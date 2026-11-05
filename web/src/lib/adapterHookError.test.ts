@@ -69,6 +69,11 @@ const EXEMPT: Record<string, string> = {
   // is `load()`, whose failure the hook does return, as `loadErr`; `ui/loadErrorCensus.test.ts` budgets
   // the seed as its own keep.
   'pages/code/cockpit/useCodeCockpit.ts:useCodeCockpit': 'its useQuery is a first-paint seed — the real read is load(), whose loadErr it returns',
+  // The install's kind, for the System popover's update control (`app/applyUpdate`). Unread, while
+  // it loads or after a failed read, it is `undefined`, and the update then asks first, as on an
+  // install that restarts: the safe answer, so no caller decides what an unknown kind means. The
+  // Updates panel reads the same key and says a failed read itself.
+  'app/applyUpdate.ts:useInstallKind': 'an unread kind is undefined — the update then asks first, the safe answer',
 }
 
 describe('an adapter hook re-exposes useQuery\'s error', () => {

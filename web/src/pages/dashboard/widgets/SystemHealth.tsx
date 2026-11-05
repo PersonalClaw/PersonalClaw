@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { Clock, Tag, Cpu, Zap, Users, ArrowUpCircle, ShieldAlert, Activity, MemoryStick, Network, HardDrive, Stethoscope } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api } from '../../../lib/api'
-import { confirm } from '../../../ui/dialog'
+import { applyUpdate, readInstallKind, updatedOutside } from '../../../app/applyUpdate'
+import { alertDialog, confirm } from '../../../ui/dialog'
+import { RELEASES_PAGE_URL } from '../../../lib/repoDocs'
 import { InlineError } from '../../../ui/InlineError'
 import { useSystemLive } from '../../settings/SystemLive'
 import { RowAction } from './kit'
@@ -93,16 +94,27 @@ export function SystemHealth({ navigate }: RouteProps) {
 
   const runUpdate = async () => {
     // Same confirm gate as the Updates settings panel — a one-click header action
-    // must not kick off a pull/rebuild/restart pipeline without an explicit yes.
-    if (!(await confirm({ title: 'Apply the available update?', body: 'The backend will update and may restart.', confirmLabel: 'Apply update' }))) return
-    // Fire — the shell-level UpdateProgressOverlay owns the progress feedback
-    // (step stepper + cancel). No inline busy state here; it would never clear
-    // on success since the gateway re-execs and the page reloads. A rejected
-    // START (409 dirty tree / update already in progress) pushes NO progress
-    // events — the overlay never opens — so toast the backend's error text.
-    api.applyUpdate().catch((e) => {
-      const msg = e instanceof Error && e.message ? e.message : 'Request failed'
-      window.dispatchEvent(new CustomEvent('ne:toast', { detail: { level: 'error', message: `Update blocked: ${msg}` } }))
+    // must not kick off a pull/rebuild/restart pipeline without an explicit yes. A
+    // container or desktop install is not updated in place: nothing restarts there,
+    // so there is nothing to confirm.
+    const outside = updatedOutside(await readInstallKind())
+    if (!outside && !(await confirm({ title: 'Apply the available update?', body: 'The backend will update and may restart.', confirmLabel: 'Apply update' }))) return
+    // The shell-level UpdateProgressOverlay owns an update's progress feedback (step
+    // stepper + cancel), and `applyUpdate` toasts a refused start. What a container
+    // or desktop install answers instead, how it is updated, is said here, with the
+    // releases page for the desktop app.
+    const how = await applyUpdate()
+    if (!how) return
+    void alertDialog({
+      title: 'How this install updates',
+      body: (
+        <>
+          {how.detail || 'This install is updated outside the app.'}
+          {how.kind === 'desktop' && (
+            <> <a href={RELEASES_PAGE_URL} target="_blank" rel="noreferrer noopener" className="underline">Open the releases page</a></>
+          )}
+        </>
+      ),
     })
   }
 

@@ -1000,9 +1000,11 @@ def _how_to_sign_back_in(via: str, kind: str = "") -> str:
     """The door back in for a session that came through *via* on a *kind* of device, given what
     this gateway offers. A door nobody recorded (*via* empty) names both the link and pairing."""
     password = _login_offered()
-    if via == ISSUER_READY and kind == "desktop":
-        # The desktop app's own window: the app signs it in each time it starts its gateway, and
-        # the window has no address bar to open a printed link in.
+    if via in (ISSUER_READY, ISSUER_TOKEN) and kind == "desktop":
+        # The desktop app's own window: the app signs it in each time it opens, with the session
+        # its gateway's ready line hands out, or at this home's running gateway with the home's
+        # local secret (`/api/token/local`), and the window has no address bar to open a printed
+        # link in.
         again = "To sign it back in, quit PersonalClaw and open it again"
         return f"{again}, or sign in with your password." if password else f"{again}."
     if via in (ISSUER_PAIR, ISSUER_ENROLL):

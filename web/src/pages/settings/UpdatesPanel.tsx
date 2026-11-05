@@ -12,7 +12,7 @@ import { Markdown } from '../../ui/Markdown'
 import { confirm } from '../../ui/dialog'
 import { fvs } from '../../design/fontWeight'
 import { notify } from '../../app/appSdk'
-import { repoDocUrl } from '../../lib/repoDocs'
+import { RELEASES_PAGE_URL, repoDocUrl } from '../../lib/repoDocs'
 import { howAnUpdateArrives } from '../../lib/updateRoute'
 
 /** Where an update's upgrade steps live: the CHANGELOG is headline-only, so they are in the docs. */
@@ -440,7 +440,7 @@ export function UpdatesPanel() {
               the same answer `personalclaw update` gives on this kind. */}
           {isDesktop && (info.available || verdict === 'pin_older') && (
             <div data-type="caption" className="mt-3 rounded-md bg-surface-high px-3 py-2 text-on-surface-low">
-              Install the {verdict === 'pin_older' ? 'pinned' : 'new'} version from the <a className="underline" href="https://github.com/PersonalClaw/PersonalClaw/releases" target="_blank" rel="noreferrer noopener">releases page</a>, then reopen the app.
+              Install the {verdict === 'pin_older' ? 'pinned' : 'new'} version from the <a className="underline" href={RELEASES_PAGE_URL} target="_blank" rel="noreferrer noopener">releases page</a>, then reopen the app.
             </div>
           )}
         </div>

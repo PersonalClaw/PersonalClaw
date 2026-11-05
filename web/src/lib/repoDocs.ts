@@ -10,3 +10,7 @@ export const REPO_DOC_BLOB_ROOT = 'https://github.com/PersonalClaw/PersonalClaw/
 export function repoDocUrl(path: string): string {
   return `${REPO_DOC_BLOB_ROOT}${path}`
 }
+
+/** The releases page: where a new version of an install the gateway does not update in place comes
+ *  from (the desktop app's dmg, AppImage and deb), as `POST /api/update`'s `instructions` answer says. */
+export const RELEASES_PAGE_URL = 'https://github.com/PersonalClaw/PersonalClaw/releases'

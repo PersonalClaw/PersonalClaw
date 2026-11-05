@@ -1,5 +1,5 @@
 /**
- * What the shell tells the owner when the gateway it started stops on its own.
+ * What the shell says when the gateway it started stops on its own, or does not start.
  *
  * The gateway is this shell's child. It stops when the app quits, and it restarts in place
  * (Settings → Restart, an applied update) without ever exiting, coming back on a new port that the
@@ -8,26 +8,28 @@
  * answers, and this used to be one console line the owner never sees: the app just stopped working
  * until it was quit and opened again.
  *
- * So the shell says what happened and offers what to do about it: start the gateway again, and the
- * windows follow it to its new address the way they do after a restart, or quit. What happened is
- * the exit status and the last line the gateway wrote to stderr, which is where it says why it
- * stopped (a restart that could not start its new image says so there, `restart_request.start`).
- * That line is the gateway's text, so it gets the treatment the shell gives any text it did not
- * write: escape sequences and control characters out, whitespace collapsed, a length clamp.
+ * So the shell says what happened, on the Gateways window's "This computer" row, where the owner
+ * starts a gateway here again (the windows follow it to its new address the way they do after a
+ * restart) or connects to another one. What happened is the exit status and the last line the
+ * gateway wrote to stderr, which is where it says why it stopped (a restart that could not start
+ * its new image says so there, `restart_request.start`). That line is the gateway's text, so it
+ * gets the treatment the shell gives any text it did not write: escape sequences and control
+ * characters out, whitespace collapsed, a length clamp.
  *
- * A gateway that does not start when the app opens is the same news with the same two choices
- * (`firstStartDialog`): said as soon as the start fails, and Start Again starts a new one.
+ * A gateway that does not start when the app opens is the same news (`notStartedSentence`), said as
+ * soon as the start fails. Both were once a sheet with Start Again and Quit, which held the main
+ * window, so the Gateways window, its child, queued behind it and never showed.
  *
- * A separate pure module so the sentence and the tail are executed by
+ * A separate pure module so the sentences and the tail are executed by
  * `desktop/test/gatewayLost.test.js` rather than read out of `main.js` as text.
  */
 
-/** The longest last line the dialog shows: a traceback's last line can run long. */
+/** The longest last line the row shows: a traceback's last line can run long. */
 const LAST_LINE_MAX = 300;
 
-/** The buttons, in order: `response` 0 starts the gateway again, 1 quits. */
-const START_AGAIN = 0;
-const QUIT = 1;
+/** The exit status of a start refused because another gateway already serves its home
+ *  (`gateway_base.HOME_SERVED_EXIT`): the app then uses that gateway instead (`homeGateway.js`). */
+const HOME_SERVED_EXIT = 3;
 
 /** Terminal escape sequences (colour, cursor) a console log line may carry. */
 const ESCAPE_SEQUENCE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -85,32 +87,6 @@ function isUnasked({ held, quitting }) {
   return Boolean(held) && !quitting;
 }
 
-/**
- * The two choices, said the same way whether the gateway stopped or never started: Start Again,
- * which starts a new gateway, or Quit.
- *
- * @param {string} message - the dialog's headline.
- * @param {string} what - how it ended, without a full stop.
- * @param {string} lastLine - the last line it wrote to stderr, or "".
- */
-function startAgainDialog(message, what, lastLine) {
-  const said = lastLine ? ` Its last message was: ${lastLine}` : "";
-  return {
-    type: "warning",
-    title: "PersonalClaw",
-    message,
-    detail:
-      `${what}, so the app has nothing to show.${said}\n\n` +
-      "Start it again, or quit PersonalClaw and open it again later.",
-    buttons: ["Start Again", "Quit"],
-    defaultId: START_AGAIN,
-    // A dialog dismissed without a choice starts the gateway again: that is safe to repeat (a start
-    // that fails says so again), where quitting would take the app away from a reflexive Escape.
-    cancelId: START_AGAIN,
-    noLink: true,
-  };
-}
-
 /** How a gateway ended: its exit status, the signal that ended it, or why it could not start. */
 function howItEnded({ code = null, signal = null, startError = "" }, startFailed) {
   if (startError) return `${startFailed} (${cleanLine(startError)})`;
@@ -118,45 +94,51 @@ function howItEnded({ code = null, signal = null, startError = "" }, startFailed
   return `The gateway was stopped by ${signal ? `a signal (${signal})` : "the system"}`;
 }
 
+/** *what* and, when the gateway said why, its last message, as one row's sentence. */
+function withLastLine(headline, what, lastLine) {
+  return `${headline} ${what}.${lastLine ? ` Its last message was: ${lastLine}` : ""}`;
+}
+
 /**
- * The dialog for a gateway that stopped when nobody asked it to, or that could not be started again.
+ * The "This computer" row's sentence for a gateway that stopped when nobody asked it to, or that
+ * could not be started again.
  *
  * @param {object} exit
  * @param {number|null} [exit.code] - the exit status, or null when a signal ended it.
  * @param {string|null} [exit.signal] - the signal that ended it, if one did.
  * @param {string} [exit.lastLine] - the last line it wrote to stderr (`makeLastLine`).
  * @param {string} [exit.startError] - why a start failed before there was a process to exit.
- * @returns {object} `dialog.showMessageBox` options; `response` is START_AGAIN or QUIT.
  */
-function gatewayLostDialog(exit = {}) {
-  const what = howItEnded(exit, "The gateway could not be started again");
-  return startAgainDialog("PersonalClaw's gateway stopped.", what, exit.lastLine || "");
+function stoppedSentence(exit = {}) {
+  return withLastLine("PersonalClaw's gateway stopped.", howItEnded(exit, "The gateway could not be started again"), exit.lastLine || "");
 }
 
 /**
- * The dialog for a gateway the app could not start when it opened, or that started and never
- * answered. It used to say "Try reopening the app" and offer Retry, which only waited for the
- * same gateway again: nothing had started it, so it waited out the whole two minutes and failed
- * the same way. Now it says how the start ended, at once, and Start Again starts a new gateway,
- * as the gateway-lost dialog's does.
- *
- * @param {object} exit - as `gatewayLostDialog`'s, or `{ unanswered: true }` for a gateway that
- *   started and never answered.
- * @returns {object} `dialog.showMessageBox` options; `response` is START_AGAIN or QUIT.
+ * The row's sentence for a gateway the app could not start when it opened, or that started and
+ * never answered (`{ unanswered: true }`).
  */
-function firstStartDialog(exit = {}) {
-  const what = exit.unanswered
-    ? "The gateway started and never answered"
-    : howItEnded(exit, "The gateway could not be started");
-  return startAgainDialog("PersonalClaw's gateway did not start.", what, exit.lastLine || "");
+function notStartedSentence(exit = {}) {
+  const what = exit.unanswered ? "It started and never answered" : howItEnded(exit, "The gateway could not be started");
+  return withLastLine("PersonalClaw's gateway did not start.", what, exit.lastLine || "");
+}
+
+/**
+ * The row's sentence for a gateway the app used and did not start, once it has stopped: the app
+ * neither stopped it nor starts it again, and says so.
+ */
+function adoptedGoneSentence(port) {
+  return (
+    `The gateway on port ${port} stopped. It was started outside this app, so PersonalClaw ` +
+    "didn't stop it and won't restart it. Start a gateway here, or connect to another one."
+  );
 }
 
 module.exports = {
+  HOME_SERVED_EXIT,
   LAST_LINE_MAX,
-  QUIT,
-  START_AGAIN,
-  firstStartDialog,
-  gatewayLostDialog,
+  adoptedGoneSentence,
   isUnasked,
   makeLastLine,
+  notStartedSentence,
+  stoppedSentence,
 };

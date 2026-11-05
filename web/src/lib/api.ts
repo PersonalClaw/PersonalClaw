@@ -5291,6 +5291,22 @@ export interface ProjectImportResult {
 export interface UpdateCheck { available: boolean; changes: string; checked: boolean; auto: 'off' | 'staged'; version?: string; latest?: string; kind?: InstallKind; unattended_apply?: boolean; current?: string; update_available?: boolean; pin_miss?: boolean; pin_older?: boolean; commits_behind?: number | null; apply_method?: string; instructions?: string[]; channel?: 'stable' | 'beta' | 'nightly'; pin?: string; image_tag?: string; release_notes?: string; check_enabled?: boolean; check_interval_hours?: number; last_version?: string; checked_now?: boolean }
 /** How this PersonalClaw was installed (`self_update.detect_install_kind`). */
 export type InstallKind = 'git' | 'pip' | 'container' | 'desktop'
+/** What `POST /api/update` answers. `instructions`: an install this gateway does not update in place,
+ *  the desktop app's own gateway or a container, answered with what does update it: `detail` says it
+ *  in one sentence (a new desktop version comes as a new app, from the releases page), and a
+ *  container's `instructions` are the commands for the release `image_tag` names. `updating`: the
+ *  update started, and its progress arrives as `update_progress` events. `restarting`: nothing to
+ *  install, so the gateway restarts (`detail` says why). A start refused outright rejects instead. */
+export interface UpdateApplyAnswer {
+  ok?: boolean
+  error?: string
+  status?: 'instructions' | 'updating' | 'restarting'
+  kind?: InstallKind
+  detail?: string
+  instructions?: string[]
+  image_tag?: string
+  apply_method?: string
+}
 /** What `POST /api/update/cancel` answers. `stopped`: the update has stopped, and `update_progress`
  *  is what it said it left. `stopping`: it has not stopped yet, and says what it left on the update
  *  progress once it has (`detail` says so). `not_running`: no update was running (`detail`). */
@@ -10860,7 +10876,7 @@ export const api = {
   // Check now: one check the owner asked for, which runs even with automatic checks off.
   checkForUpdatesNow: () => post<UpdateCheck>('/api/update/check'),
   changelog: () => get<{ content: string }>('/api/changelog').then((d) => d.content),
-  applyUpdate: () => post<{ ok?: boolean; error?: string }>('/api/update'),
+  applyUpdate: () => post<UpdateApplyAnswer>('/api/update'),
   // Stop the update in progress. Answers once it has stopped, with the update progress it ended
   // on (`cancelled`: nothing was changed; `error`: what is not as it was); `stopping` when it is
   // still stopping; `not_running` when there was none. A 409 `update_not_cancellable` says why

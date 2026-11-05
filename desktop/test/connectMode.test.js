@@ -142,25 +142,47 @@ describe("assertLoopbackTarget — the rail that keeps .local_secret on this mac
   });
 });
 
-describe("shouldAttachBridge — the capability bridge is loopback-only", () => {
-  it("attaches for the spawned gateway", () => {
-    assert.strictEqual(shouldAttachBridge("http://127.0.0.1:10000"), true);
-    assert.strictEqual(shouldAttachBridge("http://localhost:10000"), true);
+describe("shouldAttachBridge — only to the gateway proven to serve this app's home", () => {
+  // `localGatewayUrl` in main.js: the spawned gateway's ready line, or a gateway of this home that
+  // proved it holds the home's secret (`homeGateway.reach`). Nothing else ever becomes it.
+  const spawned = "http://localhost:51234";
+  const adopted = "http://127.0.0.1:10000";
+
+  it("attaches for the app's own gateway: the one it spawned, or one that proved it serves this home", () => {
+    assert.strictEqual(shouldAttachBridge(spawned, spawned), true);
+    assert.strictEqual(shouldAttachBridge(`${spawned}/#/chat`, spawned), true, "any route on that gateway");
+    assert.strictEqual(shouldAttachBridge(adopted, adopted), true);
   });
 
-  it("does NOT attach for a LAN or remote gateway", () => {
+  it("does NOT attach for a gateway on this computer that proved nothing, however it is spelled", () => {
+    // A loopback address added by hand in the Gateways window. Being on this machine is not proof of
+    // serving this home.
+    for (const url of ["http://127.0.0.1:10001", "http://localhost:10000", "http://127.0.0.1:51234", "http://[::1]:51234"]) {
+      assert.strictEqual(shouldAttachBridge(url, spawned), false, url);
+    }
+    assert.strictEqual(shouldAttachBridge("http://localhost:51234", adopted), false);
+  });
+
+  it("does NOT attach when the app has no gateway of its own", () => {
+    for (const none of ["", null, undefined]) assert.strictEqual(shouldAttachBridge(spawned, none), false, String(none));
+    assert.strictEqual(shouldAttachBridge(spawned), false);
+  });
+
+  it("does NOT attach for a LAN or remote gateway, even one named as the app's own", () => {
     for (const url of ["http://10.0.0.4:10000", "http://claw.local:10000", "https://pc.example.com", "http://brain.ts.net"]) {
-      assert.strictEqual(shouldAttachBridge(url), false, url);
+      assert.strictEqual(shouldAttachBridge(url, spawned), false, url);
+      assert.strictEqual(shouldAttachBridge(url, url), false, `${url} as its own base`);
     }
   });
 
   it("does NOT attach for a name that resolves to loopback — a spelling must not earn a microphone", () => {
-    assert.strictEqual(shouldAttachBridge("http://lh.0x41.pw"), false);
+    assert.strictEqual(shouldAttachBridge("http://lh.0x41.pw", spawned), false);
+    assert.strictEqual(shouldAttachBridge("http://lh.0x41.pw", "http://lh.0x41.pw"), false);
   });
 
   it("does not attach to nothing", () => {
-    assert.strictEqual(shouldAttachBridge(""), false);
-    assert.strictEqual(shouldAttachBridge(null), false);
+    assert.strictEqual(shouldAttachBridge("", spawned), false);
+    assert.strictEqual(shouldAttachBridge(null, spawned), false);
   });
 });
 
@@ -468,6 +490,17 @@ describe("confirmEndpoint + switchTo", () => {
     assert.strictEqual(toRemote.navigateTo, "http://10.0.0.4:10000");
     assert.strictEqual(toRemote.attachBridge, false);
     assert.strictEqual(loadRegistry(store).active, id);
+  });
+
+  it("gives no bridge to a gateway on this computer added by hand, only to the app's own", () => {
+    const store = openShellStore({ home: tmpHome() });
+    rememberLocalGateway(store, "http://localhost:51234");
+    const { id } = confirmEndpoint(store, { origin: "http://127.0.0.1:10000", trust: "loopback", scheme: "http:", host: "127.0.0.1:10000", fingerprint: "127.0.0.1" }, { label: "Another home" });
+    const toHandAdded = switchTo(store, id, { localBaseUrl: "http://localhost:51234" });
+    assert.ok(toHandAdded.ok);
+    assert.strictEqual(toHandAdded.attachBridge, false, "a loopback address proves nothing about this home");
+    const toOwn = switchTo(store, LOCAL_ENDPOINT_ID, { localBaseUrl: "http://localhost:51234" });
+    assert.strictEqual(toOwn.attachBridge, true);
   });
 
   it("REFUSES to switch to a row whose confirmation no longer holds, rather than re-confirming silently", () => {

@@ -16,14 +16,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **For apps, `personalclaw.sdk.channel.ConversationLog.update_metadata` takes `drop`, the chat-level fields to remove from a chat's record in the same write. It refuses to set or remove the record's own fields, or to remove the memory mode.**
 
+- **The desktop app can use the gateway already serving its home, one started in a terminal or as a service, where its own start was refused and left it with no gateway. It finds that gateway the way `personalclaw token` does and offers it; once you choose it, or every time after you tick Use it automatically next time, it signs in with the home's local secret for 30 days, follows it through a restart, and marks it "already running" in the Gateways window. Quitting the app signs it out and leaves that gateway running, and when its sign-in ends the window says to quit PersonalClaw and open it again.**
+
 ### Changed
 
 - **Stop stops only the turn you pressed it for, and a turn can be read by its message id. A Stop that reaches the gateway after its turn ended no longer stops the next one or empties its queue: it changes nothing, and the page says nothing failed. A soft Stop's answer names the queued messages it removed unsent, and sending one of them again runs nothing. A script, a channel or the page reads how one turn went at `GET /api/chat/sessions/{session}/turns/{message_id}`: queued, running with its run state, or settled with how it ended and its answer. An app reads only the turns of conversations it started.**
 - **Renaming, pinning, archiving or tagging a chat no longer rewrites its whole transcript: each chat's settings are kept beside it, in `sessions/<chat>.chat.json`, made from the transcript's first line the first time the gateway starts. The first line stays, so a home that goes back to 0.3.6 or an earlier version still reads every chat: a save writes it as the chat's settings say, and so does a clean stop for every chat changed since. After a crash, a chat renamed since its last message shows its old title under 0.3.6, and one whose memory mode changed since its last save has its old mode there. A chat whose settings file cannot be read opens read-only, and the Doctor names any chat whose settings could not be made. Take a `personalclaw snapshot` before upgrading.**
+- **Desktop capabilities attach only to a gateway proven to serve this app's home: the one the app started, or the one serving its home that proved it holds the home's local secret.**
 
 ### Fixed
 
+- **The desktop app starts its own gateway when it opens, and opens no other window when that works. When it has no gateway, because its own did not start or the one it used stopped, the main window says it is not connected and a small Choose a Gateway window says why and offers the gateway already serving the home (when one proves it does), Add a Gateway…, or Try Again. The dialog it showed instead held the app, with the Gateways window behind it and out of reach.**
 - **On Linux, the Docker image included, the gateway could stop answering for good when the loop list opened the workflow store while a background read closed it: from then on it took every request and answered none. It now uses Python's own SQLite wherever that has full-text search and JSON, which every build of PersonalClaw's does, and the loop list reads its stores without holding up the gateway's other requests.**
+- **On the desktop app and in a container, the System status card's update button reads Update, with no restart to confirm, and it and Home's Update available say how the install updates, in the card and in a dialog, with a link to the releases page on the desktop app. Pressing them did nothing there before. On a checkout or a wheel install the confirm says what the update will do, and the update runs as before.**
 
 ## [0.3.6] — 2026-11-03
 

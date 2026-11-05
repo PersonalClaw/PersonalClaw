@@ -62,6 +62,17 @@ describe("the capability bridge is attached only by decision", () => {
     assert.strictEqual(/attachBridge:\s*true/.test(MAIN), false, "a call site hardcodes attachBridge: true");
   });
 
+  it("gives the bridge only to the gateway proven to serve this home: every decision names `localGatewayUrl`", () => {
+    // `localGatewayUrl` has two writers: the spawned gateway's ready line, and an attach that
+    // proved the gateway holds this home's secret (`homeGateway.reach`). A decision made on the
+    // address alone is not one about this home: being on this computer proves nothing.
+    const calls = [...MAIN.matchAll(/shouldAttachBridge\(([^()]*)\)/g)];
+    assert.ok(calls.length >= 2, "the bridge decisions are gone — this rail is now blind");
+    for (const m of calls) {
+      assert.match(m[1], /^[^,]+,\s*localGatewayUrl$/, `shouldAttachBridge(${m[1]}) decides without the app's own gateway`);
+    }
+  });
+
   it("does not expose the dialog's IPC through the capability preload, or vice versa", () => {
     // Two preloads, two surfaces. A switcher that could reach the microphone bridge, or a dashboard
     // page that could reach the switcher's `confirm`, would collapse them back into one.
@@ -188,6 +199,205 @@ describe("the spawn-local path is unchanged", () => {
     assert.match(body, /parseReadyLine\(line\)/);
     assert.match(body, /if \(settled\) \{\s*followRestartedGateway\(ready\)/, "a later ready line is dropped");
     assert.match(body, /adoptLocalGateway\(ready\)/, "the first ready line signs nothing in");
+  });
+});
+
+describe("the app starts its own gateway first, uses this home's running one only when asked, and never signals one it did not start", () => {
+  const fnBody = (name) => {
+    const start = MAIN.indexOf(`function ${name}(`);
+    assert.ok(start > 0, `${name} is gone — this rail is now blind`);
+    return MAIN.slice(start, MAIN.indexOf("\n}\n", start));
+  };
+
+  it("starts its own gateway first, and looks for this home's running one only once that start fails", () => {
+    const up = fnBody("bringUpLocalGateway");
+    const startAt = up.indexOf("await startGateway()");
+    const catchAt = up.indexOf("} catch (err) {");
+    const findAt = up.indexOf("await findHomeGateway(");
+    assert.ok(startAt > 0 && catchAt > startAt && findAt > catchAt, "the app looks for another gateway before its own start has failed");
+    assert.doesNotMatch(up.slice(0, catchAt), /reach|findHomeGateway/, "the own start waits on a look for another gateway");
+    assert.match(up, /const served = exit\.code === HOME_SERVED_EXIT;[\s\S]*?await findHomeGateway\(\{ waitMs: served \? 20_000 : 0 \}\)/, "a start lost to another gateway gives up before that one listens");
+    assert.match(up, /if \(found\.reason !== "none"\) \{[\s\S]*?setLocalState\("served", found\.sentence\);[\s\S]*?return false;/, "a gateway the app cannot sign in to is not said");
+  });
+
+  it("offers a running gateway it found without signing in to it, and uses it unasked only on the owner's standing yes", () => {
+    const up = fnBody("bringUpLocalGateway");
+    // The look after a failed start proves and sends no credential; the sign-in is the press's.
+    assert.doesNotMatch(up, /reachHomeGateway|homeGateway\.signIn|adoptHomeGateway/, "the start signs in to a gateway nobody chose");
+    assert.match(up, /if \(found\.ok\) \{\s*\/\/[^\n]*\n\s*if \(autoUseRunning\(\)\) return \(await useRunningGateway\(\)\)\.ok;\s*startFailure = \{ \.\.\.exit, found: true \};\s*setLocalState\("found", foundSentence\(found\.gateway\)\);\s*return false;/);
+    assert.match(fnBody("autoUseRunning"), /shellStore\.getItem\(AUTO_USE_KEY\) === "1"/, "the standing yes is on unless the owner ticked it");
+    // Signing in to a gateway the app found happens in exactly one place, and is reached only from
+    // a press, the standing yes, and the adopted watch's follow of a gateway already in use.
+    const signIns = [...MAIN.matchAll(/homeGateway\.signIn\(/g)];
+    assert.equal(signIns.length, 1);
+    assert.ok(signIns[0].index > MAIN.indexOf("async function reachHomeGateway(") && signIns[0].index < MAIN.indexOf("const AUTO_USE_KEY"), "a sign-in outside reachHomeGateway");
+    const callers = [...MAIN.matchAll(/await reachHomeGateway\(/g)].map((m) => MAIN.slice(MAIN.lastIndexOf("\nfunction ", m.index) + 1 || MAIN.lastIndexOf("\nasync function ", m.index) + 1, m.index));
+    assert.equal(callers.length, 2, "reachHomeGateway gained a caller");
+    assert.match(fnBody("useRunningGateway"), /const found = await reachHomeGateway\(\);/);
+    assert.match(MAIN.slice(MAIN.indexOf("const adoptedWatch = makeAdoptedWatch({"), MAIN.indexOf("gone: () => adoptedGone(),")), /follow: async \(\) => \{\s*const moved = await reachHomeGateway\(\);/);
+  });
+
+  it("uses a running gateway only while its own is neither up nor starting, on a press and the standing yes alike, and keeps the box's answer", () => {
+    // The refusal is useRunningGateway's first step, before any sign-in, so the press (through
+    // useRunningHere) and the standing yes both meet it.
+    assert.match(fnBody("useRunningGateway"), /^function useRunningGateway\(\) \{\n\s*if \(ownGatewayLives\(\)\) return \{ ok: false, code: "own"/, "its own gateway can be adopted as one it did not start");
+    assert.doesNotMatch(MAIN, /if \(gatewayProcess\) return \{ ok: false, code: "own"/, "a second, narrower refusal beside useRunningGateway's");
+    const use = MAIN.slice(MAIN.indexOf("    use: async ({ remember }) => {"), MAIN.indexOf("    autoUse: async ({ on }) => {"));
+    assert.match(use, /const used = await useRunningHere\(\);\s*if \(!used\.ok\) return used;\s*setAutoUseRunning\(remember\);/, "the box is kept for a gateway that could not be used");
+    assert.match(fnBody("setAutoUseRunning"), /if \(on\) shellStore\.setItem\(AUTO_USE_KEY, "1"\);\s*else shellStore\.removeItem\(AUTO_USE_KEY\);/);
+  });
+
+  it("opens the chooser when nothing serves the windows, and no window when its own gateway starts", () => {
+    const shown = fnBody("showNotConnected");
+    assert.match(shown, /connectDialog\?\.openChooser\(\);/);
+    assert.doesNotMatch(shown, /openConnectDialog\(\)/, "the full Gateways window opens instead of the chooser");
+    assert.doesNotMatch(fnBody("bringUpLocalGateway"), /openChooser|openConnectDialog|showNotConnected/, "a start opens a window before anyone knows it failed");
+    // The chooser's Add a Gateway… is the Gateways window, in place of the chooser.
+    const gateways = MAIN.slice(MAIN.indexOf("    gateways: async () => {"), MAIN.indexOf("  };\n  return handlers;"));
+    assert.match(gateways, /connectDialog\.closeChooser\(\);\s*openConnectDialog\(\);/);
+  });
+
+  it("holds an adopted gateway's session the way it holds a ready line's", () => {
+    const adopt = fnBody("adoptHomeGateway");
+    assert.match(adopt, /await followRestartedGateway\(found\.ready\)/);
+    assert.match(adopt, /await adoptLocalGateway\(found\.ready\)/);
+  });
+
+  it("stops, signals and kills only its own child", () => {
+    // The one stop takes `gatewayProcess`, the app's own child, and the exit handler's group kill
+    // takes `liveGatewayGroup`, which only `startGateway` sets. Neither ever holds an adopted pid.
+    assert.match(fnBody("stopGateway"), /const child = gatewayProcess;/);
+    const kills = [...MAIN.matchAll(/process\.kill\(([^)]*)\)/g)].map((m) => m[1]);
+    assert.deepStrictEqual(kills, ["-liveGatewayGroup, \"SIGKILL\""]);
+    for (const m of MAIN.matchAll(/liveGatewayGroup = ([^;]+);/g)) {
+      assert.ok(["child.pid ?? null", "null"].includes(m[1]), `liveGatewayGroup is set from ${m[1]}`);
+    }
+    for (const sink of ["process.kill(", "shutdownGateway(", "stopGateway("]) {
+      for (let at = MAIN.indexOf(sink); at !== -1; at = MAIN.indexOf(sink, at + sink.length)) {
+        const end = MAIN.indexOf("\n", at);
+        const line = MAIN.slice(MAIN.lastIndexOf("\n", at) + 1, end === -1 ? MAIN.length : end);
+        assert.doesNotMatch(line, /adopted/, `an adopted gateway reaches ${sink}: ${line.trim()}`);
+      }
+    }
+  });
+
+  it("follows an adopted gateway through the doorbell, and registers again only once it is proven", () => {
+    // `adoptedWatch.js` decides; main.js routes the doorbell's news to it and does what it says.
+    const at = MAIN.indexOf("const adoptedWatch = makeAdoptedWatch({");
+    assert.ok(at > 0, "the adopted watch is gone — this rail is now blind");
+    const made = MAIN.slice(at, MAIN.indexOf("\n});\n", at));
+    assert.match(made, /reach: \(home\) => homeGateway\.reach\(home\)/);
+    assert.match(made, /proven: \(\{ pid, port \}\) => \{\n\s+adoptedGateway = \{ pid, port \};\n\s+shellToken = null;\n\s+registerWithGateway\(\)/, "a restart's new registry is not registered with, or not with the proof's pid");
+    assert.match(made, /gone: \(\) => adoptedGone\(\)/);
+    assert.match(MAIN, /if \(adoptedGateway\) \{\n\s+if \(state === "up"\) adoptedWatch\.up\(\);\n\s+else adoptedWatch\.lost\(\);/);
+    assert.doesNotMatch(MAIN, /function watchAdoptedGateway\(/, "a second follower of the doorbell's news");
+    assert.match(fnBody("adoptHomeGateway"), /adoptedWatch\.adopt\(adoptedGateway\);[\s\S]*followRestartedGateway/, "a gateway is followed before the watch knows it");
+  });
+
+  it("sends nothing that carries the home's credentials while they are withheld", () => {
+    // The shell's session, the local secret and the capability token all leave through these three
+    // doors; each asks first. Withheld from the doorbell's loss of an adopted gateway until a proof on
+    // its port, and from the stop of the gateway the app used until a new one is in use.
+    assert.match(fnBody("postGateway"), /if \(!localGatewayUrl \|\| credentialsWithheld\(\)\) return resolve\(null\);/);
+    assert.match(fnBody("getGateway"), /if \(!localGatewayUrl \|\| credentialsWithheld\(\)\) return resolve\(null\);/);
+    assert.match(fnBody("socketGateway"), /if \(credentialsWithheld\(\)\) throw/);
+    assert.match(fnBody("credentialsWithheld"), /return gatewayGone \|\| adoptedWatch\.withheld;/);
+    assert.match(fnBody("gatewayLost"), /gatewayGone = true;/);
+    assert.match(fnBody("adoptedGone"), /gatewayGone = true;/);
+    assert.match(fnBody("adoptLocalGateway"), /gatewayGone = false;/);
+    const sends = [...MAIN.matchAll(/X-Local-Secret|X-Shell-Token|localSignIn\.authorization\(\)/g)].length;
+    assert.equal(sends, 6, "a new door carries the home's credentials: give it the same ask");
+  });
+});
+
+describe("a start that timed out is the app's own gateway, never another one (main.js's functions, run under stand-ins)", () => {
+  const vm = require("node:vm");
+  /** The source of main.js's top-level function *name*, as written (`async` included). */
+  const fnSource = (name) => {
+    const at = MAIN.search(new RegExp(`^(async )?function ${name}\\(`, "m"));
+    assert.ok(at >= 0, `${name} is gone — this rail is now blind`);
+    return MAIN.slice(at, MAIN.indexOf("\n}\n", at) + 2);
+  };
+  /** bringUpLocalGateway, ownGatewayLives and useRunningGateway as main.js has them, in a context that
+   *  stands in for every name they reach for. *did* records the look, the sign-in, the adoption and
+   *  every row state, in order. */
+  const run = ({ child = null, start, found = null, autoUse = false }) => {
+    const did = [];
+    const box = {
+      console: { log() {}, warn() {}, error() {} },
+      HOME_SERVED_EXIT: 3,
+      gatewayProcess: child,
+      startFailure: null,
+      adoptedGateway: null,
+      localState: { state: "", sentence: "" },
+      adoptedWatch: { drop() {} },
+      sendStatus() {},
+      setLocalState: (state, sentence = "") => {
+        box.localState = { state, sentence };
+        did.push(state);
+      },
+      startGateway: start,
+      notStartedSentence: () => "PersonalClaw's gateway didn't start.",
+      foundSentence: () => "This home's gateway is already running, started outside this app.",
+      autoUseRunning: () => autoUse,
+      findHomeGateway: async () => (did.push("look"), found),
+      reachHomeGateway: async () => (did.push("sign-in"), { ok: true, gateway: found && found.gateway, ready: {} }),
+      adoptHomeGateway: async () => {
+        did.push("adopt");
+      },
+    };
+    vm.createContext(box);
+    vm.runInContext(["ownGatewayLives", "useRunningGateway", "bringUpLocalGateway"].map(fnSource).join("\n"), box);
+    return { box, did };
+  };
+  const living = () => ({ pid: 4242, exitCode: null, signalCode: null });
+  const timedOut = () => Promise.reject(new Error("Gateway start timed out"));
+  const refused = () => Promise.reject(Object.assign(new Error("Gateway exited with code 3"), { exit: { code: 3 } }));
+  // What `homeGateway.reach` proves of the app's own late child once it listens: it serves the home.
+  const serving = { ok: true, gateway: { pid: 4242, port: 50715 } };
+
+  it("a start that times out, whose child then serves the home, is neither offered as found nor used automatically", async () => {
+    for (const autoUse of [false, true]) {
+      const { box, did } = run({ child: living(), start: timedOut, found: serving, autoUse });
+      assert.equal(await box.bringUpLocalGateway(), false);
+      assert.deepEqual(did, ["starting", "stopped"], `with the box ${autoUse ? "ticked" : "clear"}: ${did.join(", ")}`);
+      // Made inside the context, so compared as JSON: its prototype is that realm's.
+      assert.equal(JSON.stringify(box.startFailure), JSON.stringify({ startError: "Gateway start timed out" }));
+      assert.equal(box.localState.sentence, "PersonalClaw's gateway didn't start.");
+    }
+  });
+
+  it("once its child is gone, the gateway serving the home is looked for, offered, and used on the standing yes", async () => {
+    for (const child of [null, { pid: 4242, exitCode: 3, signalCode: null }, { pid: 4242, exitCode: null, signalCode: "SIGTERM" }]) {
+      const offered = run({ child, start: refused, found: serving });
+      assert.equal(await offered.box.bringUpLocalGateway(), false);
+      assert.deepEqual(offered.did, ["starting", "look", "found"], offered.did.join(", "));
+      const used = run({ child, start: refused, found: serving, autoUse: true });
+      assert.equal(await used.box.bringUpLocalGateway(), true);
+      assert.deepEqual(used.did, ["starting", "look", "starting", "sign-in", "adopt"], used.did.join(", "));
+    }
+  });
+
+  it("refuses Use while the app's own gateway is up or starting, before any sign-in", async () => {
+    const { box, did } = run({ child: living(), start: timedOut, found: serving });
+    const answer = await box.useRunningGateway();
+    assert.equal(answer.ok, false);
+    assert.equal(answer.code, "own");
+    assert.match(answer.message, /own gateway is running/);
+    assert.deepEqual(did, []);
+  });
+
+  it("counts a child as living only while it spawned and has not exited", () => {
+    const { box } = run({ start: timedOut });
+    const lives = (child) => {
+      box.gatewayProcess = child;
+      return box.ownGatewayLives();
+    };
+    assert.equal(lives(living()), true);
+    assert.equal(lives(null), false);
+    assert.equal(lives({ pid: undefined, exitCode: null, signalCode: null }), false, "a spawn that failed has no pid");
+    assert.equal(lives({ pid: 4242, exitCode: 0, signalCode: null }), false);
+    assert.equal(lives({ pid: 4242, exitCode: null, signalCode: "SIGKILL" }), false);
   });
 });
 

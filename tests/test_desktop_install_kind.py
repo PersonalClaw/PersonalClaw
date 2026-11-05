@@ -166,11 +166,17 @@ def test_no_surface_promises_self_update_while_the_updater_is_unbuilt() -> None:
                 "shell ships no updater"
             )
 
-    # And the honest answer must actually be there, in all three.
+    # And the honest answer must actually be there, in all three. The panel links the address
+    # the web keeps once (`lib/repoDocs.RELEASES_PAGE_URL`), which the popover and Home link too.
     releases = "github.com/PersonalClaw/PersonalClaw/releases"
+    shared = (REPO_ROOT / "web/src/lib/repoDocs.ts").read_text(encoding="utf-8")
     for relative in surfaces:
         text = (REPO_ROOT / relative).read_text(encoding="utf-8")
         if relative.endswith("updates.py"):
             assert "releases page" in text, f"{relative} does not name the releases page"
+        elif relative.endswith(".tsx"):
+            assert (
+                "RELEASES_PAGE_URL" in text and releases in shared
+            ), f"{relative} does not link the releases page"
         else:
             assert releases in text, f"{relative} does not link the releases page"

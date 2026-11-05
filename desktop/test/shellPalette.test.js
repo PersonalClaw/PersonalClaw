@@ -122,7 +122,7 @@ describe("the shell pages use the shared tokens' values", () => {
     assert.deepStrictEqual(nonHexColours(pageCSS('<p style="color: teal">x</p>')), ["color: teal"]);
   });
 
-  for (const file of ["loading.html", "connectDialog.html"]) {
+  for (const file of ["loading.html", "connectDialog.html", "gatewayChooser.html"]) {
     it(`${file} uses only dark token values`, () => {
       const text = withoutMark(fs.readFileSync(path.join(ROOT, file), "utf8"));
       assert.ok(hexes(text).length >= 3, `${file}: found almost no colours`);
