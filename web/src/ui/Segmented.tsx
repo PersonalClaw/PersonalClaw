@@ -264,7 +264,9 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel,
       portal
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} disabled={disabled}
-          aria-label={ariaLabel ?? active?.label ?? active?.key} aria-expanded={open}
+          // The name holds the value it shows (WCAG 2.5.3): "File root: Workspace", never the
+          // dimension alone, which a voice user reading the pill's own word would not match.
+          aria-label={ariaLabel ? `${ariaLabel}: ${active?.label ?? active?.key}` : (active?.label ?? active?.key)} aria-expanded={open}
           // Matches `ProjectPicker`, the sibling whose popup is also a listbox: the trigger says
           // a listbox is coming, not just that something expanded.
           aria-haspopup="listbox"

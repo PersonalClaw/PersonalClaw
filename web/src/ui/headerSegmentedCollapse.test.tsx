@@ -93,7 +93,7 @@ describe('the collapsed Segmented pill', () => {
       expect(trigger!.textContent?.trim(), 'icon-only pill must render no text').toBe('')
       // Losing the text means the name has to come from aria-label, or the control
       // becomes unnameable to AT.
-      expect(trigger!.getAttribute('aria-label')).toBe('View')
+      expect(trigger!.getAttribute('aria-label'), 'the dimension and the value it shows').toBe('View: List view')
       // A square target, not a text pill — this is what fits the rail.
       expect(trigger!.className).toMatch(/size-8|size-6/)
     } finally { restore() }
