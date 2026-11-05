@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import type { RouteProps } from '../../app/useQueryState'
 import { MEMORY_TABS, MemoryPanel, STUDIO_KIND_META, useMemoryTab, type MemoryTab, type StudioKind } from '../settings/MemoryPanel'
 import { TopBar } from '../../ui/TopBar'
 import { PageTitle } from '../../ui/PageTitle'
-import { HeaderActions, HeaderSegmented } from '../../ui/HeaderActions'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { HeaderFilter } from '../../ui/HeaderFilter'
 import { HeaderSearch } from '../../ui/HeaderSearch'
 import type { FilterSectionDef } from '../../ui/FilterMenu'
@@ -13,8 +14,9 @@ const KINDS: StudioKind[] = ['fact', 'episodic', 'lesson', 'entity', 'slot', 'do
 
 /** Library › Memory (#3815), at `#/memory`: the memory studio and its tools, which were Settings ›
  *  Memory. Its header holds what the page's controls are: the view switch (Studio, Health, Recall,
- *  Inspect, Audit, Settings), and on the Studio its search and its kind filter, whose rows count what
- *  the explorer would show. Its views and the record it opens ride the address as they did (`?tab=`,
+ *  Inspect, Audit, Settings), on the Studio its search and its kind filter, whose rows count what
+ *  the explorer would show, and on Audit its filter and Reload. The "Memory of" picker stays over the
+ *  views (`MemoryPanel`). Its views and the record it opens ride the address as they did (`?tab=`,
  *  `?sel=`, `?pref=`, `?partition=`), and the old Settings address carries them here
  *  (`routeRedirects.ts`). */
 export function MemoryPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
@@ -22,6 +24,9 @@ export function MemoryPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   const [q, setQ] = useState('')
   const [kind, setKind] = useState<StudioKind | 'all'>('all')
   const [counts, setCounts] = useState<Record<StudioKind | 'all', number> | null>(null)
+  // The Audit view's filter and Reload (`MemoryPanel`'s `AuditControls`).
+  const [auditQ, setAuditQ] = useState('')
+  const [auditReloads, setAuditReloads] = useState(0)
   // The explorer reports its counts after each render that recomputes them. It keeps the last ones
   // unless a number changed, or each report would render the page, and the explorer, again.
   const onCounts = useCallback((next: Record<StudioKind | 'all', number>) => {
@@ -29,7 +34,7 @@ export function MemoryPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   }, [])
   // Another memory is another set of records, so its search and filter start over.
   const partition = query.partition ?? ''
-  useEffect(() => { setQ(''); setKind('all') }, [partition])
+  useEffect(() => { setQ(''); setKind('all'); setAuditQ('') }, [partition])
 
   const kindSections = useMemo<FilterSectionDef[]>(() => [{
     title: 'Kind', value: kind, defaultKey: 'all', onChange: (k) => setKind(k as StudioKind | 'all'), quiet: true,
@@ -45,13 +50,18 @@ export function MemoryPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
       <TopBar left={<PageTitle>Memory</PageTitle>}
         right={<HeaderActions>
           {studio && <HeaderSearch value={q} onChange={setQ} placeholder="Search memories" />}
+          {tab === 'audit' && <HeaderSearch value={auditQ} onChange={setAuditQ} placeholder="Filter by type or key"
+            label="Filter memory audit log" />}
           {studio && <HeaderFilter sections={kindSections} />}
           <HeaderSegmented ariaLabel="Memory view" value={tab} onChange={(v) => setTab(v as MemoryTab)}
             options={MEMORY_TABS.map((t) => ({ key: t.id, label: t.label, icon: t.icon }))} />
+          {tab === 'audit' && <HeaderControl icon={RefreshCw} label="Reload the audit log" priority="low"
+            onClick={() => setAuditReloads((n) => n + 1)} />}
         </HeaderActions>} />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto px-2xl py-l">
-          <MemoryPanel query={query} setQuery={setQuery} studio={{ q, kind, onCounts }} />
+          <MemoryPanel query={query} setQuery={setQuery} studio={{ q, kind, onCounts }}
+            audit={{ q: auditQ, reloads: auditReloads }} />
         </div>
       </div>
     </div>

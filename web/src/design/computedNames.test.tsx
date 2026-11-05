@@ -286,7 +286,8 @@ describe('a Button whose whole body is an icon carries a name', () => {
     const read = (rel: string) => readSource(join(process.cwd(), 'src', rel))
     expect(read('pages/knowledge/KnowledgeListPage.tsx'), 'the destructive one, through the shared cap')
       .toMatch(/ariaLabel=\{`Delete intent: \$\{rowSubject\(\[it\.goal \|\| it\.id\], 40\)\}`\}/)
-    expect(read('pages/settings/MemoryPanel.tsx')).toMatch(/ariaLabel="Reload the audit log"/)
+    // In Library › Memory's header since the Audit view's controls moved there.
+    expect(read('pages/library/MemoryPage.tsx')).toMatch(/label="Reload the audit log"/)
     expect(read('pages/projects/ProjectsSection.tsx')).toMatch(/ariaLabel="Save the project name"/)
   })
 

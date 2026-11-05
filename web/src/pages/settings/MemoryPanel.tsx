@@ -96,9 +96,17 @@ export interface StudioControls {
   onCounts: (counts: Record<StudioKind | 'all', number>) => void
 }
 
-export function MemoryPanel({ query, setQuery, studio }: Pick<RouteProps, 'query' | 'setQuery'> & {
+/** The Audit view's filter and Reload, held by the page's header (`MemoryPage`): what the filter
+ *  holds, and how many times Reload was pressed. */
+export interface AuditControls {
+  q: string
+  reloads: number
+}
+
+export function MemoryPanel({ query, setQuery, studio, audit }: Pick<RouteProps, 'query' | 'setQuery'> & {
   /** The Studio's search and kind filter, held by the page's header (`MemoryPage`). */
   studio?: StudioControls
+  audit?: AuditControls
 }) {
   const [tab] = useMemoryTab(query, setQuery)
   // Which memory the panel shows: the one every chat shares, or a folder's own (`?partition=`).
@@ -115,6 +123,9 @@ export function MemoryPanel({ query, setQuery, studio }: Pick<RouteProps, 'query
       {/* The page's header names it and holds its views (`MemoryPage`); this says what it is. */}
       <p data-type="body-s" className="mb-l text-on-surface-low">Explore and manage what the system remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail.</p>
 
+      {/* Which memory every view below reads, a folder's own or the one every chat shares, kept over
+          the views rather than in the header: it carries Remove this memory and the line under it
+          that says what that would drop, which a header menu row cannot hold. */}
       <MemoryPartitionPicker partition={partition} onPick={setPartition} />
 
       {stats && (
@@ -135,7 +146,7 @@ export function MemoryPanel({ query, setQuery, studio }: Pick<RouteProps, 'query
         <ToolTabBody key={partition}>
           {tab === 'recall' && <RecallTab />}
           {tab === 'health' && <HealthTab onChanged={reloadStats} />}
-          {tab === 'audit' && <AuditTab />}
+          {tab === 'audit' && <AuditTab q={audit?.q ?? ''} reloads={audit?.reloads ?? 0} />}
           {tab === 'inspect' && <InspectTab />}
           {tab === 'settings' && <SettingsTab stats={stats} onConsolidated={reloadStats} focusPref={query.pref || undefined} />}
         </ToolTabBody>
@@ -1366,14 +1377,20 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
 }
 
 // ── Audit ────────────────────────────────────────────────────────────────────
-function AuditTab() {
+function AuditTab({ q: filter, reloads }: { q: string; reloads: number }) {
   const partition = useMemoryPartition()
   const eventsKey = partitionKey('settings:memory-events', partition)
   const { data: events, error, refresh } = useQuery(
     eventsKey, () => api.memoryEvents({ limit: 100 }, partition),
   )
-  const [filter, setFilter] = useState('')
   const reload = () => { invalidateKeys(eventsKey); refresh() }
+  // The header's Reload (`MemoryPage`) counts its presses; each one reloads.
+  const pressed = useRef(reloads)
+  useEffect(() => {
+    if (pressed.current === reloads) return
+    pressed.current = reloads
+    reload()
+  }, [reloads])
 
   // Was `.catch(() => [] as MemoryEvent[])`: a failed read of the memory audit log rendered
   // "No matching events." — indistinguishable from a memory that has genuinely recorded nothing.
@@ -1384,14 +1401,8 @@ function AuditTab() {
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-2">
-        <div className="flex-1">
-          <TextInput value={filter} onChange={setFilter} placeholder="Filter by type or key" ariaLabel="Filter memory audit log"
-            size="md" surface="high" leadingIcon={<Search size={14} />} />
-          <ResultAnnouncement count={shown.length} noun="events" active={q !== ''} />
-        </div>
-        <Button variant="secondary" size="sm" ariaLabel="Reload the audit log" onClick={reload}><RefreshCw size={14} /></Button>
-      </div>
+      {/* The filter and Reload are the page header's (`MemoryPage`); this says what the filter left. */}
+      <ResultAnnouncement count={shown.length} noun="events" active={q !== ''} />
       {shown.length === 0 ? (
         // Two facts, two sentences. The old single "No matching events." told a user with
         // an untouched memory that their FILTER was the problem; `events.length` is the

@@ -535,18 +535,20 @@ describe('the hand-laid bars reach the same idiom', () => {
   it('MemoryPanel announces its two LISTS and not its context-preview input', () => {
     // 🪤 THE ONE JUDGEMENT IN THAT CENSUS, pinned so it is not "finished" later. MemoryPanel held
     // THREE search-shaped controls, and only two are filters: the Studio explorer and the audit log.
-    // The explorer's is the page header's search now (`MemoryPage`), so the panel holds two.
+    // Both are the page header's searches now (`MemoryPage`), so the panel holds none.
     // The third is `InspectTab`'s — you type a query and press a button to see what context a
     // retrieval WOULD return. Nothing is being narrowed, so a result count would describe nothing.
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const src = strip(readSource(join(SRC, 'pages/settings/MemoryPanel.tsx')))
     const controls = (src.match(/<SearchField\b/g) ?? []).length
       + (src.match(/<TextInput[^>]*ariaLabel="(?:Search|Filter)/g) ?? []).length
-    expect(controls, 'one SEARCH-shaped control in the panel, the audit log').toBe(1)
-    expect(strip(readSource(join(SRC, 'pages/library/MemoryPage.tsx'))), "and the explorer's, in the page header")
+    expect(controls, 'no SEARCH-shaped control left in the panel').toBe(0)
+    const page = strip(readSource(join(SRC, 'pages/library/MemoryPage.tsx')))
+    expect(page, "the explorer's, in the page header")
       .toMatch(/<HeaderSearch value=\{q\} onChange=\{setQ\} placeholder="Search memories" \/>/)
+    expect(page, "and the audit log's").toMatch(/<HeaderSearch value=\{auditQ\} onChange=\{setAuditQ\}/)
     // Exact, not a floor: a third announcement here would be one describing nothing. Both lists
-    // announce in the panel, the explorer's from the header's query it is handed.
+    // announce in the panel, each from the header's query it is handed.
     expect((src.match(/<ResultAnnouncement\b/g) ?? []).length, 'one per filter, no more').toBe(2)
     // And the third field is why the census needs no exemption for this panel: it is named as a
     // QUERY, not a filter, so the population never included it. Its text is submitted to produce a
