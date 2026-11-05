@@ -1,68 +1,8 @@
-import { type ReactNode } from 'react'
-import { Segmented, type SegOption } from './Segmented'
 import { StaleNotice } from './StaleNotice'
-import { SearchField } from './SearchField'
 
-/** The canonical on-PAGE controls bar for a list section — search + an optional
- *  filter segmented + optional extra controls (sort, chips), pinned just below the
- *  TopBar and spanning the pane. List controls belong here, on the
- *  page, NOT in the header (the header keeps only structural view-switches + the
- *  primary action). Mirrors the chat-history layout so every list page reads the
- *  same. Render via WorkbenchLayout's `controls` slot, or inline above a body. */
-export function ListControls({
-  search, filter, results, stale, children,
-}: {
-  /** Optional search box config — omit for a filter-only bar. */
-  search?: { value: string; onChange: (v: string) => void; placeholder?: string; label?: string; autoFocus?: boolean }
-  /** Optional single-select filter strip (status / kind / scope — NOT a view switch). */
-  filter?: { value: string; onChange: (v: string) => void; options: SegOption[]; ariaLabel?: string }
-  /** How many rows the current search/filter leaves, and what to call them.
-   *
-   *  Typing in a list filter changes the page under the user, and NOTHING told a
-   *  screen-reader user what happened: measured on 6 surfaces (knowledge, prompts,
-   *  triggers, apps, skills, projects) — filtering 26 rows down to 25, or to a
-   *  "No matching items" empty state, produced **zero live regions** every time. The
-   *  sighted cue is the list redrawing; without an announcement there is no cue at all.
-   *
-   *  Announced politely (a result count is an update, not an interruption) and only
-   *  while a query/filter is actually narrowing — an idle list announcing its own length
-   *  on mount would be noise. `FindBar`'s match counter is the same pattern; this brings
-   *  the 13 `ListControls` consumers onto it. */
-  results?: { count: number; noun: string; active: boolean }
-  /** The rows on screen came from the cache and are past their freshness window — pass
-   *  `useQuery`'s `stale` straight through. Renders the shared `StaleNotice` in this bar, next to
-   *  the count, which is where a claim about the data belongs.
-   *
-   *  🔑 THE NOUN IS ALREADY DECLARED, in `results.noun`. Same reasoning as the loading-noun rail:
-   *  a surface that says its rows are "triggers" when it COUNTS them has already told us what to
-   *  call them while they are being re-read, so nothing here is invented. Needs `results` for
-   *  that reason; without it there is no noun and the label is suppressed rather than guessed. */
-  stale?: boolean
-  /** Extra controls (sort dropdown, filter chips) rendered after search + filter. */
-  children?: ReactNode
-}) {
-  if (!search && !filter && !children) return null
-  return (
-    <div className="shrink-0 border-b border-outline-variant/30">
-      <div className="mx-auto flex w-full flex-wrap items-center gap-s px-l py-m">
-        {search && (
-          <div className="min-w-[12rem] flex-1">
-            <SearchField value={search.value} onChange={search.onChange}
-              placeholder={search.placeholder ?? 'Search'} ariaLabel={search.label ?? search.placeholder ?? 'Search'}
-              name={`search-${(search.label ?? search.placeholder ?? 'list').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`}
-              autoFocus={search.autoFocus} />
-          </div>
-        )}
-        {filter && (
-          <Segmented ariaLabel={filter.ariaLabel ?? 'Filter'} value={filter.value} onChange={filter.onChange} options={filter.options} />
-        )}
-        {children}
-        {results && <StaleNotice stale={!!stale} what={results.noun} className="ml-auto" />}
-      </div>
-      <ResultAnnouncement {...(results ?? { count: 0, noun: '', active: false })} />
-    </div>
-  )
-}
+// The list's status (`ListStatus`) and its announcement (`ResultAnnouncement`). The controls bar
+// this module was named for, `ListControls`, is gone: every page-level control is in the page's
+// header (`app/pageControlsAreInTheHeader.test.ts`).
 
 /** A list's status under the header, now that its controls are in the header: the stale notice
  *  when the rows came from the cache past their freshness, and the announcement of what a search or
@@ -70,7 +10,7 @@ export function ListControls({
  *  is in the page header's action area. It draws nothing visible while the rows are fresh. */
 export function ListStatus({ results, stale }: {
   /** How many rows the current search/filter leaves, what to call them, and whether the user has
-   *  narrowed the list: `ListControls`' `results`, the same rules. */
+   *  narrowed the list, as `ResultAnnouncement` reads them. */
   results: { count: number; noun: string; active: boolean }
   /** `useQuery`'s `stale`, passed straight through. */
   stale?: boolean

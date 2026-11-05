@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { join } from 'node:path'
-import { ListControls, ResultAnnouncement } from './ListControls'
+import { ResultAnnouncement } from './ListControls'
 import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Filtering a list changed the page and said nothing ───────────────────────────────
@@ -110,13 +110,13 @@ function activeExpr(src: string, line: string, depth = 3): string {
   return unmask(expr)
 }
 
-const opts = { value: '', onChange: () => {}, options: [] }
-
 describe('a filtered list announces its result count', () => {
+  // `ResultAnnouncement` is the announcement every list bar drew (`ListControls` did, until every
+  // page-level control moved into the page's header), and `ListStatus` draws it now.
   it('mounts the live region even when idle', () => {
     // A live region created at the same moment its content appears is not reliably observed,
     // so it must already be in the DOM, empty, waiting. (Same lesson as the toast host.)
-    const { container } = render(<ListControls search={{ value: '', onChange: () => {} }} />)
+    const { container } = render(<ResultAnnouncement count={26} noun="items" active={false} />)
     const region = container.querySelector('[role="status"][aria-live="polite"]')
     expect(region, 'the region must exist before a filter is typed').not.toBeNull()
     expect(region!.textContent).toBe('')
@@ -124,71 +124,38 @@ describe('a filtered list announces its result count', () => {
 
   it('says nothing while no filter is active', () => {
     // An idle list announcing its own length on mount is noise, not information.
-    const { container } = render(
-      <ListControls search={{ value: '', onChange: () => {} }}
-        results={{ count: 26, noun: 'items', active: false }} />,
-    )
+    const { container } = render(<ResultAnnouncement count={26} noun="items" active={false} />)
     expect(container.querySelector('[role="status"]')!.textContent).toBe('')
   })
 
   it('announces the count while filtering', () => {
-    const { container } = render(
-      <ListControls search={{ value: 'zfs', onChange: () => {} }}
-        results={{ count: 25, noun: 'items', active: true }} />,
-    )
+    const { container } = render(<ResultAnnouncement count={25} noun="items" active />)
     expect(container.querySelector('[role="status"]')!.textContent).toBe('25 items')
   })
 
   it('singularises a single result', () => {
     // "1 items" reads as a bug to anyone listening to it.
-    const { container } = render(
-      <ListControls search={{ value: 'x', onChange: () => {} }}
-        results={{ count: 1, noun: 'items', active: true }} />,
-    )
+    const { container } = render(<ResultAnnouncement count={1} noun="items" active />)
     expect(container.querySelector('[role="status"]')!.textContent).toBe('1 item')
   })
 
   it('names the empty result rather than announcing "0"', () => {
     // "No matching items" is the same sentence the visible EmptyState uses; "0 items" would
     // be technically true and useless.
-    const { container } = render(
-      <ListControls search={{ value: 'zzz', onChange: () => {} }}
-        results={{ count: 0, noun: 'items', active: true }} />,
-    )
+    const { container } = render(<ResultAnnouncement count={0} noun="items" active />)
     expect(container.querySelector('[role="status"]')!.textContent).toBe('No matching items')
   })
 
   it('is polite, not assertive — a result count is an update, not an interruption', () => {
-    const { container } = render(
-      <ListControls search={{ value: 'x', onChange: () => {} }}
-        results={{ count: 3, noun: 'items', active: true }} />,
-    )
-    const region = container.querySelector('[role="status"]')!
-    expect(region.getAttribute('aria-live')).toBe('polite')
+    const { container } = render(<ResultAnnouncement count={3} noun="items" active />)
+    expect(container.querySelector('[role="status"]')!.getAttribute('aria-live')).toBe('polite')
   })
 
-  it('keeps the announcement out of the visible bar', () => {
+  it('stays out of sight', () => {
     // The count is already visible as the list itself; printing it would duplicate what a
-    // sighted user can see and add a shifting element to the controls row.
-    const { container } = render(
-      <ListControls search={{ value: 'x', onChange: () => {} }}
-        results={{ count: 3, noun: 'items', active: true }} />,
-    )
+    // sighted user can see.
+    const { container } = render(<ResultAnnouncement count={3} noun="items" active />)
     expect(container.querySelector('[role="status"]')!.className).toContain('sr-only')
-  })
-
-  it('still renders nothing at all when the bar has no controls', () => {
-    // The early return must survive: an empty controls bar should not leave a stray region.
-    const { container } = render(<ListControls />)
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('works on a filter-only bar (no search box)', () => {
-    const { container } = render(
-      <ListControls filter={{ ...opts, value: 'open' }}
-        results={{ count: 4, noun: 'triggers', active: true }} />,
-    )
-    expect(container.querySelector('[role="status"]')!.textContent).toBe('4 triggers')
   })
 
   it('`empty` overrides the zero sentence for nouns the default composes badly with', () => {
@@ -498,8 +465,6 @@ describe('the hand-laid bars reach the same idiom', () => {
         'a real combobox: focus stays in the field and aria-activedescendant moves',
         /aria-activedescendant|ariaActiveDescendant/,
       ],
-      // The primitive itself.
-      'ui/ListControls.tsx': ['this IS the primitive', /export function ResultAnnouncement\b/],
       // The header's search: the page that draws it announces, through `ListStatus` beside its
       // body, and is counted above as any page is.
       'ui/HeaderSearch.tsx': ['a header member; its page announces', /export function HeaderSearch\b/],
