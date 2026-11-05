@@ -148,6 +148,16 @@ describe('a project\'s tasks are a view of the project', () => {
     expect(heading()).toBe('Garden')
   })
 
+  it("a project's Tasks page offers Rename, which edits the name in the header", async () => {
+    await open('projects/p-garden?tab=tasks')
+    expect(heading()).toBe('Garden › Tasks')
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
+    const field = screen.getByRole('textbox', { name: 'Rename this project' }) as HTMLInputElement
+    expect(field.value).toBe('Garden')
+    fireEvent.keyDown(field, { key: 'Escape' })
+    expect(heading(), 'Escape gives the breadcrumb back').toBe('Garden › Tasks')
+  })
+
   it('a reload, or a copied address, opens the project\'s board as it was', async () => {
     await open('projects/p-garden?tab=tasks&view=board')
     expect(heading()).toBe('Garden › Tasks')

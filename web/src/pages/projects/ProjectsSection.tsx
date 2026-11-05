@@ -913,8 +913,17 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
       <TaskList navigate={navigate} query={query} setQuery={setQuery} navEpoch={navEpoch}
         inProject={{
           name: project.name,
-          title: crumb,
-          actions: <HeaderControl icon={FolderKanban} label="All projects" onClick={onBack} />,
+          // Renaming draws the Overview's own editor in the title, and the crumb comes back on
+          // Save, Enter, Cancel or Escape.
+          title: renaming ? titleNode : crumb,
+          // Rename is the project's, so its Tasks page offers it too: low, so it is the first
+          // into the `…` when the row is tight.
+          actions: <>
+            {!project.is_builtin && (
+              <HeaderControl icon={Pencil} label="Rename" priority="low" onClick={() => { setNameDraft(project.name); setRenaming(true) }} />
+            )}
+            <HeaderControl icon={FolderKanban} label="All projects" onClick={onBack} />
+          </>,
         }} />
     )
   }
