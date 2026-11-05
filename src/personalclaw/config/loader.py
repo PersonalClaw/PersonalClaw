@@ -33,6 +33,7 @@ in ``load()`` here; ``tests/test_config_section_modules.py`` checks that seam.
 import copy
 import json
 import logging
+import math
 import os
 import re as _re
 import unicodedata
@@ -576,6 +577,30 @@ def _sanitize_bot_name(raw: str) -> str:
 APPROVAL_TIMEOUT_MINUTES_MIN = 1
 APPROVAL_TIMEOUT_MINUTES_MAX = 7 * 24 * 60
 APPROVAL_TIMEOUT_MINUTES_DEFAULT = 120
+
+
+def _ceiling(budgets: dict, key: str, kind: Callable[[Any], Any]) -> Any:
+    """The spending ceiling at ``guardrails.budgets.<key>`` read as *kind* (``int`` or
+    ``float``), 0 (no limit) when absent, or ``ValueError`` naming the key for one that names no
+    ceiling: text that is no number, a value of another type (a list, null), a boolean, a negative
+    number, or one that is not finite. The error goes out of ``load()``, so the budget authorises
+    nothing (an unknown ceiling is not "no limit"). A negative number floored at 0 was 0, which is
+    no limit, and so, at the dollar ceiling, were NaN and infinity; ``true`` read as a ceiling of 1,
+    and ``false`` as none. The sign is read on the value as written: ``int(-0.5)`` is 0."""
+    raw = budgets.get(key, 0)
+    if isinstance(raw, bool):
+        raise ValueError(f"guardrails.budgets.{key} is a number, not {raw!r}")
+    if isinstance(raw, (int, float)) and raw < 0:
+        raise ValueError(f"guardrails.budgets.{key} is 0 or more, not {raw!r}")
+    try:
+        number = kind(raw)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"guardrails.budgets.{key} is a finite number, not {raw!r}") from exc
+    if isinstance(number, float) and not math.isfinite(number):
+        raise ValueError(f"guardrails.budgets.{key} is a finite number, not {raw!r}")
+    if number < 0:
+        raise ValueError(f"guardrails.budgets.{key} is 0 or more, not {raw!r}")
+    return number
 
 
 def _approval_minutes(raw: object) -> int:
@@ -4285,9 +4310,9 @@ class AppConfig:
         resilience_data = data.get("resilience", {})
         if not isinstance(resilience_data, dict):
             resilience_data = {}
-        _remediation_data = resilience_data.get("remediation", {})
-        if not isinstance(_remediation_data, dict):
-            _remediation_data = {}
+        remedy = resilience_data.get("remediation", {})
+        if not isinstance(remedy, dict):
+            remedy = {}
         budgets_data = guardrails_data.get("budgets", {})
         if not isinstance(budgets_data, dict):
             budgets_data = {}
@@ -4428,7 +4453,7 @@ class AppConfig:
                     # Clamped to the same [1, 20] window ``_EDITABLE_CONFIG`` enforces, so a
                     # hand-edited config.json cannot express a ceiling the dashboard refuses.
                     max_scenarios_per_fire=max(
-                        1, min(20, int(self_qa_data.get("max_scenarios_per_fire", 3)))
+                        1, min(20, _safe_int(self_qa_data.get("max_scenarios_per_fire"), 3))
                     ),
                 ),
             ),
@@ -4805,8 +4830,8 @@ class AppConfig:
                         name=str(r.get("name", "")),
                         match_regex=str(r.get("match_regex", "")),
                         strategy=str(r.get("strategy", "log")),
-                        head=int(r.get("head", 0) or 0),
-                        tail=int(r.get("tail", 0) or 0),
+                        head=_safe_int(r.get("head") or 0, 0),
+                        tail=_safe_int(r.get("tail") or 0, 0),
                         keep=str(r.get("keep", "")),
                         skip=str(r.get("skip", "")),
                         count=str(r.get("count", "")),
@@ -5152,15 +5177,15 @@ class AppConfig:
             model_prices=ModelPricesConfig(overrides=price_overrides(data.get("model_prices"))),
             guardrails=GuardrailsConfig(
                 budgets=BudgetConfig(
-                    max_tokens_per_run=max(0, int(budgets_data.get("max_tokens_per_run", 0))),
-                    max_tokens_per_day=max(0, int(budgets_data.get("max_tokens_per_day", 0))),
+                    max_tokens_per_run=max(0, _ceiling(budgets_data, "max_tokens_per_run", int)),
+                    max_tokens_per_day=max(0, _ceiling(budgets_data, "max_tokens_per_day", int)),
                     max_dollars_per_day=max(
-                        0.0, float(budgets_data.get("max_dollars_per_day", 0.0))
+                        0.0, _ceiling(budgets_data, "max_dollars_per_day", float)
                     ),
                 ),
                 breaker=BreakerConfig(
-                    failure_threshold=max(1, int(breaker_data.get("failure_threshold", 5))),
-                    recovery_secs=max(0.0, float(breaker_data.get("recovery_secs", 30.0))),
+                    failure_threshold=max(1, _safe_int(breaker_data.get("failure_threshold"), 5)),
+                    recovery_secs=max(0.0, _safe_float(breaker_data.get("recovery_secs"), 30.0)),
                 ),
                 # Floored at 1, not 0: the breaker compares `total_failures >
                 # circuit_threshold`, so 0 would abort a run on its first failed tool
@@ -5229,16 +5254,13 @@ class AppConfig:
                 cancel_replace_min_interval_secs=max(
                     0.0, float(resilience_data.get("cancel_replace_min_interval_secs", 2.0))
                 ),
+                # Its numbers read safely: three keys deep, the validator leaves text for them.
                 remediation=RemediationConfig(
-                    enabled=_guard_flag(_remediation_data.get("enabled")),
-                    target_score=max(0, min(100, int(_remediation_data.get("target_score", 90)))),
-                    max_cost_usd=max(0.0, float(_remediation_data.get("max_cost_usd", 1.0))),
-                    idle_minutes_healthy=max(
-                        1, int(_remediation_data.get("idle_minutes_healthy", 60))
-                    ),
-                    tick_minutes_degraded=max(
-                        1, int(_remediation_data.get("tick_minutes_degraded", 5))
-                    ),
+                    enabled=_guard_flag(remedy.get("enabled")),
+                    target_score=max(0, min(100, _safe_int(remedy.get("target_score"), 90))),
+                    max_cost_usd=max(0.0, _safe_float(remedy.get("max_cost_usd"), 1.0)),
+                    idle_minutes_healthy=max(1, _safe_int(remedy.get("idle_minutes_healthy"), 60)),
+                    tick_minutes_degraded=max(1, _safe_int(remedy.get("tick_minutes_degraded"), 5)),
                 ),
             ),
             sandbox=SandboxConfig(

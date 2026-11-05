@@ -26,6 +26,7 @@ the alternative is an instance that cannot start over one typo.
 
 import hashlib
 import logging
+import math
 from typing import NamedTuple
 
 # A HARD dependency (pyproject `[project] dependencies`), imported plainly. It used to sit
@@ -116,19 +117,95 @@ def _holder(data: dict, path: FieldPath) -> tuple[dict, str] | None:
     return None
 
 
+#: The sections whose invalid values are NOT replaced by their defaults, but left for the
+#: section's own loader to refuse. ``guardrails.budgets`` raises on a ceiling it cannot read, so
+#: the budget authorises nothing, where its default (``0``, no limit) would be a ceiling nobody
+#: chose.
+_REFUSED_BY_ITS_SECTION: tuple[FieldPath, ...] = (("guardrails", "budgets"),)
+
+
+def _refused_by_its_section(path: FieldPath) -> bool:
+    """Whether *path* is a value inside a refusing section. The section itself is not: a
+    ``guardrails.budgets`` that is not an object takes its default like any other value."""
+    return any(
+        len(path) > len(section) and tuple(path[: len(section)]) == section
+        for section in _REFUSED_BY_ITS_SECTION
+    )
+
+
 def _apply_field_default(data: dict, path: FieldPath) -> None:
     """Remove the invalid value at *path* so the loader falls back to defaults.
 
-    Only handles top-level and one-level nested paths (e.g. ``agent.provider``). A value further
-    down is left for its section's own loader, which may refuse it: ``guardrails.budgets`` raises
-    on a ceiling it cannot read, so the budget authorises nothing, where the default (``0``) would
-    be a ceiling nobody chose. A boolean is repaired at any depth (:func:`_repair_boolean`).
+    Only a top-level or one-level nested path (e.g. ``agent.provider``). A value further down is
+    left for its section's own reader, which knows what it means. A blanket removal there would
+    read an agent's unreadable tool list (``agents.<name>.tools: "read_file"``) as no list, which
+    allows every tool, where its reader refuses it, and would drop a quoted number
+    (``resilience.remediation.max_cost_usd: "0.25"``) the reader parses. So the deep numeric reads
+    in ``AppConfig.load`` fall back to their shipped defaults on text, a boolean or a value that is
+    not finite (``_safe_int`` / ``_safe_float``), and :func:`_what_is_used` says which outcome a
+    warning's value meets.
+
+    Decided: a spending ceiling that names no ceiling (``guardrails.budgets.*``: text that is no
+    number, a boolean, a negative number, or one that is not finite) makes ``AppConfig.load()``,
+    and with it the gateway's start, fail (``loader._ceiling``). An unknown
+    ceiling is not "no limit", and the refusal stays where
+    ``tests/test_budget_ceiling_unverified.py`` pins it. Written as text, the warning says so. A
+    boolean is repaired at any depth (:func:`_repair_boolean`).
     """
     if len(path) > 2:
         return
     found = _holder(data, path)
     if found is not None:
         found[0].pop(found[1], None)
+
+
+def _what_is_used(data: dict, path: FieldPath, err: jsonschema.ValidationError) -> str:
+    """What a warning says becomes of the invalid value at *path*: what
+    :func:`_apply_field_default` and then the section's reader do with it."""
+    if err.validator == "type" and _expects_boolean(err.schema) and _holder(data, path) is not None:
+        # `_repair_boolean` removes a boolean that does not spell false at any depth, for the
+        # reader's default (text that spells false has its own line, "read as false"). One that is
+        # itself a list element stays (`_holder` finds no object holding it), for its section.
+        return "using default"
+    if _refused_by_its_section(path):
+        # The budgets reader (`loader._ceiling`) parses a ceiling as `_read_as_number` does ("5"
+        # is 5.0), and refuses the rest: a boolean, a negative number (its sign read as written:
+        # `int(-0.5)` is 0), one that is not finite.
+        read = _read_as_number(err.instance, err.schema)
+        written = err.instance
+        number = isinstance(written, (int, float)) and not isinstance(written, bool)
+        negative = number and written < 0
+        if read is not None and read >= 0 and not negative:
+            return f"read as {read}"
+        return (
+            "a spending ceiling that cannot be read is not replaced by its default (no limit): "
+            "the config does not load until it is fixed"
+        )
+    if len(path) <= 2 and _holder(data, path) is not None:
+        return "using default"
+    if len(path) > 2 and err.validator == "type" and _expects_number(err.schema):
+        # Every numeric field three or more keys deep is read with `_safe_int` / `_safe_float`
+        # (`tests/test_a_config_warning_says_what_the_value_becomes.py` loads each with text, a
+        # boolean and values that are not finite), so what that read makes of it is what happens.
+        read = _read_as_number(err.instance, err.schema)
+        return "using default" if read is None else f"read as {read}"
+    return "left as written, for its section to read"
+
+
+def _read_as_number(value: object, schema: dict) -> int | float | None:
+    """*value* as the loader's ``_safe_int`` (an integer field) or ``_safe_float`` reads it, or
+    ``None`` where that read falls back to the default: a boolean, text that is no number, and
+    a number that is not finite or that no int holds."""
+    if isinstance(value, bool):
+        return None
+    kind = schema.get("type")
+    try:
+        if "integer" in (kind if isinstance(kind, list) else [kind]):
+            return int(value)  # type: ignore[call-overload]
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _repair_boolean(data: dict, path: FieldPath) -> None:
@@ -341,18 +418,19 @@ def _diagnose_and_strip(data: dict) -> tuple[list[str], "_Repairs"]:
                 allowed = err.schema.get("enum", [])
                 messages.append(
                     f"Config: enum violation at '{dot_path}': "
-                    f"allowed values {allowed}, got {display_val}; using default"
+                    f"allowed values {allowed}, got {display_val}; {_what_is_used(data, path, err)}"
                 )
             elif err.validator == "type":
                 expected = err.schema.get("type", "unknown")
                 actual = _actual_type_name(value)
                 messages.append(
                     f"Config: type mismatch at '{dot_path}': expected {expected}, "
-                    f"got {actual} (value: {display_val}); using default"
+                    f"got {actual} (value: {display_val}); {_what_is_used(data, path, err)}"
                 )
             else:
                 messages.append(
-                    f"Config: validation error at '{dot_path}': {err.message}; using default"
+                    f"Config: validation error at '{dot_path}': {err.message}; "
+                    f"{_what_is_used(data, path, err)}"
                 )
             if boolean:
                 _repair_boolean(data, path)
@@ -367,6 +445,11 @@ def _diagnose_and_strip(data: dict) -> tuple[list[str], "_Repairs"]:
 def _expects_boolean(schema: dict) -> bool:
     kind = schema.get("type")
     return "boolean" in (kind if isinstance(kind, list) else [kind])
+
+
+def _expects_number(schema: dict) -> bool:
+    kind = schema.get("type")
+    return bool({"integer", "number"} & set(kind if isinstance(kind, list) else [kind]))
 
 
 class _Repairs(NamedTuple):
