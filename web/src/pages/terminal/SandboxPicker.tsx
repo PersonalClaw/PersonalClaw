@@ -27,17 +27,17 @@ export function SandboxPicker({ providers, value, onChange, busy }: {
   /** In-flight gate: the picker locks while the next session is being opened. */
   busy?: boolean
 }) {
-  const { tier } = useHeaderChild({ priority: 'low', canIcon: true, neverOverflow: true, menu: { label: 'Sandbox for new terminal sessions', icon: Shield } })
+  const { tier, mark } = useHeaderChild({ priority: 'low', canIcon: true, neverOverflow: true, menu: { label: 'Sandbox for new terminal sessions', icon: Shield } })
   const probe = useHeaderProbe()
   const width = tier === 'icon' || tier === 'overflow' ? 'w-32' : 'w-44'
   if (probe) {
-    return (
+    return mark(
       <span aria-hidden className="inline-flex items-center gap-1.5">
         <Shield size={14} /><span className={`${width} h-8`} />
       </span>
     )
   }
-  return (
+  return mark(
     <label className="inline-flex items-center gap-1.5 text-[0.8125rem] text-on-surface-low">
       <Shield size={14} aria-hidden />
       <span className="sr-only">Sandbox for new terminal sessions</span>

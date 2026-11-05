@@ -48,9 +48,9 @@ export function HeaderFilter({ sections, prefix = 'Show', className }: {
 }) {
   const label = headerFilterLabel(sections, prefix)
   const set = headerFilterSet(sections)
-  const { tier } = useHeaderChild({ priority: 'default', canIcon: true, neverOverflow: true, menu: { label, icon: SlidersHorizontal } })
+  const { tier, mark } = useHeaderChild({ priority: 'default', canIcon: true, neverOverflow: true, menu: { label, icon: SlidersHorizontal } })
   const iconOnly = tier === 'icon' || tier === 'overflow'
-  return (
+  return mark(
     <Popover portal placement="bottom" align="right" width={264}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-haspopup="dialog" aria-expanded={open} aria-label={label} title={label}

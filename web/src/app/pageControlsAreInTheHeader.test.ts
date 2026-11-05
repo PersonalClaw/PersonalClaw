@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { join, relative } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
+import { isThePrimary } from '../ui/HeaderActions'
 
 // ── Every page-level control is in the page header's action area ─────────────────────────────
 //
@@ -164,6 +165,11 @@ describe('the header holds one view switch, and a filter that says what is set',
 // panel (a Session map toggle keeps its place by priority without being the page's action).
 // Alternatives (Edit or Save, Start or Pause) are all primaries, so they may follow one another.
 
+/** Whether a member's attributes make it the page's primary, the one the order puts last. */
+export function railPrimary(attrs: string): boolean {
+  return /variant="primary"/.test(attrs) || (/priority="primary"/.test(attrs) && !/ariaExpanded=/.test(attrs))
+}
+
 /** Where a cluster's members break the one order. */
 export function headerOrderFindings(src: string): string[] {
   const out: string[] = []
@@ -173,7 +179,7 @@ export function headerOrderFindings(src: string): string[] {
       .filter((m) => !/\binOverflow\b/.test(m.attrs))
       .map((m) => ({
         ...m,
-        primary: /variant="primary"/.test(m.attrs) || (/priority="primary"/.test(m.attrs) && !/ariaExpanded=/.test(m.attrs)),
+        primary: railPrimary(m.attrs),
         danger: /\sdanger(\s|$|\/)|variant="danger"/.test(m.attrs),
       }))
     const first = members.findIndex((m) => m.primary)
@@ -192,6 +198,22 @@ export function headerOrderFindings(src: string): string[] {
 describe('every header cluster keeps the one order', () => {
   const files = () => [...pageFiles(), ...filesUnder(join(SRC, 'app'), (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n)),
     ...filesUnder(join(SRC, 'ui'), (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))]
+
+  it('the primary it counts is the one the cluster draws after the `…`', () => {
+    // The cluster portals `isThePrimary` controls to its trailing slot; a primary this rail counts
+    // that the cluster left in place sat before the `…` (Tools' Add tool server, the Inbox's
+    // Capture a note).
+    const cases: [string, string | undefined, string | undefined, boolean | undefined][] = [
+      ['variant="primary"', 'primary', undefined, undefined],
+      ['priority="primary"', undefined, 'primary', undefined],
+      ['priority="primary" ariaExpanded={open}', undefined, 'primary', false],
+      ['priority="low"', undefined, 'low', undefined],
+      ['variant="danger" priority="low"', 'danger', 'low', undefined],
+    ]
+    for (const [attrs, variant, priority, expanded] of cases) {
+      expect(railPrimary(attrs), attrs).toBe(isThePrimary(variant, priority, expanded))
+    }
+  })
 
   it('the primary last, and a destructive control before the other actions', () => {
     const found = files().flatMap((f) => headerOrderFindings(strip(readSource(f))).map((x) => `${rel(f)}: ${x}`))

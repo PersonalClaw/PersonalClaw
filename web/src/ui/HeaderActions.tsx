@@ -42,7 +42,8 @@ import { TOUCH_TARGET } from './Toggle'
  *      control that OPENS A SIDE PANEL (a `<SidePanel>`/detail/inspector rail, e.g.
  *      "Details", "Activity", "Inbox settings") rightmost.
  *    • The primary action (New, Add, Install, Run) is the rightmost control, after the
- *      cluster's own `…` too: a `variant="primary"` control draws in the row's trailing slot
+ *      cluster's own `…` too: the primary (`isThePrimary`: `variant="primary"`, or
+ *      `priority="primary"` on a control that opens no region) draws in the row's trailing slot
  *      (`usePlaced`). `app/pageControlsAreInTheHeader.test.ts` holds every cluster to the order.
  *  `priority` (primary/default/low) governs OVERFLOW shedding independently of this
  *  visual order, so keep Delete/panel-opener `priority="low"` even though their
@@ -69,7 +70,7 @@ interface ChildReg {
   inOverflow?: boolean
   /** Overflow menu row descriptor (used when this control is pushed into `…`). */
   menu: OverflowRow & { rows?: OverflowRow[] }
-  /** The page's primary action (`variant="primary"`): drawn after the `…`, outside the rail. */
+  /** The page's primary action (`isThePrimary`): drawn after the `…`, outside the rail. */
   trailing?: boolean
 }
 
@@ -93,6 +94,32 @@ interface ClusterCtx {
 }
 
 const Cluster = createContext<ClusterCtx | null>(null)
+
+/** *regs* in the row's order, as *place* (id → position) last read it from the DOM; one it has
+ *  not placed yet keeps its place among the rest by registration. */
+/** A probe's marked members by name (`useHeaderChild`'s mark), in the row's order. Two members of
+ *  one cluster with the same name would share one mark: a row should not hold two like that. */
+function membersIn(probe: HTMLElement | null): Map<string, HTMLElement> {
+  const out = new Map<string, HTMLElement>()
+  for (const el of probe?.querySelectorAll<HTMLElement>('[data-header-member]') ?? []) {
+    const name = el.getAttribute('data-header-member') ?? ''
+    if (!out.has(name)) out.set(name, el)
+  }
+  return out
+}
+
+function samePlaces(a: Map<number, number>, b: Map<number, number>): boolean {
+  if (a.size !== b.size) return false
+  for (const [k, v] of a) if (b.get(k) !== v) return false
+  return true
+}
+
+export function inRowOrder<T extends { id: number }>(regs: T[], place: Map<number, number>): T[] {
+  return regs
+    .map((r, i) => ({ r, at: place.get(r.id) ?? Number.MAX_SAFE_INTEGER, i }))
+    .sort((a, b) => a.at - b.at || a.i - b.i)
+    .map(({ r }) => r)
+}
 const PRIORITY_RANK: Record<Priority, number> = { primary: 0, default: 1, low: 2 }
 
 let _uid = 0
@@ -111,7 +138,7 @@ export function useHeaderProbe(): boolean {
 /** Register a child control with the cluster. Returns whether this child should
  *  render itself VISIBLY (false → the container is showing it as a `…`-menu row in
  *  OVERFLOW, so the child renders nothing). Stable across renders for a given child. */
-export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; tier: Tier } {
+export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; tier: Tier; mark: (node: ReactNode) => ReactNode } {
   const ctx = useContext(Cluster)
   const idRef = useRef<number>(0)
   if (!idRef.current) idRef.current = nextId()
@@ -139,19 +166,34 @@ export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; t
     // container's overflow math + menu labels stay correct.
   }, [ctx, id, reg.priority, reg.canIcon, reg.inOverflow, reg.trailing, reg.menu.label, reg.menu.danger, reg.menu.hint, reg.menu.disabled,
     reg.menu.rows?.map((r) => `${r.label}\u0000${r.hint ?? ''}`).join('\u0001')])
-  if (!ctx) return { visible: !reg.inOverflow, tier: 'full' }
+  if (!ctx) return { visible: !reg.inOverflow, tier: 'full', mark: (node) => node }
   const visible = !reg.inOverflow && (ctx.tier !== 'overflow' || !ctx.visibleIds || ctx.visibleIds.has(id))
-  return { visible, tier: ctx.tier }
+  // In the probes a member is marked with its name (`menu.label`), so the cluster reads its width,
+  // and its place among the others, from the DOM rather than from the order it registered in
+  // (`measure`). By name, not by id: each probe draws its own copy of the member, with an id of
+  // its own. One that draws nothing there (a row of the `…`) still leaves its mark, for its place.
+  const mark = (node: ReactNode): ReactNode => (ctx.probe
+    ? <span className="contents" data-header-member={reg.menu.label}>{node}</span>
+    : node)
+  return { visible, tier: ctx.tier, mark }
 }
 
 /** Draws a control where the cluster puts it: the page's primary action after the `…` (the live
  *  row's trailing slot), so the `…` never follows it; everything else, and every probe, in place.
  *  A portal keeps the React tree, and the slot follows the `…` in the DOM, so the tab order is the
  *  visual order. */
-function usePlaced(trailing: boolean): (node: ReactNode) => ReactNode {
+/** Whether a member is the page's primary action, which ends the row after the `…`: a
+ *  `variant="primary"` control, or one that holds the row by `priority="primary"` and opens no
+ *  region (a disclosure such as the Session map keeps its place). The rule
+ *  `app/pageControlsAreInTheHeader.test.ts` holds every cluster's order to. */
+export function isThePrimary(variant: string | undefined, priority: string | undefined, ariaExpanded?: boolean): boolean {
+  return variant === 'primary' || (priority === 'primary' && ariaExpanded === undefined)
+}
+
+function usePlaced(trailing: boolean, mark: (node: ReactNode) => ReactNode): (node: ReactNode) => ReactNode {
   const ctx = useContext(Cluster)
   const slot = trailing && ctx && !ctx.probe ? ctx.trailing : null
-  return (node) => (slot ? createPortal(node, slot) : node)
+  return (node) => (slot ? createPortal(node, slot) : mark(node))
 }
 
 const TIER_ORDER: Tier[] = ['full', 'text', 'icon', 'overflow']
@@ -375,6 +417,9 @@ export function HeaderActions({ children, className, overflowClassName }: {
   // container reads it during measurement) + a version counter to re-measure when
   // the child set changes.
   const regs = useRef<Map<number, ChildReg>>(new Map())
+  // Each member's place in the row, by id, as the last measure read it from the probes' marks.
+  const domOrderRef = useRef<Map<number, number>>(new Map())
+  const [domOrder, setDomOrder] = useState<Map<number, number>>(domOrderRef.current)
   const [regVersion, setRegVersion] = useState(0)
   const register = useCallback((r: ChildReg) => { regs.current.set(r.id, r); setRegVersion((v) => v + 1) }, [])
   const unregister = useCallback((id: number) => { regs.current.delete(id); setRegVersion((v) => v + 1) }, [])
@@ -427,18 +472,29 @@ export function HeaderActions({ children, className, overflowClassName }: {
       const wIcon = probeIcon.current?.scrollWidth ?? 0
       const cur = tierRef.current
 
-      // Per-child icon width: measure from the icon probe's children in DOM order.
-      const iconEls = probeIcon.current ? Array.from(probeIcon.current.children) as HTMLElement[] : []
-      // A control that always lives in the `…` draws nothing in the probes, so it has no probe
-      // element to be indexed by; it costs the row the `…` instead (`dots`).
-      const domIds = [...regs.current.values()].filter((r) => !r.inOverflow).map((r) => r.id)
+      // Per-child icon width: the icon probe's element of that member, found by its mark
+      // (`useHeaderChild`), never by the order it registered in. A member re-registers when what
+      // it shows changes (a filter's label on each choice), and one mounts later than those beside
+      // it, so that order drifts from the row's. A control that always lives in the `…` draws
+      // nothing in the probes; it costs the row the `…` instead (`dots`).
+      const iconMarks = membersIn(probeIcon.current)
+      const iconEl = (id: number) => {
+        const name = regs.current.get(id)?.menu.label
+        return (name === undefined ? undefined : iconMarks.get(name)?.firstElementChild) as HTMLElement | null | undefined
+      }
+      // The members' places in the row, read off the full probe's marks.
+      const inFull = [...membersIn(probeFull.current).keys()]
+      const placed = new Map<number, number>()
+      for (const r of regs.current.values()) {
+        const at = inFull.indexOf(r.menu.label)
+        if (at >= 0) placed.set(r.id, at)
+      }
+      domOrderRef.current = placed
+      setDomOrder((prev) => (samePlaces(prev, placed) ? prev : placed))
       // Nothing measured is no layout to fit into (a test's document), where every width reads 0
       // and the row is drawn whole, as it always was there.
       const dots = [...regs.current.values()].some((r) => r.inOverflow) && wFull > 0 ? DOTS : 0
-      const iconW = (id: number) => {
-        const i = domIds.indexOf(id)
-        return (iconEls[i]?.offsetWidth ?? 40) + GAP
-      }
+      const iconW = (id: number) => (iconEl(id)?.offsetWidth ?? 40) + GAP
       // Held children (`heldInRow`: a Segmented mode-slider, the primary action) never go into the
       // `…` menu, so their icon-only width is the rail's FLOOR (see the cap below) — and, with the
       // `…`, the narrowest this cluster can ever get.
@@ -484,7 +540,7 @@ export function HeaderActions({ children, className, overflowClassName }: {
       // OVERFLOW: greedy fill by priority. Reserve a slot for the `…` trigger, then
       // walk children (primary → default → low; ties keep DOM order) adding each
       // one's icon width until the next won't fit. The rest become menu rows.
-      const ordered = [...regs.current.values()]
+      const ordered = inRowOrder([...regs.current.values()], domOrderRef.current)
         .map((r, domOrder) => ({ r, domOrder }))
         .sort((a, b) => PRIORITY_RANK[a.r.priority] - PRIORITY_RANK[b.r.priority] || a.domOrder - b.domOrder)
       const keep = new Set<number>()
@@ -571,8 +627,8 @@ export function HeaderActions({ children, className, overflowClassName }: {
   // the row whenever one is registered; in OVERFLOW the controls the row shed join it.
   const overflowActions = useMemo(() => {
     const shed = (r: ChildReg) => r.inOverflow || (tier === 'overflow' && (!visibleIds || !visibleIds.has(r.id)))
-    return [...regs.current.values()].filter(shed).map((r) => ({ id: r.id, ...r.menu }))
-  }, [tier, visibleIds, regVersion])
+    return inRowOrder([...regs.current.values()], domOrder).filter(shed).map((r) => ({ id: r.id, ...r.menu }))
+  }, [tier, visibleIds, regVersion, domOrder])
 
   return (
     <Cluster.Provider value={ctx}>
@@ -730,15 +786,18 @@ export function HeaderControl({
 }) {
   // Reachable-but-unavailable only when there is a reason to announce; otherwise stay native.
   const softOff = !!disabled && !!disabledReason
-  const { visible, tier } = useHeaderChild({
+  // The page's primary action, drawn after the `…`: a `variant="primary"` control, or one that
+  // holds the row by `priority="primary"` and opens no region (the rail's rule, `isThePrimary`).
+  const primary = isThePrimary(variant, priority, ariaExpanded)
+  const { visible, tier, mark } = useHeaderChild({
     priority,
     canIcon: !!Icon,
     inOverflow,
-    trailing: variant === 'primary',
+    trailing: primary,
     menu: { label, icon: Icon, hint: softOff ? disabledReason : hint, danger, disabled, onSelect: disabled ? undefined : onClick },
   })
-  const placed = usePlaced(variant === 'primary')
-  if (!visible) return null // container is showing this as a `…`-menu row
+  const placed = usePlaced(primary, mark)
+  if (!visible) return mark(null) // container is showing this as a `…`-menu row
   // Rendering per tier:
   //  • FULL  → icon + label
   //  • TEXT  → icon + label if it HAS an icon (an icon'd control shouldn't drop its
@@ -806,14 +865,15 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
    *  in the `…`. */
   disabled?: boolean
 }) {
-  const { visible, tier } = useHeaderChild({
+  const primary = isThePrimary(variant, priority)
+  const { visible, tier, mark } = useHeaderChild({
     priority,
     canIcon: true,
-    trailing: variant === 'primary',
+    trailing: primary,
     menu: { label, icon: Icon, disabled, rows: disabled ? items.map((it) => ({ ...it, disabled: true })) : items },
   })
-  const placed = usePlaced(variant === 'primary')
-  if (!visible) return null
+  const placed = usePlaced(primary, mark)
+  if (!visible) return mark(null)
   const iconOnly = tier === 'icon' || tier === 'overflow'
   return placed(
     <Popover portal placement="bottom" align="right" width={260}
@@ -872,9 +932,9 @@ export function HeaderPopover({ icon: Icon, label, title, width = 320, children 
   width?: number
   children: (close: () => void) => ReactNode
 }) {
-  const { tier } = useHeaderChild({ priority: 'low', canIcon: true, neverOverflow: true, menu: { label, icon: Icon } })
+  const { tier, mark } = useHeaderChild({ priority: 'low', canIcon: true, neverOverflow: true, menu: { label, icon: Icon } })
   const iconOnly = tier === 'icon' || tier === 'overflow'
-  return (
+  return mark(
     <Popover portal placement="bottom" align="right" width={width}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-haspopup="dialog" aria-expanded={open}
@@ -930,7 +990,7 @@ export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled 
   // collapses to icon-only rather than into the menu), and it can go icon-only only when every
   // option carries an icon: an option without one would be an empty tab.
   const canIcon = options.every((o) => !!o.icon)
-  const { tier } = useHeaderChild({
+  const { tier, mark } = useHeaderChild({
     priority: 'primary',
     canIcon,
     neverOverflow: true,
@@ -945,8 +1005,8 @@ export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled 
   const iconOnly = canIcon && tier !== 'full'
   // Folded to its pill, it takes the compact widths' 44 px hit box, as the header's search and
   // filter do, with the width marked important as `DestinationTabs`' pill has it.
-  return <Segmented options={options} value={value} onChange={onChange} ariaLabel={ariaLabel} disabled={disabled} iconOnly={iconOnly} collapse="menu"
-    collapsedClassName={`${TOUCH_TARGET} max-lg:min-w-11!`} />
+  return mark(<Segmented options={options} value={value} onChange={onChange} ariaLabel={ariaLabel} disabled={disabled} iconOnly={iconOnly} collapse="menu"
+    collapsedClassName={`${TOUCH_TARGET} max-lg:min-w-11!`} />)
 }
 
 /** A header mode control that shows ONLY the current selection, and expands on
@@ -979,7 +1039,7 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled, 
   // arms a short timer; entering either cancels it. (The portaled menu is NOT a DOM
   // child of the wrapper, so a plain wrapper onMouseLeave would fire on that hop.)
   const closeTimer = useRef<number | undefined>(undefined)
-  const { tier } = useHeaderChild({
+  const { tier, mark } = useHeaderChild({
     priority: 'primary',
     canIcon: true,
     neverOverflow: true,
@@ -1055,13 +1115,13 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled, 
   }, [open, measure, closeNow, move, dismiss])
   useEffect(() => () => window.clearTimeout(closeTimer.current), [])
 
-  if (!active) return null
+  if (!active) return mark(null)
   const ActiveIcon = active.icon
   const label = active.label ?? active.key
   // Reachable-but-unavailable only when there is a reason to announce; otherwise stay native.
   const softOff = !!disabled && !!disabledReason
 
-  return (
+  return mark(
     <div ref={wrapRef} className="relative shrink-0"
       onMouseEnter={doOpen} onMouseLeave={armClose}
       onFocus={doOpen}

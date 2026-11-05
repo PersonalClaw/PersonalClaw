@@ -9,6 +9,25 @@ import { useFieldLabelId } from './forms'
 
 export interface SegOption { key: string; label?: string; tone?: string; icon?: LucideIcon; title?: string }
 
+/** The box a strip is laid out in: its parent, past any `display: contents` wrapper, which has no
+ *  box of its own. The header's probes mark each member with one (`useHeaderChild`'s `mark`), and
+ *  measured there the room came out as 0 px, so every probe drew a view switch folded to its pill
+ *  and the cluster chose its tier for a narrower row than it drew. */
+function layoutParent(el: HTMLElement): HTMLElement | null {
+  let p = el.parentElement
+  while (p && getComputedStyle(p).display === 'contents') p = p.parentElement
+  return p
+}
+
+/** The laid-out width of *box*'s children, reading through `display: contents` wrappers. */
+function laidOutWidth(box: Element): number {
+  let w = 0
+  for (const c of Array.from(box.children)) {
+    w += getComputedStyle(c).display === 'contents' ? laidOutWidth(c) : c.getBoundingClientRect().width
+  }
+  return w
+}
+
 /** The ONE canonical segmented single-select for the whole app — a slider-style
  *  pill group. Use this for every "pick one of N" choice (filters, view
  *  switches, mode toggles, tab strips) so they look identical everywhere.
@@ -80,7 +99,7 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
   useLayoutEffect(() => {
     if (collapse !== 'menu') { setCollapsed(false); return }
     const wrap = wrapRef.current
-    const parent = wrap?.parentElement
+    const parent = wrap ? layoutParent(wrap) : null
     if (!wrap || !parent) return
     const measure = () => {
       const need = probeRef.current?.scrollWidth ?? 0
@@ -106,8 +125,7 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
       const { width, flex } = wrap.style
       wrap.style.flex = '0 0 auto'
       wrap.style.width = `${need}px`
-      let childrenWidth = 0
-      for (const c of Array.from(parent.children)) childrenWidth += (c as HTMLElement).getBoundingClientRect().width
+      const childrenWidth = laidOutWidth(parent)
       // free can be NEGATIVE when the row already overflows — don't clamp it, or an
       // overflowing expanded strip would wrongly stay expanded. avail then correctly
       // drops below `need` and collapses. (childrenWidth includes the wrap, so this

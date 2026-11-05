@@ -52,8 +52,8 @@ const OPTS = [
 describe('HeaderSegmented reaches the collapsed rung', () => {
   it('passes collapse="menu" to Segmented', () => {
     const src = readFileSync(join(process.cwd(), 'src/ui/HeaderActions.tsx'), 'utf8')
-    // The single <Segmented .../> render inside HeaderSegmented.
-    const m = src.match(/return <Segmented[^/]*\/>/)
+    // The single <Segmented .../> render inside HeaderSegmented (wrapped in its probe mark).
+    const m = src.match(/return (?:mark\()?<Segmented[^/]*\/>/)
     expect(m, 'HeaderSegmented should render exactly one <Segmented/>').toBeTruthy()
     expect(
       m![0],

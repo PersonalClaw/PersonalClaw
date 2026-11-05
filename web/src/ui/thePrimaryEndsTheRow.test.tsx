@@ -27,6 +27,19 @@ describe('the primary action', () => {
     expect(row()).toEqual(['Pin', 'More actions', 'Edit'])
   })
 
+  it('a primary by priority alone follows the `…` too, and a disclosure keeps its place', () => {
+    // The rail counts `priority="primary"` with no `ariaExpanded` as the primary
+    // (`app/pageControlsAreInTheHeader.test.ts`); the Tools page's Add tool server is one.
+    render(
+      <HeaderActions>
+        <HeaderControl icon={Plus} label="Add tool server" priority="primary" />
+        <HeaderControl icon={Sparkles} label="Reload" inOverflow />
+        <HeaderControl icon={Pin} label="Session map" priority="primary" ariaExpanded={false} />
+      </HeaderActions>,
+    )
+    expect(row()).toEqual(['Session map', 'More actions', 'Add tool server'])
+  })
+
   it('a primary menu too, and with no `…` it is still last', () => {
     render(
       <HeaderActions>

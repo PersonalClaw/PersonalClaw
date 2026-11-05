@@ -32,14 +32,14 @@ export function HeaderSearch({ value, onChange, placeholder = 'Search', label, a
   tour?: string
 }) {
   const name = label ?? placeholder
-  const { tier } = useHeaderChild({ priority: 'primary', canIcon: true, neverOverflow: true, menu: { label: name, icon: Search } })
+  const { tier, mark } = useHeaderChild({ priority: 'primary', canIcon: true, neverOverflow: true, menu: { label: name, icon: Search } })
   const probe = useHeaderProbe()
   const width = tier === 'full' ? 'w-64' : 'w-48'
   const fieldName = `search-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`
 
   if (tier === 'full' || tier === 'text') {
-    if (probe) return <div aria-hidden className={cx('h-10 shrink-0', width)} />
-    return (
+    if (probe) return mark(<div aria-hidden className={cx('h-10 shrink-0', width)} />)
+    return mark(
       // The compact widths' 44 px hit box, by default, on the field as on the shed button.
       <div data-tour={tour} className={cx('shrink-0 max-lg:[&_input]:min-h-11', width)}>
         {/* `lg`: the row's 40 px height, as every header control is. */}
@@ -50,8 +50,8 @@ export function HeaderSearch({ value, onChange, placeholder = 'Search', label, a
   }
   const searched = value.trim() !== ''
   const said = searched ? `${name}: “${value.trim()}”` : name
-  if (probe) return <div aria-hidden className="size-10 shrink-0" />
-  return (
+  if (probe) return mark(<div aria-hidden className="size-10 shrink-0" />)
+  return mark(
     <Popover portal followWhileTyping placement="bottom" align="right" width={288}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-haspopup="dialog" aria-expanded={open} aria-label={said} title={said}
