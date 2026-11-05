@@ -88,10 +88,18 @@ _SUGGESTION_RULES = (
 
 @dataclass
 class SuggestionsCache:
-    """Holds pre-computed suggestions with a timestamp."""
+    """Holds pre-computed suggestions with a timestamp, and the wait after a refresh that failed.
+
+    ``retry_after`` is when a refresh that failed may be tried again, and ``retry_wait`` the wait it
+    was given: :data:`owed_chores.FIRST_WAIT_SECS` after the first failure, doubling after each one
+    up to :data:`owed_chores.LONGEST_WAIT_SECS`, as an owed chore waits. A refresh that works clears
+    both.
+    """
 
     suggestions: list[str] = field(default_factory=lambda: list(_FALLBACK_SUGGESTIONS))
     generated_at: float = 0.0
+    retry_after: float = 0.0
+    retry_wait: float = 0.0
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _task: asyncio.Task | None = field(default=None, repr=False)  # type: ignore[type-arg]
 
@@ -286,16 +294,28 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
 async def refresh_suggestions(state: "DashboardState", cache: SuggestionsCache) -> None:
     """Background task: regenerate suggestions.
 
-    A refresh no model answered keeps the suggestions there are and is asked again by the next
-    poll. It is said in one line with what happened; its traceback, which holds only the HTTP
-    client's frames, is at debug. A defect keeps its traceback.
+    A refresh that failed keeps the suggestions there are and is not tried again before its wait
+    is over (``SuggestionsCache.retry_after``), however often the pages read them: it used to stamp
+    nothing, so the read each page makes on the refresh hint started another refresh at once, about
+    89 a second against a model that was down, each a warning line. A refresh no model answered is
+    said in one line with what happened; its traceback, which holds only the HTTP client's frames,
+    is at debug. A defect keeps its traceback.
     """
+    from personalclaw.owed_chores import FIRST_WAIT_SECS, LONGEST_WAIT_SECS
+
     async with cache._lock:
         try:
             suggestions = await generate_suggestions(state)
             cache.suggestions = suggestions
             cache.generated_at = time.time()
+            cache.retry_after = cache.retry_wait = 0.0
         except Exception as exc:
+            cache.retry_wait = (
+                min(cache.retry_wait * 2, LONGEST_WAIT_SECS)
+                if cache.retry_wait
+                else FIRST_WAIT_SECS
+            )
+            cache.retry_after = time.time() + cache.retry_wait
             if is_model_call_failure(exc):
                 logger.warning("Suggestions generation failed: %s", failure_clause(exc))
                 logger.debug("Suggestions generation failure", exc_info=exc)
@@ -309,10 +329,13 @@ def start_refresh(state: "DashboardState", cache: SuggestionsCache, *, force: bo
     They are owed one when none was generated in this process, when the last is older than the
     refresh interval, and when one is asked for (*force*: the widget's Refresh). One refresh at a
     time: a read while one runs starts nothing, and every page hears a ``suggestions`` refresh
-    hint when it lands (:func:`_refresh_and_announce`), so no read waits for it.
+    hint when it lands (:func:`_refresh_and_announce`), so no read waits for it. After a refresh
+    that failed, nothing but *force* starts one before its wait is over (``retry_after``).
     """
     if cache._task is not None and not cache._task.done():
         return True
+    if not force and time.time() < cache.retry_after:
+        return False
     if not force and time.time() - cache.generated_at < _REFRESH_INTERVAL_SECS:
         return False
     task = asyncio.create_task(_refresh_and_announce(state, cache))

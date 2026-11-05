@@ -51,9 +51,15 @@ def policy(*, now: datetime | None = None) -> dict[str, Any]:
     ambiently and for Settings.
     """
     from personalclaw.config.loader import AppConfig
-    from personalclaw.providers.entity_routes import load_notifications_settings, quiet_hours_now
+    from personalclaw.providers.entity_routes import (
+        _in_configured_zone,
+        load_notifications_settings,
+        quiet_hours_now,
+    )
 
-    at = now or datetime.now().astimezone()
+    # The edges are the configured timezone's wall times, as `quiet_hours_now` reads the window:
+    # on the process's own clock, a window read in another zone changed at the wrong instants.
+    at = _in_configured_zone(now or datetime.now().astimezone())
     buddy = AppConfig.load().buddy
     settings = load_notifications_settings()
     muted = bool(settings.get("mute_all"))

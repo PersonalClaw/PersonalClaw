@@ -23,10 +23,12 @@ So an edit moves both, from either side:
 * **The report's side** (the Reports page, the reports API): ``save_report`` re-derives the mirror
   (``sync``). Only what the report owns is written — the cadence and zone in ``spec``, the switch
   (which a restore's hold outlasts: ``triggers.restore_hold``), the action, the name and the grant
-  (:func:`to_trigger`). What the automation holds of its own —
-  where its result and its failures go, whether a missed time runs late, its skip dates — and what
-  the clock wrote on it (its next fire, its runs, its health) stay as they are, so a report edit
-  cannot undo a Triggers-page setting.
+  (:func:`to_trigger`). The switch asks the rule every writer asks before it switches an
+  automation on: a one-time report whose time has passed is left off, and the reports API refuses
+  that save in the Triggers page's words (:func:`switch_on_refusal`). What the automation holds
+  of its own — where its result and its failures go, whether a missed time runs late, its skip
+  dates — and what the clock wrote on it (its next fire, its runs, its health) stay as they are,
+  so a report edit cannot undo a Triggers-page setting.
 * **The automation's side** (the Triggers page, the chat's automation tools, the CLI): every
   edit goes through ``triggers.tools``, which asks :func:`edit_refusal` first — an edit the report
   cannot hold is refused in words — and hands the saved row to :func:`adopt`, which writes its
@@ -237,6 +239,14 @@ def to_trigger(
         trigger.overlap, trigger.session, trigger.model_tier = "skip", "fresh", "background"
         kept = {k: v for k, v in (stored.spec or {}).items() if k not in _SCHEDULE_SPEC_KEYS}
         trigger.spec = {**kept, **spec}
+        # The switch-on rule every writer asks (`arm.switch_on_refusal`): a one-time report switched
+        # on after its time went by leaves its automation off, not on with nothing it will ever
+        # fire for the next tick to arm to its own past time. The reports API refuses that save
+        # first (:func:`switch_on_refusal`).
+        from personalclaw.triggers.arm import switch_on_refusal as passed_switch_on
+
+        if passed_switch_on(stored, trigger, now=now):
+            trigger.enabled = False
     # TWO steps a hand-built row cannot skip, both measured before writing:
     #
     # 1. **The frozen-capability fence.** `screen.py` classifies `knowledge-report` as
@@ -265,6 +275,27 @@ def to_trigger(
         if rearmed is not None:
             trigger.next_fire_at = rearmed
     return trigger
+
+
+def switch_on_refusal(defn: ReportDefinition, *, now: float = 0.0) -> str:
+    """Why saving *defn* would switch its automation on after its one time went by, or "": the
+    switch-on rule every writer asks (`arm.switch_on_refusal`), in the words the Triggers page and
+    the chat give. The reports API asks it before a save that switches the report on, so a refused
+    one changes nothing; the mirror asks it of every save (:func:`to_trigger`), and leaves the
+    automation off."""
+    from personalclaw.triggers.arm import left_off_words
+    from personalclaw.triggers.arm import switch_on_refusal as passed_switch_on
+    from personalclaw.triggers.restore_hold import switch_from_config
+
+    stored = _stored(str(getattr(defn, "id", "") or ""))
+    trigger = None if stored is None else to_trigger(defn, stored=stored, now=now)
+    if stored is None or trigger is None:
+        return ""
+    # The row as the report's switch would leave it, before the rule kept it off.
+    asked = copy.deepcopy(trigger)
+    switch_from_config(asked, bool(getattr(defn, "enabled", True)))
+    gone = passed_switch_on(stored, asked, now=now)
+    return left_off_words(stored, gone) if gone else ""
 
 
 def _stored(report_id: str) -> Trigger | None:

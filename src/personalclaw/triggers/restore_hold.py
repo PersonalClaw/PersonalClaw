@@ -135,9 +135,10 @@ def resume_all(store: Any) -> tuple[list[Any], list[tuple[Any, str]]]:
     """Resume every automation a restore holds in *store*, each the way its own switch resumes it
     (`tools.set_paused`): switched on, armed from now, the hold ended.
 
-    Returns what it resumed, and what stays held with why: a row that no longer parses, or one
-    whose action needs the owner's yes, which its own switch asks for (a replace keeps the yes the
-    snapshot had, so such a row could not run where the snapshot was taken either).
+    Returns what it resumed, and what stays held with why: a row that no longer parses, one whose
+    action needs the owner's yes, which its own switch asks for (a replace keeps the yes the
+    snapshot had, so such a row could not run where the snapshot was taken either), or a one-time
+    automation whose time has passed (`arm.switch_on_refusal`), which would have nothing to fire.
     """
     from personalclaw.triggers import tools
 

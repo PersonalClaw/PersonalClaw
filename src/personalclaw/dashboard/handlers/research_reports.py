@@ -344,7 +344,15 @@ async def api_report_update(request: web.Request) -> web.Response:
     raw = dict(rr.to_dict(existing))
     raw.update(fields)
     raw["id"] = report_id
-    saved = rr.save_report(rr.from_dict(raw))
+    proposed = rr.from_dict(raw)
+    # A save that switches the report on after its one time went by would leave it nothing to fire:
+    # refused as its automation's own switch refuses it, with nothing of the save kept. Any other
+    # save is the report's own, and the mirror keeps such an automation off.
+    if fields.get("enabled") is True and not existing.enabled:
+        schedules = import_module("personalclaw.knowledge.report_schedules")
+        if refused := schedules.switch_on_refusal(proposed):
+            return json_error("invalid_request", message=refused, status=400)
+    saved = rr.save_report(proposed)
     _sel_log("knowledge_report.update", f"report_id={report_id} fields={sorted(fields)}")
     return web.json_response({"report": _served(rr, saved)})
 
