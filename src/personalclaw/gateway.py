@@ -5031,6 +5031,10 @@ class GatewayOrchestrator:
                 self.dashboard_state.end_running_turns(timeout=_END_TURNS_SECS),
             )
             save_all_sessions_to_history(self.dashboard_state)
+            # Off the loop: it reads every chat's record, and writes each line that changed.
+            await self._stopping_step(
+                "the chats' first lines", asyncio.to_thread(self._sync_chat_lines)
+            )
             self.dashboard_state.file_indexes.stop_all()
 
         # Cancel in-flight handler tasks. Every wait below on a task it cancelled is bounded: a
@@ -5094,6 +5098,20 @@ class GatewayOrchestrator:
         # The runs whose agents the cancel just below cuts off, closed as interrupted first.
         self._record_stopped_agents()
         await asyncio.gather(*(self._stopping_step(what, aw) for what, aw in last.items()))
+
+    def _sync_chat_lines(self) -> None:
+        """At a clean stop, after every chat is saved: each transcript's first line as its record
+        now says it (``chat_record.sync_lines``), so a home that goes back to v0.3.6 reads every
+        chat as this version left it. A failure is said, and passed."""
+        log = self.dashboard_state.conversation_log if self.dashboard_state else None
+        if log is None:
+            return
+        from personalclaw import chat_record
+
+        try:
+            chat_record.sync_lines(log._dir)
+        except Exception:  # noqa: BLE001 — the stop goes on; only a downgrade reads the line
+            logger.warning("Stopping: the chats' first lines could not be written", exc_info=True)
 
     async def _stopping_step(self, what: str, aw: Awaitable[Any]) -> None:
         """Await one step of the stop, named for the log of a stop that runs out of time in it.

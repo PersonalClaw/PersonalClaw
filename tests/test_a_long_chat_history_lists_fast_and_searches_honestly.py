@@ -188,7 +188,8 @@ def test_a_damaged_listing_file_is_ignored_and_written_again(home):
     (home / history.LISTING_FILE).write_text("{not json", encoding="utf-8")
     _new_process()
     assert len(ConversationLog().list_sessions()) == CHATS
-    assert json.loads((home / history.LISTING_FILE).read_text(encoding="utf-8"))["version"] == 1
+    written = json.loads((home / history.LISTING_FILE).read_text(encoding="utf-8"))
+    assert written["version"] == history._LISTING_VERSION
 
 
 def test_metadata_is_read_from_the_first_line_never_the_whole_transcript(home, monkeypatch):

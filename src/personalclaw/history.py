@@ -35,6 +35,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from personalclaw import chat_record
 from personalclaw.atomic_write import atomic_write
 from personalclaw.concurrency import single_flight
 from personalclaw.config import loader as config_loader
@@ -319,6 +320,7 @@ def import_conversation(
         "message_bytes": sum(len(line.encode("utf-8")) + 1 for line in lines),
     }
     atomic_write(path, "\n".join([json.dumps(head), *lines]) + "\n")
+    chat_record.saved(path, head)
     if modified is not None:
         os.utime(path, (modified, modified))
     return path
@@ -375,25 +377,29 @@ def _metadata_line(first: bytes) -> dict:
 
 
 def read_memory_mode(path: Path) -> str | None:
-    """The memory mode the transcript at ``path`` records, read from its first line.
-
-    ``None`` when it records none: there is no transcript, or its first line is a message rather
-    than metadata, or its metadata names no mode (a transcript written before modes existed, or by
-    a channel that has none). :data:`~personalclaw.memory_writes.UNREADABLE` when the transcript
-    is there and its first line cannot be read or parsed, which keeps nothing: a mode that cannot
-    be read is not taken for ``persistent``. Read fresh on every call; it is one line.
-    """
+    """The memory mode the chat at ``path`` records: its record's while its first line is the one
+    the record matched (``chat_record.trusted``, ``matches``), else the line's, or the record's
+    for a line that names none. ``None`` for none: no transcript, a metadata line naming no mode,
+    or, with no record, a first line that is a message. Else
+    :data:`~personalclaw.memory_writes.UNREADABLE`, which keeps nothing: a line or record that
+    cannot be read, a mode no string, or, with a record, a first line no metadata. A mode that
+    cannot be read is never taken for ``persistent``, nor for the record's. Read on every call."""
     from personalclaw.memory_writes import UNREADABLE
 
     try:
+        record = chat_record.read(path)
+        if record is not None and chat_record.trusted(record, os.stat(path)):
+            return _mode_of(record, UNREADABLE)
         with open(path, "rb") as f:
             first = f.readline()
     except FileNotFoundError:
         return None
     except OSError:
         return UNREADABLE
+    if record is not None and chat_record.matches(record, first):
+        return _mode_of(record, UNREADABLE)
     if not first.strip():
-        return None
+        return None if record is None else UNREADABLE
     try:
         data = json.loads(first)
     except ValueError:
@@ -401,11 +407,14 @@ def read_memory_mode(path: Path) -> str | None:
     if not isinstance(data, dict):
         return UNREADABLE
     if data.get("_type") != "metadata":
-        return None
-    mode = data.get("memory_mode")
-    if mode is None:
-        return None
-    return mode if isinstance(mode, str) else UNREADABLE
+        return None if record is None else UNREADABLE
+    return _mode_of(chat_record.over(data, record), UNREADABLE)
+
+
+def _mode_of(metadata: Mapping[str, Any], unreadable: str) -> str | None:
+    """The memory mode *metadata* names: ``None`` for none, *unreadable* for a mode no string."""
+    mode = metadata.get("memory_mode")
+    return mode if mode is None or isinstance(mode, str) else unreadable
 
 
 def _prompt_of(data: object) -> str:
@@ -432,18 +441,34 @@ def _recorded_count(meta: Mapping[str, Any], message_bytes: int) -> int | None:
     return None
 
 
-def _read_head(path: Path, size: int, *, listing: bool) -> _Head | None:
-    """Read what the chat list needs of one transcript in ONE open: the metadata line and, for a
-    ``listing``, the message count and title fallback too. ``None`` when it cannot be read.
+def _read_head(path: Path, stat: os.stat_result, *, listing: bool) -> _Head | None:
+    """What the chat list needs of one chat, in at most ONE open: its metadata and, for a
+    ``listing``, the message count and title fallback. ``None`` when it cannot be read.
 
-    The count is read from the metadata when it records one (:func:`_recorded_count`), and
-    counted otherwise; the title fallback is the first user message in the first
-    :data:`_TITLE_SCAN_LINES` lines, for a transcript whose metadata names no title.
-    """
+    The metadata is the record's, unopened, while the transcript stands as when the record matched
+    its first line (``chat_record.trusted``); else the line is read, and says the chat when
+    something else wrote it since (``chat_record.matches``). With no readable record, the line.
+    The count is the metadata's when it records one (:func:`_recorded_count`), else counted; the
+    title fallback is the first user message in the first :data:`_TITLE_SCAN_LINES` lines."""
+    size = stat.st_size
+    try:
+        record = chat_record.read(path)
+    except chat_record.ChatRecordUnreadable:
+        record = None
+    if record is not None and chat_record.trusted(record, stat):
+        meta, head_bytes = _with_instants(chat_record.fields(record)), record.get("line_bytes")
+        head_bytes = head_bytes if type(head_bytes) is int else 0
+        recorded = _recorded_count(meta, size - head_bytes)
+        if not listing or (recorded is not None and meta.get("title")):
+            return _Head(MappingProxyType(meta), head_bytes, recorded, "", listing)
     try:
         with open(path, "rb") as f:
             first = f.readline()
-            meta = _metadata_line(first)
+            line = _metadata_line(first)
+            if record is not None and chat_record.matches(record, first):
+                meta = _with_instants(chat_record.fields(record))
+            else:
+                meta = chat_record.over(line, record) if line else line
             if not listing:
                 return _Head(MappingProxyType(meta), len(first), None, None, False)
             recorded = _recorded_count(meta, size - len(first))
@@ -451,7 +476,7 @@ def _read_head(path: Path, size: int, *, listing: bool) -> _Head | None:
             counted, prompt = 0, ""
             if recorded is None or need_title:
                 for number, raw in enumerate(itertools.chain([first], f)):
-                    if number == 0 and meta:
+                    if number == 0 and line:
                         continue  # the metadata line itself
                     if recorded is not None and (prompt or number >= _TITLE_SCAN_LINES):
                         break
@@ -481,9 +506,10 @@ def _message_line(raw: bytes) -> dict | None:
     return data
 
 
-def _signature(stat: os.stat_result) -> tuple[int, int, int]:
-    """What changes when a transcript does: every write replaces it (a new inode) or grows it."""
-    return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+def _signature(path: str, stat: os.stat_result) -> tuple[int, ...]:
+    """What changes when a chat does: its transcript, which every write replaces (a new inode) or
+    grows, and its record."""
+    return (stat.st_ino, stat.st_size, stat.st_mtime_ns, *chat_record.stamp(Path(path)))
 
 
 class _TranscriptHeads:
@@ -501,14 +527,14 @@ class _TranscriptHeads:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._kept: dict[str, tuple[tuple[int, int, int], _Head]] = {}
+        self._kept: dict[str, tuple[tuple[int, ...], _Head]] = {}
 
-    def get(self, path: str, signature: tuple[int, int, int]) -> _Head | None:
+    def get(self, path: str, signature: tuple[int, ...]) -> _Head | None:
         with self._lock:
             kept = self._kept.get(path)
         return kept[1] if kept is not None and kept[0] == signature else None
 
-    def keep(self, path: str, signature: tuple[int, int, int], head: _Head) -> None:
+    def keep(self, path: str, signature: tuple[int, ...], head: _Head) -> None:
         with self._lock:
             if len(self._kept) >= self.LIMIT:
                 self._kept.clear()
@@ -528,7 +554,8 @@ _HEADS = _TranscriptHeads()
 
 #: The home's chat list, as last listed: beside the ``sessions`` directory it describes.
 LISTING_FILE = "session_listing.json"
-_LISTING_VERSION = 1
+#: Version 2 signs each chat by its record too; v0.3.6's, version 1, is read again from the files.
+_LISTING_VERSION = 2
 #: A listing that had to open this many transcripts writes the listing file back. A handful
 #: changed since (one chat's turn) costs the next process that many opens, not a rewrite of
 #: the whole file each time; a restart after a bulk change pays once and records it.
@@ -562,25 +589,26 @@ def _load_listing(sessions_dir: Path) -> None:
         return
     for name, row in heads.items():
         try:
-            ino, size, mtime_ns, head_bytes, messages, first_prompt, meta = row
+            *signature, head_bytes, messages, first_prompt, meta = row
         except (TypeError, ValueError):
             continue
         if not (
             isinstance(name, str)
-            and all(type(v) is int for v in (ino, size, mtime_ns, head_bytes))
+            and len(signature) == 6
+            and all(type(v) is int for v in (*signature, head_bytes))
             and (messages is None or type(messages) is int)
             and isinstance(first_prompt, str)
             and isinstance(meta, dict)
         ):
             continue
         path = os.path.join(key, name)
-        if _HEADS.get(path, (ino, size, mtime_ns)) is None:
+        if _HEADS.get(path, tuple(signature)) is None:
             meta = _with_instants(meta)  # a listing written before stamps carried offsets
             head = _Head(MappingProxyType(meta), head_bytes, messages, first_prompt, True)
-            _HEADS.keep(path, (ino, size, mtime_ns), head)
+            _HEADS.keep(path, tuple(signature), head)
 
 
-def _save_listing(sessions_dir: Path, heads: list[tuple[str, tuple[int, int, int], _Head]]) -> None:
+def _save_listing(sessions_dir: Path, heads: list[tuple[str, tuple[int, ...], _Head]]) -> None:
     """Write the home's listing file: each listed transcript's head, with its signature.
 
     A restricted chat's head is left out — its metadata stays in its own transcript and nowhere
@@ -643,7 +671,7 @@ class ConversationLog:
             return False
 
     def _path(self, key: str) -> Path:
-        return self._dir / f"{_safe_key(key)}.jsonl"
+        return self._dir / chat_record.held_child(self._dir, f"{_safe_key(key)}.jsonl")
 
     def has_log(self, key: str) -> bool:
         """Return True if a conversation log file exists for *key*."""
@@ -704,6 +732,7 @@ class ConversationLog:
             if marked:
                 meta["memory_mode"] = marked
             atomic_write(path, json.dumps(meta) + "\n")
+            chat_record.saved(path, meta)
         elif marked and read_memory_mode(path) != marked:
             self.update_metadata(key, {"memory_mode": marked})
 
@@ -753,19 +782,8 @@ class ConversationLog:
         return messages[offset:], len(messages)
 
     def mark_consolidated(self, key: str, offset: int) -> None:
-        """Rewrite metadata line with updated last_consolidated offset."""
-        path = self._path(key)
-        if not path.exists():
-            return
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        if not lines:
-            return
-        meta = json.loads(lines[0])
-        meta["last_consolidated"] = offset
-        meta["updated_at"] = utc_now_iso()
-        lines[0] = json.dumps(meta) + "\n"
-        atomic_write(path, "".join(lines))
-        self._invalidate_cache(key)
+        """Record the last_consolidated offset in the session's record (:meth:`update_metadata`)."""
+        self.update_metadata(key, {"last_consolidated": offset, "updated_at": utc_now_iso()})
 
     def unconsolidated_count(self, key: str) -> int:
         """Count messages not yet processed by the consolidator."""
@@ -827,7 +845,7 @@ class ConversationLog:
                 entries = [item for item in found if item.name.endswith(".jsonl")]
         except OSError:
             return []
-        heads: list[tuple[str, tuple[int, int, int], _Head]] = []
+        heads: list[tuple[str, tuple[int, ...], _Head]] = []
         opened = 0
         for item in entries:
             # Skip symlinks — these are handoff aliases pointing to the real session
@@ -839,7 +857,7 @@ class ConversationLog:
                 stat = item.stat()
             except OSError:
                 continue
-            signature = _signature(stat)
+            signature = _signature(item.path, stat)
             kept = _HEADS.get(item.path, signature)
             head = self._head(item.path, stat, listing=True)
             if head is not None:
@@ -872,7 +890,7 @@ class ConversationLog:
     def _head(path: str, stat: os.stat_result, *, listing: bool) -> _Head | None:
         """*path*'s :class:`_Head`: the one this process kept while the file is unchanged, or read
         now — for a ``listing``, completed with the message count and title fallback."""
-        signature = _signature(stat)
+        signature = _signature(path, stat)
         kept = _HEADS.get(path, signature)
         if kept is not None:
             if kept.complete or not listing:
@@ -883,7 +901,7 @@ class ConversationLog:
                 completed = _Head(kept.meta, kept.head_bytes, recorded, "", True)
                 _HEADS.keep(path, signature, completed)
                 return completed
-        head = _read_head(Path(path), stat.st_size, listing=listing)
+        head = _read_head(Path(path), stat, listing=listing)
         if head is not None:
             _HEADS.keep(path, signature, head)
         return head
@@ -1066,6 +1084,7 @@ class ConversationLog:
         path = self._path(key)
         if path.exists():
             path.unlink()
+            chat_record.forget(path)
             self._invalidate_cache(key)
             self.invalidate_tab_id_cache()
             self._forget_search_rows(key)
@@ -1171,23 +1190,21 @@ class ConversationLog:
             except Exception:  # noqa: BLE001 - the title is written; a listener must not fail it
                 logger.warning("could not show the new title of %s", key, exc_info=True)
 
-    def update_metadata(self, key: str, fields: dict) -> None:
-        """Merge *fields* into the session's metadata line and persist."""
+    def update_metadata(self, key: str, fields: dict, *, drop: tuple[str, ...] = ()) -> None:
+        """Merge *fields* into the session's record, and remove each of *drop*: the one write of a
+        chat-level field, which leaves its transcript as it is (``chat_record.update``). A record
+        that cannot be read is left as it is, with nothing written. Raises ``ValueError`` for a
+        change or drop naming the record's own fields, or a drop of the memory mode
+        (``chat_record.update``), with nothing written."""
         path = self._path(key)
         if not path.exists():
             return
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        if not lines:
-            return
         try:
-            meta = json.loads(lines[0])
-            if meta.get("_type") != "metadata":
-                return
-        except json.JSONDecodeError:
-            return
-        meta.update(fields)
-        lines[0] = json.dumps(meta) + "\n"
-        atomic_write(path, "".join(lines), fsync=True)
+            chat_record.update(path, fields, drop=drop)
+        except chat_record.ChatRecordUnreadable:
+            logger.warning(
+                "the record of %s could not be read: %s not written", key, sorted(fields)
+            )
         self._invalidate_cache(key)
 
     def _read_messages(self, key: str) -> list[dict]:

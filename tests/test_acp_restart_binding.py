@@ -64,8 +64,14 @@ def _bound_session(state: DashboardState, *, task_mode: str = "plan") -> _ChatSe
 
 
 def _meta(tmp_path: Path) -> dict:
-    line = (tmp_path / f"dashboard_{SESSION}.jsonl").read_text(encoding="utf-8").splitlines()[0]
-    return json.loads(line)
+    """The chat's metadata as a restart reads it: its record (``chat_record``), which a chat-level
+    change writes, and the transcript's first line for a chat with none."""
+    from personalclaw import chat_record
+
+    path = tmp_path / f"dashboard_{SESSION}.jsonl"
+    if (record := chat_record.read(path)) is not None:
+        return chat_record.fields(record)
+    return json.loads(path.read_text(encoding="utf-8").splitlines()[0])
 
 
 def _restart(tmp_path: Path) -> tuple[DashboardState, _ChatSession | None]:

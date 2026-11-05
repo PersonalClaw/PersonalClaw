@@ -1250,7 +1250,8 @@
     "kind": "method",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "key"},
-     {"annotation": "dict", "kind": "positional_or_keyword", "name": "fields"}
+     {"annotation": "dict", "kind": "positional_or_keyword", "name": "fields"},
+     {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "drop"}
     ],
     "returns": "None"
    },

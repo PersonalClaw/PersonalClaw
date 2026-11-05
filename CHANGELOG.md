@@ -14,9 +14,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **For apps, the permission event has a new field: `personalclaw.sdk.channel.LLMEvent` carries `secret_file`, which is `""` on every event but the ask to open a project secret file, where it says `"read"` or `"write"`. Only your own chats on the dashboard make that ask, so a channel app's own conversations see `""`; nothing an app sends or answers changes.**
 
+- **For apps, `personalclaw.sdk.channel.ConversationLog.update_metadata` takes `drop`, the chat-level fields to remove from a chat's record in the same write. It refuses to set or remove the record's own fields, or to remove the memory mode.**
+
 ### Changed
 
 - **Stop stops only the turn you pressed it for, and a turn can be read by its message id. A Stop that reaches the gateway after its turn ended no longer stops the next one or empties its queue: it changes nothing, and the page says nothing failed. A soft Stop's answer names the queued messages it removed unsent, and sending one of them again runs nothing. A script, a channel or the page reads how one turn went at `GET /api/chat/sessions/{session}/turns/{message_id}`: queued, running with its run state, or settled with how it ended and its answer. An app reads only the turns of conversations it started.**
+- **Renaming, pinning, archiving or tagging a chat no longer rewrites its whole transcript: each chat's settings are kept beside it, in `sessions/<chat>.chat.json`, made from the transcript's first line the first time the gateway starts. The first line stays, so a home that goes back to 0.3.6 or an earlier version still reads every chat: a save writes it as the chat's settings say, and so does a clean stop for every chat changed since. After a crash, a chat renamed since its last message shows its old title under 0.3.6, and one whose memory mode changed since its last save has its old mode there. A chat whose settings file cannot be read opens read-only, and the Doctor names any chat whose settings could not be made. Take a `personalclaw snapshot` before upgrading.**
 
 ### Fixed
 

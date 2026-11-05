@@ -2609,15 +2609,8 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
     # which is exactly why it had to stop reading the bare key.
     if meta.get("closed"):
         try:
-            path = state.conversation_log._path(resolved_key)
-            if path.exists():
-                lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-                if lines:
-                    first_line_data = json.loads(lines[0])
-                    first_line_data.pop("closed", None)
-                    lines[0] = json.dumps(first_line_data) + "\n"
-                    atomic_write(path, "".join(lines))
-                    state.conversation_log._invalidate_cache(resolved_key)
+            # In the chat's record: its transcript is not rewritten to reopen it.
+            log.update_metadata(resolved_key, {}, drop=("closed",))
         except Exception:
             logger.warning("Failed to clear closed flag for %s", resolved_key, exc_info=True)
     total = session.message_count

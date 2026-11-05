@@ -4,10 +4,10 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 
-from personalclaw import memory_locality
+from personalclaw import chat_record, memory_locality
 from personalclaw.agent import agents_dir
-from personalclaw.atomic_write import atomic_write
 from personalclaw.chat_traces import TEMPORARY
 from personalclaw.config.loader import AppConfig, default_workspace_dir
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX
@@ -506,8 +506,8 @@ def _rehydrate_session_from_history(
 def kept_chat(state: DashboardState, name: str) -> tuple[str, dict | None] | None:
     """What is kept on disk for a chat named *name*: ``None`` when nothing is, else the key of
     its transcript, the file a chat of that name saves to (``persisted_history_key``), with its
-    record (its metadata line, ``{}`` when it has none), or ``None`` for a record that cannot
-    be read.
+    record (its metadata, ``{}`` when it has none), or ``None`` for a record that cannot be read
+    (``chat_record``).
 
     Kept means the file is there, whatever its first line says: a save rewrites that file, so a
     chat made for it must hold what it holds. A disk that cannot say whether it is there answers
@@ -521,6 +521,7 @@ def kept_chat(state: DashboardState, name: str) -> tuple[str, dict | None] | Non
     try:
         if not log.has_log(key):
             return None
+        chat_record.read(log._path(key))  # a record that cannot be read opens the chat read-only
         return key, log.get_metadata(key)
     except OSError:
         logger.warning("the record of chat %s could not be read", name, exc_info=True)
@@ -575,6 +576,30 @@ def open_kept_chat(
     )
 
 
+def kept_mode(transcript: Path) -> str:
+    """The memory mode a kept chat comes back in, read as every reader of it reads it
+    (``history.read_memory_mode``), so the next save writes back what the chat records: its mode,
+    and ``persistent`` for a chat that records none. A first line that cannot say it keeps nothing
+    (it may be a newer write this build cannot read), so the chat comes back in its record's mode
+    only when that keeps nothing too (Incognito, Temporary), and otherwise in
+    :data:`~personalclaw.memory_writes.UNREADABLE`, which keeps nothing: never ``persistent``."""
+    from personalclaw.history import read_memory_mode
+    from personalclaw.memory_writes import PERSISTENT, RESTRICTED_MODES, UNREADABLE
+
+    known = {PERSISTENT, *RESTRICTED_MODES}
+    mode = read_memory_mode(transcript)
+    if mode is None:
+        return PERSISTENT
+    if mode in known:
+        return mode
+    try:
+        record = chat_record.read(transcript)
+    except chat_record.ChatRecordUnreadable:
+        record = None
+    held = record.get("memory_mode") if record is not None else None
+    return held if held in RESTRICTED_MODES else UNREADABLE
+
+
 def continue_kept_chat(
     state: DashboardState, session: _ChatSession, history_key: str, meta: dict
 ) -> None:
@@ -600,7 +625,7 @@ def continue_kept_chat(
         return
     from personalclaw.dashboard.chat_title import _title_without_a_model, keeps_to_its_own_model
 
-    session.memory_mode = meta.get("memory_mode", "persistent")
+    session.memory_mode = kept_mode(log._path(history_key))
     if not meta.get("title") and keeps_to_its_own_model(state, session):
         # A chat that keeps nothing is called by its mode, as its title chore calls it. One saved
         # before that chore ran (its gateway stopped or died in between) records no title, and
@@ -1127,7 +1152,7 @@ def save_session_to_history(
         meta_line["message_count"] = len(lines)
         meta_line["message_bytes"] = sum(len(line.encode("utf-8")) for line in lines)
 
-        atomic_write(path, json.dumps(meta_line) + "\n" + "".join(lines), fsync=True)
+        chat_record.write(path, meta_line, "".join(lines))
         state.conversation_log._invalidate_cache(history_key)
         state.conversation_log.invalidate_tab_id_cache()
         # Keep cross-session search current. Runs after the

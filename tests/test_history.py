@@ -1938,3 +1938,22 @@ class TestCommitmentDeliveryScan:
         assert len(svc.due_commitments_all(now_iso="2026-01-01T00:00:00+00:00")) == 1
         assert svc.dismiss_commitment(key) is True
         assert svc.due_commitments_all(now_iso="2026-01-01T00:00:00+00:00") == []
+
+
+class TestTranscriptPath:
+    """``ConversationLog._path`` hands out only a direct child of the log's own folder."""
+
+    def test_a_key_is_kept_in_the_folder(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path / "sessions")
+        assert log._path("dashboard:chat/1") == tmp_path / "sessions" / "dashboard_chat_1.jsonl"
+
+    @pytest.mark.parametrize("name", ["../x", "../sessions-b/x", "sub/x", "sub/../x", "{out}"])
+    def test_a_name_that_leaves_the_folder_is_refused(self, tmp_path, monkeypatch, name):
+        name = name.format(out=tmp_path / "x")
+        log = ConversationLog(base_dir=tmp_path / "sessions")
+        monkeypatch.setattr("personalclaw.history._safe_key", lambda key: name)
+        with pytest.raises(ValueError, match="kept in"):
+            log._path("k")
+        with pytest.raises(ValueError, match="kept in"):
+            log.append("k", "user", "hello")
+        assert list(tmp_path.rglob("*")) == []

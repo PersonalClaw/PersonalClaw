@@ -447,6 +447,26 @@ chat, channel thread, loop worker, webhook, subagent).
   record and nothing shortens it**: there is no size cap, no rotation and no
   background rewrite, at any size. What bounds cost is what a reader takes —
   `recent()` and `history_for_model()` return a window.
+- **Each chat's settings are its record** (`chat_record.py`), beside its
+  transcript: `{safe_key}.chat.json`. Its title, pin, folder, tags, archive,
+  memory mode, runtime binding and consolidation mark are read from it, and a
+  change to one writes only the record (`ConversationLog.update_metadata`,
+  under the record's lock), never the transcript. The record holds every key
+  the transcript's first line holds, plus `v`, the line's digest and length
+  (`line_digest`, `line_bytes`: the chat list reads a chat's count and title
+  from its record without opening its transcript), `kind`, `work`, `parent`
+  and `created_by_client`, which is written once. **The first line stays until
+  the cut**, so a home that goes back to v0.3.6 reads every chat: each start
+  copies it into a record that has none, and takes back into the record a line
+  written since the record matched it, the line winning for each key it holds
+  (`copy_first_lines`); a save that rewrites the transcript writes the line as
+  the record says it, and a clean stop writes the line of every chat whose
+  record changed since (`sync_lines`). A crash before that stop leaves the line
+  as of the chat's last save, so a rename made since reads as the old title
+  under v0.3.6. A record that cannot be read is never written over: its chat
+  opens read-only, its memory mode reads as unreadable, a backup leaves it out,
+  and a transcript the start could not copy is named by the Doctor
+  (`durability.chat_records`). Deleting a chat deletes its record.
 - **Background compression shortens what the model reads, never the file**
   (`bg_compress.py`). An idle chat gets a derived record beside its
   transcript, `{safe_key}.summary.json`, naming the span it covers — counted

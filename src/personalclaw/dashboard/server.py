@@ -1103,6 +1103,12 @@ async def start_dashboard(
 
     cfg = AppConfig.load()
     _apply_startup_yolo(state, cfg)
+    # Each chat's record beside its transcript, made or taken back from a line written since
+    # (`chat_record`), before anything reads a chat.
+    if state.conversation_log is not None:
+        from personalclaw import chat_record
+
+        await asyncio.to_thread(chat_record.copy_first_lines, state.conversation_log._dir)
     restored = chat.restore_recent_sessions(
         state,
         cfg.dashboard.restore_window_minutes if cfg.dashboard.restore_sessions else 0,
