@@ -154,9 +154,9 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // A search failure is kept WITH the request it answered (see `searchError` beside the search effect).
   const [searchErr, setSearchErr] = useState<{ request: string; error: unknown } | null>(null)
   const [searchNonce, setSearchNonce] = useState(0)
-  // Server-backed search (/api/tasks/search): a non-empty query takes precedence
-  // over the status filter. URL-backed (?q, replace) so it's shareable + survives
-  // refresh; one Back exits search rather than rewinding keystrokes.
+  // Server-backed search (/api/tasks/search): the chosen Status narrows its matches, as it narrows
+  // the whole list. URL-backed (?q, replace) so it's shareable + survives refresh; one Back exits
+  // search rather than rewinding keystrokes.
   const query = qProp
   const setQuery = setQ
   const [results, setResults] = useState<TaskItem[] | null>(null)
@@ -207,6 +207,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // every project and the list sub-filter can resolve names.
   const [projects, setProjects] = useState<ProjectItem[]>([])
   const [allLists, setAllLists] = useState<TaskListItem[]>([])
+  // Whether the catalog above has answered (empty or not), so a `?list` it does not hold is known.
+  const [catalogRead, setCatalogRead] = useState(false)
   // Names of the Tasks Projects that back a Code-feature project — used to resolve
   // the "Coding projects" scope (there's no per-task origin flag).
   const [codingProjectNames, setCodingProjectNames] = useState<Set<string>>(new Set())
@@ -318,22 +320,30 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         if (!alive) return
         setProjects(ps)
         setAllLists(ls)
+        setCatalogRead(true)
         const byId = new Map(ps.map((p) => [p.id, p.name]))
         const names = new Set<string>()
         for (const cp of cps) { const n = cp.tasks_project_id && byId.get(cp.tasks_project_id); if (n) names.add(n) }
         setCodingProjectNames(names)
       })
-      .catch(() => { if (alive) { setProjects([]); setAllLists([]) } })
+      .catch(() => { if (alive) { setProjects([]); setAllLists([]); setCatalogRead(true) } })
     return () => { alive = false }
   }, [])
 
   const repeatableProject = projects.find((p) => p.name === 'Repeatable')
-  // The scoped project's task lists (for the list bar + Repeatable reset).
+  // The scoped project's task lists (for the List section and a Repeatable list's Reset).
   const scopedProject = isProjectScope ? projects.find((p) => p.name === scope) : undefined
   const projectLists = useMemo(
     () => (scopedProject ? allLists.filter((l) => l.project_id === scopedProject.id) : []),
     [scopedProject, allLists],
   )
+  // A `?list` the scoped project does not hold (one left from another project) is dropped, once the
+  // catalog and the scope have loaded, rather than shown by its raw id in the filter's label. A deep
+  // link to one of the project's lists survives: it is kept until the catalog says otherwise.
+  useEffect(() => {
+    if (catalogRead && scopedProject && listProp && !projectLists.some((l) => l.id === listProp)) setListFilter(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setListFilter writes the URL; the inputs are the rest
+  }, [catalogRead, scopedProject, listProp, projectLists])
 
   // Does a task fall within the active scope? (preset by origin, or one project)
   const inScope = useMemo(() => {
@@ -351,15 +361,18 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     [tagFilter],
   )
 
-  // Tasks within the active scope + tag, before status/search — feeds board + DAG
-  // (which present their own statuses) so both narrowings apply to every view.
-  const scopedTasks = useMemo(() => (tasks ?? []).filter(inScope).filter(hasTag), [tasks, inScope, hasTag])
+  // Tasks within the active scope, tag and list, before status/search — feeds board + DAG
+  // (which present their own statuses) so each narrowing applies to every view, the List section's
+  // as the tag's.
+  const scopedTasks = useMemo(
+    () => (tasks ?? []).filter(inScope).filter(hasTag).filter((t) => !listProp || t.task_list_id === listProp),
+    [tasks, inScope, hasTag, listProp])
 
   // The unified Filter & sort menu's sections. Sort hides on board/dag (they present + order
   // their own statuses), so the menu only ever offers what the current view honors. Status stays
-  // while searching and narrows the matches too: a section that came and went with the query
-  // left a project's header with no filter on the first key, and the row re-tiered under the
-  // field being typed in.
+  // while searching and narrows the matches too. The section came and went with the query, so the
+  // filter's label changed width on the first key and the row re-tiered under the field being typed
+  // in. The filter itself stayed.
   const showStatus = !FULL_WIDTH.includes(view)
   const showSort = view === 'list' || view === 'cards'
   const filterSections = useMemo<FilterSectionDef[]>(() => {
@@ -442,6 +455,16 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned, tagFilter, inAProject,
     isProjectScope, projectLists, listFilter?.id, repeatableProject?.id])
 
+  // The search's matches within every narrower but Status: what the no-match state counts when the
+  // chosen Status is what left none of them.
+  const matchesAnyStatus = useMemo(() => {
+    if (!q || !results) return 0
+    return results.filter(inScope).filter(hasTag)
+      .filter((t) => !listFilter || t.task_list_id === listFilter.id)
+      .filter((t) => !(owner && assigned === ASSIGNED_MINE) || isMine(t, owner)).length
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- listFilter is rebuilt each render from listProp
+  }, [q, results, inScope, hasTag, listProp, owner, assigned])
+
   const filtered = useMemo(() => {
     // The chosen status, over the search's matches as over the whole list.
     const readyIds = new Set((ready ?? []).map((t) => t.id))
@@ -449,7 +472,9 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       : filter === 'ready' ? (ready ? list.filter((t) => readyIds.has(t.id)) : list)
         : filter === 'done' ? list.filter((t) => TERMINAL.has(t.status)) : list.filter((t) => t.status === filter)
     let base: TaskItem[] | null
-    if (q) base = results && withStatus(results)
+    // Ready under a query waits for the ready read: before it answers there is nothing to narrow by,
+    // and listing every match under the Ready label would be a list it is not.
+    if (q) base = results && (filter === 'ready' && !ready ? null : withStatus(results))
     else if (filter === 'ready') base = ready
     else if (!tasks) base = null
     else base = filter === 'all' ? [...tasks] : filter === 'done' ? tasks.filter((t) => TERMINAL.has(t.status)) : tasks.filter((t) => t.status === filter)
@@ -549,6 +574,10 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     <EmptyState icon={Tag} title={`No tasks tagged “${tagFilter}”`}
       hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none carrying this tag here.`}
       action={{ label: 'Clear tag', onClick: () => setTag(TAG_ANY) }} />
+  ) : listFilter ? (
+    <EmptyState icon={ListChecks} title={`Nothing in ${listFilter.name}`}
+      hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none on this list.`}
+      action={{ label: 'All lists', onClick: () => setListFilter(null) }} />
   ) : (
     <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
   )
@@ -629,7 +658,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             <PartialNotice className="mb-s" complete={collection?.complete ?? true} shown={tasks?.length ?? 0} total={collection?.total ?? 0}
               what="tasks" detail="dependencies on the ones outside this window are not shown, so a blocked task can read as unblocked" />
             {q && searchError ? <LoadError what="search results" error={searchError} onRetry={() => setSearchNonce((n) => n + 1)} />
-              : filter === 'ready' && !q && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
+              : filter === 'ready' && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
               : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
@@ -639,14 +668,20 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
                 : <TaskGraph tasks={scopedTasks} onOpen={(id) => setOpenId(id)} />
             ) : filtered.length === 0 ? (
               // This branch is reachable through FOUR narrowing controls (search, status filter,
-              // list bar, Assigned), and it blamed "this filter" for all of them — a hint that
+              // List section, Assigned), and it blamed "this filter" for all of them — a hint that
               // told a user who typed a search to check a dropdown they never touched. Same
               // split as the code list (emptyStateNoMatch): name the control that actually
               // narrowed, offer the escape that undoes it, and count what is really there so
               // the state cannot read as "you have no tasks". Scope-only narrowing keeps the
               // neutral scope sentence — scope is chosen by navigation, and a "View all" that
               // could not escape it would be an affordance that lies about what it does.
-              q ? (
+              q && filter !== 'all' && matchesAnyStatus > 0 ? (
+                // The search matched, and the chosen Status left none of its matches: Status is the
+                // narrower to name, and the way out is any status, not clearing the search.
+                <EmptyState icon={Filter} title={`No ${FILTERS.find((f) => f.key === filter)?.label ?? filter} tasks match “${q}”`}
+                  hint={`${matchesAnyStatus} task${matchesAnyStatus === 1 ? '' : 's'} match${matchesAnyStatus === 1 ? 'es' : ''} the search — just none with this status.`}
+                  action={{ label: 'Any status', onClick: () => setFilter('all') }} />
+              ) : q ? (
                 <EmptyState icon={Search} title={`No tasks match “${q}”`}
                   hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none matching the search.`}
                   action={{ label: 'Clear search', onClick: () => setQ('') }} />
@@ -692,8 +727,6 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   )
 }
 
-/** Task-list bar shown when a project is filtered: chips to sub-filter by a list,
- *  plus a Reset action on lists under the Repeatable project. */
 function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => void }) {
   // Only a priority the user actually CHOSE. `medium` is the default and is indistinguishable from
   // unset, so it rendered on 93% of rows in a semantic colour saying nothing — the same reasoning

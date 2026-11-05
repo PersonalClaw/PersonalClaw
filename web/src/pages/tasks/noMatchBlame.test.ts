@@ -5,7 +5,7 @@ import { join } from 'node:path'
 // ── The no-match state blames the control that actually narrowed (NZ3 residual) ────────────────
 //
 // The list/cards no-match branch is reachable through FOUR narrowing controls — search, the
-// status filter, the project list bar, and Assigned › Mine — and it rendered ONE hint for all of
+// status filter, the project's List section, and Assigned › Mine — and it rendered ONE hint for all of
 // them: "No tasks match this filter." A user who typed a search was told to check a dropdown they
 // never touched. Same defect class the code list fixed (see emptyStateNoMatch.test.tsx); this file
 // pins the tasks copy of the split so a future edit cannot flatten it back to one blame-everything
@@ -27,6 +27,13 @@ describe('the tasks no-match state names its narrower', () => {
   it('a search that narrows to nothing names the query and offers Clear search', () => {
     expect(src).toMatch(/No tasks match “\$\{q\}”/)
     expect(src).toMatch(/label: 'Clear search', onClick: \(\) => setQ\(''\)/)
+  })
+
+  it('a search the chosen Status emptied names Status, with Any status as its way out', () => {
+    // Status narrows a search's matches, so its no-match state is one Status can cause: "No tasks
+    // match" with Clear search would send a user to the control that did not narrow.
+    expect(src).toMatch(/q && filter !== 'all' && matchesAnyStatus > 0 \? \(/)
+    expect(src).toMatch(/label: 'Any status', onClick: \(\) => setFilter\('all'\)/)
   })
 
   it("the view escape resets EVERY in-page narrower, not just the status filter", () => {
