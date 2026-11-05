@@ -32,12 +32,12 @@
     - radio "Apps"
     - radio "Store"
   - heading "Skills" [level=#]
+  - searchbox "Search skills"
   - radiogroup "Skills view":
     - radio "Installed" [checked]
     - radio "Browse"
     - radio "Proposals"
   - button "New skill"
-  - searchbox "Search skills"
   - status
   - button "artifacts"
   - text: artifacts

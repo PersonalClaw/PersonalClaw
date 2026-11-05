@@ -32,12 +32,12 @@
     - radio "Apps" [checked]
     - radio "Store"
   - heading "Apps" [level=#]
+  - searchbox "Search apps"
+  - 'button "Show: All apps · Sorted by name"'
   - radiogroup "Native or Library":
     - radio "Native" [checked]
     - radio "Library"
   - button "Install from URL"
-  - searchbox "Search apps"
-  - button "Filter & sort": Sorted by name
   - status
   - text: Built-in #
   - button "Artifacts Tools — details"

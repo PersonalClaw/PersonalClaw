@@ -136,12 +136,7 @@
         "button \"More actions\"",
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
-        "button[role=radio] \"All\"",
-        "button[role=radio] \"Caution\"",
-        "button[role=radio] \"Destructive\"",
-        "button[role=radio] \"Safe\"",
-        "button[role=switch] \"Tool groups\"",
-        "input \"Search tools\""
+        "button[role=switch] \"Tool groups\""
       ],
       "390": [
         "a \"Settings › Security\"",
@@ -279,12 +274,7 @@
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
         "button \"project_listList projects (with their task lists). No args.\"",
-        "button[role=radio] \"All\"",
-        "button[role=radio] \"Caution\"",
-        "button[role=radio] \"Destructive\"",
-        "button[role=radio] \"Safe\"",
-        "button[role=switch] \"Tool groups\"",
-        "input \"Search tools\""
+        "button[role=switch] \"Tool groups\""
       ],
       "412": [
         "a \"Settings › Security\"",
@@ -422,12 +412,7 @@
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
         "button \"project_listList projects (with their task lists). No args.\"",
-        "button[role=radio] \"All\"",
-        "button[role=radio] \"Caution\"",
-        "button[role=radio] \"Destructive\"",
-        "button[role=radio] \"Safe\"",
-        "button[role=switch] \"Tool groups\"",
-        "input \"Search tools\""
+        "button[role=switch] \"Tool groups\""
       ],
       "768": [
         "a \"Settings › Security\"",
@@ -566,18 +551,13 @@
         "button \"Remove personalclaw-core\"",
         "button \"project_listList projects (with their task lists). No args.\"",
         "button[role=radio] \"Agents\"",
-        "button[role=radio] \"All\"",
         "button[role=radio] \"Apps\"",
-        "button[role=radio] \"Caution\"",
-        "button[role=radio] \"Destructive\"",
         "button[role=radio] \"Learning\"",
         "button[role=radio] \"Prompts\"",
-        "button[role=radio] \"Safe\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
         "button[role=radio] \"Tools\"",
-        "button[role=switch] \"Tool groups\"",
-        "input \"Search tools\""
+        "button[role=switch] \"Tool groups\""
       ]
     },
     "known": {
@@ -723,12 +703,7 @@
         "button \"More actions\"",
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
-        "button[role=radio] \"All\"",
-        "button[role=radio] \"Caution\"",
-        "button[role=radio] \"Destructive\"",
-        "button[role=radio] \"Safe\"",
-        "button[role=switch] \"Tool groups\"",
-        "input \"Search tools\""
+        "button[role=switch] \"Tool groups\""
       ],
       "390": [
         "a \"Settings › Security\"",
@@ -866,12 +841,7 @@
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
         "button \"project_listList projects (with their task lists). No args.\"",
-        "button[role=radio] \"All\"",
-        "button[role=radio] \"Caution\"",
-        "button[role=radio] \"Destructive\"",
-        "button[role=radio] \"Safe\"",
-        "button[role=switch] \"Tool groups\"",
-        "input \"Search tools\""
+        "button[role=switch] \"Tool groups\""
       ],
       "412": [
         "a \"Settings › Security\"",
@@ -1009,12 +979,7 @@
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
         "button \"project_listList projects (with their task lists). No args.\"",
-        "button[role=radio] \"All\"",
-        "button[role=radio] \"Caution\"",
-        "button[role=radio] \"Destructive\"",
-        "button[role=radio] \"Safe\"",
-        "button[role=switch] \"Tool groups\"",
-        "input \"Search tools\""
+        "button[role=switch] \"Tool groups\""
       ],
       "768": [
         "a \"Settings › Security\"",
@@ -1153,18 +1118,13 @@
         "button \"Remove personalclaw-core\"",
         "button \"project_listList projects (with their task lists). No args.\"",
         "button[role=radio] \"Agents\"",
-        "button[role=radio] \"All\"",
         "button[role=radio] \"Apps\"",
-        "button[role=radio] \"Caution\"",
-        "button[role=radio] \"Destructive\"",
         "button[role=radio] \"Learning\"",
         "button[role=radio] \"Prompts\"",
-        "button[role=radio] \"Safe\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
         "button[role=radio] \"Tools\"",
-        "button[role=switch] \"Tool groups\"",
-        "input \"Search tools\""
+        "button[role=switch] \"Tool groups\""
       ]
     },
     "known": {

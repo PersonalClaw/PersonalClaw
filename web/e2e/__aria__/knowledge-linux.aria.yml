@@ -29,6 +29,8 @@
     - radio "Files"
     - radio "Artifacts"
   - heading "Knowledge" [level=#]
+  - searchbox "Search knowledge"
+  - button "Filter"
   - radiogroup "Knowledge view":
     - radio "Home"
     - radio "All items" [checked]
@@ -40,7 +42,6 @@
   - button "Sources"
   - button "Reports"
   - button "Add knowledge"
-  - searchbox "Search knowledge"
   - status
   - text: # items # entities # relations semantic search off
   - heading "Knowledge base is empty" [level=#]

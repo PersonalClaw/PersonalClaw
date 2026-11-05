@@ -24,10 +24,10 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Good <time of day>, Alex" [level=#]
-  - button "New chat"
   - radiogroup "View":
     - radio "Overview" [checked]
     - radio "Attention"
+  - button "New chat"
   - heading "Tasks" [level=#]
   - paragraph: No tasks ready to work.
   - button "New task"

@@ -32,13 +32,9 @@
     - radio "Apps"
     - radio "Store"
   - heading "Tools" [level=#]
-  - button "Add tool server"
   - searchbox "Search tools"
-  - radiogroup "Filter by risk level":
-    - radio "All" [checked]
-    - radio "Safe"
-    - radio "Caution"
-    - radio "Destructive"
+  - 'button "Show: Any risk"'
+  - button "Add tool server"
   - button "More actions"
   - status
   - text: Tool groups · # groups, # tools

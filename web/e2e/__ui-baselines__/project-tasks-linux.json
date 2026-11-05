@@ -3,62 +3,47 @@
     "targets": {
       "320": [
         "button \"All projects\"",
-        "button \"Filter & sort\"",
         "button \"Filter by project “Garden”\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
-        "button \"View\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Tasks\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "390": [
         "button \"All projects\"",
-        "button \"Filter & sort\"",
         "button \"Filter by project “Garden”\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
-        "button \"View\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Tasks\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "412": [
         "button \"All projects\"",
-        "button \"Filter & sort\"",
         "button \"Filter by project “Garden”\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
-        "button \"View\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Tasks\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "768": [
         "button \"All projects\"",
-        "button \"Filter & sort\"",
         "button \"Filter by project “Garden”\"",
+        "button \"Garden: its overview\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
@@ -67,15 +52,11 @@
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Tasks\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"Garden\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ]
     }
@@ -84,62 +65,47 @@
     "targets": {
       "320": [
         "button \"All projects\"",
-        "button \"Filter & sort\"",
         "button \"Filter by project “Garden”\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
-        "button \"View\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Tasks\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "390": [
         "button \"All projects\"",
-        "button \"Filter & sort\"",
         "button \"Filter by project “Garden”\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
-        "button \"View\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Tasks\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "412": [
         "button \"All projects\"",
-        "button \"Filter & sort\"",
         "button \"Filter by project “Garden”\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
-        "button \"View\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Tasks\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "768": [
         "button \"All projects\"",
-        "button \"Filter & sort\"",
         "button \"Filter by project “Garden”\"",
+        "button \"Garden: its overview\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
@@ -148,15 +114,11 @@
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Tasks\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"Garden\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ]
     }

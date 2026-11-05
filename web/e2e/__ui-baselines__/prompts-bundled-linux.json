@@ -2,35 +2,27 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Filter & sort\"",
-        "button \"More actions\"",
         "button \"New prompt\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
-        "button[role=radio] \"User\"",
-        "input \"Search\""
+        "button[role=radio] \"User\""
       ],
       "390": [
-        "button \"Filter & sort\"",
         "button \"New prompt\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
-        "button[role=radio] \"User\"",
-        "input \"Search\""
+        "button[role=radio] \"User\""
       ],
       "412": [
-        "button \"Filter & sort\"",
         "button \"New prompt\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
-        "button[role=radio] \"User\"",
-        "input \"Search\""
+        "button[role=radio] \"User\""
       ],
       "768": [
-        "button \"Filter & sort\"",
         "button \"New prompt\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
@@ -42,8 +34,7 @@
         "button[role=radio] \"Store\"",
         "button[role=radio] \"System\"",
         "button[role=radio] \"Tools\"",
-        "button[role=radio] \"User\"",
-        "input \"Search\""
+        "button[role=radio] \"User\""
       ]
     },
     "known": {
@@ -55,35 +46,27 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Filter & sort\"",
-        "button \"More actions\"",
         "button \"New prompt\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
-        "button[role=radio] \"User\"",
-        "input \"Search\""
+        "button[role=radio] \"User\""
       ],
       "390": [
-        "button \"Filter & sort\"",
         "button \"New prompt\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
-        "button[role=radio] \"User\"",
-        "input \"Search\""
+        "button[role=radio] \"User\""
       ],
       "412": [
-        "button \"Filter & sort\"",
         "button \"New prompt\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
-        "button[role=radio] \"User\"",
-        "input \"Search\""
+        "button[role=radio] \"User\""
       ],
       "768": [
-        "button \"Filter & sort\"",
         "button \"New prompt\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
@@ -95,8 +78,7 @@
         "button[role=radio] \"Store\"",
         "button[role=radio] \"System\"",
         "button[role=radio] \"Tools\"",
-        "button[role=radio] \"User\"",
-        "input \"Search\""
+        "button[role=radio] \"User\""
       ]
     },
     "known": {

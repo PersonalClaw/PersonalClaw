@@ -32,9 +32,9 @@
     - radio "Apps"
     - radio "Store"
   - heading "Agents" [level=#]
-  - button "New agent"
   - searchbox "Search agents"
   - button "More actions"
+  - button "New agent"
   - status
   - text: Native # Built-ins run the platform — definition fixed, model swappable. Agents you create are fully editable.
   - button "PersonalClaw"

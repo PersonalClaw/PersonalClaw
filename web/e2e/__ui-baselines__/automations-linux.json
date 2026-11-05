@@ -2,40 +2,32 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Filter & sort\"",
         "button \"New trigger\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search triggers\""
+        "button[role=radio] \"Workflows\""
       ],
       "390": [
-        "button \"Filter & sort\"",
         "button \"New trigger\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search triggers\""
+        "button[role=radio] \"Workflows\""
       ],
       "412": [
-        "button \"Filter & sort\"",
         "button \"New trigger\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search triggers\""
+        "button[role=radio] \"Workflows\""
       ],
       "768": [
-        "button \"Filter & sort\"",
         "button \"New trigger\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search triggers\""
+        "button[role=radio] \"Workflows\""
       ]
     },
     "known": {
@@ -47,40 +39,32 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Filter & sort\"",
         "button \"New trigger\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search triggers\""
+        "button[role=radio] \"Workflows\""
       ],
       "390": [
-        "button \"Filter & sort\"",
         "button \"New trigger\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search triggers\""
+        "button[role=radio] \"Workflows\""
       ],
       "412": [
-        "button \"Filter & sort\"",
         "button \"New trigger\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search triggers\""
+        "button[role=radio] \"Workflows\""
       ],
       "768": [
-        "button \"Filter & sort\"",
         "button \"New trigger\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search triggers\""
+        "button[role=radio] \"Workflows\""
       ]
     },
     "known": {

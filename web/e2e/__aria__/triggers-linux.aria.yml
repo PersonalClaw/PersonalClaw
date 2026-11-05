@@ -27,12 +27,12 @@
     - radio "Automations" [checked]
     - radio "Workflows"
   - heading "Automations" [level=#]
-  - button "New trigger"
   - searchbox "Search triggers"
+  - 'button "Show: All triggers"'
   - radiogroup "Triggers view":
     - radio "List" [checked]
     - radio "Week"
-  - button "Filter & sort": Filter
+  - button "New trigger"
   - status
   - region "Not on a clock":
     - heading "Not on a clock" [level=#]

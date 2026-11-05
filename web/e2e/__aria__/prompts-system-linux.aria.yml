@@ -32,14 +32,14 @@
     - radio "Apps"
     - radio "Store"
   - heading "Prompts" [level=#]
+  - searchbox "Search prompts"
+  - button "Sorted by name"
   - radiogroup "Prompts view":
     - radio "User"
     - radio "<theme>" [checked]
     - radio "Bundled"
     - radio "Snippets"
   - button "New prompt"
-  - searchbox "Search"
-  - button "Filter & sort": Sorted by name
   - status
   - heading "No <theme> prompts" [level=#]
   - paragraph: <theme> prompts are bound to a use-case (chat / background / code / goal loop) and injected as the agent <theme> prompt. The prompts PersonalClaw ships for its own work are on the Bundled tab.

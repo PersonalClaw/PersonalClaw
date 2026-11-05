@@ -3,18 +3,15 @@
     "targets": {
       "320": [
         "button \"More actions\"",
-        "button \"New agent\"",
-        "input \"Search agents\""
+        "button \"New agent\""
       ],
       "390": [
         "button \"More actions\"",
-        "button \"New agent\"",
-        "input \"Search agents\""
+        "button \"New agent\""
       ],
       "412": [
         "button \"More actions\"",
-        "button \"New agent\"",
-        "input \"Search agents\""
+        "button \"New agent\""
       ],
       "768": [
         "button \"More actions\"",
@@ -25,8 +22,7 @@
         "button[role=radio] \"Prompts\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "input \"Search agents\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {
@@ -39,18 +35,15 @@
     "targets": {
       "320": [
         "button \"More actions\"",
-        "button \"New agent\"",
-        "input \"Search agents\""
+        "button \"New agent\""
       ],
       "390": [
         "button \"More actions\"",
-        "button \"New agent\"",
-        "input \"Search agents\""
+        "button \"New agent\""
       ],
       "412": [
         "button \"More actions\"",
-        "button \"New agent\"",
-        "input \"Search agents\""
+        "button \"New agent\""
       ],
       "768": [
         "button \"More actions\"",
@@ -61,8 +54,7 @@
         "button[role=radio] \"Prompts\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "input \"Search agents\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {

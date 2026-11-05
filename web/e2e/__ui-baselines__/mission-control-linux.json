@@ -9,12 +9,8 @@
         "button \"Deny Ship v#.#? — Workflow · release\"",
         "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
         "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Needs You\"",
         "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Recent and completed\"",
-        "button[role=radio] \"Running Now\"",
         "input \"Start something\""
       ],
       "390": [
@@ -25,12 +21,8 @@
         "button \"Deny Ship v#.#? — Workflow · release\"",
         "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
         "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Needs You\"",
         "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Recent and completed\"",
-        "button[role=radio] \"Running Now\"",
         "input \"Start something\""
       ],
       "412": [
@@ -41,12 +33,8 @@
         "button \"Deny Ship v#.#? — Workflow · release\"",
         "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
         "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Needs You\"",
         "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Recent and completed\"",
-        "button[role=radio] \"Running Now\"",
         "input \"Start something\""
       ],
       "768": [
@@ -57,12 +45,8 @@
         "button \"Deny Ship v#.#? — Workflow · release\"",
         "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
         "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Needs You\"",
         "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Recent and completed\"",
-        "button[role=radio] \"Running Now\"",
         "input \"Start something\""
       ]
     },
@@ -83,12 +67,8 @@
         "button \"Deny Ship v#.#? — Workflow · release\"",
         "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
         "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Needs You\"",
         "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Recent and completed\"",
-        "button[role=radio] \"Running Now\"",
         "input \"Start something\""
       ],
       "390": [
@@ -99,12 +79,8 @@
         "button \"Deny Ship v#.#? — Workflow · release\"",
         "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
         "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Needs You\"",
         "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Recent and completed\"",
-        "button[role=radio] \"Running Now\"",
         "input \"Start something\""
       ],
       "412": [
@@ -115,12 +91,8 @@
         "button \"Deny Ship v#.#? — Workflow · release\"",
         "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
         "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Needs You\"",
         "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Recent and completed\"",
-        "button[role=radio] \"Running Now\"",
         "input \"Start something\""
       ],
       "768": [
@@ -131,12 +103,8 @@
         "button \"Deny Ship v#.#? — Workflow · release\"",
         "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
         "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"All\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Needs You\"",
         "button[role=radio] \"Overview\"",
-        "button[role=radio] \"Recent and completed\"",
-        "button[role=radio] \"Running Now\"",
         "input \"Start something\""
       ]
     },

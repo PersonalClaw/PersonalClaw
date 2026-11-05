@@ -24,10 +24,10 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Inbox # open · # total" [level=#]
+  - 'button "Show: Open"'
   - button "Restart sources"
-  - button "Capture a note"
   - button "Inbox settings"
-  - button "Filter & sort": Show
+  - button "Capture a note"
   - status
   - text: Native source active — agents post here directly. Install an inbox app (Mail Inbox, Slack) to collect your mail and messages here.
   - heading "Morning triage" [level=#]

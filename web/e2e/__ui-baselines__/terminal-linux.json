@@ -3,21 +3,18 @@
     "targets": {
       "320": [
         "button \"Enable persistent sessions\"",
-        "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "390": [
         "button \"Enable persistent sessions\"",
-        "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "412": [
         "button \"Enable persistent sessions\"",
-        "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
@@ -31,7 +28,6 @@
     },
     "known": {
       "200% text zoom": [
-        "<div#root> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ]
     }
@@ -40,21 +36,18 @@
     "targets": {
       "320": [
         "button \"Enable persistent sessions\"",
-        "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "390": [
         "button \"Enable persistent sessions\"",
-        "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "412": [
         "button \"Enable persistent sessions\"",
-        "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
@@ -68,7 +61,6 @@
     },
     "known": {
       "200% text zoom": [
-        "<div#root> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ]
     }

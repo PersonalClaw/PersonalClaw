@@ -29,7 +29,6 @@
         "button[role=switch] \"Timestamps\"",
         "button[role=switch] \"Workflow engine\"",
         "button[role=switch] \"YOLO auto-approve all\"",
-        "input \"Search settings\"",
         "select \"Approval mode\""
       ],
       "390": [
@@ -60,7 +59,6 @@
         "button[role=switch] \"Timestamps\"",
         "button[role=switch] \"Workflow engine\"",
         "button[role=switch] \"YOLO auto-approve all\"",
-        "input \"Search settings\"",
         "select \"Approval mode\""
       ],
       "412": [
@@ -91,7 +89,6 @@
         "button[role=switch] \"Timestamps\"",
         "button[role=switch] \"Workflow engine\"",
         "button[role=switch] \"YOLO auto-approve all\"",
-        "input \"Search settings\"",
         "select \"Approval mode\""
       ],
       "768": [
@@ -122,17 +119,12 @@
         "button[role=switch] \"Timestamps\"",
         "button[role=switch] \"Workflow engine\"",
         "button[role=switch] \"YOLO auto-approve all\"",
-        "input \"Search settings\"",
         "select \"Approval mode\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
-      ],
-      "focus order": [
-        "focus moves backwards from <button .absolute.inset-#.z-#> \"Open Health settings\" to <button .absolute.inset-#.z-#> \"Open Secrets settings\"",
-        "focus moves backwards from <button .absolute.inset-#.z-#> \"Open Speech & Transcription settings\" to <button .absolute.inset-#.z-#> \"Open Models & Providers settings\""
       ]
     }
   },
@@ -166,7 +158,6 @@
         "button[role=switch] \"Timestamps\"",
         "button[role=switch] \"Workflow engine\"",
         "button[role=switch] \"YOLO auto-approve all\"",
-        "input \"Search settings\"",
         "select \"Approval mode\""
       ],
       "390": [
@@ -197,7 +188,6 @@
         "button[role=switch] \"Timestamps\"",
         "button[role=switch] \"Workflow engine\"",
         "button[role=switch] \"YOLO auto-approve all\"",
-        "input \"Search settings\"",
         "select \"Approval mode\""
       ],
       "412": [
@@ -228,7 +218,6 @@
         "button[role=switch] \"Timestamps\"",
         "button[role=switch] \"Workflow engine\"",
         "button[role=switch] \"YOLO auto-approve all\"",
-        "input \"Search settings\"",
         "select \"Approval mode\""
       ],
       "768": [
@@ -259,17 +248,12 @@
         "button[role=switch] \"Timestamps\"",
         "button[role=switch] \"Workflow engine\"",
         "button[role=switch] \"YOLO auto-approve all\"",
-        "input \"Search settings\"",
         "select \"Approval mode\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
-      ],
-      "focus order": [
-        "focus moves backwards from <button .absolute.inset-#.z-#> \"Open Health settings\" to <button .absolute.inset-#.z-#> \"Open Secrets settings\"",
-        "focus moves backwards from <button .absolute.inset-#.z-#> \"Open Speech & Transcription settings\" to <button .absolute.inset-#.z-#> \"Open Models & Providers settings\""
       ]
     }
   }

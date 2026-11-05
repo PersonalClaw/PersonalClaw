@@ -2,40 +2,32 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Filter & sort\"",
         "button \"New task\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "390": [
-        "button \"Filter & sort\"",
         "button \"New task\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "412": [
-        "button \"Filter & sort\"",
         "button \"New task\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "768": [
-        "button \"Filter & sort\"",
         "button \"New task\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ]
     },
     "known": {
@@ -47,40 +39,32 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Filter & sort\"",
         "button \"New task\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "390": [
-        "button \"Filter & sort\"",
         "button \"New task\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "412": [
-        "button \"Filter & sort\"",
         "button \"New task\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ],
       "768": [
-        "button \"Filter & sort\"",
         "button \"New task\"",
         "button[role=radio] \"Cards view\"",
         "button[role=radio] \"Dependency graph\"",
         "button[role=radio] \"Kanban board\"",
-        "button[role=radio] \"List view\"",
-        "input \"Search tasks\""
+        "button[role=radio] \"List view\""
       ]
     },
     "known": {

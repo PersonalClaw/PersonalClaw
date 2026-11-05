@@ -39,11 +39,9 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "390": [
         "button \"Actions for Artifacts Tools\"",
@@ -83,11 +81,9 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "412": [
         "button \"Actions for Artifacts Tools\"",
@@ -127,11 +123,9 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "768": [
         "button \"Actions for Artifacts Tools\"",
@@ -171,7 +165,6 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
@@ -181,18 +174,12 @@
         "button[role=radio] \"Prompts\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
-      ],
-      "focus order": [
-        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Calendar Tools\" to <button .absolute.inset-#.-z-#> \"Code Map — details\"",
-        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Inbox Operation Hook\" to <button .absolute.inset-#.-z-#> \"Inbox Tools — details\"",
-        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Native Agents\" to <button .absolute.inset-#.-z-#> \"Native Filesystem Prompts — details\""
       ]
     }
   },
@@ -236,11 +223,9 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "390": [
         "button \"Actions for Artifacts Tools\"",
@@ -280,11 +265,9 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "412": [
         "button \"Actions for Artifacts Tools\"",
@@ -324,11 +307,9 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "768": [
         "button \"Actions for Artifacts Tools\"",
@@ -368,7 +349,6 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
@@ -378,18 +358,12 @@
         "button[role=radio] \"Prompts\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
-      ],
-      "focus order": [
-        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Calendar Tools\" to <button .absolute.inset-#.-z-#> \"Code Map — details\"",
-        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Inbox Operation Hook\" to <button .absolute.inset-#.-z-#> \"Inbox Tools — details\"",
-        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Native Agents\" to <button .absolute.inset-#.-z-#> \"Native Filesystem Prompts — details\""
       ]
     }
   }

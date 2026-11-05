@@ -32,14 +32,14 @@
     - radio "Apps"
     - radio "Store"
   - heading "Prompts" [level=#]
+  - searchbox "Search prompts"
+  - button "Sorted by name"
   - radiogroup "Prompts view":
     - radio "User"
     - radio "<theme>"
     - radio "Bundled" [checked]
     - radio "Snippets"
   - button "New prompt"
-  - searchbox "Search"
-  - button "Filter & sort": Sorted by name
   - status
   - paragraph: Shipped with PersonalClaw and its apps, and run by them for their own work — agent <theme> prompts, titles, classifiers, judges. Editing one changes how that task behaves. They stay out of your chat prompt picker.
   - button "eval-judge"

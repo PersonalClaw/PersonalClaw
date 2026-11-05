@@ -7,8 +7,7 @@
         "button \"More actions\"",
         "button \"New project\"",
         "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input \"Search projects\""
+        "button[role=radio] \"Projects\""
       ],
       "390": [
         "button \"Import\"",
@@ -16,8 +15,7 @@
         "button \"More actions\"",
         "button \"New project\"",
         "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input \"Search projects\""
+        "button[role=radio] \"Projects\""
       ],
       "412": [
         "button \"Import\"",
@@ -25,16 +23,14 @@
         "button \"More actions\"",
         "button \"New project\"",
         "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input \"Search projects\""
+        "button[role=radio] \"Projects\""
       ],
       "768": [
         "button \"Import\"",
         "button \"Loops\"",
         "button \"New project\"",
         "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input \"Search projects\""
+        "button[role=radio] \"Projects\""
       ]
     },
     "known": {
@@ -52,8 +48,7 @@
         "button \"More actions\"",
         "button \"New project\"",
         "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input \"Search projects\""
+        "button[role=radio] \"Projects\""
       ],
       "390": [
         "button \"Import\"",
@@ -61,8 +56,7 @@
         "button \"More actions\"",
         "button \"New project\"",
         "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input \"Search projects\""
+        "button[role=radio] \"Projects\""
       ],
       "412": [
         "button \"Import\"",
@@ -70,16 +64,14 @@
         "button \"More actions\"",
         "button \"New project\"",
         "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input \"Search projects\""
+        "button[role=radio] \"Projects\""
       ],
       "768": [
         "button \"Import\"",
         "button \"Loops\"",
         "button \"New project\"",
         "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input \"Search projects\""
+        "button[role=radio] \"Projects\""
       ]
     },
     "known": {

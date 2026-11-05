@@ -2,28 +2,21 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Install\"",
-        "button \"More actions\"",
-        "input \"Search Store\""
+        "button \"More actions\""
       ],
       "390": [
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Install\"",
-        "button \"More actions\"",
-        "input \"Search Store\""
+        "button \"More actions\""
       ],
       "412": [
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Install\"",
-        "button \"More actions\"",
-        "input \"Search Store\""
+        "button \"More actions\""
       ],
       "768": [
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Install\"",
         "button \"More actions\"",
@@ -33,50 +26,34 @@
         "button[role=radio] \"Prompts\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "input \"Search Store\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#",
-        "<p> \"Anthropic Claude chat models (Messages A\" clips at #%: #x# in #x#",
-        "<p> \"Any Anthropic-compatible (Messages API) \" clips at #%: #x# in #x#",
-        "<p> \"DeepSeek chat + reasoner models (OpenAI-\" clips at #%: #x# in #x#",
-        "<p> \"Groq LPU inference (OpenAI-compatible), \" clips at #%: #x# in #x#",
-        "<p> \"Mistral AI models via its OpenAI-compati\" clips at #%: #x# in #x#",
-        "<p> \"OpenAI chat + embedding models (Chat Com\" clips at #%: #x# in #x#",
-        "<p> \"Slack workspace integration. Monitor cha\" clips at #%: #x# in #x#",
-        "<p> \"Text-to-speech using Piper neural voice \" clips at #%: #x# in #x#",
-        "<p> \"Together AI serverless inference (OpenAI\" clips at #%: #x# in #x#"
+        "<p> \"Connect OpenAI-compatible tool servers t\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Install\"",
-        "button \"More actions\"",
-        "input \"Search Store\""
+        "button \"More actions\""
       ],
       "390": [
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Install\"",
-        "button \"More actions\"",
-        "input \"Search Store\""
+        "button \"More actions\""
       ],
       "412": [
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Install\"",
-        "button \"More actions\"",
-        "input \"Search Store\""
+        "button \"More actions\""
       ],
       "768": [
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Install\"",
         "button \"More actions\"",
@@ -86,22 +63,13 @@
         "button[role=radio] \"Prompts\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "input \"Search Store\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#",
-        "<p> \"Anthropic Claude chat models (Messages A\" clips at #%: #x# in #x#",
-        "<p> \"Any Anthropic-compatible (Messages API) \" clips at #%: #x# in #x#",
-        "<p> \"DeepSeek chat + reasoner models (OpenAI-\" clips at #%: #x# in #x#",
-        "<p> \"Groq LPU inference (OpenAI-compatible), \" clips at #%: #x# in #x#",
-        "<p> \"Mistral AI models via its OpenAI-compati\" clips at #%: #x# in #x#",
-        "<p> \"OpenAI chat + embedding models (Chat Com\" clips at #%: #x# in #x#",
-        "<p> \"Slack workspace integration. Monitor cha\" clips at #%: #x# in #x#",
-        "<p> \"Text-to-speech using Piper neural voice \" clips at #%: #x# in #x#",
-        "<p> \"Together AI serverless inference (OpenAI\" clips at #%: #x# in #x#"
+        "<p> \"Connect OpenAI-compatible tool servers t\" clips at #%: #x# in #x#"
       ]
     }
   }

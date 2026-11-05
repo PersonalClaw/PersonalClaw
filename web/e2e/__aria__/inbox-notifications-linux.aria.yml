@@ -24,9 +24,9 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Inbox # unread · # notifications" [level=#]
-  - button "Mark all read"
+  - 'button "Show: Notifications"'
   - button "Clear all"
-  - button "Filter & sort": Show #
+  - button "Mark all read"
   - status
   - text: Today
   - button "Weekly backup finished"

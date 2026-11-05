@@ -27,11 +27,11 @@
     - radio "Automations"
     - radio "Workflows" [checked]
   - heading "Workflows" [level=#]
+  - searchbox "Search workflows"
   - radiogroup "Workflows view":
     - radio "Runs" [checked]
     - radio "Definitions"
   - button "Start from template"
-  - searchbox "Search workflows"
   - status
   - heading "No workflow runs yet" [level=#]
   - paragraph: A run is one execution of a workflow — every step, its output, and where it stopped. Pick a starting point and the next screen asks for what it needs.

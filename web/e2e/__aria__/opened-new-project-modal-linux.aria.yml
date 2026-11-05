@@ -24,6 +24,7 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Projects" [level=#]
+  - button "Search projects"
   - radiogroup "View":
     - radio "Projects" [checked]
     - radio "Chats by project"
@@ -31,7 +32,6 @@
   - button "Loops"
   - button "Import"
   - button "New project"
-  - searchbox "Search projects"
   - status
   - button "Personal"
   - text: Personal Built-in no workspace · # lists

@@ -38,8 +38,7 @@
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "button[role=radio] \"Workflows\""
       ],
       "390": [
         "button \"Run audit-sweep\"",
@@ -78,8 +77,7 @@
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "button[role=radio] \"Workflows\""
       ],
       "412": [
         "button \"Run audit-sweep\"",
@@ -118,8 +116,7 @@
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "button[role=radio] \"Workflows\""
       ],
       "768": [
         "button \"Run audit-sweep\"",
@@ -158,8 +155,7 @@
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "button[role=radio] \"Workflows\""
       ]
     },
     "known": {
@@ -207,8 +203,7 @@
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "button[role=radio] \"Workflows\""
       ],
       "390": [
         "button \"Run audit-sweep\"",
@@ -247,8 +242,7 @@
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "button[role=radio] \"Workflows\""
       ],
       "412": [
         "button \"Run audit-sweep\"",
@@ -287,8 +281,7 @@
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "button[role=radio] \"Workflows\""
       ],
       "768": [
         "button \"Run audit-sweep\"",
@@ -327,8 +320,7 @@
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
-        "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "button[role=radio] \"Workflows\""
       ]
     },
     "known": {
