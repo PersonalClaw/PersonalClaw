@@ -106,7 +106,7 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right', classN
  *  and the header's `HeaderFilter`, so the two are one menu. */
 export function FilterSections({ sections, close }: { sections: FilterSectionDef[]; close: () => void }) {
   return (
-    <div className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto">
+    <div className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto overscroll-contain">
       {sections.map((s) => (
         <Section key={s.title} title={s.title}
           onClear={s.value !== s.defaultKey ? () => s.onChange(s.defaultKey) : undefined}>

@@ -22,7 +22,8 @@ const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:no
  *  Pass ``portal`` when the trigger lives inside an overflow-clipping container
  *  (e.g. a scrolling kanban column): the flyout renders into document.body with
  *  position:fixed, anchored to the trigger's rect, viewport-clamped, and closes
- *  on any scroll (the fixed menu would drift off its anchor otherwise) — mirrors
+ *  on a scroll outside it (the fixed menu would drift off its anchor otherwise; a
+ *  scroll inside it, through its own long list, keeps it open) — mirrors
  *  ui/motion/ContextMenu. Default off so existing consumers are untouched. With
  *  ``followWhileTyping`` it follows its trigger instead while a text field in it
  *  has focus (the narrow header search).
@@ -59,7 +60,7 @@ export function Popover({
   portal?: boolean
   /** With `portal`: while a text field in the flyout has focus, a scroll follows the trigger
    *  instead of closing it. For a flyout someone types into (the narrow header search); every
-   *  other portaled flyout closes on any scroll. */
+   *  other portaled flyout closes on a scroll outside it. */
   followWhileTyping?: boolean
   /** Extra classes on the wrapper, e.g. `flex min-w-0` so a trigger in a tight row can shrink. */
   className?: string
@@ -99,15 +100,17 @@ export function Popover({
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onEsc)
     // Portaled mode: the menu is position:fixed while its anchor scrolls with the
-    // container — close on ANY scroll (capture) so it never drifts off its trigger. Except, with
-    // `followWhileTyping` (the narrow header search), while a text field in it has focus: then a
-    // scroll inside the flyout moves nothing it is anchored to, and one elsewhere moves it with its
-    // trigger, so it does not close under the reader's typing.
+    // container — close on a scroll OUTSIDE it (capture) so it never drifts off its trigger. A
+    // scroll inside the flyout moves nothing it is anchored to, so it stays: a header filter's long
+    // sections scroll in a capped box, and closing on their own scroll left their last rows out of
+    // reach. With `followWhileTyping` (the narrow header search), while a text field in it has
+    // focus, a scroll elsewhere moves it with its trigger instead, so it does not close under the
+    // reader's typing.
     const onScroll = (e: Event) => {
       const menu = menuRef.current
+      if (menu && e.target instanceof Node && menu.contains(e.target)) return
       const typing = followWhileTyping && menu && document.activeElement instanceof HTMLInputElement
         && menu.contains(document.activeElement)
-      if (typing && e.target instanceof Node && menu.contains(e.target)) return
       if (typing) {
         setAnchor(ref.current?.getBoundingClientRect() ?? null)
         return

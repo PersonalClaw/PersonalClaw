@@ -579,7 +579,7 @@ function SessionOrgMenu({ s, folders, tags, orgLoadFailed, onSetFolder, onToggle
           off-screen for cards near the top of the list). portal: the menu is
           used inside overflow-clipping containers (board columns, the list
           scroller) — inline absolute positioning gets CLIPPED at their edges;
-          the body portal escapes them (and closes on scroll, see Popover). */}
+          the body portal escapes them (and closes on a scroll outside it, see Popover). */}
       {/* A menu trigger: `Popover` renders `trigger(open, toggle)` and adds no ARIA of its own, so the
           caller owns it — `FilterMenu`, `HeaderActions` and the composer's controls all pass
           `aria-expanded={open}` on their own raw buttons. This one could not until the primitive learned

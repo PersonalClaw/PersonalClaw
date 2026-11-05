@@ -9,9 +9,11 @@ import { Popover } from './Popover'
 // closed it. The narrow header search is one: at 390 px its field opens in a flyout, and a page
 // that scrolled under it (a list reflowing to the query, a momentum scroll) closed the field
 // mid-query, with focus left on nothing. Asked to (`followWhileTyping`, which the header search
-// passes), a flyout whose text field holds focus follows its trigger, a scroll inside it is its own,
-// and a scroll with the reader elsewhere still closes it. Every other portaled flyout closes on any
-// scroll, as it did: opening one puts focus in it, so following focus alone kept them all open.
+// passes), a flyout whose text field holds focus follows its trigger, and a scroll with the reader
+// elsewhere still closes it. Every other portaled flyout closes on a scroll outside it, as it did:
+// opening one puts focus in it, so following focus alone kept them all open. A scroll inside any
+// flyout is its own and keeps it open: a header filter's long sections scroll in a capped box, and
+// closing on their own scroll left their last rows out of reach.
 
 function Search({ follows = true }: { follows?: boolean }) {
   return (
@@ -43,7 +45,14 @@ describe('a portaled flyout and a scroll', () => {
     expect(isOpen()).toBe(true)
   })
 
-  it('a flyout not typed into closes on any scroll, focus in it or not', () => {
+  it('a flyout not asked to follow keeps open through a scroll inside it', () => {
+    render(<Search follows={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    scroll(screen.getByTestId('flyout'))
+    expect(isOpen()).toBe(true)
+  })
+
+  it('a flyout not asked to follow closes on a scroll outside it, focus in it or not', () => {
     render(<Search follows={false} />)
     fireEvent.click(screen.getByRole('button', { name: 'Search' }))
     screen.getByRole('textbox', { name: 'Query' }).focus()
