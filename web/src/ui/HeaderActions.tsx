@@ -22,8 +22,9 @@ import { TOP_BAR_BAND, useStackBelowCorners } from './TopBar'
  *
  *  The container measures each tier's natural width via offscreen `aria-hidden`
  *  probes + a `ResizeObserver`, then picks the richest tier that fits. In OVERFLOW
- *  it greedily keeps the highest-`priority` controls visible (icon-only) and pushes
- *  the remainder — lowest priority first — into an internal auto-`…` menu. No page
+ *  it keeps the held controls (`heldInRow`: the primary action, and what has no menu-row form)
+ *  and greedily the highest-`priority` others visible (icon-only), and pushes the remainder,
+ *  lowest priority first, into an internal auto-`…` menu. No page
  *  hand-builds a header overflow menu anymore; it falls out of the same child list.
  *
  *  Because the cluster narrows as it sheds tiers, the TopBar's flexing `left` slot
@@ -231,6 +232,17 @@ export function clusterFloor(
   return Math.min(iconTier, neverOverflow + (overflowable ? dots : 0))
 }
 
+/** Whether a control holds its place in the row at every width: a `neverOverflow` one (it has no
+ *  menu-row form), and the primary action, which is the reason the page has a header. At 390 px the
+ *  Inbox's Capture a note, notifications' Mark all read and a project's New fell into the `…` while
+ *  the filter stayed, and the project's empty state said "use New above" to a header without it.
+ *  A primary that always lives in the `…` (`inOverflow`) or has no icon form is not held. Held
+ *  controls count in the cluster's floor, so where they cannot fit beside a legible title the row
+ *  stacks below the shell corners instead of dropping one. */
+export function heldInRow(r: { priority: Priority; canIcon: boolean; neverOverflow?: boolean; inOverflow?: boolean }): boolean {
+  return !!r.neverOverflow || (r.priority === 'primary' && r.canIcon && !r.inOverflow)
+}
+
 /** Whether the header's row has to move BELOW the shell corners: the band between them cannot
  *  hold, side by side, what the title slot cannot shed plus a legible title, and the cluster's
  *  floor. At 320px that band is 85px and at 390px 155px, and the chat's floor alone is 140px. */
@@ -378,13 +390,13 @@ export function HeaderActions({ children, className, overflowClassName }: {
         const i = domIds.indexOf(id)
         return (iconEls[i]?.offsetWidth ?? 40) + GAP
       }
-      // `neverOverflow` children (e.g. a Segmented mode-slider) can't live in the `…` menu, so
-      // their icon-only width is the rail's FLOOR (see the cap below) — and, with the `…`, the
-      // narrowest this cluster can ever get.
+      // Held children (`heldInRow`: a Segmented mode-slider, the primary action) never go into the
+      // `…` menu, so their icon-only width is the rail's FLOOR (see the cap below) — and, with the
+      // `…`, the narrowest this cluster can ever get.
       let floorW = 0
       let overflowable = false
       for (const r of regs.current.values()) {
-        if (r.neverOverflow) floorW += iconW(r.id)
+        if (heldInRow(r)) floorW += iconW(r.id)
         else overflowable = true
       }
       const floor = clusterFloor({ iconTier: wIcon + dots, neverOverflow: floorW, overflowable, dots: DOTS })
@@ -424,11 +436,11 @@ export function HeaderActions({ children, className, overflowClassName }: {
         .map((r, domOrder) => ({ r, domOrder }))
         .sort((a, b) => PRIORITY_RANK[a.r.priority] - PRIORITY_RANK[b.r.priority] || a.domOrder - b.domOrder)
       const keep = new Set<number>()
-      // `neverOverflow` children always stay visible: their icon-only width (`floorW`,
-      // totalled above) is reserved up front.
+      // Held children always stay visible: their icon-only width (`floorW`, totalled above) is
+      // reserved up front.
       let used = DOTS + floorW
       for (const r of regs.current.values()) {
-        if (r.neverOverflow) keep.add(r.id)
+        if (heldInRow(r)) keep.add(r.id)
       }
       for (const { r } of ordered) {
         if (keep.has(r.id) || r.inOverflow) continue
@@ -561,7 +573,7 @@ function sameSet(a: Set<number> | null, b: Set<number>): boolean {
 }
 
 /** The internal `…` menu the container owns — the collapsed tail of the cluster. */
-function HeaderOverflow({ actions, className }: { actions: (OverflowRow & { id: number; rows?: OverflowRow[] })[]; className?: string }) {
+export function HeaderOverflow({ actions, className }: { actions: (OverflowRow & { id: number; rows?: OverflowRow[] })[]; className?: string }) {
   return (
     <Popover align="right" width={220} placement="bottom"
       trigger={(open, toggle) => (
@@ -577,20 +589,29 @@ function HeaderOverflow({ actions, className }: { actions: (OverflowRow & { id: 
       )}>
       {(close) => (
         <div className="flex flex-col gap-0.5">
-          {/* A control with a menu of its own lists its rows here, under its name, since a row
-              cannot open a second menu. */}
-          {actions.flatMap((a) => (a.rows ?? [a]).map((r, i) => ({ ...r, key: `${a.id}:${i}` }))).map((a) => (
-            <div key={a.key} className={a.danger ? '[&_button]:text-danger' : ''}>
-              {/* A row that cannot act stays, dimmed, says why under its name (the whole reason in
-                  its tooltip) and leaves the menu open when chosen, so its action is not lost. */}
-              <MenuRow icon={a.icon ? <a.icon size={16} /> : undefined} label={a.label} hint={a.hint}
-                nameIsLabel={a.disabled && !!a.hint} title={a.disabled ? a.hint : undefined}
-                disabled={a.disabled} onClick={() => { if (a.disabled) return; a.onSelect?.(); close() }} />
+          {actions.map((a) => a.rows ? (
+            // A control with a menu of its own lists its rows here, under its name as a heading,
+            // since a row cannot open a second menu. The group carries the name for a screen reader.
+            <div key={a.id} role="group" aria-label={a.label} className="flex flex-col gap-0.5">
+              <div aria-hidden data-type="caption" className="px-m pb-0.5 pt-1.5 uppercase tracking-wide text-on-surface-low">{a.label}</div>
+              {a.rows.map((r, i) => <OverflowItem key={i} row={r} close={close} />)}
             </div>
-          ))}
+          ) : <OverflowItem key={a.id} row={a} close={close} />)}
         </div>
       )}
     </Popover>
+  )
+}
+
+/** One row of the `…` menu. A row that cannot act stays, dimmed, says why under its name (the
+ *  whole reason in its tooltip) and leaves the menu open when chosen, so its action is not lost. */
+function OverflowItem({ row: a, close }: { row: OverflowRow; close: () => void }) {
+  return (
+    <div className={a.danger ? '[&_button]:text-danger' : ''}>
+      <MenuRow icon={a.icon ? <a.icon size={16} /> : undefined} label={a.label} hint={a.hint}
+        nameIsLabel={a.disabled && !!a.hint} title={a.disabled ? a.hint : undefined}
+        disabled={a.disabled} onClick={() => { if (a.disabled) return; a.onSelect?.(); close() }} />
+    </div>
   )
 }
 

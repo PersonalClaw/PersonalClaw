@@ -134,11 +134,14 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
             it shows/hides the gutter rail on a pointer device and opens/closes the drawer on
             the mobile form, so there is never a second name for "show me the map".
             `ariaExpanded`, not `active`: this is a disclosure, not an on/off setting.
-            `priority="primary"` because on the mobile form this control IS the in-session
-            navigation — shedding it into the overflow `…` menu is exactly the "mobile loses
-            session nav" outcome this must prevent. */}
+            Not `priority="primary"`: a primary is held in the row at every width
+            (`HeaderActions`' `heldInRow`), and at 390 px the title, this control and the `…`
+            cannot share the band between the shell corners, so a started chat's header stacked
+            to two rows. It sheds with the other openers instead, and on a phone it is a row of
+            the `…`: in the row or in the `…`, the map is never out of reach, which is what the
+            mobile form must keep (`e2e/sessionMap.spec.ts`). */}
         {started && (
-          <HeaderControl icon={ListTree} label="Session map" priority="primary"
+          <HeaderControl icon={ListTree} label="Session map"
             ariaExpanded={mapOpen} onClick={() => setMapOpen(!mapOpen)} />
         )}
         {/* Activity is a disclosure too: it shows and hides the Activity pane, so it keeps

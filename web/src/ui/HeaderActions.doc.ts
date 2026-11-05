@@ -40,7 +40,7 @@ const docs: UiDoc[] = [
       { name: 'disabled', description: 'Dim + block interaction.' },
       { name: 'disabledReason', description: "Why it is unavailable. Given one, a disabled control stays reachable: aria-disabled with the reason in its tooltip (Button's rule), and the reason as the … menu row's hint." },
       { name: 'danger', description: 'Style as destructive (also flags the overflow menu row).' },
-      { name: 'priority', description: "OVERFLOW shedding order: 'primary' stays visible longest, 'low' sheds first." },
+      { name: 'priority', description: "OVERFLOW shedding order: 'low' sheds first. 'primary' never sheds: it stays in the row, icon-only, and counts in the cluster's floor, so a row with no room for it stacks below the shell corners instead." },
       { name: 'hint', description: 'Secondary hint text shown on the overflow menu row.' },
       { name: 'className', description: 'Extra classes (tokens only).' },
       { name: 'inOverflow', description: 'Always a row of the … menu, at every tier, never a button on the row: an action kept one click away without spending a slot (a thread\'s Save as starter). Its presence keeps the … on the row.' },
@@ -68,6 +68,19 @@ const docs: UiDoc[] = [
       { guidance: true, description: 'Use for a few actions of one kind that would otherwise each take a header slot.' },
     ],
     anatomy: ['tier-aware trigger button', 'portaled Popover with a role=menu of rows'],
+  },
+  {
+    name: 'HeaderOverflow',
+    keywords: ['header', 'overflow', 'more', 'menu'],
+    description: "The cluster's own … menu: the rows of the controls the row shed or always keeps there. A control with a menu of its own (HeaderMenu) lists its rows under its name, as a heading that names the group. HeaderActions draws it; a page never does.",
+    props: [
+      { name: 'actions', description: 'The shed controls, in the row\'s order: a row each, or a named group of rows for a menu.' },
+      { name: 'className', description: "Added to the … button, e.g. the compact widths' 44 px hit box." },
+    ],
+    bestPractices: [
+      { guidance: false, description: 'Do not draw it in a page: put the control in HeaderActions, and the cluster sheds it here.' },
+    ],
+    anatomy: ['the … button', 'Popover of rows and named groups'],
   },
   {
     name: 'HeaderSegmented',

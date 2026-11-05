@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { titleFloor, titleReserveFor, railCeiling, clusterFloor, stackBelowCorners, pickTier, TITLE_MIN } from './HeaderActions'
+import { titleFloor, titleReserveFor, railCeiling, clusterFloor, stackBelowCorners, pickTier, heldInRow, TITLE_MIN } from './HeaderActions'
 
 // ── An EMPTY title slot is owed nothing ──────────────────────────────────────
 //
@@ -140,6 +140,31 @@ describe('clusterFloor', () => {
     expect(clusterFloor({ iconTier: 88, neverOverflow: 0, overflowable: true, dots: 44 })).toBe(44)
     // One never-overflow strip and nothing else: no `…` is ever drawn.
     expect(clusterFloor({ iconTier: 142, neverOverflow: 150, overflowable: false, dots: 44 })).toBe(142)
+  })
+})
+
+describe('heldInRow — what never falls into the `…`', () => {
+  it('holds the primary action, as it holds a control with no menu-row form', () => {
+    // At 390 px the Inbox's Capture a note fell into the `…` while the filter stayed.
+    expect(heldInRow({ priority: 'primary', canIcon: true })).toBe(true)
+    expect(heldInRow({ priority: 'default', canIcon: true, neverOverflow: true })).toBe(true)
+  })
+
+  it('but not a primary that always lives in the `…`, or has no icon to stand as', () => {
+    expect(heldInRow({ priority: 'primary', canIcon: true, inOverflow: true })).toBe(false)
+    expect(heldInRow({ priority: 'primary', canIcon: false })).toBe(false)
+  })
+
+  it('and nothing else', () => {
+    expect(heldInRow({ priority: 'default', canIcon: true })).toBe(false)
+    expect(heldInRow({ priority: 'low', canIcon: true })).toBe(false)
+  })
+
+  it('so a held primary counts in the floor, and a row too wide for the band stacks', () => {
+    // The Inbox at 390: the filter (48) and Capture a note (48), with the `…` (44).
+    const floor = clusterFloor({ iconTier: 236, neverOverflow: 96, overflowable: true, dots: 44 })
+    expect(floor).toBe(140)
+    expect(stackBelowCorners({ band: 155, hasContent: true, minWidth: 0, naturalWidth: 40, floor })).toBe(true)
   })
 })
 
