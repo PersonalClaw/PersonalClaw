@@ -892,11 +892,11 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
     // Where you are, as a breadcrumb: the project's name, back to its Overview, then Tasks. A
     // project's Overview and Tasks are two pages of it, so the way between them is navigation, and
     // the header's one view switch stays the task list's layout, as on All tasks.
-    // Where the row is tight, the name gives up its width first and "› Tasks" stays whole, so the
-    // heading always says which page this is; the name truncates, and its tooltip and link keep
-    // it. "› Tasks" is marked as a part the title cannot shed (`data-title-keep`), so the header
-    // counts it in the slot's minimum (`slotWidths`) and leaves the name the title's floor beside
-    // it, where it measured 0 px. Below 1024 px the folder glyph goes, for the name.
+    // "› Tasks" is marked as a part the title cannot shed (`data-title-keep`): the header counts it
+    // in the slot's minimum (`slotWidths`) and keeps it whole, so the heading says which page this
+    // is, and the name gets what the row leaves (it truncates; its tooltip and link keep it). Only
+    // where the row at its narrowest cannot fit beside it (320 px) does it clip, before a control
+    // would. Below 1024 px the folder glyph goes, for the name.
     const crumb = (
       <div className="flex min-w-0 items-center gap-2">
         <FolderKanban size={18} className="shrink-0 text-primary max-lg:hidden" />

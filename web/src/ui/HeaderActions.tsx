@@ -74,6 +74,9 @@ interface ChildReg {
   menu: OverflowRow & { rows?: OverflowRow[] }
   /** The page's primary action (`isThePrimary`): drawn after the `…`, outside the rail. */
   trailing?: boolean
+  /** How narrow this member gets folded (a view switch's pill), where that is narrower than its
+   *  icon form. Only the title's kept part reads it (`titleReserveFor`'s `keptFloor`). */
+  foldsTo?: number
 }
 
 /** One row of the `…` menu. A control that opens a menu of its own (`HeaderMenu`) lists its rows
@@ -167,7 +170,7 @@ export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; t
     return () => ctx.unregister(id)
     // Re-register when the descriptor's identity-bearing fields change so the
     // container's overflow math + menu labels stay correct.
-  }, [ctx, id, reg.priority, reg.canIcon, reg.inOverflow, reg.trailing, reg.menu.label, reg.menu.danger, reg.menu.hint, reg.menu.disabled,
+  }, [ctx, id, reg.priority, reg.canIcon, reg.inOverflow, reg.trailing, reg.foldsTo, reg.menu.label, reg.menu.danger, reg.menu.hint, reg.menu.disabled,
     reg.menu.rows?.map((r) => `${r.label}\u0000${r.hint ?? ''}`).join('\u0001')])
   if (!ctx) return { visible: !reg.inOverflow, tier: 'full', mark: (node) => node, id }
   const visible = !reg.inOverflow && (ctx.tier !== 'overflow' || !ctx.visibleIds || ctx.visibleIds.has(id))
@@ -217,6 +220,9 @@ export const GAP_TO_TITLE = 16
 /** The narrowest a title may get and still be read — `titleFloor`'s own lower clamp. */
 export const TITLE_MIN = 48
 
+/** A view switch folded to its pill at the compact widths: `TOUCH_TARGET`'s 44 px box. */
+const FOLDED_PILL = 44
+
 /** What the title slot is ACTUALLY owed: nothing when it holds no visible content; otherwise
  *  what it cannot shed (`minWidth`) plus the title's floor, never more than its natural width —
  *  and when the cluster's own floor (`floor`) would not fit beside that, the title yields
@@ -240,17 +246,30 @@ export const TITLE_MIN = 48
  *  claim the rest, and the slot painted under it: measured on `0b487d9c7`, the back button under
  *  the Task pill at 320/390px and the title squeezed to 0px at every width up to 1440. */
 export function titleReserveFor(
-  { hasContent, naturalWidth, inner, minWidth = 0, floor = 0 }: {
+  { hasContent, naturalWidth, inner, minWidth = 0, hardWidth = minWidth, floor = 0, keptFloor = floor }: {
     hasContent: boolean; naturalWidth: number; inner: number
     /** The slot's width with everything shrinkable shrunk: what it cannot shed. */
     minWidth?: number
+    /** The part of `minWidth` that overlaps the row when squeezed (a control, the slot's own
+     *  padding), not a kept part of the heading's text, which the bar clips: `slotWidths`' `hard`. */
+    hardWidth?: number
     /** The cluster's narrowest usable width (see `clusterFloor`). */
     floor?: number
+    /** The cluster's floor with each member at its narrowest, a view switch folded to its pill
+     *  (`foldsTo`). The kept part yields to this one only. */
+    keptFloor?: number
   },
 ): number {
   if (!hasContent) return 0
   const owed = Math.min(naturalWidth, minWidth + titleFloor(inner))
-  return Math.max(Math.min(owed, inner - GAP_TO_TITLE - floor), Math.min(naturalWidth, minWidth))
+  // A kept part of the heading's text ("› Tasks") clips before a control does: where the row at
+  // its narrowest cannot fit beside it, the title yields as far as the row needs, down to what
+  // would overlap the row. At 320 px a project's Tasks clipped its view switch by 13 px for it.
+  // It yields to the row's narrowest form, not to its floor: that counts a view switch unfolded,
+  // which fits by taking the title, and at 390 px the switch unfolded and left the title 12 px.
+  const room = inner - GAP_TO_TITLE - keptFloor
+  const kept = room >= minWidth ? minWidth : Math.max(hardWidth, room)
+  return Math.max(Math.min(owed, inner - GAP_TO_TITLE - floor), Math.min(naturalWidth, kept))
 }
 
 /** The richest tier whose row fits in `avail`. A down-step fires as soon as the current tier no
@@ -347,13 +366,14 @@ export function stackBelowCorners(
 
 /** A slot's narrowest and natural widths, read without either state ever painting.
  *
- *  Forced to zero width, its `scrollWidth` is what it cannot shed — every `shrink-0` control and
- *  gap, a truncating title's own padding — while a group that clips (the knowledge breadcrumb's
- *  `overflow-hidden` trail) counts as the zero it degrades to. At `max-content` it is what the slot
+ *  Forced to zero width, its `scrollWidth` is what would overlap the row if squeezed (`hard`) —
+ *  every `shrink-0` control and gap, a truncating title's own padding — while a group that clips
+ *  (the knowledge breadcrumb's `overflow-hidden` trail) counts as the zero it degrades to. `min`
+ *  adds the kept parts of the heading, which the bar clips. At `max-content` it is what the slot
  *  would like, and a child with a box says whether it holds anything at all. Both reads happen in
  *  one synchronous block and the inline style is put back before the browser can render, so
  *  neither state is ever seen, and the ResizeObserver never observes a size it did not end on. */
-export function slotWidths(slot: HTMLElement): { min: number; natural: number; hasContent: boolean } {
+export function slotWidths(slot: HTMLElement): { min: number; hard: number; natural: number; hasContent: boolean } {
   const { width, flex, maxWidth } = slot.style
   slot.style.flex = '0 0 auto'
   slot.style.maxWidth = 'none'
@@ -361,9 +381,18 @@ export function slotWidths(slot: HTMLElement): { min: number; natural: number; h
   // A part of the title marked as one it cannot shed (`data-title-keep`: a breadcrumb's
   // "› Tasks") counts too. The bar clips every `[data-type]` descendant (`TopBar`'s
   // truncation), so a `shrink-0` part inside the heading added nothing to the slot's shrunk
-  // width, and the row took its room: at 390 px a project's Tasks read a lone "›".
-  const kept = [...slot.querySelectorAll<HTMLElement>('[data-title-keep]')].reduce((w, el) => w + el.scrollWidth, 0)
-  const min = Math.max(slot.scrollWidth, kept)
+  // width, and the row took its room: at 390 px a project's Tasks read a lone "›". What the
+  // heading clips is added, not compared: the slot's own width holds the heading's clipped box
+  // and none of what overflows it. That overflow is the kept part with the gap before it, so the
+  // gap is counted too. A heading that does not clip has its overflow in the slot's width already.
+  const hard = slot.scrollWidth
+  const clipping = new Set<HTMLElement>()
+  for (const el of slot.querySelectorAll<HTMLElement>('[data-title-keep]')) {
+    const heading = el.parentElement?.closest<HTMLElement>('[data-type]')
+    if (heading && slot.contains(heading) && getComputedStyle(heading).overflowX !== 'visible') clipping.add(heading)
+  }
+  const kept = [...clipping].reduce((w, el) => w + Math.max(0, el.scrollWidth - el.clientWidth), 0)
+  const min = hard + kept
   slot.style.width = 'max-content'
   const natural = slot.scrollWidth
   const hasContent = Array.from(slot.children).some((c) => {
@@ -373,7 +402,7 @@ export function slotWidths(slot: HTMLElement): { min: number; natural: number; h
   slot.style.width = width
   slot.style.flex = flex
   slot.style.maxWidth = maxWidth
-  return { min, natural, hasContent }
+  return { min, hard, natural, hasContent }
 }
 
 /** The rail's hard ceiling: the inner box minus the `…` slot minus whatever the title is owed.
@@ -503,18 +532,22 @@ export function HeaderActions({ children, className, overflowClassName }: {
       // `…` menu, so their icon-only width is the rail's FLOOR (see the cap below) — and, with the
       // `…`, the narrowest this cluster can ever get.
       let floorW = 0
+      let foldedW = 0
       let overflowable = false
       for (const r of regs.current.values()) {
-        if (heldInRow(r)) floorW += iconW(r.id)
-        else overflowable = true
+        if (heldInRow(r)) {
+          floorW += iconW(r.id)
+          foldedW += r.foldsTo === undefined ? iconW(r.id) : Math.min(iconW(r.id), r.foldsTo + GAP)
+        } else overflowable = true
       }
       const floor = clusterFloor({ iconTier: wIcon + dots, neverOverflow: floorW, overflowable, dots: DOTS })
+      const keptFloor = clusterFloor({ iconTier: wIcon + dots, neverOverflow: foldedW, overflowable, dots: DOTS })
 
       // The title slot: what it cannot shed, what it would like, and whether it holds anything
       // (an empty slot still reports its own padding) — the one reading both halves of the width
       // split below use, so they cannot disagree about what the title is owed.
       const left = header?.querySelector<HTMLElement>('[data-header-left]')
-      const slot = left ? slotWidths(left) : { min: 0, natural: 0, hasContent: false }
+      const slot = left ? slotWidths(left) : { min: 0, hard: 0, natural: 0, hasContent: false }
       const band = header ? bandBox(header) : null
       if (band !== null) {
         stackRef.current?.(stackBelowCorners({
@@ -523,7 +556,7 @@ export function HeaderActions({ children, className, overflowClassName }: {
       }
       const inner = header ? innerBox(header) : outer.clientWidth
       const reserve = header
-        ? titleReserveFor({ hasContent: slot.hasContent, naturalWidth: slot.natural, minWidth: slot.min, inner, floor })
+        ? titleReserveFor({ hasContent: slot.hasContent, naturalWidth: slot.natural, minWidth: slot.min, hardWidth: slot.hard, inner, floor, keptFloor })
         : 0
       // The title needs its reserve; give the cluster the rest. On narrow headers the floor
       // shrinks so the cluster keeps usable width.
@@ -1023,6 +1056,8 @@ export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled 
     priority: 'primary',
     canIcon,
     neverOverflow: true,
+    // Folded, an icon switch is its 44 px pill (below); a label switch's pill is its active label.
+    foldsTo: canIcon ? FOLDED_PILL : undefined,
     menu: { label: ariaLabel ?? 'Options' }, // unused (neverOverflow) but required by the type
   })
   // The view switch is the row's widest member, so it gives up its labels first: icon-only from

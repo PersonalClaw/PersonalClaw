@@ -123,6 +123,26 @@ describe('titleReserveFor — the slot keeps what it cannot shed', () => {
     expect(titleReserveFor({ ...CHAT, inner: 200, floor: 140 })).toBe(73)
   })
 
+  // A project's Tasks at 320 px (288 px row): "› Tasks" with the gap before it is 65 px the heading
+  // clips, and nothing in the slot would overlap the row (`hard` 0). The cluster's floor counts the
+  // view switch unfolded (search 52, filter 52, the switch's four icons 150, New 48, the `…` 44:
+  // 346 px); folded to its pill it is 52, so the row at its narrowest is 248 px. Reserving the kept
+  // text left the rail a 135 px cap for 148 px of controls, and the switch clipped under the `…` by
+  // 13 px.
+  const TASKS = { hasContent: true, minWidth: 65, hardWidth: 0, naturalWidth: 136, floor: 346, keptFloor: 248 }
+  it('lets a kept part of the heading clip before a control does', () => {
+    expect(titleReserveFor({ ...TASKS, inner: 288 })).toBe(24)
+    expect(titleReserveFor({ ...TASKS, hardWidth: 30, inner: 288 }), 'what would overlap the row stays').toBe(30)
+  })
+
+  it('keeps it whole where the row at its narrowest fits beside it, however wide the floor', () => {
+    // 390 px (358 px row): 358 − 16 − 248 = 94 holds the 65. Yielding to the floor instead (−4)
+    // let the switch unfold into the title's room and left the title 12 px.
+    expect(titleReserveFor({ ...TASKS, inner: 358 })).toBe(65)
+    // 360 px (328 px row): 64 of the 65, the 1 px the row needs.
+    expect(titleReserveFor({ ...TASKS, inner: 328 })).toBe(64)
+  })
+
   it('still reserves nothing for an empty slot, and never more than a short title needs', () => {
     expect(titleReserveFor({ hasContent: false, naturalWidth: 49, minWidth: 49, inner: 155, floor: 140 })).toBe(0)
     expect(titleReserveFor({ hasContent: true, naturalWidth: 51, minWidth: 8, inner: 155, floor: 88 })).toBe(51)
