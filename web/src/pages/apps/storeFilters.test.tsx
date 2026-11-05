@@ -184,6 +184,34 @@ describe('the sections are operable from the accessibility tree', () => {
   })
 })
 
+describe('the sections are walked by Tab and chosen by Enter, as the rail was', () => {
+  const said = () => (document.activeElement?.textContent ?? '').replace(/\d+$/, '').trim()
+
+  it('Tab walks every row of both sections in reading order, the filter open throughout', async () => {
+    // Main's rail walk, on the sections: the rows were the page's own Tab stops, and a flyout that
+    // closed on any Tab left a keyboard user only its first row.
+    await mount(makeRouter('view=store'))
+    const trigger = await findHeaderFilter()
+    within(await section('Categories')).getByRole('button', { name: /^All apps/ }).focus()
+    const walked = [said()]
+    const want = ['All apps', 'Productivity', 'Utility', 'All sources', 'Built-in', 'apps', 'Add source']
+    for (let i = 1; i < want.length; i++) {
+      await userEvent.tab()
+      walked.push(said())
+      expect(trigger.getAttribute('aria-expanded'), `still open after reaching ${said()}`).toBe('true')
+    }
+    expect(walked, 'every row is reached, in DOM order, with no gap').toEqual(want)
+  })
+
+  it('Enter chooses a focused row: no click needed', async () => {
+    const router = makeRouter('view=store')
+    await mount(router)
+    within(await section('Categories')).getByRole('button', { name: /^Productivity/ }).focus()
+    await userEvent.keyboard('{Enter}')
+    expect(router.search()).toMatch(/stag=productivity/)
+  })
+})
+
 // ── Clause: selecting a category/source filters the grid AND survives reload via the URL ──
 describe('a category or source filters the grid and survives a reload', () => {
   it('a category writes ?stag=, and a fresh mount from that URL is still filtered', async () => {

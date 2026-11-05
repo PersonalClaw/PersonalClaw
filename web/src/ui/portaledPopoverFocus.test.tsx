@@ -104,24 +104,55 @@ describe('a portaled Popover hands focus to its flyout', () => {
     expect(document.activeElement).not.toBe(screen.getByTestId('deco'))
   })
 
-  it('Tab closes the flyout and returns focus to the trigger', () => {
+  it('Tab on a row before the last leaves it open, for the browser to move to the next row', () => {
+    // A header filter's rows were the page's own Tab stops before they moved into it: closing on
+    // the first Tab left a keyboard user only its first row.
     render(<RoleLess />)
     open()
-    fireEvent.keyDown(screen.getByText('First row'), { key: 'Tab' })
+    const ev = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    act(() => { screen.getByText('First row').dispatchEvent(ev) })
+    expect(isOpen(), 'the flyout stays open').toBe('true')
+    expect(ev.defaultPrevented, 'the browser moves focus to the next row').toBe(false)
+  })
+
+  it('Tab on the last row closes the flyout and returns focus to the trigger', () => {
+    render(<RoleLess />)
+    open()
+    act(() => { screen.getByText('Second row').focus() })
+    fireEvent.keyDown(screen.getByText('Second row'), { key: 'Tab' })
     expect(isOpen(), 'the flyout must close').toBe('false')
     expect(document.activeElement, 'focus returns to the trigger').toBe(screen.getByText('Open'))
   })
 
-  it('🔑 Tab is NOT preventDefault-ed — the browser continues from the trigger', () => {
+  it('🔑 Tab off the last row is NOT preventDefault-ed — the browser continues from the trigger', () => {
     // This is the whole trick, and it is `menuCursorKeydown`'s Tab branch reasoning: rather than
     // SIMULATING the next stop, hand focus back to the trigger and let the browser's own Tab carry
     // on from there. Preventing the default would strand focus on the trigger instead, so the press
     // would look like it did nothing.
     render(<RoleLess />)
     open()
+    act(() => { screen.getByText('Second row').focus() })
     const ev = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
-    act(() => { screen.getByText('First row').dispatchEvent(ev) })
+    act(() => { screen.getByText('Second row').dispatchEvent(ev) })
     expect(ev.defaultPrevented, 'Tab must stay cancelable so the browser moves focus on').toBe(false)
+  })
+
+  it('Shift+Tab on the first row closes it and lands on the trigger, the stop before the flyout', () => {
+    render(<RoleLess />)
+    open()
+    const ev = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })
+    act(() => { screen.getByText('First row').dispatchEvent(ev) })
+    expect(isOpen()).toBe('false')
+    expect(document.activeElement).toBe(screen.getByText('Open'))
+    expect(ev.defaultPrevented, 'the trigger is where focus stays').toBe(true)
+  })
+
+  it('Shift+Tab on a later row leaves it open', () => {
+    render(<RoleLess />)
+    open()
+    act(() => { screen.getByText('Second row').focus() })
+    fireEvent.keyDown(screen.getByText('Second row'), { key: 'Tab', shiftKey: true })
+    expect(isOpen()).toBe('true')
   })
 
   it('Escape still closes and restores the trigger — the pre-existing behaviour is intact', () => {

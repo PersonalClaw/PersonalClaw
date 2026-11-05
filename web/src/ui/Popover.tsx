@@ -257,13 +257,19 @@ export function Popover({
     menuRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus({ preventScroll: true })
   }, [open, portal, anchor])
 
-  /** Tab out of a portaled flyout closes it and hands focus back to the trigger.
+  /** Tab walks a portaled flyout's own stops, and Tab out of it closes it and hands focus back to
+   *  the trigger.
    *
-   *  🔑 DELIBERATELY NOT `preventDefault`ed, and that is the whole trick — verbatim the reasoning in
-   *  `menuCursorKeydown`'s Tab branch: focus returns to the trigger, then the browser's OWN Tab
-   *  carries on from there, landing on the control after the trigger. So the natural sequence the
-   *  portal broke is RESTORED rather than simulated. Shift+Tab needs no special case for the same
-   *  reason: the browser moves backward from the trigger for free.
+   *  The flyout sits at the end of `<body>`, so its stops are contiguous there: inside it, the
+   *  browser's own Tab and Shift+Tab move between them. A header filter holds the choices that were
+   *  the page's own Tab stops before they moved into the header (the Store rail, a project's task
+   *  lists, Knowledge's rows), and closing on any Tab left a keyboard user only its first row.
+   *
+   *  🔑 Tab on the LAST stop is DELIBERATELY NOT `preventDefault`ed, and that is the whole trick —
+   *  verbatim the reasoning in `menuCursorKeydown`'s Tab branch: focus returns to the trigger, then
+   *  the browser's OWN Tab carries on from there, landing on the control after the trigger. So the
+   *  natural sequence the portal broke is RESTORED rather than simulated. Shift+Tab on the FIRST stop
+   *  is: the stop before the flyout is its trigger, so focus lands there and stays.
    *
    *  Stands down for a role-declaring popup for the same reason the focus-in effect does: those
    *  already route Tab through `menuCursorKeydown`, whose Tab branch is where this reasoning comes
@@ -271,6 +277,11 @@ export function Popover({
    */
   const onFlyoutKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== 'Tab' || ownsItsKeyboard()) return
+    const stops = [...(menuRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])]
+      .filter((el) => el.tabIndex >= 0 && !el.closest('[inert],[aria-hidden="true"]'))
+    const at = stops.indexOf(document.activeElement as HTMLElement)
+    if (e.shiftKey ? at > 0 : at >= 0 && at < stops.length - 1) return // a stop inside: the browser's own
+    if (e.shiftKey) e.preventDefault()
     setOpen(false)
     triggerFocusRef.current?.focus({ preventScroll: true })
   }
