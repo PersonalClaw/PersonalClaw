@@ -525,11 +525,19 @@ export function targetFindings(actual: string[], baseline: string[] | undefined,
 
 // ── 4. 200% text zoom ──────────────────────────────────────────────────────────────────────────────
 
-/** Text that is cut off once the root font size doubles (WCAG 1.4.4). Read and restored in ONE
- *  synchronous pass, so no React render lands between: only text clipped by the zoom is reported,
- *  not text already clipped at 100% (an ellipsis truncation is a design). */
+/** Text that is cut off once the root font size doubles (WCAG 1.4.4): only text clipped by the zoom
+ *  is reported, not text already clipped at 100% (an ellipsis truncation is a design).
+ *
+ *  It is read once the page has settled at the doubled size, as a reader at 200% sees it. A header's
+ *  action cluster (`ui/HeaderActions`) picks its tier from probes a `ResizeObserver` reads, so it
+ *  re-tiers a frame after the font changes. Read in the same synchronous pass as the doubling, the
+ *  cluster was still laid out for 100%, and its row widened `#root` on every surface it heads: a
+ *  `<div#root>` clip no reader ever sees. So the step waits a frame and a task after doubling, and
+ *  again after restoring, before the keyboard walk reads the page. */
 export async function zoomFindings(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
+  return page.evaluate(async () => {
+    // A frame for the observers, a task for the renders they schedule, a frame for those to lay out.
+    const settle = () => new Promise<void>((done) => requestAnimationFrame(() => setTimeout(() => requestAnimationFrame(() => done()), 0)))
     // Clipped, per axis: content past an edge that does not scroll is content the reader loses.
     // An axis that scrolls (`auto`, `scroll`) keeps it reachable, and a box that truncates with an
     // ellipsis says it is truncating; neither is a finding. Both were, in the first measurement:
@@ -554,8 +562,10 @@ export async function zoomFindings(page: Page): Promise<string[]> {
     const before = measure()
     const prior = root.style.fontSize
     root.style.fontSize = `${(parseFloat(getComputedStyle(root).fontSize) || 16) * 2}px`
+    await settle()
     const after = measure()
     root.style.fontSize = prior
+    await settle()
     const out: string[] = []
     for (const [el, size] of after) {
       if (before.has(el)) continue
