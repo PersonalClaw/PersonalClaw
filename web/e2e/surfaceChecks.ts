@@ -598,6 +598,8 @@ export interface Stop {
   announced: boolean
   /** A contenteditable whose caret is its indicator, which no computed style can see. */
   credited: boolean
+  /** The stop's box in the page's content: its viewport box plus the scroll of the window and its
+   *  scrolling ancestors when it took focus, so a scroll between two stops moves neither. */
   rect: { left: number; top: number; right: number; bottom: number }
   /** How many line boxes the stop is drawn in: more than one for a link that wraps in running text. */
   lines: number
@@ -654,10 +656,18 @@ export async function tabWalk(page: Page): Promise<{ stops: Stop[]; capped: bool
         for (const k of Array.from(el.querySelectorAll('*')).slice(0, 25)) parts.push(effective(getComputedStyle(k)))
         return parts.join('||')
       }
+      // Where the stop sits in the page's content, not in the viewport: the box plus how far the
+      // window and every scrolling ancestor had scrolled when it took focus. Focus scrolls a list to
+      // its next card, so two cards in viewport terms could share a row they do not share, and the
+      // next card read as "backwards". Measured on #/workflows: Plan a project, below and left of
+      // Pursue a goal, landed in its row once focusing it scrolled the list.
       const r = e.getBoundingClientRect()
+      let sx = window.scrollX
+      let sy = window.scrollY
+      for (let a = e.parentElement; a; a = a.parentElement) { sx += a.scrollLeft; sy += a.scrollTop }
       const base = {
         desc: q.desc(el), name: q.name(el), region: q.region(el), tag: el.tagName.toLowerCase(),
-        rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom },
+        rect: { left: r.left + sx, top: r.top + sy, right: r.right + sx, bottom: r.bottom + sy },
         lines: e.getClientRects().length,
       }
       // Read while focused: the ring, and a text field's border.
