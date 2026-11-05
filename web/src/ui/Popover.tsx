@@ -92,8 +92,19 @@ export function Popover({
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onEsc)
     // Portaled mode: the menu is position:fixed while its anchor scrolls with the
-    // container — close on ANY scroll (capture) so it never drifts off its trigger.
-    const onScroll = () => setOpen(false)
+    // container — so a scroll elsewhere closes it (capture), and it never drifts off its trigger.
+    // Except where the reader is in it: a scroll inside the flyout (its own list) moves nothing it
+    // is anchored to, and a flyout holding focus (the narrow header search, mid-query) follows its
+    // trigger instead of closing under the reader's typing.
+    const onScroll = (e: Event) => {
+      const menu = menuRef.current
+      if (menu && e.target instanceof Node && menu.contains(e.target)) return
+      if (menu && menu.contains(document.activeElement)) {
+        setAnchor(ref.current?.getBoundingClientRect() ?? null)
+        return
+      }
+      setOpen(false)
+    }
     if (portal) window.addEventListener('scroll', onScroll, true)
     return () => {
       document.removeEventListener('mousedown', onDoc)
