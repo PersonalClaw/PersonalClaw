@@ -21,6 +21,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { findHeaderFilter } from '../../test/headerFilter'
 
 /** What the gateway answers; every other read stays on its way. */
 const answers: Record<string, unknown> = {}
@@ -271,9 +272,11 @@ describe('Store: by display name within each source group, the groups as the sou
     await open('apps?view=store')
     expect(cardOrder()).toEqual(['m', 'z1', 'z2', 'l1', 'l2'])
     expect(sortControl()).toContain('Sorted by name')
-    // The Sources rail lists the groups in the order the dividers show them.
-    const rail = screen.getByRole('navigation', { name: 'Categories and sources' })
-    const entries = within(rail).getAllByRole('button').map((b) => (b.textContent ?? '').replace(/\d+$/, '').trim())
+    // The filter's Sources section lists the groups in the order the dividers show them.
+    fireEvent.click(await findHeaderFilter())
+    const heading = await screen.findByText('Sources', { selector: 'span' })
+    const section = heading.parentElement!.parentElement as HTMLElement
+    const entries = within(section).getAllByRole('button').map((b) => (b.textContent ?? '').replace(/\d+$/, '').trim())
     expect(entries.slice(entries.indexOf('All sources') + 1, entries.indexOf('Add source'))).toEqual(['Built-in', 'apps'])
   })
 })

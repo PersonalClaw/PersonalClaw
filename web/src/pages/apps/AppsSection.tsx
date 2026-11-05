@@ -29,7 +29,6 @@ import { RowHitTarget } from '../../ui/RowHitTarget'
 import { TextInput, FieldError } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
-import { useIsMobile } from '../../app/useIsMobile'
 import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import {
@@ -46,7 +45,6 @@ import { dayStamp } from '../../lib/epoch'
 import { AppIcon } from './appIcon'
 import { BackendStatus, WorkerStatus } from './appProcesses'
 import { QualityBadges } from './qualityBadges'
-import { StoreSideRail, type RailOption } from './StoreSideRail'
 import { artGradient } from './appArt'
 import { AppConfigFields, unparsedSentence, useAppConfig } from './appConfigForm'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
@@ -519,10 +517,6 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   // about what "this source" means. URL-backed like every other filter here, which is
   // what makes a rail selection survive a reload.
   const [storeSrc, setStoreSrc] = useQueryParam(q, sq, 'ssrc', 'all', { replace: true })
-  // Below the shell's own rail threshold the Store rail is replaced by the
-  // header filter's sections. One media query, the same one the nav rail uses —
-  // when the shell collapses its rail to a drawer, this one collapses to a dropdown.
-  const isMobile = useIsMobile()
 
   const reload = () => { invalidateKeys('apps'); invalidateKeys('app-catalog'); refresh(); refreshCatalog() }
   const reloadCatalog = () => { invalidateKeys('app-catalog'); refreshCatalog() }
@@ -618,10 +612,6 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   // installed. Exactly one is set (installed apps aren't in the Store universe).
   const open = apps?.find((a) => a.name === openName) ?? null
   const openStore = open ? null : (storeUniverse.find((e) => e.name === openName) ?? null)
-  // The Store's category and source rail sits beside its cards while the list has the whole width.
-  // A detail beside the list leaves it a fixed narrow column, so the rail's two dimensions move into
-  // the Filter & sort menu then, as they do on a phone.
-  const railShown = !isMobile && !(open || openStore || sourcesOpen)
 
   // Shared, real app actions (enable/disable inline; configure/update/force-
   // uninstall modals; open→app page) — dispatched by BOTH the cards and the
@@ -652,18 +642,17 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     return s
   }, [apps, libSort, libStatus, libType, libCap, libEntity])
 
-  // ── ONE derivation of the Store's category + source vocabulary, consumed by
-  //    BOTH the wide-viewport rail and the narrow-viewport dropdown. Two derivations is
-  //    how the two presentations start disagreeing about what exists.
+  // ── ONE derivation of the Store's category + source vocabulary, the header filter's
+  //    Categories and Sources sections.
   //    🔑 Counts are over `storeUniverse` — the exact set the grid can render — not over
   //    installed ∪ catalog. The Store deliberately EXCLUDES installed apps (they live in
   //    the Library), so a category counted over installed apps would offer a filter whose
   //    grid comes back empty: a count maintained beside a table it does not describe.
-  const storeCategories: RailOption[] = useMemo(
+  const storeCategories: FilterOption[] = useMemo(
     () => tagOptions(storeUniverse.map((e) => e.tags ?? []))
       .map((o) => ({ key: o.key, label: categoryLabel(o.label), count: o.count ?? 0 })),
     [storeUniverse])
-  const storeSources: RailOption[] = useMemo(
+  const storeSources: FilterOption[] = useMemo(
     () => groupBySource(storeUniverse, catalog?.localSources ?? [])
       .map((g) => ({ key: g.key, label: g.label, count: g.items.length })),
     [storeUniverse, catalog?.localSources])
@@ -676,22 +665,21 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     const entities = entityOptions(storeUniverse.filter((e) => e.isProvider).map((e) => e.providerType))
     if (entities.length) s.push({ title: 'Provider entity', value: storeEntity, defaultKey: 'all', onChange: setStoreEntity, quiet: true,
       options: [{ key: 'all', label: 'Any entity' }, ...entities] })
-    // The two rail dimensions appear in this dropdown ONLY while the rail is not shown (a narrow
-    // viewport, or a detail beside the list). The rail owns them whenever it is on screen, so a
-    // wide user never meets the same filter twice — and one with no rail still reaches both.
-    if (!railShown && storeCategories.length) {
+    // Categories and Sources filter the grid in place, so they are sections of the header's filter
+    // at every width (they were a rail beside the grid on a wide one). Add source is the Sources
+    // section's last row: it opens the sources panel.
+    if (storeCategories.length) {
       s.push({ title: 'Categories', value: storeTag, defaultKey: 'all', onChange: setStoreTag, quiet: true,
-        options: [{ key: 'all', label: 'All apps' }, ...storeCategories] })
+        options: [{ key: 'all', label: 'All apps', count: storeUniverse.length }, ...storeCategories] })
     }
-    if (!railShown && storeSources.length) {
-      s.push({ title: 'Sources', value: storeSrc, defaultKey: 'all', onChange: setStoreSrc, quiet: true,
-        options: [{ key: 'all', label: 'All sources' }, ...storeSources] })
-    }
+    s.push({ title: 'Sources', value: storeSrc, defaultKey: 'all', onChange: setStoreSrc, quiet: true,
+      options: [{ key: 'all', label: 'All sources', count: storeUniverse.length }, ...storeSources],
+      actions: [{ label: 'Add source', icon: Plus, onSelect: () => setSourcesOpen(true) }] })
     s.push({ title: 'Sort by', value: storeSort, defaultKey: 'name', onChange: setStoreSort, said: orderSaid,
       options: STORE_SORTS.map((o) => ({ key: o.key, label: o.label })) })
     return s
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeUniverse, storeSort, storeType, storeEntity, storeTag, storeSrc, railShown, storeCategories, storeSources])
+  }, [storeUniverse, storeSort, storeType, storeEntity, storeTag, storeSrc, storeCategories, storeSources])
 
   // 🔑 ONE definition of "narrowed" per view, named once and used by BOTH the empty state and the
   // announcement. Each was already written out — the library's inside its empty-state condition, the
@@ -761,29 +749,13 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
         ) : null}
         <div className="mx-auto px-l py-l">
           {isStore ? (
-            /* The Store is a two-column surface on a wide viewport — the
-               persistent category/source rail, then the card grid. The rail is
-               rendered HERE, by the page a user actually reaches (`#/apps?view=store`),
-               not only inside its own test: `storeRail.test.tsx` mounts this component
-               and would go red if this line were deleted. Below the mobile threshold the
-               rail is absent and its two dimensions move into the header filter. */
-            <div className="flex items-start gap-l">
-              {railShown && (
-                <StoreSideRail
-                  categories={storeCategories} category={storeTag} onCategory={setStoreTag}
-                  categoryTotal={storeUniverse.length}
-                  sources={storeSources} source={storeSrc} onSource={setStoreSrc}
-                  sourceTotal={storeUniverse.length}
-                  onAddSource={() => setSourcesOpen(true)} />
-              )}
-              <div className="min-w-0 flex-1">
-                <StoreView catalog={catalog} catalogError={catalogErr} result={storeResult} totalKnown={storeUniverse.length}
-                  installedCount={(apps ?? []).filter((a) => !a.native).length}
-                  onInstalled={noteInstalled} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag, setStoreSrc)}
-                  filtersActive={storeNarrowed}
-                  onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch} openName={openName}
-                  onOpenSources={() => setSourcesOpen(true)} />
-              </div>
+            <div className="min-w-0">
+              <StoreView catalog={catalog} catalogError={catalogErr} result={storeResult} totalKnown={storeUniverse.length}
+                installedCount={(apps ?? []).filter((a) => !a.native).length}
+                onInstalled={noteInstalled} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag, setStoreSrc)}
+                filtersActive={storeNarrowed}
+                onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch} openName={openName}
+                onOpenSources={() => setSourcesOpen(true)} />
             </div>
           ) : apps === undefined && appsErr ? (
             // Before the skeleton branch, or a failed fetch spins it forever.

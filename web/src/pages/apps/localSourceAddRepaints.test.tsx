@@ -1,3 +1,4 @@
+import { findHeaderFilter } from '../../test/headerFilter'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -56,8 +57,8 @@ function mockApi(over: Record<string, unknown> = {}) {
 async function openSourcesPanel() {
   const { AppsSection } = await import('./AppsSection')
   render(<AppsSection query={{ view: 'store' }} setQuery={() => {}} navigate={() => {}} />)
-  await waitFor(() => expect(screen.getByRole('navigation', { name: 'Categories and sources' })).toBeTruthy())
-  // Several controls open this panel (the header action, the rail's "Add source", the empty
+  await findHeaderFilter()
+  // Several controls open this panel (the header action, the filter's "Add source", the empty
   // state's link) — take the header action, the same control the committed harness prefers.
   const openers = screen.getAllByRole('button', { name: new RegExp(PANEL_TITLE, 'i') })
   await userEvent.click(openers[0])
