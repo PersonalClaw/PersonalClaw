@@ -503,7 +503,11 @@ describe('the hand-laid bars reach the same idiom', () => {
       // The header's search: the page that draws it announces, through `ListStatus` beside its
       // body, and is counted above as any page is.
       'ui/HeaderSearch.tsx': ['a header member; its page announces', /export function HeaderSearch\b/],
+      // Settings home's search is in the Settings header, and the home it narrows announces: the
+      // page hands its query to `SettingsHome`, which draws the `ResultAnnouncement` (checked below).
+      'pages/settings/SettingsPage.tsx': ['its home announces what the header search narrows', /<SettingsHome go=\{go\} query=\{homeQuery\} \/>/],
     }
+    expect(strip(readSource(join(SRC, 'pages/settings/SettingsHome.tsx'))), 'Settings home announces its matches').toContain('<ResultAnnouncement')
 
     const withControl = walk(SRC)
       .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readSource(abs)) }))

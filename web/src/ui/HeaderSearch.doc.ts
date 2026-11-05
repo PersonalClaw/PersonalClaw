@@ -13,6 +13,7 @@ const doc: UiDoc = {
     { name: 'label', description: 'The accessible name, where it should differ from the placeholder; defaults to it.' },
     { name: 'autoFocus', description: 'Focus the field on mount, at the tiers that draw one.' },
     { name: 'className', description: "Added to the shed form's Search button, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`)." },
+    { name: 'tour', description: 'A product-tour anchor (`data-tour`), on the live field or its button and never on a probe, so the tour rings what is on screen (Settings home: `settings`).' },
   ],
   bestPractices: [
     { guidance: true, description: 'Put the page search here, the first child of the HeaderActions cluster, and announce what it leaves with a ListStatus beside the body.' },

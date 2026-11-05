@@ -17,7 +17,7 @@ import { useHeaderChild, useHeaderProbe } from './HeaderActions'
  *
  *  Inside the cluster's measuring probes it draws an empty box of the field's width, not a second
  *  input with the same id. */
-export function HeaderSearch({ value, onChange, placeholder = 'Search', label, autoFocus, className }: {
+export function HeaderSearch({ value, onChange, placeholder = 'Search', label, autoFocus, className, tour }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
@@ -26,6 +26,9 @@ export function HeaderSearch({ value, onChange, placeholder = 'Search', label, a
   autoFocus?: boolean
   /** Added to the shed form's Search button, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
   className?: string
+  /** A product-tour anchor (`data-tour`), on the live field or its button and never on a probe, so
+   *  the tour rings what is on screen. */
+  tour?: string
 }) {
   const name = label ?? placeholder
   const { tier } = useHeaderChild({ priority: 'primary', canIcon: true, neverOverflow: true, menu: { label: name, icon: Search } })
@@ -36,7 +39,7 @@ export function HeaderSearch({ value, onChange, placeholder = 'Search', label, a
   if (tier === 'full' || tier === 'text') {
     if (probe) return <div aria-hidden className={cx('h-10 shrink-0', width)} />
     return (
-      <div className={cx('shrink-0', width)}>
+      <div data-tour={tour} className={cx('shrink-0', width)}>
         {/* `lg`: the row's 40 px height, as every header control is. */}
         <SearchField size="lg" value={value} onChange={onChange} placeholder={placeholder} ariaLabel={name}
           name={fieldName} autoFocus={autoFocus} />
@@ -50,6 +53,7 @@ export function HeaderSearch({ value, onChange, placeholder = 'Search', label, a
     <Popover portal placement="bottom" align="right" width={288}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-haspopup="dialog" aria-expanded={open} aria-label={said} title={said}
+          data-tour={tour}
           className={cx(
             'relative inline-flex size-10 shrink-0 items-center justify-center rounded-pill transition-colors duration-(--duration-short)',
             open ? 'bg-surface-high text-on-surface' : 'text-on-surface hover:bg-surface-high',

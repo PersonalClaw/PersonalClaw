@@ -6,7 +6,7 @@
  *  redirect rows themselves are held to the router's rules by `app/routeRedirects.test.tsx`, and every
  *  old address is opened in the real shell by `app/everyShippedRouteResolves.test.tsx`. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import ts from 'typescript'
@@ -213,15 +213,15 @@ describe('the overview\'s search holds every setting its panels declare', () => 
   })
 })
 
-/** The overview, searched for `query`: the pages whose cards stay on screen. */
+/** The overview, searched for `query` (the Settings header's search, which it is handed): the pages
+ *  whose cards stay on screen. */
 async function searched(query: string): Promise<string[]> {
   cleanup()
   render(
     <ThemeProvider><AppearanceProvider><PersonalityProvider><IdentityProvider>
-      <SettingsHome go={() => {}} />
+      <SettingsHome go={() => {}} query={query} />
     </IdentityProvider></PersonalityProvider></AppearanceProvider></ThemeProvider>,
   )
-  fireEvent.change(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: query } })
   await act(async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)) })
   return SETTINGS_PAGES.filter((p) => {
     const button = screen.getByRole('button', { name: `Open ${p.label} settings`, hidden: true })

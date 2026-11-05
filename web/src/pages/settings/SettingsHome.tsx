@@ -2,7 +2,6 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { Eyebrow } from '../../ui/Eyebrow'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { SearchX } from 'lucide-react'
-import { SearchField } from '../../ui/SearchField'
 import { SETTINGS_WIDGETS, type SettingsWidget } from './settingsWidgets'
 import { columnsFor, packRows } from './packRows'
 import { SETTINGS_GROUPS, SETTINGS_PAGES, type SettingsPageDef } from './settingsPages'
@@ -22,8 +21,11 @@ const GRID_MAX = 1200 // the grid's widest; past it, three columns of ~390 px st
  *  at the right edge. It used to pack whole groups into columns, which left the columns over a
  *  thousand pixels apart; a group now reads left to right, top to bottom, in its own source order,
  *  which is also the order focus moves in. Cards in a row stretch to its tallest. */
-export function SettingsHome({ go }: { go: (id: string) => void }) {
-  const [query, setQuery] = useState('')
+export function SettingsHome({ go, query = '' }: {
+  go: (id: string) => void
+  /** The search, which is the Settings header's (`SettingsPage`). */
+  query?: string
+}) {
   const q = query.trim()
 
   // The pages by group, in the registry's order.
@@ -43,25 +45,14 @@ export function SettingsHome({ go }: { go: (id: string) => void }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div ref={gridRef} className="mx-auto w-full px-2xl" style={{ maxWidth: `calc(${GRID_MAX}px + 2 * var(--spacing-2xl))` }}>
-          {/* Search across all settings + the data on every card. Pinned to the top
-              of the scroll area (its own surface bg masks cards sliding under it),
-              with a constant gap below so the first row never crowds it. */}
-          <div className="sticky top-0 z-20 -mx-2xl bg-canvas px-2xl pt-2xl pb-l">
-            {/* `data-tour="settings"` — the product tour's last stop.
-                On the SEARCH, not on the page: the bento is as tall and wide as the viewport,
-                so ringing the whole thing dims nothing and the card has nowhere to sit that
-                is not on top of it. The search is also what the stop's copy is about. */}
-            <div data-tour="settings" className="mx-auto w-full" style={{ maxWidth: 720 }}>
-              <SearchField value={query} onChange={setQuery} autoFocus
-                placeholder="Search settings — name, description, or any value inside"
-                ariaLabel="Search settings" />
-              {/* 🔑 This page holds no filtered array — each widget owns the hook producing its own
-                  search text and reports whether it matched. So the count comes from that SAME
-                  `matches` map that decides what stays on screen (and that `anyMatch` reads), which is
-                  why it cannot disagree with the page: both are the one source. */}
-              <ResultAnnouncement count={Object.values(matches).filter(Boolean).length} noun="settings"
-                active={q !== ''} />
-            </div>
+          {/* The search is the header's (`SettingsPage`). 🔑 This page holds no filtered array —
+              each widget owns the hook producing its own search text and reports whether it
+              matched. So the count comes from that SAME `matches` map that decides what stays on
+              screen (and that `anyMatch` reads), which is why it cannot disagree with the page:
+              both are the one source. */}
+          <div className="pt-xl">
+            <ResultAnnouncement count={Object.values(matches).filter(Boolean).length} noun="settings"
+              active={q !== ''} />
           </div>
 
           {!anyMatch && (

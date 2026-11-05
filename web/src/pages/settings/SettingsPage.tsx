@@ -5,8 +5,10 @@ import {
   FlaskConical, KeyRound, MessageCircle, Workflow, RefreshCcw, Gauge,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { TopBar } from '../../ui/TopBar'
+import { HeaderActions } from '../../ui/HeaderActions'
+import { HeaderSearch } from '../../ui/HeaderSearch'
 import { IconButton } from '../../ui/IconButton'
 import { ArrowLeft } from 'lucide-react'
 import { DesignPanel } from './DesignPanel'
@@ -173,6 +175,8 @@ export function SettingsPage({ sub, navigate, query, setQuery, duringSetup = fal
    *  this is how one of them reaches the next. */
   duringSetup?: boolean
 }) {
+  // Settings home's search, in its header; the home's cards read it.
+  const [homeQuery, setHomeQuery] = useState('')
   // `go` takes a page id or a section id: a section opens on the page that holds it.
   const go = (id: string) => navigate?.(id ? sectionAddress(id) : 'settings')
   const backToSetup = () => navigate?.('onboarding')
@@ -182,12 +186,20 @@ export function SettingsPage({ sub, navigate, query, setQuery, duringSetup = fal
   const page = sub ? (pageById(sub) ?? pageOfSection(sub)) : undefined
   const focus = page && sub !== page.id ? sub : query?.section
 
-  // Home (no valid sub, or bare #/settings): the bento grid.
+  // Home (no valid sub, or bare #/settings): the bento grid, its search in the header.
   if (!page) {
     return (
       <div className="flex h-full flex-col">
-        <TopBar left={<PageTitle>Settings</PageTitle>} />
-        <SettingsHome go={go} />
+        <TopBar left={<PageTitle>Settings</PageTitle>}
+          right={<HeaderActions>
+            {/* `tour="settings"`: the product tour's last stop. On the SEARCH, not on the page: the
+                bento is as tall and wide as the viewport, so ringing the whole thing dims nothing
+                and the card has nowhere to sit that is not on top of it. The search is also what
+                the stop's copy is about. */}
+            <HeaderSearch value={homeQuery} onChange={setHomeQuery} autoFocus tour="settings"
+              placeholder="Search settings — name, description, or any value inside" label="Search settings" />
+          </HeaderActions>} />
+        <SettingsHome go={go} query={homeQuery} />
       </div>
     )
   }
