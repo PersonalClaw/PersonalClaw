@@ -23,39 +23,65 @@ import sys
 from pathlib import Path
 
 import pytest
+import tree_under_test
 
 from scripts import sdk_signature_snapshot as snap
 
 REPO = Path(__file__).resolve().parents[1]
 
 
-def _rendered_by_a_fresh_interpreter(home: Path, seed: str) -> str:
-    """The snapshot of the SDK as a fresh interpreter imports it, rendered.
+def _in_a_fresh_interpreter(home: Path, seed: str, program: str) -> str:
+    """What *program* prints in a fresh interpreter that imports the tree under test.
 
     Out of process on purpose. In this one, an SDK module first imported while an earlier test
     had patched a name it re-exports keeps that mock bound for the rest of the worker (measured:
     ``sdk.channel.config_dir`` read as a ``MagicMock`` under ``-n 4``), so an in-process walk
     would answer for the tests that happened to run first, not for the code.
+
+    Its environment is built from nothing, so it inherits no entry the run put on its
+    ``PYTHONPATH``, and the child found ``personalclaw`` through the venv's editable install. A
+    venv shared by several clones points at one of them, so the child walked that clone's SDK.
+    This tree's ``src`` goes first on the child's ``PYTHONPATH`` (``tests/tree_under_test.py``).
     """
+    env = {
+        "PYTHONHASHSEED": seed,
+        "PERSONALCLAW_HOME": str(home),
+        "HOME": str(home),
+        "PATH": os.environ.get("PATH", ""),
+    }
+    tree_under_test.put_first(env)
     out = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from scripts import sdk_signature_snapshot as s;"
-            " print(s.render(s.snapshot()), end='')",
-        ],
+        [sys.executable, "-c", program],
         cwd=REPO,
-        env={
-            "PYTHONHASHSEED": seed,
-            "PERSONALCLAW_HOME": str(home),
-            "HOME": str(home),
-            "PATH": os.environ.get("PATH", ""),
-        },
+        env=env,
         capture_output=True,
         text=True,
         check=True,
     )
     return out.stdout
+
+
+def _rendered_by_a_fresh_interpreter(home: Path, seed: str) -> str:
+    """The snapshot of the SDK as a fresh interpreter imports it, rendered."""
+    return _in_a_fresh_interpreter(
+        home,
+        seed,
+        "from scripts import sdk_signature_snapshot as s; print(s.render(s.snapshot()), end='')",
+    )
+
+
+def test_the_fresh_interpreter_walks_the_tree_under_test(tmp_path):
+    """🔴 Red before wherever the venv's install points at another clone: the child imported that
+    clone's ``personalclaw``, so the test below judged its SDK, not this tree's. On a Mac whose
+    shared venv was installed from an older clone, every head failed it, and a head that dropped a
+    parameter from a published function without regenerating the snapshot passed it. In CI the
+    venv installs from the checkout, so there the child imports this tree either way."""
+    import personalclaw
+
+    theirs = _in_a_fresh_interpreter(
+        tmp_path, "0", "import personalclaw; print(personalclaw.__file__, end='')"
+    )
+    assert Path(theirs).resolve() == Path(personalclaw.__file__).resolve(), theirs
 
 
 def test_the_checked_in_snapshot_matches_the_live_sdk(tmp_path):
