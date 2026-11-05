@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, waitFor, fireEvent, within } from '@testing-library/react'
+import { findHeaderFilter } from '../../test/headerFilter'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -76,8 +77,13 @@ function mount() {
   )
 }
 
-/** The list chip's Reset control — named for the list, per this page's own naming contract. */
-const findReset = () => waitFor(() => screen.getByRole('button', { name: `Reset list ${LIST.name}` }))
+/** The list's Reset, named for the list: the last row of the header filter's List section, where
+ *  the task-list chips' Reset moved with the lists. */
+const findReset = async () => {
+  const filter = await findHeaderFilter()
+  if (filter.getAttribute('aria-expanded') !== 'true') fireEvent.click(filter)
+  return waitFor(() => within(screen.getByRole('group', { name: 'List' })).getByRole('button', { name: `Reset ${LIST.name}` }))
+}
 
 beforeEach(() => { resetMock.mockClear(); sessionStorage.clear() })
 afterEach(() => cleanup())

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2, Users, UserRound, Search, Filter, Tag, Tags, Workflow } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -425,8 +425,22 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       said: (k) => SORT_SAID[k] ?? SORT_SAID.recent,
       options: SORTS.map((s) => ({ key: s.key, label: s.label })),
     })
+    // A project's task lists: which one the page shows (`?list`), where a row of chips over the
+    // list chose it. A repeatable list resets from here too, under its choices.
+    if (isProjectScope && projectLists.length > 0) sections.push({
+      title: 'List', value: listFilter?.id ?? '', defaultKey: '', quiet: true,
+      onChange: (k) => setListFilter(k ? { id: k, name: projectLists.find((l) => l.id === k)?.name ?? k } : null),
+      options: [
+        { key: '', label: 'All lists', icon: ListChecks },
+        ...projectLists.map((l) => ({ key: l.id, label: l.name, icon: ListChecks })),
+      ],
+      actions: projectLists
+        .filter((l) => !!repeatableProject && l.project_id === repeatableProject.id)
+        .map((l) => ({ label: `Reset ${l.name}`, icon: RotateCcw, onSelect: () => { void resetRef.current(l) } })),
+    })
     return sections
-  }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned, tagFilter, inAProject])
+  }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned, tagFilter, inAProject,
+    isProjectScope, projectLists, listFilter?.id, repeatableProject?.id])
 
   const filtered = useMemo(() => {
     // The chosen status, over the search's matches as over the whole list.
@@ -477,6 +491,9 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // NOT make the count safe: `collection.complete` can be false, and a warning that undercounts
   // is worse than one that does not count at all. The body states the consequence categorically
   // instead — true for every list at every size, and independent of completeness.
+  // The List section's Reset reads the latest of this (the sections are memoised).
+  const resetRef = useRef(resetList)
+  resetRef.current = resetList
   async function resetList(list: TaskListItem) {
     if (!(await confirm({
       title: `Reset “${list.name}”?`,
@@ -611,12 +628,6 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             {moveError && <div className="mb-s"><InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError></div>}
             <PartialNotice className="mb-s" complete={collection?.complete ?? true} shown={tasks?.length ?? 0} total={collection?.total ?? 0}
               what="tasks" detail="dependencies on the ones outside this window are not shown, so a blocked task can read as unblocked" />
-            {isProjectScope && projectLists.length > 0 && (
-              <TaskListBar lists={projectLists} repeatableId={repeatableProject?.id}
-                active={listFilter?.id ?? ''}
-                onPick={(l) => setListFilter(listFilter?.id === l.id ? null : { id: l.id, name: l.name })}
-                onReset={resetList} />
-            )}
             {q && searchError ? <LoadError what="search results" error={searchError} onRetry={() => setSearchNonce((n) => n + 1)} />
               : filter === 'ready' && !q && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
               : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
@@ -683,37 +694,6 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
 
 /** Task-list bar shown when a project is filtered: chips to sub-filter by a list,
  *  plus a Reset action on lists under the Repeatable project. */
-function TaskListBar({ lists, repeatableId, active, onPick, onReset }: {
-  lists: TaskListItem[]; repeatableId?: string; active: string
-  onPick: (l: TaskListItem) => void; onReset: (l: TaskListItem) => void
-}) {
-  return (
-    <div className="mb-m flex flex-wrap items-center gap-s">
-      <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low uppercase tracking-wide"><ListChecks size={12} /> Task lists</span>
-      {lists.map((l) => {
-        const isActive = active === l.id
-        const repeatable = !!repeatableId && l.project_id === repeatableId
-        return (
-          <span key={l.id} data-type="body-s" className={`inline-flex items-center rounded-pill h-7 pl-3 ${repeatable ? 'pr-1' : 'pr-3'} transition-colors ${isActive ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}>
-            {/* One-of-N: which task list the page is showing. `bg-primary text-on-primary` was the only
-                cue, so this takes the app's recorded form — `<dimension>: <value>` plus `aria-pressed`.
-                The name goes on the PICK button, not the pill wrapper, because the wrapper also holds the
-                Reset control and a state on it would describe both. */}
-            <button type="button" aria-label={`Task list: ${l.name}`} aria-pressed={isActive}
-              onClick={() => onPick(l)} className="inline-flex items-center gap-1">{l.name}</button>
-            {repeatable && (
-              <button type="button" onClick={(e) => { e.stopPropagation(); onReset(l) }} title="Reset this repeatable list (all tasks must be done)"
-                className={`ml-1.5 inline-flex size-5 items-center justify-center rounded-full ${isActive ? 'hover:bg-on-primary/20' : 'hover:bg-surface-container'}`} aria-label={`Reset list ${l.name}`}>
-                <RotateCcw size={12} />
-              </button>
-            )}
-          </span>
-        )
-      })}
-    </div>
-  )
-}
-
 function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => void }) {
   // Only a priority the user actually CHOSE. `medium` is the default and is indistinguishable from
   // unset, so it rendered on 93% of rows in a semantic colour saying nothing — the same reasoning

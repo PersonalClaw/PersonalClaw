@@ -37,7 +37,7 @@ const rel = (abs: string) => relative(SRC, abs)
 const count = (src: string, re: RegExp) => [...src.matchAll(re)].length
 
 /** A section's own controls in a page that owns a header: not page-level, so not counted. */
-const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; toggles?: number; filterMenu?: number; why: string }> = {
+const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; toggles?: number; pressedRows?: number; filterMenu?: number; why: string }> = {
   'pages/files/FilesSection.tsx': { search: 1, why: "the explorer pane's search of the file tree" },
   'pages/tools/ToolsPage.tsx': { segmented: 3, why: "the add and edit server dialogs' type and transport fields" },
   'pages/loop/LoopComposer.tsx': { segmented: 3, why: "the composer's own fields: granularity, project kind, loop kind" },
@@ -55,10 +55,10 @@ const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; to
  *  controls moved. */
 const BUDGET: Record<string, number> = {}
 
-/** The rows of pressed toggles in a source: each `role="group"` element with an `aria-pressed`
- *  button inside it. The element runs from its opening tag to the close that balances it. */
-export function toggleRows(src: string): number {
-  let rows = 0
+/** Where each `role="group"` element of a source runs: from its opening tag to the close that
+ *  balances it. */
+function groupRanges(src: string): [number, number][] {
+  const out: [number, number][] = []
   for (const m of src.matchAll(/role="group"/g)) {
     const open = src.lastIndexOf('<', m.index)
     const tag = /^<([\w.]+)/.exec(src.slice(open))?.[1]
@@ -72,7 +72,33 @@ export function toggleRows(src: string): number {
       depth += t[0].startsWith('</') ? -1 : 1
       if (depth === 0) { end = t.index; break }
     }
-    if (/aria-pressed=/.test(src.slice(open, end))) rows += 1
+    out.push([open, end])
+  }
+  return out
+}
+
+/** The rows of pressed toggles in a source: each `role="group"` element with an `aria-pressed`
+ *  button inside it. */
+export function toggleRows(src: string): number {
+  return groupRanges(src).filter(([open, end]) => /aria-pressed=/.test(src.slice(open, end))).length
+}
+
+/** The rows of pressed toggles drawn with no group round them: a `.map` whose element is a button
+ *  with `aria-pressed`, as Tasks' task-list chips were, outside any `role="group"` (counted above). */
+export function pressedRows(src: string): number {
+  const groups = groupRanges(src)
+  let rows = 0
+  for (const m of src.matchAll(/\.map\(/g)) {
+    const at = m.index!
+    if (groups.some(([a, b]) => at > a && at < b)) continue
+    // The map's own call, to the paren that balances it.
+    let depth = 0
+    let end = at + 4
+    for (; end < src.length; end++) {
+      if (src[end] === '(') depth++
+      else if (src[end] === ')' && --depth === 0) break
+    }
+    if (/<button\b[^>]*?aria-pressed=/.test(src.slice(at, end))) rows += 1
   }
   return rows
 }
@@ -87,7 +113,8 @@ function outsideTheHeader(abs: string): number {
   const strips = Math.max(0, count(src, /<Segmented[\s>]/g) - (own.segmented ?? 0))
   const searches = Math.max(0, count(src, /<SearchField[\s>]/g) - (own.search ?? 0))
   const toggles = Math.max(0, toggleRows(src) - (own.toggles ?? 0))
-  return bars + strips + searches + toggles
+  const loose = Math.max(0, pressedRows(src) - (own.pressedRows ?? 0))
+  return bars + strips + searches + toggles + loose
 }
 
 describe('every page-level control is in the page header', () => {
@@ -115,8 +142,18 @@ describe('every page-level control is in the page header', () => {
       expect(count(src, /<Segmented[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.segmented ?? 0)
       expect(count(src, /<SearchField[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.search ?? 0)
       expect(toggleRows(src), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.toggles ?? 0)
+      expect(pressedRows(src), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.pressedRows ?? 0)
       expect(count(src, /<FilterMenu[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.filterMenu ?? 0)
     }
+  })
+
+  it('counts a mapped row of pressed buttons with no group round it, as a row', () => {
+    // Tasks' task-list chips: a plain div of `aria-pressed` buttons, a page filter in the body.
+    const chips = '<div className="mb-m flex">{lists.map((l) => {\n  const on = active === l.id\n'
+      + '  return (<span key={l.id}><button type="button" aria-pressed={on} onClick={() => pick(l)}>{l.name}</button></span>)\n})}</div>'
+    expect(pressedRows(chips)).toBe(1)
+    expect(pressedRows(`<div role="group" aria-label="Lists">${chips}</div>`), 'a group is counted once, by toggleRows').toBe(0)
+    expect(pressedRows('{rows.map((r) => <button type="button" onClick={go}>{r}</button>)}')).toBe(0)
   })
 
   it('counts a row of pressed toggles, and a group of anything else not', () => {

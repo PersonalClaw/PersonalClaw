@@ -311,9 +311,10 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     // nothing — the whole population floor is too coarse to notice six missing). 22 since the shell's
     // content-width pill, one of the 23, was removed with its file (#5718); 21 since Chat history's
     // tag filter became its header filter's Tag section; 19 since Memory's view strip and kind chips
-    // moved into its page header (a radiogroup and a filter). The header filter's sections are named
-    // groups of pressed rows (`ui/FilterMenu`), held below with the other named groups.
-    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(19)
+    // moved into its page header (a radiogroup and a filter); 18 since Tasks' task-list chips became
+    // its filter's List section. The header filter's sections are named groups of pressed rows
+    // (`ui/FilterMenu`), held below with the other named groups.
+    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(18)
     for (const rel of ['pages/settings/NotificationRulesMatrix.tsx', 'pages/settings/PersonalityPicker.tsx']) {
       expect(groups.map((g) => g.rel), `${rel} delegates, and must still be COUNTED`).toContain(rel)
     }
@@ -398,14 +399,14 @@ describe('the last two current-item markers in the tree', () => {
   const codeOf = (rel: string) => readSource(join(SRC, rel))
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-  it("the task-list pill says which list the page is showing", () => {
-    // Its `bg-primary text-on-primary` was the only cue. This rail's own form applies: the name carries
-    // the dimension, and it sits on the PICK button — the pill wrapper also holds Reset, so a state on
-    // the wrapper would describe two controls at once.
+  it("the task list the page shows is a named, pressed choice", () => {
+    // The pills over the list were the choice, `<dimension>: <value>` plus `aria-pressed`. They are
+    // the header filter's List section now, whose rows are pressed when chosen and whose section is a
+    // group named "List" (`ui/FilterMenu`); a repeatable list's Reset is the section's action and
+    // keeps a name of its own.
     const code = codeOf('pages/tasks/TasksListPage.tsx')
-    expect(code).toMatch(/aria-label=\{`Task list: \$\{l\.name\}`\} aria-pressed=\{isActive\}/)
-    expect(code, 'and the Reset button keeps its own separate name')
-      .toMatch(/aria-label=\{`Reset list \$\{l\.name\}`\}/)
+    expect(code).toMatch(/title: 'List', value: listFilter\?\.id \?\? ''/)
+    expect(code, 'and Reset names its list').toMatch(/label: `Reset \$\{l\.name\}`/)
   })
 
   it("the file tree says which file is open, and only where the tint claims it", () => {
