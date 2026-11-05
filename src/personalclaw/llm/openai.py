@@ -28,6 +28,7 @@ from personalclaw.llm.base import (
     ModelProvider,
     wire_temperature,
 )
+from personalclaw.llm.catalog import openai_compatible_base
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.inflight import InFlightRequests
 from personalclaw.llm.prompt_cache import PromptCache
@@ -221,6 +222,10 @@ class OpenAIProvider(ModelProvider):
 
         self._openai_module = openai
         self._model = model
+        # A bare-host Base URL chats, streams and embeds under ``/v1``, where its model list and
+        # Test connection read (`catalog.openai_compatible_base`), so "Connected" means a chat
+        # reaches the server too. A Base URL with any path is used as typed.
+        base_url = openai_compatible_base(base_url) if base_url else None
         self._base_url = base_url
         self._max_tokens = max_tokens
         self._extra_options: dict[str, object] = dict(extra_options or {})
