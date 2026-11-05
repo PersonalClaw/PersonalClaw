@@ -45,7 +45,9 @@ async function readEdges(page: Page): Promise<Edges> {
     const group = document.querySelector('nav[data-tour="rail"] [role="group"][aria-label="Chat history"]')
     if (!group) throw new Error('no Chat history group')
     const newChat = [...group.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New chat')
-    const header = group.querySelector('button[aria-expanded]')
+    // The open group's header: it names the list it controls. The search row's Group by button
+    // opens a menu (`aria-expanded` too) and comes first, so `aria-expanded` alone finds it.
+    const header = group.querySelector('button[aria-expanded="true"][aria-controls]')
     if (!newChat || !header) throw new Error('no New chat button or group header')
     const left = (el: Element | null | undefined) => {
       if (!el) throw new Error('missing element')
