@@ -36,7 +36,7 @@ const rel = (abs: string) => relative(SRC, abs)
 const count = (src: string, re: RegExp) => [...src.matchAll(re)].length
 
 /** A section's own controls in a page that owns a header: not page-level, so not counted. */
-const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; toggles?: number; why: string }> = {
+const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; toggles?: number; filterMenu?: number; why: string }> = {
   'pages/files/FilesSection.tsx': { search: 1, why: "the explorer pane's search of the file tree" },
   'pages/tools/ToolsPage.tsx': { segmented: 3, why: "the add and edit server dialogs' type and transport fields" },
   'pages/loop/LoopComposer.tsx': { segmented: 3, why: "the composer's own fields: granularity, project kind, loop kind" },
@@ -46,6 +46,7 @@ const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; to
   'pages/prompts/PromptCreatePage.tsx': { segmented: 2, why: "a form field (the prompt kind) and the editor's right-rail pane" },
   'pages/triggers/TriggerCreatePage.tsx': { segmented: 1, why: 'a form field, the trigger kind' },
   'pages/learning/LearningPage.tsx': { segmented: 1, why: "the Proposals section's own kind filter, under its heading" },
+  'pages/dashboard/agents/AgentDay.tsx': { filterMenu: 1, why: "the agents' day's own Show filter, over that one panel of Home, beside its heading" },
 }
 
 /** The page-level controls not yet in the header, by file: a page drawing one outside its header
@@ -78,9 +79,10 @@ export function toggleRows(src: string): number {
 /** The page-level controls a page draws outside its header. */
 function outsideTheHeader(abs: string): number {
   const src = strip(readSource(abs))
-  const bars = count(src, /<ListControls[\s>]/g) + count(src, /<FilterMenu[\s>]/g) + count(src, /<FilterChip[\s>]/g)
-  if (!/<TopBar[\s>]/.test(src)) return bars
   const own = SECTION_CONTROLS[rel(abs)] ?? {}
+  const menus = Math.max(0, count(src, /<FilterMenu[\s>]/g) - (own.filterMenu ?? 0))
+  const bars = count(src, /<ListControls[\s>]/g) + menus + count(src, /<FilterChip[\s>]/g)
+  if (!/<TopBar[\s>]/.test(src)) return bars
   const strips = Math.max(0, count(src, /<Segmented[\s>]/g) - (own.segmented ?? 0))
   const searches = Math.max(0, count(src, /<SearchField[\s>]/g) - (own.search ?? 0))
   const toggles = Math.max(0, toggleRows(src) - (own.toggles ?? 0))
@@ -112,6 +114,7 @@ describe('every page-level control is in the page header', () => {
       expect(count(src, /<Segmented[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.segmented ?? 0)
       expect(count(src, /<SearchField[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.search ?? 0)
       expect(toggleRows(src), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.toggles ?? 0)
+      expect(count(src, /<FilterMenu[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.filterMenu ?? 0)
     }
   })
 
