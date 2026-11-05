@@ -825,6 +825,8 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
           style={fvs(470)}>
           <Icon size={16} />
           {!iconOnly && <span className="whitespace-nowrap">{label}</span>}
+          {/* It opens a menu, which a plain control does not: the chevron says so. */}
+          {!iconOnly && <ChevronDown size={12} aria-hidden className="-ml-0.5 shrink-0 opacity-70" />}
         </button>
       )}>
       {(close) => <HeaderMenuRows label={label} items={items} close={close} />}
