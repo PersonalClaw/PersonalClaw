@@ -198,3 +198,17 @@ describe('sw.ts consults the policy at every cache site', () => {
     expect(source).toContain("request.method !== 'GET'")
   })
 })
+
+describe('the shell\'s cache key', () => {
+  it('is its own URL only: a URL with a query is never stored', () => {
+    expect(mayCache(url('/'), ORIGIN)).toBe(true)
+    expect(mayCache(url('/?anything=1'), ORIGIN)).toBe(false)
+    expect(mayCache(url('/manifest.webmanifest?v=2'), ORIGIN)).toBe(false)
+  })
+
+  it('the worker reads no /api route itself, and drops query-keyed entries on activate', () => {
+    const src = readFileSync(join(WEB_DIR, 'src', 'sw.ts'), 'utf8')
+    expect(src).not.toMatch(/fetch\(\s*['"`]\/api/)
+    expect(src).toMatch(/new URL\(request\.url\)\.search\) await cache\.delete\(request\)/)
+  })
+})

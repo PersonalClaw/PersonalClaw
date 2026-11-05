@@ -12,10 +12,10 @@ import { StaleWriteNotice } from '../../../ui/StaleWriteNotice'
 import { SquareIconButton } from '../../../ui/SquareIconButton'
 import { QuietButton } from '../../../ui/QuietButton'
 import { Button } from '../../../ui/Button'
-import { TextLink } from '../../../ui/TextLink'
 import { Centered } from '../../../ui/Centered'
 import { resolveContentType, getContentType } from '../../../ui/content/contentTypes'
 import type { CommentTarget } from '../../../ui/content/commentTarget'
+import { SignedAnchor, SignedTextLink } from '../../../ui/SignedMedia'
 
 export interface FileViewerHandle { save: () => void }
 
@@ -259,7 +259,7 @@ export const FileViewer = forwardRef<FileViewerHandle, ViewerProps>(function Fil
         <div className="flex flex-col items-center gap-2 text-on-surface-low">
           <FileWarning size={26} className="opacity-40" />
           <p className="text-[0.8125rem]">This looks like a binary file — it can't be shown as text.</p>
-          <TextLink href={api.fileRawUrl(entry.path, true)} external size="sm">Download to inspect it</TextLink>
+          <SignedTextLink href={api.fileRawUrl(entry.path, true)} external size="sm">Download to inspect it</SignedTextLink>
         </div>
       </Centered>
     )
@@ -301,8 +301,8 @@ export const FileViewer = forwardRef<FileViewerHandle, ViewerProps>(function Fil
       {isMac && (
         <SquareIconButton icon={FolderOpen} iconSize={13} label="Reveal in Finder" onClick={() => { void api.revealPath(entry.path, 'reveal').catch(() => {}) }} />
       )}
-      <a href={api.fileRawUrl(entry.path, true)} download={fileName} target="_blank" rel="noreferrer"
-        className="inline-flex size-7 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface" title="Download"><Download size={13} /></a>
+      <SignedAnchor href={api.fileRawUrl(entry.path, true)} download={fileName} target="_blank" rel="noreferrer"
+        className="inline-flex size-7 items-center justify-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface" title="Download"><Download size={13} /></SignedAnchor>
     </>
   )
   // The one recovery for a save refused because the file changed since this copy was read, then

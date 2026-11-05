@@ -1,3 +1,5 @@
+import { signUrl, signs } from './signedUrl'
+
 /** Trigger a browser download of in-memory text content as a named file.
  *  Creates a transient object URL, clicks a synthetic anchor, then revokes it. */
 export function downloadText(filename: string, content: string, mime = 'text/plain;charset=utf-8'): void {
@@ -21,6 +23,14 @@ export function downloadText(filename: string, content: string, mime = 'text/pla
  *  at the URL (`window.location.href = …`) replaced the whole app with whatever came back
  *  whenever the response was not an attachment, until the user pressed Back. */
 export function downloadFrom(url: string): void {
+  // The browser fetches the link itself, so it can't carry the sign-in's pair: on a gateway that
+  // pairs its sign-ins the URL is signed first (`lib/signedUrl.ts`). On one that doesn't, the
+  // click happens at once, exactly as before.
+  if (!signs()) { clickToSave(url); return }
+  void signUrl(url).then(clickToSave)
+}
+
+function clickToSave(url: string): void {
   const a = document.createElement('a')
   a.href = url
   a.download = ''

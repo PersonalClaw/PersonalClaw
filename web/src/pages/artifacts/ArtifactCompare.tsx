@@ -8,6 +8,7 @@ import { Segmented } from '../../ui/Segmented'
 // Monaco's side-by-side diff editor, lazy — it shares the locally-bundled monaco
 // from monacoSetup (never a CDN), same as the code cockpit's DiffView.
 import { useDiffTeardown } from '../../ui/useDiffTeardown'
+import { SignedImg } from '../../ui/SignedMedia'
 const MonacoDiff = lazy(() => import('@monaco-editor/react').then((m) => ({ default: m.DiffEditor })))
 
 /** Compare two versions of one artifact.
@@ -133,7 +134,7 @@ function ImagePair({ art, left, right }: { art: Artifact; left: number; right: n
           <figcaption className="text-on-surface-low text-[0.75rem]">
             {i === 0 ? 'Before' : 'After'} · v{v}
           </figcaption>
-          <img
+          <SignedImg
             src={`/api/artifacts/${encodeURIComponent(art.slug)}/raw?version=${v}`}
             alt={`${art.name}, version ${v}`}
             className="min-h-0 w-full rounded-md border border-outline/40 object-contain"

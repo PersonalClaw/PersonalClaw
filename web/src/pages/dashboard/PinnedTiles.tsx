@@ -13,6 +13,7 @@ import { LiquidShape } from '../../ui/motion'
 import { safeMode } from '../../ui/surfaces/layers'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { costLabel, isLive, lastRefreshFailed, sourceChips } from './tileFreshness'
+import { SignedAnchor } from '../../ui/SignedMedia'
 
 // ── The Pinned tiles band ──────────────────────
 // The ADDITIVE half of the dashboard-as-views registry: the Overview preset's
@@ -135,7 +136,7 @@ function FreshnessBar({ tile, row }: { tile: DashboardTile; row: TileRefreshRow 
   const cost = costLabel(row)
   return (
     <div className="flex min-w-0 items-center gap-xs" data-testid="tile-freshness">
-      <a
+      <SignedAnchor
         href={api.tileLedgerHref('overview', tile.ref)}
         target="_blank"
         rel="noreferrer"
@@ -149,7 +150,7 @@ function FreshnessBar({ tile, row }: { tile: DashboardTile; row: TileRefreshRow 
         className={`truncate underline decoration-dotted underline-offset-2 ${failed ? 'text-error' : 'text-on-surface-low'}`}
       >
         {row?.ts ? relPast(row.ts) : 'never refreshed'}
-      </a>
+      </SignedAnchor>
       {chips.map((c) => (
         <span
           key={c.id}

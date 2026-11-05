@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, isLiveDownload, type DownloadJob } from '../../lib/api'
+import { openEventStream, type EventStreamLike } from '../../lib/eventStream'
 
 /** Track async local-model download jobs for one provider.
  *
@@ -26,7 +27,7 @@ export function useModelDownloads(provider: string, onSettled: () => void, { rea
   adopt?: DownloadJob
 } = {}) {
   const [jobs, setJobs] = useState<Record<string, DownloadJob>>({})
-  const streams = useRef<Map<string, EventSource>>(new Map())
+  const streams = useRef<Map<string, EventStreamLike>>(new Map())
   const settled = useRef(onSettled)
   settled.current = onSettled
   const adopted = useRef('')
@@ -40,8 +41,8 @@ export function useModelDownloads(provider: string, onSettled: () => void, { rea
   const attach = useCallback((job: DownloadJob) => {
     setJobs((prev) => ({ ...prev, [job.model]: job }))
     if (!isLiveDownload(job) || streams.current.has(job.id)) return
-    let es: EventSource
-    try { es = new EventSource(api.downloadStreamUrl(job.id)) } catch { return }
+    let es: EventStreamLike
+    try { es = openEventStream(api.downloadStreamUrl(job.id)) } catch { return }
     streams.current.set(job.id, es)
     const onFrame = (e: Event) => {
       let data: DownloadJob | null = null

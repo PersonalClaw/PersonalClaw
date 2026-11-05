@@ -34,6 +34,8 @@ import {
 } from 'lucide-react'
 import { apiError, type AgentTier } from '../lib/api'
 import { useInvestigate } from '../lib/investigate'
+import { openSocket, pairFetch } from '../lib/pair'
+import { bindSignedSource, signUrl } from '../lib/signedUrl'
 import { basedOn, isStaleWrite } from '../lib/staleWrite'
 // The host's own design-system primitives, re-exported to apps under
 // `@personalclaw/app-sdk/ui`. Imported by identity — an app page built from
@@ -119,27 +121,25 @@ const SK = { 'X-Session-Key': 'dashboard:ui' }
 // /api/apps/{name}/token) as `Authorization: Bearer`, layered on the owner cookie
 // the browser attaches automatically. The gateway reads its `app` claim to scope
 // the request to this app's declared permissions. Cached per app; re-minted lazily
-// after expiry (or on a 401). Failure to mint is non-fatal — the owner cookie still
-// authenticates; the request simply isn't app-scoped (fails closed at the gateway
-// for anything outside the owner's own reach).
+// after expiry (or on a 401). A mint that fails fails the app's call: the request is
+// never sent on the owner's cookie alone, which would carry the owner's whole reach
+// rather than the app's, and the app's socket is not opened without one.
 const _appTokens = new Map<string, { token: string; exp: number }>()
 
 async function appToken(appName: string): Promise<string> {
   const cached = _appTokens.get(appName)
   const now = Date.now() / 1000
   if (cached && cached.exp - 30 > now) return cached.token
-  try {
-    const r = await fetch(`/api/apps/${encodeURIComponent(appName)}/token`, { method: 'POST', headers: { ...SK } })
-    if (!r.ok) return ''
-    const { token, expires_in } = await r.json()
-    _appTokens.set(appName, { token, exp: now + (Number(expires_in) || 3600) })
-    return token || ''
-  } catch { return '' }
+  const r = await pairFetch(`/api/apps/${encodeURIComponent(appName)}/token`, { method: 'POST', headers: { ...SK } })
+  if (!r.ok) throw await apiError(r)
+  const { token, expires_in } = (await r.json()) as { token?: unknown; expires_in?: unknown }
+  if (typeof token !== 'string' || !token) throw new AppPermissionError(`${appName} got no app token from the gateway.`)
+  _appTokens.set(appName, { token, exp: now + (Number(expires_in) || 3600) })
+  return token
 }
 
 async function appAuthHeaders(appName: string): Promise<Record<string, string>> {
-  const t = await appToken(appName)
-  return t ? { ...SK, Authorization: `Bearer ${t}` } : { ...SK }
+  return { ...SK, Authorization: `Bearer ${await appToken(appName)}` }
 }
 
 /** A write's precondition, the same one core's own pages send (`basedOn` in `lib/staleWrite.ts`).
@@ -162,6 +162,19 @@ export interface AppApiClient {
   patch: <T>(path: string, body?: unknown, opts?: AppWriteOptions) => Promise<T>
   del: <T>(path: string) => Promise<T>
   can: (path: string) => boolean
+  /** A URL for an element that loads it itself (`<audio>`, `<video>`, `<img>`): *path*, a gateway
+   *  route under `/api/` the app declares in `permissions.api`, signed so it opens on a gateway
+   *  that pairs its sign-ins, and as it is on one that doesn't. The signature carries the owner's
+   *  reach for that one URL, as every request an app's page makes in the host page does
+   *  (`docs/security/limitations.md` §4), and it lasts at most two hours. An app's own backend
+   *  (`/apps/<name>/api/…`) is never signed: it comes back as it is. For an element that stays on
+   *  screen, use {@link AppApiClient.bindMedia}, which signs it again before the signature ends. */
+  mediaUrl: (path: string) => Promise<string>
+  /** Keep *element*'s source on *path* (declared as for `mediaUrl`): signed at once, signed again
+   *  before the signature ends and once when the element fails, carrying a playing element's place,
+   *  paused state and speed over each time. Returns the function that stops it, for an effect's
+   *  cleanup: `useEffect(() => api.bindMedia(ref.current!, path), [path])`. */
+  bindMedia: (element: HTMLImageElement | HTMLMediaElement, path: string) => () => void
 }
 
 /** IMPERATIVE API client scoped to the app's declared `permissions.api` —
@@ -181,8 +194,9 @@ export interface AppApiClient {
  *  acts only on a request carrying an app identity, which is the `Bearer` token
  *  `appAuthHeaders` attaches — so the 403 is real for every call made through here.
  *  A bundle is under no obligation to come through here: it runs in the host page
- *  (loadContributedModule), so a bare `fetch('/api/…')` carries the owner's cookie,
- *  reaches the gateway with no app identity, and is treated as the owner. That is
+ *  (loadContributedModule), so a bare `fetch('/api/…')` carries the owner's cookie, its code can
+ *  read the sign-in's pair from this origin's storage and send that too, and the request reaches
+ *  the gateway with no app identity and is treated as the owner. That is
  *  disclosed at install consent and in `docs/security/limitations.md` §4; it is not
  *  closable from this side, because a same-origin request from an app bundle is
  *  indistinguishable from the dashboard's own. */
@@ -197,6 +211,10 @@ export function createAppApi(app: AppContext): AppApiClient {
     return matchesAny(pathname, app.permissions.api)
   }
 
+  function undeclared(path: string): AppPermissionError {
+    return new AppPermissionError(`${app.name} has not declared ${path.split(/[?#]/, 1)[0]} in permissions.api.`)
+  }
+
   async function request<T>(method: string, path: string, body?: unknown, opts?: AppWriteOptions): Promise<T> {
     if (!allowed(path)) {
       throw new AppPermissionError(
@@ -209,7 +227,7 @@ export function createAppApi(app: AppContext): AppApiClient {
       init.body = JSON.stringify(body)
     }
     if (opts?.basedOn) init.headers = { ...init.headers, ...basedOn(opts.basedOn) }
-    const r = await fetch(path, init)
+    const r = await pairFetch(path, init)
     // The same builder core's pages throw from, so a refusal carries the gateway's `status` and
     // `code` (`isStaleWrite` reads the code) and its sentence. Reading `body.error` as the message
     // made every platform-envelope refusal — `{"error": {"code", "message"}}`, 428 and 409
@@ -227,6 +245,15 @@ export function createAppApi(app: AppContext): AppApiClient {
     patch: <T,>(path: string, body?: unknown, opts?: AppWriteOptions) => request<T>('PATCH', path, body, opts),
     del: <T,>(path: string) => request<T>('DELETE', path),
     can: allowed,
+    mediaUrl: async (path: string) => {
+      if (!allowed(path)) throw undeclared(path)
+      // The host's own signer: an app token is refused at the signing route before it routes.
+      return signUrl(path)
+    },
+    bindMedia: (element: HTMLImageElement | HTMLMediaElement, path: string) => {
+      if (!allowed(path)) throw undeclared(path)
+      return bindSignedSource(element, path)
+    },
   }
 }
 
@@ -277,7 +304,7 @@ export interface AgentTaskClient {
  *  anything else. The gateway decides, so a bundle that skips this client gains nothing. */
 export function createAgentTask(appName: string): AgentTaskClient {
   async function start(task: string, opts?: AgentTaskOptions): Promise<string> {
-    const r = await fetch(`/api/apps/${encodeURIComponent(appName)}/agent-run`, {
+    const r = await pairFetch(`/api/apps/${encodeURIComponent(appName)}/agent-run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await appAuthHeaders(appName)) },
       body: JSON.stringify({ task, tier: opts?.tier, agent: opts?.agent, max_turns: opts?.maxTurns }),
@@ -290,7 +317,7 @@ export function createAgentTask(appName: string): AgentTaskClient {
   }
 
   async function poll(id: string): Promise<AgentTaskResult> {
-    const r = await fetch(`/api/apps/${encodeURIComponent(appName)}/agent-run/${encodeURIComponent(id)}`, { headers: await appAuthHeaders(appName) })
+    const r = await pairFetch(`/api/apps/${encodeURIComponent(appName)}/agent-run/${encodeURIComponent(id)}`, { headers: await appAuthHeaders(appName) })
     if (!r.ok) throw await apiError(r)
     return await r.json() as AgentTaskResult
   }
@@ -335,10 +362,19 @@ export function createAppEvents(app: AppContext, onEvent: (e: WsEnvelope) => voi
     // Attach the app-scoped token via query param — the WS handshake can't set an
     // Authorization header. The gateway scopes this connection's event stream to
     // the app's permissions.events (server-side filter in broadcast_ws).
-    const t = await appToken(app.name)
+    let t: string
+    try {
+      t = await appToken(app.name)
+    } catch {
+      // No app token, no socket: opened on the owner's cookie alone it would carry every event
+      // the owner sees. Try again on the same backoff.
+      if (closed) return
+      retry = Math.min(retry + 1, 6)
+      timer = window.setTimeout(connect, 250 * 2 ** retry)
+      return
+    }
     if (closed) return
-    const qs = t ? `?app_token=${encodeURIComponent(t)}` : ''
-    ws = new WebSocket(`${proto}://${location.host}/api/ws${qs}`)
+    ws = openSocket(`${proto}://${location.host}/api/ws?app_token=${encodeURIComponent(t)}`)
     ws.onmessage = (ev) => {
       try {
         const env = JSON.parse(ev.data) as WsEnvelope
@@ -757,7 +793,7 @@ export async function loadContributedModule(
 ): Promise<Record<string, unknown>> {
   let text: string
   try {
-    const r = await fetch(src)
+    const r = await pairFetch(src)
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     text = await r.text()
   } catch {

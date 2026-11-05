@@ -11,6 +11,7 @@ import { withFreshSignIn } from './freshSignIn'
 import { withSecurityConsent } from './securityConsent'
 import type { WorkPhase } from './workPhase'
 import { isSignedOutRefusal, reportSignedOut, signedOutState } from './signedOut'
+import { clearPair, pairFetch, pairSentWith } from './pair'
 import { basedOn, type Revisioned } from './staleWrite'
 import { activePersonaTheme } from '../design/personalities'
 import { newMessageId } from './messageIds'
@@ -62,6 +63,10 @@ export async function apiError(r: Response): Promise<ApiError> {
     // failing on its own with a bare refusal.
     const reason = (detail as { reason?: unknown } | undefined)?.reason
     reportSignedOut({ message, code, reason: typeof reason === 'string' ? reason : '' })
+    // An ending ends the sign-in's pair with it: cleared only while storage still holds the one
+    // this request carried, and never for a request that was about a sign-in link (`lib/pair.ts`).
+    const sent = pairSentWith(r)
+    if (sent && !/[?&]token=/.test(r.url || '')) clearPair(sent)
   }
   return new ApiError(message, r.status, code, detail)
 }
@@ -128,19 +133,19 @@ const lookInQuery = (places: string[]) => {
 }
 
 const get = <T>(p: string, opts: ReadOptions = {}) =>
-  refuseIfSignedOut() ?? fetch(p, { headers: { ...SK }, ...(opts.signal ? { signal: opts.signal } : {}) }).then(j<T>)
+  refuseIfSignedOut() ?? pairFetch(p, { headers: { ...SK }, ...(opts.signal ? { signal: opts.signal } : {}) }).then(j<T>)
 // Every write may be answered "sign in again" — minting a credential, or making sign-in less strict,
 // from a device that signed in more than ten minutes ago — and `withFreshSignIn` asks the owner and
 // sends it once more (`lib/freshSignIn.ts`). `extra` carries a write's precondition —
 // `basedOn(revision)` for a whole-document write (`lib/staleWrite.ts`) — and nothing else rides it.
 const write = <T>(method: string, p: string, body?: unknown, extra?: Record<string, string>) =>
-  refuseIfSignedOut() ?? withFreshSignIn(() => fetch(p, { method, headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>))
+  refuseIfSignedOut() ?? withFreshSignIn(() => pairFetch(p, { method, headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>))
 const post = <T>(p: string, body?: unknown, extra?: Record<string, string>) => write<T>('POST', p, body, extra)
 const put = <T>(p: string, body?: unknown, extra?: Record<string, string>) => write<T>('PUT', p, body, extra)
 const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) => write<T>('PATCH', p, body, extra)
 // Resolves with the answer when the route sends one (a removal that says what it did, as an app's
 // uninstall names the skills it kept), and with nothing otherwise.
-const del = <T = void>(p: string) => refuseIfSignedOut() ?? withFreshSignIn(() => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => {
+const del = <T = void>(p: string) => refuseIfSignedOut() ?? withFreshSignIn(() => pairFetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => {
   if (!r.ok) throw await apiError(r)
   try { return (await r.json()) as T } catch { return undefined as T }
 }))
@@ -165,7 +170,7 @@ const inMemory = (path: string, partition = '') =>
  *  a true network/parse failure rejects (as an ok:false result). */
 async function _installReq(p: string, body: unknown): Promise<AppInstallResult> {
   try {
-    const r = await fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify(body) })
+    const r = await pairFetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify(body) })
     const data = await r.json().catch(() => null)
     // A request refused at the door (a `source` that is missing or not a string) answers the one
     // wire envelope, `{error: {code, message}}`: its sentence is the result's error, like every
@@ -8529,10 +8534,14 @@ export const api = {
   // signed out, THIS one included. Refused without `confirm: true`, so call it only from the
   // owner's confirmation (Settings → Security does). `notice` is the sentence this browser's
   // ended session is told — the one its next request would carry.
-  rotateSigningKey: () =>
-    post<{ ok: boolean; signed_out: number; notice: { code: string; reason: string; message: string } | null }>(
+  // Every sign-in's pair is derived from that key, so this browser forgets its own once it is done.
+  rotateSigningKey: async () => {
+    const out = await post<{ ok: boolean; signed_out: number; notice: { code: string; reason: string; message: string } | null }>(
       '/api/auth/rotate-key', { confirm: true },
-    ),
+    )
+    clearPair()
+    return out
+  },
   // The tokens external agents reach the inbound surfaces with — each surface's own and each
   // registered client's — with when each stops working. `problem` is the sentence to show when
   // the record of their lifetimes can't be read (every surface token is refused until it can).
@@ -8602,7 +8611,12 @@ export const api = {
       username, password,
       ...(current ? { current_password: current.password, ...(current.code ? { totp: current.code } : {}) } : {}),
     }),
-  authLogout: () => post<{ ok: boolean; revoked: boolean }>('/api/auth/logout'),
+  // This browser's own sign-out: once it is done, the sign-in's pair is forgotten with it.
+  authLogout: async () => {
+    const out = await post<{ ok: boolean; revoked: boolean }>('/api/auth/logout')
+    clearPair()
+    return out
+  },
 
   // ── External Access: the shared inbound seam ──
   //
@@ -8710,7 +8724,7 @@ export const api = {
   durabilityArchive: () => get<DurabilityArchives>('/api/durability/archive'),
   /** POST because the domain selection is a body. `domains` omitted = the full export. */
   durabilityExport: (domains?: string[]) =>
-    fetch('/api/durability/export', {
+    pairFetch('/api/durability/export', {
       method: 'POST',
       headers: { ...SK, 'Content-Type': 'application/json' },
       body: JSON.stringify(domains && domains.length ? { domains } : {}),
@@ -8724,7 +8738,7 @@ export const api = {
   durabilityImport: (file: File, mode?: 'merge') => {
     const fd = new FormData(); fd.append('file', file)
     const qs = mode ? `?mode=${mode}` : ''
-    return fetch(`/api/durability/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd })
+    return pairFetch(`/api/durability/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd })
       .then(j<DurabilityImportResult>)
   },
   /** `mode` omitted returns the restore PLAN and changes nothing. A replace is refused while the
@@ -8844,7 +8858,7 @@ export const api = {
     get<{ links: MemoryRecordLink[]; ref: string; enabled: boolean }>(
       inMemory(`/api/memory/record-links?ref=${encodeURIComponent(ref)}`, partition)),
   memoryGraphExport: (partition = '') =>
-    fetch(inMemory('/api/memory/graph/export', partition), { headers: { ...SK } }).then(async (r) => {
+    pairFetch(inMemory('/api/memory/graph/export', partition), { headers: { ...SK } }).then(async (r) => {
       if (!r.ok) throw await apiError(r)
       return r.text()
     }),
@@ -8854,7 +8868,7 @@ export const api = {
   // shape as `_installReq` above, for the same reason.
   memorySlots: (partition = '') => get<MemorySlotsResponse>(inMemory('/api/memory/slots', partition)),
   memorySlotAppend: async (name: string, text: string, partition = ''): Promise<MemorySlotAppendResult> => {
-    const r = await fetch(inMemory(`/api/memory/slots/${encodeURIComponent(name)}/lines`, partition), {
+    const r = await pairFetch(inMemory(`/api/memory/slots/${encodeURIComponent(name)}/lines`, partition), {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ text }),
     })
     const data = await r.json().catch(() => null)
@@ -8892,7 +8906,7 @@ export const api = {
   memoryImport: (data: unknown, partition = '') => post<Record<string, number>>(inMemory('/api/memory/import', partition), data),
   lessons: (partition = '') => get<{ lessons: Lesson[] }>(inMemory('/api/lessons', partition)).then((d) => d.lessons),
   addLesson: (rule: string, category = 'knowledge', partition = '') => post<{ ok: boolean }>(inMemory('/api/lessons', partition), { rule, category }),
-  deleteLesson: (rule: string, partition = '') => fetch(inMemory('/api/lessons', partition), { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ rule }) }).then(j<{ ok: boolean }>),
+  deleteLesson: (rule: string, partition = '') => pairFetch(inMemory('/api/lessons', partition), { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ rule }) }).then(j<{ ok: boolean }>),
 
   // ── Full-text conversation search (over persisted JSONL content) ──
   // `snippet` carries the matching passage with `<<`/`>>` around the matched terms, whether the
@@ -9030,7 +9044,7 @@ export const api = {
    *  Inline fetch rather than the shared `del`, which resolves void — this reads its body.
    *  Same shape as `deleteLesson` below, the other DELETE whose response is data. */
   restoreDiscoverTips: () =>
-    fetch('/api/legibility/discover/dismiss', { method: 'DELETE', headers: { ...SK } }).then(j<{ ok: boolean; restored: number }>),
+    pairFetch('/api/legibility/discover/dismiss', { method: 'DELETE', headers: { ...SK } }).then(j<{ ok: boolean; restored: number }>),
 
   // ── Always-on conventions viewer: what EVERY session receives, with
   // provenance. The server slices these out of the session's own producer strings, so
@@ -9202,7 +9216,7 @@ export const api = {
   // DELETE that returns the refreshed status body (the shared `del` is void-only), so the UI
   // repaints from the response instead of a second round-trip.
   clearHfToken: () =>
-    fetch('/api/models/hf-token', { method: 'DELETE', headers: { ...SK } }).then(j<HfTokenStatus>),
+    pairFetch('/api/models/hf-token', { method: 'DELETE', headers: { ...SK } }).then(j<HfTokenStatus>),
   /** A model's Test, for one use case: one small real call (user-click only). A Test that ran and
    *  failed resolves with `ok: false` and its sentence; a 409 is a use case or provider with no Test
    *  (`model_untestable`) or a Test of the same provider already running (`model_test_running`). */
@@ -9553,7 +9567,7 @@ export const api = {
     if (opts?.duplex) qs.set('duplex', 'true')
     if (opts?.session) qs.set('session', opts.session)
     const url = qs.toString() ? `/api/stt/transcribe?${qs}` : '/api/stt/transcribe'
-    const r = await fetch(url, { method: 'POST', headers: { ...SK }, body: fd })
+    const r = await pairFetch(url, { method: 'POST', headers: { ...SK }, body: fd })
     const data = await r.json().catch(() => ({}))
     // `code` rides along so a composer keys on it, never on the words (`transcriptionFailure`).
     if (!r.ok) return { error: data?.error || `HTTP ${r.status}`, code: data?.code }
@@ -9743,12 +9757,12 @@ export const api = {
   saveULoopSpec: (id: string, body: Record<string, unknown>, base: string) =>
     put<Loop>(`/api/loops/${encodeURIComponent(id)}`, body, basedOn(base)),
   uLoopAction: (id: string, action: 'start' | 'pause' | 'resume' | 'stop') =>
-    fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ action }) }).then(j<Loop>),
+    pairFetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ action }) }).then(j<Loop>),
   /** Its owner commits a code session's uncommitted changes with *message* (`POST /api/loops/{id}/commit`):
    *  the loop's own workspace, once the loop has ended; nothing is pushed. */
   loopCommit: (id: string, message: string) => post<{ ok: boolean; sha: string }>(`/api/loops/${encodeURIComponent(id)}/commit`, { message }),
   uLoopNudge: (id: string, text: string, taskId?: string) => post(`/api/loops/${encodeURIComponent(id)}/nudge`, taskId ? { text, task_id: taskId } : { text }),
-  deleteULoop: (id: string) => fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
+  deleteULoop: (id: string) => pairFetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
   uLoopQueue: (id: string, taskIds: string[], action: 'queue' | 'unqueue' = 'queue') =>
     post<{ ok: boolean; queued_task_ids: string[] }>(`/api/loops/${encodeURIComponent(id)}/queue`, { task_ids: taskIds, action }),
   uLoopAutopilot: (id: string, on: boolean) =>
@@ -9864,7 +9878,7 @@ export const api = {
   // DELETE with a body, so it can't use del(); the failure still funnels through apiError like
   // every other thrower — the literal 'delete failed' it threw before surfaced VERBATIM in the
   // page's failure toast ("Couldn't delete …: delete failed"), hiding the server's actual reason.
-  deleteNotification: (ts: string) => fetch('/api/notifications', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ ts }) }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
+  deleteNotification: (ts: string) => pairFetch('/api/notifications', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ ts }) }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
   clearNotifications: () => post('/api/notifications/clear'),
 
   // Triggers — the unified surface (schedule + lifecycle). The schedule helpers
@@ -10078,7 +10092,7 @@ export const api = {
     put<{ ok: boolean; snippet: PromptSnippet; revision: string }>(`/api/prompt-snippets/${encodeURIComponent(name)}`, body, basedOn(base)),
   // carries the backend message (e.g. the 409 "included by N items" usage guard) so
   // the UI can explain why a delete was refused — not the generic del() "delete failed".
-  deleteSnippet: (name: string) => fetch(`/api/prompt-snippets/${encodeURIComponent(name)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
+  deleteSnippet: (name: string) => pairFetch(`/api/prompt-snippets/${encodeURIComponent(name)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
   renderSnippet: (name: string, variables: Record<string, unknown>) => post<{ name: string; rendered: string }>(`/api/prompt-snippets/${encodeURIComponent(name)}/render`, { variables }),
   // prompt use-case bindings (which prompt serves each runtime context and internal task)
   promptBindings: () => get<PromptBindings>('/api/prompts/bindings'),
@@ -10252,7 +10266,7 @@ export const api = {
   // app-install pattern (_installReq). Only a true network/parse failure yields ok:false.
   installSkill: async (id: string, marketplace = 'skills.sh', force = false): Promise<SkillInstallResult> => {
     try {
-      const r = await fetch('/api/skills/install', {
+      const r = await pairFetch('/api/skills/install', {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...SK },
         body: JSON.stringify({ id, marketplace, force }),
       })
@@ -10549,7 +10563,8 @@ export const api = {
   knowledgeEntityRelated: (name: string) =>
     get<{ related: { name: string; entity_type?: string; relation_type: string; outgoing: boolean }[] }>(`/api/knowledge/entities/by-name/${encodeURIComponent(name)}/related`),
   generateKnowledgeIntelligence: (id: string) => post<KnowledgeItem>(`/api/knowledge/items/${encodeURIComponent(id)}/generate-intelligence`),
-  // Bare URLs for <img>/<audio>/<video> src — auth rides the same-origin pc_token cookie.
+  // The URLs an <img>/<audio>/<video> loads by itself: give them to a Signed* element
+  // (`ui/SignedMedia.tsx`), which signs them where the sign-in needs more than its cookie.
   knowledgeItemFileUrl: (id: string) => `/api/knowledge/items/${encodeURIComponent(id)}/file`,
   knowledgeItemThumbnailUrl: (id: string) => `/api/knowledge/items/${encodeURIComponent(id)}/thumbnail`,
   // node-graph ingestion: per-item extracted-content pool + live progress SSE.
@@ -10763,7 +10778,7 @@ export const api = {
       return chunkedUpload(file, { target: 'knowledge', onProgress, signal })
     }
     const fd = new FormData(); fd.append('file', file)
-    const r = await fetch('/api/knowledge/ingest', { method: 'POST', headers: { ...SK }, body: fd, signal })
+    const r = await pairFetch('/api/knowledge/ingest', { method: 'POST', headers: { ...SK }, body: fd, signal })
     if (!r.ok) throw new Error(await errText(r))
     return r.json()
   },
@@ -10865,7 +10880,7 @@ export const api = {
   // The read endpoint serves raw NDJSON text (application/x-ndjson), NOT a JSON
   // document — parse as text or every multi-line archive throws in r.json().
   sessionArchiveRead: (name: string) =>
-    fetch(`/api/session/archive/${encodeURIComponent(name)}`, { headers: { ...SK } })
+    pairFetch(`/api/session/archive/${encodeURIComponent(name)}`, { headers: { ...SK } })
       .then(async (r) => { if (!r.ok) throw await apiError(r); return r.text() }),
   // ── document comments: the annotation layer over files, artifacts and planning docs ──
   // 🔴 These routes are why the layer is DURABLE. It persisted to one `localStorage` key, so
@@ -10891,7 +10906,7 @@ export const api = {
   projectImport: (file: File, opts: { preview?: boolean } = {}) => {
     const fd = new FormData(); fd.append('file', file)
     const qs = opts.preview ? '?preview=1' : ''
-    return fetch(`/api/projects/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd }).then(j<ProjectImportResult>)
+    return pairFetch(`/api/projects/import${qs}`, { method: 'POST', headers: { ...SK }, body: fd }).then(j<ProjectImportResult>)
   },
   // updates + changelog
   // The status as the last check left it. It reaches GitHub only when an automatic check is due.
@@ -11066,7 +11081,7 @@ export const api = {
   // Query params, not a body: DELETE bodies are inconsistently forwarded by proxies, and the
   // name is not secret — only values are.
   deleteSecret: (name: string, projectId = '') =>
-    fetch(
+    pairFetch(
       `/api/secrets?name=${encodeURIComponent(name)}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`,
       { method: 'DELETE', headers: { ...SK } },
     ).then(j<SecretDeleteResult>),
@@ -11133,7 +11148,7 @@ export const api = {
     if (small.length) {
       const fd = new FormData()
       small.forEach((f) => fd.append('file', f))
-      const r = await fetch('/api/upload/file', { method: 'POST', headers: { ...SK }, body: fd, signal })
+      const r = await pairFetch('/api/upload/file', { method: 'POST', headers: { ...SK }, body: fd, signal })
       const data = await j<{ paths: string[]; error?: string }>(r)
       if (data.paths) paths.push(...data.paths)
     }
@@ -11143,7 +11158,7 @@ export const api = {
   // ── files (the workspace explorer) — endpoints are /api/file-* (singular) ──
   fileRoots: () => get<FileListResp>('/api/file-list'),
   fileList: (path: string) => get<FileListResp>(`/api/file-list?path=${encodeURIComponent(path)}`),
-  fileRead: (path: string, resolve = false) => fetch(`/api/file-read?path=${encodeURIComponent(path)}${resolve ? '&resolve=1' : ''}`, { headers: { ...SK } }).then(async (r) => {
+  fileRead: (path: string, resolve = false) => pairFetch(`/api/file-read?path=${encodeURIComponent(path)}${resolve ? '&resolve=1' : ''}`, { headers: { ...SK } }).then(async (r) => {
     if (!r.ok) throw await apiError(r)  // ApiError carries .status so the viewer can tell a 404 (file gone → close the stale tab) from a transient 5xx (offer retry)
     // X-Binary: the server detected non-text content (NUL bytes) — don't treat the
     // empty body as an editable file; the viewer shows a binary placeholder.
@@ -11185,7 +11200,7 @@ export const api = {
       if (small.length) {
         const fd = new FormData()
         for (const f of small) fd.append('file', f, f.name)
-        const r = await fetch(`/api/file-upload?path=${encodeURIComponent(dir)}`, { method: 'POST', headers: { ...SK }, body: fd, signal })
+        const r = await pairFetch(`/api/file-upload?path=${encodeURIComponent(dir)}`, { method: 'POST', headers: { ...SK }, body: fd, signal })
         // The refusal's own sentence, from either envelope this route answers: a coded refusal
         // (`{error: {code, message}}`, the content scan's) read as `data.error` showed the user
         // "[object Object]".
@@ -11396,7 +11411,7 @@ export const api = {
   workflowRunDrop: (id: string, files: File[], confirm = false) => {
     const body = new FormData()
     for (const f of files) body.append('file', f)
-    return fetch(
+    return pairFetch(
       `/api/workflows/runs/${encodeURIComponent(id)}/drop${confirm ? '?confirm=true' : ''}`,
       { method: 'POST', headers: { ...SK }, body },
     ).then(j<WorkflowDropStatus>)
@@ -11530,7 +11545,7 @@ export const api = {
   // so this is spelled out with `fetch` — the shared `put` helper carries no headers.
   artifactModel: (slug: string) => get<DocumentModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
   saveArtifactModel: (slug: string, version: number, model: DocumentModelJson) =>
-    fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
+    pairFetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
       body: JSON.stringify({ model }),
@@ -11542,7 +11557,7 @@ export const api = {
   // check into every editor, which is a discriminator the URL already carries.
   artifactSheetModel: (slug: string) => get<SheetModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
   saveArtifactSheetModel: (slug: string, version: number, model: SheetModelJson) =>
-    fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
+    pairFetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
       body: JSON.stringify({ model }),
@@ -11551,7 +11566,7 @@ export const api = {
   // kind decides which crosses (`documents/model_codec.py`).
   artifactDeckModel: (slug: string) => get<DeckModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
   saveArtifactDeckModel: (slug: string, version: number, model: DeckModelJson) =>
-    fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
+    pairFetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
       body: JSON.stringify({ model }),

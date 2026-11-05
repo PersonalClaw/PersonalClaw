@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, useMemo, useState } from 'react'
+import { createContext, memo, useContext, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { physics } from '../design/motion'
 import { fvs } from '../design/fontWeight'
@@ -21,6 +21,8 @@ import type { MemoryCitation } from '../pages/chat/chatTypes'
 import 'katex/dist/katex.min.css'
 import { copyText } from '../app/clipboard'
 import { fingerprint, useBesideRegistration, useOpenBeside, type BesideBlock } from './OpenBeside'
+import { pairFetch } from '../lib/pair'
+import { useSignedSource } from '../lib/signedUrl'
 
 /** The one renderer for markdown this app did not write: a model's reply, a tool's result, a
  *  knowledge item's body (a feed entry, a scraped page, an uploaded file, a mirrored
@@ -124,13 +126,34 @@ function artifactSlugFromSrc(src: string): string {
 function InlineArtifactImage({ src, alt, chatSessionKey }: {
   src: string; alt: string; chatSessionKey?: string
 }) {
-  const [failed, setFailed] = useState(false)
+  // 'gone': the gateway answered 404, so the artifact was deleted and Regenerate is offered.
+  // 'refused': any other failure (a sign-in or a signature the gateway refused, the network). That
+  // is never a deletion, and Regenerate, a metered model call, is never offered for it.
+  const [failed, setFailed] = useState<'' | 'gone' | 'refused'>('')
   // Cache-buster appended on a successful regenerate so the browser refetches the
   // same (now-immutable-cached) /raw URL instead of serving the 404 from cache.
   const [bust, setBust] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const slug = artifactSlugFromSrc(src)
+  // The cache-buster goes on before signing, so the signature covers the URL actually loaded.
+  const url = src + bust
+  const { src: shown, retry } = useSignedSource(url)
+  useEffect(() => { setFailed('') }, [url])
+
+  // A failed load is signed again and tried once. When that gives the image nothing new to load
+  // (nothing signs here, or the signature came back the same), or the new one fails too, it is
+  // asked about once through the request layer, which carries the pair: only a 404 there means
+  // the image is gone.
+  const onError = async () => {
+    if (await retry()) return
+    try {
+      const r = await pairFetch(url, { method: 'HEAD' })
+      setFailed(r.status === 404 ? 'gone' : 'refused')
+    } catch {
+      setFailed('refused')
+    }
+  }
 
   const regenerate = async () => {
     if (!slug) return
@@ -139,13 +162,21 @@ function InlineArtifactImage({ src, alt, chatSessionKey }: {
       await api.regenerateArtifactImage(slug, { session: chatSessionKey, prompt: alt })
       // Re-show the <img>, busting cache so the freshly-written bytes load.
       setBust(`${src.includes('?') ? '&' : '?'}_r=${Date.now()}`)
-      setFailed(false)
+      setFailed('')
     } catch (e) {
       setErr((e as Error)?.message || 'Regenerate failed')
     } finally { setBusy(false) }
   }
 
-  if (failed) {
+  if (failed === 'refused') {
+    return (
+      <div className="my-2 flex max-w-md items-center gap-2 rounded-lg border border-outline-variant/40 bg-surface-low px-4 py-3">
+        <ImageOff size={14} className="shrink-0 text-on-surface-low" />
+        <span data-type="body-s" className="text-on-surface-low">This image can’t be shown right now. Reload the page to try again.</span>
+      </div>
+    )
+  }
+  if (failed === 'gone') {
     return (
       <div className="my-2 flex max-w-md flex-col gap-2 rounded-lg border border-outline-variant/40 bg-surface-low px-4 py-3">
         <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low">
@@ -169,8 +200,8 @@ function InlineArtifactImage({ src, alt, chatSessionKey }: {
     )
   }
   return (
-    <img src={src + bust} alt={alt} loading="lazy" onError={() => setFailed(true)}
-      className="my-2 max-h-[28rem] max-w-full rounded-lg border border-outline-variant/40 object-contain" />
+    shown ? <img src={shown} alt={alt} loading="lazy" onError={() => { void onError() }}
+      className="my-2 max-h-[28rem] max-w-full rounded-lg border border-outline-variant/40 object-contain" /> : null
   )
 }
 

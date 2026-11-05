@@ -94,7 +94,7 @@ describe('incognito copy matches the backend contract', () => {
     expect(read('dashboard', 'memory_write_gate.py')).toMatch(/key = approval_answer\.work_of_request\(request\)\s*\n\s*if not key or key == _DASHBOARD_UI:\s*\n\s*return await handler\(request\)/)
     const client = readFileSync(join(__dirname, '..', '..', 'lib', 'api.ts'), 'utf8')
     expect(client).toMatch(/const SK = \{ 'X-Session-Key': 'dashboard:ui'/)
-    expect(client).toMatch(/fetch\(url, \{ method: 'POST', headers: \{ \.\.\.SK \}, body: fd \}\)/)
+    expect(client).toMatch(/pairFetch\(url, \{ method: 'POST', headers: \{ \.\.\.SK \}, body: fd \}\)/)
     expect(client).toMatch(/voiceSynthesize: \(text: string, session: string, request: string\) => post</)
   })
 

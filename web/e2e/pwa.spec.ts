@@ -4,6 +4,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
+import { apiGet } from './pairedApi'
 
 // ── PWA behaviour: /api is NEVER served from cache ────────────────────────────
 //
@@ -158,7 +159,7 @@ test.describe('service worker', () => {
       // ── 4. Go genuinely offline: the origin stops existing.
       await shutdown(server)
       await expect(async () => {
-        await page.request.get(`${ORIGIN}/api/ping`)
+        await apiGet(page, `${ORIGIN}/api/ping`)
       }).rejects.toBeTruthy()
 
       // ── 5. The vacuity floor. Offline, a navigation STILL renders the shell —

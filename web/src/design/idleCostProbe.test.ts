@@ -349,7 +349,8 @@ describe('the probe measures until it gets an idle window, and says so when it n
     const got = await measureIdle(page as never)
     expect(got).toEqual({ sample: quiet, voided: [] })
     expect(page.waitForTimeout).toHaveBeenCalledWith(IDLE_WINDOW_MS)
-    expect(page.request.get).toHaveBeenCalledWith('/api/chat/sessions')
+    // Through the e2e pair helper: the stored pair rides it, and with none (this stub's page) no header.
+    expect(page.request.get).toHaveBeenCalledWith('/api/chat/sessions', { headers: {} })
   })
 
   it('measures again after a window something reached, and reports the windows it threw away', async () => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { api } from '../../../lib/api'
+import { openEventStream, type EventStreamLike } from '../../../lib/eventStream'
 
 /** Live-watch a file's content via the /api/file-watch SSE stream. Calls
  *  `onChange(content, revision)` whenever the file changes on disk — the text exactly as
@@ -13,11 +14,11 @@ export function useFileWatch(path: string | null, enabled: boolean, onChange: (c
 
   useEffect(() => {
     if (!enabled || !path) return
-    let es: EventSource | null = null
+    let es: EventStreamLike | null = null
     try {
       // resolve=1: a relative chat file-mention watches from the same resolved
       // workspace path fileRead used (else the watch 400s and can't push updates).
-      es = new EventSource(api.fileWatchUrl(path, true))
+      es = openEventStream(api.fileWatchUrl(path, true))
     } catch {
       return
     }

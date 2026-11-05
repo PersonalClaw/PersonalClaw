@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type Loop } from '../../lib/api'
+import { openEventStream, type EventStreamLike } from '../../lib/eventStream'
 
 // The COMPLETE set of lifecycle events the unified per-loop SSE (loop_sse) can emit
 // after the initial `snapshot`, across ALL kinds (goal/general/research/design =
@@ -40,9 +41,9 @@ export const RUN_LIFECYCLE = [
   // A cycle its worker ran without tools: the loop waits for a model that uses them
   // (`LoopWatchdog.hold_without_tools`).
   'no_tools',
-  // Loop middleware events. These MUST be listed here: EventSource
-  // silently DROPS event types it has no listener for, so an unregistered event is not a
-  // rendering bug you can see — it is an event that never arrives.
+  // Loop middleware events. These MUST be listed here: the stream (an EventSource, or
+  // `lib/eventStream.ts`'s reader) silently DROPS event types it has no listener for, so an
+  // unregistered event is not a rendering bug you can see — it is an event that never arrives.
   'breaker_trip', 'steering', 'judge_verdict', 'judge_divergence',
   // The plan-review lifecycle. Registered here for the SAME reason
   // as every event above — an unregistered type is silently dropped by EventSource, so the
@@ -147,8 +148,8 @@ export function useRunStream(id: string | null, enabled: boolean, handlers: {
   useEffect(() => {
     setConnected(false)
     if (!enabled || !id) return
-    let es: EventSource | null = null
-    try { es = new EventSource(api.uLoopStreamUrl(id)) } catch { return }
+    let es: EventStreamLike | null = null
+    try { es = openEventStream(api.uLoopStreamUrl(id)) } catch { return }
 
     es.addEventListener('snapshot', (e) => {
       try { ref.current.onSnapshot(JSON.parse((e as MessageEvent).data) as Loop) } catch { /* malformed */ }

@@ -63,5 +63,18 @@ setup('authenticate', async ({ page, context }) => {
       `report a clean tree for a surface no user ever sees.`,
   ).toBeVisible({ timeout: 15_000 }))
 
+  // A gateway that pairs its sign-ins refuses the cookie without the pair the page keeps in its
+  // origin storage (`src/lib/pair.ts`), and `storageState` below carries that storage to every
+  // spec. So the harness's own sign-in is held to the rule too: a gateway that answers this read
+  // with `pair_missing` handed the harness a pair it never stored.
+  const missing = await page.evaluate(async () => {
+    const pair = (() => { try { return window.localStorage.getItem('pc_pair') || '' } catch { return '' } })()
+    const r = await fetch('/api/auth/session', { headers: pair ? { 'X-PersonalClaw-Pair': pair } : {} })
+    if (r.status !== 403) return false
+    const body = await r.json().catch(() => null) as { error?: { detail?: { reason?: string } } } | null
+    return body?.error?.detail?.reason === 'pair_missing'
+  })
+  expect(missing, 'the gateway pairs its sign-ins, and the harness stored no pair').toBe(false)
+
   await context.storageState({ path: OUT })
 })

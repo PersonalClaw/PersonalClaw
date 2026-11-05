@@ -39,7 +39,6 @@ import {
   isPushPayload,
   notificationFor,
   shouldFocus,
-  soundMapFromRules,
   type PushPayload,
 } from './app/pushPolicy'
 
@@ -103,6 +102,12 @@ sw.addEventListener('activate', (event) => {
     (async () => {
       for (const key of await caches.keys()) {
         if (key !== CACHE_NAME) await caches.delete(key)
+      }
+      // The cache holds entries under their own URLs only, with no query (`mayCache`): drop any
+      // entry keyed by a URL with one.
+      const cache = await caches.open(CACHE_NAME)
+      for (const request of await cache.keys()) {
+        if (new URL(request.url).search) await cache.delete(request)
       }
     })(),
   )
@@ -187,22 +192,16 @@ async function deliverPush(payload: PushPayload): Promise<void> {
   await Promise.allSettled([shown, voiceCue(payload)])
 }
 
-/** Resolve the per-kind cue voice from the notification rules and post it to every open client.
- *  Best-effort and fail-open: an unreadable rules file (offline, unauthenticated) simply means no
- *  cue, and `notificationFor` stays the one place the voice is read. */
+/** Hand the push's kind to every open client, which resolves its voice and plays it.
+ *
+ *  The worker reads nothing itself: the notification rules are an `/api` read, and on a gateway
+ *  that pairs its sign-ins only the page holds what such a read needs (`web/src/lib/pair.ts`), so
+ *  a worker read would be refused and every push would lose its voice. The page reads them through
+ *  its own request layer, and only a visible page plays anything (`app/pushCuePlayback.ts`). */
 async function voiceCue(payload: PushPayload): Promise<void> {
-  let soundByKind: Record<string, string> = {}
-  try {
-    const res = await fetch('/api/notifications/rules', { credentials: 'same-origin' })
-    if (!res.ok) return
-    soundByKind = soundMapFromRules(await res.json())
-  } catch {
-    return
-  }
-  const note = notificationFor(payload, soundByKind)
-  if (!note.sound) return
+  if (!payload.kind) return
   const clients = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true })
-  for (const client of clients) client.postMessage({ type: PUSH_CUE_MESSAGE, cue: note.sound })
+  for (const client of clients) client.postMessage({ type: PUSH_CUE_MESSAGE, kind: payload.kind })
 }
 
 sw.addEventListener('notificationclick', (event) => {

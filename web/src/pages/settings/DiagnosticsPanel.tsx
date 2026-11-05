@@ -9,6 +9,7 @@ import { api } from '../../lib/api'
 import { accentChip } from '../../design/accent'
 import { PanelHeader, Section } from './settingsUI'
 import { reportActionFailure } from '../../app/reportingWrite'
+import { openEventStream, type EventStreamLike } from '../../lib/eventStream'
 
 /** A single streamed log entry (backend emits {level, msg} JSON per SSE frame,
  *  msg already formatted as "<ts> <LEVEL> <logger>: <message>"). */
@@ -53,8 +54,8 @@ export function DiagnosticsPanel() {
   // Subscribe to the live log SSE (ring-buffer replay + live tail). While paused,
   // frames are dropped (not buffered) — resuming shows the live tail, not a backlog.
   useEffect(() => {
-    let es: EventSource | null = null
-    try { es = new EventSource(api.logsUrl(300)) } catch { return }
+    let es: EventStreamLike | null = null
+    try { es = openEventStream(api.logsUrl(300)) } catch { return }
     es.onopen = () => setConnected(true)
     es.onmessage = (e) => {
       if (pausedRef.current) return

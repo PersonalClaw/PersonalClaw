@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type WorkflowRunDetailData } from '../../lib/api'
+import { openEventStream, type EventStreamLike } from '../../lib/eventStream'
 
 // The COMPLETE set of events the per-run workflow SSE can emit after the initial
 // `workflow_snapshot`. EventSource silently DROPS event types with no registered
@@ -106,8 +107,8 @@ export function useWorkflowStream(
   useEffect(() => {
     setConnected(false)
     if (!enabled || !runId) return
-    let es: EventSource | null = null
-    try { es = new EventSource(api.workflowRunStreamUrl(runId)) } catch { return }
+    let es: EventStreamLike | null = null
+    try { es = openEventStream(api.workflowRunStreamUrl(runId)) } catch { return }
 
     es.addEventListener('workflow_snapshot', (e) => {
       try { ref.current.onSnapshot(JSON.parse((e as MessageEvent).data) as WorkflowRunDetailData) } catch { /* malformed */ }

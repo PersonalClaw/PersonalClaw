@@ -11,6 +11,7 @@
 // whatever the page does, so progress says `finishing` and a caller stops offering Cancel.
 
 import { errText } from './errText'
+import { pairFetch } from './pair'
 
 const SK = { 'X-Session-Key': 'dashboard:ui' }
 
@@ -36,7 +37,7 @@ interface Limits { limits: Record<string, number>; single_post_threshold: number
 let _limitsCache: Limits | null = null
 async function fetchLimits(): Promise<Limits> {
   if (_limitsCache) return _limitsCache
-  const r = await fetch('/api/uploads/limits', { headers: { ...SK } })
+  const r = await pairFetch('/api/uploads/limits', { headers: { ...SK } })
   if (!r.ok) throw new Error(`could not fetch upload limits (HTTP ${r.status})`)
   _limitsCache = await r.json()
   return _limitsCache!
@@ -85,7 +86,7 @@ export async function chunkedUpload(file: File, opts: ChunkedUploadOpts): Promis
   }
   // Not aborted with the rest: a cancel that lands while this is in flight is honoured below,
   // where the id it answers with lets the upload it opened be dropped.
-  const initR = await fetch('/api/uploads/init', {
+  const initR = await pairFetch('/api/uploads/init', {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...SK },
     body: JSON.stringify(initBody),
   })
@@ -95,7 +96,7 @@ export async function chunkedUpload(file: File, opts: ChunkedUploadOpts): Promis
   // From here the gateway holds this upload's parts. One this page gives up is dropped there now,
   // rather than left for the day-long sweep. `keepalive` lets the drop outlive the page.
   const drop = () => {
-    void fetch(`/api/uploads/${uploadId}`, { method: 'DELETE', headers: { ...SK }, keepalive: true }).catch(() => {})
+    void pairFetch(`/api/uploads/${uploadId}`, { method: 'DELETE', headers: { ...SK }, keepalive: true }).catch(() => {})
   }
   window.addEventListener('pagehide', drop)
   try {
@@ -126,7 +127,7 @@ export async function chunkedUpload(file: File, opts: ChunkedUploadOpts): Promis
   opts.onProgress?.({ loaded: file.size, total: file.size, pct: 100, finishing: true })
   let compR: Response
   try {
-    compR = await fetch(`/api/uploads/${uploadId}/complete`, {
+    compR = await pairFetch(`/api/uploads/${uploadId}/complete`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...SK },
       body: '{}',
     })
@@ -151,7 +152,7 @@ async function putPartWithRetry(uploadId: string, index: number, blob: Blob, sig
   for (let attempt = 0; attempt < _PART_RETRIES; attempt++) {
     if (signal?.aborted) throw new DOMException('upload cancelled', 'AbortError')
     try {
-      const r = await fetch(`/api/uploads/${uploadId}/part?index=${index}`, {
+      const r = await pairFetch(`/api/uploads/${uploadId}/part?index=${index}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/octet-stream', ...SK },
         body: blob, signal,
       })

@@ -73,7 +73,9 @@ export function isApiPath(pathname: string): boolean {
 export function mayCache(url: URL, origin: string): boolean {
   if (url.origin !== origin) return false
   if (isApiPath(url.pathname)) return false
-  if ((APP_SHELL as readonly string[]).includes(url.pathname)) return true
+  // The shell is stored only under its own URL, with no query: a document a query shapes is never
+  // written (the Cache API ignores `no-store`, so the rule is here).
+  if ((APP_SHELL as readonly string[]).includes(url.pathname)) return url.search === ''
   return CACHEABLE_PREFIXES.some((p) => url.pathname.startsWith(p))
 }
 

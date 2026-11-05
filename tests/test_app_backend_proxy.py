@@ -523,3 +523,63 @@ async def test_proxy_never_forwards_a_credential_riding_the_query(monkeypatch):
         _SECRET, "GET", forwarded.raw_path_qs, b"", sent["headers"][PROXY_SIGNATURE_HEADER], 60
     )
     assert ok, f"the signature does not cover the target that was sent: {why}"
+
+
+@pytest.mark.asyncio
+async def test_proxy_never_forwards_the_sign_in_pair_and_never_passes_back_a_sign_out(monkeypatch):
+    """The page sends the sign-in's pair on every request to its own origin
+    (``web/src/lib/pair.ts``), and an app's backend calls are to that origin. The pair is the
+    owner's, like the cookie the proxy already strips, so a backend never receives it. Coming
+    back, ``X-Auth-Required`` is the gateway's own word that this browser's sign-in ended: a
+    backend can't say it for it."""
+    import aiohttp
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers.apps import api_app_proxy
+
+    _patch_proxy_world(monkeypatch)
+    sent: dict = {}
+
+    class _Content:
+        async def iter_chunked(self, _n):
+            yield b"{}"
+
+    class _Upstream:
+        status = 403
+        headers = {"Content-Type": "application/json", "X-Auth-Required": "true", "X-App": "kept"}
+        content = _Content()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Session:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def request(self, method, url, **kwargs):
+            sent.update(headers=kwargs.get("headers") or {})
+            return _Upstream()
+
+    monkeypatch.setattr(aiohttp, "ClientSession", _Session)
+    req = make_mocked_request(
+        "GET",
+        "/apps/demo/api/things",
+        headers={"X-PersonalClaw-Pair": "Q" * 43, "Cookie": "pc_token_10000=owner"},
+        match_info={"name": "demo", "tail": "things"},
+    )
+    resp = await api_app_proxy(req)
+
+    assert sent, "the proxy never reached the upstream call"
+    assert {k.lower() for k in sent["headers"]}.isdisjoint({"x-personalclaw-pair", "cookie"})
+    assert "Q" * 43 not in str(sent["headers"])
+    assert "X-Auth-Required" not in resp.headers
+    assert resp.headers.get("X-App") == "kept"

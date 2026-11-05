@@ -18,6 +18,7 @@ import { sanitizeInlineHtml } from './sanitize'
 import { ImagePreview, PdfPreview, CsvPreview, JsonPreview } from '../../pages/files/browse/FilePreviews'
 import { api } from '../../lib/api'
 import { PROSE_MEASURE_CLASS } from '../../design/measure'
+import { SignedAnchor, SignedVideo } from '../SignedMedia'
 
 /** Markdown — react-markdown + widget blocks (the chat/file markdown renderer). */
 export const MarkdownPreview = memo(function MarkdownPreview({ content }: PreviewProps) {
@@ -198,7 +199,7 @@ export const VideoFilePreview = memo(function VideoFilePreview({ path, content }
   return (
     <div className="grid h-full place-items-center overflow-auto p-m">
       {/* eslint-disable-next-line jsx-a11y/media-has-caption -- generated clip, no track */}
-      <video src={src} controls className="max-h-full max-w-full rounded-md"
+      <SignedVideo src={src} controls className="max-h-full max-w-full rounded-md"
         style={{ background: 'var(--color-surface-high)' }} />
     </div>
   )
@@ -220,11 +221,11 @@ export const OfficeDocPreview = memo(function OfficeDocPreview({ path, content }
       </p>
       {raw
         ? (
-          <a href={raw} download
+          <SignedAnchor href={raw} download
             data-type="body-s"
             className="inline-flex w-fit items-center gap-1.5 rounded-md bg-surface-high px-3 h-8 text-on-surface transition-colors hover:bg-surface-container">
             <Download size={13} /> Download
-          </a>
+          </SignedAnchor>
         )
         : <PreviewUnavailable label="document" />}
       <OfficeExtractedText url={raw} />

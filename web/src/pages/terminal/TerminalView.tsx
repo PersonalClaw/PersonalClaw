@@ -10,6 +10,7 @@ import { api } from '../../lib/api'
 import { registerTerminal, unregisterTerminal } from './terminalBridge'
 import { escapeGate } from './escapeGate'
 import type { TermTab } from './TerminalPage'
+import { openSocket } from '../../lib/pair'
 
 type Status = 'connecting' | 'open' | 'reconnecting' | 'exited' | 'error'
 
@@ -117,7 +118,7 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
       if (disposed) return
       const sid = sessionIdRef.current
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const ws = new WebSocket(`${proto}://${location.host}/api/ws/terminal/${encodeURIComponent(sid)}`)
+      const ws = openSocket(`${proto}://${location.host}/api/ws/terminal/${encodeURIComponent(sid)}`)
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
 
