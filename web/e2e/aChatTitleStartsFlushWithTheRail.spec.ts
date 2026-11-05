@@ -91,7 +91,8 @@ for (const narrowest of [false, true]) {
 
       const edges = await readEdges(page)
       expect(Math.abs(edges.header - edges.newChat), 'the group header starts at the rail edge').toBeLessThanOrEqual(1)
-      expect(Object.keys(edges.titles).sort()).toEqual(['e2e-flush-calm', 'e2e-flush-long'])
+      // A chat's row is keyed by its thread, `chat:<session key>`.
+      expect(Object.keys(edges.titles).sort()).toEqual(['chat:e2e-flush-calm', 'chat:e2e-flush-long'])
       for (const [key, x] of Object.entries(edges.titles)) {
         expect(Math.abs(x - edges.newChat), `${key}'s title is flush with the rail`).toBeLessThanOrEqual(1)
       }
