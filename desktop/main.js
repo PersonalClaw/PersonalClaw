@@ -27,11 +27,13 @@ const { quitWithin } = require("./quitSequence");
 const { makeSystemBrowser, navigationGuard, registerSystemBrowserIpc, windowOpenHandler } = require("./systemBrowser");
 const { buildGatewayEnv } = require("./gatewayEnv");
 const {
+  HOME_NEWER_EXIT,
   HOME_SERVED_EXIT,
   adoptedGoneSentence,
   isUnasked,
   makeLastLine,
   notStartedSentence,
+  olderSentence,
   stoppedSentence,
 } = require("./gatewayLost");
 const homeGateway = require("./homeGateway");
@@ -64,7 +66,7 @@ const {
   probeAll,
   nextReconnectStep,
 } = require("./connectMode");
-const { describeList, makeConnectDialog } = require("./connectDialog");
+const { RELEASES_PAGE_URL, describeList, makeConnectDialog } = require("./connectDialog");
 
 /**
  * Resolve the user's real login-shell PATH.
@@ -381,8 +383,16 @@ async function stopGateway({ graceMs = GATEWAY_GRACE_MS, killGraceMs } = {}) {
 async function gatewayLost(exit) {
   startFailure = exit;
   gatewayGone = true;
-  setLocalState("stopped", stoppedSentence(exit));
+  if (exit.code === HOME_NEWER_EXIT) setOlder();
+  else setLocalState("stopped", stoppedSentence(exit));
   showNotConnected();
+}
+
+/** The app's own gateway was refused this home because a newer PersonalClaw has served it
+ *  (`HOME_NEWER_EXIT`): the row names that version and offers the newer app, never a start that
+ *  would be refused again. */
+function setOlder() {
+  setLocalState("older", olderSentence(homeGateway.newestThatServed(PERSONALCLAW_HOME)));
 }
 
 /**
@@ -523,6 +533,13 @@ async function bringUpLocalGateway() {
       console.error("Gateway did not start:", err.message);
       startFailure = exit;
       setLocalState("stopped", notStartedSentence(exit));
+      return false;
+    }
+    // A newer PersonalClaw has served this home: no gateway runs (it would hold the lock), and a
+    // start here would be refused again. The newer app is the way on.
+    if (exit.code === HOME_NEWER_EXIT) {
+      startFailure = { ...exit, older: true };
+      setOlder();
       return false;
     }
     // A start the home refused because another gateway serves it waits for that one's runtime
@@ -1896,6 +1913,9 @@ function connectHandlers() {
       openConnectDialog();
       return { ok: true };
     },
+    // "This computer" row's Open the Releases Page, for a home a newer PersonalClaw served: its one
+    // fixed address, in the system browser, through the one door to it.
+    releases: () => systemBrowser.open(RELEASES_PAGE_URL),
   };
   return handlers;
 }

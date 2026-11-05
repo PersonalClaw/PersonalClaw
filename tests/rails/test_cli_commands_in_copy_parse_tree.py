@@ -16,7 +16,7 @@ from table_rows import row
 
 #: How many commands the copy holds today. The table test asserts it exactly, so a row the scan
 #: stops finding fails rather than quietly leaving the table. A new command in copy raises it.
-_ROWS = 115
+_ROWS = 116
 
 
 #: Files whose backticked commands describe a command someone RAN, not one a user is told to run.

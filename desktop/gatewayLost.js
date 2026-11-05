@@ -31,6 +31,10 @@ const LAST_LINE_MAX = 300;
  *  (`gateway_base.HOME_SERVED_EXIT`): the app then uses that gateway instead (`homeGateway.js`). */
 const HOME_SERVED_EXIT = 3;
 
+/** The exit status of a start refused because a newer PersonalClaw has served its home
+ *  (`gateway_base.HOME_NEWER_EXIT`): a start here would be refused again, so the row offers none. */
+const HOME_NEWER_EXIT = 4;
+
 /** Terminal escape sequences (colour, cursor) a console log line may carry. */
 const ESCAPE_SEQUENCE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 
@@ -133,12 +137,30 @@ function adoptedGoneSentence(port) {
   );
 }
 
+/**
+ * The row's sentence for the app's own gateway refused this home because a newer PersonalClaw has
+ * served it (`HOME_NEWER_EXIT`), *newest* being that version as the home's stamp says it
+ * (`homeGateway.newestThatServed`), or "" when it cannot be read. The gateway's own line also names
+ * the variable a person rolls a home back with, which the app does not pass on (`gatewayEnv.js`),
+ * so the row says what the owner can do here instead: a newer app, or another gateway.
+ */
+function olderSentence(newest = "") {
+  const which = newest ? `PersonalClaw ${newest}` : "a newer PersonalClaw";
+  return (
+    `This home was last used by ${which}, and this app's gateway is older, so it won't start on ` +
+    "it: an older version could lose what the newer one saved. Get the newest app from the " +
+    "releases page, or connect to another gateway."
+  );
+}
+
 module.exports = {
+  HOME_NEWER_EXIT,
   HOME_SERVED_EXIT,
   LAST_LINE_MAX,
   adoptedGoneSentence,
   isUnasked,
   makeLastLine,
   notStartedSentence,
+  olderSentence,
   stoppedSentence,
 };

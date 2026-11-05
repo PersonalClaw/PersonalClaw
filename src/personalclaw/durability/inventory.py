@@ -622,6 +622,22 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_UNION_BY_ID,
         help="the files Inbox messages came with, one folder per message",
     ),
+    # The newest PersonalClaw that has served this home (`gateway_base.VERSION_FILE`), which every
+    # start's claim holds it to: an older version is refused the home, since it would rewrite the
+    # newer one's files in older shapes. A snapshot and a replace restore carry it, since it says
+    # which version wrote the data that comes back with it, so an older install is refused a newer
+    # snapshot too. A sync never carries it, and a merge or an import never takes it in: another
+    # machine's or another home's says which version wrote ITS files.
+    StateEntry(
+        id="gateway_version",
+        kind=KIND_JSON_FILE,
+        path="gateway.version.json",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="the newest PersonalClaw that has served this home",
+        machine_local=True,
+        merged_in=False,
+    ),
     StateEntry(
         id="code",
         kind=KIND_TREE,

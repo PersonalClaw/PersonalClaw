@@ -15,7 +15,14 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 from personalclaw import __version__ as _local_version
-from personalclaw import checkout_update, log_sinks, self_update, shutdown_event, versions
+from personalclaw import (
+    checkout_update,
+    gateway_base,
+    log_sinks,
+    self_update,
+    shutdown_event,
+    versions,
+)
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
@@ -535,10 +542,14 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
             finally:
                 # From here it restarts into the release it installed, which nothing stops.
                 _wheel_upgrade = None
-            if not installed:
+            if installed is None:
                 return
             state.push_update_progress("restarting", "Restarting server…")
-            await _graceful_reexec(state, auth_mode=auth_mode)
+            # A pin older than the newest release that has served the home is a rollback the
+            # owner asked for, so the new image's claim is told it is meant.
+            await _graceful_reexec(
+                state, auth_mode=auth_mode, roll_back_from=gateway_base.rollback_into(installed)
+            )
         except Exception:
             logger.exception("pip self-update failed")
             state.push_update_progress("failed", "Update failed — check logs")
@@ -552,10 +563,11 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
     return web.json_response({"ok": True, "status": "updating", "kind": "pip"})
 
 
-async def _upgrade_wheel(state: DashboardState) -> bool:
+async def _upgrade_wheel(state: DashboardState) -> str | None:
     """Install the release the ``updates`` channel/pin selects into PersonalClaw's environment, with
-    the tool that made it: ``True`` once it is installed, ``False`` when there was nothing to
-    install or it failed, which it says on the update progress.
+    the tool that made it: the version it installed once it is installed (``""`` when no release
+    named one, the newest wheel), ``None`` when there was nothing to install or it failed, which it
+    says on the update progress.
 
     A cancel (:func:`_cancel_wheel_upgrade`) stops the installer and says what that left: a wheel
     has nothing to put back, so nothing was changed only when the environment's distributions are
@@ -584,7 +596,7 @@ async def _upgrade_wheel(state: DashboardState) -> bool:
             state.push_update_progress(
                 "error", "No release matches the pinned version — check updates.pin."
             )
-            return False
+            return None
         if target and not self_update.moves_to(target, _local_version, cfg.updates.pin):
             # Nothing to install. `-U personalclaw==<target>` for a release that is not
             # newer is a DOWNGRADE carried out under the name "update". No restart either:
@@ -592,7 +604,7 @@ async def _upgrade_wheel(state: DashboardState) -> bool:
             sentence = self_update.up_to_date_sentence(target, _local_version, cfg.updates.pin)
             state.push_update_progress("done", f"{sentence}.")
             state.clear_update_progress()
-            return False
+            return None
         spec = self_update.upgrade_spec(target)
 
         # The tool that made the environment, found there before this started.
@@ -613,7 +625,7 @@ async def _upgrade_wheel(state: DashboardState) -> bool:
         except asyncio.TimeoutError:
             await kill_timed_out(pip_up)
             state.push_update_progress("error", "Upgrade timed out")
-            return False
+            return None
         except asyncio.CancelledError:
             await kill_timed_out(pip_up)
             raise
@@ -640,9 +652,9 @@ async def _upgrade_wheel(state: DashboardState) -> bool:
         state.push_update_progress(
             "error", f"Upgrade failed: {summary}" if summary else "Upgrade failed"
         )
-        return False
+        return None
     # No frontend build — assets ship in the wheel.
-    return True
+    return target
 
 
 async def _cancel_wheel_upgrade() -> str:
@@ -945,7 +957,11 @@ async def _advance_checkout(
         # Restart: the gateway stops the way every stop runs, then starts the new image
         progress("restarting", "Restarting server…")
         logger.info("Update complete — restarting")
-        await _graceful_reexec(state, auth_mode=auth_mode)
+        # A release older than the newest that has served the home is a rollback the owner asked
+        # for (a pin), so the new image's claim is told it is meant.
+        await _graceful_reexec(
+            state, auth_mode=auth_mode, roll_back_from=gateway_base.rollback_into(target_tag)
+        )
     except Exception:
         logger.exception("Update failed")
         progress("failed", "Update failed — check logs")
@@ -970,7 +986,9 @@ def _live_auth_mode(request: web.Request) -> str:
         return ""
 
 
-async def _graceful_reexec(state: DashboardState | None, *, auth_mode: str = "") -> None:
+async def _graceful_reexec(
+    state: DashboardState | None, *, auth_mode: str = "", roll_back_from: str = ""
+) -> None:
     """Restart the gateway: stop it the way every stop runs, then start a fresh image in place.
 
     Shared by the update-apply restart, the standalone restart endpoint and the staged
@@ -984,8 +1002,10 @@ async def _graceful_reexec(state: DashboardState | None, *, auth_mode: str = "")
 
     *auth_mode* is the LIVE ``AuthConfig.mode`` (an AuthMode str-enum: 'none' / 'local_token' / …)
     the caller read from ``request.app['auth_cfg']``, pinned into the new image's environment
-    so a Restart re-applies code without ever changing whether auth is on or off. *state* is
-    ``None`` on a gateway with no dashboard, where there is nobody to tell.
+    so a Restart re-applies code without ever changing whether auth is on or off. *roll_back_from*
+    is for an update the owner asked for into a release older than the newest that has served the
+    home (``gateway_base.rollback_into``): the new image's claim is told the rollback is meant.
+    *state* is ``None`` on a gateway with no dashboard, where there is nobody to tell.
 
     A restart whose program cannot be run is refused before anything stops
     (``restart_request.RestartUnavailable``), and its sentence is what the owner reads: the gateway
@@ -994,7 +1014,7 @@ async def _graceful_reexec(state: DashboardState | None, *, auth_mode: str = "")
 
     await asyncio.sleep(0.5)  # let pending SSE/WS frames drain to clients
     try:
-        request_restart(auth_mode=auth_mode)
+        request_restart(auth_mode=auth_mode, roll_back_from=roll_back_from)
     except RestartUnavailable as refused:
         logger.error("Restart refused: %s", refused)
         if state is not None:

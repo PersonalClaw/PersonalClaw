@@ -42,6 +42,7 @@
     <div class="choice">
       <button id="use" hidden>Use the Gateway Already Running</button>
       <label id="remember-row" class="remember" hidden><input id="remember" type="checkbox" /> Use it automatically next time</label>
+      <button id="releases" hidden>Open the Releases Page</button>
       <button id="add">Add a Gateway…</button>
       <button id="retry">Try Again</button>
     </div>
@@ -58,10 +59,15 @@
         byId('why').textContent = String(chooser.sentence || '');
         byId('use').hidden = !chooser.use;
         byId('remember-row').hidden = !chooser.use;
-        // The first offer is the one most likely to work: a gateway already running, else a new try.
+        // A home a newer PersonalClaw served: the newer app, and no start that would be refused again.
+        byId('releases').hidden = !chooser.releases;
+        byId('retry').hidden = !chooser.retry;
+        // The first offer is the one most likely to work: a gateway already running, the newer app,
+        // else a new try.
         byId('use').className = chooser.use ? 'primary' : '';
-        byId('retry').className = chooser.use ? '' : 'primary';
-        for (const id of ['use', 'add', 'retry']) byId(id).disabled = chooser.busy || pressing;
+        byId('releases').className = chooser.releases ? 'primary' : '';
+        byId('retry').className = chooser.use || chooser.releases ? '' : 'primary';
+        for (const id of ['use', 'releases', 'add', 'retry']) byId(id).disabled = chooser.busy || pressing;
       }
 
       function fail(res, fallback) {
@@ -78,7 +84,7 @@
       async function press(button, run, fallback) {
         pressing = true;
         byId('error').hidden = true;
-        for (const id of ['use', 'add', 'retry']) byId(id).disabled = true;
+        for (const id of ['use', 'releases', 'add', 'retry']) byId(id).disabled = true;
         const res = await run();
         pressing = false;
         if (!res || !res.ok) fail(res, fallback);
@@ -87,6 +93,8 @@
 
       byId('use').addEventListener('click', () =>
         press(byId('use'), () => window.pclawConnect.use(byId('remember').checked), 'That gateway could not be used.'));
+      byId('releases').addEventListener('click', () =>
+        press(byId('releases'), () => window.pclawConnect.releases().then(() => ({ ok: true })), 'The releases page could not be opened.'));
       byId('add').addEventListener('click', () =>
         press(byId('add'), () => window.pclawConnect.openGateways(), 'The Gateways window could not be opened.'));
       byId('retry').addEventListener('click', () =>

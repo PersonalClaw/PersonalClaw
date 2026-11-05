@@ -24,11 +24,13 @@ const {
   LOOPBACK_HOST,
   PROOF_CONTEXT,
   SIGN_IN_TTL,
+  VERSION_FILE,
   gatewayProof,
   homeId,
   homeIdOf,
   isNonce,
   newNonce,
+  newestThatServed,
   reach,
   signIn,
 } = require("../homeGateway");
@@ -280,5 +282,21 @@ describe("signIn: trade the home's secret for a session, at the gateway reach fo
       await assert.rejects(() => signIn(forged, home), /not a gateway reach found/);
     }
     assert.equal(gw.seen.length, 0, "a hand-made gateway was sent something");
+  });
+});
+
+describe("newestThatServed: the version the home's stamp names, for the row to say", () => {
+  it("reads the newest PersonalClaw that has served the home from its stamp", () => {
+    const home = tmpHome();
+    fs.writeFileSync(path.join(home, VERSION_FILE), JSON.stringify({ newest: "0.3.7", at: 1 }));
+    assert.equal(newestThatServed(home), "0.3.7");
+  });
+
+  it("says nothing it cannot put in a sentence as a version: no stamp, a damaged one, or no version in it", () => {
+    for (const written of [null, "{not json", JSON.stringify({ at: 1 }), JSON.stringify({ newest: 7 }), JSON.stringify({ newest: "0.3.7 and more words" }), JSON.stringify({ newest: "x".repeat(80) })]) {
+      const home = tmpHome();
+      if (written !== null) fs.writeFileSync(path.join(home, VERSION_FILE), written);
+      assert.equal(newestThatServed(home), "", String(written));
+    }
   });
 });

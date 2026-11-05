@@ -8,7 +8,7 @@
  * to survive, and the existing `renameCurrentTab` pattern in `main.js` (a `data:` URL with
  * hand-escaped interpolation) is exactly the shape not to copy for untrusted strings.
  *
- * The dialog's preload (`connectPreload.js`) exposes ten invokes and one event, `changed`, and
+ * The dialog's preload (`connectPreload.js`) exposes eleven invokes and one event, `changed`, and
  * nothing else. It carries no capability surface: the switcher has no business reaching a microphone.
  *
  * When nothing serves the app's windows (its own gateway did not start, a gateway stopped), the app
@@ -50,12 +50,17 @@ const CONNECT_CHANNELS = Object.freeze({
   autoUse: "pclaw:connect:auto-use",
   /** The chooser's Add a Gateway…: the Gateways window, where one is added. */
   gateways: "pclaw:connect:gateways",
+  releases: "pclaw:connect:releases",
   /** Main → dialog: the list changed (the local gateway came up, stopped, or was found), so read it again. */
   changed: "pclaw:connect:changed",
 });
 
 /** The "This computer" row's states, as `main.js` keeps them (`localState`). */
-const LOCAL_STATES = Object.freeze(["starting", "own", "found", "adopted", "stopped", "served"]);
+const LOCAL_STATES = Object.freeze(["starting", "own", "found", "adopted", "stopped", "served", "older"]);
+
+/** Where a newer app comes from: the one page the "This computer" row's Open the Releases Page
+ *  opens, in the browser. Fixed here, so the dialog names no address of its own. */
+const RELEASES_PAGE_URL = "https://github.com/PersonalClaw/PersonalClaw/releases";
 
 /** The reserved row for this computer's gateway, for a registry that has none yet (a first start
  *  that failed): the row is where a gateway is started here, so it is always there. */
@@ -97,6 +102,10 @@ function describeLocal(local = {}) {
       return { state, badge: "", statusText: "Not running", statusTone: "warn", detail: sentence, action: { id: "start", label: "Start a Gateway Here" } };
     case "served":
       return { state, badge: "", statusText: "Can't sign in to it", statusTone: "bad", detail: sentence, action: { id: "start", label: "Try Again" } };
+    // A newer PersonalClaw has served this home: a start here would be refused again, so the row
+    // offers the newer app instead.
+    case "older":
+      return { state, badge: "", statusText: "Older than this home", statusTone: "bad", detail: sentence, action: { id: "releases", label: "Open the Releases Page" } };
     default:
       return { state: "starting", badge: "", statusText: "Starting…", statusTone: "idle", detail: "", action: null };
   }
@@ -188,7 +197,9 @@ function describeRow(row, { activeId, health = {}, localBaseUrl = "", local } = 
 /**
  * What the chooser says and offers while nothing serves the app's windows, from the "This computer"
  * row's state: why (its sentence), Use the Gateway Already Running only while one is `found`, and
- * Add a Gateway… and Try Again always, held while a start runs. Pure, as `describeLocal` is.
+ * Add a Gateway… always, held while a start runs. Try Again, except for a home a newer PersonalClaw
+ * served (`older`), where a start would be refused again: Open the Releases Page instead. Pure, as
+ * `describeLocal` is.
  */
 function describeChooser(local = {}) {
   const here = describeLocal(local);
@@ -197,6 +208,8 @@ function describeChooser(local = {}) {
     state: here.state,
     sentence: busy ? "Starting PersonalClaw's gateway…" : here.detail || "PersonalClaw's gateway isn't running.",
     use: here.state === "found",
+    releases: here.state === "older",
+    retry: here.state !== "older",
     busy,
     /** Nothing more to choose: a gateway serves the windows. */
     settled: here.state === "own" || here.state === "adopted",
@@ -309,7 +322,7 @@ function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {
     for (const w of [win, chooser]) if (w && !w.isDestroyed()) w.webContents.send(CONNECT_CHANNELS.changed);
   }
 
-  /** Register the ten invokes. Each one is a thin adaptor over `handlers`, which `main.js` owns. */
+  /** Register the eleven invokes. Each one is a thin adaptor over `handlers`, which `main.js` owns. */
   function registerIpc(ipc = ipcMain) {
     const wrap = (name, fn) => {
       ipc.handle(name, async (_event, arg) => {
@@ -334,6 +347,7 @@ function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {
     wrap(CONNECT_CHANNELS.use, (arg) => handlers.use({ remember: (arg && arg.remember) === true }));
     wrap(CONNECT_CHANNELS.autoUse, (arg) => handlers.autoUse({ on: (arg && arg.on) === true }));
     wrap(CONNECT_CHANNELS.gateways, () => handlers.gateways());
+    wrap(CONNECT_CHANNELS.releases, () => handlers.releases());
   }
 
   return {
@@ -352,4 +366,4 @@ function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {
   };
 }
 
-module.exports = { CONNECT_CHANNELS, LOCAL_STATES, describeLocal, describeChooser, healthCopy, describeRow, describeList, makeConnectDialog };
+module.exports = { CONNECT_CHANNELS, LOCAL_STATES, RELEASES_PAGE_URL, describeLocal, describeChooser, healthCopy, describeRow, describeList, makeConnectDialog };

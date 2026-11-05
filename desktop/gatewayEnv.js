@@ -52,6 +52,15 @@ const AUTH_SWITCHES = Object.freeze([
 ]);
 
 /**
+ * Inherited variables that are one person's word to one start they made, which the app's gateway
+ * must not act on. A rollback meant (`gateway_base.ROLL_BACK_ENV`) lets an older PersonalClaw
+ * claim a home a newer one served, and the app's bundled gateway must not roll the owner's home
+ * back because a terminal that once started one still exports it: the app has no rollback, and
+ * says the home is newer instead.
+ */
+const NOT_PASSED_ON = Object.freeze(["PERSONALCLAW_ROLL_BACK_FROM"]);
+
+/**
  * Build the child environment for the gateway spawn.
  *
  * @param {object} opts
@@ -61,11 +70,11 @@ const AUTH_SWITCHES = Object.freeze([
  * @returns {Record<string, string|undefined>} a NEW object; `opts.env` is never mutated.
  */
 function buildGatewayEnv({ env = {}, loginPath = "", projectDir = "" } = {}) {
-  // Drop any inherited PERSONALCLAW_PORT so the gateway honors `--port auto`, and every inherited
-  // switch that would weaken how it asks for a sign-in.
+  // Drop any inherited PERSONALCLAW_PORT so the gateway honors `--port auto`, every inherited
+  // switch that would weaken how it asks for a sign-in, and every word meant for another start.
   const { PERSONALCLAW_PORT: _ignored, ...rest } = env;
   const inherited = Object.fromEntries(
-    Object.entries(rest).filter(([key]) => !AUTH_SWITCHES.includes(key))
+    Object.entries(rest).filter(([key]) => !AUTH_SWITCHES.includes(key) && !NOT_PASSED_ON.includes(key))
   );
   return {
     ...inherited,
@@ -78,4 +87,4 @@ function buildGatewayEnv({ env = {}, loginPath = "", projectDir = "" } = {}) {
   };
 }
 
-module.exports = { AUTH_SWITCHES, INSTALL_KIND, buildGatewayEnv };
+module.exports = { AUTH_SWITCHES, INSTALL_KIND, NOT_PASSED_ON, buildGatewayEnv };

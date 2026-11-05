@@ -1,7 +1,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { AUTH_SWITCHES, INSTALL_KIND, buildGatewayEnv } = require("../gatewayEnv");
+const { AUTH_SWITCHES, INSTALL_KIND, NOT_PASSED_ON, buildGatewayEnv } = require("../gatewayEnv");
 
 /**
  * The gateway spawn environment.
@@ -83,6 +83,18 @@ describe("buildGatewayEnv", () => {
       ["PERSONALCLAW_AUTH_MODE", "PERSONALCLAW_BIND_HOST", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"],
     );
     assert.strictEqual(env.HOME, "/Users/someone", "the rest of the environment still reaches it");
+  });
+
+  it("passes on no rollback meant for another start: the app's gateway never rolls a home back", () => {
+    // A terminal that once rolled a home back may still export it. The app's bundled gateway,
+    // older than the PersonalClaw that last served the home, must be refused it, not let in.
+    const env = buildGatewayEnv({
+      env: { ...base, PERSONALCLAW_ROLL_BACK_FROM: "0.3.7" },
+      loginPath: "/usr/bin",
+      projectDir: "/app/resources",
+    });
+    assert.ok(!("PERSONALCLAW_ROLL_BACK_FROM" in env));
+    assert.deepStrictEqual([...NOT_PASSED_ON], ["PERSONALCLAW_ROLL_BACK_FROM"]);
   });
 
   it("never mutates the environment it was handed", () => {

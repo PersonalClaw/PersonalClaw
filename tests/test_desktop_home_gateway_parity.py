@@ -79,3 +79,22 @@ def test_the_app_reads_the_exit_a_served_home_gives() -> None:
     match = re.search(r"const HOME_SERVED_EXIT = (\d+);", _source("gatewayLost.js"))
     assert match, "desktop/gatewayLost.js declares no HOME_SERVED_EXIT"
     assert int(match.group(1)) == gateway_base.HOME_SERVED_EXIT
+
+
+def test_the_app_reads_the_exit_and_the_stamp_a_newer_home_gives() -> None:
+    """An older app's gateway, refused a home a newer PersonalClaw served, exits with a code of its
+    own, and the row names the version the home's stamp holds."""
+    match = re.search(r"const HOME_NEWER_EXIT = (\d+);", _source("gatewayLost.js"))
+    assert match, "desktop/gatewayLost.js declares no HOME_NEWER_EXIT"
+    assert int(match.group(1)) == gateway_base.HOME_NEWER_EXIT
+    assert _js_string(_source("homeGateway.js"), "VERSION_FILE") == gateway_base.VERSION_FILE
+
+
+def test_the_app_passes_no_rollback_on_to_its_gateway() -> None:
+    """The one variable that lets an older version claim a newer home is the owner's word to one
+    start; the app's own gateway never inherits it (``desktop/gatewayEnv.js``)."""
+    match = re.search(
+        r"const NOT_PASSED_ON = Object\.freeze\(\[([^\]]*)\]\);", _source("gatewayEnv.js")
+    )
+    assert match, "desktop/gatewayEnv.js declares no NOT_PASSED_ON"
+    assert f'"{gateway_base.ROLL_BACK_ENV}"' in match.group(1)

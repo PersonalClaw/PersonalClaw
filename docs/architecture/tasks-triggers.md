@@ -695,7 +695,8 @@ context-savings ledger (`tokenjuice_savings.json`), when its own backups and
 syncs last ran (`durability_state.json`), which due-date notices it sent
 (`task_due_notices.json`), which Morning triage digest each chat channel's DM
 last received (`digest_channels.json`), how far you have seen each chat in its
-windows, which unread reads (`chat_seen.json`), the channel messages and webhook deliveries
+windows, which unread reads (`chat_seen.json`), the newest PersonalClaw that has served
+the home (`gateway.version.json`), the channel messages and webhook deliveries
 its doors already took, kept a week so one delivered again runs nothing
 (`received.jsonl`), and the legacy files each home imports once
 (`crons.json`, `event_triggers.json`, `autonudge.json`) are `machine_local`: a

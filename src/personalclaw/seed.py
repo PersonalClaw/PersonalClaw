@@ -199,13 +199,15 @@ def seed(fixture_name: str, *, replace: bool = False) -> None:
        atomic — documented in this docstring — but that's acceptable for a
        dev tool. The caller can re-run with ``--seed-replace`` to clean up.
 
-    The home's claim (``gateway_base.LOCK_FILE``) is never part of what it
-    holds. A gateway's start takes the claim before it seeds (``cli.main``),
-    so a home another gateway serves is refused before anything here runs,
-    and the home this seeds holds the starting gateway's lock: a home holding
-    only the lock is empty, and a replace leaves the lock where it is, since
-    a new file of its name would be a second lock while the gateway still
-    holds the old one.
+    The home's claim (``gateway_base.LOCK_FILE``, and the version stamp the
+    claim keeps beside it, ``gateway_base.VERSION_FILE``) is never part of
+    what it holds. A gateway's start takes the claim before it seeds
+    (``cli.main``), so a home another gateway serves is refused before
+    anything here runs, and the home this seeds holds the starting gateway's
+    lock and stamp: a home holding only those is empty, and a replace leaves
+    them where they are, since a new file of the lock's name would be a second
+    lock while the gateway still holds the old one, and the stamp says which
+    PersonalClaw serves the home.
 
     ``symlinks`` is left at the ``shutil.copytree`` default (``False``) so
     symlinks inside fixtures are followed. No shipped fixtures contain
@@ -269,12 +271,13 @@ def seed(fixture_name: str, *, replace: bool = False) -> None:
 
 def _held(dst: Path) -> list[Path]:
     """What *dst* holds that a seed would copy over: everything in it but the home's claim
-    (``gateway_base.LOCK_FILE``). Nothing when *dst* is not there."""
-    from personalclaw.gateway_base import LOCK_FILE
+    (``gateway_base.LOCK_FILE`` and ``gateway_base.VERSION_FILE``). Nothing when *dst* is not
+    there."""
+    from personalclaw.gateway_base import LOCK_FILE, VERSION_FILE
 
     if not dst.is_dir():
         return []
-    return sorted(entry for entry in dst.iterdir() if entry.name != LOCK_FILE)
+    return sorted(entry for entry in dst.iterdir() if entry.name not in (LOCK_FILE, VERSION_FILE))
 
 
 def seed_cmd(args) -> int:  # noqa: ANN001 — argparse.Namespace at call site

@@ -99,7 +99,7 @@ def _cannot_start(program: str) -> str:
     )
 
 
-def request_restart(*, auth_mode: str = "") -> RestartRequest:
+def request_restart(*, auth_mode: str = "", roll_back_from: str = "") -> RestartRequest:
     """Ask the running gateway to stop the way it always stops, then start a fresh gateway.
 
     The fresh one is :func:`relaunch_argv`. Its program is checked first: when it is gone or cannot
@@ -107,7 +107,10 @@ def request_restart(*, auth_mode: str = "") -> RestartRequest:
     :class:`RestartUnavailable` instead and the gateway keeps serving. *auth_mode* is the RUNNING
     gateway's resolved auth mode, pinned into the new one's environment: the launcher's
     environment may not have survived (the shell that exported ``=none`` exits and the process is
-    reparented), and a restart must never change whether sign-in is required.
+    reparented), and a restart must never change whether sign-in is required. *roll_back_from*,
+    for a restart into an older release the owner asked for (``gateway_base.rollback_into``), is
+    the newest version that has served the home, named for the new image's claim alone
+    (``gateway_base.ROLL_BACK_ENV``), which takes it out again.
 
     Every other variable is the environment this gateway was launched with (``env.launch_env``),
     never ``os.environ`` as it now stands: the new image is started in place of this one, so what
@@ -127,6 +130,10 @@ def request_restart(*, auth_mode: str = "") -> RestartRequest:
     env = launch_env()
     if auth_mode:
         env["PERSONALCLAW_AUTH_MODE"] = str(auth_mode)
+    if roll_back_from:
+        from personalclaw.gateway_base import ROLL_BACK_ENV
+
+        env[ROLL_BACK_ENV] = roll_back_from
     _pending = RestartRequest(program, argv, env)
     shutdown_event.set()
     return _pending
