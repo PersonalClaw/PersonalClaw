@@ -124,28 +124,34 @@ const lookupOf = (map) => async (host) => {
 // ── the credential rails ───────────────────────────────────────────────────────────────────────
 
 describe("assertLoopbackTarget — the rail that keeps .local_secret on this machine", () => {
-  it("passes for the shapes the spawned gateway actually takes", () => {
-    for (const url of ["http://localhost:10000", "http://127.0.0.1:53211", "http://[::1]:9000"]) {
+  it("passes for http on 127.0.0.1 at the gateway's port, port 80 included: the address the app's own gateway listens on", () => {
+    for (const url of ["http://127.0.0.1:53211", "http://127.0.0.1:80"]) {
       assert.strictEqual(assertLoopbackTarget(url), true, url);
+    }
+  });
+
+  it("throws for every other loopback shape, which the app's own gateway never takes", () => {
+    for (const url of ["http://localhost:10000", "http://[::1]:9000", "http://127.0.0.2:53211", "https://127.0.0.1:53211", "http://someone@127.0.0.1:53211", "http://127.0.0.1:53211/api"]) {
+      assert.throws(() => assertLoopbackTarget(url, "capability manifest"), /not the address the app's own gateway listens on/, url);
     }
   });
 
   it("throws for a LAN host, a public host, and a name that merely resolves to loopback", () => {
     for (const url of ["http://10.0.0.4:10000", "https://pc.example.com", "http://claw.local:10000", "http://lh.0x41.pw"]) {
-      assert.throws(() => assertLoopbackTarget(url, "capability manifest"), /non-loopback target/, url);
+      assert.throws(() => assertLoopbackTarget(url, "capability manifest"), /not the address the app's own gateway listens on/, url);
     }
   });
 
   it("throws for an empty or unparseable target rather than treating it as harmless", () => {
-    assert.throws(() => assertLoopbackTarget(""), /non-loopback target/);
-    assert.throws(() => assertLoopbackTarget("not a url"), /non-loopback target/);
+    assert.throws(() => assertLoopbackTarget(""), /not the address the app's own gateway listens on/);
+    assert.throws(() => assertLoopbackTarget("not a url"), /not the address the app's own gateway listens on/);
   });
 });
 
 describe("shouldAttachBridge — only to the gateway proven to serve this app's home", () => {
   // `localGatewayUrl` in main.js: the spawned gateway's ready line, or a gateway of this home that
   // proved it holds the home's secret (`homeGateway.reach`). Nothing else ever becomes it.
-  const spawned = "http://localhost:51234";
+  const spawned = "http://127.0.0.1:51234";
   const adopted = "http://127.0.0.1:10000";
 
   it("attaches for the app's own gateway: the one it spawned, or one that proved it serves this home", () => {
@@ -157,10 +163,10 @@ describe("shouldAttachBridge — only to the gateway proven to serve this app's 
   it("does NOT attach for a gateway on this computer that proved nothing, however it is spelled", () => {
     // A loopback address added by hand in the Gateways window. Being on this machine is not proof of
     // serving this home.
-    for (const url of ["http://127.0.0.1:10001", "http://localhost:10000", "http://127.0.0.1:51234", "http://[::1]:51234"]) {
+    for (const url of ["http://127.0.0.1:10001", "http://localhost:10000", "http://localhost:51234", "http://[::1]:51234"]) {
       assert.strictEqual(shouldAttachBridge(url, spawned), false, url);
     }
-    assert.strictEqual(shouldAttachBridge("http://localhost:51234", adopted), false);
+    assert.strictEqual(shouldAttachBridge("http://127.0.0.1:51234", adopted), false);
   });
 
   it("does NOT attach when the app has no gateway of its own", () => {
@@ -342,7 +348,7 @@ describe("describeStartup — spawn-local unless connect is fully justified", ()
 
   it("stays spawn-local when the active row is the local one", () => {
     const store = openShellStore({ home: tmpHome() });
-    rememberLocalGateway(store, "http://localhost:51234");
+    rememberLocalGateway(store, "http://127.0.0.1:51234");
     assert.strictEqual(describeStartup({ store }).reason, "active_is_local");
   });
 
@@ -395,7 +401,7 @@ describe("describeStartup — spawn-local unless connect is fully justified", ()
   it("does not let the local row steal the active pointer on a relaunch", () => {
     const store = confirmedStore("http://10.0.0.4:10000");
     const before = loadRegistry(store).active;
-    rememberLocalGateway(store, "http://localhost:51999");
+    rememberLocalGateway(store, "http://127.0.0.1:51999");
     assert.strictEqual(loadRegistry(store).active, before);
     assert.strictEqual(describeStartup({ store }).mode, "connect");
   });
@@ -478,10 +484,10 @@ describe("confirmEndpoint + switchTo", () => {
 
   it("switches to a confirmed row and reports the bridge decision", () => {
     const store = openShellStore({ home: tmpHome() });
-    rememberLocalGateway(store, "http://localhost:51234");
+    rememberLocalGateway(store, "http://127.0.0.1:51234");
     const { id } = confirmEndpoint(store, { origin: "http://10.0.0.4:10000", trust: "private", scheme: "http:", host: "10.0.0.4", fingerprint: "" }, { label: "Work" });
 
-    const toLocal = switchTo(store, LOCAL_ENDPOINT_ID, { localBaseUrl: "http://localhost:51234" });
+    const toLocal = switchTo(store, LOCAL_ENDPOINT_ID, { localBaseUrl: "http://127.0.0.1:51234" });
     assert.ok(toLocal.ok);
     assert.strictEqual(toLocal.attachBridge, true);
 
@@ -494,13 +500,20 @@ describe("confirmEndpoint + switchTo", () => {
 
   it("gives no bridge to a gateway on this computer added by hand, only to the app's own", () => {
     const store = openShellStore({ home: tmpHome() });
-    rememberLocalGateway(store, "http://localhost:51234");
+    rememberLocalGateway(store, "http://127.0.0.1:51234");
     const { id } = confirmEndpoint(store, { origin: "http://127.0.0.1:10000", trust: "loopback", scheme: "http:", host: "127.0.0.1:10000", fingerprint: "127.0.0.1" }, { label: "Another home" });
-    const toHandAdded = switchTo(store, id, { localBaseUrl: "http://localhost:51234" });
+    const toHandAdded = switchTo(store, id, { localBaseUrl: "http://127.0.0.1:51234" });
     assert.ok(toHandAdded.ok);
     assert.strictEqual(toHandAdded.attachBridge, false, "a loopback address proves nothing about this home");
-    const toOwn = switchTo(store, LOCAL_ENDPOINT_ID, { localBaseUrl: "http://localhost:51234" });
+    const toOwn = switchTo(store, LOCAL_ENDPOINT_ID, { localBaseUrl: "http://127.0.0.1:51234" });
     assert.strictEqual(toOwn.attachBridge, true);
+  });
+
+  it("goes to the app's own gateway only while it runs, never to the address a row stored", () => {
+    const store = openShellStore({ home: tmpHome() });
+    rememberLocalGateway(store, "http://127.0.0.1:51234");
+    const stopped = switchTo(store, LOCAL_ENDPOINT_ID, { localBaseUrl: "" });
+    assert.deepStrictEqual(stopped, { ok: false, reason: "local_gateway_not_running" });
   });
 
   it("REFUSES to switch to a row whose confirmation no longer holds, rather than re-confirming silently", () => {
@@ -514,7 +527,7 @@ describe("confirmEndpoint + switchTo", () => {
 
   it("refuses an unknown id and refuses to remove the local row", () => {
     const store = openShellStore({ home: tmpHome() });
-    rememberLocalGateway(store, "http://localhost:1");
+    rememberLocalGateway(store, "http://127.0.0.1:1");
     assert.strictEqual(switchTo(store, "ep_nope").ok, false);
     assert.strictEqual(forgetEndpoint(store, LOCAL_ENDPOINT_ID).reason, "local_endpoint_is_not_removable");
     assert.strictEqual(forgetEndpoint(store, "ep_nope").reason, "unknown_endpoint");
@@ -936,5 +949,20 @@ describe("one gateway's revocation touches only its own row", () => {
     const health = await probeAll(loadRegistry(s));
     assert.strictEqual(health.ep_nourl.status, HEALTH_UNKNOWN);
     assert.strictEqual(health.ep_nourl.detail, "no_url");
+  });
+
+  it("probes the app's own row only at its running gateway's address, never the one the row stored", async () => {
+    const s = openShellStore({ home: tmpHome() });
+    rememberLocalGateway(s, "http://127.0.0.1:51234");
+    const probed = [];
+    const probe = async (url) => {
+      probed.push(url);
+      return { status: HEALTH_REACHABLE, httpStatus: 200, version: "", detail: "" };
+    };
+    const idle = await probeAll(loadRegistry(s), { probe });
+    assert.deepStrictEqual(probed, []);
+    assert.strictEqual(idle[LOCAL_ENDPOINT_ID].detail, "no_url");
+    await probeAll(loadRegistry(s), { probe, localBaseUrl: "http://127.0.0.1:52222" });
+    assert.deepStrictEqual(probed, ["http://127.0.0.1:52222"]);
   });
 });

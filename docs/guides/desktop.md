@@ -94,7 +94,9 @@ The gateway the app starts asks every request for a sign-in, exactly as a gatewa
 other way does: token sign-in is on, and it listens on this computer only. The app does not turn
 that off, and it does not pass on the variables that would (`PERSONALCLAW_AUTH_MODE`,
 `PERSONALCLAW_BYPASS_LOCAL_NETWORKS`, `PERSONALCLAW_BIND_HOST`), even when it is started from a
-terminal that sets them.
+terminal that sets them. The app's own gateway always listens on this computer only, whatever bind
+host the home stores; to reach PersonalClaw from another device, run the gateway yourself
+([remote access](remote-access.md)).
 
 Each time the gateway starts it hands the app a sign-in made for that start, on a pipe only the
 app reads, and the app signs its windows in with it:
@@ -334,9 +336,12 @@ The three cases are genuinely different and the app treats them differently:
 
 | Where the gateway is | `http://` | `https://` |
 |---|---|---|
-| This computer (`localhost`, `127.0.0.1`) | fine, no prompt — this is the default mode | fine |
+| This computer (`127.0.0.1`, `[::1]`) | fine, no prompt — this is the default mode | fine |
 | Your network or tailnet (`10.x`, `192.168.x`, `172.16–31.x`, `100.64–127.x`, `*.local`, `*.ts.net`) | allowed **once you confirm**, with a plain warning that the traffic is readable by anyone else on that network | allowed once you confirm |
 | Anywhere else (the public internet) | **refused** | allowed once you confirm |
+
+A name, `localhost` included, is never taken as this computer: the app asks first, as it does for
+an address on your network.
 
 Plaintext to a public address is refused rather than warned about. A gateway reached over the
 internet goes through your own tunnel, which terminates TLS, and the session cookie it sets is

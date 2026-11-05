@@ -965,6 +965,16 @@ def _bundle_rows(issues: list[str]) -> None:
     )
 
 
+def _remote_access_hint(live: int | None, port: int | None) -> str:
+    """The SSH tunnel hint for this home's gateway, or ``""`` for no port: to the address and port
+    the reach found it at (*live*), else to where one of this home would listen, on the port it is
+    configured to bind (*port*)."""
+    machine = machine_hostname() or "this-host"
+    if live:
+        return tunnel_hint(live, machine, home_gateway.LOOPBACK_HOST)
+    return tunnel_hint(port, machine) if port else ""
+
+
 def _doctor(*, start_agent_clis: bool = False) -> None:
     """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity.
 
@@ -1388,13 +1398,11 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         except Exception:
             print("  gateway:     ⚠️  running but returned unexpected response")
 
-    # SSH tunnel hint for remote hosts: the port this home's gateway listens on, else the one it
-    # is configured to bind.
-    _tunnel = _live or _port
-    if _tunnel and is_remote:
-        mh = machine_hostname() or "this-host"
+    # SSH tunnel hint for remote hosts (`_remote_access_hint`).
+    _tunnel = _remote_access_hint(_live, _port) if is_remote else ""
+    if _tunnel:
         print("\n  💡 Remote access: Run on your LOCAL machine:")
-        print(f"     {tunnel_hint(_tunnel, mh)}")
+        print(f"     {_tunnel}")
         print("     Then run: personalclaw token")
 
     # Verify a request with no token is refused beyond loopback (security check). It is asked of

@@ -164,7 +164,7 @@ class _Gateway(SimpleNamespace):
         named for the port the ready line names, and the page's own origin."""
         return {
             "Cookie": f"pc_token_{self.port}={token}",
-            "Origin": f"http://localhost:{self.port}",
+            "Origin": f"http://127.0.0.1:{self.port}",
         }
 
     def internal_secret(self) -> str:

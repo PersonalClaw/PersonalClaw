@@ -55,12 +55,24 @@ describe("buildGatewayEnv", () => {
     assert.strictEqual(built().PERSONALCLAW_PROJECT_DIR, "/app/resources");
   });
 
-  it("sets no authentication switch, so the gateway asks every request for a sign-in", () => {
+  it("names 127.0.0.1 as the bind host and sets no other switch, so the gateway asks every request for a sign-in", () => {
     // The shell signs its windows in with the session the ready line carries (localSignIn.js).
     // Any key here that changed how the gateway admits a request would hand the app's gateway,
     // and every approval waiting on it, to any process on the computer.
+    // The one switch it does name is the loopback bind host, which only keeps the gateway where it is.
     const added = Object.keys(built()).filter((key) => !(key in base));
-    assert.deepStrictEqual(added.sort(), ["PERSONALCLAW_INSTALL_KIND", "PERSONALCLAW_PROJECT_DIR"]);
+    assert.deepStrictEqual(added.sort(), ["PERSONALCLAW_BIND_HOST", "PERSONALCLAW_INSTALL_KIND", "PERSONALCLAW_PROJECT_DIR"]);
+  });
+
+  it("names 127.0.0.1 as the bind host whatever the parent environment holds", () => {
+    for (const inherited of [undefined, "0.0.0.0", "::", "::1", "192.0.2.7", "gateway.example.test"]) {
+      const env = buildGatewayEnv({
+        env: inherited === undefined ? { ...base } : { ...base, PERSONALCLAW_BIND_HOST: inherited },
+        loginPath: "/usr/bin",
+        projectDir: "/app/resources",
+      });
+      assert.strictEqual(env.PERSONALCLAW_BIND_HOST, "127.0.0.1", `with ${inherited === undefined ? "none" : inherited} inherited`);
+    }
   });
 
   it("passes on no inherited switch that would weaken the sign-in or leave loopback", () => {
@@ -77,7 +89,8 @@ describe("buildGatewayEnv", () => {
       loginPath: "/usr/bin",
       projectDir: "/app/resources",
     });
-    for (const key of AUTH_SWITCHES) assert.ok(!(key in env), `${key} reached the gateway`);
+    for (const key of ["PERSONALCLAW_AUTH_MODE", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"]) assert.ok(!(key in env), `${key} reached the gateway`);
+    assert.strictEqual(env.PERSONALCLAW_BIND_HOST, "127.0.0.1", "the inherited bind host reached the gateway");
     assert.deepStrictEqual(
       [...AUTH_SWITCHES].sort(),
       ["PERSONALCLAW_AUTH_MODE", "PERSONALCLAW_BIND_HOST", "PERSONALCLAW_BYPASS_LOCAL_NETWORKS"],

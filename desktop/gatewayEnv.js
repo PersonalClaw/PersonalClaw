@@ -44,6 +44,8 @@ const INSTALL_KIND = "desktop";
  * The app's gateway is local-token on loopback, always: `PERSONALCLAW_AUTH_MODE=none` would admit
  * every caller as the owner, the local-network bypass would admit any caller on loopback without a
  * token, and a bind host would put the gateway on the network.
+ *
+ * The bind host is named, as `LOOPBACK_BIND_HOST`, the address the app reaches the gateway at.
  */
 const AUTH_SWITCHES = Object.freeze([
   "PERSONALCLAW_AUTH_MODE",
@@ -59,6 +61,9 @@ const AUTH_SWITCHES = Object.freeze([
  * says the home is newer instead.
  */
 const NOT_PASSED_ON = Object.freeze(["PERSONALCLAW_ROLL_BACK_FROM"]);
+
+/** The address the app's gateway listens on, and the one the app reaches it at (`parseReadyLine`). */
+const LOOPBACK_BIND_HOST = "127.0.0.1";
 
 /**
  * Build the child environment for the gateway spawn.
@@ -84,7 +89,8 @@ function buildGatewayEnv({ env = {}, loginPath = "", projectDir = "" } = {}) {
     PATH: loginPath,
     PERSONALCLAW_PROJECT_DIR: projectDir,
     PERSONALCLAW_INSTALL_KIND: INSTALL_KIND,
+    PERSONALCLAW_BIND_HOST: LOOPBACK_BIND_HOST,
   };
 }
 
-module.exports = { AUTH_SWITCHES, INSTALL_KIND, NOT_PASSED_ON, buildGatewayEnv };
+module.exports = { AUTH_SWITCHES, INSTALL_KIND, LOOPBACK_BIND_HOST, NOT_PASSED_ON, buildGatewayEnv };

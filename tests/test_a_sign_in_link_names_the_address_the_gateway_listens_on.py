@@ -8,12 +8,16 @@ the gateway listens on (``origin.gateway_bind_host``, which the server binds), `
 default, the loopback address of a wildcard bind's family, and an IPv6 address in brackets. A
 ``dashboard.url`` the owner configured still wins where it did.
 
-Each case compares a printed link's host with the address the gateway would listen on; no
-listener is opened here.
+A command that reached this home's gateway (``personalclaw token``, and the Doctor's tunnel hint)
+names the address it reached it at, ``127.0.0.1``, whatever bind host its own environment holds.
+
+Each case compares a printed link's host with the address the gateway would listen on, or, for a
+command that reaches the gateway, with the loopback address of the stand-in it reached.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -75,14 +79,35 @@ def test_the_startup_link_names_the_bound_address(bound, bind, expected) -> None
     assert _host(link) == expected, link
 
 
-@pytest.mark.parametrize(("bind", "expected"), BINDS[:3])
-def test_the_token_command_names_the_bound_address(
-    bound, monkeypatch, tmp_path: Path, capsys, bind, expected
+@pytest.mark.parametrize("bind", [None, "0.0.0.0", "10.1.2.3", "::1", "::", "fd00::5"])
+def test_the_token_command_names_the_address_it_reached(
+    bound, monkeypatch, tmp_path: Path, capsys, bind
 ) -> None:
+    """The command signs in at the address it reached the gateway at, and its link names that
+    address, whatever bind host its own environment holds."""
     bound(bind)
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     out, _err, port = _run_token(monkeypatch, tmp_path, capsys)
-    assert out == f"http://{expected}:{port}?token={_SYNTHETIC_TOKEN}\n", out
+    assert out == f"http://127.0.0.1:{port}?token={_SYNTHETIC_TOKEN}\n", out
+
+
+def test_the_token_command_names_the_address_it_reached_whatever_the_home_stores(
+    bound, monkeypatch, tmp_path: Path, capsys, unset_env
+) -> None:
+    """The home's ``.env`` holds ``::1`` and the command takes it in as it starts, as ``main``
+    does; the gateway it reaches listens on 127.0.0.1, and the link names 127.0.0.1."""
+    from personalclaw.cli import _read_the_env_files
+
+    bound(None)
+    unset_env("PERSONALCLAW_BIND_HOST")
+    monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("PERSONALCLAW_BIND_HOST=::1\n")
+    _read_the_env_files()
+    assert os.environ.get("PERSONALCLAW_BIND_HOST") == "::1", "the control: the command took it in"
+    out, _err, port = _run_token(monkeypatch, tmp_path, capsys)
+    assert out == f"http://127.0.0.1:{port}?token={_SYNTHETIC_TOKEN}\n", out
 
 
 @pytest.mark.parametrize(("bind", "expected"), BINDS[:3])
@@ -123,6 +148,22 @@ def test_the_doctors_tunnel_hint_is_the_same_rule(bound, bind, expected) -> None
 
     bound(bind)
     assert tunnel_hint(7777, "box") == f"ssh -L 127.0.0.1:7777:{expected}:7777 box"
+
+
+def test_the_doctors_tunnel_hint_names_the_address_it_reached(capsys, monkeypatch) -> None:
+    """Over SSH, with this home's gateway reached on 127.0.0.1 and ``::1`` in the command's own
+    environment, the hint forwards to 127.0.0.1."""
+    from test_doctor_on_a_bind_beyond_loopback import _run_doctor
+
+    monkeypatch.setattr("personalclaw.cli_doctor.machine_hostname", lambda: "box")
+    out, _asked, port = _run_doctor(
+        capsys,
+        monkeypatch,
+        addresses=["127.0.0.1"],
+        env={"PERSONALCLAW_BIND_HOST": "::1", "SSH_CONNECTION": "1.2.3.4 1234 5.6.7.8 5678"},
+    )
+    forward = next(line for line in out.splitlines() if "ssh -L" in line)
+    assert forward.strip() == f"ssh -L 127.0.0.1:{port}:127.0.0.1:{port} box", forward
 
 
 def test_the_link_rule() -> None:

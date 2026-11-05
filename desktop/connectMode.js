@@ -152,7 +152,7 @@ const RETRYABLE = Object.freeze([HEALTH_UNREACHABLE, HEALTH_TIMEOUT, HEALTH_HTTP
 // ── the loopback rail for secret-bearing calls ─────────────────────────────────────────────────
 
 /**
- * Throw unless `url` is loopback.
+ * Throw unless `url` is the address the app's own gateway listens on: `http://127.0.0.1`, at its port.
  *
  * `main.js` calls this before every request that carries `.local_secret` or the shell token. It
  * exists because connect-mode introduces a second URL into a file that used to have exactly one:
@@ -161,11 +161,19 @@ const RETRYABLE = Object.freeze([HEALTH_UNREACHABLE, HEALTH_TIMEOUT, HEALTH_HTTP
  * error is a crash in a `try` block; a silent send is a credential leak.
  */
 function assertLoopbackTarget(url, what = "request") {
-  const parsed = parseGatewayUrl(String(url || ""));
-  if (!parsed.ok || parsed.trust !== TRUST_LOOPBACK) {
+  let parsed = null;
+  try {
+    parsed = new URL(String(url || ""));
+  } catch {
+    parsed = null;
+  }
+  // The app's own gateway listens on 127.0.0.1 and is reached there, at its port, and nowhere else.
+  // Port 80 parses to an empty port, and an adopted gateway can have it.
+  if (!parsed || parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1" || parsed.pathname !== "/" || parsed.username || parsed.password) {
     throw new Error(
-      `refusing to send ${what} to a non-loopback target (${String(url)}): this call carries a ` +
-        `machine-local credential and is only ever valid against the gateway this shell spawned`
+      `refusing to send ${what} to ${String(url)}: not the address the app's own gateway listens on ` +
+        `(http://127.0.0.1, at its port). This call carries a machine-local credential and is only ` +
+        `ever valid against the gateway this shell spawned`
     );
   }
   return true;
@@ -587,7 +595,7 @@ function switchTo(store, id, { currentFingerprint = "", localBaseUrl = "" } = {}
   if (!row) return { ok: false, reason: "unknown_endpoint" };
 
   if (row.id === LOCAL_ENDPOINT_ID || row.kind === "local") {
-    const url = localBaseUrl || row.base_url;
+    const url = localBaseUrl;
     if (!url) return { ok: false, reason: "local_gateway_not_running" };
     const next = setActive(reg, row.id);
     saveRegistry(store, next);
@@ -825,7 +833,7 @@ async function probeAll(registry, { probe = probeEndpoint, localBaseUrl = "" } =
   const rows = registry.endpoints || [];
   const results = await Promise.all(
     rows.map(async (row) => {
-      const url = row.id === LOCAL_ENDPOINT_ID || row.kind === "local" ? localBaseUrl || row.base_url : row.base_url;
+      const url = row.id === LOCAL_ENDPOINT_ID || row.kind === "local" ? localBaseUrl : row.base_url;
       if (!url) {
         // "This row has no URL" is not "this row is unreachable". Kept apart on purpose.
         return [row.id, { status: HEALTH_UNKNOWN, httpStatus: 0, version: "", detail: "no_url" }];
