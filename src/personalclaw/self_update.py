@@ -985,6 +985,51 @@ def installer_error_summary(stderr: str, *, limit: int = 200) -> str:
     return joined[:limit].strip()
 
 
+#: The waits before the installer is asked again when it finds no version of the release the update
+#: check named. The check reads GitHub's release list, which has a release at once; the installer
+#: reads PyPI's simple index, served from a CDN cache (``max-age=600``) whose edge can go on serving
+#: the page without a release for minutes after it was published.
+UNPUBLISHED_RETRY_WAITS: tuple[float, ...] = (30.0, 90.0)
+
+#: An installer saying its index has no version of PersonalClaw it names: uv's "there is no version
+#: of personalclaw==X", pip's "No matching distribution found for personalclaw==X" and "Could not
+#: find a version that satisfies the requirement personalclaw==X". The version is group 1.
+_NO_VERSION_RE = re.compile(
+    r"(?:there is no version of|no matching distribution found for"
+    r"|could not find a version that satisfies the requirement)\s+personalclaw\s*==\s*([^\s,;)]+)",
+    re.IGNORECASE,
+)
+
+#: pip's line naming the versions it left out because they need another Python ("Ignored the
+#: following versions that require a different python version: 0.3.7 Requires-Python >=3.12").
+_OTHER_PYTHON_RE = re.compile(r"require a different python version:?(.*)", re.IGNORECASE)
+_VERSION_TOKEN_RE = re.compile(r"\bv?\d+(?:\.\d+)*[\w.+-]*")
+
+
+def finds_no_version(stderr: str, target: str) -> bool:
+    """Whether an installer's failure says its index has no version *target* of PersonalClaw yet
+    (:data:`_NO_VERSION_RE`), the version compared as :mod:`personalclaw.versions` reads it, so a
+    candidate's tag ``v0.3.0-rc.1`` is uv's ``0.3.0rc1``.
+
+    Another release's is not, nor any other failure. Nor is a release the index has for another
+    Python only: pip says "No matching distribution found" for it too, after a line naming it as
+    one that requires a different Python version, and waiting for it would never end."""
+    from personalclaw.versions import same_version
+
+    if not target:
+        return False
+    clean = _ANSI_RE.sub("", stderr or "")
+    for other in _OTHER_PYTHON_RE.finditer(clean):
+        if any(same_version(t, target) for t in _VERSION_TOKEN_RE.findall(other.group(1))):
+            return False
+    return any(same_version(m.group(1), target) for m in _NO_VERSION_RE.finditer(clean))
+
+
+def still_publishing_sentence(target: str) -> str:
+    """What an update says when the index has no version *target* after every wait."""
+    return f"PyPI is still publishing {normalize_version(target)}. Try again in a few minutes."
+
+
 def upgrade_spec(latest: str) -> str:
     """The requirement to hand the installer for a wheel-install upgrade.
 

@@ -168,16 +168,17 @@ async def test_uses_uv_when_the_venv_has_no_pip(monkeypatch, spawn, tools):
 @pytest.mark.asyncio
 async def test_failure_detail_reaches_the_ui(monkeypatch, spawn, tools):
     """Before the fix the panel showed the static "pip upgrade failed" while the
-    real cause sat in gateway.log. The user must be able to SEE the cause."""
+    real cause sat in gateway.log. The user must be able to SEE the cause. (An index that has
+    no version of the release yet is waited for first: test_an_update_right_after_a_release_…)"""
     tools(made_by="pip", uv=False, pip=True)
-    spawn(_Proc(1, b"ERROR: Could not find a version that satisfies personalclaw==9.9.9\n"))
+    spawn(_Proc(1, b"ERROR: Cannot install personalclaw==9.9.9: conflicting dependencies\n"))
     state = _StateStub()
 
     await _run_apply(state, monkeypatch, latest="9.9.9")
 
     errors = [d for s, d in state.progress if s == "error"]
     assert errors, f"no error progress pushed: {state.progress}"
-    assert "Could not find a version" in errors[0]
+    assert "conflicting dependencies" in errors[0]
     assert errors[0] != "pip upgrade failed"
 
 
