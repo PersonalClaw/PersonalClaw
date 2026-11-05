@@ -323,12 +323,14 @@ function Browse({ toggle, query, setQuery }: { toggle: React.ReactNode } & Pick<
             <HeaderActions>
               <HeaderSearch value={q} onChange={setQ} placeholder="Search the marketplace" label="Search marketplace" />
               {/* Which marketplace the search reads: a choice set, so a section of the filter, whose
-                  label says which one is set. */}
+                  label says which one is set. The matches are each row's count, never its words:
+                  the label is what the cluster's probes measure, so a count in it re-tiered the row
+                  on every search reply and could take away the field being typed in. */}
               <HeaderFilter sections={[{
                 title: 'Marketplace', value: marketplace, defaultKey: '', onChange: setMarketplace,
                 options: [
-                  { key: '', label: totalMatches ? `All marketplaces (${totalMatches})` : 'All marketplaces' },
-                  ...marketplaces.map((m) => ({ key: m.name, label: counts[m.name] ? `${m.name} (${counts[m.name]})` : m.name })),
+                  { key: '', label: 'All marketplaces', count: totalMatches || undefined },
+                  ...marketplaces.map((m) => ({ key: m.name, label: m.name, count: counts[m.name] || undefined })),
                 ],
               }]} />
               {toggle}
