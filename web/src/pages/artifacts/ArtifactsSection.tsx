@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, FolderInput, MessagesSquare } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { HeaderActions } from '../../ui/HeaderActions'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Loading, LoadError } from '../../ui/ListScaffold'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { QuietButton } from '../../ui/QuietButton'
@@ -237,18 +237,18 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
           </HeaderActions>
         ) : active ? (
           <HeaderActions>
-            {canFile && <>
-              <QuietButton onClick={() => setIterate(iterate ? '' : ITERATE_PENDING)} ariaExpanded={iterateOpen}
-                title={iterateOpen ? 'Close the iterate panel' : 'Open a chat beside this artifact and change it by asking'}>
-                <MessagesSquare size={13} /> {iterateOpen ? 'Close iterate' : 'Iterate with agent'}
-              </QuietButton>
-              <QuietButton onClick={assignCollection} title="Group this artifact under a library collection">
-                <FolderInput size={13} /> {active.collection || 'Set collection'}
-              </QuietButton>
-            </>}
-            {/* A pin is Home's bookmark, not a write to the artifact, so a read-only record takes
-                one as well. */}
+            {/* The one order: the actions, then the panel opener (Iterate) last. A pin is Home's
+                bookmark, not a write to the artifact, so a read-only record takes one as well. */}
+            {canFile && (
+              <HeaderControl icon={FolderInput} label={active.collection || 'Set collection'} onClick={assignCollection}
+                title="Group this artifact under a library collection" />
+            )}
             <ArtifactPinButton slug={slug} name={active.name} />
+            {canFile && (
+              <HeaderControl icon={MessagesSquare} label={iterateOpen ? 'Close iterate' : 'Iterate with agent'}
+                onClick={() => setIterate(iterate ? '' : ITERATE_PENDING)} ariaExpanded={iterateOpen}
+                title={iterateOpen ? 'Close the iterate panel' : 'Open a chat beside this artifact and change it by asking'} />
+            )}
           </HeaderActions>
         ) : undefined}
       />

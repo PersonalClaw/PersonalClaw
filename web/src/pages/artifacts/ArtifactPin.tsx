@@ -3,7 +3,7 @@ import { Pin, PinOff } from 'lucide-react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { failureSentence, reportActionFailure } from '../../app/reportingWrite'
-import { QuietButton } from '../../ui/QuietButton'
+import { HeaderControl } from '../../ui/HeaderActions'
 
 /** Pin the open artifact to Home, or unpin it — the control Home's "Pinned artifacts" card sends
  *  people to ("Pin one from its page to keep it here").
@@ -48,9 +48,9 @@ export function ArtifactPinButton({ slug, name }: { slug: string; name: string }
   const title = pinned === true ? 'Take this artifact off Home'
     : pinned === false ? 'Keep this artifact on Home, under Pinned artifacts'
     : `${failureSentence('read your pins', readError)} Pinning keeps it on Home either way.`
+  // A header member: measured with the row, and into the `…` when it is tight.
   return (
-    <QuietButton onClick={toggle} disabled={busy} title={title}>
-      {pinned === true ? <PinOff size={13} /> : <Pin size={13} />} {pinned === true ? 'Unpin from Home' : 'Pin to Home'}
-    </QuietButton>
+    <HeaderControl icon={pinned === true ? PinOff : Pin} label={pinned === true ? 'Unpin from Home' : 'Pin to Home'}
+      title={title} onClick={toggle} disabled={busy} />
   )
 }

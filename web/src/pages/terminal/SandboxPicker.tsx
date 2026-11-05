@@ -1,5 +1,6 @@
 import { Shield } from 'lucide-react'
 import { Select } from '../../ui/forms'
+import { useHeaderChild, useHeaderProbe } from '../../ui/HeaderActions'
 
 export interface SandboxProvider { name: string; display_name: string; available: boolean }
 
@@ -14,6 +15,10 @@ export interface SandboxProvider { name: string; display_name: string; available
  * Rides the shared form-family `Select` (a native `<select>` under the hood, so keyboard,
  * screen-reader, and disabled-option semantics come for free) at the `sm` scale for this
  * toolbar row.
+ *
+ * A member of the header's cluster: it registers, so the row is measured with it, and narrows its
+ * field where the row has shed to icons. A choice has no menu-row form, so it never goes into the
+ * `…`. In the cluster's offscreen probes it draws a box of its width, not a second select.
  */
 export function SandboxPicker({ providers, value, onChange, busy }: {
   providers: SandboxProvider[]
@@ -22,11 +27,21 @@ export function SandboxPicker({ providers, value, onChange, busy }: {
   /** In-flight gate: the picker locks while the next session is being opened. */
   busy?: boolean
 }) {
+  const { tier } = useHeaderChild({ priority: 'low', canIcon: true, neverOverflow: true, menu: { label: 'Sandbox for new terminal sessions', icon: Shield } })
+  const probe = useHeaderProbe()
+  const width = tier === 'icon' || tier === 'overflow' ? 'w-32' : 'w-44'
+  if (probe) {
+    return (
+      <span aria-hidden className="inline-flex items-center gap-1.5">
+        <Shield size={14} /><span className={`${width} h-8`} />
+      </span>
+    )
+  }
   return (
     <label className="inline-flex items-center gap-1.5 text-[0.8125rem] text-on-surface-low">
       <Shield size={14} aria-hidden />
       <span className="sr-only">Sandbox for new terminal sessions</span>
-      <span className="w-44">
+      <span className={width}>
         <Select
           ariaLabel="Sandbox for new terminal sessions"
           value={value}

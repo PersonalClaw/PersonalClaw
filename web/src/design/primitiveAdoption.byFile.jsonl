@@ -54,7 +54,6 @@
 {"file":"pages/files/browse/FileTree.tsx","raw-button":3,"raw-input":3,"raw-dialog":0}
 {"file":"pages/files/browse/PathBar.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
 {"file":"pages/files/comments/CommentLayer.tsx","raw-button":0,"raw-input":2,"raw-dialog":0}
-{"file":"pages/inbox/InboxPage.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/knowledge/AudioRecorder.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/knowledge/KnowledgeCreatePage.tsx","raw-button":2,"raw-input":5,"raw-dialog":0}
 {"file":"pages/knowledge/KnowledgeDetail.tsx","raw-button":1,"raw-input":2,"raw-dialog":0}

@@ -787,7 +787,7 @@ export function HeaderControl({
  *  The menu is a `role="menu"` of `menuitem`s with the shared cursor: it opens with focus on its
  *  first row, the arrows move, Enter picks, and Escape or Tab closes it with focus back on the
  *  control. Portaled, so the page body cannot paint over it. */
-export function HeaderMenu({ icon: Icon, label, items, priority = 'default', variant = 'ghost', title }: {
+export function HeaderMenu({ icon: Icon, label, items, priority = 'default', variant = 'ghost', title, disabled }: {
   icon: LucideIcon
   label: string
   items: { label: string; icon?: LucideIcon; hint?: string; onSelect: () => void }[]
@@ -796,12 +796,15 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
   variant?: Variant
   /** The tooltip, when the control says more than its label. Defaults to the label. */
   title?: string
+  /** Unavailable for now (the Inbox's Digest while one is being written): the trigger, and its rows
+   *  in the `…`. */
+  disabled?: boolean
 }) {
   const { visible, tier } = useHeaderChild({
     priority,
     canIcon: true,
     trailing: variant === 'primary',
-    menu: { label, icon: Icon, rows: items },
+    menu: { label, icon: Icon, disabled, rows: disabled ? items.map((it) => ({ ...it, disabled: true })) : items },
   })
   const placed = usePlaced(variant === 'primary')
   if (!visible) return null
@@ -809,12 +812,12 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
   return placed(
     <Popover portal placement="bottom" align="right" width={260}
       trigger={(open, toggle) => (
-        <button type="button" onClick={toggle} aria-haspopup="menu" aria-expanded={open}
+        <button type="button" onClick={toggle} aria-haspopup="menu" aria-expanded={open} disabled={disabled}
           title={title ?? label} aria-label={iconOnly ? label : undefined}
           data-type="label-s"
           className={cx(
             'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
-            'transition-colors duration-(--duration-short)',
+            'transition-colors duration-(--duration-short) disabled:opacity-40 disabled:pointer-events-none',
             iconOnly ? 'size-10' : 'h-10 px-l',
             open && variant === 'ghost' ? variants.secondary : variants[variant],
           )}
@@ -845,6 +848,43 @@ function HeaderMenuRows({ label, items, close }: {
           label={it.label} hint={it.hint} onClick={() => { close(); it.onSelect() }} />
       ))}
     </div>
+  )
+}
+
+/** A header control that opens a panel of its own, too rich for a row of the `…` (Artifacts'
+ *  Deployed: each served page with its link, and Open and Tear down beside it). It takes the
+ *  cluster's ladder like `HeaderMenu` (icon and label, icon only) and is measured with the row, but
+ *  it never sheds into the `…`, since a menu row cannot open it, as `HeaderFilter` does not. */
+export function HeaderPopover({ icon: Icon, label, title, width = 320, children }: {
+  icon: LucideIcon
+  label: string
+  /** The tooltip, when the control says more than its label. Defaults to the label. */
+  title?: string
+  /** The panel's width in px. */
+  width?: number
+  children: (close: () => void) => ReactNode
+}) {
+  const { tier } = useHeaderChild({ priority: 'low', canIcon: true, neverOverflow: true, menu: { label, icon: Icon } })
+  const iconOnly = tier === 'icon' || tier === 'overflow'
+  return (
+    <Popover portal placement="bottom" align="right" width={width}
+      trigger={(open, toggle) => (
+        <button type="button" onClick={toggle} aria-haspopup="dialog" aria-expanded={open}
+          title={title ?? label} aria-label={iconOnly ? label : undefined}
+          data-type="label-s"
+          className={cx(
+            'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
+            'transition-colors duration-(--duration-short)',
+            iconOnly ? 'size-10' : 'h-10 px-l',
+            open ? variants.secondary : variants.ghost,
+          )}
+          style={fvs(470)}>
+          <Icon size={16} />
+          {!iconOnly && <span className="whitespace-nowrap">{label}</span>}
+        </button>
+      )}>
+      {children}
+    </Popover>
   )
 }
 

@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertCircle, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, EyeOff, Lightbulb, ShieldCheck } from 'lucide-react'
+import { AlertCircle, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, EyeOff, Lightbulb, Save as SaveIcon, ShieldCheck } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { PageTitle } from '../../ui/PageTitle'
-import { HeaderActions, HeaderSegmented } from '../../ui/HeaderActions'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { QuietButton } from '../../ui/QuietButton'
-import { Button } from '../../ui/Button'
 import { Loading, LoadError } from '../../ui/ListScaffold'
 import { ChipInput, Checkbox, Field, FieldError, Select, TextArea, TextInput } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
@@ -268,22 +267,14 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
               onChange={(k) => switchTab(k as Tab)}
               options={[{ key: 'steps', label: 'Steps' }, { key: 'json', label: 'JSON' }]}
             />
-            <QuietButton
-              onClick={() => { void submit(false) }}
+            <HeaderControl icon={ShieldCheck} label={busy === 'check' ? 'Checking…' : 'Check'} onClick={() => { void submit(false) }}
               title="Check it the way Save does, without saving anything"
               disabled={busy !== null || blocked || !!jsonErr}
-              disabledReason={busy ? 'A check or save is already running' : blockedReason}
-            >
-              <ShieldCheck size={13} /> {busy === 'check' ? 'Checking…' : 'Check'}
-            </QuietButton>
-            <Button
+              disabledReason={busy ? 'A check or save is already running' : blockedReason} />
+            <HeaderControl icon={SaveIcon} label={busy === 'save' ? 'Saving…' : copyMode ? 'Save copy' : 'Save'} variant="primary" priority="primary"
               onClick={() => { void submit(true) }}
-              loading={busy === 'save'}
               disabled={busy !== null || !saveable || blocked || !!jsonErr || held}
-              disabledReason={held ? HELD_CHANGE_REASON : !saveable ? 'No changes to save' : blockedReason}
-            >
-              {copyMode ? 'Save copy' : 'Save'}
-            </Button>
+              disabledReason={held ? HELD_CHANGE_REASON : !saveable ? 'No changes to save' : blockedReason} />
           </HeaderActions>
         ) : undefined}
       />

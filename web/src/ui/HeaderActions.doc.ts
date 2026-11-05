@@ -63,11 +63,28 @@ const docs: UiDoc[] = [
       { name: 'priority', description: "OVERFLOW shedding order, as HeaderControl's." },
       { name: 'variant', description: "The trigger's fill, as HeaderControl's: primary where the menu is the page's primary action." },
       { name: 'title', description: 'The tooltip, when the control says more than its label. Defaults to the label.' },
+      { name: 'disabled', description: 'Unavailable for now: the trigger, and its rows in the …' },
     ],
     bestPractices: [
       { guidance: true, description: 'Use for a few actions of one kind that would otherwise each take a header slot.' },
     ],
     anatomy: ['tier-aware trigger button', 'portaled Popover with a role=menu of rows'],
+  },
+  {
+    name: 'HeaderPopover',
+    keywords: ['header', 'popover', 'panel', 'deployed'],
+    description: "A header control that opens a panel of its own, too rich for a row of the … (Artifacts' Deployed: each served page with its link, and Open and Tear down beside it). It takes the cluster's ladder like HeaderMenu and is measured with the row, but never sheds into the …, since a menu row cannot open it.",
+    props: [
+      { name: 'icon', description: 'Lucide icon, shown beside the label and alone at the ICON tier.' },
+      { name: 'label', description: "The control's name." },
+      { name: 'title', description: 'The tooltip, when the control says more than its label. Defaults to the label.' },
+      { name: 'width', description: "The panel's width in px (default 320)." },
+      { name: 'children', description: 'The panel, given a close function.' },
+    ],
+    bestPractices: [
+      { guidance: true, description: 'Prefer HeaderMenu where each row is one action: it can shed into the ….' },
+    ],
+    anatomy: ['tier-aware trigger button', 'portaled Popover'],
   },
   {
     name: 'HeaderOverflow',

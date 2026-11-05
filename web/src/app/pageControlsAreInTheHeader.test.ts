@@ -207,3 +207,59 @@ describe('every header cluster keeps the one order', () => {
     expect(headerOrderFindings(cluster('{a ? <HeaderControl label="Save" variant="primary" /> : <HeaderControl label="Edit" variant="primary" />}'))).toEqual([])
   })
 })
+
+// ── Every control in a header row is a member of its cluster ─────────────────────────────────────
+//
+// A control the cluster does not know of is not measured, so the row's tier and the title's room
+// are worked out without it, and it cannot shed into the `…`: the Inbox's Digest, Artifacts'
+// Deployed menu and pin, the workflow definition's and editor's buttons were hand-laid buttons in
+// the row. Each child of a cluster is a member (`HeaderControl`, `HeaderMenu`, `HeaderPopover`,
+// `HeaderSearch`, `HeaderFilter`, `HeaderSegmented`), or a component whose own source registers
+// with it (`useHeaderChild`) or draws one.
+
+const MEMBERS = new Set(['HeaderControl', 'HeaderMenu', 'HeaderPopover', 'HeaderSearch', 'HeaderFilter', 'HeaderSegmented'])
+const DRAWS_A_MEMBER = /useHeaderChild\(|<(HeaderControl|HeaderMenu|HeaderPopover|HeaderSearch|HeaderFilter|HeaderSegmented)\b/
+
+/** The non-member components a cluster draws, each with whether its own source joins the cluster. */
+export function clusterStrangers(file: string, src: string, readModule: (from: string, spec: string) => string | null): string[] {
+  const out: string[] = []
+  const imports = new Map<string, string>()
+  for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*'([^']+)'/g)) {
+    for (const name of m[1].split(',').map((n) => n.trim().split(/\s+as\s+/).pop()!).filter(Boolean)) imports.set(name, m[2])
+  }
+  for (const block of src.matchAll(/<HeaderActions[\s>][\s\S]*?<\/HeaderActions>/g)) {
+    for (const tag of new Set([...block[0].matchAll(/<([A-Z][A-Za-z]*)\b/g)].map((m) => m[1]))) {
+      if (tag === 'HeaderActions' || MEMBERS.has(tag)) continue
+      const spec = imports.get(tag)
+      const mod = spec ? readModule(file, spec) : src
+      if (!mod || !DRAWS_A_MEMBER.test(mod)) out.push(`${tag} is drawn in a header row but joins no cluster`)
+    }
+  }
+  return out
+}
+
+describe('every control in a header row is a member of its cluster', () => {
+  const resolve = (from: string, spec: string): string | null => {
+    if (!spec.startsWith('.')) return null
+    const base = join(SRC, from, '..', spec)
+    for (const ext of ['.tsx', '.ts', '/index.tsx']) {
+      try { return strip(readSource(base + ext)) } catch { /* the next form */ }
+    }
+    return null
+  }
+
+  it('in every page and the shell', () => {
+    const files = [...pageFiles(), ...filesUnder(join(SRC, 'app'), (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))]
+    const found = files.flatMap((f) => clusterStrangers(rel(f), strip(readSource(f)), resolve).map((x) => `${rel(f)}: ${x}`))
+    expect(found).toEqual([])
+  })
+
+  it('reads a cluster as the rule says', () => {
+    const page = (body: string) => `import { Popover } from './Popover'\nimport { Pin } from './Pin'\n<HeaderActions>${body}</HeaderActions>`
+    const modules: Record<string, string> = { './Popover': 'export function Popover() {}', './Pin': 'export function Pin() { return <HeaderControl /> }' }
+    const read = (_: string, spec: string) => modules[spec] ?? null
+    expect(clusterStrangers('p.tsx', page('<HeaderControl label="A" /><Pin />'), read)).toEqual([])
+    expect(clusterStrangers('p.tsx', page('<Popover trigger={() => <button>Digest</button>} />'), read))
+      .toEqual(['Popover is drawn in a header row but joins no cluster'])
+  })
+})

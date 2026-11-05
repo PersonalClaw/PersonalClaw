@@ -10,8 +10,7 @@ import { ListStatus } from '../../ui/ListControls'
 import { type FilterSectionDef } from '../../ui/FilterMenu'
 import { HeaderSearch } from '../../ui/HeaderSearch'
 import { HeaderFilter } from '../../ui/HeaderFilter'
-import { Popover, MenuRow } from '../../ui/Popover'
-import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { HeaderActions, HeaderControl, HeaderMenu } from '../../ui/HeaderActions'
 import { TOUCH_TARGET } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
@@ -420,36 +419,18 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
             <HeaderActions overflowClassName={TOUCH_TARGET}>
               {(items === undefined || items.length > 0) && <HeaderSearch value={q} onChange={setQ} placeholder="Search inbox" className={TOUCH_TARGET} />}
               <HeaderFilter sections={filterSections} className={TOUCH_TARGET} />
-              {/* Channel digest — only meaningful when channels are watched. Picks a
-                  channel, generates a catch-up summary that lands as a new item. `portal`: inside
-                  the cluster it sits in the row's horizontal scroller, which would clip its menu. */}
-              {watched.length > 0 && (
-                <Popover portal placement="bottom" align="right" trigger={(open, toggle) => (
-                  <button onClick={toggle} disabled={busy}
-                    data-type="body-s"
-                    className="inline-flex items-center gap-1.5 rounded-pill h-9 px-m text-on-surface-var hover:bg-surface-high hover:text-on-surface transition-colors disabled:opacity-40"
-                    style={{ background: open ? 'var(--color-surface-high)' : undefined }}
-                    title="Generate a catch-up digest for a watched channel">
-                    {busy ? <Loader2 size={15} className="animate-spin" /> : <ScrollText size={15} />}
-                    <span className="hidden sm:inline">Digest</span>
-                  </button>
-                )}>
-                  {(close) => (
-                    <div className="flex flex-col gap-0.5" style={{ minWidth: 220 }}>
-                      <div data-type="caption" className="px-m pt-1 pb-1.5 uppercase tracking-wide text-on-surface-low">Catch-up digest · last 4h</div>
-                      {watched.map((ch) => (
-                        <MenuRow key={ch.id} icon={<ScrollText size={15} />} label={ch.name || ch.id}
-                          onClick={() => { close(); digest(ch.id) }} />
-                      ))}
-                    </div>
-                  )}
-                </Popover>
-              )}
               {/* Gated on `open_count`, the same set the sweep reaches. Gating on the old
                   PENDING-only count made the only bulk control VANISH once every row had been
                   read, while the queue was still full (issue 493). */}
               {(status?.open_count ?? 0) > 0 && (
                 <HeaderControl icon={CheckCheck} label="Dismiss all" danger priority="low" onClick={dismissAll} disabled={busy} className={TOUCH_TARGET} />
+              )}
+              {/* Channel digest — only meaningful when channels are watched. Picks a channel and
+                  generates a catch-up summary of its last 4 hours, which lands as a new item. */}
+              {watched.length > 0 && (
+                <HeaderMenu icon={busy ? Loader2 : ScrollText} label="Digest" disabled={busy}
+                  title="Generate a catch-up digest of a watched channel's last 4 hours"
+                  items={watched.map((ch) => ({ label: ch.name || ch.id, icon: ScrollText, hint: 'Catch-up of the last 4 hours', onSelect: () => digest(ch.id) }))} />
               )}
               <HeaderControl icon={RotateCcw} label="Restart sources" priority="low" onClick={restart} disabled={busy} className={TOUCH_TARGET} />
               <HeaderControl icon={SettingsIcon} label="Inbox settings" active={settingsOpen} priority="low" onClick={() => setSettingsOpen(!settingsOpen)} className={TOUCH_TARGET} />
