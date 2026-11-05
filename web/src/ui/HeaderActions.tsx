@@ -718,8 +718,9 @@ export function HeaderOverflow({ actions, className }: { actions: (OverflowRow &
   )
 }
 
-/** One row of the `…` menu. A row that cannot act stays, dimmed, says why under its name (the
- *  whole reason in its tooltip) and leaves the menu open when chosen, so its action is not lost. */
+/** One row of the `…` menu. A row that cannot act stays, dimmed, and leaves the menu open when
+ *  chosen, so its action is not lost. One whose control gives a reason (`disabledReason`) says it
+ *  under its name, the whole reason in its tooltip. */
 function OverflowItem({ row: a, close }: { row: OverflowRow; close: () => void }) {
   return (
     <div className={a.danger ? '[&_button]:text-danger' : ''}>
