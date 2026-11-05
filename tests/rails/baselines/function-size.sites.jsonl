@@ -110,7 +110,7 @@
 {"site": "src/personalclaw/mcp_artifacts.py::_list_tools", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 469, "complexity": 1}
 {"site": "src/personalclaw/mcp_automation.py::_call_tool_inner", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 105, "complexity": 47}
 {"site": "src/personalclaw/mcp_automation.py::_list_tools", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 339, "complexity": 1}
-{"site": "src/personalclaw/mcp_core.py::_call_tool_inner", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 402, "complexity": 83}
+{"site": "src/personalclaw/mcp_core.py::_call_tool_inner", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 401, "complexity": 82}
 {"site": "src/personalclaw/mcp_core.py::_list_tools", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 655, "complexity": 1}
 {"site": "src/personalclaw/mcp_memory.py::_call_tool_inner", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 93, "complexity": 32}
 {"site": "src/personalclaw/mcp_oauth.py::discover", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 92, "complexity": 36}
