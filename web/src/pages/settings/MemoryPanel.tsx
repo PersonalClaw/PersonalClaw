@@ -22,7 +22,7 @@ import {
   type RecallRanking, type MemoryDoc, type MemoryHistoryDays, hasApiCode,
 } from '../../lib/api'
 import { ProbeRow } from './DoctorPanel'
-import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
+import { Section, Field, Row, Toggle, SavedToast } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { confirmForgetPreference } from './forgetPreference'
 import { Button } from '../../ui/Button'
@@ -30,7 +30,6 @@ import { Eyebrow } from '../../ui/Eyebrow'
 import { ListSkeleton, FormSkeleton, InlineLoadError, LoadError, EmptyState } from '../../ui/ListScaffold'
 import { TextInput, TextArea, Select, ChipInput, NumberField, FieldError, useSyncedDraft } from '../../ui/forms'
 import { Segmented } from '../../ui/Segmented'
-import { SearchField } from '../../ui/SearchField'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { QuietButton } from '../../ui/QuietButton'
 import { Slider } from '../../ui/Slider'
@@ -43,9 +42,7 @@ import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { fvs } from '../../design/fontWeight'
-import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
-import { tabListKeys } from '../../lib/tabListKeys'
 import { useUnsavedGuard } from '../../lib/useUnsavedGuard'
 import { MemoryPartitionContext, MemoryPartitionPicker, partitionKey, useMemoryPartition } from './MemoryPartitionPicker'
 import { DiscoverTip } from '../discover/DiscoverTip'
@@ -59,8 +56,10 @@ import { DiscoverTip } from '../discover/DiscoverTip'
 // FOCUSED TOOLS, not browsing: Health (lint/dream), Recall (scored recall), Inspect
 // (context preview), Audit (WAL), Settings (retention/consolidation). Flat tab bar —
 // no more tabs-under-tabs. ?tab holds the id so deep links + refresh survive.
-type Tab = 'studio' | 'recall' | 'health' | 'audit' | 'inspect' | 'settings'
-const TOP_TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
+export type MemoryTab = 'studio' | 'recall' | 'health' | 'audit' | 'inspect' | 'settings'
+type Tab = MemoryTab
+/** Memory's views, in the order its header's view switch shows them. */
+export const MEMORY_TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
   { id: 'studio', label: 'Studio', icon: Share2 },
   { id: 'health', label: 'Health', icon: HeartPulse },
   { id: 'recall', label: 'Recall', icon: Search },
@@ -81,15 +80,27 @@ const LEGACY_TAB_ALIAS: Record<string, Tab> = {
   browse: 'studio', episodic: 'studio', graph: 'studio', lessons: 'studio', editors: 'studio',
 }
 
-export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
+/** The view Memory shows, riding `?tab=` (replace: an in-place view switch), with the pre-Studio
+ *  addresses folded in. The page's header switch and this panel read the same one. */
+export function useMemoryTab(query: RouteProps['query'], setQuery: RouteProps['setQuery']): [Tab, (t: Tab) => void] {
   const [tabRaw, setTabRaw] = useQueryParam(query, setQuery, 'tab', 'studio', { replace: true })
   const resolved = LEGACY_TAB_ALIAS[tabRaw as string] ?? tabRaw
-  const tab = (ALL_TABS.includes(resolved as Tab) ? resolved : 'studio') as Tab
-  // Arrow/Home/End across the strip, from the one shared implementation (lib/tabListKeys) that
-  // four other strips already read — declaring role="tab" without it would promise a model this
-  // panel does not keep.
-  const setTab = (t: Tab) => setTabRaw(t)
-  const onTabKey = tabListKeys((i) => setTab(TOP_TABS[i].id))
+  return [(ALL_TABS.includes(resolved as Tab) ? resolved : 'studio') as Tab, (t: Tab) => setTabRaw(t)]
+}
+
+/** The Studio's explorer controls, which are the page header's: its search and its kind filter,
+ *  and where the explorer reports each kind's count for the filter's rows. */
+export interface StudioControls {
+  q: string
+  kind: StudioKind | 'all'
+  onCounts: (counts: Record<StudioKind | 'all', number>) => void
+}
+
+export function MemoryPanel({ query, setQuery, studio }: Pick<RouteProps, 'query' | 'setQuery'> & {
+  /** The Studio's search and kind filter, held by the page's header (`MemoryPage`). */
+  studio?: StudioControls
+}) {
+  const [tab] = useMemoryTab(query, setQuery)
   // Which memory the panel shows: the one every chat shares, or a folder's own (`?partition=`).
   const [partition, setPartition] = useQueryParam(query, setQuery, 'partition', '', { replace: true })
   const statsKey = partitionKey('settings:memory-stats', partition)
@@ -101,7 +112,8 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
   return (
     <MemoryPartitionContext.Provider value={partition}>
     <div className="flex flex-col" style={{ minHeight: 0 }}>
-      <PanelHeader title="Memory" hint="Explore and manage what the system remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail." />
+      {/* The page's header names it and holds its views (`MemoryPage`); this says what it is. */}
+      <p data-type="body-s" className="mb-l text-on-surface-low">Explore and manage what the system remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail.</p>
 
       <MemoryPartitionPicker partition={partition} onPick={setPartition} />
 
@@ -114,43 +126,11 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
         </div>
       )}
 
-      {/* flat tab bar — Studio (explore) + the focused tools (no more tabs-under-tabs).
-          🔴 The active tab was distinguished ONLY by a 2px underline and the accent text colour, so
-          nothing said which view was showing. `ui/Segmented` — this app's canonical view switcher —
-          already declares tablist/tab/aria-selected for exactly this job; this strip is a different
-          VISUAL (an underline bar, not a pill) so it keeps its look and takes those semantics. */}
-      <div role="tablist" aria-label="Memory view" onKeyDown={onTabKey}
-        className="mb-l flex gap-0.5 border-b border-outline-variant/40">
-        {TOP_TABS.map((t) => {
-          const on = t.id === tab
-          return (
-            // 🪤 `role="tab"` is a PROMISE of the tab keyboard model. Roving tabIndex — exactly one tab
-            // in the tab order — plus the shared arrow handler above, because announcing tabs without
-            // the model is worse than announcing nothing.
-            // Raw: no button primitive takes a tab role or a roving tabIndex.
-            <button key={t.id} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
-              onClick={() => setTab(t.id)}
-              data-type="body-s" className="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 transition-colors"
-              // 🔴 ACCENT TEXT ON THE CANVAS NEEDS THE EMPHASIS SHADE. Measured at 4.37:1 (need 4.5) by axe and
-              //    ux-audit in light: `--color-primary` on `--color-canvas` (#c8452e on #f0f4f8). The scheme rail
-              //    guaranteed accent text against **white**, and passes there (4.83) — but this sits on the canvas,
-              //    which the guarantee never measured. Across all 12 schemes plain primary fails on the canvas in
-              //    **7 of 12** (4.37-4.41) while `primary-emphasis` passes in **all 12** (worst 4.82, coral 6.0).
-              //    See design/schemeContrast.test.ts, which now measures this dimension.
-              style={on
-                ? { borderColor: 'var(--color-primary)', color: 'var(--color-primary-emphasis)' }
-                : { borderColor: 'transparent', color: 'var(--color-on-surface-low)' }}>
-              <t.icon size={14} /> {t.label}
-            </button>
-          )
-        })}
-      </div>
-
       {/* Studio owns its own 3-pane height; the tool tabs get a bounded scroll body. Keyed by the
           memory shown: another memory is another set of records, so a selection, a draft or a
           recall result from the last one does not carry over. */}
       {tab === 'studio' ? (
-        <MemoryStudio key={partition} onChanged={reloadStats} initialSel={query.sel || undefined} />
+        <MemoryStudio key={partition} onChanged={reloadStats} initialSel={query.sel || undefined} controls={studio} />
       ) : (
         <ToolTabBody key={partition}>
           {tab === 'recall' && <RecallTab />}
@@ -224,7 +204,7 @@ function readValue(raw?: string): string {
 // Selecting in the list focuses the graph + opens the inspector; clicking a node
 // selects it in the list. One fetch of the graph is shared across all three panes.
 
-type StudioKind = 'fact' | 'episodic' | 'lesson' | 'doc' | 'entity' | 'slot'
+export type StudioKind = 'fact' | 'episodic' | 'lesson' | 'doc' | 'entity' | 'slot'
 interface StudioItem {
   uid: string            // unique within the studio (kind-scoped)
   kind: StudioKind
@@ -259,7 +239,7 @@ export function facetOf(fact: SemanticEntry): StudioFacet | null {
   return { cls: typeof cls === 'string' ? cls : '', text, forgotten: forgotten === true }
 }
 
-const STUDIO_KIND_META: Record<StudioKind, { label: string; icon: LucideIcon }> = {
+export const STUDIO_KIND_META: Record<StudioKind, { label: string; icon: LucideIcon }> = {
   fact: { label: 'Facts', icon: Database },
   episodic: { label: 'Episodes', icon: BookOpen },
   lesson: { label: 'Lessons', icon: GraduationCap },
@@ -341,11 +321,12 @@ export function studioScope(
   return { counts, shown }
 }
 
-function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initialSel?: string }) {
+function MemoryStudio({ onChanged, initialSel, controls }: { onChanged: () => void; initialSel?: string; controls?: StudioControls }) {
   const partition = useMemoryPartition()
   const k = (key: string) => partitionKey(key, partition)
-  const [kindFilter, setKindFilter] = useState<StudioKind | 'all'>('all')
-  const [q, setQ] = useState('')
+  // The search and the kind filter are the page header's (`StudioControls`).
+  const kindFilter = controls?.kind ?? 'all'
+  const q = controls?.q ?? ''
   // `initialSel` (e.g. `epi:42`, from a `[Memory N]` chat citation's deep-link)
   // preselects that memory once on mount; user selection takes over after.
   const [selUid, setSelUid] = useState<string | null>(initialSel ?? null)
@@ -438,6 +419,9 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   // load is a list that is quietly missing a kind — which reads exactly like an empty one.
   const loadError = factsErr ?? epiErr ?? lessonsErr ?? entitiesErr ?? slotsErr ?? null
   const { counts, shown } = useMemo(() => studioScope(items, q, kindFilter), [items, q, kindFilter])
+  // The header's kind filter counts what this explorer would show for each kind.
+  const onCounts = controls?.onCounts
+  useEffect(() => { onCounts?.(counts) }, [counts, onCounts])
 
   // The entity topology, narrowed to the {label,group}/{from,to} shape the canvas renders.
   // `group` carries the Louvain community, so colouring by group IS colouring by community —
@@ -587,34 +571,15 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   }
 
   return (
-    <div ref={shellRef} className="flex gap-3 overflow-hidden" style={{ height: paneH }}>
+    // The row scrolls sideways where its panes can't fit (200% text doubles their rem widths), so
+    // the inspector stays in reach rather than cut off.
+    <div ref={shellRef} className="flex gap-3 overflow-x-auto overflow-y-hidden" style={{ height: paneH }}>
       {/* ── EXPLORER ── */}
       <div className="flex w-[19rem] shrink-0 flex-col rounded-xl border border-outline-variant/40 bg-surface-container/40">
-        <div className="flex flex-col gap-2 border-b border-outline-variant/30 p-2.5">
-          <SearchField value={q} onChange={setQ} placeholder="Search memories" ariaLabel="Search memories" size="sm" />
-          {/* Two dimensions again — the query and the kind chips below — and `shown` is the memo the
-              explorer list renders. */}
-          <ResultAnnouncement count={shown.length} noun="memories" singular="memory"
-            active={!!q.trim() || kindFilter !== 'all'} />
-          {/* 🔴 One-of-N, and the chosen chip was an `accentChip` background and nothing else. The
-              dimension goes on the GROUP, not into each chip's name: each chip's visible text ends in a
-              count ("fact 12"), and an `aria-label` would replace that text in the accessible name
-              instead of adding to it. */}
-          <div role="group" aria-label="Filter by kind" className="flex flex-wrap gap-1">
-            {(['all', 'fact', 'episodic', 'lesson', 'entity', 'slot', 'doc'] as const).map((k) => {
-              const on = kindFilter === k
-              const meta = k === 'all' ? null : STUDIO_KIND_META[k]
-              return (
-                // Raw: a 24px counted filter chip; no chip primitive exists, and Segmented is a radio track.
-                <button key={k} type="button" aria-pressed={on} onClick={() => setKindFilter(k)}
-                  data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-6 transition-colors"
-                  style={on ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
-                  {meta && <meta.icon size={11} />}{k === 'all' ? 'All' : meta!.label}<span className="tabular-nums">{counts[k]}</span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
+        {/* Two dimensions, the header's search and its kind filter, and `shown` is the memo the
+            explorer list renders. */}
+        <ResultAnnouncement count={shown.length} noun="memories" singular="memory"
+          active={!!q.trim() || kindFilter !== 'all'} />
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {/* The failure branch precedes both the loading and the empty one: `data ===
               undefined` is true for all three, so a later test never runs. */}

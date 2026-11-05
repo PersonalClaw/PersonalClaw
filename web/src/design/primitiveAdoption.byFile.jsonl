@@ -86,7 +86,7 @@
 {"file":"pages/settings/AuditPanel.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/settings/DesignPanel.tsx","raw-button":5,"raw-input":0,"raw-dialog":0}
 {"file":"pages/settings/DiagnosticsPanel.tsx","raw-button":5,"raw-input":0,"raw-dialog":0}
-{"file":"pages/settings/MemoryPanel.tsx","raw-button":5,"raw-input":2,"raw-dialog":0}
+{"file":"pages/settings/MemoryPanel.tsx","raw-button":3,"raw-input":2,"raw-dialog":0}
 {"file":"pages/settings/ModelBackends.tsx","raw-button":0,"raw-input":1,"raw-dialog":0}
 {"file":"pages/settings/ModelsPanel.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/settings/NotificationsPanel.tsx","raw-button":0,"raw-input":1,"raw-dialog":0}

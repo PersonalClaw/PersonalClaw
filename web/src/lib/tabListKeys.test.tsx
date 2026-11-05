@@ -169,7 +169,8 @@ describe('every tab strip in the tree is a real tablist', () => {
     .filter((f) => /role="tab"/.test(f.src))
 
   it('finds the population (not vacuously green)', () => {
-    expect(sites().length, 'the role="tab" census must not go empty').toBeGreaterThanOrEqual(5)
+    // Four since Memory's strip became its page header's view switch.
+    expect(sites().length, 'the role="tab" census must not go empty').toBeGreaterThanOrEqual(4)
   })
 
   it('each one declares a tablist, roving tabIndex and aria-selected', () => {
@@ -212,15 +213,15 @@ describe('every tab strip in the tree is a real tablist', () => {
     expect(sites().map((f) => f.file), 'Segmented left the tab census').not.toContain('ui/Segmented.tsx')
   })
 
-  it('and the only tab strips left are the five that reveal something', () => {
+  it('and the only tab strips left are the four that reveal something', () => {
     // The vacuity floor for the assertion above: it is also satisfied by a tree with no tab strips at
-    // all. These five are hand-rolled view switchers, untouched by #3472, and each one swaps a pane.
+    // all. These four are hand-rolled view switchers, untouched by #3472, and each one swaps a pane.
+    // (Memory's strip is its page header's view switch now, a radiogroup like every page's.)
     // (`ChatActivityPanel`, the strip this handler came from, is the chat's session inspector now: a
     // column of disclosures that open side by side, not tabs that swap one pane, #3820.)
     expect(sites().map((f) => f.file).sort()).toEqual([
       'pages/files/FilesSection.tsx',
       'pages/loops/LoopCockpitPage.tsx',
-      'pages/settings/MemoryPanel.tsx',
       'pages/terminal/TerminalDrawer.tsx',
       'pages/terminal/TerminalPage.tsx',
     ])

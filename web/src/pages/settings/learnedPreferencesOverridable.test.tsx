@@ -74,7 +74,7 @@ async function mountSettings(rows: Partial<MemoryFacet>[] = [{}]) {
   // `setQuery` a click on the tab strip cannot change tabs, and the panel would stay on Studio
   // forever. `?tab=settings` is also how a user really arrives here from a deep link.
   render(<MemoryPanel query={{ tab: 'settings' }} setQuery={() => {}} />)
-  expect(screen.getByRole('tab', { name: /settings/i }).getAttribute('aria-selected')).toBe('true')
+  // Its views are the page header's switch now (`MemoryPage`); the panel draws the one `?tab=` names.
   await waitFor(() => expect(screen.getByText('Learned preferences')).toBeTruthy())
   return list
 }

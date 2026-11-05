@@ -54,8 +54,12 @@ describe('PanelHeader is the page heading of a settings sub-route', () => {
     // shortfall — name the exceptions instead, so a new panel without a title fails with its own filename.
     const files = readdirSync(SETTINGS).filter((f) => /Panel\.tsx$/.test(f))
     expect(files.length, 'the settings panels must be discoverable').toBeGreaterThan(20)
-    const missing = files.filter((f) => !/<PanelHeader\b/.test(readFileSync(join(SETTINGS, f), 'utf8')))
+    // `MemoryPanel` is Library › Memory's body now, not a settings sub-route: its page's header holds
+    // the h1 (`pages/library/MemoryPage.tsx`).
+    const missing = files.filter((f) => f !== 'MemoryPanel.tsx' && !/<PanelHeader\b/.test(readFileSync(join(SETTINGS, f), 'utf8')))
     expect(missing, 'a settings sub-route is a page; its panel title is its h1').toEqual([])
+    expect(readFileSync(join(process.cwd(), 'src/pages/library/MemoryPage.tsx'), 'utf8'), 'Memory has its h1 in its page header')
+      .toMatch(/<TopBar left=\{<PageTitle>Memory<\/PageTitle>\}/)
   })
 
   it("the inbox DRAWER copy does not use PanelHeader — #/inbox already has an h1", () => {

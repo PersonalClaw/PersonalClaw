@@ -310,14 +310,17 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     // asserted in the test below, which is the one that would catch that matcher silently matching
     // nothing — the whole population floor is too coarse to notice six missing). 22 since the shell's
     // content-width pill, one of the 23, was removed with its file (#5718); 21 since Chat history's
-    // tag filter became its header filter's Tag section, whose rows mark the choice with a check.
-    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(21)
+    // tag filter became its header filter's Tag section, whose rows mark the choice with a check; 19
+    // since Memory's view strip and kind chips moved into its page header (a radiogroup and a filter).
+    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(19)
     for (const rel of ['pages/settings/NotificationRulesMatrix.tsx', 'pages/settings/PersonalityPicker.tsx']) {
       expect(groups.map((g) => g.rel), `${rel} delegates, and must still be COUNTED`).toContain(rel)
     }
     expect(groups.some((g) => g.rel === 'pages/settings/settingsUI.tsx'), 'SegPills must be in scope').toBe(true)
+    // Three the name-keyed sweep could not see, of which the view strip and the kind chips are the
+    // page header's now: one is left in the panel.
     expect(groups.filter((g) => g.rel === 'pages/settings/MemoryPanel.tsx').length,
-      'the three the name-keyed sweep could not see').toBeGreaterThanOrEqual(3)
+      'the one the name-keyed sweep could not see that stays in the panel').toBeGreaterThanOrEqual(1)
     expect(groups.filter((g) => g.rel === 'pages/settings/DiagnosticsPanel.tsx').length,
       'both level pickers, not one').toBeGreaterThanOrEqual(2)
 
