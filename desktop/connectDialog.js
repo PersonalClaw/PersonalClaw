@@ -156,7 +156,7 @@ function healthCopy(status) {
  */
 function describeRow(row, { activeId, health = {}, localBaseUrl = "", local } = {}) {
   const isLocal = row.id === LOCAL_ENDPOINT_ID || row.kind === "local";
-  const url = isLocal ? localBaseUrl || row.base_url : row.base_url;
+  const url = isLocal ? localBaseUrl : row.base_url;
   const status = (health[row.id] && health[row.id].status) || HEALTH_UNKNOWN;
   const copy = healthCopy(status);
   const here = isLocal && local ? describeLocal(local) : null;

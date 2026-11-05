@@ -48,6 +48,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **One damaged web-watch file stops only its own watch. A file that could not be read, or held a field of the wrong type, stopped every watch after it in the list, and the watches before it lost their new items' fires. Now its watch says on the Automations page that its record could not be read, keeps a copy of the file beside it where the file can be opened, and starts over with a fresh record; every other watch polls and fires as before. A record that can be neither read nor written over is said once per reason, on the page too: its watch checks nothing until a fresh record can be saved, and tries again after a minute, then less often, up to every half hour.**
 - **Follow-up suggestions stop asking a failing model again on every page read. While the model that writes them was down, Home and a new chat asked it about 89 times a second, each a warning line in the gateway log. A refresh that failed now waits a minute, doubling while it keeps failing, up to half an hour; Refresh still asks at once.**
 - **A generated image in a chat that can't be loaded right now no longer reads as deleted. Only an image the gateway says is gone shows its prompt and offers Regenerate; any other failure says the image can't be shown, so a refused load never offers a model call.**
+- **The desktop app reaches the gateway it starts at the address that gateway listens on, `127.0.0.1`, where it used `localhost`.**
 
 ## [0.3.6] — 2026-11-03
 

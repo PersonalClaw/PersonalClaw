@@ -44,9 +44,9 @@ function cookieStore() {
 }
 
 describe("the ready line", () => {
-  it("names the gateway's port and the sign-in it minted for this start", () => {
+  it("names the gateway's port and the sign-in it minted for this start, at the address the gateway listens on", () => {
     const ready = parseReadyLine(readyLine({ port: 51234, token: TOKEN, pid: 7, home: "/tmp/h" }));
-    assert.deepStrictEqual(ready, { port: 51234, token: TOKEN, url: "http://localhost:51234" });
+    assert.deepStrictEqual(ready, { port: 51234, token: TOKEN, url: "http://127.0.0.1:51234" });
   });
 
   it("is the only line that counts", () => {
@@ -68,7 +68,7 @@ describe("the ready line", () => {
     assert.deepStrictEqual(parseReadyLine(readyLine({ port: 51234 })), {
       port: 51234,
       token: "",
-      url: "http://localhost:51234",
+      url: "http://127.0.0.1:51234",
     });
   });
 });
@@ -83,7 +83,7 @@ describe("signing the windows in", () => {
     const [verb, details] = cookies.calls[0];
     assert.strictEqual(verb, "set");
     assert.deepStrictEqual(details, {
-      url: "http://localhost:51234",
+      url: "http://127.0.0.1:51234",
       name: "pc_token_51234",
       value: TOKEN,
       path: "/",
@@ -99,7 +99,7 @@ describe("signing the windows in", () => {
 
   it("names the cookie the way the gateway does: pc_token_<the port it serves on>", () => {
     assert.strictEqual(sessionCookieName(51234), "pc_token_51234");
-    assert.strictEqual(windowCookie({ url: "http://localhost:9", port: 9, token: TOKEN }).name, "pc_token_9");
+    assert.strictEqual(windowCookie({ url: "http://127.0.0.1:9", port: 9, token: TOKEN }).name, "pc_token_9");
   });
 
   it("puts the same session on the shell's own requests as a Bearer header, and none before", async () => {
@@ -128,10 +128,10 @@ describe("a restart signs the windows in again", () => {
 
     const replaced = await signIn.adopt(parseReadyLine(readyLine({ port: 52345, token: NEXT_TOKEN })));
 
-    assert.deepStrictEqual(replaced, { url: "http://localhost:51234", port: 51234, token: TOKEN });
-    assert.deepStrictEqual([...cookies.jar.keys()], ["http://localhost:52345 pc_token_52345"]);
-    assert.strictEqual(cookies.jar.get("http://localhost:52345 pc_token_52345").value, NEXT_TOKEN);
-    assert.deepStrictEqual(cookies.calls[1], ["remove", "http://localhost:51234", "pc_token_51234"]);
+    assert.deepStrictEqual(replaced, { url: "http://127.0.0.1:51234", port: 51234, token: TOKEN });
+    assert.deepStrictEqual([...cookies.jar.keys()], ["http://127.0.0.1:52345 pc_token_52345"]);
+    assert.strictEqual(cookies.jar.get("http://127.0.0.1:52345 pc_token_52345").value, NEXT_TOKEN);
+    assert.deepStrictEqual(cookies.calls[1], ["remove", "http://127.0.0.1:51234", "pc_token_51234"]);
     assert.deepStrictEqual(signIn.authorization(), { Authorization: `Bearer ${NEXT_TOKEN}` });
   });
 
@@ -143,7 +143,7 @@ describe("a restart signs the windows in again", () => {
 
     assert.strictEqual(replaced.token, TOKEN, "the old start's sign-in would never be signed out");
     assert.strictEqual(cookies.jar.size, 1);
-    assert.strictEqual(cookies.jar.get("http://localhost:51234 pc_token_51234").value, NEXT_TOKEN);
+    assert.strictEqual(cookies.jar.get("http://127.0.0.1:51234 pc_token_51234").value, NEXT_TOKEN);
   });
 
   it("replaces nothing when the same ready line is read twice", async () => {
@@ -154,8 +154,8 @@ describe("a restart signs the windows in again", () => {
   });
 
   it("sends each window that showed the old address to the same route at the new one", () => {
-    const old = "http://localhost:51234";
-    const next = "http://localhost:52345";
+    const old = "http://127.0.0.1:51234";
+    const next = "http://127.0.0.1:52345";
     assert.strictEqual(movedUrl(`${old}/#/chat/abc`, old, next), `${next}/#/chat/abc`);
     assert.strictEqual(movedUrl(`${old}/#/inbox?capture=1`, old, next), `${next}/#/inbox?capture=1`);
     // A query is dropped: the dashboard routes in the hash, and a query is where a link's token rides.
@@ -185,7 +185,7 @@ describe("quitting", () => {
   it("signs a session out with its own cookie, at the gateway being asked", () => {
     // After a restart the old session is signed out at the NEW gateway, whose cookie name follows
     // its own port; the session itself is the old one.
-    const request = signOutRequest({ url: "http://localhost:51234", port: 51234, token: TOKEN }, 52345);
+    const request = signOutRequest({ url: "http://127.0.0.1:51234", port: 51234, token: TOKEN }, 52345);
     assert.deepStrictEqual(request, {
       path: SIGN_OUT_PATH,
       headers: { Cookie: `pc_token_52345=${TOKEN}` },

@@ -35,6 +35,8 @@ const SIGN_OUT_PATH = "/api/auth/logout";
  * The ready line's `{port, token, url}`, or null for any other line. A ready line without a token
  * still names the port, with `token: ""`: the window then meets the gateway's sign-in page, which
  * says what to do, rather than a window that never loads.
+ *
+ * The url is the address the gateway listens on, `127.0.0.1`.
  */
 function parseReadyLine(line) {
   if (typeof line !== "string" || !line.startsWith(READY_PREFIX)) return null;
@@ -47,7 +49,7 @@ function parseReadyLine(line) {
   const port = payload && payload.port;
   if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
   const token = typeof payload.token === "string" ? payload.token : "";
-  return { port, token, url: `http://localhost:${port}` };
+  return { port, token, url: `http://127.0.0.1:${port}` };
 }
 
 /** The gateway's session cookie for a gateway serving on *port*. */

@@ -65,9 +65,9 @@ describe("the stub backend", () => {
 });
 
 describe("what the smoke reads", () => {
-  it("takes the shell's own gateway page, on any loopback name, and nothing else", () => {
-    for (const url of ["http://localhost:61221/", "http://127.0.0.1:5173/#/chat", "http://[::1]:8080/"]) assert.match(url, LOOPBACK_PAGE, url);
-    for (const url of ["file:///app/loading.html", "about:blank", "https://localhost:443/", "http://example.com:80/", "http://localhost/"]) {
+  it("takes the shell's own gateway page, at the address the gateway listens on, and nothing else", () => {
+    for (const url of ["http://127.0.0.1:61221/", "http://127.0.0.1:5173/#/chat"]) assert.match(url, LOOPBACK_PAGE, url);
+    for (const url of ["http://localhost:61221/", "http://[::1]:8080/", "file:///app/loading.html", "about:blank", "https://127.0.0.1:443/", "http://example.com:80/", "http://127.0.0.1/"]) {
       assert.doesNotMatch(url, LOOPBACK_PAGE, url);
     }
   });
@@ -94,15 +94,15 @@ describe("a link the smoke hands the app (#3827)", () => {
   const sent = (request, extra = {}) => ({ method: "Network.requestWillBeSent", sessionId: "s", params: { requestId: "r1", request, ...extra } });
 
   it("finds the draft wherever it left the page: a request's body, its fetched body, a non-GET address, a WebSocket frame", () => {
-    assert.deepEqual(carriedOut([sent({ method: "POST", url: "http://localhost:1/api/chat", postData: `{"text":"${MARK}"}` })], MARK, "s"), [
-      "POST http://localhost:1/api/chat carried it in its body",
+    assert.deepEqual(carriedOut([sent({ method: "POST", url: "http://127.0.0.1:1/api/chat", postData: `{"text":"${MARK}"}` })], MARK, "s"), [
+      "POST http://127.0.0.1:1/api/chat carried it in its body",
     ]);
     const bodies = new Map([["r1", `text=${MARK}`]]);
-    assert.deepEqual(carriedOut([sent({ method: "POST", url: "http://localhost:1/x", hasPostData: true })], MARK, "s", bodies), [
-      "POST http://localhost:1/x carried it in its body",
+    assert.deepEqual(carriedOut([sent({ method: "POST", url: "http://127.0.0.1:1/x", hasPostData: true })], MARK, "s", bodies), [
+      "POST http://127.0.0.1:1/x carried it in its body",
     ]);
-    assert.deepEqual(carriedOut([sent({ method: "PUT", url: `http://localhost:1/api/drafts/${MARK}` })], MARK, "s"), [
-      `PUT http://localhost:1/api/drafts/${MARK} carried it in its address`,
+    assert.deepEqual(carriedOut([sent({ method: "PUT", url: `http://127.0.0.1:1/api/drafts/${MARK}` })], MARK, "s"), [
+      `PUT http://127.0.0.1:1/api/drafts/${MARK} carried it in its address`,
     ]);
     const frame = { method: "Network.webSocketFrameSent", sessionId: "s", params: { requestId: "w", response: { payloadData: `{"type":"send","text":"${MARK}"}` } } };
     assert.deepEqual(carriedOut([frame], MARK, "s"), ["a WebSocket frame carried it"]);
@@ -110,10 +110,10 @@ describe("a link the smoke hands the app (#3827)", () => {
 
   it("does not count what stayed: a GET's address, a frame that came in, another page's requests, another text", () => {
     const events = [
-      sent({ method: "GET", url: `http://localhost:1/api/search?q=${MARK}` }),
+      sent({ method: "GET", url: `http://127.0.0.1:1/api/search?q=${MARK}` }),
       { method: "Network.webSocketFrameReceived", sessionId: "s", params: { response: { payloadData: MARK } } },
-      { ...sent({ method: "POST", url: "http://localhost:1/api/chat", postData: MARK }), sessionId: "other" },
-      sent({ method: "POST", url: "http://localhost:1/api/chat", postData: "something else" }),
+      { ...sent({ method: "POST", url: "http://127.0.0.1:1/api/chat", postData: MARK }), sessionId: "other" },
+      sent({ method: "POST", url: "http://127.0.0.1:1/api/chat", postData: "something else" }),
     ];
     assert.deepEqual(carriedOut(events, MARK, "s"), []);
   });
@@ -339,13 +339,13 @@ describe("the packed app", () => {
     const shortOfIt = `${COCKPIT_LINK} opened ${CODE_LOOP.name}'s cockpit but not ${CODE_LOOP.diff}'s diff for ${CODE_LOOP.task}: the address lost diff=${CODE_LOOP.diff}, task=${CODE_LOOP.task} (the page is on #/code/${CODE_LOOP.id}?pane=changes)`;
     assert.equal(short.reads({ ok: false, reason: shortOfIt, mainOutput: "" }), true);
     assert.equal(short.reads({ ok: false, reason: `${COCKPIT_LINK} did not open ${CODE_LOOP.name}'s cockpit: the page is on #/chat`, mainOutput: "" }), false);
-    assert.equal(short.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://localhost:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), false);
+    assert.equal(short.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://127.0.0.1:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), false);
     assert.equal(resumes.reads({ ok: false, reason: shortOfIt, mainOutput: "" }), false);
     assert.equal(replays.reads({ ok: false, reason: shortOfIt, mainOutput: "" }), false);
-    assert.equal(replays.reads({ ok: false, reason: "#/chat/new?mode=plan reopened in a new one replayed a write: POST http://localhost:1/api/chat/sessions", mainOutput: "" }), true);
-    assert.equal(replays.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://localhost:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), false);
-    assert.equal(resumes.reads({ ok: false, reason: "#/chat/new?mode=plan reopened in a new one replayed a write: POST http://localhost:1/api/chat/sessions", mainOutput: "" }), false);
-    assert.equal(resumes.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://localhost:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), true);
+    assert.equal(replays.reads({ ok: false, reason: "#/chat/new?mode=plan reopened in a new one replayed a write: POST http://127.0.0.1:1/api/chat/sessions", mainOutput: "" }), true);
+    assert.equal(replays.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://127.0.0.1:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), false);
+    assert.equal(resumes.reads({ ok: false, reason: "#/chat/new?mode=plan reopened in a new one replayed a write: POST http://127.0.0.1:1/api/chat/sessions", mainOutput: "" }), false);
+    assert.equal(resumes.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://127.0.0.1:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), true);
     assert.equal(resumes.reads({ ok: false, reason: "the draft left the page: a WebSocket frame carried it", mainOutput: "" }), false);
     assert.equal(sends.reads({ ok: false, reason: "the cockpit link acted on the loop: a WebSocket frame carried it", mainOutput: "" }), false);
     assert.equal(dropped.reads({ ok: false, reason: "personalclaw://settings did not open #/settings: the page stayed on #/chat", mainOutput: "" }), true);

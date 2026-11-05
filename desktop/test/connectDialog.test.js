@@ -62,13 +62,18 @@ describe("describeRow", () => {
 
   it("shows the LIVE local URL for the reserved row, not the one that was persisted last launch", () => {
     // The spawn-local port is OS-assigned, so the stored value is stale by definition on relaunch.
-    const r = describeRow(row({ id: LOCAL_ENDPOINT_ID, kind: "local", base_url: "http://localhost:1111" }), {
+    const r = describeRow(row({ id: LOCAL_ENDPOINT_ID, kind: "local", base_url: "http://127.0.0.1:1111" }), {
       activeId: LOCAL_ENDPOINT_ID,
-      localBaseUrl: "http://localhost:52222",
+      localBaseUrl: "http://127.0.0.1:52222",
     });
-    assert.strictEqual(r.url, "http://localhost:52222");
+    assert.strictEqual(r.url, "http://127.0.0.1:52222");
     assert.strictEqual(r.kind, "local");
     assert.strictEqual(r.removable, false, "the gateway this shell spawned is not forgettable");
+  });
+
+  it("shows no address for the reserved row while no gateway of the app's runs, never the one it stored", () => {
+    const r = describeRow(row({ id: LOCAL_ENDPOINT_ID, kind: "local", base_url: "http://127.0.0.1:1111" }), { activeId: LOCAL_ENDPOINT_ID });
+    assert.strictEqual(r.url, "");
   });
 
   it("reports a row with no URL as missingUrl, and does not call it unreachable", () => {
@@ -115,7 +120,7 @@ describe("describeList", () => {
   });
 
   it("lists this computer's row once, where the registry keeps it", () => {
-    const local = row({ id: LOCAL_ENDPOINT_ID, kind: "local", label: "This computer", base_url: "http://localhost:1" });
+    const local = row({ id: LOCAL_ENDPOINT_ID, kind: "local", label: "This computer", base_url: "http://127.0.0.1:1" });
     const list = describeList({ registry: { active: "", endpoints: [row(), local] } });
     assert.deepStrictEqual(list.rows.map((r) => r.id), ["ep_a", LOCAL_ENDPOINT_ID]);
   });

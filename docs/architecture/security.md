@@ -55,10 +55,10 @@ whose work a request is, hold in every auth mode.
 ### The desktop app's gateway
 
 The Electron shell starts its own gateway in the default `local_token` mode on loopback, as
-every install runs. Its environment builder (`desktop/gatewayEnv.js`) sets no authentication
-switch, and drops an inherited `PERSONALCLAW_AUTH_MODE`, `PERSONALCLAW_BYPASS_LOCAL_NETWORKS`
-or `PERSONALCLAW_BIND_HOST`, so a shell started from a terminal that exports one still starts a
-gateway that asks for a sign-in. App tokens, the internal credential's operation list and the
+every install runs. Its environment builder (`desktop/gatewayEnv.js`) names `127.0.0.1` as the
+bind host and sets no other switch: it drops an inherited `PERSONALCLAW_AUTH_MODE`,
+`PERSONALCLAW_BYPASS_LOCAL_NETWORKS` or `PERSONALCLAW_BIND_HOST`, so a shell started from a
+terminal that exports one still starts a gateway that asks for a sign-in. App tokens, the internal credential's operation list and the
 rule that only you answer an approval therefore hold on a desktop install exactly as elsewhere.
 
 The shell signs itself in with the owner session the gateway's `--json-ready` line mints for each

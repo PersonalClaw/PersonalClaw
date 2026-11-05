@@ -57,8 +57,8 @@ const DEFAULT_TIMEOUT_MS = 150_000;
 /** What Electron prints when main.js throws, a missing module included. */
 const MAIN_ERROR = /A JavaScript error occurred in the main process|Uncaught Exception|Error: Cannot find module/;
 const COMPOSER = '[aria-label="Message input"]';
-/** A page served by a gateway on this machine: the shell's own loads `http://localhost:<port>/`. */
-const LOOPBACK_PAGE = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]):\d+\//;
+/** The shell's own gateway page, at the address that gateway listens on: `http://127.0.0.1:<port>/`. */
+const LOOPBACK_PAGE = /^http:\/\/127\.0\.0\.1:\d+\//;
 /** The one DevTools switch the smoke gives the app: a pipe, never a port. */
 const DEVTOOLS_SWITCH = "--remote-debugging-pipe";
 /** A link to a route, and one to no route the app has. */
