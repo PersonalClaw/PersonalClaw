@@ -23,7 +23,9 @@ const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:no
  *  (e.g. a scrolling kanban column): the flyout renders into document.body with
  *  position:fixed, anchored to the trigger's rect, viewport-clamped, and closes
  *  on any scroll (the fixed menu would drift off its anchor otherwise) — mirrors
- *  ui/motion/ContextMenu. Default off so existing consumers are untouched.
+ *  ui/motion/ContextMenu. Default off so existing consumers are untouched. With
+ *  ``followWhileTyping`` it follows its trigger instead while a text field in it
+ *  has focus (the narrow header search).
  *
  *  ``placement`` is a PREFERENCE, not a promise: on open the trigger's position is
  *  measured, and if the preferred side lacks room the menu flips to the other one.
@@ -42,6 +44,7 @@ const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:no
  *  already is for the other two — `portalPos` clamps `left` into the viewport. */
 export function Popover({
   trigger, children, align = 'left', width, placement = 'top', openSignal, portal = false, className,
+  followWhileTyping = false,
 }: {
   trigger: (open: boolean, toggle: () => void) => ReactNode
   children: (close: () => void) => ReactNode
@@ -54,6 +57,10 @@ export function Popover({
   openSignal?: number
   /** Render the flyout via a body portal (see doc above). */
   portal?: boolean
+  /** With `portal`: while a text field in the flyout has focus, a scroll follows the trigger
+   *  instead of closing it. For a flyout someone types into (the narrow header search); every
+   *  other portaled flyout closes on any scroll. */
+  followWhileTyping?: boolean
   /** Extra classes on the wrapper, e.g. `flex min-w-0` so a trigger in a tight row can shrink. */
   className?: string
 }) {
@@ -92,14 +99,16 @@ export function Popover({
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onEsc)
     // Portaled mode: the menu is position:fixed while its anchor scrolls with the
-    // container — so a scroll elsewhere closes it (capture), and it never drifts off its trigger.
-    // Except where the reader is in it: a scroll inside the flyout (its own list) moves nothing it
-    // is anchored to, and a flyout holding focus (the narrow header search, mid-query) follows its
-    // trigger instead of closing under the reader's typing.
+    // container — close on ANY scroll (capture) so it never drifts off its trigger. Except, with
+    // `followWhileTyping` (the narrow header search), while a text field in it has focus: then a
+    // scroll inside the flyout moves nothing it is anchored to, and one elsewhere moves it with its
+    // trigger, so it does not close under the reader's typing.
     const onScroll = (e: Event) => {
       const menu = menuRef.current
-      if (menu && e.target instanceof Node && menu.contains(e.target)) return
-      if (menu && menu.contains(document.activeElement)) {
+      const typing = followWhileTyping && menu && document.activeElement instanceof HTMLInputElement
+        && menu.contains(document.activeElement)
+      if (typing && e.target instanceof Node && menu.contains(e.target)) return
+      if (typing) {
         setAnchor(ref.current?.getBoundingClientRect() ?? null)
         return
       }
@@ -111,7 +120,7 @@ export function Popover({
       document.removeEventListener('keydown', onEsc)
       if (portal) window.removeEventListener('scroll', onScroll, true)
     }
-  }, [open, portal])
+  }, [open, portal, followWhileTyping])
 
   /** The side that actually has room for this menu.
    *

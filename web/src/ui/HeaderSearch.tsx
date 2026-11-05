@@ -52,7 +52,7 @@ export function HeaderSearch({ value, onChange, placeholder = 'Search', label, a
   const said = searched ? `${name}: “${value.trim()}”` : name
   if (probe) return <div aria-hidden className="size-10 shrink-0" />
   return (
-    <Popover portal placement="bottom" align="right" width={288}
+    <Popover portal followWhileTyping placement="bottom" align="right" width={288}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-haspopup="dialog" aria-expanded={open} aria-label={said} title={said}
           data-tour={tour}
