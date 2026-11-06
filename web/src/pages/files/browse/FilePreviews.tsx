@@ -65,18 +65,6 @@ export const PdfPreview = memo(function PdfPreview({ path, src }: { path?: strin
   )
 })
 
-/* ── HTML (sandboxed, no scripts) ── */
-export const HtmlPreview = memo(function HtmlPreview({ content }: { content: string }) {
-  // Render the file as a REAL document: scripts run (so animations, canvas, and
-  // interactivity work), served from a blob (null-origin) iframe with
-  // sandbox="allow-scripts" — the same isolation the artifact/widget frames use,
-  // so the page can't reach the app's origin, cookies, or storage. (A bare
-  // sandbox="" blocked all scripts, leaving HTML static.)
-  const blobUrl = useMemo(() => URL.createObjectURL(new Blob([content], { type: 'text/html;charset=utf-8' })), [content])
-  useEffect(() => () => URL.revokeObjectURL(blobUrl), [blobUrl])
-  return <iframe src={blobUrl} sandbox="allow-scripts" title="HTML preview" className="h-full w-full border-none bg-white" />
-})
-
 /* ── CSV / TSV table ── */
 export const CsvPreview = memo(function CsvPreview({ content, name }: { content: string; name: string }) {
   const delimiter = extOf(name) === 'tsv' ? '\t' : ','

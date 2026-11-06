@@ -64,6 +64,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Computer use refuses the click method that moves the real pointer until it can be held to the named application. A refused click is audited with its method and the point it was aimed at, as an allowed one is; an element press and a click at a point in the named application work as before.**
 - **A computer-use call runs only the driver operation its tool names, and hands the driver only the arguments that tool declares.**
 - **The desktop app's windows send their sign-in to the gateway the app uses and nowhere else, and not at all while that gateway is away. They come back by themselves after the gateway restarts in place and after the app's own update; a gateway this app didn't start that is stopped and started again still reads as gone, and is used again from the This computer row, which also says when a gateway signed the app out, with Sign In Again.**
+- **An image from another site in what the dashboard shows loads only when you press Load. Text the dashboard did not write (a reply, a tool's result, a message, a knowledge item, a document) can name an image on another site, and the page used to load it as soon as the text was shown, outside your network settings. Such an image is now a placeholder that names its site; Load fetches it through the gateway, under your network settings. Images from the artifact library load as before.**
 
 ## [0.3.6] — 2026-11-03
 

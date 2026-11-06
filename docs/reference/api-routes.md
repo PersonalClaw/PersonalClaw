@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **957 registrations** over **776 distinct paths** — 950 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **958 registrations** over **777 distinct paths** — 951 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,7 +20,7 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 132 families the surface divides into, largest first.
+The 133 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
@@ -135,6 +135,7 @@ The 132 families the surface divides into, largest first.
 | `/api/genui` | 1 | 1 |
 | `/api/healthz` | 1 | 1 |
 | `/api/hooks` | 1 | 1 |
+| `/api/images` | 1 | 1 |
 | `/api/investigate` | 1 | 1 |
 | `/api/logout` | 1 | 1 |
 | `/api/manifest` | 1 | 1 |
@@ -159,7 +160,7 @@ The 132 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 950 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 951 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -506,6 +507,7 @@ The 950 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/heartbeat/tasks` | every task in HEARTBEAT.md, and whether the owner allowed it. |
 | `POST` | `/api/heartbeat/tasks/allow` | the owner's yes to one queued task. |
 | `POST` | `/api/hooks/agent` | run an agent turn for an outside program's call. |
+| `POST` | `/api/images/remote` | The image at the ``https`` address the page sends as ``url``, or a refusal. |
 | `GET` | `/api/inbox` | list all inbox items (recency, optionally engagement-weighted). |
 | `POST` | `/api/inbox/digest` | on-demand channel digest. |
 | `POST` | `/api/inbox/dismiss-all` | dismiss every OPEN item (pending or seen). |

@@ -8727,6 +8727,20 @@ export const api = {
   // These retired `/api/durability/snapshots` and the `/api/portability/*` trio: one
   // export endpoint, one import endpoint, one archive list, one restore.
   durabilityArchive: () => get<DurabilityArchives>('/api/durability/archive'),
+  /** An image a shown text names on another site, fetched by the gateway through its network
+   *  settings (`POST /api/images/remote`): the page itself loads no image from another host. Only
+   *  the owner's press asks; a refusal rejects with the gateway's sentence. *signal* lets the
+   *  request go when the image leaves the page. */
+  loadRemoteImage: (url: string, signal?: AbortSignal): Promise<Blob> =>
+    refuseIfSignedOut() ?? pairFetch('/api/images/remote', {
+      method: 'POST',
+      headers: { ...SK, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      signal,
+    }).then(async (r) => {
+      if (!r.ok) throw await apiError(r)
+      return r.blob()
+    }),
   /** POST because the domain selection is a body. `domains` omitted = the full export. */
   durabilityExport: (domains?: string[]) =>
     pairFetch('/api/durability/export', {

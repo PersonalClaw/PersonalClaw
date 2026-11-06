@@ -349,6 +349,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/heartbeat/tasks` — every task in HEARTBEAT.md, and whether the owner allowed it.
 - `POST /api/heartbeat/tasks/allow` — the owner's yes to one queued task.
 - `POST /api/hooks/agent` — run an agent turn for an outside program's call.
+- `POST /api/images/remote` — The image at the ``https`` address the page sends as ``url``, or a refusal.
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
 - `POST /api/inbox/digest` — on-demand channel digest.
 - `POST /api/inbox/dismiss-all` — dismiss every OPEN item (pending or seen).

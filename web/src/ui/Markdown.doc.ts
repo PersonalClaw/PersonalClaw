@@ -1,14 +1,15 @@
 import type { UiDoc } from './uiDoc'
 
 // Doc object for Markdown — the one renderer for markdown the app did not write. The
-// Markdown-only policy (embedded HTML shown as text, web-and-email links, https and artifact
-// images), the opt-in widget contract, and the "coerce non-string children instead of
-// crashing" defensiveness were all source comments — encoded here as machine-readable data.
+// Markdown-only policy (embedded HTML shown as text, web-and-email links, artifact images, and a
+// Load placeholder for any other image), the opt-in widget contract, and the "coerce non-string
+// children instead of crashing" defensiveness were all source comments — encoded here as
+// machine-readable data.
 const doc: UiDoc = {
   name: 'Markdown',
   keywords: ['markdown', 'renderer', 'chat', 'message', 'code', 'latex', 'mermaid', 'widget', 'tables', 'diff', 'untrusted', 'knowledge'],
   description:
-    'The one renderer for markdown the app did not write — model replies, tool results, knowledge bodies, inbox messages, app and tool descriptions, release notes — and it renders it as Markdown only: embedded HTML is shown as the text it is (attribute-free formatting tags such as `<kbd>`, `<br>` and `<sub>` aside), a link opens only for http, https and mailto, and an image loads only from https or the artifact library. react-markdown + remark-gfm (tables, task lists, strikethrough), remark-math + rehype-katex (LaTeX), and highlight.js (code), with ```mermaid diagrams, ```diff highlighting, copy/Run-in-terminal code affordances, inline artifact images (with a Regenerate fallback for deleted ones), and — where the caller opts in — `<widget>` blocks rendered as sandboxed theme-aware iframes. All component overrides are token-driven.',
+    'The one renderer for markdown the app did not write — model replies, tool results, knowledge bodies, inbox messages, app and tool descriptions, release notes — and it renders it as Markdown only: embedded HTML is shown as the text it is (attribute-free formatting tags such as `<kbd>`, `<br>` and `<sub>` aside), a link opens only for http, https and mailto, and an image loads only from the artifact library: an https image is a placeholder naming its host, loaded only when the owner presses Load. react-markdown + remark-gfm (tables, task lists, strikethrough), remark-math + rehype-katex (LaTeX), and highlight.js (code), with ```mermaid diagrams, ```diff highlighting, copy/Run-in-terminal code affordances, inline artifact images (with a Regenerate fallback for deleted ones), and — where the caller opts in — `<widget>` blocks rendered as sandboxed theme-aware iframes. All component overrides are token-driven.',
   props: [
     { name: 'chatSessionKey', description: "Scopes the inline-image history lookup so a deleted image's placeholder can offer Regenerate (re-runs at the same slug; server recovers the prompt from this session); absent, the placeholder is static." },
     { name: 'children', description: 'The markdown source. Non-string input (an object/array an agent emitted) is defensively flattened to readable text instead of crashing.' },

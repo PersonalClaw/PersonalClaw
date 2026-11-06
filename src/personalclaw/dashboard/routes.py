@@ -1200,6 +1200,12 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
 
     register_artifact_routes(app)
 
+    # An image a shown text names on another site, fetched by the gateway on the owner's press:
+    # the page itself loads none (`server.dashboard_csp`). POST only.
+    from personalclaw.dashboard.handlers.remote_image import register_remote_image_routes
+
+    register_remote_image_routes(app)
+
     # Inbox
     app.router.add_get("/api/inbox", handlers_inbox.api_inbox_list)
     # The open COLLECTION. Distinct from `POST /api/inbox/{id}/open` below (the per-row engagement

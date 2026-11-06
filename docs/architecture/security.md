@@ -1630,7 +1630,10 @@ only:
 - **A link opens only for http, https and mailto**, read with the browser's own
   URL parser; a relative link (a path on this gateway, an in-app route) is not
   a link.
-- **An image loads only over https or from the artifact library's own route.**
+- **An image from the artifact library loads; an https image shows as a placeholder naming its
+  host and loads only when you press Load, fetched by the gateway under your network settings;
+  any other image is shown as its words** (`POST /api/images/remote`,
+  `dashboard/handlers/remote_image.py`).
 - **A `<widget>` block runs in its sandboxed frame only in the agent's own chat
   reply** (the `widgets` prop). Anywhere else it is embedded HTML like any other.
 
@@ -1643,9 +1646,10 @@ artifact frames), and fails on a new one. The project's own copy — labels,
 hints, errors — is JSX text and never passes through the renderer.
 
 The page's Content-Security-Policy (`dashboard/server.py::dashboard_csp`) is
-the layer behind that: `default-src 'self'`, no code, style or font from
-another origin, `img-src` adding `data:`, `blob:` and `https:` (the images in a
-rendered body), `frame-src 'self' blob:`, `frame-ancestors 'self'`,
+the layer behind that: `default-src 'self'`, no code, style, font or image from
+another origin, `img-src 'self' data: blob:` (an image in a rendered body is a
+request to a host the body's author picked, carrying whatever its address holds,
+so the page loads none itself), `frame-src 'self' blob:`, `frame-ancestors 'self'`,
 `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, and a
 `connect-src` of `'self'` plus the loopback WebSocket at the port the page was
 served on (and the public host when `dashboard.public_url` is set).

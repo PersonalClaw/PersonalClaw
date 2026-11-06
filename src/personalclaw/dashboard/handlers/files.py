@@ -1581,13 +1581,10 @@ async def api_file_raw(request: web.Request) -> web.Response:
             if header.startswith(magic):
                 content_type = mime
                 break
-    # SVG: XML-based, no magic bytes
-    if not content_type:
-        stripped = data.lstrip(b"\xef\xbb\xbf").lstrip()
-        if stripped.startswith(b"<svg") or (
-            stripped.startswith(b"<?xml") and b"<svg" in data[:4096]
-        ):
-            content_type = "image/svg+xml"
+    # SVG: XML-based, no magic bytes. Its first element, after the prolog, comments and a
+    # doctype, is `<svg`: an XHTML page that holds an SVG is not one.
+    if not content_type and _first_element_is_svg(data):
+        content_type = "image/svg+xml"
     # PDF: %PDF magic bytes
     if not content_type:
         if header.startswith(b"%PDF"):
@@ -1598,8 +1595,44 @@ async def api_file_raw(request: web.Request) -> web.Response:
     _log("success", path)
     headers = {"Content-Type": content_type, "X-Content-Type-Options": "nosniff"}
     if content_type == "image/svg+xml":
-        headers["Content-Security-Policy"] = "script-src 'none'; style-src 'unsafe-inline'"
+        # Opened as a page of its own, an SVG runs no script and loads nothing but its own data
+        # images and fonts. Sandboxed too, so opened as a page it draws and does nothing else; an
+        # image element that loads it ignores both.
+        headers["Content-Security-Policy"] = (
+            "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; sandbox"
+        )
     return web.Response(body=data, headers=headers)
+
+
+#: A doctype as XML reads it: its quoted literals whole, in the external id and in an internal
+#: subset, whose declarations, comments, processing instructions and parameter entities are read
+#: the same way. Matched possessively, so a doctype that doesn't close is no doctype at all, and
+#: the match is one pass: nothing is tried again in another split.
+_DOCTYPE = (
+    rb"<!DOCTYPE(?:[^>\[\"']|\"[^\"]*\"|'[^']*')*+"
+    rb"(?:\[(?:\s+|%[^;\s]+;|<!--.*?-->|<\?.*?\?>|<!(?!--)(?:[^>\"']|\"[^\"]*\"|'[^']*')*+>)*+\])?"
+    rb"\s*>"
+)
+
+#: What may come before an SVG's first element: whitespace, the XML prolog and other processing
+#: instructions, comments and a doctype.
+_BEFORE_THE_FIRST_ELEMENT = re.compile(
+    rb"(?:\s+|<\?.*?\?>|<!--.*?-->|" + _DOCTYPE + rb")*+", re.DOTALL | re.IGNORECASE
+)
+
+#: An ``svg`` element, with or without a namespace prefix (``<svg:svg``). XML names are
+#: case-sensitive, so ``<SVG`` is another element.
+_SVG_ROOT = re.compile(rb"<(?:[A-Za-z_][\w.-]*:)?svg[\s>/]")
+
+
+def _first_element_is_svg(data: bytes) -> bool:
+    """Whether *data*'s first element is ``<svg``, prefixed or not: its byte-order mark, prolog,
+    comments and doctype (internal subset and quoted literals read whole) skipped, in its first
+    4 KiB. A doctype that doesn't close in that span leaves no first element, so it is refused."""
+    head = data[:4096].lstrip(b"\xef\xbb\xbf")
+    lead = _BEFORE_THE_FIRST_ELEMENT.match(head)
+    rest = head[lead.end() if lead else 0 :]
+    return _SVG_ROOT.match(rest) is not None
 
 
 def _allow_heartbeat_tasks_the_owner_wrote(
