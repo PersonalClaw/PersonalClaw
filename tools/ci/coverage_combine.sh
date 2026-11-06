@@ -11,5 +11,11 @@ if [ "$found" -ne 6 ]; then
   exit 1
 fi
 uv run coverage combine coverage-data
-uv run coverage xml -o coverage.xml
-echo "coverage of the whole suite: $(uv run coverage report --format=total)%"
+# The report reads only the tree under test, which the combine has put under src/personalclaw/
+# (pyproject's [tool.coverage.paths]). A child that a test starts while it is measured records
+# every `personalclaw` it imports, including one the test planted in its own temporary folder. That
+# folder is gone by the time this job runs, and coverage fails the whole report on a file with no
+# source (run 42170607590).
+tree='src/personalclaw/*'
+uv run coverage xml --include="$tree" -o coverage.xml
+echo "coverage of the whole suite: $(uv run coverage report --include="$tree" --format=total)%"
