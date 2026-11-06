@@ -12626,14 +12626,9 @@ ROWS = (*ROWS, NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST)
 #: The tier workflows, whose every test runs through run-job.
 _RUN_JOB_TIERS = ("pr.yml", "merge.yml", "breadth.yml")
 #: The steps that still run a test themselves, by workflow, job and step name: breadth.yml's legs,
-#: until #5600 moves each one to run-job.
+#: until #5600 moves each one to run-job. The five suite legs moved first.
 _STEPS_THAT_RUN_THEIR_OWN_TEST: frozenset[tuple[str, str, str]] = frozenset(
     {
-        ("breadth.yml", "ubuntu", "pytest (shard ${{ matrix.shard }})"),
-        ("breadth.yml", "macos", "pytest (shard ${{ matrix.shard }})"),
-        ("breadth.yml", "arm", "pytest (shard ${{ matrix.shard }})"),
-        ("breadth.yml", "coverage-shard", "pytest (shard ${{ matrix.shard }})"),
-        ("breadth.yml", "canary", "pytest (canary shard ${{ matrix.shard }})"),
         (
             "breadth.yml",
             "random-order",

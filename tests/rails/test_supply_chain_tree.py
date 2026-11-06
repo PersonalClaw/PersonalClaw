@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from ci_run_job import read_run_job
 from supply_chain_shared import _LOGIN_SHELL_RE, README, REPO_ROOT, _logical_lines
 
 from tools.ci import oci_layout
@@ -58,8 +59,15 @@ def _built() -> dict[str, dict]:
     return jobs
 
 
+def _as_run(workflow: object) -> object:
+    """*workflow*, parsed, with each step that runs a catalogue entry through run-job read as the
+    entry's command (``tests/ci_run_job.py``): a leg holds its rules whichever way it runs."""
+    listed = REPO_ROOT / "tools" / "ci" / "catalogue.toml"
+    return read_run_job(listed.read_text(encoding="utf-8"), workflow)
+
+
 def _breadth_workflow() -> dict[str, object]:
-    workflow = yaml.safe_load(BREADTH_WORKFLOW.read_text(encoding="utf-8"))
+    workflow = _as_run(yaml.safe_load(BREADTH_WORKFLOW.read_text(encoding="utf-8")))
     assert isinstance(workflow, dict)
     return workflow
 
@@ -466,7 +474,7 @@ def _jobs_that_run_the_suite() -> list[tuple[str, str, object]]:
     """``(workflow, job, permissions it holds)`` for every job with a step that runs pytest."""
     found: list[tuple[str, str, object]] = []
     for path in sorted(WORKFLOWS.glob("*.yml")):
-        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        workflow = _as_run(yaml.safe_load(path.read_text(encoding="utf-8")))
         assert isinstance(workflow, dict)
         default = workflow.get("permissions")
         jobs = workflow.get("jobs")
