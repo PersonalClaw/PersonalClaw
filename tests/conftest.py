@@ -1693,22 +1693,28 @@ def _reset_action_services() -> object:
 
 
 @pytest.fixture(autouse=True)
-def _reset_app_restart_reasons() -> object:
-    """Forget every app's restart reason a test left behind.
+def _reset_app_restart_reasons_and_kept_skills() -> object:
+    """Forget every app's restart reason, and every skill note no disable or update has said yet,
+    that a test left behind.
 
     ``app_runtime`` keeps why an app needs a gateway restart (a package it replaced while loaded,
     a thread its previous version left running) in memory on purpose: in the product, a restart
-    is the one thing that clears it. Across tests the app NAMES repeat (``demo-app``) while each
-    test has its own home, so a reason one test earned would make the next test's clean update
-    report ``restart_required``. ``app_code``'s record of what an app's code registered is left
-    alone: a later unload of the same name taking back what an earlier test left is the isolation
-    the registries it covers otherwise lack.
+    is the one thing that clears it. It keeps, by app, the seeded skills an unload left because
+    their owner changed them, until the disable, update or uninstall that ran it says so
+    (``take_kept``). Across tests the app NAMES repeat (``demo-app``) while each test has its own
+    home, so a reason one test earned would make the next test's clean update report
+    ``restart_required``, and a note one test left unsaid would be the next test's to say (breadth's
+    random-order leg, run 42170607590). ``app_code``'s record of what an app's code registered is
+    left alone: a later unload of the same name taking back what an earlier test left is the
+    isolation the registries it covers otherwise lack.
     """
     from personalclaw.apps import app_runtime
 
     app_runtime._restart.clear()
+    app_runtime._kept.clear()
     yield
     app_runtime._restart.clear()
+    app_runtime._kept.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -2014,7 +2020,7 @@ def _a_test_leaves_process_state_as_it_found_it(
     _restore_provider_registry,
     _reset_channel_delivery_registry,
     _reset_action_services,
-    _reset_app_restart_reasons,
+    _reset_app_restart_reasons_and_kept_skills,
     _reset_provider_measurement_boards,
     _restore_workflow_def_registry,
     _restore_tool_provider_registry,
