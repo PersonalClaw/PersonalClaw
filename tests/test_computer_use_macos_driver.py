@@ -698,17 +698,23 @@ def test_scrolling_posts_a_wheel_event_and_no_pointer_event(ffi):
     assert not _POINTER_CALLS & set(ffi.names)
 
 
-def test_only_the_explicitly_named_methods_touch_a_pointer(ffi):
+def test_only_the_explicitly_named_method_touches_a_pointer(ffi):
     located = macos_driver.op_click({"app": "TextEdit", "click_method": "located", "x": 5, "y": 6})
     assert "error" not in located, located
     assert ("click_located", (ffi.pid, 5.0, 6.0)) in ffi.calls
     assert "click_global" not in ffi.names, "the located method must not warp the real cursor"
     assert located["pointer_moved"] is False
 
-    warped = macos_driver.op_click({"click_method": "global", "x": 7, "y": 8})
-    assert "error" not in warped, warped
-    assert ("click_global", (7.0, 8.0)) in ffi.calls
-    assert warped["pointer_moved"] is True
+
+def test_the_method_that_moves_the_real_pointer_posts_nothing(ffi):
+    """🔴 Red before: the driver moved the operator's real pointer and clicked. It refuses the
+    method now, before any OS call."""
+    answer = macos_driver.op_click({"app": "TextEdit", "click_method": "global", "x": 7, "y": 8})
+    error = answer["error"]
+    assert error["code"] == macos_driver.ERR_REAL_POINTER_REFUSED
+    assert "real pointer" in error["message"]
+    assert error["why"] and "'auto'" in error["fix"] and "'located'" in error["fix"]
+    assert ffi.calls == [], "the refused method made an OS call"
 
 
 def test_the_pointer_rail_detects_a_mouse_event(monkeypatch, ffi):

@@ -69,3 +69,38 @@ def test_the_name_reader_sees_a_binding_by_string_and_by_attribute_but_not_in_a_
     in_prose = ast.parse(f'"""{WARP}"""\ndef f():\n    """{WARP}"""\n')
     assert WARP in _names(by_string) and WARP in _names(by_attribute)
     assert WARP not in _names(in_prose)
+
+
+#: The function that moves the owner's real pointer. Its click method is refused in the dispatch
+#: and again in the driver until such input can be held to the named application, so no code calls
+#: it until a confined version lands.
+REAL_POINTER_CLICK = "click_global"
+
+
+def _calls(tree: ast.Module, name: str) -> list[int]:
+    """The lines of every call in *tree* to *name*, bare or as an attribute (``ffi.name(...)``)."""
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == name)
+            or (isinstance(node.func, ast.Attribute) and node.func.attr == name)
+        )
+    ]
+
+
+def test_nothing_in_the_package_calls_the_real_pointer_click():
+    calls = {
+        str(path): lines
+        for path in source_index.package_files()
+        if (lines := _calls(source_index.tree(path), REAL_POINTER_CLICK))
+    }
+    assert calls == {}, calls
+
+
+def test_the_call_reader_sees_a_bare_call_and_an_attribute_call():
+    """The vacuity proof for the rail above: a reader that saw nothing would pass it."""
+    tree = ast.parse(f"{REAL_POINTER_CLICK}(1, 2)\nffi.{REAL_POINTER_CLICK}(3, 4)\n")
+    assert _calls(tree, REAL_POINTER_CLICK) == [1, 2]
+    assert _calls(ast.parse(f'"""{REAL_POINTER_CLICK}(1, 2)"""\n'), REAL_POINTER_CLICK) == []

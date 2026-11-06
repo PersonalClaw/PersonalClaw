@@ -689,13 +689,13 @@ Activate an element by index. The default performs an accessibility press, which
 
 **Response type:** `computer_use.click.result`
 
-**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_REAL_POINTER_REFUSED`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
 - `app` (string, optional) — Coordinate methods only: target app.
-- `click_method` (string, optional) — auto (default): accessibility press on the element, no pointer motion. located: post a click to the target process at x,y without moving the real cursor. global: warp the operator's real cursor and click — the only method that touches their physical pointer, so it must be asked for by name.
+- `click_method` (string, optional) — auto (default): accessibility press on the element, no pointer motion. located: post a click to the target process at x,y without moving the real cursor. A method that moves the operator's real pointer is refused until such input can be held to the named application.
 - `element_index` (integer, required) — Zero-based index of the element within that snapshot.
 - `snapshot_id` (string, required) — The id returned by the computer_snapshot call that found the element.
 - `x` (number, optional) — Coordinate methods only.

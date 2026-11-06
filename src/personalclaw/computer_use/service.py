@@ -57,6 +57,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -76,6 +77,7 @@ ERR_DRIVER_UNAVAILABLE = "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE"
 ERR_DRIVER_FAILED = "ERR_COMPUTER_USE_DRIVER_FAILED"
 ERR_AX_PERMISSION = "ERR_COMPUTER_USE_AX_PERMISSION"
 ERR_PLATFORM_UNSUPPORTED = "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED"
+ERR_REAL_POINTER_REFUSED = "ERR_COMPUTER_USE_REAL_POINTER_REFUSED"
 
 #: The codes the driver child may name for itself. An allowlist, still — the reasoning in
 #: :func:`_run_driver` is that a child able to pick any code could dress a failure up as a
@@ -131,6 +133,14 @@ DRIVER_CHILD_MODULE = "personalclaw.computer_use.driver_host"
 #: must be explicitly named by the model, and ``auto`` never resolves onto them.
 _CLICK_METHODS = ("auto", "located", "global")
 _POINTER_METHODS = ("located", "global")
+
+#: The click methods that move the operator's real pointer, refused in the dispatch before
+#: anything is screened or posted (:func:`_refuse_the_real_pointer`), and again in the driver:
+#: such input cannot yet be held to the application the call names.
+_REAL_POINTER_METHODS = ("global",)
+
+#: The click methods that run: the ones a refusal suggests, and the ones the tool's schema offers.
+_WORKING_CLICK_METHODS = tuple(m for m in _CLICK_METHODS if m not in _REAL_POINTER_METHODS)
 
 
 class ComputerUseRefusal(Exception):
@@ -224,14 +234,23 @@ def _refuse(
     )
 
 
-def _audit(*, tool: str, app: str, outcome: str, error: str, source: str, identity: str) -> None:
+def _audit(
+    *,
+    tool: str,
+    app: str,
+    outcome: str,
+    error: str,
+    source: str,
+    identity: str,
+    point: dict[str, float] | None = None,
+) -> None:
     """Step 5. Write exactly one SEL row for this attempt. Never decides, never raises.
 
     Every exit from the chain reaches here once — the refusal paths with ``outcome="denied"``
-    and the approved path with ``outcome="approved"``. ``metadata`` is left empty rather than
-    filled with the tool's arguments: ``gate`` would reduce any string to a shape summary
-    anyway (window titles and typed text are personal data the SEL does not redact), so
-    passing them would buy nothing and read as though it did.
+    and the approved path with ``outcome="approved"``. ``metadata`` carries only the point a
+    click was aimed at (:func:`_point`), never the tool's other arguments: ``gate`` would reduce
+    any string to a shape summary anyway (window titles and typed text are personal data the
+    SEL does not redact), so passing them would buy nothing and read as though it did.
     """
     gate.require_computer_use(
         tool=tool,
@@ -240,6 +259,54 @@ def _audit(*, tool: str, app: str, outcome: str, error: str, source: str, identi
         error=error,
         source=source or "background",
         caller_identity=identity,
+        metadata=point or None,
+    )
+
+
+def _point(tool: str, params: dict[str, Any]) -> dict[str, float]:
+    """The point a coordinate click was aimed at, for its audit row: each of ``x`` and ``y`` the
+    call gave as a finite number. A click names its method in the row's ``operation``
+    (:func:`_operation`) and its point here, allowed or refused; an element press, or a method
+    that does not exist, carries none. Total, like the audit it feeds: no value raises."""
+    if _operation(tool, params) == tool:
+        return {}
+    point: dict[str, float] = {}
+    for key in ("x", "y"):
+        value = params.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and _finite(value):
+            point[key] = value
+    return point
+
+
+def _finite(value: float) -> bool:
+    """Whether *value* is a finite number. An integer past the float range is not one, and
+    ``math.isfinite`` raises on it rather than say so."""
+    try:
+        return math.isfinite(value)
+    except (OverflowError, ValueError):
+        return False
+
+
+def _refuse_the_real_pointer(params: dict[str, Any]) -> None:
+    """Refuse a click method that moves the operator's real pointer (:data:`_REAL_POINTER_METHODS`).
+
+    Before the allowlist, the snapshot and the driver, so nothing is screened, walked or posted
+    for it. The method is still a known one, so the refusal says what to use instead rather than
+    that it does not exist.
+    """
+    if _click_method(params) not in _REAL_POINTER_METHODS:
+        return
+    app = params.get("app")
+    _refuse(
+        ERR_REAL_POINTER_REFUSED,
+        what="The 'global' click method is refused: it moves your real pointer.",
+        why="Input through the real pointer cannot yet be held to the application the call names.",
+        fix=(
+            "Use 'auto' to press the element by index, or 'located' to click a point in the "
+            "named application without moving the pointer."
+        ),
+        suggestions=_WORKING_CLICK_METHODS,
+        app=app if isinstance(app, str) else "",
     )
 
 
@@ -550,10 +617,11 @@ def _click_method(params: dict[str, Any]) -> str:
     """Resolve the click method. ``auto`` NEVER becomes a pointer method.
 
     That rule in one function: an absent or empty method is ``auto`` (an accessibility press,
-    no pointer involved), and the two methods that post or warp a real pointer are reachable
-    only by a model naming them. Resolution never *widens* — there is no fallback from ``auto``
-    to a coordinate click when an element press is unavailable, because that fallback is how a
-    cursor moves by accident.
+    no pointer involved), and a coordinate method is reachable only by a model naming it. The
+    method that moves the real pointer is refused in the dispatch and again in the driver, until
+    such input can be held to the named application. Resolution never *widens* — there is no
+    fallback from ``auto`` to a coordinate click when an element press is unavailable, because
+    that fallback is how a cursor moves by accident.
     """
     raw = params.get("click_method")
     method = raw.strip() if isinstance(raw, str) and raw.strip() else "auto"
@@ -563,7 +631,7 @@ def _click_method(params: dict[str, Any]) -> str:
             what=f"{method!r} is not a click method.",
             why="Only the declared methods exist, and an unknown one cannot be resolved safely.",
             fix="Use 'auto' unless you specifically need a coordinate click.",
-            suggestions=_CLICK_METHODS,
+            suggestions=_WORKING_CLICK_METHODS,
         )
     return method
 
@@ -574,7 +642,8 @@ def _operation(tool: str, params: dict[str, Any]) -> str:
     The pointer paths must be distinguishable in the audit, and ``SecurityEvent``
     documents ``tool_kind`` as a *category*, so the
     distinctness lives in ``operation``, which is the field documented to hold the tool name.
-    A real-cursor warp is therefore one filter away from every other click.
+    A coordinate click is therefore one filter away from every other click, on the allowed row
+    and on a refused one alike.
     """
     if tool == "computer_click":
         method = params.get("click_method")
@@ -609,13 +678,15 @@ async def computer_dispatch(
     try:
         enable_state.require_enabled(tool)
     except enable_state.ComputerUseDisabled as exc:
+        asked = params if isinstance(params, dict) else {}
         _audit(
-            tool=tool,
+            tool=_operation(tool, asked),
             app="",
             outcome="denied",
             error=exc.error.code,
             source=source,
             identity=caller_identity,
+            point=_point(tool, asked),
         )
         raise
 
@@ -624,11 +695,13 @@ async def computer_dispatch(
     snap: Snapshot | None = None
     try:
         spec = _spec(tool)
+        if spec.name == "computer_click":
+            _refuse_the_real_pointer(args)  # step 1b — before anything is screened
         # A coordinate click carries no element index — the coordinate path is reserved for
         # canvas/custom-drawn UI that exposes no addressable element, so there is nothing to
         # index. It is NOT a bypass of the chain: the method must be named by the model, the
         # app must be named and allowlisted, and the attempt is audited under its own
-        # ``operation`` so a real-cursor warp is one filter away from every ordinary click.
+        # ``operation`` so a coordinate click is one filter away from every ordinary click.
         by_index = spec.screen_index
         if spec.name == "computer_click" and _click_method(args) in _POINTER_METHODS:
             by_index = False
@@ -660,12 +733,13 @@ async def computer_dispatch(
         # what it was about rather than nothing. Local first: once the dispatch has resolved the
         # app, that is the value every other row in this attempt used.
         _audit(
-            tool=tool,
+            tool=_operation(tool, args),
             app=app or _refusal_app(exc),
             outcome="denied",
             error=exc.error.code,
             source=source,
             identity=caller_identity,
+            point=_point(tool, args),
         )
         raise
 
@@ -676,6 +750,7 @@ async def computer_dispatch(
         error="",
         source=source,
         identity=caller_identity,
+        point=_point(tool, args),
     )
 
     if spec.acts:

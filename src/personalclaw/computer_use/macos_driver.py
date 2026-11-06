@@ -8,7 +8,9 @@ changes: the dispatch chain, the ceilinged spawn and the SEL audit were all live
 module existed.
 
 **This process holds no authority** and re-states no policy — ``driver_host``'s docstring is the
-contract and ``test_the_driver_child_makes_no_policy_decision`` asserts it. What this module does
+contract and ``test_the_driver_child_makes_no_policy_decision`` asserts it. One refusal is held
+here as well, as a deliberate second wall: the click method that moves the real pointer, refused
+in the dispatch first, until such input can be held to the named application. What this module does
 own is the one check only the *acting* process can make honestly: the tree is re-walked here, at
 the moment of the act, and the fingerprint the dispatch computed at screening time is compared
 again. The dispatch's own re-walk (``service._require_fresh_element``) happens before the secure
@@ -38,6 +40,9 @@ from personalclaw.computer_use.types import DriverError, DriverRefusal, Element,
 ERR_AX_PERMISSION = "ERR_COMPUTER_USE_AX_PERMISSION"
 ERR_DRIVER_UNAVAILABLE = "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE"
 ERR_DRIVER_FAILED = "ERR_COMPUTER_USE_DRIVER_FAILED"
+#: The click method that moves the operator's real pointer, refused here as in the dispatch
+#: (``service._refuse_the_real_pointer``), so no request that reaches this child can post it.
+ERR_REAL_POINTER_REFUSED = "ERR_COMPUTER_USE_REAL_POINTER_REFUSED"
 ERR_STALE_INDEX = "ERR_COMPUTER_USE_STALE_INDEX"
 
 #: ``computer_scroll``'s directions, as line deltas. Positive vertical scrolls the content down.
@@ -49,10 +54,11 @@ _DIRECTIONS = {
 }
 _DEFAULT_SCROLL_LINES = 3
 
-#: The click methods this driver implements. ``service._click_method`` has already validated the
-#: name and guaranteed ``auto`` never widens onto a pointer method; this mapping only has to
-#: refuse a method it does not implement rather than fall back to one it does.
-_POINTER_METHODS = ("located", "global")
+#: The coordinate click methods this driver implements. ``service._click_method`` has already
+#: validated the name and guaranteed ``auto`` never widens onto a pointer method; this mapping only
+#: has to refuse a method it does not implement rather than fall back to one it does. The method
+#: that moves the real pointer is refused before it is looked up (``ERR_REAL_POINTER_REFUSED``).
+_POINTER_METHODS = ("located",)
 
 
 def _permission_fix(responsible: macos_tcc.Responsible) -> str:
@@ -248,7 +254,7 @@ def op_snapshot(request: dict[str, Any]) -> dict[str, Any]:
 
 @_guarded
 def op_click(request: dict[str, Any]) -> dict[str, Any]:
-    """Activate an element, or — only when explicitly named — click a coordinate.
+    """Activate an element, or — only when explicitly named — click a point in the named app.
 
     The ``auto`` branch calls :func:`macos_ffi.press` and NOTHING else: no mouse event is
     created, so the operator's pointer cannot move as a result of an ordinary click. There is no
@@ -256,6 +262,23 @@ def op_click(request: dict[str, Any]) -> dict[str, Any]:
     exactly how a cursor moves by accident.
     """
     method = _text(request, "click_method", required=False) or "auto"
+    if method == "global":
+        # Before any OS call: such input cannot yet be held to the named application. The
+        # dispatch refuses it first; this is the second wall.
+        raise DriverRefusal(
+            DriverError(
+                ERR_REAL_POINTER_REFUSED,
+                "the 'global' click method is refused: it moves the real pointer",
+                why=(
+                    "Input through the real pointer cannot yet be held to the application the "
+                    "call names."
+                ),
+                fix=(
+                    "Use 'auto' to press the element by index, or 'located' to click a point in "
+                    "the named application without moving the pointer."
+                ),
+            )
+        )
     if method not in ("auto",) + _POINTER_METHODS:
         raise DriverRefusal(
             _failed_refusal(
@@ -269,11 +292,8 @@ def op_click(request: dict[str, Any]) -> dict[str, Any]:
         return {"clicked": {"index": element.index, "role": element.role}, "method": "auto"}
 
     x, y = _coordinate(request, "x"), _coordinate(request, "y")
-    if method == "located":
-        ffi.click_located(ffi.resolve_app_pid(_text(request, "app")), x, y)
-        return {"clicked": {"x": x, "y": y}, "method": "located", "pointer_moved": False}
-    ffi.click_global(x, y)
-    return {"clicked": {"x": x, "y": y}, "method": "global", "pointer_moved": True}
+    ffi.click_located(ffi.resolve_app_pid(_text(request, "app")), x, y)
+    return {"clicked": {"x": x, "y": y}, "method": "located", "pointer_moved": False}
 
 
 def _coordinate(request: dict[str, Any], key: str) -> float:

@@ -5137,7 +5137,9 @@ export interface SelVerify {
 // One trail point of the cursor-motion overlay: where an APPROVED acting call was about to
 // land. `x`/`y` are screen coordinates and null when the driver reported no frame — the
 // overlay draws nothing for those rather than a phantom (0,0) landing. `method` is the
-// pointer story: 'ax_press' moved no real pointer; 'global' warped the operator's own.
+// pointer story: 'ax_press' moved no real pointer, and 'located' clicked a point in the named
+// app without moving it. 'global' stays in the type for rows recorded before computer use refused
+// the method that moves the real pointer.
 export interface ComputerUseTrailPoint {
   seq: number; ts: number; tool: string; app: string
   method: 'ax_press' | 'located' | 'global'
