@@ -317,6 +317,7 @@ def test_a_one_megabyte_line_is_judged_within_the_bar(line, refused):
     The bar is :data:`BAR`, and why it is that number is said there."""
     took = cpu_budget.seconds(lambda: security._may_push(line))
     assert security._may_push(line) is refused
+    # Not read through cpu_budget.limit: at most 1.7 s on the coverage leg, against BAR.
     assert took < BAR, f"{took:.2f}s"
 
 

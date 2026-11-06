@@ -401,7 +401,7 @@ def test_a_256_kb_line_that_repeats_a_command_is_checked_in_under_a_second(home,
     assert len(text) >= LONG - 64
     took = cpu_budget.seconds(lambda: security.is_sensitive_bash_command(text))
     assert security.is_sensitive_bash_command(text) is None
-    assert took < 1.0, f"{took:.2f}s"
+    assert took < cpu_budget.limit(1.0), f"{took:.2f}s"
 
 
 @pytest.mark.parametrize(
@@ -426,7 +426,7 @@ def test_a_256_kb_line_of_commands_that_reads_a_credential_is_refused_in_under_a
     refused = security._SHELL_REFUSAL[security.CREDENTIAL]
     took = cpu_budget.seconds(lambda: security.is_sensitive_bash_command(text))
     assert security.is_sensitive_bash_command(text) == refused
-    assert took < 1.0, f"{took:.2f}s"
+    assert took < cpu_budget.limit(1.0), f"{took:.2f}s"
 
 
 def test_a_256_kb_word_of_interpreter_names_run_together_is_searched_in_under_a_second(home):
@@ -440,4 +440,4 @@ def test_a_256_kb_word_of_interpreter_names_run_together_is_searched_in_under_a_
     took = cpu_budget.seconds(lambda: security._reads_credential_folder(normalised))
     assert security._reads_credential_folder(normalised) is False
     assert security.is_sensitive_bash_command(text) is None
-    assert took < 1.0, f"{took:.2f}s"
+    assert took < cpu_budget.limit(1.0), f"{took:.2f}s"

@@ -2,8 +2,9 @@
 
 The credential screen's 256 KB budget went red twice in breadth's coverage leg, with coverage's
 tracer already set aside for the timed call: the process's CPU time counted another thread in the
-worker. These hold the budget to the calling thread, and to all of its work, so a budget stays
-one second wherever it runs.
+worker. These hold the budget to the calling thread, and to all of its work, so a budget reads only
+its own thread's work wherever it runs (what a tracer adds is allowed for by
+``cpu_budget.limit``).
 """
 
 from __future__ import annotations

@@ -6,6 +6,7 @@ tests/rails/test_ci_capabilities_tree.py
 tests/rails/test_ci_plan_tree.py
 tests/rails/test_digests_have_one_canonical_form.py
 tests/rails/test_each_tree_check_runs_in_one_place.py
+tests/rails/test_every_cpu_budget_reads_through_the_limit_tree.py
 tests/rails/test_every_door_takes_messages_in_one_way_tree.py
 tests/rails/test_every_model_call_writes_its_usage_row_tree.py
 tests/rails/test_every_run_reader_says_whose_runs_it_reads_tree.py

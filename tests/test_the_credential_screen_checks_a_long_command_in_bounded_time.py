@@ -310,7 +310,7 @@ def test_a_256_kb_command_is_checked_by_the_credential_screen_in_under_a_second(
     assert len(command) >= LONG
     took = cpu_budget.seconds(lambda: security.is_sensitive_bash_command(command))
     assert security.is_sensitive_bash_command(command) is None
-    assert took < 1.0, f"{took:.2f}s"
+    assert took < cpu_budget.limit(1.0), f"{took:.2f}s"
 
 
 def test_a_32_kb_heredoc_is_checked_by_the_credential_screen_in_under_a_second(home):
@@ -323,6 +323,8 @@ def test_a_32_kb_heredoc_is_checked_by_the_credential_screen_in_under_a_second(h
     assert len(command) >= 32000
     took = cpu_budget.seconds(lambda: security.is_sensitive_bash_command(command))
     assert security.is_sensitive_bash_command(command) is None
+    # Not read through cpu_budget.limit: at most 0.22 s on the coverage leg, and its regression
+    # (4.2 s) is under the traced bound.
     assert took < 1.0, f"{took:.2f}s"
 
 
