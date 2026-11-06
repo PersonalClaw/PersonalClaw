@@ -98,3 +98,39 @@ def test_the_app_passes_no_rollback_on_to_its_gateway() -> None:
     )
     assert match, "desktop/gatewayEnv.js declares no NOT_PASSED_ON"
     assert f'"{gateway_base.ROLL_BACK_ENV}"' in match.group(1)
+
+
+def test_the_app_resolves_its_home_where_its_gateway_does(monkeypatch) -> None:
+    """``appHome`` in ``desktop/gatewayEnv.js`` resolves ``PERSONALCLAW_HOME`` as the loader does,
+    so the app reads its gateway's runtime record and local secret in the folder the gateway writes
+    them to; a home kept as written would be a second folder, and the app's record watch would hold
+    the windows' sign-in back for good. Held to the vectors ``desktop/test/gatewayEnv.test.js``
+    checks ``appHome`` against. The process ``HOME`` is set too: ``~`` expands against it, not
+    against the environment handed in."""
+    from personalclaw.config import loader
+
+    vectors = re.findall(
+        r'\{ home: "([^"]*)", named: "([^"]*)", resolved: "([^"]*)" \}',
+        _source("test/gatewayEnv.test.js"),
+    )
+    assert len(vectors) >= 5, "the JS test carries no home vectors — this rail is now blind"
+    assert any(named.startswith("~") for _, named, _ in vectors), "no vector expands a ~"
+    assert any(
+        resolved.endswith("/.personalclaw") and named for _, named, resolved in vectors
+    ), "no vector is a refused home"
+    for home, named, resolved in vectors:
+        monkeypatch.setenv("HOME", home)
+        env = {"HOME": home, "PERSONALCLAW_HOME": named}
+        assert loader.resolve_config_dir(env) == Path(resolved), (home, named)
+
+
+def test_a_home_linked_into_a_system_tree_is_refused_once_resolved(tmp_path, monkeypatch) -> None:
+    """The loader refuses a system tree on the resolved path, as ``appHome`` does
+    (``desktop/test/gatewayEnv.test.js``: a link into ``/usr``)."""
+    from personalclaw.config import loader
+
+    (tmp_path / "into-usr").symlink_to("/usr")
+    monkeypatch.setenv("HOME", "/h")
+    env = {"HOME": "/h", "PERSONALCLAW_HOME": str(tmp_path / "into-usr" / "pc")}
+    assert loader.resolve_config_dir(env) == Path("/h/.personalclaw")
+    assert "into-usr" in _source("test/gatewayEnv.test.js"), "the JS side holds no such link"

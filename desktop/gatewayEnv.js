@@ -36,6 +36,10 @@
  * `tests/test_desktop_install_kind.py` pins the two sides together.
  */
 
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
 /** The install kind a shell-spawned gateway reports. Must be a `self_update.INSTALL_KINDS` member. */
 const INSTALL_KIND = "desktop";
 
@@ -65,6 +69,51 @@ const NOT_PASSED_ON = Object.freeze(["PERSONALCLAW_ROLL_BACK_FROM"]);
 /** The address the app's gateway listens on, and the one the app reaches it at (`parseReadyLine`). */
 const LOOPBACK_BIND_HOST = "127.0.0.1";
 
+/** What `PERSONALCLAW_HOME` may not be, once resolved: the filesystem root and the system trees
+ *  under it (`_SYSTEM_DIRS` in `personalclaw/config/loader.py`). */
+const SYSTEM_TOPS = Object.freeze(["usr", "System", "etc"]);
+
+/** *p* with every part that exists resolved through its links, and the rest appended as written
+ *  (`Path.resolve` without `strict`): the real path of the longest prefix that exists. */
+function resolveAsFarAsItExists(p, realpath) {
+  const rest = [];
+  let head = p;
+  for (;;) {
+    try {
+      return path.join(realpath(head), ...rest.reverse());
+    } catch {
+      const parent = path.dirname(head);
+      if (parent === head) return path.join(head, ...rest.reverse());
+      rest.push(path.basename(head));
+      head = parent;
+    }
+  }
+}
+
+/**
+ * The home this app runs in, resolved the way the gateway resolves its own (`resolve_config_dir`
+ * in `personalclaw/config/loader.py`), so the two are one folder: the app reads its gateway's
+ * runtime record and local secret there, and a record in another folder reads as a lost gateway.
+ * `PERSONALCLAW_HOME`, when *env* names one: a leading `~` expanded against `HOME`, made absolute,
+ * and resolved as far as it exists, unless that is the filesystem root or a system tree, which
+ * gives the default. The default is `~/.personalclaw`, as written. A LaunchAgent, `launchctl
+ * setenv`, an environment.d line or a desktop file's `Exec=env` hands the app `~/pc` as written,
+ * where a shell would have expanded it. `~name` is not expanded; the loader would.
+ * `tests/test_desktop_home_gateway_parity.py` holds the vectors in `test/gatewayEnv.test.js` to
+ * the loader's answers. Resolves `{ home, named }`: *named* is whether *env* named one.
+ */
+function appHome(env = process.env, { homedir = os.homedir, realpath = fs.realpathSync.native, cwd = process.cwd } = {}) {
+  const user = (env.HOME || "").trim() || homedir();
+  const fallback = path.join(user, ".personalclaw");
+  const raw = env.PERSONALCLAW_HOME;
+  if (!raw) return { home: fallback, named: false };
+  const expanded = raw === "~" ? user : raw.startsWith("~/") ? path.join(user, raw.slice(2)) : raw;
+  const resolved = resolveAsFarAsItExists(path.isAbsolute(expanded) ? expanded : path.join(cwd(), expanded), realpath);
+  const top = resolved.split(path.sep).filter(Boolean)[0];
+  if (resolved === path.sep || SYSTEM_TOPS.includes(top)) return { home: fallback, named: true };
+  return { home: resolved, named: true };
+}
+
 /**
  * Build the child environment for the gateway spawn.
  *
@@ -90,7 +139,11 @@ function buildGatewayEnv({ env = {}, loginPath = "", projectDir = "" } = {}) {
     PERSONALCLAW_PROJECT_DIR: projectDir,
     PERSONALCLAW_INSTALL_KIND: INSTALL_KIND,
     PERSONALCLAW_BIND_HOST: LOOPBACK_BIND_HOST,
+    // The home the app runs in, resolved as the gateway would (`appHome`), when the app's own
+    // environment names one: the gateway writes its record where the app reads it. An unset
+    // home stays unset, so the default install's environment is as it was.
+    ...(appHome(env).named ? { PERSONALCLAW_HOME: appHome(env).home } : {}),
   };
 }
 
-module.exports = { AUTH_SWITCHES, INSTALL_KIND, LOOPBACK_BIND_HOST, NOT_PASSED_ON, buildGatewayEnv };
+module.exports = { AUTH_SWITCHES, INSTALL_KIND, LOOPBACK_BIND_HOST, NOT_PASSED_ON, SYSTEM_TOPS, appHome, buildGatewayEnv };

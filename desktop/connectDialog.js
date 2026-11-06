@@ -56,7 +56,7 @@ const CONNECT_CHANNELS = Object.freeze({
 });
 
 /** The "This computer" row's states, as `main.js` keeps them (`localState`). */
-const LOCAL_STATES = Object.freeze(["starting", "own", "found", "adopted", "stopped", "served", "older"]);
+const LOCAL_STATES = Object.freeze(["starting", "own", "found", "adopted", "stopped", "served", "older", "signed_out", "cant_sign_in"]);
 
 /** Where a newer app comes from: the one page the "This computer" row's Open the Releases Page
  *  opens, in the browser. Fixed here, so the dialog names no address of its own. */
@@ -106,6 +106,12 @@ function describeLocal(local = {}) {
     // offers the newer app instead.
     case "older":
       return { state, badge: "", statusText: "Older than this home", statusTone: "bad", detail: sentence, action: { id: "releases", label: "Open the Releases Page" } };
+    // The gateway runs and ended this app's sign-in: nothing signs it in again but the owner's press.
+    case "signed_out":
+      return { state, badge: "", statusText: "Signed out", statusTone: "act", detail: sentence, action: { id: "sign-in", label: "Sign In Again" } };
+    // The gateway runs, and this app can't sign its windows in to it from here: the sentence says what to do.
+    case "cant_sign_in":
+      return { state, badge: "", statusText: "Can't sign in", statusTone: "bad", detail: sentence, action: null };
     default:
       return { state: "starting", badge: "", statusText: "Starting…", statusTone: "idle", detail: "", action: null };
   }
@@ -198,8 +204,9 @@ function describeRow(row, { activeId, health = {}, localBaseUrl = "", local } = 
  * What the chooser says and offers while nothing serves the app's windows, from the "This computer"
  * row's state: why (its sentence), Use the Gateway Already Running only while one is `found`, and
  * Add a Gateway… always, held while a start runs. Try Again, except for a home a newer PersonalClaw
- * served (`older`), where a start would be refused again: Open the Releases Page instead. Pure, as
- * `describeLocal` is.
+ * served (`older`), where a start would be refused again: Open the Releases Page instead; and for a
+ * gateway this app can't sign its windows in to from here (`cant_sign_in`), where nothing it does
+ * would help. Pure, as `describeLocal` is.
  */
 function describeChooser(local = {}) {
   const here = describeLocal(local);
@@ -209,7 +216,9 @@ function describeChooser(local = {}) {
     sentence: busy ? "Starting PersonalClaw's gateway…" : here.detail || "PersonalClaw's gateway isn't running.",
     use: here.state === "found",
     releases: here.state === "older",
-    retry: here.state !== "older",
+    // Try again starts or looks again: nothing it does helps a newer home, or a gateway this app
+    // can't sign its windows in to from here.
+    retry: here.state !== "older" && here.state !== "cant_sign_in",
     busy,
     /** Nothing more to choose: a gateway serves the windows. */
     settled: here.state === "own" || here.state === "adopted",

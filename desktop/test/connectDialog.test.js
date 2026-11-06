@@ -231,6 +231,16 @@ describe("the chooser, while nothing serves the windows", () => {
     }
   });
 
+  it("says why the app can't sign in here, with no Try Again and nothing to use", () => {
+    const sentence = "This app can't sign in to this computer's gateway again from here. Quit PersonalClaw and open it again.";
+    const cant = describeChooser({ state: "cant_sign_in", sentence });
+    assert.equal(cant.sentence, sentence);
+    assert.equal(cant.retry, false, "Try Again offered where a start or a look can't help");
+    assert.equal(cant.use, false);
+    assert.equal(cant.releases, false);
+    assert.equal(cant.settled, false);
+  });
+
   it("holds its offers while a start runs, and has nothing to choose once a gateway serves", () => {
     assert.equal(describeChooser({ state: "starting" }).busy, true);
     assert.equal(describeChooser({ state: "starting" }).use, false);
@@ -503,5 +513,29 @@ describe("the chooser document", () => {
     const policy = html.match(/http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/)[1];
     const dialogPolicy = fs.readFileSync(path.join(__dirname, "..", "connectDialog.html"), "utf8").match(/http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/)[1];
     assert.equal(policy, dialogPolicy);
+  });
+});
+
+describe("the copy the signed-out row adds", () => {
+  it("never says pair, which reads as device pairing", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const row = describeLocal({ state: "signed_out", sentence: "x" });
+    const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+    const sentence = main.match(/const SIGNED_OUT_SENTENCE = "([^"]+)";/);
+    assert.ok(sentence, "the row's sentence is gone from main.js: this scan is blind");
+    const refused = main.match(/const NOT_SIGNED_IN_AGAIN_SENTENCE = "([^"]+)";/);
+    assert.ok(refused, "the refused press's sentence is gone from main.js: this scan is blind");
+    const changed = main.match(/const GATEWAY_CHANGED_SENTENCE = "([^"]+)";/);
+    assert.ok(changed, "the interrupted press's sentence is gone from main.js: this scan is blind");
+    const homeGateway = fs.readFileSync(path.join(__dirname, "..", "homeGateway.js"), "utf8");
+    const broken = homeGateway.match(/pairless: true, sentence: `([^`]+)`/);
+    assert.ok(broken, "the broken sign-in's sentence is gone from homeGateway.js: this scan is blind");
+    const cant = describeLocal({ state: "cant_sign_in", sentence: refused[1] });
+    assert.equal(cant.action, null, "a row Sign In Again would be refused on offers an action");
+    for (const text of [row.statusText, row.action.label, sentence[1], refused[1], changed[1], broken[1], cant.statusText]) {
+      assert.doesNotMatch(text, /pair/i, text);
+    }
+    assert.equal(row.action.label, "Sign In Again");
   });
 });

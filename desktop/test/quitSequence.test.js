@@ -138,6 +138,8 @@ describe("the quit's budget", () => {
     assert.match(handler, /quitWithin\(\{/, "before-quit no longer quits within the deadline");
     assert.match(handler, /stop: \(budget\) => stopGateway\(budget\)/, "the stop is not given the budget");
     assert.doesNotMatch(handler, /\.then\(\(\) => stopGateway\(\)\)/, "the stop waits on the asks again");
+    // The sign-out ask ends the held session, then every session kept to be signed out, in its share.
+    assert.match(handler, /if \(held\) await signOutLocalSession\(held, ms\);\s*await signOutKept\(ms\);/, "the quit leaves the kept sessions signed in");
     assert.match(MAIN, /timeout: timeoutMs,/, "postGateway no longer takes the time it is given");
     const exit = MAIN.slice(MAIN.indexOf('process.on("exit"'));
     assert.match(exit.slice(0, exit.indexOf("\n});\n")), /process\.kill\(-liveGatewayGroup, "SIGKILL"\)/);

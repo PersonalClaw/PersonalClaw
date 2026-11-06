@@ -76,8 +76,13 @@ function deadPid() {
  * body}`, or `"silent"` to take the connection and never answer). `/api/token/local` signs in only
  * the secret it is given. Every request is written down in `seen`.
  */
-async function fakeGateway({ secret = "", health }) {
+/** A pair of the shape a gateway gives (43 characters of base64url). */
+const WINDOW_PAIR = "p".repeat(43);
+
+async function fakeGateway({ secret = "", health, windowDoor = "", doorStatus = 200, pairValue = WINDOW_PAIR }) {
   const seen = [];
+  /** The sessions this stand-in minted at its token door, in order. */
+  const sessions = [];
   let connections = 0;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://x");
@@ -90,11 +95,25 @@ async function fakeGateway({ secret = "", health }) {
     }
     if (url.pathname === "/api/token/local") {
       if (secret && req.headers["x-local-secret"] === secret) {
+        // The window's own door, as `handlers/core.api_token_local` answers it: a session of the
+        // window's own with its pair, or (*windowDoor* "pairless") a broken one without.
+        const atTheDoor = url.searchParams.get("for") === "window";
+        if (atTheDoor && doorStatus !== 200) {
+          res.writeHead(doorStatus, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ error: { code: "token_ttl_too_long", message: "That lifetime is longer than the window's door gives." } }));
+        }
+        const pair = atTheDoor && windowDoor === "pairs" ? { pair: pairValue } : {};
+        const token = atTheDoor ? "window-token" : "minted-token";
+        sessions.push(token);
         res.writeHead(200, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify({ token: "minted-token", expires_in: 2592000, expires_at: 1, open_within: 86400 }));
+        return res.end(JSON.stringify({ token, ...pair, expires_in: 2592000, expires_at: 1, open_within: 86400 }));
       }
       res.writeHead(403, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ error: "invalid secret" }));
+    }
+    if (url.pathname === "/api/auth/logout" && req.method === "POST") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ revoked: true }));
     }
     res.writeHead(404);
     res.end();
@@ -102,13 +121,15 @@ async function fakeGateway({ secret = "", health }) {
   server.on("connection", () => (connections += 1));
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   servers.push(server);
-  return { server, port: server.address().port, seen, connections: () => connections };
+  return { server, port: server.address().port, seen, sessions, connections: () => connections };
 }
 
 /** The `/api/healthz` answer of a gateway serving *home*, holding *secret*, as `api_healthz` makes it. */
-const proven = (home, secret, { pid = 4242, version = "0.3.6" } = {}) => (_req, url, port) => {
+const proven = (home, secret, { pid = 4242, version = "0.3.6", windowDoor = false } = {}) => (_req, url, port) => {
   const nonce = url.searchParams.get("nonce") || "";
-  return { body: { status: "ok", version, pid, home_id: idOf(home), root_ok: true, ...(nonce ? { proof: proofOf(secret, nonce, port) } : {}) } };
+  // The window door's flag rides only beside the proof, as `api_healthz` puts it.
+  const proof = nonce ? { proof: proofOf(secret, nonce, port), ...(windowDoor ? { window_door: true } : {}) } : {};
+  return { body: { status: "ok", version, pid, home_id: idOf(home), root_ok: true, ...proof } };
 };
 
 /** Every header any request carried, lowercased, across everything *seen*. */
@@ -254,7 +275,8 @@ describe("signIn: trade the home's secret for a session, at the gateway reach fo
     const found = await reach(home);
     const signed = await signIn(found.gateway, home);
     assert.equal(signed.ok, true, signed.sentence);
-    assert.deepEqual(signed.ready, { port: gw.port, token: "minted-token", url: `http://127.0.0.1:${gw.port}` }, "shaped as a ready line, for adoptLocalGateway");
+    assert.deepEqual(signed.ready, { port: gw.port, token: "minted-token", url: `http://127.0.0.1:${gw.port}`, windowDoor: false }, "shaped as a ready line, for adoptLocalGateway");
+    assert.equal(signed.pair, null, "a gateway without the window door gives no pair");
     const ask = gw.seen[1];
     assert.equal(ask.path, "/api/token/local");
     assert.equal(ask.query, `?ttl=${SIGN_IN_TTL}`);
@@ -298,5 +320,152 @@ describe("newestThatServed: the version the home's stamp names, for the row to s
       if (written !== null) fs.writeFileSync(path.join(home, VERSION_FILE), written);
       assert.equal(newestThatServed(home), "", String(written));
     }
+  });
+});
+
+describe("the window's own door: asked only of a gateway whose proven answer says it has one", () => {
+  it("reads the flag only beside a proof this home's secret made, and carries the secret's digest", async () => {
+    const home = tmpHome();
+    writeSecret(home, "home-secret");
+    const flagged = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret", { windowDoor: true }) });
+    writeRecord(home, { port: flagged.port, pid: process.pid });
+    const found = await reach(home);
+    assert.equal(found.ok, true, found.sentence);
+    assert.equal(found.gateway.windowDoor, true);
+    assert.equal(found.gateway.secretDigest, crypto.createHash("sha256").update("home-secret").digest("hex"));
+
+    const forged = await fakeGateway({ secret: "home-secret", health: proven(home, "another-secret", { windowDoor: true }) });
+    writeRecord(home, { port: forged.port, pid: process.pid });
+    const refused = await reach(home);
+    assert.equal(refused.ok, false, "a flag beside a proof the secret didn't make is never carried");
+
+    const plain = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret") });
+    writeRecord(home, { port: plain.port, pid: process.pid });
+    assert.equal((await reach(home)).gateway.windowDoor, false);
+  });
+
+  it("asks a gateway without the flag exactly as today: ?ttl=30d, and no pair", async () => {
+    const home = tmpHome();
+    writeSecret(home, "home-secret");
+    const gw = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret"), windowDoor: "pairs" });
+    writeRecord(home, { port: gw.port, pid: process.pid });
+    const signed = await signIn((await reach(home)).gateway, home);
+    assert.equal(signed.ok, true, signed.sentence);
+    assert.equal(signed.pair, null);
+    const asks = gw.seen.filter((r) => r.path === "/api/token/local");
+    assert.deepEqual(asks.map((r) => r.query), [`?ttl=${SIGN_IN_TTL}`]);
+  });
+
+  it("asks a flagged gateway at the window's door, with only Accept and the secret, and takes its pair", async () => {
+    const home = tmpHome();
+    writeSecret(home, "home-secret");
+    const gw = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret", { windowDoor: true }), windowDoor: "pairs" });
+    writeRecord(home, { port: gw.port, pid: process.pid });
+    const signed = await signIn((await reach(home)).gateway, home);
+    assert.equal(signed.ok, true, signed.sentence);
+    assert.deepEqual(signed.ready, { port: gw.port, token: "window-token", url: `http://127.0.0.1:${gw.port}`, windowDoor: true });
+    assert.equal(signed.pair, WINDOW_PAIR);
+    const ask = gw.seen.find((r) => r.path === "/api/token/local");
+    assert.equal(ask.query, `?for=window&ttl=${SIGN_IN_TTL}`);
+    assert.deepEqual(Object.keys(ask.headers).filter((h) => !["host", "connection"].includes(h)).sort(), ["accept", "x-local-secret"]);
+  });
+
+  it("ends a flagged gateway's sign-in that came without its pair, and hands nothing of it back", async () => {
+    const home = tmpHome();
+    writeSecret(home, "home-secret");
+    const gw = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret", { windowDoor: true }), windowDoor: "pairless" });
+    writeRecord(home, { port: gw.port, pid: process.pid });
+    const signed = await signIn((await reach(home)).gateway, home);
+    assert.equal(signed.ok, false);
+    assert.equal(signed.pairless, true);
+    assert.equal(signed.ready, undefined, "no token of it reaches the caller");
+    const out = gw.seen.find((r) => r.path === "/api/auth/logout");
+    assert.ok(out, "the pairless sign-in was not signed out");
+    assert.equal(out.method, "POST");
+    assert.equal(out.headers.authorization, "Bearer window-token");
+  });
+});
+
+describe("the lifetime the window's door is asked for", () => {
+  it("is none at the app's own gateway, which then gives auth.session_ttl, and 30 days at one the app found", async () => {
+    const home = tmpHome();
+    writeSecret(home, "home-secret");
+    const gw = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret", { windowDoor: true }), windowDoor: "pairs" });
+    writeRecord(home, { port: gw.port, pid: process.pid });
+    const own = await signIn((await reach(home)).gateway, home, { ttl: null });
+    assert.equal(own.ok, true, own.sentence);
+    const found = await signIn((await reach(home)).gateway, home);
+    assert.equal(found.ok, true, found.sentence);
+    const asks = gw.seen.filter((r) => r.path === "/api/token/local").map((r) => r.query);
+    assert.deepEqual(asks, ["?for=window", `?for=window&ttl=${SIGN_IN_TTL}`]);
+    assert.equal(SIGN_IN_TTL, "30d");
+  });
+});
+
+describe("an ask at the door: only the secret its proof was checked with, a status on a refusal, and a pair of the right shape", () => {
+  it("sends nothing when the home's secret changed after the proof", async () => {
+    const home = tmpHome();
+    writeSecret(home, "home-secret");
+    const gw = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret", { windowDoor: true }), windowDoor: "pairs" });
+    writeRecord(home, { port: gw.port, pid: process.pid });
+    const found = await reach(home);
+    assert.equal(found.ok, true, found.sentence);
+    writeSecret(home, "a-newer-secret");
+    const out = await signIn(found.gateway, home);
+    assert.equal(out.ok, false);
+    assert.deepEqual(gw.seen.filter((r) => r.path === "/api/token/local"), [], "the ask went with a secret its proof never checked");
+  });
+
+  it("hands back the door's status with its refusal", async () => {
+    const home = tmpHome();
+    writeSecret(home, "home-secret");
+    const gw = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret", { windowDoor: true }), windowDoor: "pairs", doorStatus: 403 });
+    writeRecord(home, { port: gw.port, pid: process.pid });
+    const out = await signIn((await reach(home)).gateway, home);
+    assert.equal(out.ok, false);
+    assert.equal(out.status, 403);
+  });
+
+  it("reads a pair of another shape as none: that session is signed out at once, and the ask fails", async () => {
+    for (const pairValue of ["short", `${WINDOW_PAIR}x`, "p".repeat(42) + "="]) {
+      const home = tmpHome();
+      writeSecret(home, "home-secret");
+      const gw = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret", { windowDoor: true }), windowDoor: "pairs", pairValue });
+      writeRecord(home, { port: gw.port, pid: process.pid });
+      const out = await signIn((await reach(home)).gateway, home);
+      assert.equal(out.ok, false, pairValue);
+      assert.equal(out.pairless, true, pairValue);
+      const logout = gw.seen.find((r) => r.path === "/api/auth/logout");
+      assert.ok(logout, `${pairValue}: the session was not signed out`);
+      assert.equal(logout.headers.authorization, "Bearer window-token");
+    }
+  });
+
+  it("takes the pair's shape from the dashboard's own (web/src/lib/pair.ts)", () => {
+    const web = fs.readFileSync(path.join(__dirname, "..", "..", "web", "src", "lib", "pair.ts"), "utf8");
+    assert.ok(web.includes("const SHAPE = /^[A-Za-z0-9_-]{43}$/"), "the dashboard's shape moved");
+    assert.ok(fs.readFileSync(path.join(__dirname, "..", "homeGateway.js"), "utf8").includes("const PAIR_SHAPE = /^[A-Za-z0-9_-]{43}$/;"));
+  });
+
+  it("mints nothing by a proof, and exactly one session by a found gateway's ask, at a gateway without the door", async () => {
+    const home = tmpHome();
+    writeSecret(home, "home-secret");
+    const gw = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret") });
+    writeRecord(home, { port: gw.port, pid: process.pid });
+    const found = await reach(home);
+    assert.deepEqual(gw.sessions, [], "a proof minted a session");
+    const out = await signIn(found.gateway, home);
+    assert.equal(out.ok, true, out.sentence);
+    assert.deepEqual(gw.sessions, ["minted-token"], "a found gateway's ask minted other than one session");
+  });
+
+  it("says a broken sign-in at the door without the word pair", async () => {
+    const home = tmpHome();
+    writeSecret(home, "home-secret");
+    const gw = await fakeGateway({ secret: "home-secret", health: proven(home, "home-secret", { windowDoor: true }), windowDoor: "pairless" });
+    writeRecord(home, { port: gw.port, pid: process.pid });
+    const out = await signIn((await reach(home)).gateway, home);
+    assert.equal(out.pairless, true);
+    assert.doesNotMatch(out.sentence, /pair/i, out.sentence);
   });
 });

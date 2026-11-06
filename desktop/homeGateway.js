@@ -22,8 +22,11 @@
  *
  * Only `reach` makes a gateway `signIn` will sign in at, and `signIn` is the only place this file
  * sends the home's secret: `GET /api/token/local`, for a session that lasts what the ready line's
- * does. Its reply is shaped as a ready line, so the shell holds it exactly as it holds that one
- * (`localSignIn.js`): in memory, as the windows' session cookie, never on disk, in a URL or a log.
+ * does. A gateway whose proven answer says it has the window's own door (`WINDOW_DOOR_FIELD`) is
+ * asked at that door, `GET /api/token/local?for=window`, for a session of the windows' own with its
+ * pair; one that doesn't say so is asked as it always was. The reply is shaped as a ready line, so
+ * the shell holds it exactly as it holds that one (`localSignIn.js`): in memory, as the windows'
+ * session cookie, never on disk, in a URL or a log.
  *
  * Electron-free, so its decisions are driven against real sockets and real files.
  */
@@ -62,11 +65,20 @@ const ANSWER_ATTEMPTS = 3;
 /** The most of an answer that is read: a gateway's identity answer is about 150 bytes. */
 const ANSWER_LIMIT = 64 * 1024;
 
-/** How long the session the app signs in for lasts: the ready line's own default (`auth.session_ttl`
- *  is 30 days unless set), so an app on a gateway it found lasts as long as one on its own. Quitting
- *  signs it out, as it signs the ready line's out. */
+/** How long a session the app signs in for at a gateway it found lasts: 30 days, the door's
+ *  maximum, as the token door's life is today. At the app's own gateway the window's door is asked
+ *  with no ttl (`signIn`'s `ttl: null`), and gives `auth.session_ttl`, what the ready line's session
+ *  lasts. Quitting signs either out, as it signs the ready line's out. */
 const SIGN_IN_TTL = "30d";
+/** A pair's shape, as the gateway gives it and the dashboard keeps it (`web/src/lib/pair.ts`). */
+const PAIR_SHAPE = /^[A-Za-z0-9_-]{43}$/;
 const SIGN_IN_TIMEOUT_MS = 5000;
+
+/** The name the gateway says it has the window's own door by, on its ready line and in a proven
+ *  health answer (`sign_in_pair.WINDOW_DOOR`, `tests/test_the_window_door_flag_parity.py`). */
+const WINDOW_DOOR_FIELD = "window_door";
+/** The route that ends the session that authorized it (`handlers/auth.api_auth_logout`). */
+const LOGOUT_PATH = "/api/auth/logout";
 
 /** What a read says of a port where nothing listens, and of one that took the connection and was silent. */
 const NOTHING = "nothing";
@@ -160,11 +172,12 @@ function newestThatServed(home) {
 }
 
 /**
- * One GET to `127.0.0.1:<port><route>`: `{status, body}` (the parsed body, `{}` for one that is not
- * an object), or `NOTHING` when nothing takes the connection, or `SILENT` when what took it said
- * nothing in time. No proxy, no redirect followed, at most `ANSWER_LIMIT` bytes read.
+ * One request (a GET, or *method*) to `127.0.0.1:<port><route>`: `{status, body}` (the parsed body,
+ * `{}` for one that is not an object), or `NOTHING` when nothing takes the connection, or `SILENT`
+ * when what took it said nothing in time. No proxy, no redirect followed, at most `ANSWER_LIMIT`
+ * bytes read. A POST carries no body.
  */
-function getOnce(port, route, { timeoutMs, headers = {} }) {
+function getOnce(port, route, { timeoutMs, headers = {}, method = "GET" }) {
   return new Promise((resolve) => {
     let settled = false;
     const done = (value) => {
@@ -173,7 +186,15 @@ function getOnce(port, route, { timeoutMs, headers = {} }) {
       resolve(value);
     };
     const req = http.request(
-      { host: LOOPBACK_HOST, port, path: route, method: "GET", agent: false, timeout: timeoutMs, headers: { Accept: "application/json", ...headers } },
+      {
+        host: LOOPBACK_HOST,
+        port,
+        path: route,
+        method,
+        agent: false,
+        timeout: timeoutMs,
+        headers: { Accept: "application/json", ...(method === "GET" ? {} : { "Content-Length": "0" }), ...headers },
+      },
       (res) => {
         const chunks = [];
         let size = 0;
@@ -272,14 +293,30 @@ async function reach(home, { timeoutMs = ANSWER_TIMEOUT_MS, attempts = ANSWER_AT
       `${where} is answered by a program that says it serves this home (${home}) with a proof this home's local secret did not make, so the secret was not sent to it. If it is this home's gateway and the home's secret was replaced since it started, restart it.`
     );
   }
+  // Read only now, beside a proof this home's secret made: the flag rides on nothing less.
   const gateway = Object.freeze({
     port,
     pid: Number.isInteger(said.pid) ? said.pid : record.pid,
     url: `http://${LOOPBACK_HOST}:${port}`,
     version: typeof said.version === "string" ? said.version : "",
+    windowDoor: said[WINDOW_DOOR_FIELD] === true,
+    secretDigest: digestOf(secret),
   });
   reached.add(gateway);
   return { ok: true, gateway };
+}
+
+/** The sha256 of a local secret: what tells one start of a gateway from the next on the same port. */
+function digestOf(secret) {
+  return crypto.createHash("sha256").update(String(secret)).digest("hex");
+}
+
+/** The digest of the secret this home's gateway wrote for its current start, or "" for none. Read at
+ *  a ready line, it is what a later proof on the same port must have been checked with to be the
+ *  same start (`gatewayWatch`). */
+function startDigest(home) {
+  const secret = readSecret(home);
+  return secret ? digestOf(secret) : "";
 }
 
 /** What a gateway's error answer says: its envelope's message, else its status (`home_gateway.error_text`). */
@@ -291,27 +328,45 @@ function errorText(body, status) {
 
 /**
  * Trade this home's local secret for a session at *gateway*, one `reach` found: `{ok: true, ready:
- * {port, token, url}}`, shaped as a ready line, or `{ok: false, sentence}`. Throws for a gateway
- * `reach` did not make: this is the one request that carries the secret.
+ * {port, token, url, windowDoor}, pair}`, shaped as a ready line, or `{ok: false, status, sentence}`,
+ * *status* being the refusal's HTTP status, or 0 where nothing answered or nothing was sent. Throws
+ * for a gateway `reach` did not make: this is the one request that carries the secret. Only the
+ * secret the proof was checked with is sent: one that changed since is not (`secretDigest`).
+ *
+ * The door is the one *gateway*'s proven answer names. At the window's own door, an answer without
+ * a pair, or with one of another shape, is a failed sign-in: that session is signed out at once,
+ * and nothing of it reaches a window (`{ok: false, pairless: true}`). A *ttl* of null asks for none,
+ * so the gateway gives its own.
  */
 async function signIn(gateway, home, { ttl = SIGN_IN_TTL, timeoutMs = SIGN_IN_TIMEOUT_MS } = {}) {
   if (!gateway || typeof gateway !== "object" || !reached.has(gateway)) {
     throw new Error("not a gateway reach found: the app signs in only at one that proved it serves this home");
   }
   const secret = readSecret(home);
-  if (!secret) return { ok: false, sentence: `This home's local secret can't be read, so the app can't sign in to its gateway on port ${gateway.port}.` };
-  const answer = await getOnce(gateway.port, `/api/token/local?ttl=${encodeURIComponent(ttl)}`, {
+  if (!secret) return { ok: false, status: 0, sentence: `This home's local secret can't be read, so the app can't sign in to its gateway on port ${gateway.port}.` };
+  if (digestOf(secret) !== gateway.secretDigest) {
+    return { ok: false, status: 0, sentence: `This home's local secret changed after its gateway on port ${gateway.port} proved it serves this home, so nothing was sent. Try again.` };
+  }
+  const query = [gateway.windowDoor ? "for=window" : "", ttl ? `ttl=${encodeURIComponent(ttl)}` : ""].filter(Boolean).join("&");
+  const answer = await getOnce(gateway.port, `/api/token/local${query ? `?${query}` : ""}`, {
     timeoutMs,
     headers: { "X-Local-Secret": secret },
   });
   if (answer === NOTHING || answer === SILENT) {
-    return { ok: false, sentence: `This home's gateway on port ${gateway.port} could not be asked to sign this app in (${answer === SILENT ? "no answer" : "nothing listens there any more"}).` };
+    return { ok: false, status: 0, sentence: `This home's gateway on port ${gateway.port} could not be asked to sign this app in (${answer === SILENT ? "no answer" : "nothing listens there any more"}).` };
   }
   const token = answer.body && typeof answer.body.token === "string" ? answer.body.token : "";
   if (answer.status !== 200 || !token) {
-    return { ok: false, sentence: `This home's gateway on port ${gateway.port} did not sign this app in: ${errorText(answer.body, answer.status)}` };
+    return { ok: false, status: answer.status, sentence: `This home's gateway on port ${gateway.port} did not sign this app in: ${errorText(answer.body, answer.status)}` };
   }
-  return { ok: true, ready: { port: gateway.port, token, url: gateway.url } };
+  const ready = { port: gateway.port, token, url: gateway.url, windowDoor: gateway.windowDoor };
+  if (!gateway.windowDoor) return { ok: true, ready, pair: null };
+  const pair = typeof answer.body.pair === "string" && PAIR_SHAPE.test(answer.body.pair) ? answer.body.pair : "";
+  if (!pair) {
+    await getOnce(gateway.port, LOGOUT_PATH, { timeoutMs, method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    return { ok: false, status: 200, pairless: true, sentence: `This home's gateway on port ${gateway.port} didn't finish signing this app's windows in, so that sign-in was ended.` };
+  }
+  return { ok: true, ready, pair };
 }
 
 module.exports = {
@@ -324,6 +379,7 @@ module.exports = {
   SECRET_FILE,
   SIGN_IN_TTL,
   VERSION_FILE,
+  WINDOW_DOOR_FIELD,
   gatewayProof,
   homeId,
   homeIdOf,
@@ -334,4 +390,5 @@ module.exports = {
   reach,
   readRecord,
   signIn,
+  startDigest,
 };
