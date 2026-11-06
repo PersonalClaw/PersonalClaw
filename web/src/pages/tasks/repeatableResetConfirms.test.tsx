@@ -41,7 +41,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       // 🪤 MOCK THE CLIENT METHOD'S CONTRACT, NOT THE WIRE ENVELOPE. `api.projects()` and
       // `api.taskLists()` already unwrap (`.then(d => d.projects)`), so returning `{ projects: [...] }`
       // here hands the page an OBJECT where it expects an array — `.find` throws, the loader's own
-      // `.catch` empties both lists, and the list bar silently never mounts. `api.tasks()` is the
+      // `.catch` empties both lists, and the List section silently never shows. `api.tasks()` is the
       // exception: the page unwraps that one itself, so it keeps its envelope.
       tasks: vi.fn(async () => ({ tasks: [TASK], owner: 'me' })),
       projects: vi.fn(async () => [PROJECT]),
@@ -68,8 +68,8 @@ function mount() {
         onCreate={noop} view="list" filter="all" openId="" setView={noop} setFilter={noop}
         setOpenId={noop} editing={false} setEditing={noop}
         // 🪤 `scope` is the project NAME, not an id: `scopedProject = projects.find(p => p.name === scope)`,
-        // and the list bar renders only under `isProjectScope && projectLists.length > 0`. With an empty
-        // scope the bar — and so the Reset control — never mounts at all.
+        // and the List section shows only under `isProjectScope && projectLists.length > 0`. With an
+        // empty scope the section — and so the Reset row — never shows at all.
         q="" sort="" scope="Repeatable" list="" tag="" setQ={noop} setSort={noop} setScope={noop} setList={noop} setTag={noop}
       />
       <DialogHost />

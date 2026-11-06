@@ -214,8 +214,8 @@ describe('the fix is structural, and its reach is pinned', () => {
 
   it('focuses with preventScroll — without it, opening the menu closes it', () => {
     // 🪤 NOT a micro-optimisation. The portaled flyout is `position: fixed`, and focusing into it
-    // can scroll an ancestor. `Popover` closes on ANY scroll in portal mode (capture-phase), so a
-    // scrolling focus call would shut the menu in the same frame it opened.
+    // can scroll an ancestor. `Popover` closes on a scroll outside it in portal mode (capture-phase),
+    // so a focus call that scrolls an ancestor would shut the menu in the same frame it opened.
     const code = strip(readSource(join(SRC, 'ui', 'Popover.tsx')))
     const effect = code.match(/if \(!open \|\| !portal \|\| ownsItsKeyboard\(\)\) return[\s\S]{0,200}/)?.[0] ?? ''
     expect(effect, 'found the focus-in effect').not.toBe('')

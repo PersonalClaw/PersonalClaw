@@ -47,9 +47,11 @@ import { TOUCH_TARGET } from './Toggle'
  *      back or elsewhere (All projects, Back) is not marked `priority="primary"`: it would end the
  *      row as if it were the page's action. `app/pageControlsAreInTheHeader.test.ts` holds every
  *      cluster to the order.
- *  `priority` (primary/default/low) governs OVERFLOW shedding independently of this
- *  visual order, so keep Delete/panel-opener `priority="low"` even though their
- *  positions are fixed by the tenet. */
+ *  `priority` (primary/default/low) governs OVERFLOW shedding, and `priority="primary"` with no
+ *  `ariaExpanded` also moves a control to the row's end (`isThePrimary`). That is why Delete stays
+ *  `priority="low"`: "primary" would end the row with it. A panel opener stays low too, so it sheds
+ *  first; with `ariaExpanded` it keeps its place under any priority, but "primary" would hold it in
+ *  the row (`heldInRow`). */
 export type Tier = 'full' | 'text' | 'icon' | 'overflow'
 export type Priority = 'primary' | 'default' | 'low'
 
@@ -226,7 +228,9 @@ const FOLDED_PILL = 44
 /** What the title slot is ACTUALLY owed: nothing when it holds no visible content; otherwise
  *  what it cannot shed (`minWidth`) plus the title's floor, never more than its natural width —
  *  and when the cluster's own floor (`floor`) would not fit beside that, the title yields
- *  (truncates further) so the controls stay usable, down to what the slot cannot shed.
+ *  (truncates further) so the controls stay usable, down to what the slot cannot shed; a kept part
+ *  of the heading yields below that, to `hardWidth`, where the row at its narrowest (`keptFloor`)
+ *  cannot fit beside it.
  *
  *  Exported and pure so the arithmetic can be tested. It cannot be exercised through a render:
  *  jsdom reports every box as 0, so the whole width computation collapses to zeros there and a

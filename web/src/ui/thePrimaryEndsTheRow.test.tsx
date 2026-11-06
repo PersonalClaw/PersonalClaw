@@ -9,7 +9,7 @@ import { HeaderActions, HeaderControl, HeaderMenu } from './HeaderActions'
 //
 // The `…` was the row's last control, so on a page whose header held one (a thread's Save as
 // starter, a narrow row's shed actions) the primary was second from the right, and the one order
-// had an exception. A control `isThePrimary` counts as the primary (`variant="primary"`, or
+// had an exception. A control that `isThePrimary` counts as the primary (`variant="primary"`, or
 // `priority="primary"` on one that opens no region) draws in a slot after the `…` now. It is a portal
 // into that slot, so the page's tree is unchanged, and the slot follows the `…` in the DOM, so a
 // keyboard reaches the controls in the order they are seen.
