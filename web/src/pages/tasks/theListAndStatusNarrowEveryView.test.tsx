@@ -118,4 +118,16 @@ describe('Ready under a query', () => {
     expect(await screen.findByText(/ready tasks/i, {}, { timeout: 3000 })).toBeTruthy()
     expect(screen.queryByText('Weed the beds')).toBeNull()
   })
+
+  // Board and the graph draw the scoped tasks, not the search's results or the ready read, so a
+  // ready read that fails under a query neither holds them on the skeleton nor stands in for them.
+  for (const view of ['board', 'dag']) {
+    it(`${view}: draws its tasks when the ready read fails under a query`, async () => {
+      ready.mockImplementation(async () => { throw new Error('ready read failed') })
+      mount({ view, filter: 'ready', q: 'the' })
+      expect(await screen.findByText('Weed the beds', {}, { timeout: 3000 })).toBeTruthy()
+      await waitFor(() => expect(ready).toHaveBeenCalled())
+      expect(screen.queryByText(/couldn.t load ready tasks|ready tasks/i), 'no ready error in its place').toBeNull()
+    })
+  }
 })

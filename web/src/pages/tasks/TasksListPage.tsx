@@ -582,6 +582,17 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
   )
 
+  // Board and the graph draw the scoped tasks (scope, tag and list), never the search's results or
+  // the ready read, so only the tasks' own read holds them on the skeleton or stands in their place
+  // with its error: a ready read that failed under a query held Board on the skeleton for good.
+  const drawingTheTasks = (drawn: ReactNode) => (
+    tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
+      : tasks === null ? <ListSkeleton rows={6} what="tasks" /> : tasks.length === 0 ? (
+        <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
+      ) : scopedTasks.length === 0 ? nothingInView
+      : drawn
+  )
+
   return (
     <WorkbenchLayout
       scroll={false}
@@ -629,17 +640,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
               what="tasks" detail="dependencies on the ones outside this window are not shown, so a blocked task can read as unblocked" />
           </div>
           <div className="mx-auto h-full min-h-0 w-full">
-            {/* Error FIRST: `tasks === null` also satisfies the skeleton and the empty branch, so a
-                later test would be unreachable. Removing the swallow above is only half the fix —
-                without this branch a failed load would hang on the skeleton forever instead. */}
-            {q && searchError ? <LoadError what="search results" error={searchError} onRetry={() => setSearchNonce((n) => n + 1)} />
-              : filter === 'ready' && !q && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
-              : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
-              : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
-              <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
-            ) : scopedTasks.length === 0 ? nothingInView : (
-              <TaskBoard tasks={scopedTasks} onOpen={(id) => setOpenId(id)} onMove={moveTask} />
-            )}
+            {drawingTheTasks(<TaskBoard tasks={scopedTasks} onOpen={(id) => setOpenId(id)} onMove={moveTask} />)}
           </div>
         </div>
       ) : (
@@ -657,15 +658,12 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             {moveError && <div className="mb-s"><InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError></div>}
             <PartialNotice className="mb-s" complete={collection?.complete ?? true} shown={tasks?.length ?? 0} total={collection?.total ?? 0}
               what="tasks" detail="dependencies on the ones outside this window are not shown, so a blocked task can read as unblocked" />
-            {q && searchError ? <LoadError what="search results" error={searchError} onRetry={() => setSearchNonce((n) => n + 1)} />
+            {view === 'dag' ? drawingTheTasks(<TaskGraph tasks={scopedTasks} onOpen={(id) => setOpenId(id)} />)
+              : q && searchError ? <LoadError what="search results" error={searchError} onRetry={() => setSearchNonce((n) => n + 1)} />
               : filter === 'ready' && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
               : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
-            ) : view === 'dag' ? (
-              scopedTasks.length === 0
-                ? nothingInView
-                : <TaskGraph tasks={scopedTasks} onOpen={(id) => setOpenId(id)} />
             ) : filtered.length === 0 ? (
               // This branch is reachable through FOUR narrowing controls (search, status filter,
               // List section, Assigned), and it blamed "this filter" for all of them — a hint that
