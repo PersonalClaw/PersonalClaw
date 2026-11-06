@@ -23,7 +23,7 @@ import { WidgetBoundary } from '../../app/ErrorBoundary'
 import type { RouteProps } from '../../app/useQueryState'
 import { Button } from '../../ui/Button'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
-import { Segmented } from '../../ui/Segmented'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { StatusPill } from '../../ui/StatusPill'
 import { TextLink } from '../../ui/TextLink'
@@ -114,7 +114,7 @@ export const HOME_VIEWS = [
 type Shown = 'all' | Group
 
 const SHOWN_OPTIONS = [
-  { key: 'all', label: 'All' },
+  { key: 'all', label: 'All groups' },
   ...GROUPS.map((g) => ({ key: g, label: GROUP_LABEL[g] })),
 ]
 
@@ -201,19 +201,21 @@ export function Home({ defaultView = 'overview', ...route }: RouteProps & { defa
   const { query, setQuery, navigate } = route
   const view = query.view === 'overview' || query.view === 'attention' ? query.view : defaultView
   const { name } = useIdentity()
-  // The header's two actions go through the one responsive cluster, which sheds labels as the
-  // room narrows. A phone's New chat keeps a 44 px target beside the shell's corner controls.
+  // The header's controls go through the one responsive cluster, which sheds labels as the room
+  // narrows, in the one order every header keeps: the view's filter (Attention's), the View switch,
+  // New chat last. A phone's New chat keeps a 44 px target beside the shell's corner controls.
   const phone = useIsMobile()
-  const header = (
+  const header = (filter?: ReactNode) => (
     <TopBar
       contentAligned
       left={<h1 data-type="headline-s" className="min-w-0 truncate text-on-surface">{greetingFor(name)}</h1>}
       right={(
         <HeaderActions>
-          <HeaderControl icon={Plus} label="New chat" variant="secondary" priority="primary"
-            className={phone ? 'min-h-11 min-w-11' : undefined} onClick={() => navigate('chat/new')} />
+          {filter}
           <HeaderSegmented ariaLabel="View" options={HOME_VIEWS} value={view}
             onChange={(k) => setQuery({ view: k === defaultView ? null : k, open: null })} />
+          <HeaderControl icon={Plus} label="New chat" variant="secondary" priority="primary"
+            className={phone ? 'min-h-11 min-w-11' : undefined} onClick={() => navigate('chat/new')} />
         </HeaderActions>
       )}
     />
@@ -224,7 +226,7 @@ export function Home({ defaultView = 'overview', ...route }: RouteProps & { defa
     // matrix's clipped-ring check, on Schedule's "New trigger" at its viewport).
     return (
       <div className="flex h-full flex-col">
-        {header}
+        {header()}
         <div className="min-h-0 flex-1 overflow-y-auto"><HomeOverview {...route} /></div>
       </div>
     )
@@ -239,7 +241,7 @@ function greetingFor(name: string | undefined): string {
   return name ? `Good ${part}, ${firstNameOf(name)}` : `Good ${part}`
 }
 
-function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }) {
+function AttentionStack({ header, ...route }: RouteProps & { header: (filter?: ReactNode) => ReactNode }) {
   const { query, setQuery } = route
   const needs = useNeedsYou()
   // Every tool call is approved without asking while YOLO is on, the timed mode a chat's YOLO pill
@@ -379,7 +381,14 @@ function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }
   ].filter(Boolean)
 
   return (
-    <ListBesideDetail header={header} detail={detail} noun="Home">
+    <ListBesideDetail header={header(
+      // All three groups or one of them, so a narrow window can show the one it is for: a view
+      // choice, kept per browser, in the header's filter ("Show: All groups").
+      <HeaderFilter sections={[{
+        title: 'Show', value: shown, defaultKey: 'all', options: SHOWN_OPTIONS,
+        onChange: (k) => { const v = k as Shown; setShown(v); writeShown(v) },
+      }]} />,
+    )} detail={detail} noun="Home">
       <section role="region" aria-label="Home" data-tour="approvals"
         className="mx-auto flex w-full min-w-0 flex-col gap-l px-l py-l">
         {status?.yolo ? (
@@ -412,11 +421,6 @@ function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }
         ) : null}
 
         <StartSomething navigate={route.navigate} />
-
-        <div className="min-w-0">
-          <Segmented size="sm" collapse="scroll" ariaLabel="Show" options={SHOWN_OPTIONS} value={shown}
-            onChange={(k) => { const v = k as Shown; setShown(v); writeShown(v) }} />
-        </div>
 
         {shows('needs-you') ? <Group group="needs-you" count={needs.data ? needs.rows.length : null}>
           {needs.unreadable.length > 0 ? (

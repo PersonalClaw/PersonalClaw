@@ -3,7 +3,6 @@
     "targets": {
       "320": [
         "button \"Add knowledge\"",
-        "button \"Knowledge view\"",
         "button \"More actions\"",
         "button \"Open chat\"",
         "button \"Reports\"",
@@ -78,7 +77,6 @@
     "targets": {
       "320": [
         "button \"Add knowledge\"",
-        "button \"Knowledge view\"",
         "button \"More actions\"",
         "button \"Open chat\"",
         "button \"Reports\"",

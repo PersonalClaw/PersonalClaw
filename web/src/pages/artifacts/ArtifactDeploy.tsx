@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ChevronDown, ExternalLink, FolderOpen, PanelTop, PowerOff, Rocket } from 'lucide-react'
+import { ExternalLink, FolderOpen, PanelTop, PowerOff, Rocket } from 'lucide-react'
 import { api, type ArtifactDeployment, type ArtifactKind } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { QuietButton } from '../../ui/QuietButton'
-import { Popover } from '../../ui/Popover'
+import { HeaderPopover } from '../../ui/HeaderActions'
 
 /** Kinds that can be deployed — mirrors `DEPLOYABLE_KINDS` in
  *  `artifacts/deploy.py`. A markdown/image artifact already has a reader; "deploy" on
@@ -149,13 +149,9 @@ export function DeployedAppsMenu({ onOpen, onChanged }: {
   }
 
   return (
-    // `portal`: the toolbar row this trigger sits in clips its overflow, so an
-    // in-flow menu would be cut off at the row's edge.
-    <Popover placement="bottom" portal trigger={(open, toggle) => (
-      <QuietButton onClick={toggle} ariaExpanded={open} title="Artifacts currently served as pages">
-        <Rocket size={13} /> Deployed ({rows.length}) <ChevronDown size={11} />
-      </QuietButton>
-    )}>
+    // A header member (`HeaderPopover`): measured with the row and icon-only when it is tight. Its
+    // panel portals, so the row's scroller cannot clip it.
+    <HeaderPopover icon={Rocket} label={`Deployed (${rows.length})`} title="Artifacts currently served as pages">
       {() => (
         <div className="min-w-[20rem] p-1">
           {rows.map((r) => (
@@ -174,6 +170,6 @@ export function DeployedAppsMenu({ onOpen, onChanged }: {
           ))}
         </div>
       )}
-    </Popover>
+    </HeaderPopover>
   )
 }

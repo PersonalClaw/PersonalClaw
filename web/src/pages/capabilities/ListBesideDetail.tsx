@@ -58,12 +58,11 @@ function useNarrowerThanBeside(box: RefObject<HTMLElement | null>): boolean {
  *  stays mounted under a detail, so its scroll, its search and the row that opened the detail are
  *  where they were when it closes, and the focus goes back to that row.
  *
- *  `controls` is the list's own bar (search, filter, sort, its More menu); it sits over the list,
- *  never over the detail. */
-export function ListBesideDetail({ header, controls, detail, noun, children }: {
-  /** The tab's header: its title and the one action that adds to it. */
+ *  The list's controls (its search, filter and secondary actions) are in the header with the one
+ *  that adds, so no bar sits over the list. */
+export function ListBesideDetail({ header, detail, noun, children }: {
+  /** The tab's header: its title and every control of the tab, the one that adds last. */
   header: ReactNode
-  controls?: ReactNode
   detail: CapabilityDetail | null
   /** What the list holds, plural ("agents"), which names the way back to it. */
   noun: string
@@ -80,7 +79,6 @@ export function ListBesideDetail({ header, controls, detail, noun, children }: {
         <div data-capability-list hidden={detail !== null && compact}
           className={`@container flex min-w-0 flex-col ${beside ? 'shrink-0 border-r border-outline-variant/40' : 'flex-1'}`}
           style={beside ? { width: LIST_WIDTH } : undefined}>
-          {controls}
           <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
         </div>
         {detail && <DetailPane key={detail.id} detail={detail} compact={compact} noun={noun} />}

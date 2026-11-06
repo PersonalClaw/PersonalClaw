@@ -14,12 +14,13 @@ import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
-import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
-import { ListControls } from '../../ui/ListControls'
-import { FilterMenu, type FilterSectionDef, type FilterOption } from '../../ui/FilterMenu'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
+import { ListStatus } from '../../ui/ListControls'
+import { type FilterSectionDef, type FilterOption } from '../../ui/FilterMenu'
+import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { Modal } from '../../ui/Modal'
 import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
-import { ListMoreMenu } from '../capabilities/ListMoreMenu'
 import { byName, compareApps, orderSaid } from '../capabilities/capabilityOrder'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Markdown } from '../../ui/Markdown'
@@ -27,9 +28,7 @@ import { MoreRow } from '../../ui/MoreRow'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { TextInput, FieldError } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
-import { Segmented } from '../../ui/Segmented'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
-import { useIsMobile } from '../../app/useIsMobile'
 import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import {
@@ -46,7 +45,6 @@ import { dayStamp } from '../../lib/epoch'
 import { AppIcon } from './appIcon'
 import { BackendStatus, WorkerStatus } from './appProcesses'
 import { QualityBadges } from './qualityBadges'
-import { StoreSideRail, type RailOption } from './StoreSideRail'
 import { artGradient } from './appArt'
 import { AppConfigFields, unparsedSentence, useAppConfig } from './appConfigForm'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
@@ -325,7 +323,7 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
 }
 
 // ── Filter / sort vocabulary (shared by Library + Store) ────────────────────
-// Each list dimension is a single-select FilterMenu section; defaults below are
+// Each list dimension is a single-select section of the header filter; defaults below are
 // the "not filtering" key so the active-count badge + URL stay clean.
 
 type LibSortKey = 'name' | 'updated' | 'installed' | 'status' | 'type'
@@ -337,7 +335,7 @@ const LIB_SORTS: { key: LibSortKey; label: string }[] = [
   { key: 'type', label: 'Type' },
 ]
 const LIB_STATUS = [
-  { key: 'all', label: 'All' },
+  { key: 'all', label: 'All apps' },
   { key: 'enabled', label: 'Enabled' },
   { key: 'disabled', label: 'Disabled' },
 ]
@@ -359,7 +357,7 @@ const STORE_SORTS: { key: StoreSortKey; label: string }[] = [
   { key: 'type', label: 'Type' },
 ]
 const STORE_TYPES = [
-  { key: 'all', label: 'All' },
+  { key: 'all', label: 'All apps' },
   { key: 'standard', label: 'Standard apps' },
   { key: 'provider', label: 'Provider apps' },
 ]
@@ -519,10 +517,6 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   // about what "this source" means. URL-backed like every other filter here, which is
   // what makes a rail selection survive a reload.
   const [storeSrc, setStoreSrc] = useQueryParam(q, sq, 'ssrc', 'all', { replace: true })
-  // Below the shell's own rail threshold the Store rail is replaced by the
-  // FilterMenu dropdown sections. One media query, the same one the nav rail uses —
-  // when the shell collapses its rail to a drawer, this one collapses to a dropdown.
-  const isMobile = useIsMobile()
 
   const reload = () => { invalidateKeys('apps'); invalidateKeys('app-catalog'); refresh(); refreshCatalog() }
   const reloadCatalog = () => { invalidateKeys('app-catalog'); refreshCatalog() }
@@ -618,10 +612,6 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   // installed. Exactly one is set (installed apps aren't in the Store universe).
   const open = apps?.find((a) => a.name === openName) ?? null
   const openStore = open ? null : (storeUniverse.find((e) => e.name === openName) ?? null)
-  // The Store's category and source rail sits beside its cards while the list has the whole width.
-  // A detail beside the list leaves it a fixed narrow column, so the rail's two dimensions move into
-  // the Filter & sort menu then, as they do on a phone.
-  const railShown = !isMobile && !(open || openStore || sourcesOpen)
 
   // Shared, real app actions (enable/disable inline; configure/update/force-
   // uninstall modals; open→app page) — dispatched by BOTH the cards and the
@@ -634,62 +624,62 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   const libSections: FilterSectionDef[] = useMemo(() => {
     const all = apps ?? []
     const provTypes = all.filter((a) => a.isProvider).map((a) => a.providerType)
+    // What the list shows, then its order, as the header filter's label reads them ("Show: All
+    // apps · Sorted by name"); the finer choices are named there only once set.
     const s: FilterSectionDef[] = [
-      { title: 'Sort by', value: libSort, defaultKey: 'name', onChange: setLibSort,
-        options: LIB_SORTS.map((o) => ({ key: o.key, label: o.label })) },
       { title: 'Status', value: libStatus, defaultKey: 'all', onChange: setLibStatus,
         options: LIB_STATUS.map((o) => ({ ...o, count: o.key === 'all' ? undefined : cnt(all, (a) => (o.key === 'enabled') === a.enabled) })) },
-      { title: 'Type', value: libType, defaultKey: 'all', onChange: setLibType,
+      { title: 'Type', value: libType, defaultKey: 'all', onChange: setLibType, quiet: true,
         options: LIB_TYPES.map((o) => ({ ...o, count: o.key === 'all' ? undefined : cnt(all, (a) => libKind(a) === o.key) })) },
-      { title: 'Capability', value: libCap, defaultKey: 'all', onChange: setLibCap,
+      { title: 'Capability', value: libCap, defaultKey: 'all', onChange: setLibCap, quiet: true,
         options: LIB_CAPS.map((o) => ({ ...o, count: o.key === 'all' ? undefined : cnt(all, (a) => o.key === 'ui' ? a.hasUI : o.key === 'backend' ? a.hasBackend : a.hasConfig) })) },
     ]
     const entities = entityOptions(provTypes)
-    if (entities.length) s.push({ title: 'Provider entity', value: libEntity, defaultKey: 'all', onChange: setLibEntity,
+    if (entities.length) s.push({ title: 'Provider entity', value: libEntity, defaultKey: 'all', onChange: setLibEntity, quiet: true,
       options: [{ key: 'all', label: 'Any entity' }, ...entities] })
+    s.push({ title: 'Sort by', value: libSort, defaultKey: 'name', onChange: setLibSort, said: orderSaid,
+      options: LIB_SORTS.map((o) => ({ key: o.key, label: o.label })) })
     return s
   }, [apps, libSort, libStatus, libType, libCap, libEntity])
 
-  // ── ONE derivation of the Store's category + source vocabulary, consumed by
-  //    BOTH the wide-viewport rail and the narrow-viewport dropdown. Two derivations is
-  //    how the two presentations start disagreeing about what exists.
+  // ── ONE derivation of the Store's category + source vocabulary, the header filter's
+  //    Categories and Sources sections.
   //    🔑 Counts are over `storeUniverse` — the exact set the grid can render — not over
   //    installed ∪ catalog. The Store deliberately EXCLUDES installed apps (they live in
   //    the Library), so a category counted over installed apps would offer a filter whose
   //    grid comes back empty: a count maintained beside a table it does not describe.
-  const storeCategories: RailOption[] = useMemo(
+  const storeCategories: FilterOption[] = useMemo(
     () => tagOptions(storeUniverse.map((e) => e.tags ?? []))
       .map((o) => ({ key: o.key, label: categoryLabel(o.label), count: o.count ?? 0 })),
     [storeUniverse])
-  const storeSources: RailOption[] = useMemo(
+  const storeSources: FilterOption[] = useMemo(
     () => groupBySource(storeUniverse, catalog?.localSources ?? [])
       .map((g) => ({ key: g.key, label: g.label, count: g.items.length })),
     [storeUniverse, catalog?.localSources])
 
   const storeSections: FilterSectionDef[] = useMemo(() => {
     const s: FilterSectionDef[] = [
-      { title: 'Sort by', value: storeSort, defaultKey: 'name', onChange: setStoreSort,
-        options: STORE_SORTS.map((o) => ({ key: o.key, label: o.label })) },
       { title: 'Type', value: storeType, defaultKey: 'all', onChange: setStoreType,
         options: STORE_TYPES.map((o) => ({ ...o, count: o.key === 'all' ? undefined : cnt(storeUniverse, (e) => (o.key === 'provider') === e.isProvider) })) },
     ]
     const entities = entityOptions(storeUniverse.filter((e) => e.isProvider).map((e) => e.providerType))
-    if (entities.length) s.push({ title: 'Provider entity', value: storeEntity, defaultKey: 'all', onChange: setStoreEntity,
+    if (entities.length) s.push({ title: 'Provider entity', value: storeEntity, defaultKey: 'all', onChange: setStoreEntity, quiet: true,
       options: [{ key: 'all', label: 'Any entity' }, ...entities] })
-    // The two rail dimensions appear in this dropdown ONLY while the rail is not shown (a narrow
-    // viewport, or a detail beside the list). The rail owns them whenever it is on screen, so a
-    // wide user never meets the same filter twice — and one with no rail still reaches both.
-    if (!railShown && storeCategories.length) {
-      s.push({ title: 'Categories', value: storeTag, defaultKey: 'all', onChange: setStoreTag,
-        options: [{ key: 'all', label: 'All apps' }, ...storeCategories] })
+    // Categories and Sources filter the grid in place, so they are sections of the header's filter
+    // at every width (they were a rail beside the grid on a wide one). Add source is the Sources
+    // section's last row: it opens the sources panel.
+    if (storeCategories.length) {
+      s.push({ title: 'Categories', value: storeTag, defaultKey: 'all', onChange: setStoreTag, quiet: true,
+        options: [{ key: 'all', label: 'All apps', count: storeUniverse.length }, ...storeCategories] })
     }
-    if (!railShown && storeSources.length) {
-      s.push({ title: 'Sources', value: storeSrc, defaultKey: 'all', onChange: setStoreSrc,
-        options: [{ key: 'all', label: 'All sources' }, ...storeSources] })
-    }
+    s.push({ title: 'Sources', value: storeSrc, defaultKey: 'all', onChange: setStoreSrc, quiet: true,
+      options: [{ key: 'all', label: 'All sources', count: storeUniverse.length }, ...storeSources],
+      actions: [{ label: 'Add source', icon: Plus, onSelect: () => setSourcesOpen(true) }] })
+    s.push({ title: 'Sort by', value: storeSort, defaultKey: 'name', onChange: setStoreSort, said: orderSaid,
+      options: STORE_SORTS.map((o) => ({ key: o.key, label: o.label })) })
     return s
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeUniverse, storeSort, storeType, storeEntity, storeTag, storeSrc, railShown, storeCategories, storeSources])
+  }, [storeUniverse, storeSort, storeType, storeEntity, storeTag, storeSrc, storeCategories, storeSources])
 
   // 🔑 ONE definition of "narrowed" per view, named once and used by BOTH the empty state and the
   // announcement. Each was already written out — the library's inside its empty-state condition, the
@@ -701,8 +691,8 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   // Controls show whenever there's a populated list to act on (or while loading).
   const showLibControls = !isStore && (apps === undefined || apps.length > 0)
   // The Store now lists the full known-app universe (installed + available), so its search and
-  // Filter & sort show whenever it's non-empty (or still loading). Its bar itself is always there,
-  // for the More menu that holds Manage Sources.
+  // filter show whenever it's non-empty (or still loading). Manage Sources is in the header's `…`
+  // either way.
   const showStoreControls = isStore && (catalog === undefined || storeUniverse.length > 0)
 
   // The selected app's detail beside the list (`?open=`): an installed app's with its lifecycle, or
@@ -728,129 +718,44 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
       <ListBesideDetail noun="apps" detail={detail}
         header={<TopBar
           keepCornerPadding
-          left={
-            <div className="flex items-center gap-3 min-w-0">
-              {/* `shrink-0`: the row's other item is a `Segmented` that DECLARES a collapse
-                  strategy (below), so when the two compete the strip is the one meant to give
-                  way — one pill naming the active view — and the page's own name is the one
-                  thing on the row that cannot be abbreviated. Left to the default the title is
-                  a shrinkable flex item and the row resolves the squeeze against the heading.
-                  Deliberately NOT in `PageTitle` itself: ~30 destinations render a title beside
-                  header actions where truncating a long name IS the right answer, so a
-                  primitive-wide `shrink-0` would trade this defect for thirty. */}
-              <PageTitle className="shrink-0">{isStore ? 'Store' : 'Apps'}</PageTitle>
-              {/* The Store is a tab of Capabilities of its own (#3817), so this strip switches the Apps
-                  tab between Native and Library, and the Store tab draws none. The measurements below
-                  were taken with the Store as a third option here; two options are narrower still.
-
-                  🔴 THE ONLY HEADER-ROW `Segmented` IN THE APP WITH NO COLLAPSE STRATEGY, and it is the
-                  widest thing in this row. Measured at 390px: the strip spans 86..276 (**190px**) inside a
-                  ~199px slot (the header is 390 wide with 191px of shell-corner reservation), so it
-                  overflowed and axe reported `target-size` **serious** — `Library` ∩ `Install from URL`
-                  overlapping by **40×32**, plus the `Store` tab running under the terminal and
-                  notification corner controls by 26×26 each. A tap in those regions hits the wrong
-                  control.
-                  `collapse="menu"` is the same strategy every sibling Segmented in a header row already
-                  declares (`LoopComposer`'s Granularity, Mode and Project kind) and which that row's own
-                  comment prescribes: "the row can only fit by each wide control having its OWN collapse
-                  strategy". Below the fit threshold this becomes one pill naming the active view, opening
-                  the three in a popover — roles and arrow-key behaviour are untouched.
-
-                  🔑 `collapse="menu"` ALONE IS NOT ENOUGH HERE, and the primitive's own docstring says why:
-                  "labelled, the pill is ~119px, which still overflowed a phone header's ~42px control rail".
-                  Re-measured at 390px with only the collapse strategy added, the folded pill was **84×32 at
-                  113..197** inside a **115px** left slot (44..159) — so it still ran 38px into the action
-                  cluster and still overlapped `Install from URL` by **38×32**. The overlap shrank from 40×32
-                  to 38×32; it did not go away. Its exact width tracks the active option's label, so the
-                  same variant measures **105×32 at 113..218** on `Library` — a wider label is a worse clash,
-                  not a better one.
-
-                  🔑 AND THE LABELLED PILL IS THE WEAKER TAP TARGET, not the stronger one. `iconOnly` looks
-                  like it trades target size for title space, so it was measured rather than argued:
-                  `document.elementFromPoint` at the labelled pill's OWN CENTRE returns `Install from URL`,
-                  and Playwright cannot click the control at all (57 retries, `subtree intercepts pointer
-                  events`). A 105×32 box whose centre belongs to another control is a 0px target. The bare
-                  form measures 32×32 at 113..145 with nothing overlapping it and its centre resolving to
-                  itself, so this RESTORES a reachable target.
-                  So take the primitive's LAST rung too. `iconOnly` on mobile makes the folded pill `size-8`
-                  (**32×32** at 113..145, clear of the action cluster and above the 24px SC 2.5.8 floor — not
-                  a crushed target), which is the first form that fits the **44px** the title leaves.
-                  That needs every option to carry an icon, because `CollapsedSegmented` deliberately falls
-                  back to the labelled pill when the active option has no glyph — the icons are what unlocks
-                  the rung, not decoration. Same shape as `SkillsPage`'s `ModeToggle`, the sibling that
-                  already resolved this exact squeeze.
-                  The icons widen the expanded strip (186 → 249px), so the fit decision was swept across
-                  widths to check that did not trade the phone clash for a laptop one — `need` is the hidden
-                  probe's intrinsic width, `avail` the slot this control actually gets:
-
-                      ≥1180px   need 249  avail 261   full strip, tabs 73×32
-                       1024px   need 249  avail 117   folded pill "Library" 105px
-                        900px   need 249  avail  79   folded pill "Library" 105px
-                       ≤768px   need 108  avail  44   folded pill, bare 32×32   ← iconOnly
-                        320px   need 108  avail -20   folded pill, bare 32×32
-
-                  No band regressed: at 1024/900 the OLD 186px strip already exceeded a 117/79px slot, so
-                  that width used to crush its tabs rather than fold — folding is the improvement there too.
-                  The ≥1180px margin is 12px, and running out of it folds to a named pill, which is the
-                  designed rung rather than a clip. */}
-              {!isStore && (
-                <Segmented ariaLabel="Native or Library" collapse="menu" iconOnly={isMobile}
-                  value={view} onChange={setView}
-                  options={[
-                    { key: 'native', label: 'Native', icon: Boxes },
-                    { key: 'library', label: 'Library', icon: Package },
-                  ]} />
-              )}
-            </div>
-          }
+          left={<PageTitle>{isStore ? 'Store' : 'Apps'}</PageTitle>}
           right={<HeaderActions>
-            {/* The one action the header holds (#3817): Install on the Store tab, and on Apps, where
-                adding an app is installing one. Manage Sources is in the Store list's More menu. */}
+            {showLibControls && <HeaderSearch value={search} onChange={setSearch} placeholder="Search installed apps" label="Search apps" />}
+            {showLibControls && <HeaderFilter sections={libSections} />}
+            {showStoreControls && <HeaderSearch value={search} onChange={setSearch} placeholder="Search the Store" label="Search Store" />}
+            {showStoreControls && <HeaderFilter sections={storeSections} />}
+            {/* The Store is a tab of Capabilities of its own (#3817), so this switches the Apps tab
+                between Native and Library, and the Store tab draws none. Every option carries an
+                icon, so on a phone it folds to its bare glyph and keeps a reachable target. */}
+            {!isStore && (
+              <HeaderSegmented ariaLabel="Native or Library" value={view} onChange={setView}
+                options={[
+                  { key: 'native', label: 'Native', icon: Boxes },
+                  { key: 'library', label: 'Library', icon: Package },
+                ]} />
+            )}
+            {isStore && <HeaderControl icon={Database} label="Manage Sources" inOverflow onClick={() => { setOpenName(''); setSourcesOpen(true) }} />}
+            {/* Install is the header's primary on both tabs: on Apps, adding an app is installing one. */}
             <HeaderControl icon={Plus} label="Install from URL" variant="primary" priority="primary" onClick={() => setInstalling(true)} />
           </HeaderActions>}
         />}
-        controls={showLibControls ? (
-          <ListControls search={{ value: search, onChange: setSearch, placeholder: 'Search installed apps', label: 'Search apps' }}
-            results={{ count: (libResult ?? []).length, noun: 'apps', active: apps !== undefined && libNarrowed }}
-            stale={apps !== undefined && appsStale}>
-            {/* The control names the order the list shows. */}
-            <FilterMenu sections={libSections} label={orderSaid(libSort)} />
-          </ListControls>
-        ) : isStore ? (
-          <ListControls
-            search={showStoreControls ? { value: search, onChange: setSearch, placeholder: 'Search the Store', label: 'Search Store' } : undefined}
-            results={{ count: storeResult.length, noun: 'apps', active: catalog !== undefined && storeNarrowed }}
-            stale={catalog !== undefined && catalogStale}>
-            {showStoreControls && <FilterMenu sections={storeSections} label={orderSaid(storeSort)} />}
-            <ListMoreMenu actions={[{ label: 'Manage Sources', icon: Database, onSelect: () => { setOpenName(''); setSourcesOpen(true) } }]} />
-          </ListControls>
-        ) : undefined}
       >
+        {showLibControls ? (
+          <ListStatus results={{ count: (libResult ?? []).length, noun: 'apps', active: apps !== undefined && libNarrowed }}
+            stale={apps !== undefined && appsStale} />
+        ) : isStore ? (
+          <ListStatus results={{ count: storeResult.length, noun: 'apps', active: catalog !== undefined && storeNarrowed }}
+            stale={catalog !== undefined && catalogStale} />
+        ) : null}
         <div className="mx-auto px-l py-l">
           {isStore ? (
-            /* The Store is a two-column surface on a wide viewport — the
-               persistent category/source rail, then the card grid. The rail is
-               rendered HERE, by the page a user actually reaches (`#/apps?view=store`),
-               not only inside its own test: `storeRail.test.tsx` mounts this component
-               and would go red if this line were deleted. Below the mobile threshold the
-               rail is absent and its two dimensions move into the FilterMenu dropdown. */
-            <div className="flex items-start gap-l">
-              {railShown && (
-                <StoreSideRail
-                  categories={storeCategories} category={storeTag} onCategory={setStoreTag}
-                  categoryTotal={storeUniverse.length}
-                  sources={storeSources} source={storeSrc} onSource={setStoreSrc}
-                  sourceTotal={storeUniverse.length}
-                  onAddSource={() => setSourcesOpen(true)} />
-              )}
-              <div className="min-w-0 flex-1">
-                <StoreView catalog={catalog} catalogError={catalogErr} result={storeResult} totalKnown={storeUniverse.length}
-                  installedCount={(apps ?? []).filter((a) => !a.native).length}
-                  onInstalled={noteInstalled} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag, setStoreSrc)}
-                  filtersActive={storeNarrowed}
-                  onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch} openName={openName}
-                  onOpenSources={() => setSourcesOpen(true)} />
-              </div>
+            <div className="min-w-0">
+              <StoreView catalog={catalog} catalogError={catalogErr} result={storeResult} totalKnown={storeUniverse.length}
+                installedCount={(apps ?? []).filter((a) => !a.native).length}
+                onInstalled={noteInstalled} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag, setStoreSrc)}
+                filtersActive={storeNarrowed}
+                onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch} openName={openName}
+                onOpenSources={() => setSourcesOpen(true)} />
             </div>
           ) : apps === undefined && appsErr ? (
             // Before the skeleton branch, or a failed fetch spins it forever.

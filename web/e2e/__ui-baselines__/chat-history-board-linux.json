@@ -11,16 +11,13 @@
       ],
       "390": [
         "button \"Generate Tags\"",
-        "button \"More actions\"",
         "button \"New chat\"",
         "button \"New folder\"",
-        "button \"View\"",
         "button[role=radio] \"Board view (by tag)\"",
         "button[role=radio] \"List view\""
       ],
       "412": [
         "button \"Generate Tags\"",
-        "button \"More actions\"",
         "button \"New chat\"",
         "button \"New folder\"",
         "button[role=radio] \"Board view (by tag)\"",
@@ -52,16 +49,13 @@
       ],
       "390": [
         "button \"Generate Tags\"",
-        "button \"More actions\"",
         "button \"New chat\"",
         "button \"New folder\"",
-        "button \"View\"",
         "button[role=radio] \"Board view (by tag)\"",
         "button[role=radio] \"List view\""
       ],
       "412": [
         "button \"Generate Tags\"",
-        "button \"More actions\"",
         "button \"New chat\"",
         "button \"New folder\"",
         "button[role=radio] \"Board view (by tag)\"",

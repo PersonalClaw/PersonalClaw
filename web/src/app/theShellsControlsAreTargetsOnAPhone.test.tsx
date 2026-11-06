@@ -96,7 +96,8 @@ describe("the shell's controls on a phone", () => {
       { id: 'files', label: 'Files', icon: FileText, address: 'files' },
     ]
     render(<DestinationTabs name="Library" tabs={tabs} tab="files" navigate={() => {}} fallback={null}>{null}</DestinationTabs>)
-    const pill = await screen.findByRole('button', { name: 'Library' })
+    // Named by its dimension and the tab it shows (WCAG 2.5.3).
+    const pill = await screen.findByRole('button', { name: 'Library: Files' })
     expect(compactFloor(pill), pill.className).toBe(true)
     // The strip sits in TopBar's left slot, whose title rule gives every `[data-type]` in it
     // `min-width: 0` from a descendant selector, and the pill has a `data-type`. A plain

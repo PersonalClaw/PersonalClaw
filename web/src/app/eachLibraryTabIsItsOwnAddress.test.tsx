@@ -58,7 +58,7 @@ registerBuiltinContentTypes()
 beforeAll(async () => {
   await Promise.all([
     import('../pages/knowledge/KnowledgeSection'),
-    import('../pages/settings/MemoryPanel'),
+    import('../pages/library/MemoryPage'),
     import('../pages/files/FilesSection'),
     import('../pages/artifacts/ArtifactsSection'),
     import('../pages/settings/SettingsPage'),
@@ -101,8 +101,9 @@ const checkedView = () => within(knowledgeViews()).getAllByRole('radio').filter(
   .map((r) => r.textContent)
 /** The reader's article, or null where the item is not open in it. */
 const reader = () => screen.queryByRole('group', { name: 'Article body' })
-/** The Memory view the page has selected. */
-const memoryView = () => within(screen.getByRole('tablist', { name: 'Memory view' })).getByRole('tab', { selected: true }).textContent
+/** The Memory view the page has selected: its header's view switch. */
+const memoryView = () => within(screen.getByRole('radiogroup', { name: 'Memory view' })).getAllByRole('radio')
+  .find((r) => r.getAttribute('aria-checked') === 'true')?.textContent
 
 /** The deeper addresses the issue names, each with the tab it belongs to and what it draws there,
  *  the sub-view the address names. Each opens as itself. */

@@ -27,10 +27,10 @@
     - radio "Automations" [checked]
     - radio "Workflows"
   - heading "Automations" [level=#]
-  - button "New trigger"
   - radiogroup "Triggers view":
     - radio "List"
     - radio "Week" [checked]
+  - button "New trigger"
   - status
   - text: <month> # – # # fires this week · # suppressed
   - button "Previous week"

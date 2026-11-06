@@ -312,7 +312,7 @@ describe('it walks all five stops, over the real surfaces', () => {
       chat: 'pages/chat/composer/ChatComposer.tsx',
       inbox: 'pages/inbox/InboxPage.tsx',
       approvals: 'pages/dashboard/Home.tsx',
-      settings: 'pages/settings/SettingsHome.tsx',
+      settings: 'pages/settings/SettingsPage.tsx',
     }
     for (const stop of PRODUCT_TOUR_STOPS) {
       const host = HOSTS[stop.anchor]

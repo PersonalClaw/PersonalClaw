@@ -741,19 +741,12 @@ describe('the tone-as-ink-and-tint family stays inside the swept envelope', () =
    *  case where a new chip copies an existing file+tone pair exactly. */
   const key = (s: Site) => `${s.file} @${s.pct}% ${s.tone.replace(/\s+/g, ' ').trim()}`
 
-  // The two sites above 18% are named, with the reason each is out of the ink budget rather than
-  // simply unfixed. A THIRD one reds this test and has to be argued for.
-  const ABOVE_CEILING = new Set([
-    // A knowledge-TYPE hue on a selected filter chip. `KnowledgeListPage.tsx` already carries the
-    // reasoning beside it: no `<tone>-container` sibling exists, the coral container would be visually
-    // wrong, and "if one ever fails, it needs its own container value, not a guess made from this
-    // one". Respected, not re-litigated.
-    'pages/knowledge/KnowledgeListPage.tsx @20% tone',
-    // A user-chosen chat-tag colour (`t.color`). The tone is USER DATA, so no token value can
-    // constrain it — this one needs a contrast-aware ink picked at render time, which is a
-    // different change from a scheme retune. (Moved with the chat history page.)
-    "pages/chat/history/ChatHistoryPage.tsx @22% t.color || 'var(--color-primary)",
-  ])
+  // A site above 18% is named here, with the reason it is out of the ink budget rather than simply
+  // unfixed. None is now: the two that were, a knowledge type's hue on Knowledge's selected filter
+  // chip and a chat tag's own colour on Chat history's tag filter, went with those chips into the
+  // header's filter, whose rows mark the choice with a check. A new one reds this test and has to
+  // be argued for.
+  const ABOVE_CEILING = new Set<string>([])
 
   it('no chip tints above the 18% ceiling these tiers were swept at', () => {
     const over = SITES.filter((s) => s.pct > 18).map(key)
@@ -761,7 +754,7 @@ describe('the tone-as-ink-and-tint family stays inside the swept envelope', () =
     expect(unexpected, `above the swept ceiling with no recorded reason:\n${unexpected.join('\n')}\n` +
       `Sweep that strength in this file first, or use one that is already swept (≤16% on any resting ` +
       `tier, 18% on --color-surface).`).toEqual([])
-    expect(over.length, 'the two recorded exceptions still exist (or this allowance is stale)').toBe(ABOVE_CEILING.size)
+    expect(over.length, 'each recorded exception still exists (or this allowance is stale)').toBe(ABOVE_CEILING.size)
   })
 
   it('the 18% population is exactly the eight sites whose tones were reasoned about', () => {

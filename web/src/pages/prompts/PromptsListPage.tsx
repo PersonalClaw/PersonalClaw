@@ -2,14 +2,14 @@ import { useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { Plus, FileText, Puzzle, Maximize2, User, Cog, Package } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
-import { Segmented } from '../../ui/Segmented'
-import { ListControls } from '../../ui/ListControls'
-import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
+import { ListStatus } from '../../ui/ListControls'
+import { type FilterSectionDef } from '../../ui/FilterMenu'
+import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
 import { comparePrompts, orderSaid } from '../capabilities/capabilityOrder'
-import { useIsMobile } from '../../app/useIsMobile'
 import { ContextMenu, type ContextMenuItem, Disintegrate } from '../../ui/motion'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type PromptItem, type PromptKind, type PromptSnippet } from '../../lib/api'
@@ -122,7 +122,6 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
   const openName = openNameRaw || null
   const [editing, setEditing] = useEditFlag(query, setQuery)
   const isSnips = tab === 'snippets'
-  const isMobile = useIsMobile()
   // The Source filter and sort exist only where origins still MIX — the snippets. On a prompt tab
   // the tab already is the origin, so "Bundled" there could only ever filter the User tab to
   // nothing — and a `src` left in the URL would do that with no visible control to clear it.
@@ -163,9 +162,11 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
   const loadErr = isSnips ? snipsErr : itemsErr
   const anyItems = isSnips ? (snippets === undefined || (snippets?.length ?? 0) > 0) : (items === undefined || (items?.length ?? 0) > 0)
 
+  // What the list shows, then its order: the header filter's label reads them in that order, the
+  // order in its own words ("Show: All sources · Sorted by name").
   const filterSections: FilterSectionDef[] = [
-    { title: 'Sort by', value: sort, defaultKey: 'name', onChange: (k) => setSort(k), options: sorts.map((s) => ({ key: s.key, label: s.label })) },
     ...(isSnips ? [{ title: 'Source', value: source, defaultKey: 'all', onChange: (k: string) => setSource(k), options: SOURCES.map((s) => ({ key: s.key, label: s.label })) }] : []),
+    { title: 'Sort by', value: sort, defaultKey: 'name', onChange: (k) => setSort(k), said: orderSaid, options: sorts.map((s) => ({ key: s.key, label: s.label })) },
   ]
 
   // The open record's detail, beside the list (`?open=`), with its way to the full page.
@@ -197,32 +198,21 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
       header={
         <TopBar
           keepCornerPadding
-          // The view switch sits beside the title, as the Skills and Apps tabs' do, so the header's
-          // actions are the one that adds (#3817). Search, sort and the source filter live on the
-          // list's own bar.
-          left={
-            <div className="flex min-w-0 items-center gap-m">
-              <PageTitle className="shrink-0">Prompts</PageTitle>
-              <Segmented ariaLabel="Prompts view" collapse="menu" iconOnly={isMobile} value={tab}
-                onChange={(v) => { setTab(v as Tab); setQuery({ open: null, edit: null }) }} options={TABS} />
-            </div>
-          }
+          left={<PageTitle>Prompts</PageTitle>}
           right={
             <HeaderActions>
+              {anyItems && <HeaderSearch value={q} onChange={setQ} placeholder={isSnips ? 'Search snippets' : 'Search prompts'} />}
+              {/* Its label names the order the list shows, and on Snippets the source too. */}
+              {anyItems && <HeaderFilter sections={filterSections} prefix={isSnips ? 'Show' : ''} />}
+              <HeaderSegmented ariaLabel="Prompts view" value={tab}
+                onChange={(v) => { setTab(v as Tab); setQuery({ open: null, edit: null }) }} options={TABS} />
               <HeaderControl icon={Plus} label={isSnips ? 'New snippet' : 'New prompt'} variant="primary" priority="primary" onClick={() => onCreate(createKind)} />
             </HeaderActions>
           }
         />
       }
-      controls={anyItems
-        ? <ListControls
-            search={{ value: q, onChange: setQ, placeholder: isSnips ? 'Search snippets' : 'Search prompts', label: 'Search' }}
-            results={{ count: (rows ?? []).length, noun: isSnips ? 'snippets' : 'prompts', active: !!q.trim() }}>
-            {/* The control names the order the list shows. */}
-            <FilterMenu sections={filterSections} label={orderSaid(sort)} />
-          </ListControls>
-        : undefined}
     >
+      {anyItems && <ListStatus results={{ count: (rows ?? []).length, noun: isSnips ? 'snippets' : 'prompts', active: !!q.trim() }} />}
       <div className="mx-auto px-l py-l">
         {rows === null && loadErr ? (
           <LoadError what={isSnips ? 'snippets' : 'prompts'} error={loadErr} onRetry={load} />

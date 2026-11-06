@@ -3,10 +3,11 @@ import { withWeight } from '../../design/fontWeight'
 import { Wrench, ShieldAlert, Server, Cpu, Plug, Circle, CircleAlert, RefreshCw, Loader2, Plus, Trash2, Download, ChevronRight, MessageCircleQuestion, ShieldCheck, Pencil, KeyRound, LogOut, Copy } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
-import { ListControls } from '../../ui/ListControls'
+import { ListStatus } from '../../ui/ListControls'
+import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ListBesideDetail } from '../capabilities/ListBesideDetail'
-import { ListMoreMenu } from '../capabilities/ListMoreMenu'
 import { CapabilityPermissions, toolPermissions } from '../capabilities/CapabilityPermissions'
 import { compareToolProviders, compareTools } from '../capabilities/capabilityOrder'
 import { Modal } from '../../ui/Modal'
@@ -591,28 +592,24 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
           left={<PageTitle>Tools</PageTitle>}
           right={
             <HeaderActions>
+              {hasTools && <HeaderSearch value={q} onChange={setQ} placeholder="Search tools" />}
+              {hasTools && (
+                <HeaderFilter sections={[{
+                  title: 'Risk', value: risk, defaultKey: 'all', onChange: setRisk,
+                  options: [
+                    { key: 'all', label: 'Any risk' },
+                    { key: 'safe', label: 'Safe' },
+                    { key: 'caution', label: 'Caution' },
+                    { key: 'destructive', label: 'Destructive' },
+                  ],
+                }]} />
+              )}
+              <HeaderControl icon={probing ? Loader2 : RefreshCw} label={probing ? 'Re-probing MCP servers…' : 'Re-probe MCP servers'}
+                inOverflow onClick={reprobe} disabled={probing} disabledReason={probing ? 'A re-probe is running; it can run again once it ends.' : undefined} />
               <HeaderControl icon={Plus} label="Add tool server" priority="primary" onClick={() => setAddOpen(true)} />
             </HeaderActions>
           }
         />
-      }
-      // The bar is always there for the More menu, which holds what the header no longer does; its
-      // search and risk filter wait for tools to narrow.
-      controls={
-        <ListControls
-          search={hasTools ? { value: q, onChange: setQ, placeholder: 'Search tools', label: 'Search tools' } : undefined}
-          results={{ count: shownTools, noun: 'tools', active: groups !== null && filtered }}
-          filter={hasTools ? {
-            value: risk, onChange: setRisk, ariaLabel: 'Filter by risk level',
-            options: [
-              { key: 'all', label: 'All' },
-              { key: 'safe', label: 'Safe', tone: 'var(--color-ok)' },
-              { key: 'caution', label: 'Caution', tone: 'var(--color-warn)' },
-              { key: 'destructive', label: 'Destructive', tone: 'var(--color-danger)' },
-            ],
-          } : undefined}>
-          <ListMoreMenu actions={[{ label: probing ? 'Re-probing MCP servers…' : 'Re-probe MCP servers', icon: probing ? Loader2 : RefreshCw, onSelect: reprobe, disabledReason: probing ? 'A re-probe is running; it can run again once it ends.' : undefined }]} />
-        </ListControls>
       }
       detail={open && {
         id: open.name, title: open.name, onClose: () => setOpenName(''),
@@ -625,6 +622,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       }}
     >
       <>
+        <ListStatus results={{ count: shownTools, noun: 'tools', active: groups !== null && filtered }} />
         <div className="mx-auto px-l py-l">
           {tools === null && loadErr ? (
             <LoadError what="tools" error={loadErr} onRetry={load} />

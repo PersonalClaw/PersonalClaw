@@ -23,7 +23,7 @@
 {"file":"pages/chat/composer/PasteCards.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/composer/QueueStack.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/header/ChatHeader.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
-{"file":"pages/chat/history/ChatHistoryPage.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
+{"file":"pages/chat/history/ChatHistoryPage.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/history/SessionPeek.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
 {"file":"pages/chat/inspector/InspectorSection.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/transcript/AssistantSegments.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
@@ -54,12 +54,11 @@
 {"file":"pages/files/browse/FileTree.tsx","raw-button":3,"raw-input":3,"raw-dialog":0}
 {"file":"pages/files/browse/PathBar.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
 {"file":"pages/files/comments/CommentLayer.tsx","raw-button":0,"raw-input":2,"raw-dialog":0}
-{"file":"pages/inbox/InboxPage.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/knowledge/AudioRecorder.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/knowledge/KnowledgeCreatePage.tsx","raw-button":2,"raw-input":5,"raw-dialog":0}
 {"file":"pages/knowledge/KnowledgeDetail.tsx","raw-button":1,"raw-input":2,"raw-dialog":0}
 {"file":"pages/knowledge/KnowledgeDetailPage.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
-{"file":"pages/knowledge/KnowledgeListPage.tsx","raw-button":5,"raw-input":0,"raw-dialog":0}
+{"file":"pages/knowledge/KnowledgeListPage.tsx","raw-button":4,"raw-input":0,"raw-dialog":0}
 {"file":"pages/loop/LoopComposer.tsx","raw-button":2,"raw-input":4,"raw-dialog":0}
 {"file":"pages/loop/LoopRuntimePill.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/loop/LoopSelfApproval.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
@@ -87,7 +86,7 @@
 {"file":"pages/settings/AuditPanel.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/settings/DesignPanel.tsx","raw-button":5,"raw-input":0,"raw-dialog":0}
 {"file":"pages/settings/DiagnosticsPanel.tsx","raw-button":5,"raw-input":0,"raw-dialog":0}
-{"file":"pages/settings/MemoryPanel.tsx","raw-button":5,"raw-input":2,"raw-dialog":0}
+{"file":"pages/settings/MemoryPanel.tsx","raw-button":3,"raw-input":2,"raw-dialog":0}
 {"file":"pages/settings/ModelBackends.tsx","raw-button":0,"raw-input":1,"raw-dialog":0}
 {"file":"pages/settings/ModelsPanel.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/settings/NotificationsPanel.tsx","raw-button":0,"raw-input":1,"raw-dialog":0}
@@ -104,10 +103,9 @@
 {"file":"pages/settings/settingsUI.tsx","raw-button":2,"raw-input":1,"raw-dialog":0}
 {"file":"pages/skills/SkillInspector.tsx","raw-button":3,"raw-input":0,"raw-dialog":0}
 {"file":"pages/skills/SkillProposals.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
-{"file":"pages/skills/SkillsPage.tsx","raw-button":0,"raw-input":1,"raw-dialog":0}
 {"file":"pages/tasks/DagView.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/tasks/TaskDetail.tsx","raw-button":4,"raw-input":0,"raw-dialog":0}
-{"file":"pages/tasks/TasksListPage.tsx","raw-button":4,"raw-input":0,"raw-dialog":0}
+{"file":"pages/tasks/TasksListPage.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/tasks/formControls.tsx","raw-button":3,"raw-input":2,"raw-dialog":0}
 {"file":"pages/terminal/TerminalDrawer.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/terminal/TerminalPage.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}

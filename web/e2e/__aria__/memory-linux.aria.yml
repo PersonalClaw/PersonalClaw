@@ -29,25 +29,18 @@
     - radio "Files"
     - radio "Artifacts"
   - heading "Memory" [level=#]
+  - searchbox "Search memories"
+  - button "Filter"
+  - radiogroup "Memory view":
+    - radio "Studio" [checked]
+    - radio "Health"
+    - radio "Recall"
+    - radio "Inspect"
+    - radio "Audit"
+    - radio "Settings"
   - paragraph: Explore and manage what the <theme> remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail.
   - text: # Semantic # Episodic # Events # Embedded · no model bound
-  - tablist "Memory view":
-    - tab "Studio" [selected]
-    - tab "Health"
-    - tab "Recall"
-    - tab "Inspect"
-    - tab "Audit"
-    - tab "Settings"
-  - searchbox "Search memories"
   - status
-  - group "Filter by kind":
-    - button "All #" [pressed]
-    - button "Facts #"
-    - button "Episodes #"
-    - button "Lessons #"
-    - button "Entities #"
-    - button "Slots #"
-    - button "Documents #"
   - button "Preferences Editable markdown memory"
   - button "Projects Editable markdown memory"
   - button "History One editable file per day"

@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useId, useMemo, type ReactNode } from 'react'
 import { SlidersHorizontal, Check, type LucideIcon } from 'lucide-react'
 import { Popover } from './Popover'
 import { FilterRow } from './FilterRow'
@@ -27,6 +27,29 @@ export interface FilterSectionDef {
   defaultKey: string
   options: FilterOption[]
   onChange: (key: string) => void
+  /** In a header filter's label (`HeaderFilter`): named only while set away from its default. For
+   *  a page with more choice sets than its label can read out, the ones whose default says nothing. */
+  quiet?: boolean
+  /** In a header filter's label: how this section's choice is said, from its key ("Sorted by
+   *  name"); the chosen option's own label otherwise. */
+  said?: (key: string) => string
+  /** Rows after the choices that act rather than choose (Knowledge's New shelf, under its shelves).
+   *  Choosing one closes the menu. A `hint` says what it needs, under its label. */
+  actions?: { label: string; icon?: LucideIcon; hint?: string; onSelect: () => void }[]
+  /** Several choices at once (Chat history's tags, any of which a chat may carry): `value` is the
+   *  chosen keys joined by commas, '' for none, and each row adds or removes its own key. */
+  multi?: boolean
+}
+
+/** A multi section's value with `key` added, or taken out if it was in. */
+export function toggledKey(value: string, key: string): string {
+  const keys = value.split(',').filter(Boolean)
+  return (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]).join(',')
+}
+
+/** Whether a section has `key` chosen. */
+function isChosen(s: FilterSectionDef, key: string): boolean {
+  return s.multi ? s.value.split(',').includes(key) : s.value === key
 }
 
 /** The canonical header "Filter & sort" control: a single 40px pill that opens a
@@ -74,28 +97,41 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right', classN
           )}
         </button>
       )}>
-      {(close) => (
-        <div className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto">
-          {sections.map((s) => (
-            <Section key={s.title} title={s.title}
-              onClear={s.value !== s.defaultKey ? () => s.onChange(s.defaultKey) : undefined}>
-              {s.options.map((o) => (
-                <Row key={o.key} option={o} selected={s.value === o.key} onClick={() => s.onChange(o.key)} />
-              ))}
-            </Section>
-          ))}
-          <Button variant="ghost" size="sm" onClick={close} className="mt-1 w-full">Done</Button>
-        </div>
-      )}
+      {(close) => <FilterSections sections={sections} close={close} />}
     </Popover>
   )
 }
 
-function Section({ title, onClear, children }: { title: string; onClear?: () => void; children: ReactNode }) {
+/** The open menu's body: each section's choices, with its Clear, and Done. Shared by `FilterMenu`
+ *  and the header's `HeaderFilter`, so the two are one menu. */
+export function FilterSections({ sections, close }: { sections: FilterSectionDef[]; close: () => void }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto overscroll-contain">
+      {sections.map((s) => (
+        <Section key={s.title} title={s.title}
+          onClear={s.value !== s.defaultKey ? () => s.onChange(s.defaultKey) : undefined}>
+          {s.options.map((o) => (
+            <Row key={o.key} option={o} selected={isChosen(s, o.key)}
+              onClick={() => s.onChange(s.multi ? toggledKey(s.value, o.key) : o.key)} />
+          ))}
+          {s.actions?.map((a) => (
+            <FilterRow key={a.label} label={a.label} icon={a.icon} hint={a.hint} selected={false} onClick={() => { close(); a.onSelect() }} />
+          ))}
+        </Section>
+      ))}
+      <Button variant="ghost" size="sm" onClick={close} className="mt-1 w-full">Done</Button>
+    </div>
+  )
+}
+
+/** One choice set of the menu: a group named by its title, so a screen reader says which set a
+ *  row is in ("Type", "Shelf") as the old chip rows' groups did. */
+function Section({ title, onClear, children }: { title: string; onClear?: () => void; children: ReactNode }) {
+  const titleId = useId()
+  return (
+    <div role="group" aria-labelledby={titleId} className="flex flex-col gap-0.5">
       <div className="flex items-center justify-between px-2 pb-0.5">
-        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{title}</span>
+        <span id={titleId} data-type="caption" className="text-on-surface-low uppercase tracking-wide">{title}</span>
         {onClear && <TextLink onClick={onClear} size="xs">Clear</TextLink>}
       </div>
       {children}
@@ -108,12 +144,13 @@ function Row({ option, selected, onClick }: { option: FilterOption; selected: bo
   return (
     <>
       {option.groupLabel && <div data-type="caption" className="mt-1 px-2 pt-1.5 text-on-surface-low uppercase tracking-wide border-t border-on-surface/8">{option.groupLabel}</div>}
-      {/* The row itself is `ui/FilterRow` — the App Store's persistent
-          category/source rail renders the same one, because it and this dropdown are one
-          control at two viewport widths. The selected-row tint lives there. */}
-      <FilterRow label={option.label} count={option.count} icon={Icon} selected={selected}
+      {/* The row itself is `ui/FilterRow`, where the selected-row tint lives. `pressed` says
+          which row is chosen: the check is drawn for the eye (`aria-hidden`), and a screen reader
+          heard the same label for the chosen row and the rest (the chips these rows replaced
+          announced it). */}
+      <FilterRow label={option.label} count={option.count} icon={Icon} selected={selected} pressed={selected}
         onClick={onClick}
-        trailing={selected ? <Check size={14} className="relative shrink-0 text-primary" /> : undefined} />
+        trailing={selected ? <Check size={14} aria-hidden className="relative shrink-0 text-primary" /> : undefined} />
     </>
   )
 }

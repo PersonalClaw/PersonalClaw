@@ -338,17 +338,18 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
                 cockpit) as well as one created without a walkthrough; Resume reaches every
                 parked and every stalled state, `blocked` among them, which no surface offered
                 before the guard was derived. */}
-            {canAct('start') && <HeaderControl icon={Play} label="Start" variant="primary" priority="primary" onClick={() => act('start')} />}
-            {canAct('pause') && <HeaderControl icon={Pause} label="Pause" variant="secondary" priority="primary" onClick={() => act('pause')} />}
-            {canAct('resume') && <HeaderControl icon={Play} label="Resume" variant="primary" priority="primary" onClick={() => act('resume')} />}
+            {!active && <HeaderControl icon={Trash2} label={confirmDelete ? 'Confirm delete?' : 'Delete'} danger priority="low" onClick={del} />}
             {canAct('stop') && <HeaderControl icon={Square} label={confirmStop ? 'Stop for good?' : 'Stop'} variant={confirmStop ? 'danger' : 'secondary'} onClick={() => { if (!confirmStop) { setConfirmStop(true); return } setConfirmStop(false); act('stop') }} />}
-            {/* `ariaExpanded`, not `active` — see the same control in `LoopCockpitPage`: it reveals
-                an adjacent composer rather than turning a setting on. */}
-            {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" ariaExpanded={nudgeOpen} onClick={() => setNudgeOpen((v) => !v)} />}
             {/* Agentic build — open a chat to build/mix components for this design system
                 on the canvas. Loop-aware via the seed regardless of a project. */}
             {onBuildWithChat && <HeaderControl icon={MessageSquare} label="Build with chat" variant="secondary" onClick={() => onBuildWithChat(loop)} />}
-            {!active && <HeaderControl icon={Trash2} label={confirmDelete ? 'Confirm delete?' : 'Delete'} danger priority="low" onClick={del} />}
+            {/* `ariaExpanded`, not `active` — see the same control in `LoopCockpitPage`: it reveals
+                an adjacent composer rather than turning a setting on. */}
+            {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" ariaExpanded={nudgeOpen} onClick={() => setNudgeOpen((v) => !v)} />}
+            {/* The loop's next step last, in the one order: Pause, or Start or Resume. */}
+            {canAct('pause') && <HeaderControl icon={Pause} label="Pause" variant="secondary" priority="primary" onClick={() => act('pause')} />}
+            {canAct('start') && <HeaderControl icon={Play} label="Start" variant="primary" priority="primary" onClick={() => act('start')} />}
+            {canAct('resume') && <HeaderControl icon={Play} label="Resume" variant="primary" priority="primary" onClick={() => act('resume')} />}
           </HeaderActions>
         }
       />

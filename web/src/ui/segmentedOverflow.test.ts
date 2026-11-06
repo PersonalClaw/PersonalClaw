@@ -99,11 +99,13 @@ describe('a Segmented fed by a large registry declares how it collapses', () => 
     expect(SIZES.get('ARTIFACT_KINDS')).toBe(16)
   })
 
-  it(`at least one site is actually governed by the >=${THRESHOLD}-option rule`, () => {
-    // If nothing is in scope the rule below is decoration. Today exactly one site qualifies; if that
-    // ever drops to zero the threshold has drifted away from the code and should be re-measured.
+  it(`a registry of >=${THRESHOLD} options feeds no strip today: the one there was is a filter section`, () => {
+    // The kind filter this rail was measured on moved into the page header's filter, as every
+    // choice set that is not the page's view did (`app/pageControlsAreInTheHeader.test.ts`): a
+    // section of a menu, which scrolls, so its 17 options are all reachable at any width. The rule
+    // below keeps its guard for the next registry-fed strip; this pins where the measured one went.
     const governed = SITES.filter((s) => s.registries.some((r) => (SIZES.get(r) ?? 0) >= THRESHOLD))
-    expect(governed.length).toBeGreaterThan(0)
+    expect(governed.map((s) => `${s.file}:${s.line}`)).toEqual([])
   })
 
   it(`every Segmented mapping a registry of >=${THRESHOLD} options passes \`collapse\``, () => {
@@ -117,13 +119,11 @@ describe('a Segmented fed by a large registry declares how it collapses', () => 
     expect(offenders, 'a strip this wide is cut off, not shrunk — pass collapse="scroll", "menu" or "wrap"').toEqual([])
   })
 
-  it('the artifacts kind filter — the site this rail was measured on — scrolls', () => {
-    const site = SITES.find((s) => s.file === 'pages/artifacts/ArtifactsSection.tsx' && s.registries.includes('ARTIFACT_KINDS'))
-    expect(site, 'the artifacts kind Segmented moved or stopped mapping ARTIFACT_KINDS').toBeTruthy()
-    // 'scroll' rather than 'menu' deliberately: this is a page toolbar, and `collapse="menu"` measures
-    // its slot against `parent.clientWidth`, which is wrong in a `flex-wrap` row (children sum across
-    // lines, so free space reads negative and the strip latches collapsed at every width). The two
-    // existing scroll adopters are both body strips; the menu adopters are all header controls.
-    expect(site!.collapse).toBe('scroll')
+  it('the artifacts kind filter — the site this rail was measured on — is the header filter\'s Kind section, which scrolls', () => {
+    const page = readSource(join(SRC, 'pages/artifacts/ArtifactsSection.tsx'))
+    expect(page, 'the Kind section maps ARTIFACT_KINDS').toMatch(/title: 'Kind'[\s\S]{0,200}ARTIFACT_KINDS\.map/)
+    expect(page, 'and the header filter holds it').toMatch(/<HeaderFilter sections=\{filterSections\} \/>/)
+    // The menu's body scrolls within the viewport, so a long section is reached by scrolling it.
+    expect(readSource(join(SRC, 'ui/FilterMenu.tsx')), 'the sections scroll').toMatch(/max-h-\[70vh\] overflow-y-auto/)
   })
 })

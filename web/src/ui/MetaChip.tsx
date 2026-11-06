@@ -19,9 +19,9 @@ import { accentChip } from '../design/accent'
  *  `stopPropagation` because every one of these sits inside a row/card whose own click opens the
  *  record — filtering by a tag must not also open the task the tag happened to be attached to.
  *
- *  NOT called `FilterChip`, which is the obvious name and is already taken by a DIFFERENT control:
- *  `pages/knowledge`'s local `FilterChip` is an h-8 toggle carrying `aria-pressed`, one of a rail of
- *  filter states you switch between. This is an h-6 metadata pill that reports a value and narrows
+ *  NOT called `FilterChip`, the obvious name, which was taken by a DIFFERENT control when this was
+ *  made: `pages/knowledge`'s local `FilterChip`, an h-8 toggle carrying `aria-pressed`, one of a
+ *  rail of filter states you switch between (those are the header filter's rows now). This is an h-6 metadata pill that reports a value and narrows
  *  to it. Same family, different job — one name for both would force one height and one semantic
  *  onto each, which is why `design/primitiveShadowing` asks for this call to be recorded. */
 export function MetaChip({ label, title, ariaLabel, icon: Icon, tone = 'neutral', onClick }: {

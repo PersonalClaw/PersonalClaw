@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, Play, RotateCcw, ScanSearch, Scale, SkipForward, X, XCircle } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
-import { Segmented } from '../../ui/Segmented'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { SidePanel } from '../../ui/SidePanel'
@@ -535,6 +534,32 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
         // The five panel toggles go into the menu first; the lifecycle actions stay.
         right={run ? (
           <HeaderActions>
+            {/* The run's view switch, first in the row as every page's is. Hidden when there is
+                nothing to show: a List/Graph switch over an empty run offers two ways to look at
+                nothing. */}
+            {nodes.length > 0 && (
+              <HeaderSegmented
+                ariaLabel="Run view"
+                value={view}
+                onChange={(v) => setView(v as 'list' | 'graph')}
+                options={[
+                  { key: 'list', label: 'List' },
+                  { key: 'graph', label: 'Graph' },
+                ]}
+              />
+            )}
+            {/* The one order: Cancel and Steer, then the panels, then the run's next step (Start,
+                Pause or Resume, or Fork once it ended) last. Three lifecycle phases, not two — see
+                the note beside `start` above. */}
+            {!isTerminal(run.status) && (
+              <HeaderControl icon={X} label="Cancel" onClick={cancel}
+                title={isPrelaunch(run.status) ? 'Cancel this run before it starts' : 'Cancel this run'} />
+            )}
+            {!isPrelaunch(run.status) && !isTerminal(run.status) && (
+              <HeaderControl icon={MessageSquarePlus} label="Steer" ariaExpanded={steerOpen}
+                onClick={() => setSteerOpen((v) => !v)}
+                title="Steer this run — queue an instruction or accept a judge comment" />
+            )}
             {/* Workspace on BOTH sides of the terminal split, unlike Steer/Pause/Fork: reviewing
                 what a run changed is the one thing a user wants equally mid-run (is it touching
                 what I expected) and after (do I take this work). */}
@@ -567,18 +592,11 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
             <HeaderControl icon={MessageSquareCode} label="Review" priority="low" ariaExpanded={reviewOpen}
               onClick={() => setReviewOpen((v) => !v)}
               title="Review — accept or reject this run's line-anchored findings" hint="Accept or reject this run's line-anchored findings" />
-            {/* Three lifecycle phases, not two — see the note beside `start` above. */}
             {isPrelaunch(run.status) ? (
-              <>
-                <HeaderControl icon={Play} label="Start" priority="primary" onClick={start}
-                  title="Start this run — it has not executed yet" />
-                <HeaderControl icon={X} label="Cancel" onClick={cancel} title="Cancel this run before it starts" />
-              </>
+              <HeaderControl icon={Play} label="Start" priority="primary" onClick={start}
+                title="Start this run — it has not executed yet" />
             ) : !isTerminal(run.status) ? (
               <>
-                <HeaderControl icon={MessageSquarePlus} label="Steer" ariaExpanded={steerOpen}
-                  onClick={() => setSteerOpen((v) => !v)}
-                  title="Steer this run — queue an instruction or accept a judge comment" />
                 {/* A pause STOPS the step in flight and re-queues it — the old "in-flight steps
                     finish" promise was a pause that paused nothing. It lands on the controller's
                     next step, so the gap between the click and that step says so instead of
@@ -602,7 +620,6 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                     onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))}
                     title="Pause — stops the step in flight; Resume runs it again" />
                 )}
-                <HeaderControl icon={X} label="Cancel" onClick={cancel} title="Cancel this run" />
               </>
             ) : (
               <HeaderControl icon={GitBranch} label="Fork" priority="primary" onClick={fork}
@@ -709,22 +726,6 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 initial={overlayOf(run)}
                 onSaved={() => refetch()}
               />
-            )}
-
-            {/* The mode toggle sits ABOVE the nodes and is hidden when there is nothing to show —
-                a List/Graph switch over an empty run offers two ways to look at nothing. */}
-            {nodes.length > 0 && (
-              <div className="flex items-center gap-xs">
-                <Segmented
-                  ariaLabel="Run view"
-                  value={view}
-                  onChange={(v) => setView(v as 'list' | 'graph')}
-                  options={[
-                    { key: 'list', label: 'List' },
-                    { key: 'graph', label: 'Graph' },
-                  ]}
-                />
-              </div>
             )}
 
             {view === 'graph' && dag.nodes.length > 0 ? (

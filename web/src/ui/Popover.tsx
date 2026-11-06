@@ -22,8 +22,11 @@ const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:no
  *  Pass ``portal`` when the trigger lives inside an overflow-clipping container
  *  (e.g. a scrolling kanban column): the flyout renders into document.body with
  *  position:fixed, anchored to the trigger's rect, viewport-clamped, and closes
- *  on any scroll (the fixed menu would drift off its anchor otherwise) — mirrors
- *  ui/motion/ContextMenu. Default off so existing consumers are untouched.
+ *  on a scroll outside it (the fixed menu would drift off its anchor otherwise; a
+ *  scroll inside it, through its own long list, keeps it open) — mirrors
+ *  ui/motion/ContextMenu. Default off so existing consumers are untouched. With
+ *  ``followWhileTyping`` it follows its trigger instead while a text field in it
+ *  has focus (the narrow header search).
  *
  *  ``placement`` is a PREFERENCE, not a promise: on open the trigger's position is
  *  measured, and if the preferred side lacks room the menu flips to the other one.
@@ -42,6 +45,7 @@ const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:no
  *  already is for the other two — `portalPos` clamps `left` into the viewport. */
 export function Popover({
   trigger, children, align = 'left', width, placement = 'top', openSignal, portal = false, className,
+  followWhileTyping = false,
 }: {
   trigger: (open: boolean, toggle: () => void) => ReactNode
   children: (close: () => void) => ReactNode
@@ -54,6 +58,10 @@ export function Popover({
   openSignal?: number
   /** Render the flyout via a body portal (see doc above). */
   portal?: boolean
+  /** With `portal`: while a text field in the flyout has focus, a scroll follows the trigger
+   *  instead of closing it. For a flyout someone types into (the narrow header search); every
+   *  other portaled flyout closes on a scroll outside it. */
+  followWhileTyping?: boolean
   /** Extra classes on the wrapper, e.g. `flex min-w-0` so a trigger in a tight row can shrink. */
   className?: string
 }) {
@@ -92,15 +100,30 @@ export function Popover({
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onEsc)
     // Portaled mode: the menu is position:fixed while its anchor scrolls with the
-    // container — close on ANY scroll (capture) so it never drifts off its trigger.
-    const onScroll = () => setOpen(false)
+    // container — close on a scroll OUTSIDE it (capture) so it never drifts off its trigger. A
+    // scroll inside the flyout moves nothing it is anchored to, so it stays: a header filter's long
+    // sections scroll in a capped box, and closing on their own scroll left their last rows out of
+    // reach. With `followWhileTyping` (the narrow header search), while a text field in it has
+    // focus, a scroll elsewhere moves it with its trigger instead, so it does not close under the
+    // reader's typing.
+    const onScroll = (e: Event) => {
+      const menu = menuRef.current
+      if (menu && e.target instanceof Node && menu.contains(e.target)) return
+      const typing = followWhileTyping && menu && document.activeElement instanceof HTMLInputElement
+        && menu.contains(document.activeElement)
+      if (typing) {
+        setAnchor(ref.current?.getBoundingClientRect() ?? null)
+        return
+      }
+      setOpen(false)
+    }
     if (portal) window.addEventListener('scroll', onScroll, true)
     return () => {
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onEsc)
       if (portal) window.removeEventListener('scroll', onScroll, true)
     }
-  }, [open, portal])
+  }, [open, portal, followWhileTyping])
 
   /** The side that actually has room for this menu.
    *
@@ -234,13 +257,19 @@ export function Popover({
     menuRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus({ preventScroll: true })
   }, [open, portal, anchor])
 
-  /** Tab out of a portaled flyout closes it and hands focus back to the trigger.
+  /** Tab walks a portaled flyout's own stops, and Tab out of it closes it and hands focus back to
+   *  the trigger.
    *
-   *  🔑 DELIBERATELY NOT `preventDefault`ed, and that is the whole trick — verbatim the reasoning in
-   *  `menuCursorKeydown`'s Tab branch: focus returns to the trigger, then the browser's OWN Tab
-   *  carries on from there, landing on the control after the trigger. So the natural sequence the
-   *  portal broke is RESTORED rather than simulated. Shift+Tab needs no special case for the same
-   *  reason: the browser moves backward from the trigger for free.
+   *  The flyout sits at the end of `<body>`, so its stops are contiguous there: inside it, the
+   *  browser's own Tab and Shift+Tab move between them. A header filter holds the choices that were
+   *  the page's own Tab stops before they moved into the header (the Store rail, a project's task
+   *  lists, Knowledge's rows), and closing on any Tab left a keyboard user only its first row.
+   *
+   *  🔑 Tab on the LAST stop is DELIBERATELY NOT `preventDefault`ed, and that is the whole trick —
+   *  verbatim the reasoning in `menuCursorKeydown`'s Tab branch: focus returns to the trigger, then
+   *  the browser's OWN Tab carries on from there, landing on the control after the trigger. So the
+   *  natural sequence the portal broke is RESTORED rather than simulated. Shift+Tab on the FIRST stop
+   *  is: the stop before the flyout is its trigger, so focus lands there and stays.
    *
    *  Stands down for a role-declaring popup for the same reason the focus-in effect does: those
    *  already route Tab through `menuCursorKeydown`, whose Tab branch is where this reasoning comes
@@ -248,6 +277,11 @@ export function Popover({
    */
   const onFlyoutKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== 'Tab' || ownsItsKeyboard()) return
+    const stops = [...(menuRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])]
+      .filter((el) => el.tabIndex >= 0 && !el.closest('[inert],[aria-hidden="true"]'))
+    const at = stops.indexOf(document.activeElement as HTMLElement)
+    if (e.shiftKey ? at > 0 : at >= 0 && at < stops.length - 1) return // a stop inside: the browser's own
+    if (e.shiftKey) e.preventDefault()
     setOpen(false)
     triggerFocusRef.current?.focus({ preventScroll: true })
   }

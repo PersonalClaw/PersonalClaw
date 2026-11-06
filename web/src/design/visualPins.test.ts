@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { FIXED_CLOCK } from '../../e2e/fixedClock'
-import { AUDIT_VERIFIED, LEARNING_WEEK, SYSTEM_READING, weekEndingOn } from '../../e2e/stubbedReads'
+import { AUDIT_VERIFIED, BOOT_ROOTS, FILE_ROOTS, LEARNING_WEEK, SYSTEM_READING, weekEndingOn } from '../../e2e/stubbedReads'
 import { verifiedScope } from '../pages/settings/AuditPanel'
 import { waitedFor } from '../pages/chat/approvalRow'
 
@@ -74,6 +74,20 @@ describe("Settings' tiles", () => {
     expect(SYSTEM_READING.patch(live)).toEqual({ ...live, cpu_pct: 12, mem_used_gb: 3.2, mem_total_gb: 15.6, mem_free_gb: 12.4 })
     expect(SYSTEM_READING.url.test('/api/system')).toBe(true)
     expect(SYSTEM_READING.url.test('/api/system/models')).toBe(false)
+  })
+})
+
+describe("Files' roots", () => {
+  it('keep the two the home has at boot, whatever else the shared home has made', () => {
+    if (!('patch' in FILE_ROOTS)) throw new Error('FILE_ROOTS is a patch of the live read')
+    const root = (label: string) => ({ label, path: `/h/${label}`, name: label, is_dir: true })
+    const live = { roots: ['Workspace', 'Outbox', 'Uploads', 'Context: Personal', 'Context: Repeatable'].map(root), entries: [], path: '' }
+    expect(FILE_ROOTS.patch(live)).toEqual({ ...live, roots: BOOT_ROOTS.map(root) })
+  })
+
+  it('stub the roots read only, not a folder listing', () => {
+    expect(FILE_ROOTS.url.test('/api/file-list')).toBe(true)
+    expect(FILE_ROOTS.url.test('/api/file-list?path=%2Fh%2FWorkspace')).toBe(false)
   })
 })
 

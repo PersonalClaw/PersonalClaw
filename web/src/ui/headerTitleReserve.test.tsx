@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { titleFloor, titleReserveFor, railCeiling, clusterFloor, stackBelowCorners, TITLE_MIN } from './HeaderActions'
+import { titleFloor, titleReserveFor, railCeiling, clusterFloor, stackBelowCorners, pickTier, heldInRow, wholeTitleTier, TITLE_MIN } from './HeaderActions'
 
 // ── An EMPTY title slot is owed nothing ──────────────────────────────────────
 //
@@ -123,6 +123,26 @@ describe('titleReserveFor — the slot keeps what it cannot shed', () => {
     expect(titleReserveFor({ ...CHAT, inner: 200, floor: 140 })).toBe(73)
   })
 
+  // A project's Tasks at 320 px (288 px row): "› Tasks" with the gap before it is 65 px the heading
+  // clips, and nothing in the slot would overlap the row (`hard` 0). The cluster's floor counts the
+  // view switch unfolded (search 52, filter 52, the switch's four icons 150, New 48, the `…` 44:
+  // 346 px); folded to its pill it is 52, so the row at its narrowest is 248 px. Reserving the kept
+  // text left the rail a 135 px cap for 148 px of controls, and the switch clipped under the `…` by
+  // 13 px.
+  const TASKS = { hasContent: true, minWidth: 65, hardWidth: 0, naturalWidth: 136, floor: 346, keptFloor: 248 }
+  it('lets a kept part of the heading clip before a control does', () => {
+    expect(titleReserveFor({ ...TASKS, inner: 288 })).toBe(24)
+    expect(titleReserveFor({ ...TASKS, hardWidth: 30, inner: 288 }), 'what would overlap the row stays').toBe(30)
+  })
+
+  it('keeps it whole where the row at its narrowest fits beside it, however wide the floor', () => {
+    // 390 px (358 px row): 358 − 16 − 248 = 94 holds the 65. Yielding to the floor instead (−4)
+    // let the switch unfold into the title's room and left the title 12 px.
+    expect(titleReserveFor({ ...TASKS, inner: 358 })).toBe(65)
+    // 360 px (328 px row): 64 of the 65, the 1 px the row needs.
+    expect(titleReserveFor({ ...TASKS, inner: 328 })).toBe(64)
+  })
+
   it('still reserves nothing for an empty slot, and never more than a short title needs', () => {
     expect(titleReserveFor({ hasContent: false, naturalWidth: 49, minWidth: 49, inner: 155, floor: 140 })).toBe(0)
     expect(titleReserveFor({ hasContent: true, naturalWidth: 51, minWidth: 8, inner: 155, floor: 88 })).toBe(51)
@@ -140,6 +160,31 @@ describe('clusterFloor', () => {
     expect(clusterFloor({ iconTier: 88, neverOverflow: 0, overflowable: true, dots: 44 })).toBe(44)
     // One never-overflow strip and nothing else: no `…` is ever drawn.
     expect(clusterFloor({ iconTier: 142, neverOverflow: 150, overflowable: false, dots: 44 })).toBe(142)
+  })
+})
+
+describe('heldInRow — what never falls into the `…`', () => {
+  it('holds the primary action, as it holds a control with no menu-row form', () => {
+    // At 390 px the Inbox's Capture a note fell into the `…` while the filter stayed.
+    expect(heldInRow({ priority: 'primary', canIcon: true })).toBe(true)
+    expect(heldInRow({ priority: 'default', canIcon: true, neverOverflow: true })).toBe(true)
+  })
+
+  it('but not a primary that always lives in the `…`, or has no icon to stand as', () => {
+    expect(heldInRow({ priority: 'primary', canIcon: true, inOverflow: true })).toBe(false)
+    expect(heldInRow({ priority: 'primary', canIcon: false })).toBe(false)
+  })
+
+  it('and nothing else', () => {
+    expect(heldInRow({ priority: 'default', canIcon: true })).toBe(false)
+    expect(heldInRow({ priority: 'low', canIcon: true })).toBe(false)
+  })
+
+  it('so a held primary counts in the floor, and a row too wide for the band stacks', () => {
+    // The Inbox at 390: the filter (48) and Capture a note (48), with the `…` (44).
+    const floor = clusterFloor({ iconTier: 236, neverOverflow: 96, overflowable: true, dots: 44 })
+    expect(floor).toBe(140)
+    expect(stackBelowCorners({ band: 155, hasContent: true, minWidth: 0, naturalWidth: 40, floor })).toBe(true)
   })
 })
 
@@ -173,5 +218,59 @@ describe('stackBelowCorners — when the band between the corners cannot hold th
     // "Tasks" is 51px: the title term is min(51, 8 + 48) = 51, not the full legible floor.
     expect(stackBelowCorners({ hasContent: true, minWidth: 8, naturalWidth: 51, band: 51 + 16 + 140, floor: 140 })).toBe(false)
     expect(TITLE_MIN).toBe(48)
+  })
+})
+
+describe('pickTier — a step up needs slack only where shedding could give the title width back', () => {
+  // `#/tasks` at 390 px: search 40, filter 40, the four views 142 and New task 40, with their gaps,
+  // make an icon row of 286, which is also the cluster's floor (the three never-overflow controls,
+  // 246, and the `…`, 44, come to 290). The title yields to that floor, so `avail` is 286.
+  const TASKS = { full: 620, text: 600, icon: 286, avail: 286, dots: 0, floor: 286, hyst: 8 }
+
+  it('leaves overflow for an icon row no wider than the floor, with no slack to spare', () => {
+    // It went to overflow while the page loaded, and stayed: its `…` held New task alone.
+    expect(pickTier({ ...TASKS, cur: 'overflow' })).toBe('icon')
+    expect(pickTier({ ...TASKS, cur: 'full' })).toBe('icon')
+  })
+
+  it('still holds a step up to a tier wider than the floor to the slack', () => {
+    // An icon row of 300 against a floor of 286: overflow is narrower, so the slack still applies.
+    expect(pickTier({ ...TASKS, icon: 300, avail: 304, cur: 'overflow' })).toBe('overflow')
+    expect(pickTier({ ...TASKS, icon: 300, avail: 308, cur: 'overflow' })).toBe('icon')
+    // And a step down never waits for it.
+    expect(pickTier({ ...TASKS, icon: 300, avail: 300, cur: 'full' })).toBe('icon')
+    expect(pickTier({ ...TASKS, full: 600, avail: 604, cur: 'icon' })).toBe('icon')
+  })
+
+  it('counts a `…` drawn at every tier in both the row and the floor', () => {
+    expect(pickTier({ ...TASKS, icon: 242, dots: 44, floor: 286, cur: 'overflow' })).toBe('icon')
+    expect(pickTier({ ...TASKS, icon: 243, dots: 44, floor: 286, cur: 'icon' })).toBe('overflow')
+  })
+})
+
+describe('wholeTitleTier — a plainer tier that shows the title whole wins', () => {
+  // Home at 390 px: "Good morning, Alex" wants 180; New chat and the view switch are 200 with
+  // labels, 120 with icons; the header's inner box is 330.
+  const home = { full: 200, text: 200, icon: 120, dots: 0, inner: 330, natural: 180, hasContent: true }
+
+  it("drops the labels that would cut the greeting", () => {
+    expect(wholeTitleTier({ ...home, picked: 'full' })).toBe('icon')
+  })
+
+  it('keeps the richer tier while the title is whole at it', () => {
+    expect(wholeTitleTier({ ...home, inner: 400, picked: 'full' })).toBe('full')
+  })
+
+  it('keeps the chosen tier where no plainer one shows the title whole either', () => {
+    expect(wholeTitleTier({ ...home, natural: 260, picked: 'full' })).toBe('full')
+  })
+
+  it('leaves overflow, and a header with no title, as they are', () => {
+    expect(wholeTitleTier({ ...home, picked: 'overflow' })).toBe('overflow')
+    expect(wholeTitleTier({ ...home, hasContent: false, picked: 'full' })).toBe('full')
+  })
+
+  it('never steps to a richer tier than the one chosen', () => {
+    expect(wholeTitleTier({ ...home, picked: 'icon', natural: 300 })).toBe('icon')
   })
 })

@@ -37,6 +37,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
 
 import { ChatPage } from '../ChatPage'
 import { runState } from '../../test/runState'
+import { headerFilter } from '../../test/headerFilter'
 
 beforeEach(() => {
   sessionStorage.clear()
@@ -67,7 +68,9 @@ describe('the chat history', () => {
     await screen.findByText('Grocery list')
     expect(screen.queryByText('Daily agenda overview'), 'your own chats are the default scope').toBeNull()
 
-    const tab = screen.getByRole('radio', { name: /Channels 1/ })
+    // The scope is a section of the header's filter: Channels, with its one chat counted.
+    fireEvent.click(headerFilter())
+    const tab = await screen.findByRole('button', { name: /^Channels\s*1$/ })
     fireEvent.click(tab)
     rerender(<ChatPage sub="history" navigate={() => {}} query={{ origin: 'channel' }} setQuery={setQuery} />)
     const title = await screen.findByText('Daily agenda overview')

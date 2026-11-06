@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { join } from 'node:path'
-import { ListControls, ResultAnnouncement } from './ListControls'
+import { ResultAnnouncement } from './ListControls'
 import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Filtering a list changed the page and said nothing ───────────────────────────────
@@ -110,13 +110,13 @@ function activeExpr(src: string, line: string, depth = 3): string {
   return unmask(expr)
 }
 
-const opts = { value: '', onChange: () => {}, options: [] }
-
 describe('a filtered list announces its result count', () => {
+  // `ResultAnnouncement` is the announcement every list bar drew (`ListControls` did, until every
+  // page-level control moved into the page's header), and `ListStatus` draws it now.
   it('mounts the live region even when idle', () => {
     // A live region created at the same moment its content appears is not reliably observed,
     // so it must already be in the DOM, empty, waiting. (Same lesson as the toast host.)
-    const { container } = render(<ListControls search={{ value: '', onChange: () => {} }} />)
+    const { container } = render(<ResultAnnouncement count={26} noun="items" active={false} />)
     const region = container.querySelector('[role="status"][aria-live="polite"]')
     expect(region, 'the region must exist before a filter is typed').not.toBeNull()
     expect(region!.textContent).toBe('')
@@ -124,71 +124,38 @@ describe('a filtered list announces its result count', () => {
 
   it('says nothing while no filter is active', () => {
     // An idle list announcing its own length on mount is noise, not information.
-    const { container } = render(
-      <ListControls search={{ value: '', onChange: () => {} }}
-        results={{ count: 26, noun: 'items', active: false }} />,
-    )
+    const { container } = render(<ResultAnnouncement count={26} noun="items" active={false} />)
     expect(container.querySelector('[role="status"]')!.textContent).toBe('')
   })
 
   it('announces the count while filtering', () => {
-    const { container } = render(
-      <ListControls search={{ value: 'zfs', onChange: () => {} }}
-        results={{ count: 25, noun: 'items', active: true }} />,
-    )
+    const { container } = render(<ResultAnnouncement count={25} noun="items" active />)
     expect(container.querySelector('[role="status"]')!.textContent).toBe('25 items')
   })
 
   it('singularises a single result', () => {
     // "1 items" reads as a bug to anyone listening to it.
-    const { container } = render(
-      <ListControls search={{ value: 'x', onChange: () => {} }}
-        results={{ count: 1, noun: 'items', active: true }} />,
-    )
+    const { container } = render(<ResultAnnouncement count={1} noun="items" active />)
     expect(container.querySelector('[role="status"]')!.textContent).toBe('1 item')
   })
 
   it('names the empty result rather than announcing "0"', () => {
     // "No matching items" is the same sentence the visible EmptyState uses; "0 items" would
     // be technically true and useless.
-    const { container } = render(
-      <ListControls search={{ value: 'zzz', onChange: () => {} }}
-        results={{ count: 0, noun: 'items', active: true }} />,
-    )
+    const { container } = render(<ResultAnnouncement count={0} noun="items" active />)
     expect(container.querySelector('[role="status"]')!.textContent).toBe('No matching items')
   })
 
   it('is polite, not assertive — a result count is an update, not an interruption', () => {
-    const { container } = render(
-      <ListControls search={{ value: 'x', onChange: () => {} }}
-        results={{ count: 3, noun: 'items', active: true }} />,
-    )
-    const region = container.querySelector('[role="status"]')!
-    expect(region.getAttribute('aria-live')).toBe('polite')
+    const { container } = render(<ResultAnnouncement count={3} noun="items" active />)
+    expect(container.querySelector('[role="status"]')!.getAttribute('aria-live')).toBe('polite')
   })
 
-  it('keeps the announcement out of the visible bar', () => {
+  it('stays out of sight', () => {
     // The count is already visible as the list itself; printing it would duplicate what a
-    // sighted user can see and add a shifting element to the controls row.
-    const { container } = render(
-      <ListControls search={{ value: 'x', onChange: () => {} }}
-        results={{ count: 3, noun: 'items', active: true }} />,
-    )
+    // sighted user can see.
+    const { container } = render(<ResultAnnouncement count={3} noun="items" active />)
     expect(container.querySelector('[role="status"]')!.className).toContain('sr-only')
-  })
-
-  it('still renders nothing at all when the bar has no controls', () => {
-    // The early return must survive: an empty controls bar should not leave a stray region.
-    const { container } = render(<ListControls />)
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('works on a filter-only bar (no search box)', () => {
-    const { container } = render(
-      <ListControls filter={{ ...opts, value: 'open' }}
-        results={{ count: 4, noun: 'triggers', active: true }} />,
-    )
-    expect(container.querySelector('[role="status"]')!.textContent).toBe('4 triggers')
   })
 
   it('`empty` overrides the zero sentence for nouns the default composes badly with', () => {
@@ -232,11 +199,12 @@ function code(abs: string): string {
   return readSource(abs).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
 
-/** The opening tag of every `<ListControls …>` in a file — balanced, so a `{{…}}` prop value with a
- *  `>` inside an arrow function does not end it early. */
+/** The opening tag of every list bar's announcement in a file — a `<ListControls …>`, or the
+ *  `<ListStatus …>` a page draws once its controls moved into its header — balanced, so a `{{…}}`
+ *  prop value with a `>` inside an arrow function does not end it early. */
 function controlsTags(src: string): string[] {
   const out: string[] = []
-  for (const m of src.matchAll(/<ListControls\b/g)) {
+  for (const m of src.matchAll(/<(?:ListControls|ListStatus)\b/g)) {
     let depth = 0
     for (let j = m.index!; j < src.length; j++) {
       const c = src[j]
@@ -474,7 +442,7 @@ describe('the hand-laid bars reach the same idiom', () => {
     // just a silent gap with a comment attached.
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const hasControl = (src: string) =>
-      /<SearchField\b/.test(src) || /<TextInput[^>]*ariaLabel="(?:Search|Filter)/.test(src)
+      /<(?:SearchField|HeaderSearch)\b/.test(src) || /<TextInput[^>]*ariaLabel="(?:Search|Filter)/.test(src)
 
     /** file → [why it does not need a status region, a pattern proving that reason] */
     const EXEMPT: Record<string, [string, RegExp]> = {
@@ -497,9 +465,17 @@ describe('the hand-laid bars reach the same idiom', () => {
         'a real combobox: focus stays in the field and aria-activedescendant moves',
         /aria-activedescendant|ariaActiveDescendant/,
       ],
-      // The primitive itself.
-      'ui/ListControls.tsx': ['this IS the primitive', /export function ResultAnnouncement\b/],
+      // The header's search: the page that draws it announces, through `ListStatus` beside its
+      // body, and is counted above as any page is.
+      'ui/HeaderSearch.tsx': ['a header member; its page announces', /export function HeaderSearch\b/],
+      // Settings home's search is in the Settings header, and the home it narrows announces: the
+      // page hands its query to `SettingsHome`, which draws the `ResultAnnouncement` (checked below).
+      'pages/settings/SettingsPage.tsx': ['its home announces what the header search narrows', /<SettingsHome go=\{go\} query=\{homeQuery\} \/>/],
+      // Memory's Studio search is its header's, and the explorer it narrows announces: the page hands
+      // the query to `MemoryPanel`, whose explorer draws the `ResultAnnouncement` (checked below).
+      'pages/library/MemoryPage.tsx': ['its explorer announces what the header search narrows', /studio=\{\{ q, kind, onCounts \}\}/],
     }
+    expect(strip(readSource(join(SRC, 'pages/settings/SettingsHome.tsx'))), 'Settings home announces its matches').toContain('<ResultAnnouncement')
 
     const withControl = walk(SRC)
       .map((abs) => ({ rel: abs.replace(SRC + '/', ''), src: strip(readSource(abs)) }))
@@ -510,7 +486,7 @@ describe('the hand-laid bars reach the same idiom', () => {
 
     const silent = withControl
       .filter(({ rel, src }) =>
-        !src.includes('<ResultAnnouncement') && !src.includes('<ListControls') && !EXEMPT[rel])
+        !src.includes('<ResultAnnouncement') && !src.includes('<ListControls') && !src.includes('<ListStatus') && !EXEMPT[rel])
       .map((f) => f.rel)
     expect(silent, 'a control that narrows a list without announcing it tells a screen reader nothing')
       .toEqual([])
@@ -557,16 +533,22 @@ describe('the hand-laid bars reach the same idiom', () => {
   })
 
   it('MemoryPanel announces its two LISTS and not its context-preview input', () => {
-    // 🪤 THE ONE JUDGEMENT IN THAT CENSUS, pinned so it is not "finished" later. MemoryPanel holds
+    // 🪤 THE ONE JUDGEMENT IN THAT CENSUS, pinned so it is not "finished" later. MemoryPanel held
     // THREE search-shaped controls, and only two are filters: the Studio explorer and the audit log.
+    // Both are the page header's searches now (`MemoryPage`), so the panel holds none.
     // The third is `InspectTab`'s — you type a query and press a button to see what context a
     // retrieval WOULD return. Nothing is being narrowed, so a result count would describe nothing.
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const src = strip(readSource(join(SRC, 'pages/settings/MemoryPanel.tsx')))
     const controls = (src.match(/<SearchField\b/g) ?? []).length
       + (src.match(/<TextInput[^>]*ariaLabel="(?:Search|Filter)/g) ?? []).length
-    expect(controls, 'two SEARCH-shaped controls — the explorer and the audit log').toBe(2)
-    // Exact, not a floor: a third announcement here would be one describing nothing.
+    expect(controls, 'no SEARCH-shaped control left in the panel').toBe(0)
+    const page = strip(readSource(join(SRC, 'pages/library/MemoryPage.tsx')))
+    expect(page, "the explorer's, in the page header")
+      .toMatch(/<HeaderSearch value=\{q\} onChange=\{setQ\} placeholder="Search memories" \/>/)
+    expect(page, "and the audit log's").toMatch(/<HeaderSearch value=\{auditQ\} onChange=\{setAuditQ\}/)
+    // Exact, not a floor: a third announcement here would be one describing nothing. Both lists
+    // announce in the panel, each from the header's query it is handed.
     expect((src.match(/<ResultAnnouncement\b/g) ?? []).length, 'one per filter, no more').toBe(2)
     // And the third field is why the census needs no exemption for this panel: it is named as a
     // QUERY, not a filter, so the population never included it. Its text is submitted to produce a

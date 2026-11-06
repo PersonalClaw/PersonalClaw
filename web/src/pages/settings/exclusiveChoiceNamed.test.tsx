@@ -309,14 +309,20 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     // 17 was the equality-only population; the membership spelling added six more (see the floor
     // asserted in the test below, which is the one that would catch that matcher silently matching
     // nothing — the whole population floor is too coarse to notice six missing). 22 since the shell's
-    // content-width pill, one of the 23, was removed with its file (#5718).
-    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(22)
+    // content-width pill, one of the 23, was removed with its file (#5718); 21 since Chat history's
+    // tag filter became its header filter's Tag section; 19 since Memory's view strip and kind chips
+    // moved into its page header (a radiogroup and a filter); 18 since Tasks' task-list chips became
+    // its filter's List section. The header filter's sections are named groups of pressed rows
+    // (`ui/FilterMenu`), held below with the other named groups.
+    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(18)
     for (const rel of ['pages/settings/NotificationRulesMatrix.tsx', 'pages/settings/PersonalityPicker.tsx']) {
       expect(groups.map((g) => g.rel), `${rel} delegates, and must still be COUNTED`).toContain(rel)
     }
     expect(groups.some((g) => g.rel === 'pages/settings/settingsUI.tsx'), 'SegPills must be in scope').toBe(true)
+    // Three the name-keyed sweep could not see, of which the view strip and the kind chips are the
+    // page header's now: one is left in the panel.
     expect(groups.filter((g) => g.rel === 'pages/settings/MemoryPanel.tsx').length,
-      'the three the name-keyed sweep could not see').toBeGreaterThanOrEqual(3)
+      'the one the name-keyed sweep could not see that stays in the panel').toBeGreaterThanOrEqual(1)
     expect(groups.filter((g) => g.rel === 'pages/settings/DiagnosticsPanel.tsx').length,
       'both level pickers, not one').toBeGreaterThanOrEqual(2)
 
@@ -328,14 +334,13 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     // 🔑 THE FLOOR THAT MATTERS FOR A NEW MATCHER. A regex that resolves to nothing produces exactly
     // the same green as a clean tree, and this one interpolates the map's item name — one escaping
     // slip and it silently matches zero. Six is what was measured when it was written: five stateless
-    // (now fixed) plus `ChatPage`'s artifact picker, which was already correct via `MenuRow`.
+    // (now fixed) plus `ChatPage`'s artifact picker, which was already correct via `MenuRow`. Five since
+    // Chat history's tag filter left the page body for the header's filter.
     const groups = exclusiveGroups()
     const member = groups.filter((g) => g.via === 'membership')
-    expect(member.length, 'the membership matcher must resolve its own population').toBeGreaterThanOrEqual(6)
+    expect(member.length, 'the membership matcher must resolve its own population').toBeGreaterThanOrEqual(5)
     for (const rel of [
       'pages/settings/SearchPanel.tsx',
-      // The history page's tag filter, which moved out of ChatPage.
-      'pages/chat/history/ChatHistoryPage.tsx',
       // The composer's knowledge and artifact pickers, which moved out of ChatPage.
       'pages/chat/composer/ContextPickers.tsx',
       'pages/agents/AgentForm.tsx',
@@ -356,9 +361,11 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     const named: [string, RegExp][] = [
       ['pages/settings/SearchPanel.tsx', /role="group" aria-label=\{`\$\{meta\.label\} provider`\}/],
       ['pages/chat/composer/ContextPickers.tsx', /role="group" aria-label="Knowledge to attach"/],
-      ['pages/chat/history/ChatHistoryPage.tsx', /role="group" aria-label="Filter by tag"/],
       ['pages/agents/AgentForm.tsx', /role="group" aria-label=\{label\}/],
       ['pages/loops/LoopPlanReview.tsx', /role="group" aria-label=\{label\}/],
+      // The header filter's sections (Chat history's tags, Knowledge's shelves, the Store's
+      // categories and sources): each a group named by its title, its rows pressed when chosen.
+      ['ui/FilterMenu.tsx', /role="group" aria-labelledby=\{titleId\}/],
     ]
     for (const [rel, re] of named) {
       const src = stripComments(readSource(join(SRC, rel)))
@@ -392,14 +399,14 @@ describe('the last two current-item markers in the tree', () => {
   const codeOf = (rel: string) => readSource(join(SRC, rel))
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-  it("the task-list pill says which list the page is showing", () => {
-    // Its `bg-primary text-on-primary` was the only cue. This rail's own form applies: the name carries
-    // the dimension, and it sits on the PICK button — the pill wrapper also holds Reset, so a state on
-    // the wrapper would describe two controls at once.
+  it("the task list the page shows is a named, pressed choice", () => {
+    // The pills over the list were the choice, `<dimension>: <value>` plus `aria-pressed`. They are
+    // the header filter's List section now, whose rows are pressed when chosen and whose section is a
+    // group named "List" (`ui/FilterMenu`); a repeatable list's Reset is the section's action and
+    // keeps a name of its own.
     const code = codeOf('pages/tasks/TasksListPage.tsx')
-    expect(code).toMatch(/aria-label=\{`Task list: \$\{l\.name\}`\} aria-pressed=\{isActive\}/)
-    expect(code, 'and the Reset button keeps its own separate name')
-      .toMatch(/aria-label=\{`Reset list \$\{l\.name\}`\}/)
+    expect(code).toMatch(/title: 'List', value: listFilter\?\.id \?\? ''/)
+    expect(code, 'and Reset names its list').toMatch(/label: `Reset \$\{l\.name\}`/)
   })
 
   it("the file tree says which file is open, and only where the tint claims it", () => {

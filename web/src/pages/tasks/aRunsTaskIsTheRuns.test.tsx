@@ -4,6 +4,7 @@ import { TasksListPage } from './TasksListPage'
 import { TaskDetail } from './TaskDetail'
 import type { TaskItem } from '../../lib/api'
 import { resetDataStore } from '../../lib/data'
+import { headerFilter } from '../../test/headerFilter'
 
 // ── A task a workflow run files for its own step reads as the run's, not the owner's ─────────────
 //
@@ -77,7 +78,7 @@ describe('the Tasks list', () => {
   it('leaves it out of "Mine"', async () => {
     render(<Page />)
     await waitFor(() => expect(screen.getByText(RUNS_TASK.title)).toBeTruthy())
-    fireEvent.click(screen.getByLabelText('Filter & sort'))
+    fireEvent.click(headerFilter())
     const section = screen.getByText('Assigned').parentElement!.parentElement as HTMLElement
     fireEvent.click(within(section).getByText('Mine'))
     await waitFor(() => expect(screen.queryByText(RUNS_TASK.title)).toBeNull())

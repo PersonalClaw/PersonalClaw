@@ -277,7 +277,7 @@ export function CodePlanReview({ draft, onBack, onLaunched, embedded = false }: 
       {/* In a pane beside the planning, the pane's header is the title and its close the way out. */}
       {!embedded && <TopBar
         left={<div className="flex items-center gap-2"><Code2 size={18} className="text-primary" /><span data-type="title-l" className="text-on-surface">Review the plan</span></div>}
-        right={<HeaderActions><HeaderControl icon={ChevronLeft} label="Back" onClick={onBack} priority="primary" /></HeaderActions>} />}
+        right={<HeaderActions><HeaderControl icon={ChevronLeft} label="Back" onClick={onBack} /></HeaderActions>} />}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">
         <div className="mx-auto flex w-full flex-col gap-4">

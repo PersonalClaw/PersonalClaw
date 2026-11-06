@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { AlertTriangle, Brain, Check, RefreshCw, Sparkles, TrendingDown, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
-import { QuietButton } from '../../ui/QuietButton'
 import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -221,12 +221,9 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
           </div>
         }
         right={
-          <QuietButton
-            title="Refresh"
-            onClick={refreshAll}
-          >
-            <RefreshCw size={14} /> Refresh
-          </QuietButton>
+          <HeaderActions>
+            <HeaderControl icon={RefreshCw} label="Refresh" onClick={refreshAll} />
+          </HeaderActions>
         }
       />
       {/* The trio, converging on `scrollRegionNamed`'s form rather than inventing one. Chromium puts

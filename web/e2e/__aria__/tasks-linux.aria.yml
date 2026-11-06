@@ -24,14 +24,14 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "All tasks" [level=#]
+  - searchbox "Search tasks"
+  - 'button "Show: All tasks"'
   - radiogroup "View":
     - radio "List view" [checked]
     - radio "Cards view"
     - radio "Kanban board"
     - radio "Dependency graph"
   - button "New task"
-  - searchbox "Search tasks"
-  - button "Filter & sort": Filter
   - status
   - heading "No tasks" [level=#]
   - paragraph: Break a goal into tracked work. Create a task, or let an agent plan from a chat.

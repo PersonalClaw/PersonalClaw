@@ -154,7 +154,6 @@ describe('§3 no single-choice field borrows tab semantics again', () => {
     expect(declaring).toEqual([
       'pages/files/FilesSection.tsx',
       'pages/loops/LoopCockpitPage.tsx',
-      'pages/settings/MemoryPanel.tsx',
       'pages/terminal/TerminalDrawer.tsx',
       'pages/terminal/TerminalPage.tsx',
     ])

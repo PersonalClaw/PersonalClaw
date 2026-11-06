@@ -21,6 +21,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { findHeaderFilter } from '../../test/headerFilter'
 
 /** What the gateway answers; every other read stays on its way. */
 const answers: Record<string, unknown> = {}
@@ -104,8 +105,12 @@ const cardOrder = () => [...document.querySelectorAll('p')]
   .filter((t) => t.startsWith('id:'))
   .map((t) => t.slice(3))
 
-/** The sort control's own words. */
-const sortControl = () => screen.getByRole('button', { name: 'Filter & sort' }).textContent ?? ''
+/** The sort control's own words: the header filter, whose label names the order the list shows. */
+const sortControl = () => {
+  const filter = screen.getAllByRole('button').find((b) => b.hasAttribute('data-header-filter'))
+  expect(filter, 'the header filter').toBeTruthy()
+  return filter!.getAttribute('aria-label') ?? ''
+}
 
 describe('Agents: by display name, A–Z, case-insensitive; equal names by id', () => {
   it('native agents and each runtime\'s agents', async () => {
@@ -267,9 +272,11 @@ describe('Store: by display name within each source group, the groups as the sou
     await open('apps?view=store')
     expect(cardOrder()).toEqual(['m', 'z1', 'z2', 'l1', 'l2'])
     expect(sortControl()).toContain('Sorted by name')
-    // The Sources rail lists the groups in the order the dividers show them.
-    const rail = screen.getByRole('navigation', { name: 'Categories and sources' })
-    const entries = within(rail).getAllByRole('button').map((b) => (b.textContent ?? '').replace(/\d+$/, '').trim())
+    // The filter's Sources section lists the groups in the order the dividers show them.
+    fireEvent.click(await findHeaderFilter())
+    const heading = await screen.findByText('Sources', { selector: 'span' })
+    const section = heading.parentElement!.parentElement as HTMLElement
+    const entries = within(section).getAllByRole('button').map((b) => (b.textContent ?? '').replace(/\d+$/, '').trim())
     expect(entries.slice(entries.indexOf('All sources') + 1, entries.indexOf('Add source'))).toEqual(['Built-in', 'apps'])
   })
 })

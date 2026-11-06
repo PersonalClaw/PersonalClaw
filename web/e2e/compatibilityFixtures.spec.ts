@@ -358,14 +358,15 @@ const FIXTURES: Fixture[] = [
     stub: answerProjectsAndTasks,
     view: (s, form) => ({
       hash: s.hash, heading: s.headings[0] ?? null, ...(form === 'wide' ? { lit: s.lit } : {}),
-      project: s.chosen['Project view'] ?? null, view: s.chosen.View ?? null, tasks: showing(s, TASK_TITLES),
+      view: s.chosen.View ?? null, tasks: showing(s, TASK_TITLES),
     }),
     expected: (form) => ({
-      hash: '#/projects/p-garden?tab=tasks&view=board', heading: 'Garden', ...(form === 'wide' ? { lit: 'Projects' } : {}),
-      project: 'Tasks', view: 'Kanban board', tasks: ['Order the soil', 'Plant the beans'],
+      // The Tasks page names where it is as a breadcrumb: the project, then Tasks.
+      hash: '#/projects/p-garden?tab=tasks&view=board', heading: 'Garden › Tasks', ...(form === 'wide' ? { lit: 'Projects' } : {}),
+      view: 'Kanban board', tasks: ['Order the soil', 'Plant the beans'],
     }),
     drawer: { lit: 'Projects' },
-    dropped: { what: 'the Tasks view', script: dropQueryKey('tab'), parts: ['hash', 'project', 'view', 'tasks'] },
+    dropped: { what: 'the Tasks view', script: dropQueryKey('tab'), parts: ['hash', 'heading', 'view', 'tasks'] },
   },
   {
     name: 'a thread with its Activity pane',

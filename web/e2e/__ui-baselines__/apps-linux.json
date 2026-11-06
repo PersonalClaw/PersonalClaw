@@ -3,34 +3,27 @@
     "targets": {
       "320": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "390": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "412": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "768": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Agents\"",
@@ -41,8 +34,7 @@
         "button[role=radio] \"Prompts\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {
@@ -55,34 +47,27 @@
     "targets": {
       "320": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "390": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "412": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
-        "button[role=radio] \"Native\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Native\""
       ],
       "768": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Filter & sort\"",
         "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Agents\"",
@@ -93,8 +78,7 @@
         "button[role=radio] \"Prompts\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "input \"Search apps\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {

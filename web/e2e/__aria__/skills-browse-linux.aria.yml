@@ -32,14 +32,12 @@
     - radio "Apps"
     - radio "Store"
   - heading "Skills" [level=#]
+  - searchbox "Search marketplace"
+  - 'button "Show: All marketplaces"'
   - radiogroup "Skills view":
     - radio "Installed"
     - radio "Browse" [checked]
     - radio "Proposals"
-  - searchbox "Search marketplace"
-  - combobox "Marketplace":
-    - option "All marketplaces" [selected]
-    - option "native"
   - status
   - heading "Browse skills" [level=#]
   - paragraph: Search all marketplaces for skills to install — the agent loads them when relevant.

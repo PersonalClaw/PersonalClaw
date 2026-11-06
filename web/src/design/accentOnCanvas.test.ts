@@ -23,7 +23,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // 🔑 SCOPE, MEASURED RATHER THAN GUESSED. A runtime census over 20 routes at BOTH viewports found
 // exactly **two** small accent texts painted on the canvas: the Memory Studio tab (both viewports) and
-// the inbox-settings link (phone only, where the panel goes full-width). The other 43 small-coral-text
+// the inbox-settings link (phone only, where the panel goes full-width). The Studio tab is gone since:
+// Memory's views are its page header's view switch, drawn on the header's own surface. The other 43 small-coral-text
 // sites sit on `--color-surface`/`surface-container` (white in light), where the same ink passes at
 // 4.83 — so this change does NOT pre-empt the open "coral as accent text" design decision; it
 // fixes the two places where the measurement fails today.
@@ -70,14 +71,7 @@ const read = (rel: string) => readSource(join(SRC, rel))
 // the same class is a failure at a 15px base and compliant large text at 24px. Read the computed
 // `fontSize` off the rendered node.
 
-describe('the two canvas-painted accent texts use the emphasis shade', () => {
-  it("the Memory Studio tab's active ink is the emphasis token", () => {
-    const code = read('pages/settings/MemoryPanel.tsx')
-    expect(code).toMatch(/borderColor: 'var\(--color-primary\)', color: 'var\(--color-primary-emphasis\)'/)
-    expect(code, 'the border may stay on the base accent — it is not text')
-      .toMatch(/borderColor: 'var\(--color-primary\)'/)
-  })
-
+describe('the canvas-painted accent texts use the emphasis shade', () => {
   it('the inbox-settings link uses the emphasis ink, in both copies of the panel', () => {
     // The sites now speak `ui/TextLink` (the adoption rail converged the idiom), so the emphasis
     // guarantee lives in two halves: the call site asks for the emphasis ink…
@@ -93,13 +87,6 @@ describe('the two canvas-painted accent texts use the emphasis shade', () => {
   it('neither site carries the old failing ink any more', () => {
     expect(read('pages/inbox/InboxSettingsPanel.tsx'))
       .not.toMatch(/className="text-primary text-\[0\.8125rem\] hover:underline">Open notification rules/)
-    expect(read('pages/settings/MemoryPanel.tsx'))
-      .not.toMatch(/borderColor: 'var\(--color-primary\)', color: 'var\(--color-primary\)'/)
-  })
-
-  it('the call sites carry the measurement, not just the token', () => {
-    // A bare token swap reads like a style preference; the number is what stops it being reverted.
-    expect(read('pages/settings/MemoryPanel.tsx')).toMatch(/4\.37:1/)
   })
 
   it('the scheme rail now measures the canvas, which is what makes this rule enforceable', () => {

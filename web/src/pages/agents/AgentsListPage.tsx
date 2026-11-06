@@ -6,11 +6,11 @@ import { fvs } from '../../design/fontWeight'
 import { Plus, Search, Star, Users, Lock, Cpu, Wrench, Sparkles, Zap, RefreshCw, Upload } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
-import { ListControls } from '../../ui/ListControls'
+import { ListStatus } from '../../ui/ListControls'
+import { HeaderSearch } from '../../ui/HeaderSearch'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
-import { ListMoreMenu } from '../capabilities/ListMoreMenu'
 import { compareAgents } from '../capabilities/capabilityOrder'
 import { useAgentsData, type NativeGroup, type DiscoveredGroup } from './agentsData'
 import { providerMeta, isReservedAgent, isBuiltinDefaultAgent } from './agentMeta'
@@ -169,21 +169,20 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
         <TopBar
           keepCornerPadding
           left={<PageTitle>Agents</PageTitle>}
+          // Every page-level control in the header, in its one order: the search, the list's own
+          // actions (in its `…`), New agent last. Sync is the only control that makes a Store, app
+          // or snapshot agent visible (issue 344).
           right={<HeaderActions>
+            <HeaderSearch value={q} onChange={setQ} placeholder="Search agents" />
+            <HeaderControl icon={RefreshCw} label={syncing ? 'Syncing…' : 'Sync agents'} inOverflow onClick={syncAgents}
+              disabled={syncing} disabledReason={syncing ? 'A sync is running; it can run again once it ends.' : undefined} />
+            <HeaderControl icon={Upload} label="Export to Claude Code" inOverflow onClick={() => setExporting(true)} />
             <HeaderControl icon={Plus} label="New agent" variant="primary" priority="primary" onClick={onCreate} />
           </HeaderActions>}
         />
       }
-      controls={<ListControls search={{ value: q, onChange: setQ, placeholder: 'Search agents', label: 'Search agents' }}
-        results={{ count: shownCount, noun: 'agents', active: !!n && !(loading && groups.length === 0) }}>
-        {/* The header holds only New agent, so what else the list does is here, beside it. Sync is
-            the only control that makes a Store, app or snapshot agent visible (issue 344). */}
-        <ListMoreMenu actions={[
-          { label: syncing ? 'Syncing…' : 'Sync agents', icon: RefreshCw, onSelect: syncAgents, disabledReason: syncing ? 'A sync is running; it can run again once it ends.' : undefined },
-          { label: 'Export to Claude Code', icon: Upload, onSelect: () => setExporting(true) },
-        ]} />
-      </ListControls>}
     >
+      <ListStatus results={{ count: shownCount, noun: 'agents', active: !!n && !(loading && groups.length === 0) }} />
       <div className="mx-auto px-l py-l flex flex-col gap-2xl">
         {!loaded && error ? (
           // A failed native read used to render "No native agents · Create an agent…" — the newcomer

@@ -165,8 +165,11 @@ describe('a button that reveals content says that it does', () => {
   // loop cockpit's Details button, which shows and hides its rail — was never counted, and it announced
   // a pressed toggle where a rail appeared. The optional `{` opener takes that shape in, with any
   // `;`-ended statements before the flip; their class stops at `{`, `}`, `;` and a line break, so it
-  // cannot leave the block either.
-  const TOGGLE = /onClick=\{\(\) => (?:\{\s*(?:[^{}\n;]+;\s*)*)?(?:[^&{}\n]+&& )?set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => (?:\{\s*(?:[^{}\n;]+;\s*)*)?(?:[^&{}\n]+&& )?set\w+\(!\w+\)/g
+  // cannot leave the block either. Each statement starts at a character that is not a space, and the
+  // guard's class stops at `;` too, so a handler's text is read one way only: with a space allowed at
+  // a statement's start, a run of ` :;` could be split exponentially many ways (CodeQL's
+  // inefficient-regular-expression alert).
+  const TOGGLE = /onClick=\{\(\) => (?:\{\s*(?:[^{}\n;\s][^{}\n;]*;\s*)*)?(?:[^&{}\n;]+&& )?set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => (?:\{\s*(?:[^{}\n;\s][^{}\n;]*;\s*)*)?(?:[^&{}\n;]+&& )?set\w+\(!\w+\)/g
 
   it('the old matcher is BLIND to a guarded flip — the gap is structural', () => {
     // Synthetic and exact: the first line is the one that sat outside the census since it was written.
@@ -209,6 +212,16 @@ describe('a button that reveals content says that it does', () => {
     // A block that sets without flipping is not a toggle, and the block stays inside its own handler.
     expect(sees('onClick={() => { setOpen(true); setSelected(null) }}')).toBe(false)
     expect(sees('onClick={() => { run() }} onBlur={() => { reset(); setOpen(!open) }}')).toBe(false)
+    TOGGLE.lastIndex = 0
+  })
+
+  it('reads a long run of statements in linear time', () => {
+    // 28 ` :;` took the space-led class seconds (its time doubled with each one); this one takes none.
+    const shape = 'onClick={() => {' + ' :;'.repeat(28)
+    const started = performance.now()
+    TOGGLE.lastIndex = 0
+    expect(TOGGLE.test(shape)).toBe(false)
+    expect(performance.now() - started).toBeLessThan(1000)
     TOGGLE.lastIndex = 0
   })
 
@@ -468,6 +481,26 @@ describe('the disclosures whose toggle arrives as a PROP', () => {
     PROP_TOGGLE.lastIndex = 0
   })
 
+  /** Prop-passed toggles that are SETTINGS, classified: they reveal nothing, so they take no
+   *  `aria-expanded`, and announce their state with `aria-pressed` (HeaderControl's `active`) and a
+   *  label that names it. [file, the setter, the pressed state, the state-naming label].
+   *
+   *  🪤 The project's default read as announced only by an unrelated `aria-expanded` in its file, its
+   *  New menu's, until that menu moved into the header's cluster. The file-level read below cannot
+   *  tell the two apart, so it is classified here, with its own proof. */
+  const PROP_SETTINGS: [string, string, string, string][] = [
+    ['projects/ProjectsSection.tsx', 'DefaultProject', 'active={isDefault}', "label={isDefault ? 'Default project' : 'Make default'}"],
+  ]
+
+  for (const [rel, setter, pressed, label] of PROP_SETTINGS) {
+    it(`${rel}'s set${setter} announces its state as pressed, with a label that names it`, () => {
+      const src = read(rel)
+      expect(src, 'the toggle must still be there').toMatch(new RegExp(`set${setter}\\(`))
+      expect(src, 'its control is pressed while the setting is on').toContain(pressed)
+      expect(src, 'and its label says which').toContain(label)
+    })
+  }
+
   const walkPages = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
   function propToggles() {
@@ -500,7 +533,7 @@ describe('the disclosures whose toggle arrives as a PROP', () => {
     // `aria-pressed` or a state-naming label — before any of them can be called done. A NEW silent prop
     // toggle pushes this over, which is the point: the default for an unclassified one is "not yet
     // reviewed", not "fine".
-    const silent = propToggles().filter((t) => !t.announced)
+    const silent = propToggles().filter((t) => !t.announced && !PROP_SETTINGS.some(([rel, setter]) => rel === t.rel && setter === t.state))
     expect(silent.length, `classify a new prop toggle, do not add to this number:\n${
       silent.map((s) => `${s.rel} set${s.state}`).join('\n')}`).toBeLessThanOrEqual(9)
   })

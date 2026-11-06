@@ -27,11 +27,11 @@
     - radio "Automations"
     - radio "Workflows" [checked]
   - heading "Workflows" [level=#]
+  - searchbox "Search workflows"
   - radiogroup "Workflows view":
     - radio "Runs"
     - radio "Definitions" [checked]
   - button "Start from template"
-  - searchbox "Search workflows"
   - status
   - button "audit-sweep"
   - text: audit-sweep Find issues from several angles at once, adversarially verify each one, fix what survives, and loop until a round finds nothing new. Off v# bundled

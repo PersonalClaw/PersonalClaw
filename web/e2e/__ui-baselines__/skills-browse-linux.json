@@ -4,23 +4,17 @@
       "320": [
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
-        "button[role=radio] \"Proposals\"",
-        "input \"Search marketplace\"",
-        "select \"Marketplace\""
+        "button[role=radio] \"Proposals\""
       ],
       "390": [
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
-        "button[role=radio] \"Proposals\"",
-        "input \"Search marketplace\"",
-        "select \"Marketplace\""
+        "button[role=radio] \"Proposals\""
       ],
       "412": [
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
-        "button[role=radio] \"Proposals\"",
-        "input \"Search marketplace\"",
-        "select \"Marketplace\""
+        "button[role=radio] \"Proposals\""
       ],
       "768": [
         "button[role=radio] \"Agents\"",
@@ -32,9 +26,7 @@
         "button[role=radio] \"Proposals\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "input \"Search marketplace\"",
-        "select \"Marketplace\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {
@@ -48,23 +40,17 @@
       "320": [
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
-        "button[role=radio] \"Proposals\"",
-        "input \"Search marketplace\"",
-        "select \"Marketplace\""
+        "button[role=radio] \"Proposals\""
       ],
       "390": [
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
-        "button[role=radio] \"Proposals\"",
-        "input \"Search marketplace\"",
-        "select \"Marketplace\""
+        "button[role=radio] \"Proposals\""
       ],
       "412": [
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
-        "button[role=radio] \"Proposals\"",
-        "input \"Search marketplace\"",
-        "select \"Marketplace\""
+        "button[role=radio] \"Proposals\""
       ],
       "768": [
         "button[role=radio] \"Agents\"",
@@ -76,9 +62,7 @@
         "button[role=radio] \"Proposals\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "input \"Search marketplace\"",
-        "select \"Marketplace\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {

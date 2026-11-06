@@ -257,19 +257,10 @@ export function RoomView({ roomId, navigate, setQuery }: {
               {state !== 'active' && <StatusPill tone={stateMeta.tone}>{stateMeta.label}</StatusPill>}
             </div>
           }
+          // The one order: the destructive control first, then the others, and the panel opener
+          // last, since the room has no primary action of its own.
           right={
             <HeaderActions>
-              <HeaderControl
-                icon={PanelRight}
-                label="Members"
-                active={membersOpen}
-                ariaExpanded={membersOpen}
-                priority="primary"
-                onClick={() => setMembersOpen((o) => !o)} />
-              <HeaderControl
-                icon={Download}
-                label="Export transcript"
-                onClick={() => downloadFrom(api.roomExportUrl(room.id, 'md'))} />
               <HeaderControl
                 icon={Archive}
                 label="Archive"
@@ -277,6 +268,17 @@ export function RoomView({ roomId, navigate, setQuery }: {
                 priority="low"
                 disabled={room.archived || busy}
                 onClick={archive} />
+              <HeaderControl
+                icon={Download}
+                label="Export transcript"
+                onClick={() => downloadFrom(api.roomExportUrl(room.id, 'md'))} />
+              <HeaderControl
+                icon={PanelRight}
+                label="Members"
+                active={membersOpen}
+                ariaExpanded={membersOpen}
+                priority="primary"
+                onClick={() => setMembersOpen((o) => !o)} />
             </HeaderActions>
           } />
       }

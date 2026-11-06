@@ -77,7 +77,7 @@ export function DecisionJournal({ onOpenItem, onOpenChat }: { onOpenItem: (id: s
   )
 }
 
-/** The decision's life domain. A plain tag, deliberately NOT the page's `FilterChip`: that is a
+/** The decision's life domain. A plain tag, deliberately NOT a filter control: that is a
  *  button, and nothing here filters — a control that looks pressable and does nothing is worse
  *  than a label. */
 function DomainTag({ domain }: { domain: string }) {

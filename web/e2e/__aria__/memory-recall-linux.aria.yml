@@ -29,15 +29,15 @@
     - radio "Files"
     - radio "Artifacts"
   - heading "Memory" [level=#]
+  - radiogroup "Memory view":
+    - radio "Studio"
+    - radio "Health"
+    - radio "Recall" [checked]
+    - radio "Inspect"
+    - radio "Audit"
+    - radio "Settings"
   - paragraph: Explore and manage what the <theme> remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail.
   - text: # Semantic # Episodic # Events # Embedded · no model bound
-  - tablist "Memory view":
-    - tab "Studio"
-    - tab "Health"
-    - tab "Recall" [selected]
-    - tab "Inspect"
-    - tab "Audit"
-    - tab "Settings"
   - paragraph: Ask your memory a question — a ranked deep recall across every stored fact, lesson, and episode (records the recall signal).
   - textbox "Question for deep memory recall":
     - /placeholder: e.g. what did I decide about the TicTacToe deploy?

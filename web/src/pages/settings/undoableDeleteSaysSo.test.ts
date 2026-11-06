@@ -65,18 +65,18 @@ const forNoun = (noun: string) => {
   return found[0][0]
 }
 
-/** The panel's tab labels, read from `TOP_TABS` itself. The copy used to send people to "the History
+/** The panel's view labels, read from `MEMORY_TABS` itself (the page header's view switch). The copy used to send people to "the History
  *  tab below" — there is no History tab, the undo lives under **Audit**, and the strip is ABOVE the
  *  studio — while this rail pinned the wrong name as a literal. Reading the label from the strip is
  *  what keeps the copy and the tab from drifting apart again. */
-const tabLabels = [...(code.match(/const TOP_TABS[\s\S]*?\n\]/)?.[0] ?? '').matchAll(/label: '([^']+)'/g)].map((m) => m[1])
+const tabLabels = [...(code.match(/const MEMORY_TABS[\s\S]*?\n\]/)?.[0] ?? '').matchAll(/label: '([^']+)'/g)].map((m) => m[1])
 const AUDIT = tabLabels.find((l) => l === 'Audit')
 /** Every "the <X> tab" a copy string names. */
 const tabsNamed = (src: string) => [...src.matchAll(/\b[Tt]he (\w+) tab\b/g)].map((m) => m[1])
 
 describe("every delete's copy matches whether it can be undone", () => {
   it('🔴 every tab a delete names is a tab the strip has', () => {
-    expect(AUDIT, 'the Audit tab is in TOP_TABS (vacuity)').toBe('Audit')
+    expect(AUDIT, 'the Audit tab is in MEMORY_TABS (vacuity)').toBe('Audit')
     const named = calls.flatMap((m) => tabsNamed(m[0]))
     expect(named.length, 'the reversible deletes do name a tab').toBeGreaterThan(0)
     for (const tab of named) expect(tabLabels, `"the ${tab} tab" is a tab on this panel`).toContain(tab)

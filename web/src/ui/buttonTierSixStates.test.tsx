@@ -149,8 +149,9 @@ describe('the two call sites whose gate was invisible', () => {
     const src = code('pages/workflows/WorkflowDefDetail.tsx')
     // `refine` opens with `if (refining) return`, so without this the second click is a no-op.
     expect(src).toMatch(/if \(refining\) return/)
-    expect(src).toMatch(/<QuietButton[\s\S]{0,400}?disabled=\{refining\}/)
-    expect(src).toMatch(/<QuietButton[\s\S]{0,400}?disabledReason="A refinement is already in flight"/)
+    // A header member now (`HeaderControl`), with the same gate.
+    expect(src).toMatch(/<HeaderControl icon=\{Sparkles\}[\s\S]{0,400}?disabled=\{refining\}/)
+    expect(src).toMatch(/<HeaderControl icon=\{Sparkles\}[\s\S]{0,400}?disabledReason="A refinement is already in flight"/)
   })
 
   it('the comment-stripping is load-bearing, not decorative', () => {

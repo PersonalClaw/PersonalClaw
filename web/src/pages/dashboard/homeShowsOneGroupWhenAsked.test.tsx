@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { resetDataStore } from '../../lib/data'
 import { NeedsYouBadge } from '../../ui/NeedsYouBadge'
 import { HomeHarness, runningRow, waitingItem, waitingList } from '../../test/homeHarness'
+import { headerFilter } from '../../test/headerFilter'
 
 // ── Home shows one group when asked, and never hides what waits from the count ─────────────────
 //
-// A filter row above the groups picks all three or one of them, so a narrow window can show the one
+// The header's filter picks all three groups or one of them, so a narrow window can show the one
 // it is for. It is a view choice, kept per browser like the sidebar's state, and the toolbar's
 // needs-you badge always counts everything: a filter never hides that something waits (#3813).
 
@@ -38,14 +39,19 @@ beforeEach(() => {
   waiting.mockResolvedValue(waitingList([waitingItem(), waitingItem({ id: 'question:q', kind: 'question', brief: { questions: [{ question: 'Which branch?' }] } })]))
 })
 
-const filter = () => screen.getByRole('radiogroup', { name: 'Show' })
+/** The header's filter, and a choice in its open menu. */
+const filter = () => headerFilter()
+const choose = async (name: string) => {
+  await userEvent.click(filter())
+  await userEvent.click(await screen.findByRole('button', { name }))
+}
 
 describe('the group filter', () => {
   it('shows all three until one is picked, then only that one', async () => {
     render(<HomeHarness />)
     await screen.findByText('Which branch?')
     expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Needs You', 'Running Now', 'Recent and completed'])
-    await userEvent.click(within(filter()).getByRole('radio', { name: 'Running Now' }))
+    await choose('Running Now')
     expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Running Now'])
     expect(screen.getByText('Plan the garden')).toBeInTheDocument()
     expect(screen.queryByText('Which branch?')).toBeNull()
@@ -53,12 +59,13 @@ describe('the group filter', () => {
 
   it('is kept per browser, so the next visit opens on the same choice', async () => {
     render(<HomeHarness />)
-    await userEvent.click(within(filter()).getByRole('radio', { name: 'Recent and completed' }))
+    await choose('Recent and completed')
     cleanup()
     render(<HomeHarness />)
-    expect(within(filter()).getByRole('radio', { name: 'Recent and completed' })).toHaveAttribute('aria-checked', 'true')
+    expect(filter(), 'the filter says what it shows').toHaveAttribute('aria-label', 'Show: Recent and completed')
+    expect(filter()).toHaveAttribute('data-header-filter', 'set')
     expect(screen.queryByRole('heading', { name: 'Needs You' })).toBeNull()
-    await userEvent.click(within(filter()).getByRole('radio', { name: 'All' }))
+    await choose('All groups')
     expect(localStorage.getItem('home-groups')).toBeNull()
   })
 
@@ -72,6 +79,7 @@ describe('the group filter', () => {
   it('ignores a stored choice it does not know, and shows all three', async () => {
     localStorage.setItem('home-groups', 'idle')
     render(<HomeHarness />)
-    expect(within(filter()).getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true')
+    expect(filter()).toHaveAttribute('aria-label', 'Show: All groups')
+    expect(filter()).toHaveAttribute('data-header-filter', 'default')
   })
 })

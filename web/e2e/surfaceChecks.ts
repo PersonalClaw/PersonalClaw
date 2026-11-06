@@ -525,11 +525,19 @@ export function targetFindings(actual: string[], baseline: string[] | undefined,
 
 // ── 4. 200% text zoom ──────────────────────────────────────────────────────────────────────────────
 
-/** Text that is cut off once the root font size doubles (WCAG 1.4.4). Read and restored in ONE
- *  synchronous pass, so no React render lands between: only text clipped by the zoom is reported,
- *  not text already clipped at 100% (an ellipsis truncation is a design). */
+/** Text that is cut off once the root font size doubles (WCAG 1.4.4): only text clipped by the zoom
+ *  is reported, not text already clipped at 100% (an ellipsis truncation is a design).
+ *
+ *  It is read once the page has settled at the doubled size, as a reader at 200% sees it. A header's
+ *  action cluster (`ui/HeaderActions`) picks its tier from probes a `ResizeObserver` reads, so it
+ *  re-tiers a frame after the font changes. Read in the same synchronous pass as the doubling, the
+ *  cluster was still laid out for 100%, and its row widened `#root` on every surface it heads: a
+ *  `<div#root>` clip no reader ever sees. So the step waits a frame and a task after doubling, and
+ *  again after restoring, before the keyboard walk reads the page. */
 export async function zoomFindings(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
+  return page.evaluate(async () => {
+    // A frame for the observers, a task for the renders they schedule, a frame for those to lay out.
+    const settle = () => new Promise<void>((done) => requestAnimationFrame(() => setTimeout(() => requestAnimationFrame(() => done()), 0)))
     // Clipped, per axis: content past an edge that does not scroll is content the reader loses.
     // An axis that scrolls (`auto`, `scroll`) keeps it reachable, and a box that truncates with an
     // ellipsis says it is truncating; neither is a finding. Both were, in the first measurement:
@@ -554,8 +562,10 @@ export async function zoomFindings(page: Page): Promise<string[]> {
     const before = measure()
     const prior = root.style.fontSize
     root.style.fontSize = `${(parseFloat(getComputedStyle(root).fontSize) || 16) * 2}px`
+    await settle()
     const after = measure()
     root.style.fontSize = prior
+    await settle()
     const out: string[] = []
     for (const [el, size] of after) {
       if (before.has(el)) continue
@@ -588,6 +598,8 @@ export interface Stop {
   announced: boolean
   /** A contenteditable whose caret is its indicator, which no computed style can see. */
   credited: boolean
+  /** The stop's box in the page's content: its viewport box plus the scroll of the window and its
+   *  scrolling ancestors when it took focus, so a scroll between two stops moves neither. */
   rect: { left: number; top: number; right: number; bottom: number }
   /** How many line boxes the stop is drawn in: more than one for a link that wraps in running text. */
   lines: number
@@ -644,10 +656,18 @@ export async function tabWalk(page: Page): Promise<{ stops: Stop[]; capped: bool
         for (const k of Array.from(el.querySelectorAll('*')).slice(0, 25)) parts.push(effective(getComputedStyle(k)))
         return parts.join('||')
       }
+      // Where the stop sits in the page's content, not in the viewport: the box plus how far the
+      // window and every scrolling ancestor had scrolled when it took focus. Focus scrolls a list to
+      // its next card, so two cards in viewport terms could share a row they do not share, and the
+      // next card read as "backwards". Measured on #/workflows: Plan a project, below and left of
+      // Pursue a goal, landed in its row once focusing it scrolled the list.
       const r = e.getBoundingClientRect()
+      let sx = window.scrollX
+      let sy = window.scrollY
+      for (let a = e.parentElement; a; a = a.parentElement) { sx += a.scrollLeft; sy += a.scrollTop }
       const base = {
         desc: q.desc(el), name: q.name(el), region: q.region(el), tag: el.tagName.toLowerCase(),
-        rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom },
+        rect: { left: r.left + sx, top: r.top + sy, right: r.right + sx, bottom: r.bottom + sy },
         lines: e.getClientRects().length,
       }
       // Read while focused: the ring, and a text field's border.

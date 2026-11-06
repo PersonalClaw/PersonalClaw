@@ -7,8 +7,10 @@ import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { IconButton } from '../../ui/IconButton'
-import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
-import { ListControls } from '../../ui/ListControls'
+import { type FilterSectionDef } from '../../ui/FilterMenu'
+import { ListStatus } from '../../ui/ListControls'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { SidePanel } from '../../ui/SidePanel'
@@ -143,7 +145,7 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
     onChange: (k) => setFilter(k as typeof filter),
     options: [
       { key: 'active', label: 'Active', count: count('active') },
-      { key: 'all', label: 'All', count: count('all') },
+      { key: 'all', label: 'All loops', count: count('all') },
       { key: 'ongoing', label: 'Ongoing', count: count('ongoing') },
       { key: 'done', label: 'Done', count: count('done') },
     ],
@@ -156,18 +158,12 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
           keepCornerPadding
           left={<PageTitle>Loops</PageTitle>}
           right={
-            <div className="flex items-center gap-s">
-              <Button size="sm" className="h-10" onClick={onCreate}><Plus size={16} /> New loop</Button>
-            </div>
+            <HeaderActions>
+              <HeaderFilter sections={[filterSection]} />
+              <HeaderControl icon={Plus} label="New loop" variant="primary" priority="primary" onClick={onCreate} />
+            </HeaderActions>
           }
         />
-      }
-      controls={
-        // Active / Ongoing (forever + monitor) / Done filters — on the page,
-        // not the header.
-        <ListControls results={{ count: (loops ?? []).filter(matches).length, noun: 'loops', active: filter !== 'active' }}>
-          <FilterMenu sections={[filterSection]} />
-        </ListControls>
       }
       panel={peek && (
         <SidePanel key={peek.id} fillHeight storeKey="loop-peek-w"
@@ -177,6 +173,7 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
         </SidePanel>
       )}
     >
+      <ListStatus results={{ count: (loops ?? []).filter(matches).length, noun: 'loops', active: filter !== 'active' }} />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-2xl">
           {(codeAtWork > 0 || codeUnread) && (

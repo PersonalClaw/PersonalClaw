@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { TasksListPage } from './TasksListPage'
 import { api } from '../../lib/api'
 import { resetDataStore } from '../../lib/data'
+import { headerFilter } from '../../test/headerFilter'
 
 // ── Task tags are readable as well as writable (#477) ───────────────────────────────────────────
 //
@@ -120,7 +121,7 @@ describe('the tag axis is reachable from the filter menu', () => {
     render(<Harness />)
     await waitFor(() => expect(screen.getByText('Deliver Ramirez wedding gallery')).toBeTruthy())
 
-    fireEvent.click(screen.getByLabelText('Filter & sort'))
+    fireEvent.click(headerFilter())
     // Was absent entirely: Scope / Status / Assigned / Sort by.
     const section = screen.getByText('Tag').parentElement!.parentElement as HTMLElement
     expect(within(section).getByText('Any tag')).toBeTruthy()
@@ -132,7 +133,7 @@ describe('the tag axis is reachable from the filter menu', () => {
     render(<Harness />)
     await waitFor(() => expect(screen.getByText('Press the fall cider batch')).toBeTruthy())
 
-    fireEvent.click(screen.getByLabelText('Filter & sort'))
+    fireEvent.click(headerFilter())
     const section = screen.getByText('Tag').parentElement!.parentElement as HTMLElement
     fireEvent.click(within(section).getByText('fall market'))
 
@@ -150,7 +151,7 @@ describe('the tag axis is reachable from the filter menu', () => {
     render(<Harness />)
     await waitFor(() => expect(screen.getByText('Re-tile the back step')).toBeTruthy())
 
-    fireEvent.click(screen.getByLabelText('Filter & sort'))
+    fireEvent.click(headerFilter())
     expect(screen.queryByText('Tag')).toBeNull()
     expect(screen.getByText('Scope')).toBeTruthy()
   })

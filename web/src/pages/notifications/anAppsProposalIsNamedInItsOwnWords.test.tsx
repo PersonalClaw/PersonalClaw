@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import type { NotificationItem } from '../../lib/api'
+import { headerFilter } from '../../test/headerFilter'
 
 // ── An app's proposal reads as the kind its manifest named ───────────────────────────────────────
 //
@@ -47,7 +48,7 @@ describe("an app's proposal on the Notifications page", () => {
   it('the filter offers it by that name', async () => {
     render(<NotificationsPage query={{}} setQuery={vi.fn()} navigate={vi.fn()} />)
     await screen.findByText(PROPOSAL.title)
-    fireEvent.click(screen.getByRole('button', { name: 'Filter & sort' }))
+    fireEvent.click(headerFilter())
     expect(await screen.findByRole('button', { name: /Draft reply/ })).toBeTruthy()
     expect(screen.queryByText(/proposal:draft/)).toBeNull()
   })

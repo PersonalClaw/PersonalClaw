@@ -373,7 +373,7 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
     // If either stops taking a noun, this whole rule loses a source of truth.
     expect(readSource(join(SRC, 'ui/ListScaffold.tsx')), 'LoadError').toMatch(/what: string/)
     const controls = readSource(join(SRC, 'ui/ListControls.tsx'))
-    expect(controls, 'ListControls results contract').toMatch(/results\?: \{ count: number; noun: string/)
+    expect(controls, 'ListStatus results contract').toMatch(/results: \{ count: number; noun: string/)
     expect(controls, 'and it is spoken aloud').toMatch(/ResultAnnouncement/)
   })
 })

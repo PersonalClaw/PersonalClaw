@@ -7,7 +7,8 @@
  * Measured with four lessons: All 80, Facts 39 (the four among them), Lessons 4.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, waitFor, cleanup, within } from '@testing-library/react'
+import { render, screen, waitFor, cleanup, within, fireEvent } from '@testing-library/react'
+import { findHeaderFilter } from '../../test/headerFilter'
 import type { Lesson, SemanticEntry } from '../../lib/api'
 
 const RULE = 'Talk notes are conversational; no jokes about Kafka.'
@@ -43,8 +44,9 @@ async function mount() {
       },
     }
   })
-  const { MemoryPanel } = await import('./MemoryPanel')
-  render(<MemoryPanel query={{}} setQuery={() => {}} />)
+  // The page, whose header holds the Studio's kind filter and its counts.
+  const { MemoryPage } = await import('../library/MemoryPage')
+  render(<MemoryPage query={{}} setQuery={() => {}} />)
 }
 
 beforeEach(() => {
@@ -53,7 +55,13 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.resetModules(); vi.doUnmock('../../lib/api') })
 
-const chip = (name: RegExp) => within(screen.getByRole('group', { name: 'Filter by kind' })).getByRole('button', { name })
+/** The header filter's Kind row named `name`, the filter opened if it is not. */
+async function kindRow(name: RegExp): Promise<HTMLElement> {
+  const trigger = await findHeaderFilter()
+  if (trigger.getAttribute('aria-expanded') !== 'true') fireEvent.click(trigger)
+  const section = (await screen.findByText('Kind', { selector: 'span' })).parentElement!.parentElement as HTMLElement
+  return within(section).getByRole('button', { name })
+}
 
 describe('the Memory studio', () => {
   it('lists a lesson once, as the lesson, never as a raw lesson.<hash> fact', async () => {
@@ -63,7 +71,7 @@ describe('the Memory studio', () => {
     expect(screen.getAllByText(RULE), 'the rule is on one row').toHaveLength(1)
     expect(screen.queryByText('lesson.0d07ddd7ad40')).toBeNull()
     expect(screen.queryByText('lesson.ws.721a7d005120')).toBeNull()
-    expect(chip(/^Lessons/).textContent).toBe('Lessons2')
-    expect(chip(/^Facts/).textContent, 'the one fact that is a fact').toBe('Facts1')
+    expect((await kindRow(/^Lessons/)).textContent).toBe('Lessons2')
+    expect((await kindRow(/^Facts/)).textContent, 'the one fact that is a fact').toBe('Facts1')
   })
 })

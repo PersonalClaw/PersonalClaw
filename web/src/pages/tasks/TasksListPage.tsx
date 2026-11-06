@@ -1,17 +1,18 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2, Users, UserRound, Search, Filter, Tag, Tags, Workflow } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { TOUCH_TARGET } from '../../ui/Toggle'
-import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { type FilterSectionDef } from '../../ui/FilterMenu'
+import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { PartialNotice } from '../../ui/PartialNotice'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { Meter } from '../../ui/Meter'
-import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { TextLink } from '../../ui/TextLink'
 import { confirm, confirmDelete } from '../../ui/dialog'
@@ -45,7 +46,7 @@ const VIEW_KEY = 'tasks-view'
 // (`ready` = unblocked and actionable, spanning open + in_progress), so they
 // keep their own labels.
 const FILTERS = [
-  { key: 'all', label: 'All' },
+  { key: 'all', label: 'Any status' },
   { key: 'ready', label: 'Ready' },
   ...['open', 'in_progress', 'blocked', 'done'].map((k) => ({ key: k, label: statusMeta(k).label })),
 ]
@@ -55,6 +56,8 @@ const SORTS = [
   { key: 'due', label: 'Due date' },
   { key: 'priority', label: 'Priority' },
 ]
+/** An order as the header filter's label says it, beside the scope and status it reads. */
+const SORT_SAID: Record<string, string> = { recent: 'Recently updated first', due: 'By due date', priority: 'By priority' }
 // Scope filter — narrows the list to a slice of work, applied across every view
 // (incl. board + DAG). Sentinels group tasks by origin; any other value is a
 // specific Tasks Project name. Goal Loop tasks land under the "Goal Loops"
@@ -105,7 +108,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   inProject?: {
     /** The project's name, the scope its tasks carry. */
     name: string
-    /** The header's left side: the project's title and its view switch. */
+    /** The header's left side: where you are, the project's name (back to its Overview) and Tasks. */
     title: ReactNode
     /** Controls beside the page's own, at the header's right. */
     actions?: ReactNode
@@ -151,9 +154,9 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // A search failure is kept WITH the request it answered (see `searchError` beside the search effect).
   const [searchErr, setSearchErr] = useState<{ request: string; error: unknown } | null>(null)
   const [searchNonce, setSearchNonce] = useState(0)
-  // Server-backed search (/api/tasks/search): a non-empty query takes precedence
-  // over the status filter. URL-backed (?q, replace) so it's shareable + survives
-  // refresh; one Back exits search rather than rewinding keystrokes.
+  // Server-backed search (/api/tasks/search): the chosen Status narrows its matches, as it narrows
+  // the whole list. URL-backed (?q, replace) so it's shareable + survives refresh; one Back exits
+  // search rather than rewinding keystrokes.
   const query = qProp
   const setQuery = setQ
   const [results, setResults] = useState<TaskItem[] | null>(null)
@@ -204,6 +207,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // every project and the list sub-filter can resolve names.
   const [projects, setProjects] = useState<ProjectItem[]>([])
   const [allLists, setAllLists] = useState<TaskListItem[]>([])
+  // Whether the catalog above has answered (empty or not), so a `?list` it does not hold is known.
+  const [catalogRead, setCatalogRead] = useState(false)
   // Names of the Tasks Projects that back a Code-feature project — used to resolve
   // the "Coding projects" scope (there's no per-task origin flag).
   const [codingProjectNames, setCodingProjectNames] = useState<Set<string>>(new Set())
@@ -315,22 +320,30 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         if (!alive) return
         setProjects(ps)
         setAllLists(ls)
+        setCatalogRead(true)
         const byId = new Map(ps.map((p) => [p.id, p.name]))
         const names = new Set<string>()
         for (const cp of cps) { const n = cp.tasks_project_id && byId.get(cp.tasks_project_id); if (n) names.add(n) }
         setCodingProjectNames(names)
       })
-      .catch(() => { if (alive) { setProjects([]); setAllLists([]) } })
+      .catch(() => { if (alive) { setProjects([]); setAllLists([]); setCatalogRead(true) } })
     return () => { alive = false }
   }, [])
 
   const repeatableProject = projects.find((p) => p.name === 'Repeatable')
-  // The scoped project's task lists (for the list bar + Repeatable reset).
+  // The scoped project's task lists (for the List section and a Repeatable list's Reset).
   const scopedProject = isProjectScope ? projects.find((p) => p.name === scope) : undefined
   const projectLists = useMemo(
     () => (scopedProject ? allLists.filter((l) => l.project_id === scopedProject.id) : []),
     [scopedProject, allLists],
   )
+  // A `?list` the scoped project does not hold (one left from another project) is dropped, once the
+  // catalog and the scope have loaded, rather than shown by its raw id in the filter's label. A deep
+  // link to one of the project's lists survives: it is kept until the catalog says otherwise.
+  useEffect(() => {
+    if (catalogRead && scopedProject && listProp && !projectLists.some((l) => l.id === listProp)) setListFilter(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setListFilter writes the URL; the inputs are the rest
+  }, [catalogRead, scopedProject, listProp, projectLists])
 
   // Does a task fall within the active scope? (preset by origin, or one project)
   const inScope = useMemo(() => {
@@ -348,14 +361,24 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     [tagFilter],
   )
 
-  // Tasks within the active scope + tag, before status/search — feeds board + DAG
-  // (which present their own statuses) so both narrowings apply to every view.
-  const scopedTasks = useMemo(() => (tasks ?? []).filter(inScope).filter(hasTag), [tasks, inScope, hasTag])
+  // Tasks within the active scope, tag, list and Assigned, before status/search — feeds board + DAG
+  // (which present their own statuses) so each narrowing applies to every view, the List section's
+  // and Mine as the tag's: the filter's label says what the page shows.
+  // `narrowedTasks` is that set before Mine, which the Mine empty state counts.
+  const mineOnly = !!owner && assigned === ASSIGNED_MINE
+  const narrowedTasks = useMemo(
+    () => (tasks ?? []).filter(inScope).filter(hasTag).filter((t) => !listProp || t.task_list_id === listProp),
+    [tasks, inScope, hasTag, listProp])
+  const scopedTasks = useMemo(
+    () => (mineOnly ? narrowedTasks.filter((t) => isMine(t, owner)) : narrowedTasks),
+    [narrowedTasks, mineOnly, owner])
 
-  // The unified Filter & sort menu's sections. Status hides while searching (the
-  // query overrides it) and Sort hides on board/dag (they present + order their
-  // own statuses) — so the menu only ever offers what the current view honors.
-  const showStatus = !FULL_WIDTH.includes(view) && !q
+  // The unified Filter & sort menu's sections. Sort hides on board/dag (they present + order
+  // their own statuses), so the menu only ever offers what the current view honors. Status stays
+  // while searching and narrows the matches too. The section came and went with the query, so the
+  // filter's label changed width on the first key and the row re-tiered under the field being typed
+  // in. The filter itself stayed.
+  const showStatus = !FULL_WIDTH.includes(view)
   const showSort = view === 'list' || view === 'cards'
   const filterSections = useMemo<FilterSectionDef[]>(() => {
     const byProject = new Map<string, number>()
@@ -385,8 +408,10 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         ...projOptions.map((p, i) => ({ key: p.name, label: p.name, icon: FolderKanban, count: byProject.get(p.name), groupLabel: i === 0 ? 'Projects' : undefined })),
       ],
     }]
+    // In the header filter's label, the scope always and the rest once set ("Show: All tasks ·
+    // Ready"); in a project, which has no scope, the status always.
     if (showStatus) sections.push({
-      title: 'Status', value: filter, defaultKey: 'all', onChange: setFilter,
+      title: 'Status', value: filter, defaultKey: 'all', onChange: setFilter, quiet: !inAProject,
       options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: statusCount(f.key) })),
     })
     // Tag — the axis that existed end to end on the server and had no way in. Offered
@@ -394,7 +419,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     // narrows which work is on screen, which is exactly what scope does there too.
     // Busiest tag first, then alphabetical, so a real vocabulary stays navigable.
     if (tagCounts.size > 0) sections.push({
-      title: 'Tag', value: tagFilter, defaultKey: TAG_ANY, onChange: setTag,
+      title: 'Tag', value: tagFilter, defaultKey: TAG_ANY, onChange: setTag, quiet: true,
       options: [
         { key: TAG_ANY, label: 'Any tag', icon: Tags, count: tasks?.length },
         ...[...tagCounts.entries()]
@@ -407,22 +432,54 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     // would be a control that can only ever be a no-op.
     const foreign = owner ? (tasks ?? []).filter((t) => !isMine(t, owner)).length : 0
     if (owner && foreign > 0) sections.push({
-      title: 'Assigned', value: assigned, defaultKey: ASSIGNED_EVERYONE, onChange: setAssigned,
+      title: 'Assigned', value: assigned, defaultKey: ASSIGNED_EVERYONE, onChange: setAssigned, quiet: true,
       options: [
         { key: ASSIGNED_EVERYONE, label: 'Everyone', icon: Users, count: tasks?.length },
         { key: ASSIGNED_MINE, label: 'Mine', icon: UserRound, count: (tasks?.length ?? 0) - foreign },
       ],
     })
     if (showSort) sections.push({
-      title: 'Sort by', value: sortBy, defaultKey: 'recent', onChange: setSortBy,
+      title: 'Sort by', value: sortBy, defaultKey: 'recent', onChange: setSortBy, quiet: true,
+      said: (k) => SORT_SAID[k] ?? SORT_SAID.recent,
       options: SORTS.map((s) => ({ key: s.key, label: s.label })),
     })
+    // A project's task lists: which one the page shows (`?list`), where a row of chips over the
+    // list chose it. A repeatable list resets from here too, under its choices.
+    if (isProjectScope && projectLists.length > 0) sections.push({
+      title: 'List', value: listFilter?.id ?? '', defaultKey: '', quiet: true,
+      onChange: (k) => setListFilter(k ? { id: k, name: projectLists.find((l) => l.id === k)?.name ?? k } : null),
+      options: [
+        { key: '', label: 'All lists', icon: ListChecks },
+        ...projectLists.map((l) => ({ key: l.id, label: l.name, icon: ListChecks })),
+      ],
+      actions: projectLists
+        .filter((l) => !!repeatableProject && l.project_id === repeatableProject.id)
+        .map((l) => ({ label: `Reset ${l.name}`, icon: RotateCcw, hint: 'Every task must be done first', onSelect: () => { void resetRef.current(l) } })),
+    })
     return sections
-  }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned, tagFilter, inAProject])
+  }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned, tagFilter, inAProject,
+    isProjectScope, projectLists, listFilter?.id, repeatableProject?.id])
+
+  // The search's matches within every narrower but Status: what the no-match state counts when the
+  // chosen Status is what left none of them.
+  const matchesAnyStatus = useMemo(() => {
+    if (!q || !results) return 0
+    return results.filter(inScope).filter(hasTag)
+      .filter((t) => !listFilter || t.task_list_id === listFilter.id)
+      .filter((t) => !(owner && assigned === ASSIGNED_MINE) || isMine(t, owner)).length
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- listFilter is rebuilt each render from listProp
+  }, [q, results, inScope, hasTag, listProp, owner, assigned])
 
   const filtered = useMemo(() => {
+    // The chosen status, over the search's matches as over the whole list.
+    const readyIds = new Set((ready ?? []).map((t) => t.id))
+    const withStatus = (list: TaskItem[]) => filter === 'all' ? list
+      : filter === 'ready' ? (ready ? list.filter((t) => readyIds.has(t.id)) : list)
+        : filter === 'done' ? list.filter((t) => TERMINAL.has(t.status)) : list.filter((t) => t.status === filter)
     let base: TaskItem[] | null
-    if (q) base = results  // search overrides the status filter
+    // Ready under a query waits for the ready read: before it answers there is nothing to narrow by,
+    // and listing every match under the Ready label would be a list it is not.
+    if (q) base = results && (filter === 'ready' && !ready ? null : withStatus(results))
     else if (filter === 'ready') base = ready
     else if (!tasks) base = null
     else base = filter === 'all' ? [...tasks] : filter === 'done' ? tasks.filter((t) => TERMINAL.has(t.status)) : tasks.filter((t) => t.status === filter)
@@ -464,6 +521,9 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // NOT make the count safe: `collection.complete` can be false, and a warning that undercounts
   // is worse than one that does not count at all. The body states the consequence categorically
   // instead — true for every list at every size, and independent of completeness.
+  // The List section's Reset reads the latest of this (the sections are memoised).
+  const resetRef = useRef(resetList)
+  resetRef.current = resetList
   async function resetList(list: TaskListItem) {
     if (!(await confirm({
       title: `Reset “${list.name}”?`,
@@ -512,15 +572,37 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
 
   // The nothing-on-screen state for the views that render `scopedTasks` (board + DAG). They
   // have no status/search branch to blame, so scope was the only narrower they could name —
-  // and with a Tag filter now applying to them too, "No tasks match this scope." would blame
-  // the wrong control. A tag is dismissable in place, so it gets its own escape; a scope is
-  // chosen by navigation and keeps the neutral sentence.
-  const nothingInView = tagFilter !== TAG_ANY ? (
+  // and with a Tag, a list and Mine now applying to them too, "No tasks match this scope." would
+  // blame the wrong control. Each of those is undone in place, so each gets its own escape (Clear
+  // tag, All lists, Everyone); a scope is chosen by navigation and keeps the neutral sentence.
+  // Mine is named first where it is what emptied the view: the tasks before it are there, and none
+  // is the owner's.
+  const others = narrowedTasks.length
+  const nothingInView = mineOnly && others > 0 ? (
+    <EmptyState icon={UserRound} title="No tasks of yours here"
+      hint={others === 1 ? 'The one task here is not assigned to you.' : `None of the ${others} tasks here is assigned to you.`}
+      action={{ label: 'Everyone', onClick: () => setAssigned(ASSIGNED_EVERYONE) }} />
+  ) : tagFilter !== TAG_ANY ? (
     <EmptyState icon={Tag} title={`No tasks tagged “${tagFilter}”`}
       hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none carrying this tag here.`}
       action={{ label: 'Clear tag', onClick: () => setTag(TAG_ANY) }} />
+  ) : listFilter ? (
+    <EmptyState icon={ListChecks} title={`Nothing in ${listFilter.name}`}
+      hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none on this list.`}
+      action={{ label: 'All lists', onClick: () => setListFilter(null) }} />
   ) : (
     <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
+  )
+
+  // Board and the graph draw the scoped tasks (scope, tag, list and Mine), never the search's
+  // results or the ready read, so only the tasks' own read holds them on the skeleton or stands in
+  // their place with its error: a ready read that failed under a query held Board on the skeleton.
+  const drawingTheTasks = (drawn: ReactNode) => (
+    tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
+      : tasks === null ? <ListSkeleton rows={6} what="tasks" /> : tasks.length === 0 ? (
+        <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
+      ) : scopedTasks.length === 0 ? nothingInView
+      : drawn
   )
 
   return (
@@ -531,40 +613,21 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
           keepCornerPadding
           left={inProject ? inProject.title : <PageTitle>All tasks</PageTitle>}
           right={
-            // Header keeps only structural controls — the view switcher + the primary
-            // action, in the 4-tier cluster so they degrade together (view icon+label →
-            // icon-only; New task → icon-only → …) instead of clipping on narrow/mobile.
-            // Search / filter / sort live on the page (below). In a project the header also holds
-            // All projects, and below 1024 px the shell's 44 px corners leave it too little room,
-            // so it folds into the `…`, which is a 44 px target there.
+            // Every page-level control, in the 4-tier cluster so they degrade together: the search
+            // (not on board or DAG, which present every row), the scope, status, tag and sort
+            // filter, the view switch, All projects in a project, and New task last. Below 1024 px
+            // the shell's 44 px corners leave the row little room, so what folds goes into the
+            // `…`, which is a 44 px target there.
             <HeaderActions overflowClassName={TOUCH_TARGET}>
+              {!FULL_WIDTH.includes(view) && <HeaderSearch value={query} onChange={setQuery} placeholder="Search tasks" />}
+              {filterSections.length > 0 && <HeaderFilter sections={filterSections} />}
               <HeaderSegmented ariaLabel="View" value={view} onChange={(v) => setView(v as ViewMode)}
                 options={[{ key: 'list', label: 'List view', icon: List }, { key: 'cards', label: 'Cards view', icon: LayoutGrid }, { key: 'board', label: 'Kanban board', icon: Columns3 }, { key: 'dag', label: 'Dependency graph', icon: GitFork }]} />
-              <HeaderControl icon={Plus} label="New task" variant="primary" priority="primary" onClick={onCreate} />
               {inProject?.actions}
+              <HeaderControl icon={Plus} label="New task" variant="primary" priority="primary" onClick={onCreate} />
             </HeaderActions>
           }
         />
-      }
-      controls={
-        // On-page controls: search (hidden on board/DAG, which present all rows) +
-        // the scope/status/sort filter popover.
-        <div className="shrink-0 border-b border-outline-variant/30">
-          <div className="mx-auto flex w-full items-center gap-s px-l py-m">
-            {!FULL_WIDTH.includes(view) && (
-              <div className="min-w-[12rem] flex-1">
-                <SearchField value={query} onChange={setQuery} placeholder="Search tasks" ariaLabel="Search tasks" />
-              </div>
-            )}
-            <FilterMenu sections={filterSections} />
-            {/* Typing here rewrites the list under the user, and nothing said so. Same idiom the
-                `ListControls` adopters render — this page lays its own bar out, so it renders the
-                extracted piece rather than a second copy of it. `active` is the SEARCH being
-                non-empty, not `filter !== 'all'`: the status filter's own default is a preset, and a
-                flag that is true at rest would announce a count to a user who has done nothing. */}
-            <ResultAnnouncement count={filtered?.length ?? 0} noun="tasks" active={query.trim().length > 0} />
-          </div>
-        </div>
       }
       panel={open && (
         <SidePanel key={open.id} fillHeight storeKey="task-panel-w" icon={(() => { const I = statusMeta(open.status).icon; return <I size={18} style={{ color: statusMeta(open.status).tone }} /> })()} title={open.title} onClose={() => setOpenId(null)}>
@@ -572,6 +635,11 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         </SidePanel>
       )}
     >
+      {/* Typing in the search rewrites the list under the user, so the count is announced.
+          `active` is the SEARCH being non-empty, not `filter !== 'all'`: the status filter's own
+          default is a preset, and a flag that is true at rest would announce a count to a user who
+          has done nothing. */}
+      <ResultAnnouncement count={filtered?.length ?? 0} noun="tasks" active={query.trim().length > 0} />
       {/* Board is a fixed-height shell (manages its own column scroll); other
           views scroll the whole content column. */}
       {view === 'board' ? (
@@ -584,17 +652,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
               what="tasks" detail="dependencies on the ones outside this window are not shown, so a blocked task can read as unblocked" />
           </div>
           <div className="mx-auto h-full min-h-0 w-full">
-            {/* Error FIRST: `tasks === null` also satisfies the skeleton and the empty branch, so a
-                later test would be unreachable. Removing the swallow above is only half the fix —
-                without this branch a failed load would hang on the skeleton forever instead. */}
-            {q && searchError ? <LoadError what="search results" error={searchError} onRetry={() => setSearchNonce((n) => n + 1)} />
-              : filter === 'ready' && !q && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
-              : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
-              : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
-              <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
-            ) : scopedTasks.length === 0 ? nothingInView : (
-              <TaskBoard tasks={scopedTasks} onOpen={(id) => setOpenId(id)} onMove={moveTask} />
-            )}
+            {drawingTheTasks(<TaskBoard tasks={scopedTasks} onOpen={(id) => setOpenId(id)} onMove={moveTask} />)}
           </div>
         </div>
       ) : (
@@ -612,31 +670,28 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             {moveError && <div className="mb-s"><InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError></div>}
             <PartialNotice className="mb-s" complete={collection?.complete ?? true} shown={tasks?.length ?? 0} total={collection?.total ?? 0}
               what="tasks" detail="dependencies on the ones outside this window are not shown, so a blocked task can read as unblocked" />
-            {isProjectScope && projectLists.length > 0 && (
-              <TaskListBar lists={projectLists} repeatableId={repeatableProject?.id}
-                active={listFilter?.id ?? ''}
-                onPick={(l) => setListFilter(listFilter?.id === l.id ? null : { id: l.id, name: l.name })}
-                onReset={resetList} />
-            )}
-            {q && searchError ? <LoadError what="search results" error={searchError} onRetry={() => setSearchNonce((n) => n + 1)} />
-              : filter === 'ready' && !q && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
+            {view === 'dag' ? drawingTheTasks(<TaskGraph tasks={scopedTasks} onOpen={(id) => setOpenId(id)} />)
+              : q && searchError ? <LoadError what="search results" error={searchError} onRetry={() => setSearchNonce((n) => n + 1)} />
+              : filter === 'ready' && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
               : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
-            ) : view === 'dag' ? (
-              scopedTasks.length === 0
-                ? nothingInView
-                : <TaskGraph tasks={scopedTasks} onOpen={(id) => setOpenId(id)} />
             ) : filtered.length === 0 ? (
               // This branch is reachable through FOUR narrowing controls (search, status filter,
-              // list bar, Assigned), and it blamed "this filter" for all of them — a hint that
+              // List section, Assigned), and it blamed "this filter" for all of them — a hint that
               // told a user who typed a search to check a dropdown they never touched. Same
               // split as the code list (emptyStateNoMatch): name the control that actually
               // narrowed, offer the escape that undoes it, and count what is really there so
               // the state cannot read as "you have no tasks". Scope-only narrowing keeps the
               // neutral scope sentence — scope is chosen by navigation, and a "View all" that
               // could not escape it would be an affordance that lies about what it does.
-              q ? (
+              q && filter !== 'all' && matchesAnyStatus > 0 ? (
+                // The search matched, and the chosen Status left none of its matches: Status is the
+                // narrower to name, and the way out is any status, not clearing the search.
+                <EmptyState icon={Filter} title={`No tasks match “${q}” with Status ${FILTERS.find((f) => f.key === filter)?.label ?? filter}`}
+                  hint={`${matchesAnyStatus} task${matchesAnyStatus === 1 ? '' : 's'} match${matchesAnyStatus === 1 ? 'es' : ''} the search — just none with this status.`}
+                  action={{ label: 'Any status', onClick: () => setFilter('all') }} />
+              ) : q ? (
                 <EmptyState icon={Search} title={`No tasks match “${q}”`}
                   hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none matching the search.`}
                   action={{ label: 'Clear search', onClick: () => setQ('') }} />
@@ -679,39 +734,6 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         </div>
       )}
     </WorkbenchLayout>
-  )
-}
-
-/** Task-list bar shown when a project is filtered: chips to sub-filter by a list,
- *  plus a Reset action on lists under the Repeatable project. */
-function TaskListBar({ lists, repeatableId, active, onPick, onReset }: {
-  lists: TaskListItem[]; repeatableId?: string; active: string
-  onPick: (l: TaskListItem) => void; onReset: (l: TaskListItem) => void
-}) {
-  return (
-    <div className="mb-m flex flex-wrap items-center gap-s">
-      <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low uppercase tracking-wide"><ListChecks size={12} /> Task lists</span>
-      {lists.map((l) => {
-        const isActive = active === l.id
-        const repeatable = !!repeatableId && l.project_id === repeatableId
-        return (
-          <span key={l.id} data-type="body-s" className={`inline-flex items-center rounded-pill h-7 pl-3 ${repeatable ? 'pr-1' : 'pr-3'} transition-colors ${isActive ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}>
-            {/* One-of-N: which task list the page is showing. `bg-primary text-on-primary` was the only
-                cue, so this takes the app's recorded form — `<dimension>: <value>` plus `aria-pressed`.
-                The name goes on the PICK button, not the pill wrapper, because the wrapper also holds the
-                Reset control and a state on it would describe both. */}
-            <button type="button" aria-label={`Task list: ${l.name}`} aria-pressed={isActive}
-              onClick={() => onPick(l)} className="inline-flex items-center gap-1">{l.name}</button>
-            {repeatable && (
-              <button type="button" onClick={(e) => { e.stopPropagation(); onReset(l) }} title="Reset this repeatable list (all tasks must be done)"
-                className={`ml-1.5 inline-flex size-5 items-center justify-center rounded-full ${isActive ? 'hover:bg-on-primary/20' : 'hover:bg-surface-container'}`} aria-label={`Reset list ${l.name}`}>
-                <RotateCcw size={12} />
-              </button>
-            )}
-          </span>
-        )
-      })}
-    </div>
   )
 }
 

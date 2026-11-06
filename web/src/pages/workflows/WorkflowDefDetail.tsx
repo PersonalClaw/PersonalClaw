@@ -4,9 +4,7 @@ import { TopBar } from '../../ui/TopBar'
 import { Loading, LoadError, InlineLoadError } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { TextLink } from '../../ui/TextLink'
-import { Button } from '../../ui/Button'
-import { HeaderActions } from '../../ui/HeaderActions'
-import { Segmented } from '../../ui/Segmented'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { Toggle } from '../../ui/Toggle'
 import {
   buildArgs,
@@ -280,50 +278,8 @@ export function WorkflowDefDetail({ name, onBack, onStarted, onEdit }: {
         </div>}
         right={def ? (
           <HeaderActions>
-            {/* 🪤 Same shape OutboxPanel had: `refine` opens with `if (refining) return`, so a second
-                click through the whole refine round-trip was a silent no-op while the button stayed
-                lit — and it sits beside a `Button` that DOES carry `loading`+`disabled`, so the two
-                halves of one header row disagreed about what "in flight" looks like. */}
-            <QuietButton
-              onClick={refine}
-              title="Propose an improvement to this template from its run history"
-              disabled={refining}
-              disabledReason="A refinement is already in flight"
-            >
-              <Sparkles size={13} /> {refining ? 'Refining…' : 'Refine now'}
-            </QuietButton>
-            {/* A shipped template is read-only: its edit is saved as a copy under the user's own
-                name, and the label says so before the click rather than after it. */}
-            <QuietButton
-              onClick={() => onEdit()}
-              title={readOnly ? `Make your own copy of ${name} and edit it` : `Edit ${name}`}
-            >
-              <Pencil size={13} /> {readOnly ? 'Edit a copy' : 'Edit'}
-            </QuietButton>
-            {/* Off while a required input is blank, and it SAYS which one. Before this the
-                button stayed lit through a blank required field and through a mistyped one: the
-                run was refused by the service, so the only feedback was a toast after the
-                round-trip. `missingRequired` is the same emptiness rule the tool inspector and
-                the app config form use — a legitimate `false` or `0` is present, not missing. */}
-            <Button
-              onClick={start}
-              loading={starting}
-              disabled={starting || missing.length > 0}
-              disabledReason={missing.length ? `Fill in: ${missing.join(', ')}` : undefined}
-            >
-              <Play size={14} /> Run
-            </Button>
-          </HeaderActions>
-        ) : undefined}
-      />
-      <div className="min-h-0 flex-1 overflow-y-auto p-l">
-        {loading ? <Loading what="this workflow" /> : !def ? (
-          <p data-type="body-s" className="text-on-surface-low">This definition could not be loaded.</p>
-        ) : (
-          <div className="mx-auto flex flex-col gap-l">
-            {def.description && <p data-type="body-s" className="text-on-surface">{def.description}</p>}
-
-            <Segmented
+            {/* The definition's view switch is the page's, so it sits in the header with its actions. */}
+            <HeaderSegmented
               ariaLabel="Definition view"
               value={tab}
               onChange={(k) => setTab(k as 'steps' | 'versions' | 'ledger')}
@@ -333,6 +289,34 @@ export function WorkflowDefDetail({ name, onBack, onStarted, onEdit }: {
                 { key: 'ledger', label: 'Run Ledger' },
               ]}
             />
+            {/* 🪤 Same shape OutboxPanel had: `refine` opens with `if (refining) return`, so a second
+                click through the whole refine round-trip was a silent no-op while the button stayed
+                lit — and it sits beside the Run control, which DOES carry `disabled`, so the two
+                halves of one header row disagreed about what "in flight" looks like. */}
+            <HeaderControl icon={Sparkles} label={refining ? 'Refining…' : 'Refine now'} onClick={refine}
+              title="Propose an improvement to this template from its run history"
+              disabled={refining} disabledReason="A refinement is already in flight" />
+            {/* A shipped template is read-only: its edit is saved as a copy under the user's own
+                name, and the label says so before the click rather than after it. */}
+            <HeaderControl icon={Pencil} label={readOnly ? 'Edit a copy' : 'Edit'} onClick={() => onEdit()}
+              title={readOnly ? `Make your own copy of ${name} and edit it` : `Edit ${name}`} />
+            {/* Off while a required input is blank, and it SAYS which one. Before this the
+                button stayed lit through a blank required field and through a mistyped one: the
+                run was refused by the service, so the only feedback was a toast after the
+                round-trip. `missingRequired` is the same emptiness rule the tool inspector and
+                the app config form use — a legitimate `false` or `0` is present, not missing. */}
+            <HeaderControl icon={Play} label={starting ? 'Starting…' : 'Run'} variant="primary" priority="primary" onClick={start}
+              disabled={starting || missing.length > 0}
+              disabledReason={missing.length ? `Fill in: ${missing.join(', ')}` : undefined} />
+          </HeaderActions>
+        ) : undefined}
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto p-l">
+        {loading ? <Loading what="this workflow" /> : !def ? (
+          <p data-type="body-s" className="text-on-surface-low">This definition could not be loaded.</p>
+        ) : (
+          <div className="mx-auto flex flex-col gap-l">
+            {def.description && <p data-type="body-s" className="text-on-surface">{def.description}</p>}
 
             {tab === 'steps' && (
               <>

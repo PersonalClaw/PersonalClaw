@@ -25,18 +25,14 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Good <time of day>, Alex" [level=#]
-  - button "New chat"
+  - 'button "Show: All groups"'
   - radiogroup "View":
     - radio "Overview"
     - radio "Attention" [checked]
+  - button "New chat"
   - region "Home":
     - textbox "Start something":
       - /placeholder: "Start something: type it and press Enter for a new chat"
-    - radiogroup "Show":
-      - radio "All" [checked]
-      - radio "Needs You"
-      - radio "Running Now"
-      - radio "Recent and completed"
     - region "Needs You":
       - heading "Needs You" [level=#]
       - text: "#"

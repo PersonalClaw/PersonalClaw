@@ -2,64 +2,28 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Browse text files\"",
-        "button \"Filter & sort\"",
-        "button[role=radio] \"All kinds\"",
-        "button[role=radio] \"HTML\"",
-        "button[role=radio] \"Markdown\"",
-        "button[role=radio] \"React\"",
-        "button[role=radio] \"Widget\"",
-        "input \"Search artifacts\""
+        "button \"Browse text files\""
       ],
       "390": [
         "button \"Browse text files\"",
-        "button \"Filter & sort\"",
-        "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
-        "button[role=radio] \"HTML\"",
         "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Markdown\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"React\"",
-        "button[role=radio] \"SVG\"",
-        "button[role=radio] \"Widget\"",
-        "input \"Search artifacts\""
+        "button[role=radio] \"Memory\""
       ],
       "412": [
         "button \"Browse text files\"",
-        "button \"Filter & sort\"",
-        "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
-        "button[role=radio] \"HTML\"",
         "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Markdown\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"React\"",
-        "button[role=radio] \"SVG\"",
-        "button[role=radio] \"Widget\"",
-        "input \"Search artifacts\""
+        "button[role=radio] \"Memory\""
       ],
       "768": [
         "button \"Browse text files\"",
-        "button \"Filter & sort\"",
-        "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Document\"",
         "button[role=radio] \"Files\"",
-        "button[role=radio] \"HTML\"",
-        "button[role=radio] \"Image\"",
-        "button[role=radio] \"Infographic\"",
-        "button[role=radio] \"JSON\"",
         "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Markdown\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"React\"",
-        "button[role=radio] \"SVG\"",
-        "button[role=radio] \"Text\"",
-        "button[role=radio] \"Widget\"",
-        "input \"Search artifacts\""
+        "button[role=radio] \"Memory\""
       ]
     },
     "known": {
@@ -71,64 +35,28 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Browse text files\"",
-        "button \"Filter & sort\"",
-        "button[role=radio] \"All kinds\"",
-        "button[role=radio] \"HTML\"",
-        "button[role=radio] \"Markdown\"",
-        "button[role=radio] \"React\"",
-        "button[role=radio] \"Widget\"",
-        "input \"Search artifacts\""
+        "button \"Browse text files\""
       ],
       "390": [
         "button \"Browse text files\"",
-        "button \"Filter & sort\"",
-        "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
-        "button[role=radio] \"HTML\"",
         "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Markdown\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"React\"",
-        "button[role=radio] \"SVG\"",
-        "button[role=radio] \"Widget\"",
-        "input \"Search artifacts\""
+        "button[role=radio] \"Memory\""
       ],
       "412": [
         "button \"Browse text files\"",
-        "button \"Filter & sort\"",
-        "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
-        "button[role=radio] \"HTML\"",
         "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Markdown\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"React\"",
-        "button[role=radio] \"SVG\"",
-        "button[role=radio] \"Widget\"",
-        "input \"Search artifacts\""
+        "button[role=radio] \"Memory\""
       ],
       "768": [
         "button \"Browse text files\"",
-        "button \"Filter & sort\"",
-        "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Document\"",
         "button[role=radio] \"Files\"",
-        "button[role=radio] \"HTML\"",
-        "button[role=radio] \"Image\"",
-        "button[role=radio] \"Infographic\"",
-        "button[role=radio] \"JSON\"",
         "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Markdown\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"React\"",
-        "button[role=radio] \"SVG\"",
-        "button[role=radio] \"Text\"",
-        "button[role=radio] \"Widget\"",
-        "input \"Search artifacts\""
+        "button[role=radio] \"Memory\""
       ]
     },
     "known": {

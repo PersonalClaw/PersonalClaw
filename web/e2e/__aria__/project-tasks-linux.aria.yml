@@ -23,20 +23,19 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - heading "Garden" [level=#]
-  - button "Rename"
-  - radiogroup "Project view":
-    - radio "Overview"
-    - radio "Tasks" [checked]
+  - heading "Garden Tasks" [level=#]:
+    - button "Garden"
+    - text: Tasks
+  - button "Search tasks"
+  - 'button "Show: Any status"'
   - radiogroup "View":
     - radio "List view" [checked]
     - radio "Cards view"
     - radio "Kanban board"
     - radio "Dependency graph"
-  - button "New task"
+  - button "Rename"
   - button "All projects"
-  - searchbox "Search tasks"
-  - button "Filter & sort": Filter
+  - button "New task"
   - status
   - button "Order the soil — Not started"
   - 'button "Select: Order the soil"'

@@ -29,15 +29,15 @@
     - radio "Files"
     - radio "Artifacts"
   - heading "Memory" [level=#]
+  - radiogroup "Memory view":
+    - radio "Studio"
+    - radio "Health" [checked]
+    - radio "Recall"
+    - radio "Inspect"
+    - radio "Audit"
+    - radio "Settings"
   - paragraph: Explore and manage what the <theme> remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail.
   - text: # Semantic # Episodic # Events # Embedded · no model bound
-  - tablist "Memory view":
-    - tab "Studio"
-    - tab "Health" [selected]
-    - tab "Recall"
-    - tab "Inspect"
-    - tab "Audit"
-    - tab "Settings"
   - heading "Dreaming" [level=#]
   - paragraph: Like sleep consolidates memories, PersonalClaw reviews its episodic memories (raw conversation fragments) and promotes the recurring, cross-context ones into durable semantic facts — scored on frequency, diversity, recency, and richness. It runs automatically in the background; trigger a pass now to consolidate a recent burst of activity.
   - button "Dream now"

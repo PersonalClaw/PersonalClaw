@@ -37,8 +37,8 @@ const h = vi.hoisted(() => {
     renameSession: () => Promise.resolve({}),
     sendChat: () => Promise.resolve({}),
   }
-  /** The diff's modified side: what a selection in it reports. */
-  const diff = { select: (_s: { startLineNumber: number; endLineNumber: number } | null) => {} }
+  /** The diff's modified side: what a selection in it reports, once the diff has mounted. */
+  const diff = { mounted: false, select: (_s: { startLineNumber: number; endLineNumber: number } | null) => {} }
   return { calls, reads, state, diff }
 })
 
@@ -75,6 +75,7 @@ vi.mock('@monaco-editor/react', async () => {
           selection: s ? { ...s, startColumn: 1, endColumn: 4, isEmpty: () => false } : { startLineNumber: 1, endLineNumber: 1, startColumn: 1, endColumn: 1, isEmpty: () => true },
         }))
         onMount?.({ getModifiedEditor: () => side, setModel: () => {} }, {})
+        h.diff.mounted = true
       }, [modified, onMount])
       return <pre>{modified}</pre>
     },
@@ -103,6 +104,8 @@ beforeEach(() => {
   sessionStorage.clear()
   h.calls.length = 0
   h.state.status = 'running'
+  h.diff.mounted = false
+  h.diff.select = () => {}
   navigate.mockReset()
 })
 afterEach(cleanup)
@@ -116,6 +119,9 @@ describe('a comment on a change', () => {
     const box = await field()
     expect(box.tagName).toBe('TEXTAREA')
     fireEvent.change(box, { target: { value: 'Keep the retry, drop the sleep.' } })
+    // The field renders at once and the diff once its two reads answer: select only in a mounted
+    // diff, as a person can only drag over lines that are drawn. A slow runner drew the field first.
+    await waitFor(() => expect(h.diff.mounted, 'the diff has mounted').toBe(true))
     act(() => h.diff.select({ startLineNumber: 2, endLineNumber: 3 }))
     expect(await screen.findByText('On lines 2–3')).toBeInTheDocument()
     expect(sent('uLoopNudge'), 'nothing is sent while it is written').toEqual([])

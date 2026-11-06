@@ -116,8 +116,9 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
       // Boundary control, which holds the permission mode and the working folder. Brief the agent
       // is a row of the composer's `+` menu.
       //
-      // Header ordering tenet: the side-panel opener is the RIGHTMOST control. On the new-chat page
-      // that's "Chat history"; once started it's "Activity".
+      // The one order: the side-panel opener is the last of the actions, and the primary follows
+      // it. A thread has no primary on the row (New chat lives in the `…`), so the panel opener
+      // ends it: "Chat history" on the new-chat page, "Activity" once started.
       <HeaderActions className="max-w-[70vw]">
         {/* The chat's link and the channels it can continue on, in one menu. A control like its
             neighbours, so it takes the cluster's ladder, and its rows join the `…` when tighter. */}
@@ -134,11 +135,14 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
             it shows/hides the gutter rail on a pointer device and opens/closes the drawer on
             the mobile form, so there is never a second name for "show me the map".
             `ariaExpanded`, not `active`: this is a disclosure, not an on/off setting.
-            `priority="primary"` because on the mobile form this control IS the in-session
-            navigation — shedding it into the overflow `…` menu is exactly the "mobile loses
-            session nav" outcome this must prevent. */}
+            Not `priority="primary"`: a primary is held in the row at every width
+            (`HeaderActions`' `heldInRow`), and at 390 px the title, this control and the `…`
+            cannot share the band between the shell corners, so a started chat's header stacked
+            to two rows. It sheds with the other openers instead, and on a phone it is a row of
+            the `…`: in the row or in the `…`, the map is never out of reach, which is what the
+            mobile form must keep (`e2e/sessionMap.spec.ts`). */}
         {started && (
-          <HeaderControl icon={ListTree} label="Session map" priority="primary"
+          <HeaderControl icon={ListTree} label="Session map"
             ariaExpanded={mapOpen} onClick={() => setMapOpen(!mapOpen)} />
         )}
         {/* Activity is a disclosure too: it shows and hides the Activity pane, so it keeps

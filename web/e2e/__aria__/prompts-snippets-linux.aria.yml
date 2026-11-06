@@ -32,14 +32,14 @@
     - radio "Apps"
     - radio "Store"
   - heading "Prompts" [level=#]
+  - searchbox "Search snippets"
+  - 'button "Show: All sources · Sorted by name"'
   - radiogroup "Prompts view":
     - radio "User"
     - radio "<theme>"
     - radio "Bundled"
     - radio "Snippets" [checked]
   - button "New snippet"
-  - searchbox "Search"
-  - button "Filter & sort": Sorted by name
   - status
   - button "agent-runtime-identity"
   - text: agent-runtime-identity bundled # vars Tells the agent which agent it is, whom it works for, and which runtime it runs in (dashboard/channel/CLI/cron), so it answers natively. <theme> bundled
