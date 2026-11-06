@@ -339,7 +339,11 @@ async def test_signing_in_again_lets_the_same_device_mint() -> None:
         assert resp.status == 200, await resp.text()
         renewed = resp.cookies[COOKIE].value
         assert renewed != session.token
-        again = await _mint(client, "pairing code", {"Cookie": f"{COOKIE}={renewed}"})
+        # The confirm answers the renewed sign-in's pair, which the page keeps from then on.
+        pair = (await resp.json())["pair"]
+        again = await _mint(
+            client, "pairing code", {"Cookie": f"{COOKIE}={renewed}", "X-PersonalClaw-Pair": pair}
+        )
         assert again.status == 200, await again.text()
         # The sign-in it replaced ended: a copy of the old cookie gains nothing from the check.
         old = await client.get("/api/auth/session", headers={"Cookie": f"{COOKIE}={session.token}"})

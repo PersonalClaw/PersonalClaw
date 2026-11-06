@@ -53,6 +53,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
+
+# Imported before any test patches `config_dir`: a module first imported under a patch keeps the
+# mock bound.
+from browser_sign_in import browser_headers, browser_token
 from shared_app_rows import (
     RecordedRows,
     Row,
@@ -63,8 +67,6 @@ from shared_app_rows import (
 )
 from table_rows import row
 
-# Imported before any test patches `config_dir`: a module first imported under a patch keeps the
-# mock bound.
 from personalclaw import seed_local_model
 from personalclaw.apps import manager
 from personalclaw.dashboard.handlers import local_model, model_registry
@@ -342,7 +344,7 @@ class _Gateway:
         if app_token and as_backend:
             params["token"] = app_token
         else:
-            headers["Cookie"] = f"pc_token_{PORT}={self._owner}"
+            headers.update(browser_headers(self._owner, port=PORT))
             if app_token:
                 headers["Authorization"] = f"Bearer {app_token}"
         kwargs: dict[str, Any] = {"headers": headers, "params": params}
@@ -365,7 +367,7 @@ class _Gateway:
         resp = await self.client.put(
             f"/api/models/active/{use_case}",
             json={"models": models},
-            headers={"Cookie": f"pc_token_{PORT}={self._owner}", "If-Match": f'"{base}"'},
+            headers={**browser_headers(self._owner, port=PORT), "If-Match": f'"{base}"'},
         )
         text = await resp.text()
         assert (
@@ -389,7 +391,7 @@ async def _gateway(routes: list[tuple[str, str, Handler]]) -> AsyncIterator[_Gat
     """The real token middleware and app permission middleware, in front of the app routes and
     *routes* — registered as the gateway registers them, so ``HEAD`` answers on every read."""
     from personalclaw.dashboard.server import app_permission_middleware
-    from personalclaw.dashboard.token_auth import generate_token, token_auth_middleware
+    from personalclaw.dashboard.token_auth import token_auth_middleware
 
     app = web.Application(
         middlewares=[token_auth_middleware(port=PORT, local_only=False), app_permission_middleware]
@@ -400,7 +402,7 @@ async def _gateway(routes: list[tuple[str, str, Handler]]) -> AsyncIterator[_Gat
             app.router.add_get(template, handler)
         else:
             app.router.add_route(method, template, handler)
-    owner = generate_token("owner", ttl_seconds=600)
+    owner = browser_token("owner", 600)
     async with TestClient(TestServer(app), cookie_jar=DummyCookieJar()) as client:
         yield _Gateway(client, owner)
 

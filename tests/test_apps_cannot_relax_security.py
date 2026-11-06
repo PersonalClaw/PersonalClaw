@@ -41,6 +41,10 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
+
+# Imported before any test patches `config_dir`: a module first imported under a patch keeps the
+# mock bound.
+from browser_sign_in import browser_token
 from chat_test_helpers import _make_state
 from shared_app_rows import (
     RecordedRows,
@@ -55,8 +59,6 @@ from table_rows import row
 from test_apps_cannot_change_your_models import PORT
 from test_apps_cannot_post_into_your_chats import OWNER_ONLY, WAYS, _AppGateway, _pending
 
-# Imported before any test patches `config_dir`: a module first imported under a patch keeps the
-# mock bound.
 from personalclaw.apps import manager
 from personalclaw.dashboard.handlers.apps import register_app_routes
 
@@ -110,7 +112,7 @@ async def _gateway(routes: list[tuple[str, str, Any]]) -> AsyncIterator[_AppGate
     import personalclaw.config.loader as loader
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
     from personalclaw.dashboard.server import app_permission_middleware
-    from personalclaw.dashboard.token_auth import generate_token, token_auth_middleware
+    from personalclaw.dashboard.token_auth import token_auth_middleware
 
     state = _make_state(loader.config_dir())
     app = web.Application(
@@ -129,7 +131,7 @@ async def _gateway(routes: list[tuple[str, str, Any]]) -> AsyncIterator[_AppGate
     register_app_routes(app)
     for method, template, handler in routes:
         app.router.add_route(method, template, handler)
-    owner = generate_token("owner", ttl_seconds=600)
+    owner = browser_token("owner", 600)
     async with TestClient(TestServer(app), cookie_jar=DummyCookieJar()) as client:
         yield _AppGateway(client, owner, state)
 

@@ -73,6 +73,7 @@ import json
 import logging
 import os
 import shlex
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
@@ -312,7 +313,7 @@ class HomeClaim:
 _held: dict[Path, tuple[HomeClaim, io.FileIO]] = {}
 
 
-def claim_home() -> HomeClaim:
+def claim_home(*, pair_sign_ins: Callable[[Path], None] | None = None) -> HomeClaim:
     """Claim this home for the gateway this process runs, or raise.
 
     The claim is an exclusive, non-blocking ``flock`` on ``<home>/gateway.lock``, opened through
@@ -324,7 +325,10 @@ def claim_home() -> HomeClaim:
     starts. Asked again for a home this process holds, it returns that claim.
 
     With the lock held it holds the home to the newest version that has served it
-    (:func:`_hold_the_version`), and lets the lock go again when that refuses this version.
+    (:func:`_hold_the_version`), and lets the lock go again when that refuses this version. A
+    *pair_sign_ins* runs there too, at every claim, with the lock held and before the stamp is
+    raised: the session rows, not the stamp, say whether there is anything for it to end
+    (``dashboard.sign_in_update``). It raises :class:`HomeNotClaimed` to stop the start.
 
     Raises :class:`HomeAlreadyServed` when another process holds the claim, naming the gateway that
     serves the home (:func:`_serving`), :class:`HomeServedByNewer` when a newer version has served
@@ -358,7 +362,7 @@ def claim_home() -> HomeClaim:
         handle.close()
         raise HomeNotClaimed(_not_claimed(home, lock, exc)) from exc
     try:
-        rolled_back_from = _hold_the_version(home)
+        rolled_back_from = _hold_the_version(home, pair_sign_ins)
     except BaseException:
         handle.close()
         raise
@@ -367,7 +371,7 @@ def claim_home() -> HomeClaim:
     return claim
 
 
-def _hold_the_version(home: Path) -> str:
+def _hold_the_version(home: Path, pair_sign_ins: Callable[[Path], None] | None = None) -> str:
     """Hold *home*, whose lock this process holds, to the newest version that has served it: the
     version that served it last when that is newer than this one, else this one.
 
@@ -379,6 +383,8 @@ def _hold_the_version(home: Path) -> str:
     (:func:`personalclaw.env.forget_launch_variable`). A stamp that cannot be read or written, a
     link in its place included, and a version of this install that cannot be read fail closed
     (:class:`HomeNotClaimed`), as a lock that cannot be taken does.
+
+    Before any stamp is written, *pair_sign_ins* runs. Nothing runs for a start this refuses.
     """
     import time
 
@@ -399,15 +405,17 @@ def _hold_the_version(home: Path) -> str:
     except (LinkInTheWay, OSError, ValueError) as exc:
         raise HomeNotClaimed(_unread_version(home, exc)) from exc
     stamped = versions.parse_version(newest) if newest else None
-    if stamped is not None and stamped > running:
-        if not versions.same_version(meant, newest):
-            raise HomeServedByNewer(home, __version__, newest)
-        _stamp(
-            home, path, {"newest": __version__, "at": int(time.time()), "rolled_back_from": newest}
-        )
+    rolling_back = stamped is not None and stamped > running
+    if rolling_back and not versions.same_version(meant, newest):
+        raise HomeServedByNewer(home, __version__, newest)
+    if pair_sign_ins is not None:
+        pair_sign_ins(home)
+    now = int(time.time())
+    if rolling_back:
+        _stamp(home, path, {"newest": __version__, "at": now, "rolled_back_from": newest})
         return newest
     if stamped is None or running > stamped:
-        _stamp(home, path, {"newest": __version__, "at": int(time.time())})
+        _stamp(home, path, {"newest": __version__, "at": now})
     return ""
 
 

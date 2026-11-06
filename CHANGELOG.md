@@ -8,6 +8,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes — read before upgrading
+
+- **Every browser and every paired phone or device signs in again once after this update: open a new link with `personalclaw token`, pair your phones again, and turn their notifications back on. A token anything but a script used, such as one sent by a client with no User-Agent, is signed out too: get a new one with `personalclaw token`. Reload the browse connector, then pair it again from Settings → Devices & Access → Devices in that browser, before any other sign-in there. The desktop app needs 0.3.7 or newer to open a gateway at this version: an older app's window says so and names the releases page.**
+
+### Security
+
+- **A browser's sign-in needs more than its cookie. Browsers send the gateway's session cookie to every server on the same computer, whatever its port, so a program serving on another port could act as you with it. Each sign-in a browser makes now comes with a value only the dashboard's own page keeps and sends with every request, and the cookie without it is refused.**
+
 ### Added
 
 - **A project's secret file opens for a chat you allow. When the agent's `read_file` meets a project's `.env`, `secrets.json` or another secret file by its name, the chat asks you, and `write_file` and `edit_file` ask the same to change one. The card has two answers, Allow for this session and Deny: an Allow opens that file for that operation in that chat until the chat is deleted or PersonalClaw restarts, and its values still reach the agent masked. Trust, YOLO, an approval mode, a saved grant and a hook's pattern never answer it, a channel gets the link rather than a prompt, and an unattended turn or an app's conversation gets the refusal it got before. PersonalClaw's own credential store, a sign-in file in your home and the files in a credential folder are never offered, a search and a listing still leave secret files out, and the shell still refuses them. The security log records each Allow and each read or change it lets through, with the file's path and never what it holds.**
@@ -24,6 +32,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **For apps, the page SDK's API client has `mediaUrl(path)` and `bindMedia(element, path)`, for an `<audio>`, `<video>` or `<img>` that loads a gateway route the app declares in `permissions.api`. `mediaUrl` answers the URL to give it once, and `bindMedia` keeps the element on it, signing it again before the signature ends and once when it fails, from the same place and at the same speed. Each signs the path where the dashboard's sign-in needs more than its cookie to load it, and leaves it as it is everywhere else, so an app that uses them keeps working either way.**
 
 ### Changed
+
+- **A link opened in a browser signs it in with a sign-in of its own that lasts what is left of the link: a startup link signs one browser in and ends, and a `personalclaw token` link stays a token beside it in Settings → Devices & Access → Devices. Signing out ends the sign-in that sent it, whichever way it came.**
+
+- **The compose web front at `https://127.0.0.1:3443` passes every page to the gateway, so you can sign in there: open the `personalclaw token` link with `https://127.0.0.1:3443` in place of `http://127.0.0.1:10000`. The two addresses share one sign-in cookie, so signing in at one signs the other out.**
 
 - **Stop stops only the turn you pressed it for, and a turn can be read by its message id. A Stop that reaches the gateway after its turn ended no longer stops the next one or empties its queue: it changes nothing, and the page says nothing failed. A soft Stop's answer names the queued messages it removed unsent, and sending one of them again runs nothing. A script, a channel or the page reads how one turn went at `GET /api/chat/sessions/{session}/turns/{message_id}`: queued, running with its run state, or settled with how it ended and its answer. An app reads only the turns of conversations it started.**
 - **Renaming, pinning, archiving or tagging a chat no longer rewrites its whole transcript: each chat's settings are kept beside it, in `sessions/<chat>.chat.json`, made from the transcript's first line the first time the gateway starts. The first line stays, so a home that goes back to 0.3.6 or an earlier version still reads every chat: a save writes it as the chat's settings say, and so does a clean stop for every chat changed since. After a crash, a chat renamed since its last message shows its old title under 0.3.6, and one whose memory mode changed since its last save has its old mode there. A chat whose settings file cannot be read opens read-only, and the Doctor names any chat whose settings could not be made. Take a `personalclaw snapshot` before upgrading.**

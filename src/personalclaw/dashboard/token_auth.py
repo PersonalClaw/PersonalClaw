@@ -51,6 +51,7 @@ from personalclaw.dashboard.session_store import (  # noqa: F401 — re-exported
     END_EXPIRED,
     END_KEY_REPLACED,
     END_LIMIT,
+    END_LINK_OPENED,
     END_REASONS,
     END_REPLACED,
     END_SIGNED_OUT,
@@ -58,6 +59,7 @@ from personalclaw.dashboard.session_store import (  # noqa: F401 — re-exported
     END_SIGNED_OUT_EVERYWHERE,
     END_SIGNED_OUT_OTHERS,
     END_SUPERSEDED,
+    END_UPDATED,
     ISSUER_APP,
     ISSUER_ENROLL,
     ISSUER_LOGIN,
@@ -65,9 +67,11 @@ from personalclaw.dashboard.session_store import (  # noqa: F401 — re-exported
     ISSUER_READY,
     ISSUER_STARTUP,
     ISSUER_TOKEN,
+    ISSUER_WINDOW,
     DeviceInfo,
     SessionRecord,
 )
+from personalclaw.dashboard.sign_in_pair import BOUND_CLAIM, bound, pair_for, pair_refusal
 from personalclaw.inbound.webhook import FIRE_PATH, HOOK_PATH
 from personalclaw.sel import AUDIT_OUTCOME_SUCCESS
 from personalclaw.sel import sel as _sel_fn
@@ -322,6 +326,11 @@ class TokenStateManager:
             self._consumed[token] = session_exp
             return True
 
+    def release(self, token: str) -> None:
+        """Forget that *token* was consumed: the answer that consumed it delivered nothing."""
+        with self._lock:
+            self._consumed.pop(token, None)
+
     def evict_expired(self, now: float) -> None:
         """Remove all expired entries from all state stores."""
         with self._lock:
@@ -510,7 +519,10 @@ LINK_WINDOW_SECS = 24 * 3600
 #:
 #: Subtracting is the fix, not widening the route's own allowlist: a credential is not a
 #: filter, and it must never reach a SEL query — or an app backend — as one.
-RESERVED_QUERY_PARAMS: frozenset[str] = frozenset({"token", "app_token"})
+#:
+#: ``pc_sig`` and ``pc_exp`` are a signed resource URL's (:mod:`signed_urls`), read here in
+#: place of a bound session's pair, so they're the same kind of thing.
+RESERVED_QUERY_PARAMS: frozenset[str] = frozenset({"token", "app_token", "pc_sig", "pc_exp"})
 
 #: The stable wire codes of a refused ``Authorization: Bearer`` (registered in
 #: ``http_errors.HTTP_ERROR_CODES``). One code for every Bearer that cannot stand on its own —
@@ -658,6 +670,9 @@ class MintedSession:
     open_until: float
     #: Whether the session reached the durable store (and so the list, and a restart).
     persisted: bool
+    #: A bound session's pair (:mod:`sign_in_pair`), which the door hands to the page; ``""``
+    #: for a session that isn't bound.
+    pair: str = ""
 
     @property
     def lifetime_secs(self) -> int:
@@ -675,6 +690,9 @@ def mint_session(
     issuer: str,
     device: DeviceInfo | None = None,
     app: str = "",
+    bound: bool = False,
+    spare: str = "",
+    started_by: str = "",
 ) -> MintedSession:
     """Mint a session through the door *issuer* names, and record it.
 
@@ -690,6 +708,13 @@ def mint_session(
     * ``exp`` — until when it can be opened as a ``?token=`` link: the link window
       (:data:`LINK_WINDOW_SECS`, 24 hours) or its whole lifetime, whichever is sooner;
     * ``session_exp`` — when the session ends.
+
+    A *bound* session is a browser's (:mod:`sign_in_pair`): its token carries the signed claim
+    ``pb``, every request on it presents its pair, and the pair is in what this returns, for the
+    door to hand to the page. Its link window is closed (``exp`` is ``iat``), so it can never be
+    opened as a ``?token=`` link. *spare* is the session a browser's new sign-in replaces: it isn't
+    counted against the limit, so the sign-in replacing it can't sign anything else out.
+    *started_by* is a desktop window's (``session_store.SessionRecord.started_by``).
 
     A lifetime longer than :data:`MAX_SESSION_TTL_SECS` (90 days) raises ``ValueError`` whose
     message is the sentence to show whoever asked (``personalclaw.auth.lifetimes.too_long``):
@@ -712,7 +737,7 @@ def mint_session(
     nonce = os.urandom(8).hex()
     session_ttl = max(1, int(ttl_seconds))
     expires_at = now + session_ttl
-    open_until = now + min(LINK_WINDOW_SECS, session_ttl)
+    open_until = now if bound else now + min(LINK_WINDOW_SECS, session_ttl)
     device = device or DeviceInfo(id=new_device_id(), minted_at=now)
     if not device.minted_at:
         device.minted_at = now
@@ -720,7 +745,15 @@ def mint_session(
     _state.register_nonce(nonce, expires_at)
     persisted = False
     try:
-        remembered = remember_session(nonce, expires_at, issuer=issuer, device=device, app=app)
+        remembered = remember_session(
+            nonce,
+            expires_at,
+            issuer=issuer,
+            device=device,
+            app=app,
+            spare=spare,
+            started_by=started_by,
+        )
         persisted = remembered.persisted
         _signed_out(remembered.evicted, END_LIMIT, actor=user_id)
     except Exception:  # noqa: BLE001
@@ -735,6 +768,8 @@ def mint_session(
     }
     if app:
         payload_dict["app"] = app
+    if bound:
+        payload_dict[BOUND_CLAIM] = 1
     payload = json.dumps(payload_dict, separators=(",", ":")).encode()
     token = f"{_b64url_encode(payload)}.{_sign(payload)}"
 
@@ -755,6 +790,7 @@ def mint_session(
         expires_at=expires_at,
         open_until=open_until,
         persisted=persisted,
+        pair=pair_for(_secret(), nonce) if bound else "",
     )
 
 
@@ -987,6 +1023,7 @@ _POOL_NOUNS = {"device": "paired devices", "browser": "browsers", "token": "toke
 REFUSED_NOT_SIGNED_IN = "not_signed_in"
 REFUSED_LINK_EXPIRED = "link_expired"
 REFUSED_LINK_USED = "link_used"
+REFUSED_LINK_OPENED = END_LINK_OPENED
 REFUSED_ENDED = "ended"
 
 
@@ -1000,7 +1037,7 @@ def _how_to_sign_back_in(via: str, kind: str = "") -> str:
     """The door back in for a session that came through *via* on a *kind* of device, given what
     this gateway offers. A door nobody recorded (*via* empty) names both the link and pairing."""
     password = _login_offered()
-    if via in (ISSUER_READY, ISSUER_TOKEN) and kind == "desktop":
+    if via == ISSUER_WINDOW or (via in (ISSUER_READY, ISSUER_TOKEN) and kind == "desktop"):
         # The desktop app's own window: the app signs it in each time it opens, with the session
         # its gateway's ready line hands out, or at this home's running gateway with the home's
         # local secret (`/api/token/local`), and the window has no address bar to open a printed
@@ -1120,9 +1157,11 @@ def link_used_notice() -> SignedOutNotice:
     )
 
 
-def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
+def _ended_notice(claims: dict[str, Any], *, user_agent: str = "") -> SignedOutNotice | None:
     """Why the verified session *claims* name is over — signed out, or expired — or *None*
-    when neither is known."""
+    when neither is known. *user_agent* is the requester's: every way back in is read from it
+    first (``pair_refusals.way_back``)."""
+    from personalclaw.dashboard import pair_refusals
     from personalclaw.dashboard.session_store import POOL_CAPS, ended_session
 
     nonce = str(claims.get("nonce") or "")
@@ -1130,6 +1169,17 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
     via = ended.issuer if ended is not None else ""
     kind = ended.kind if ended is not None else ""
     device = "This browser" if kind == "browser" else "This device"
+    if ended is not None and ended.reason in (END_LINK_OPENED, END_UPDATED):
+        if ended.reason == END_LINK_OPENED:
+            return pair_refusals.link_opened_notice()
+        return SignedOutNotice(
+            code=ERR_SESSION_SIGNED_OUT,
+            reason=ended.reason,
+            at=ended.at,
+            message=pair_refusals.updated_sentence(
+                via, kind, when_words(ended.at), user_agent=user_agent
+            ),
+        )
     if ended is not None and ended.reason != END_EXPIRED:
         when = when_words(ended.at)
         pool = _pool_of_ended(ended)
@@ -1165,7 +1215,7 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
             code=ERR_SESSION_SIGNED_OUT,
             reason=ended.reason,
             at=ended.at,
-            message=f"{why} {_how_to_sign_back_in(via, kind)}",
+            message=f"{why} {pair_refusals.way_back(via, kind, user_agent)}",
         )
     deadline = _session_deadline(claims)
     if deadline and deadline <= time.time():
@@ -1176,13 +1226,13 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
             at=deadline,
             message=(
                 f"Your sign-in on this device lasted {duration_words(deadline - issued)} and "
-                f"ended {when_words(deadline)}. {_how_to_sign_back_in(via, kind)}"
+                f"ended {when_words(deadline)}. {pair_refusals.way_back(via, kind, user_agent)}"
             ),
         )
     return None
 
 
-def signed_out_notice(token: str) -> SignedOutNotice | None:
+def signed_out_notice(token: str, *, user_agent: str = "") -> SignedOutNotice | None:
     """Why the session *token* names is no longer signed in — or *None* when that is not
     something this token's holder may be told.
 
@@ -1191,10 +1241,10 @@ def signed_out_notice(token: str) -> SignedOutNotice | None:
     uses this: it explains an ending, and greets everyone else as the sign-in it is.
     """
     claims = _verified_claims(token)
-    return _ended_notice(claims) if claims is not None else None
+    return _ended_notice(claims, user_agent=user_agent) if claims is not None else None
 
 
-def refusal_notice(token: str, *, source: str) -> SignedOutNotice:
+def refusal_notice(token: str, *, source: str, user_agent: str = "") -> SignedOutNotice:
     """What a browser carrier (*source*: the ``?token=`` link or the cookie) whose *token* was
     refused is told — always something.
 
@@ -1206,9 +1256,10 @@ def refusal_notice(token: str, *, source: str) -> SignedOutNotice:
     claims = _verified_claims(token)
     if claims is None:
         return not_signed_in_notice()
-    notice = _ended_notice(claims)
+    notice = _ended_notice(claims, user_agent=user_agent)
     if notice is not None:
         return notice
+    from personalclaw.dashboard import pair_refusals
     from personalclaw.dashboard.session_store import load_sessions
 
     now = time.time()
@@ -1217,7 +1268,9 @@ def refusal_notice(token: str, *, source: str) -> SignedOutNotice:
             code=ERR_SESSION_SIGNED_OUT,
             reason=REFUSED_ENDED,
             at=now,
-            message=f"This device’s sign-in has ended. {_how_to_sign_back_in('')}",
+            message=(
+                f"This device’s sign-in has ended. {pair_refusals.way_back('', '', user_agent)}"
+            ),
         )
     open_until = float(claims.get("exp") or 0.0)
     if source == "query" and open_until and open_until <= now:
@@ -1322,7 +1375,8 @@ class _Credentials:
     ``presented`` credential, so the refusal can tell the device why (:func:`refusal_notice`).
     That sentence is composed only when a refusal is actually answered: most calls here are
     the local-network bypass naming a session, where composing one per request would read the
-    store and the config for nothing.
+    store and the config for nothing. ``pair_reason`` is set when the session itself is valid
+    but the request doesn't carry what a bound one needs (:func:`sign_in_pair.pair_refusal`).
     """
 
     token: str = ""
@@ -1332,15 +1386,16 @@ class _Credentials:
     error_code: str = ""
     reason: str = ""
     presented: str = ""
+    pair_reason: str = ""
 
     @property
     def valid(self) -> bool:
-        return bool(self.token) and not self.error_code and not self.reason
+        return bool(self.token) and not (self.error_code or self.reason or self.pair_reason)
 
     @property
     def failure(self) -> str:
         """What the audit row says about a refusal: the stable code, else the reason."""
-        return self.error_code or self.reason
+        return self.error_code or self.pair_reason or self.reason
 
 
 def served_port(request: Any) -> int:
@@ -1421,6 +1476,10 @@ def _select_request_credentials(request: Any, port: int) -> _Credentials:
         # Bytes, not str: `compare_digest` raises on a non-ASCII str, and the query is anyone's.
         if owner_bearer and not hmac.compare_digest(query_token.encode(), bearer.encode()):
             return _Credentials(error_code=ERR_CREDENTIAL_CONFLICT)
+        if bound(query_token):
+            # A browser's sign-in is never a link: refused before anything is exchanged, with the
+            # sentence anything this gateway can't use gets.
+            return _Credentials(reason="a browser's sign-in is not a link", source="query")
         token, source = query_token, "query"
     elif owner_bearer:
         token, source = bearer, "header"
@@ -1446,7 +1505,13 @@ def _select_request_credentials(request: Any, port: int) -> _Credentials:
             a_valid, a_user, _reason, a_app = validate_token_with_app(layered)
             if a_valid and a_app and a_user == user_id:
                 app = a_app
-    return _Credentials(token=token, source=source, user_id=user_id, app=app)
+    return _Credentials(
+        token=token,
+        source=source,
+        user_id=user_id,
+        app=app,
+        pair_reason=pair_refusal(request, token, source),
+    )
 
 
 def presented_session_nonce(request: Any, port: int) -> str:
@@ -1575,6 +1640,11 @@ def try_consume(token: str, session_exp: float = 0.0) -> bool:
     return _state.try_consume(token, session_exp or time.time() + MAX_SESSION_TTL_SECS)
 
 
+def release_consumed(token: str) -> None:
+    """Make *token* consumable again: the one answer that consumed it delivered nothing."""
+    _state.release(token)
+
+
 def _audit_session(
     operation: str,
     *,
@@ -1671,29 +1741,37 @@ def sign_out(nonces: list[str], reason: str, *, actor: str) -> int:
     return _signed_out(ended, reason, actor=actor)
 
 
-def renew_sign_in(request: Any, previous: str, ttl_seconds: int, *, owner: str) -> MintedSession:
-    """The sign-in that replaces *previous* — the session this device's cookie holds — once the
-    owner has confirmed it is them (``POST /api/auth/confirm``). The cookie is the caller's to set.
+def renew_sign_in(
+    request: Any, previous_nonce: str, ttl_seconds: int, *, owner: str
+) -> MintedSession | None:
+    """The sign-in that replaces *previous_nonce* — the session that authorized the request — once
+    the owner has confirmed it is them (``POST /api/auth/confirm``). The cookie is the caller's to
+    set.
 
     A paired or enrolled device keeps its door, which is what makes it a paired device
-    (``session_store.paired_sessions``); any other is now signed in by its password. The session
-    it replaces ends and its pushes move to the new one, as when a browser opens a newer link, so
-    a copy of the old cookie gains nothing from this check. A cookie naming no live owner session
-    ends nothing.
+    (``session_store.paired_sessions``); any other is now signed in by its password. Either way it
+    is a browser's bound sign-in (:mod:`sign_in_pair`), whose pair the caller answers. The session
+    it replaces ends and its pushes move to the new one, as when a browser opens a newer link. When
+    *previous_nonce* names no live session, nothing ends. A desktop window's own sign-in is never
+    renewed or replaced (*None*): the app
+    signs its window in itself, and the window shows the owner is here by having started it.
     """
     from personalclaw.dashboard.session_store import load_session_records
 
-    valid, user, _reason, app = (
-        validate_token_with_app(previous, use_session_exp=True) if previous else (False, "", "", "")
-    )
-    previous_nonce = token_nonce(previous) if valid and not app else ""
+    user = str(request.get("user") or owner)
     record = load_session_records().get(previous_nonce) if previous_nonce else None
+    if record is None:
+        previous_nonce = ""
+    if record is not None and record.issuer == ISSUER_WINDOW:
+        return None
     device = client_of(request)
     issuer, subject = ISSUER_LOGIN, owner
     if record is not None and record.issuer in (ISSUER_PAIR, ISSUER_ENROLL):
         issuer, subject = record.issuer, user
         device.name, device.kind = record.device.name, record.device.kind
-    minted = mint_session(subject, ttl_seconds, issuer=issuer, device=device)
+    minted = mint_session(
+        subject, ttl_seconds, issuer=issuer, device=device, bound=True, spare=previous_nonce
+    )
     if previous_nonce:
         _keep_the_browser_s_pushes(previous_nonce, minted.nonce)
         sign_out([previous_nonce], END_REPLACED, actor=owner)
@@ -1984,47 +2062,12 @@ def token_auth_middleware(
             issued_at=_issued_at(credentials.token),
         )
 
-    def _refuse(request: web.Request, credentials: _Credentials, fallback: str) -> web.Response:
-        """A Bearer's refusal is its stable wire code; every other refusal keeps its wording.
-
-        JSON on every path, pages included: a header credential is sent by a client that
-        reads JSON, never by a browser navigating to a page, so the paste-token gate would be
-        an answer to a question nobody asked. The body never echoes the credential. A browser
-        carrier whose session is known to have ended gets its signed-out sentence instead.
-        """
-        from personalclaw.http_errors import json_error
-
-        headers = {"X-Auth-Required": "true"}
-        if credentials.error_code == ERR_CREDENTIAL_CONFLICT:
-            return json_error(ERR_CREDENTIAL_CONFLICT, status=403, headers=headers)
-        if credentials.error_code:
-            return json_error(ERR_BEARER_INVALID, status=403, headers=headers)
-        return _deny(
-            request,
-            fallback,
-            notice=refusal_notice(credentials.presented, source=credentials.source),
-        )
-
-    def _retire_the_sign_in_it_replaces(request: web.Request, token: str, user_id: str) -> None:
-        """A browser opening a new link moves to it: end the sign-in its cookie held before.
-
-        The gateway opens a fresh startup link in the default browser at every start, and the
-        browser swaps its cookie for it. The session it swapped out stayed live for its whole
-        lifetime with no browser holding it — a credential nobody would ever sign out, and one
-        more identical "Chrome on Mac" row in Settings → Devices for every restart. Only an
-        owner session in THIS browser's cookie is retired; a token held anywhere else is not.
-        """
-        previous = request.cookies.get(session_cookie_name(request, port), "")
-        if not previous or hmac.compare_digest(previous.encode(), token.encode()):
-            return
-        valid, _user, _reason, app = validate_token_with_app(previous, use_session_exp=True)
-        previous_nonce = token_nonce(previous)
-        if valid and not app and previous_nonce and previous_nonce != token_nonce(token):
-            _keep_the_browser_s_pushes(previous_nonce, token_nonce(token))
-            sign_out([previous_nonce], END_REPLACED, actor=user_id or "owner")
-
     @web.middleware
     async def middleware(request: web.Request, handler: object) -> web.StreamResponse:
+        from personalclaw.dashboard import worker_eviction
+
+        if worker_eviction.serves_no_worker(request):
+            return worker_eviction.self_removing_worker()
         path = request.path
         routed = request.rel_url.path_safe
         _matches_strict = any(route.admits(request.method, routed) for route in strict_routes)
@@ -2227,63 +2270,29 @@ def token_auth_middleware(
             return await handler(request)  # type: ignore[operator]
         if path in _BYPASS_EXACT or any(t.fullmatch(path) for t in _BYPASS_TEMPLATES):
             return await handler(request)  # type: ignore[operator]
-        credentials = _select_request_credentials(request, port)
+        from personalclaw.dashboard import link_exchange
+
+        credentials = link_exchange.keeps_its_cookie(
+            request, port, _select_request_credentials(request, port)
+        )
         if not credentials.valid:
-            _log_auth(request, "", "denied", credentials.failure)
+            _log_denied(request, credentials)
             return _refuse(request, credentials, credentials.reason)
-        token = credentials.token
-        user_id = credentials.user_id
-        # The browser exchange — address binding and the cookie — belongs to the entry link
-        # alone. The cookie is already the session, and the header is a stateless carrier.
-        from_query = credentials.source == "query"
-
-        # Prefer X-Real-IP set by a trusted reverse proxy (nginx) over the
-        # TCP remote address. See _resolved_client_ip for the trust rules.
-        client_ip = _resolved_client_ip(request)
-
-        # IP binding only applies on the initial query-param token exchange.
-        # Cookie- and header-carried requests skip IP checks — the credential itself is the
-        # proof, and IP validation behind a proxy is unreliable.
-        if from_query and not check_token_ip(token, client_ip):
-            _log_auth(request, user_id, "denied", "IP mismatch")
-            return _deny(request, "IP mismatch", notice=link_used_notice())
-
-        # Extract session_exp for cookie and IP binding on first query-param use
-        session_exp = 0.0
-        if from_query:
-            try:
-                payload_bytes = _b64url_decode(token.split(".")[0])
-                session_exp = _session_deadline(json.loads(payload_bytes))
-            except Exception:
-                pass
-            bind_token_ip(token, client_ip, session_exp)
-            _retire_the_sign_in_it_replaces(request, token, user_id)
-
+        if credentials.source == "query":
+            # A link: exchanged for a browser's own sign-in where one is signed in, and only this
+            # one request anywhere else. The cookie and the header are the session as they are.
+            return await link_exchange.open_link(
+                request,
+                handler,  # type: ignore[arg-type]
+                credentials,
+                port=port,
+                client_ip=_resolved_client_ip(request),
+                adopt=_adopt,
+            )
         # Expose authenticated identity to handlers (deny-by-default)
         _adopt(request, credentials)
-
-        # Proceed to handler
         resp = await handler(request)  # type: ignore[operator]
-
-        # Set cookie after handler (needs response object)
-        if from_query:
-            cookie_name = session_cookie_name(request, port)
-            remaining = int(session_exp - time.time()) if session_exp else MAX_SESSION_TTL_SECS
-            resp.set_cookie(
-                cookie_name,
-                token,
-                httponly=True,
-                samesite="Lax",
-                path="/",
-                # The session's own end, plus the grace that lets its end be explained
-                # (SIGNED_OUT_NOTICE_GRACE_SECS). The gateway refuses it at `session_exp`.
-                max_age=min(max(0, remaining), MAX_SESSION_TTL_SECS) + SIGNED_OUT_NOTICE_GRACE_SECS,
-                secure=secure_cookies(),
-            )
-            # Clear the non-port-specific cookie so only the port's own is used.
-            resp.set_cookie("pc_token", "", max_age=0, path="/")
-
-        _log_auth(request, user_id, "ok", "", identity=request["session_nonce"])
+        _log_auth(request, credentials.user_id, "ok", "", identity=request["session_nonce"])
         return resp  # type: ignore[return-value]
 
     middleware._is_token_auth = True  # type: ignore[attr-defined]  # sentinel for server.py security gate  # noqa: E501
@@ -2441,6 +2450,41 @@ def _deny(
     )
 
 
+def _refuse(request: web.Request, credentials: _Credentials, fallback: str) -> web.Response:
+    """A Bearer's refusal is its stable wire code; every other refusal keeps its wording.
+
+    JSON on every path, pages included: a header credential is sent by a client that
+    reads JSON, never by a browser navigating to a page, so the paste-token gate would be
+    an answer to a question nobody asked. The body never echoes the credential. A browser
+    carrier whose session is known to have ended gets its signed-out sentence instead, and a
+    live bound session the request didn't carry its pair for gets ``pair_refusals.pair_refused``.
+    """
+    from personalclaw.dashboard import worker_eviction
+    from personalclaw.http_errors import json_error
+
+    if worker_eviction.is_worker_script_fetch(request):
+        # An update check this gateway won't answer with its own worker (worker_eviction).
+        return worker_eviction.self_removing_worker()
+    headers = {"X-Auth-Required": "true"}
+    if credentials.error_code == ERR_CREDENTIAL_CONFLICT:
+        return json_error(ERR_CREDENTIAL_CONFLICT, status=403, headers=headers)
+    if credentials.error_code:
+        return json_error(ERR_BEARER_INVALID, status=403, headers=headers)
+    if credentials.pair_reason:
+        from personalclaw.dashboard.pair_refusals import pair_refused
+
+        return pair_refused(request, credentials)
+    return _deny(
+        request,
+        fallback,
+        notice=refusal_notice(
+            credentials.presented,
+            source=credentials.source,
+            user_agent=request.headers.get("User-Agent", ""),
+        ),
+    )
+
+
 def _internal_secret_invalid() -> web.Response:
     """The refusal of an internal route presented a credential this gateway did not issue.
 
@@ -2568,6 +2612,22 @@ def flush_auth_logs() -> None:
     and the gateway log's count of each refusal window still open."""
     flush_success_tally()
     flush_refusal_lines()
+
+
+def _log_denied(request: web.Request, credentials: _Credentials) -> None:
+    """The security event log's row for a refused sign-in: ``session_pair_refused`` naming the
+    reason when the session was live and only its pair was missing or wrong, else the middleware's
+    own row. Never a credential or a pair."""
+    if credentials.pair_reason:
+        _log_auth(
+            request,
+            credentials.user_id,
+            "denied",
+            credentials.pair_reason,
+            operation="session_pair_refused",
+        )
+        return
+    _log_auth(request, "", "denied", credentials.failure)
 
 
 def _log_auth(

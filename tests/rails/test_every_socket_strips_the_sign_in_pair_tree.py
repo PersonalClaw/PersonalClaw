@@ -32,8 +32,12 @@ def test_every_gateway_socket_selects_personalclaw_and_strips_the_pair() -> None
             assert "protocols=(SOCKET_PROTOCOL,)" in match.group(
                 1
             ), f"{rel}:{line} selects no subprotocol"
-        prepares = re.findall(r"await ws\.prepare\((.*)$", text, re.MULTILINE)
-        assert prepares and all(
-            p.startswith("without_pair_protocol(") for p in prepares
-        ), f"{rel} prepares a socket on a request that may hold the pair"
+        # Whatever each socket is called, every one is prepared on the request with its pair out.
+        names = set(re.findall(r"(\w+)\s*(?::[^=]+)?=\s*(?:web\.)?WebSocketResponse\(", text))
+        assert names, f"{rel} makes a socket the rail can't follow to its prepare()"
+        for name in names:
+            prepares = re.findall(rf"await\s+{re.escape(name)}\.prepare\((.*)$", text, re.MULTILINE)
+            assert prepares and all(
+                p.startswith("without_pair_protocol(") for p in prepares
+            ), f"{rel} prepares `{name}` on a request that may hold the pair"
     assert found >= 2, "the gateway's two socket routes were not found"

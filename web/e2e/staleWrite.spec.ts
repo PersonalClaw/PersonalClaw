@@ -19,12 +19,13 @@ import { harnessHome } from './runPlaces'
 // Tool output is a section of Agent since #5897, and this is its address there.
 const RULES = 'settings/agent?section=tool-output'
 
-/** A same-origin call from inside a tab — the SPA's own cookie and CSRF posture, not a side door. */
+/** A same-origin call from inside a tab — the SPA's own cookie, sign-in pair and CSRF posture,
+ *  not a side door. */
 async function inTab<T>(page: Page, path: string, init?: { method: string; body?: unknown; headers?: Record<string, string> }): Promise<T> {
   return page.evaluate(async ({ path, init }) => {
     const r = await fetch(path, {
       method: init?.method ?? 'GET',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Key': 'dashboard:ui', ...(init?.headers ?? {}) },
+      headers: { 'Content-Type': 'application/json', 'X-Session-Key': 'dashboard:ui', ...(localStorage.getItem('pc_pair') ? { 'X-PersonalClaw-Pair': localStorage.getItem('pc_pair') as string } : {}), ...(init?.headers ?? {}) },
       body: init?.body === undefined ? undefined : JSON.stringify(init.body),
     })
     if (!r.ok) throw new Error(`${init?.method ?? 'GET'} ${path} → ${r.status} ${await r.text()}`)
@@ -67,7 +68,7 @@ async function addServer(page: Page, name: string) {
 /** Remove an MCP server if a crashed earlier run left it behind; a missing one is fine. */
 async function removeServer(page: Page, name: string) {
   const status = await page.evaluate(async (n) => (await fetch(`/api/mcp/servers/${n}`, {
-    method: 'DELETE', headers: { 'X-Session-Key': 'dashboard:ui' },
+    method: 'DELETE', headers: { 'X-Session-Key': 'dashboard:ui', ...(localStorage.getItem('pc_pair') ? { 'X-PersonalClaw-Pair': localStorage.getItem('pc_pair') as string } : {}) },
   })).status, name)
   expect([200, 204, 404], `DELETE /api/mcp/servers/${name} → ${status}`).toContain(status)
 }

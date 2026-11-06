@@ -165,7 +165,8 @@ async def api_dashboard_view_tile_refresh(request: web.Request) -> web.Response:
     from personalclaw.dashboard import tile_refresh
 
     view_id = request.match_info["view_id"]
-    if request.method == "GET":
+    # HEAD is the GET's (aiohttp routes it to this handler): it reads, and never refreshes.
+    if request.method in ("GET", "HEAD"):
         ref = str(request.query.get("ref", "")).strip()
         if not ref:
             return web.json_response(

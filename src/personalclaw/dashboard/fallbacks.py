@@ -59,9 +59,11 @@ async def spa_fallback(
     except web.HTTPNotFound:
         # `/icons/` is excluded for the PWA: a manifest icon that resolves to
         # index.html is an invalid icon, and the only symptom is an install
-        # prompt that never appears. A 404 is diagnosable; HTML is not.
+        # prompt that never appears. A 404 is diagnosable; HTML is not. The
+        # build's static prefixes are excluded too (`token_auth._BYPASS_PREFIXES`,
+        # open with no sign-in), so a missing build file is a 404, never the shell.
         if request.method == "GET" and not request.path.startswith(
-            ("/assets/", "/icons/", "/sprites/", "/vendor/")
+            ("/assets/", "/icons/", "/sprites/", "/vendor/", "/fonts/")
         ):
             return await handlers.index(request)
         raise

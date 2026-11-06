@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **958 registrations** over **777 distinct paths** — 951 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **959 registrations** over **778 distinct paths** — 952 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -49,10 +49,10 @@ The 133 families the surface divides into, largest first.
 | `/api/durability` | 11 | 11 |
 | `/api/notifications` | 11 | 8 |
 | `/api/prompts` | 11 | 7 |
+| `/api/auth` | 10 | 10 |
 | `/api/lexicon` | 10 | 6 |
 | `/api/model-providers` | 10 | 8 |
 | `/api/rooms` | 10 | 8 |
-| `/api/auth` | 9 | 9 |
 | `/api/browse` | 9 | 7 |
 | `/api/doctor` | 9 | 9 |
 | `/api/evals` | 9 | 9 |
@@ -160,7 +160,7 @@ The 133 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 951 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 952 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -270,6 +270,7 @@ The 951 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/auth/password` | set the owner's sign-in password, or change it. |
 | `POST` | `/api/auth/rotate-key` | replace the key every sign-in is signed with. |
 | `GET` | `/api/auth/session` | the authenticated account view (Settings → Account). |
+| `POST` | `/api/auth/signed-urls` | sign the page's resource URLs on its own sign-in. |
 | `GET` | `/api/auth/status` | what the login UI needs to render itself. |
 | `GET` | `/api/autonomy` | every governed action type, its rung, and what it has earned. |
 | `POST` | `/api/autonomy/demote` | hand a type's autonomy back. Body ``{key}``. |

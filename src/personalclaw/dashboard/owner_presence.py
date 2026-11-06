@@ -125,6 +125,8 @@ def presence_proof(request: web.Request) -> str:
 
     if record.issuer == ISSUER_READY and is_loopback(request.remote or ""):
         return PROOF_STARTED_BY
+    if _window_of_this_start(request, record):
+        return PROOF_STARTED_BY
     signed_in = float(record.device.minted_at or 0.0)
     if signed_in and time.time() - signed_in <= PRESENCE_WINDOW_SECS:
         return PROOF_RECENT_SIGN_IN
@@ -291,6 +293,24 @@ def _local_secret_presented(request: web.Request) -> bool:
         return False
     # Bytes, not str: `compare_digest` raises on a non-ASCII str, and the header is anyone's.
     return hmac.compare_digest(expected.encode(), provided.encode())
+
+
+def _window_of_this_start(request: web.Request, record: Any) -> bool:
+    """Whether *record* is the desktop window's own sign-in, minted during THIS gateway start
+    (its local secret's digest matches) and used from this computer. A window signed in by an
+    earlier start shows nothing: the app signs it in again when it opens."""
+    import hmac
+
+    from personalclaw.dashboard.origin import is_loopback
+    from personalclaw.dashboard.session_store import ISSUER_WINDOW
+    from personalclaw.dashboard.sign_in_pair import started_by_digest
+
+    secret = str(request.app.get("local_secret") or "")
+    if record.issuer != ISSUER_WINDOW or not secret or not record.started_by:
+        return False
+    if not is_loopback(request.remote or ""):
+        return False
+    return hmac.compare_digest(record.started_by, started_by_digest(secret))
 
 
 def _session_record(request: web.Request) -> Any:

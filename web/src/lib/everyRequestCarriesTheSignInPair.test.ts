@@ -168,14 +168,16 @@ describe('the sockets', () => {
 })
 
 describe('the rail', () => {
-  it('sends no request a pair could miss: fetch, sockets and beacons only through lib/pair.ts', async () => {
+  it('sends no request a pair could miss: fetch, XHR, sockets and beacons only through lib/pair.ts', async () => {
     const { join, relative, sep } = await import('node:path')
     const { filesUnder, readSource } = await import('../test/sourceTree')
     const root = join(__dirname, '..')
     const RULES: { pattern: RegExp; allowed: string[]; what: string }[] = [
       // `sw.ts` fetches only build output: it reads no `/api` route (`app/swPolicy.test.ts`).
-      { pattern: /(^|[^A-Za-z0-9_.$])fetch\(/, allowed: [`lib${sep}pair.ts`, 'sw.ts'], what: 'fetch(' },
-      { pattern: /new WebSocket\(/, allowed: [`lib${sep}pair.ts`], what: 'new WebSocket(' },
+      // A bare `fetch(`, and the global's own under another name: `window.fetch(`, `globalThis.fetch(`.
+      { pattern: /(^|[^A-Za-z0-9_.$])fetch\(|\b(window|globalThis|self)\.fetch\(/, allowed: [`lib${sep}pair.ts`, 'sw.ts'], what: 'fetch(' },
+      { pattern: /new (window\.|globalThis\.)?WebSocket\(/, allowed: [`lib${sep}pair.ts`], what: 'new WebSocket(' },
+      { pattern: /new (window\.|globalThis\.)?XMLHttpRequest\(/, allowed: [], what: 'new XMLHttpRequest(' },
       { pattern: /sendBeacon\(/, allowed: [], what: 'sendBeacon(' },
     ]
     const offenders: string[] = []

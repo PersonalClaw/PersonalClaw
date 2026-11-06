@@ -111,7 +111,11 @@ function keepGatewayLog(home: string, testInfo: TestInfo): void {
  *  which keeps its environment. */
 export async function restartFromPage(page: Page): Promise<void> {
   const answer = await page.evaluate(() =>
-    fetch('/api/system/restart', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Key': 'dashboard:ui' } })
+    fetch('/api/system/restart', {
+      method: 'POST',
+      // The sign-in's pair, as the page sends it (`web/src/lib/pair.ts`).
+      headers: { 'Content-Type': 'application/json', 'X-Session-Key': 'dashboard:ui', ...(localStorage.getItem('pc_pair') ? { 'X-PersonalClaw-Pair': localStorage.getItem('pc_pair') as string } : {}) },
+    })
       .then((r) => r.status))
   expect(answer, 'the gateway refused the restart').toBe(200)
 }

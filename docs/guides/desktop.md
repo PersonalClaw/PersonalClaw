@@ -131,6 +131,11 @@ Again**. The row says the same when a gateway can't sign the app's windows in af
 where Sign In Again can't help, it reads **Can't sign in**, with what to do. With a gateway older
 than this app, quit PersonalClaw and open it again instead.
 
+**A gateway from 0.3.7 on needs the app from 0.3.7 on.** Such a gateway asks each browser's
+sign-in for more than its cookie, and only the app from 0.3.7 on signs its windows in that way.
+An older app's window on it says so and names the
+[releases page](https://github.com/PersonalClaw/PersonalClaw/releases): update the app there.
+
 ## When a gateway already serves your home
 
 The app starts its own gateway when it opens. Only one gateway serves a PersonalClaw home, so if

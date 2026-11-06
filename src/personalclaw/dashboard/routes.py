@@ -115,6 +115,11 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_post("/api/auth/confirm", _auth_h.api_auth_confirm)
     app.router.add_post("/api/auth/enroll/start", _auth_h.api_auth_enroll_start)
     app.router.add_post("/api/auth/enroll/complete", _auth_h.api_auth_enroll_complete)
+    # What a browser's page has the browser load by itself (media, downloads, new tabs), signed on
+    # its own sign-in so the signature stands in for the header it can't send (signed_urls.py).
+    from personalclaw.dashboard.signed_urls import api_signed_urls
+
+    app.router.add_post("/api/auth/signed-urls", api_signed_urls)
 
     # Device pairing + the Devices registry. Registered next to the auth
     # routes because they mint the same credential: a paired device holds an ordinary session,

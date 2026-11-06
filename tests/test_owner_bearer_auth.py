@@ -26,10 +26,12 @@ from unittest.mock import patch
 import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
+from browser_sign_in import browser_token, pair_of
 
 from personalclaw.dashboard import session_store, token_auth
 from personalclaw.dashboard.handlers import devices as devices_h
 from personalclaw.dashboard.server import _security_headers_middleware
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER
 
 PORT = 10000
 COOKIE = f"pc_token_{PORT}"
@@ -81,7 +83,7 @@ async def _client(middleware=None) -> TestClient:
         mixed_internal_routes=frozenset({"GET /api/mixed-probe"}),
     )
     app = web.Application(middlewares=[_security_headers_middleware, auth])
-    for path in ("/api/probe", "/api/internal-probe", "/api/mixed-probe"):
+    for path in ("/api/probe", "/api/internal-probe", "/api/mixed-probe", "/api/auth/session"):
         app.router.add_get(path, _identity)
     app.router.add_get("/api/ws", _ws_identity)
     client = TestClient(TestServer(app))
@@ -155,11 +157,12 @@ async def test_the_header_opens_the_websocket() -> None:
 async def test_a_device_session_rides_the_header_exactly_as_it_rides_the_cookie() -> None:
     """One credential, two carriers: whatever the cookie admits, the header admits, as the SAME
     session — so every paired-device distinction (keyed on the session nonce) still applies."""
-    token = token_auth.generate_token(devices_h.PAIRED_DEVICE_USER, ttl_seconds=300)
+    token = browser_token(devices_h.PAIRED_DEVICE_USER, 300, issuer=token_auth.ISSUER_PAIR)
+    paired = {PAIR_HEADER: pair_of(token)}
     client = await _client()
     try:
-        by_cookie = await client.get("/api/probe", cookies={COOKIE: token})
-        by_header = await client.get("/api/probe", headers=_bearer(token))
+        by_cookie = await client.get("/api/probe", cookies={COOKIE: token}, headers=paired)
+        by_header = await client.get("/api/probe", headers={**_bearer(token), **paired})
         assert by_cookie.status == by_header.status == 200
         assert await by_header.json() == await by_cookie.json()
         assert (await by_header.json())["session_nonce"] == token_auth.token_nonce(token)
@@ -172,15 +175,24 @@ async def test_a_device_session_rides_the_header_exactly_as_it_rides_the_cookie(
 
 @pytest.mark.asyncio
 async def test_the_query_token_still_exchanges_for_the_cookie() -> None:
-    """Control: ``?token=`` is the browser entry link, and it still sets the session cookie."""
+    """Control: ``?token=`` is the browser entry link. It signs a browser in where the dashboard
+    exchanges it (``link_exchange``), with a sign-in of the browser's own and its pair; anywhere
+    else it authorizes the one request and sets no cookie."""
     token = token_auth.generate_token("owner", ttl_seconds=300)
     client = await _client()
     try:
-        entered = await client.get("/api/probe", params={"token": token})
+        elsewhere = await client.get("/api/probe", params={"token": token})
+        assert elsewhere.status == 200
+        assert COOKIE not in elsewhere.cookies
+        entered = await client.get("/api/auth/session", params={"token": token})
         assert entered.status == 200
-        assert entered.cookies[COOKIE].value == token
-        again = await client.get("/api/probe", cookies={COOKIE: token})
-        assert await again.json() == await entered.json()
+        cookie = entered.cookies[COOKIE].value
+        assert cookie != token
+        pair = entered.headers[PAIR_HEADER]
+        again = await client.get(
+            "/api/probe", cookies={COOKIE: cookie}, headers={PAIR_HEADER: pair}
+        )
+        assert (await again.json())["user"] == (await entered.json())["user"] == "owner"
     finally:
         await client.close()
 
@@ -190,9 +202,12 @@ async def test_the_same_token_in_the_header_and_the_query_keeps_the_exchange() -
     token = token_auth.generate_token("owner", ttl_seconds=300)
     client = await _client()
     try:
-        response = await client.get("/api/probe", params={"token": token}, headers=_bearer(token))
+        response = await client.get(
+            "/api/auth/session", params={"token": token}, headers=_bearer(token)
+        )
         assert response.status == 200
-        assert response.cookies[COOKIE].value == token
+        assert response.cookies[COOKIE].value
+        assert response.headers[PAIR_HEADER]
     finally:
         await client.close()
 
@@ -232,12 +247,14 @@ async def test_an_app_token_alone_in_the_header_authorizes_nothing() -> None:
 @pytest.mark.asyncio
 async def test_an_app_token_in_the_header_still_narrows_the_owner_cookie() -> None:
     """Control: the app SDK's shape — the owner cookie plus the app's token — is unchanged."""
-    owner = token_auth.generate_token("owner", ttl_seconds=300)
+    owner = browser_token("owner", 300)
     app_token = token_auth.generate_token("owner", ttl_seconds=300, app="notes")
     client = await _client()
     try:
         response = await client.get(
-            "/api/probe", cookies={COOKIE: owner}, headers=_bearer(app_token)
+            "/api/probe",
+            cookies={COOKIE: owner},
+            headers={**_bearer(app_token), PAIR_HEADER: pair_of(owner)},
         )
         assert response.status == 200
         assert await response.json() == {
@@ -356,11 +373,13 @@ async def test_the_inbound_mcp_token_cannot_authenticate_an_owner_route(monkeypa
 async def test_another_schemes_authorization_header_is_not_this_gateways() -> None:
     """A reverse proxy's own ``Basic`` login rides the same header beside the session cookie.
     It is the proxy's credential, not a malformed one of ours: ignored, never refused."""
-    owner = token_auth.generate_token("owner", ttl_seconds=300)
+    owner = browser_token("owner", 300)
     client = await _client()
     try:
         response = await client.get(
-            "/api/probe", cookies={COOKIE: owner}, headers={"Authorization": "Basic b3duZXI6cHc="}
+            "/api/probe",
+            cookies={COOKIE: owner},
+            headers={"Authorization": "Basic b3duZXI6cHc=", PAIR_HEADER: pair_of(owner)},
         )
         assert response.status == 200, await response.text()
         assert (await response.json())["user"] == "owner"

@@ -27,6 +27,7 @@ import a_deployed_page_runs_in_an_origin_of_its_own_shared
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from browser_sign_in import browser_token, pair_of
 from yarl import URL
 
 from personalclaw.artifacts import handlers as artifact_handlers
@@ -36,10 +37,8 @@ from personalclaw.artifacts.handlers import register_artifact_routes
 from personalclaw.artifacts.native import NativeArtifactProvider
 from personalclaw.dashboard import token_auth
 from personalclaw.dashboard.server import _security_headers_middleware
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER
 from personalclaw.dashboard.token_auth import (
-    bind_token_ip,
-    generate_token,
-    mark_consumed,
     token_auth_middleware,
 )
 
@@ -90,11 +89,10 @@ async def _client(*, with_auth: bool = False) -> TestClient:
     return client
 
 
-def _owner_cookie() -> dict[str, str]:
-    token = generate_token("owner", ttl_seconds=300)
-    bind_token_ip(token, "127.0.0.1")
-    mark_consumed(token)
-    return {"pc_token_10000": token}
+def _owner() -> dict[str, dict[str, str]]:
+    """What the owner's page sends: the session cookie, and the pair it keeps."""
+    token = browser_token("owner", 300)
+    return {"cookies": {"pc_token_10000": token}, "headers": {PAIR_HEADER: pair_of(token)}}
 
 
 async def _deploy(client: TestClient, slug: str, **kw) -> str:
@@ -216,7 +214,7 @@ async def test_a_deployed_page_and_its_own_files_load_without_the_session_cookie
     (files / "app.css").write_text("h1 { color: rgb(1, 2, 3) }")
     client = await _client(with_auth=True)
     try:
-        url = await _deploy(client, art.slug, cookies=_owner_cookie())
+        url = await _deploy(client, art.slug, **_owner())
         client.session.cookie_jar.clear()  # the page's own requests: no session at all
         for path, needle in ((url, "planner"), (url + "app.js", "title"), (url + "app.css", "rgb")):
             resp = await client.get(path)
@@ -235,8 +233,8 @@ async def test_without_its_capability_nothing_is_served(native) -> None:
     other = prov.create(name="Recipe box", content="<h1>recipes</h1>", kind="html")
     client = await _client(with_auth=True)
     try:
-        url = await _deploy(client, art.slug, cookies=_owner_cookie())
-        other_url = await _deploy(client, other.slug, cookies=_owner_cookie())
+        url = await _deploy(client, art.slug, **_owner())
+        other_url = await _deploy(client, other.slug, **_owner())
         client.session.cookie_jar.clear()
         # Another deployment's capability opens nothing of this one.
         mixed = _with_capability(url, _capability_of(other_url))
@@ -249,7 +247,7 @@ async def test_without_its_capability_nothing_is_served(native) -> None:
         # nothing: there is no capability in it to read.
         bare = f"{SERVE_URL_PREFIX}/{art.slug}/"
         assert (await client.get(bare, allow_redirects=False)).status in (302, 401, 403)
-        owner = await client.get(bare, cookies=_owner_cookie(), allow_redirects=False)
+        owner = await client.get(bare, **_owner(), allow_redirects=False)
         assert owner.status == 404
         assert "planner" not in await owner.text()
     finally:
@@ -326,14 +324,14 @@ async def test_the_capability_is_never_written_to_the_audit_log(native) -> None:
     ):
         client = await _client(with_auth=True)
         try:
-            url = await _deploy(client, art.slug, cookies=_owner_cookie())
+            url = await _deploy(client, art.slug, **_owner())
             capability = _capability_of(url)
             client.session.cookie_jar.clear()
             assert (await client.get(url)).status == 200
             assert (await client.get(url + "nope.js")).status == 404
             assert (await client.get(url.rstrip("/"), allow_redirects=False)).status == 308
             assert (await client.get(url + "%2e%2e%2fmeta.json")).status in (403, 404)
-            await client.delete(f"/api/artifacts/{art.slug}/deploy", cookies=_owner_cookie())
+            await client.delete(f"/api/artifacts/{art.slug}/deploy", **_owner())
             assert (await client.get(url)).status == 404
         finally:
             await client.close()

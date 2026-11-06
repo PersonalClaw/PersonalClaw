@@ -25,6 +25,7 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from browser_sign_in import browser_token
 from signed_in_sessions import without_sign_in
 
 from personalclaw.auth import pairing
@@ -808,19 +809,27 @@ async def test_the_redeem_page_never_interpolates_the_query_string(_isolated) ->
         bare = await (await client.get("/pair")).text()
     assert with_code == bare, "the query string changed the served document"
     assert "alert(1)" not in with_code
-    assert devices_h._PAIR_HTML == bare
+    # The one value the page carries is where it lands, from the derived device kind.
+    assert devices_h._PAIR_HTML.replace("__LANDING__", "/") == bare
 
 
 @pytest.mark.asyncio
 async def test_a_browser_that_already_has_a_session_is_sent_home(_isolated) -> None:
-    """Self-pairing would overwrite this browser's own cookie and spend an eviction slot."""
-    token = token_auth.generate_token("owner")
+    """Self-pairing would overwrite this browser's own cookie and spend an eviction slot. The page
+    sends itself home after one read with the cookie and the pair it holds: the gateway can't
+    decide it from the cookie, which any page on this host can make the browser send."""
+    token = browser_token("owner", 600)
     async with TestClient(TestServer(_app())) as client:
-        resp = await client.get(f"/pair?token={token}", allow_redirects=False)
-        assert resp.status == 302
-        assert resp.headers["Location"] == "/"
-        # A browser with no session still gets the form, so the redirect is not unconditional.
-        assert (await client.get("/pair")).status == 200
+        resp = await client.get(
+            "/pair", allow_redirects=False, headers={"Cookie": f"pc_token_{PORT}={token}"}
+        )
+        # 🪤 Redirecting on the cookie alone is the plant: the form is served either way.
+        assert resp.status == 200
+        page = await resp.text()
+    assert "data-landing='/'" in page
+    assert "fetch('/api/auth/session'" in page
+    assert "'X-PersonalClaw-Pair': pair" in page
+    assert "localStorage.getItem('pc_pair')" in page
 
 
 _PHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148"
@@ -869,13 +878,11 @@ def test_the_redeem_page_goes_where_the_gateway_says_and_only_to_its_own_paths()
 
 @pytest.mark.asyncio
 async def test_a_phone_that_is_already_signed_in_is_sent_to_the_companion(_isolated) -> None:
-    token = token_auth.generate_token("owner")
     async with TestClient(TestServer(_app())) as client:
-        resp = await client.get(
-            f"/pair?token={token}", allow_redirects=False, headers={"User-Agent": _PHONE}
-        )
-    assert resp.status == 302
-    assert resp.headers["Location"] == devices_h.COMPANION_HOME
+        resp = await client.get("/pair", allow_redirects=False, headers={"User-Agent": _PHONE})
+        page = await resp.text()
+    assert resp.status == 200
+    assert f"data-landing='{devices_h.COMPANION_HOME}'" in page
 
 
 def test_every_refusal_the_redeem_path_can_return_has_copy_on_the_page() -> None:

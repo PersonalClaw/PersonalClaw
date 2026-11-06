@@ -67,6 +67,7 @@ from personalclaw.dashboard.origin import (
     resolve_bind_host,
     resolve_dashboard_host,
 )
+from personalclaw.dashboard.sign_in_pair import WINDOW_DOOR
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import (
     ISSUER_READY,
@@ -267,6 +268,8 @@ def ready_line(*, port: int, home: Path, minted: MintedSession) -> str:
         "token_expires_at": minted.expires_at,
         "pid": os.getpid(),
         "home": str(home),
+        # This build has the desktop window's door (`sign_in_pair.WINDOW_DOOR`).
+        WINDOW_DOOR: True,
     }
     return f"PERSONALCLAW_READY:{json.dumps(payload)}"
 

@@ -530,7 +530,7 @@ The posture is announced on stderr, so stdout stays pipeable.
         help=(
             "Print a single line `PERSONALCLAW_READY:{...}` to stdout once the "
             "dashboard is bound. Payload includes port, token, token_expires_in, "
-            "token_expires_at, pid, and PERSONALCLAW_HOME. Used by test harnesses to "
+            "token_expires_at, pid, PERSONALCLAW_HOME and window_door. Used by test harnesses to "
             "discover the bound ephemeral port and authenticate without polling. NOTE: "
             "the token is an owner sign-in that lasts as long as a browser sign-in "
             "(auth.session_ttl, 30 days by default) — treat the READY line as sensitive "
@@ -1648,16 +1648,21 @@ def _claim_the_home() -> None:
     the start here with the reason on stderr and nothing written into the home: another gateway
     serves it (exit ``gateway_base.HOME_SERVED_EXIT``, the sentence naming that gateway), a newer
     PersonalClaw has served it (exit ``gateway_base.HOME_NEWER_EXIT``, the sentence naming both
-    versions), or its lock or its version stamp cannot be used (exit 1). None of them writes into
-    the home: no audit row, which belongs in the log of the gateway serving the home, and no record
-    of a refused start, which would say that a home being served is not.
+    versions), or its lock or its version stamp cannot be used, or the update to pair-bound
+    sign-ins can't run: its session store can't be read, or an older build's sign-in is still
+    there after it (exit 1). None of them writes into the home: no audit row, which belongs in the
+    log of the gateway serving the home, and no record of a refused start, which would say that a
+    home being served is not.
 
     A claim that rolled the home back on purpose (``gateway_base.ROLL_BACK_ENV``) says so on stderr
     and in the security log, as the start of the gateway that now serves the home."""
     from personalclaw import __version__, gateway_base
+    from personalclaw.dashboard.sign_in_update import pair_sign_ins
 
     try:
-        claim = gateway_base.claim_home()
+        # The update to pair-bound sign-ins runs here at every start, with the claim held and
+        # before the listener binds; the session rows say what it ends (sign_in_update.py).
+        claim = gateway_base.claim_home(pair_sign_ins=pair_sign_ins)
     except gateway_base.HomeAlreadyServed as served:
         print(served, file=sys.stderr)
         sys.exit(gateway_base.HOME_SERVED_EXIT)

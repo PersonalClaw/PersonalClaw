@@ -326,7 +326,9 @@ async def test_a_year_long_token_from_before_stops_90_days_after_it_was_issued()
     stale, _ = _legacy_token(issued_days_ago=91, lasts_days=365)
     fresh, _ = _legacy_token(issued_days_ago=10, lasts_days=365)
     async with TestClient(TestServer(_status_app())) as client:
-        ok = await client.get("/api/status", cookies={f"pc_token_{PORT}": fresh})
+        # A token from before is what a script holds: a Bearer. (A browser's cookie from before
+        # was signed out by the update to pair-bound sign-ins.)
+        ok = await client.get("/api/status", headers={"Authorization": f"Bearer {fresh}"})
         assert ok.status == 200, "inside its first 90 days it still works"
         resp = await client.get(
             "/api/status", cookies={f"pc_token_{PORT}": stale}, headers={"User-Agent": CHROME}

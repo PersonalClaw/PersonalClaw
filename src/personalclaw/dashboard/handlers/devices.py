@@ -54,6 +54,7 @@ from aiohttp import web
 from personalclaw.dashboard.handlers.page_shell import page_document
 from personalclaw.dashboard.origin import check_origin
 from personalclaw.dashboard.owner_presence import ACTION_PAIR_DEVICE, require_owner_presence
+from personalclaw.dashboard.owner_token_url import script_source as owner_token_script_source
 from personalclaw.dashboard.session_store import (
     POOL_CAPS,
     DeviceInfo,
@@ -65,6 +66,7 @@ from personalclaw.dashboard.session_store import (
     signed_in_sessions,
 )
 from personalclaw.dashboard.token_auth import (
+    END_REPLACED,
     END_SIGNED_OUT,
     END_SIGNED_OUT_ELSEWHERE,
     END_SIGNED_OUT_OTHERS,
@@ -225,6 +227,23 @@ def _described(request: web.Request) -> tuple[str, str]:
 # ── pair/complete ───────────────────────────────────────────────────────
 
 
+def _replaced_sign_in(request: web.Request) -> str:
+    """The nonce of the owner sign-in this browser's cookie holds, which a pairing here replaces,
+    or ``""``. A desktop window's own sign-in is never replaced: the app signs its window in itself.
+    """
+    from personalclaw.dashboard.handlers.auth import _cookie_name
+    from personalclaw.dashboard.session_store import ISSUER_WINDOW, load_session_records
+    from personalclaw.dashboard.token_auth import token_nonce, validate_token_with_app
+
+    cookie = request.cookies.get(_cookie_name(request), "")
+    if not cookie:
+        return ""
+    valid, _user, _reason, app = validate_token_with_app(cookie, use_session_exp=True)
+    nonce = token_nonce(cookie) if valid and not app else ""
+    record = load_session_records().get(nonce) if nonce else None
+    return nonce if record is not None and record.issuer != ISSUER_WINDOW else ""
+
+
 async def api_devices_pair_complete(request: web.Request) -> web.Response:
     """POST /api/devices/pair/complete — redeem a code for a durable device session.
 
@@ -291,7 +310,10 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
         minted_at=time.time(),
         ip=ip[:64],
     )
-    minted = mint_session(PAIRED_DEVICE_USER, ttl, issuer=ISSUER_PAIR, device=device)
+    previous = _replaced_sign_in(request)
+    minted = mint_session(
+        PAIRED_DEVICE_USER, ttl, issuer=ISSUER_PAIR, device=device, bound=True, spare=previous
+    )
     token = minted.token
     if not minted.persisted:
         # The session exists but is not in the store, so it cannot be listed or revoked, and it
@@ -302,6 +324,9 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
         return json_error(ERR_CODE_INVALID, status=503)
 
     _clear_failures(ip)
+    if previous:
+        # This browser's earlier sign-in is the one the pairing's cookie replaces.
+        sign_out([previous], END_REPLACED, actor=PAIRED_DEVICE_USER)
     _audit(
         "device_paired",
         "granted",
@@ -318,6 +343,8 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
             "expires_in": ttl,
             # Where the redeem page sends the device next (`landing_for`).
             "landing": landing_for(device.kind),
+            # The page keeps it (`owner_token_url.keepPair`); it is never in the cookie.
+            "pair": minted.pair,
         }
     )
     _set_session_cookie(request, resp, token, ttl)
@@ -343,19 +370,19 @@ async def pair_page(request: web.Request) -> web.Response:
     guards — origin check, per-IP lockout, single-use hashed short-TTL code. What the exemption
     buys is that the door is reachable at all.
 
-    A browser that ALREADY holds a valid session is redirected home instead of being offered the
-    form. That is not tidiness: redeeming a code here overwrites this browser's session cookie,
-    so the owner's own laptop would silently become a "device" row while its previous session
-    row stayed behind unreachable, still counting against the browser limit. Home is where a
-    pairing would have landed it (`landing_for`): a phone that opens the link again goes to the
-    companion, as it did the first time.
+    A browser that ALREADY holds a signed-in page is sent home instead of being offered the form:
+    redeeming a code here would replace its sign-in with a device's. The page decides that itself,
+    with one authenticated read sent with the cookie and the pair it holds (``GET
+    /api/auth/session``), and only that read's ``signed_in`` sends it home: with the sign-in
+    switched off, or a bypassed local network, the read answers 200 with no session named, and
+    the page still has to offer the form. The gateway can't decide it from the cookie alone; in
+    the desktop app the main process adds its own pair. Home is
+    where a pairing would have landed it (`landing_for`), the one value the page carries, chosen
+    from the derived device kind: a phone that opens the link again goes to the companion.
     """
-    from personalclaw.dashboard.handlers.auth import has_valid_session
-
-    if has_valid_session(request):
-        raise web.HTTPFound(landing_for(_described(request)[1]))
+    landing = landing_for(_described(request)[1])
     return web.Response(
-        text=_PAIR_HTML,
+        text=_PAIR_HTML.replace("__LANDING__", landing),
         content_type="text/html",
         headers={"Cache-Control": "no-store"},
     )
@@ -366,7 +393,7 @@ async def pair_page(request: web.Request) -> web.Response:
 _PAIR_BODY = """\
 <h1>Pair this device</h1>
 <p>This will sign this device in to the PersonalClaw dashboard on your home network.</p>
-<form id='f' autocomplete='off'>
+<form id='f' autocomplete='off' data-landing='__LANDING__'>
 <input id='c' name='code' type='text' placeholder='XXXX-XXXX' autocomplete='one-time-code'
 inputmode='latin' autocapitalize='characters' spellcheck='false' aria-label='Pairing code'>
 <input id='n' name='device_name' type='text' placeholder="This device's name (optional)"
@@ -388,6 +415,21 @@ var MESSAGES = {
     'This gateway will not accept pairing from this address. On the host, set the dashboard '
     + 'URL to the address you are using here, then try again.'
 };
+// Already signed in on this page? One read with the cookie and the pair this page holds says so,
+// and only its `signed_in` does: a gateway that skips the sign-in answers 200 to anyone.
+(function () {
+  var pair = '';
+  try { pair = window.localStorage.getItem('pc_pair') || ''; } catch (_) { pair = ''; }
+  var headers = /^[A-Za-z0-9_-]{43}$/.test(pair) ? { 'X-PersonalClaw-Pair': pair } : {};
+  fetch('/api/auth/session', { headers: headers, credentials: 'same-origin' })
+    .then(function (r) { return r.status === 200 ? r.json() : null; })
+    .then(function (session) {
+      if (session && session.signed_in === true) {
+        window.location.assign(document.getElementById('f').getAttribute('data-landing') || '/');
+      }
+    })
+    .catch(function () { /* not signed in here: the form is the answer */ });
+})();
 var params = new URLSearchParams(window.location.search);
 var prefilled = (params.get('code') || '').toUpperCase();
 if (prefilled) { document.getElementById('c').value = prefilled; }
@@ -410,6 +452,7 @@ document.getElementById('f').addEventListener('submit', function (ev) {
     });
   }).then(function (res) {
     if (res.ok) {
+      PersonalClawOwnerToken.keepPair(res.data && res.data.pair);
       // Where the gateway says this device lands; only ever a path on this same gateway.
       var to = res.data && res.data.landing;
       var local = typeof to === 'string' && to.charAt(0) === '/' && to.charAt(1) !== '/';
@@ -427,8 +470,12 @@ document.getElementById('f').addEventListener('submit', function (ev) {
 });
 """
 
+# The owner-token helpers ride in front, as on the sign-in page: `keepPair` keeps the sign-in's
+# pair a gateway that pairs its sign-ins answers the pairing with (`web/src/lib/pair.ts`).
 _PAIR_HTML = page_document(
-    title="Pair this device — PersonalClaw", body=_PAIR_BODY, script=_PAIR_SCRIPT
+    title="Pair this device — PersonalClaw",
+    body=_PAIR_BODY,
+    script=owner_token_script_source() + "\n" + _PAIR_SCRIPT,
 )
 
 

@@ -14,6 +14,13 @@
  *                    and the route the gate was opened at. A pasted URL contributes only its
  *                    token, so pasting cannot move anyone to another origin or path.
  *   home()           "/" plus the route — where a successful sign-in lands, instead of "/".
+ *   keepPair(value)  keep the sign-in's pair a gateway that pairs its sign-ins answered with, in
+ *                    this origin's own storage (`web/src/lib/pair.ts` reads it), so the session
+ *                    cookie is never sent alone. A value without a pair's shape is ignored, and
+ *                    an answer with none (every other gateway) changes nothing.
+ *
+ * A `?token=` document the gateway answered with a pair carries it on this script's own tag as
+ * `data-pair`: it is kept, and the attribute removed, before the scrub runs.
  */
 (function (root) {
   'use strict'
@@ -69,13 +76,36 @@
     return '/' + route(root.location.hash)
   }
 
+  var PAIR_KEY = 'pc_pair'
+  var PAIR_SHAPE = /^[A-Za-z0-9_-]{43}$/
+
+  function keepPair(value) {
+    if (typeof value !== 'string' || !PAIR_SHAPE.test(value)) return false
+    try {
+      root.localStorage.setItem(PAIR_KEY, value)
+    } catch (_) {
+      return false
+    }
+    try {
+      root.document.dispatchEvent(new root.Event('personalclaw:pair-changed'))
+    } catch (_) {
+      // No document to tell: the next reader reads storage itself.
+    }
+    return true
+  }
+
   root.PersonalClawOwnerToken = Object.freeze({
     route: route,
     scrub: scrub,
     connectUrl: connectUrl,
     home: home,
+    keepPair: keepPair,
   })
 
   var self = root.document && root.document.currentScript
+  if (self && self.hasAttribute('data-pair')) {
+    keepPair(self.getAttribute('data-pair'))
+    self.removeAttribute('data-pair')
+  }
   if (self && self.hasAttribute('data-owner-token-scrub')) scrub()
 })(window)

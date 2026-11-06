@@ -18,12 +18,13 @@ import { apiDelete } from './pairedApi'
 //     the window around it, no cookie, no web storage, and (the CSP floor) no request of its own.
 //  3. Tearing the deployment down, and deleting the artifact, take the URL down.
 
-/** A same-origin call from inside the dashboard tab: the SPA's own cookie and session header. */
+/** A same-origin call from inside the dashboard tab: the SPA's own cookie, sign-in pair and
+ *  session header. */
 async function inTab<T>(page: Page, path: string, method = 'GET', body?: unknown): Promise<T> {
   return page.evaluate(async ({ path, method, body }) => {
     const r = await fetch(path, {
       method,
-      headers: { 'Content-Type': 'application/json', 'X-Session-Key': 'dashboard:ui' },
+      headers: { 'Content-Type': 'application/json', 'X-Session-Key': 'dashboard:ui', ...(localStorage.getItem('pc_pair') ? { 'X-PersonalClaw-Pair': localStorage.getItem('pc_pair') as string } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     })
     if (!r.ok) throw new Error(`${method} ${path} → ${r.status} ${await r.text()}`)

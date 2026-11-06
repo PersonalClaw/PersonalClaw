@@ -44,6 +44,10 @@ from urllib.parse import quote
 import pytest
 from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
+
+# Imported before any test patches `config_dir`: a module first imported under a patch keeps the
+# mock bound.
+from browser_sign_in import browser_token
 from fenced_rows import fences_unchanged
 from shared_app_rows import (
     RecordedRows,
@@ -57,8 +61,6 @@ from shared_app_rows import (
 from table_rows import labelled, row, tasks_ended
 from test_apps_cannot_change_your_models import PORT, _Gateway
 
-# Imported before any test patches `config_dir`: a module first imported under a patch keeps the
-# mock bound.
 from personalclaw.apps import manager
 from personalclaw.dashboard.handlers.apps import register_app_routes
 
@@ -213,7 +215,7 @@ async def _token_gateway(routes: list[tuple[str, str, Any]]) -> AsyncIterator[_T
     routes and *routes*."""
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
     from personalclaw.dashboard.server import app_permission_middleware
-    from personalclaw.dashboard.token_auth import generate_token, token_auth_middleware
+    from personalclaw.dashboard.token_auth import token_auth_middleware
 
     app = web.Application(
         middlewares=[
@@ -225,7 +227,7 @@ async def _token_gateway(routes: list[tuple[str, str, Any]]) -> AsyncIterator[_T
     register_app_routes(app)
     for method, template, handler in routes:
         app.router.add_route(method, template, handler)
-    owner = generate_token("owner", ttl_seconds=600)
+    owner = browser_token("owner", 600)
     async with TestClient(TestServer(app), cookie_jar=DummyCookieJar()) as client:
         yield _TokenGateway(client, owner)
 

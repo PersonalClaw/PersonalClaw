@@ -31,10 +31,12 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
-from test_apps_cannot_change_your_models import PORT, _Gateway
 
 # Imported before any test patches `config_dir`: a module first imported under a patch keeps the
 # mock bound.
+from browser_sign_in import browser_token
+from test_apps_cannot_change_your_models import PORT, _Gateway
+
 from personalclaw.apps import manager
 from personalclaw.dashboard.handlers.apps import register_app_routes
 from personalclaw.dashboard.handlers.proactive import api_proactive_install
@@ -90,7 +92,7 @@ async def _gateway() -> AsyncIterator[_Gateway]:
     """The real token middleware and app permission middleware, in front of the app routes and the
     real install route."""
     from personalclaw.dashboard.server import app_permission_middleware
-    from personalclaw.dashboard.token_auth import generate_token, token_auth_middleware
+    from personalclaw.dashboard.token_auth import token_auth_middleware
 
     app = web.Application(
         middlewares=[token_auth_middleware(port=PORT, local_only=False), app_permission_middleware]
@@ -100,7 +102,7 @@ async def _gateway() -> AsyncIterator[_Gateway]:
     )
     register_app_routes(app)
     app.router.add_post(ROUTE, api_proactive_install)
-    owner = generate_token("owner", ttl_seconds=600)
+    owner = browser_token("owner", 600)
     async with TestClient(TestServer(app), cookie_jar=DummyCookieJar()) as client:
         yield _Gateway(client, owner)
 

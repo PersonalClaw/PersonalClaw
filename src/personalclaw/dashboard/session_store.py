@@ -120,6 +120,7 @@ ISSUER_LOGIN = "login"  # a password sign-in
 ISSUER_ENROLL = "enroll"  # a device code typed on the sign-in page
 ISSUER_PAIR = "pair"  # Settings → Devices → Pair a device
 ISSUER_APP = "app"  # an app-scoped token (it narrows a session to one app)
+ISSUER_WINDOW = "window"  # the desktop app's own window (`/api/token/local?for=window`)
 ISSUER_UNKNOWN = "unknown"  # a row written before the door was recorded
 ISSUERS: tuple[str, ...] = (
     ISSUER_STARTUP,
@@ -129,6 +130,7 @@ ISSUERS: tuple[str, ...] = (
     ISSUER_ENROLL,
     ISSUER_PAIR,
     ISSUER_APP,
+    ISSUER_WINDOW,
     ISSUER_UNKNOWN,
 )
 
@@ -174,6 +176,8 @@ END_REPLACED = "replaced"  # the same browser signed in again with a newer link
 END_SUPERSEDED = "superseded"  # a startup link no browser opened, and the gateway started again
 END_KEY_REPLACED = "key_replaced"  # the owner replaced the key every sign-in is signed with
 END_EXPIRED = "expired"  # it ran its whole lifetime (recorded by the store, never passed in)
+END_LINK_OPENED = "link_opened"  # a startup link a browser opened, which signed that browser in
+END_UPDATED = "updated"  # PersonalClaw was updated to sign browsers in with their pair
 END_REASONS: tuple[str, ...] = (
     END_SIGNED_OUT,
     END_SIGNED_OUT_ELSEWHERE,
@@ -184,6 +188,8 @@ END_REASONS: tuple[str, ...] = (
     END_SUPERSEDED,
     END_KEY_REPLACED,
     END_EXPIRED,
+    END_LINK_OPENED,
+    END_UPDATED,
 )
 
 #: How many ended sessions are remembered. Past this, the oldest ending is forgotten and that
@@ -323,6 +329,12 @@ def _derived_device_id(nonce: str) -> str:
     return hashlib.sha256(f"personalclaw-session:{nonce}".encode()).hexdigest()[:16]
 
 
+#: The row field :attr:`SessionRecord.pairing` is stored as. A build from before it drops the field
+#: from every row when it writes the store, so once an older build has written the store, every row
+#: reads as an older build's.
+PAIRING_ROW_FIELD = "pairing"
+
+
 @dataclass
 class SessionRecord:
     """One ``sessions.json`` row. ``device`` is always present once parsed."""
@@ -331,11 +343,22 @@ class SessionRecord:
     issuer: str = ISSUER_UNKNOWN
     device: DeviceInfo = field(default_factory=lambda: DeviceInfo(id=new_device_id()))
     app: str = ""
+    #: A desktop window's sign-in only: a digest of the gateway start's local secret that minted
+    #: it, so its started-by proof (``owner_presence``) lasts that start and no longer.
+    started_by: str = ""
+    #: Minted by a build whose browser sign-ins need their pair (:data:`PAIRING_ROW_FIELD`), on
+    #: every row that build mints, bound or not. A row without it was minted, or last rewritten, by
+    #: an older build, and the next start ends it (``sign_in_update``) unless it's spared.
+    pairing: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"exp": self.expiry, "issuer": self.issuer}
         if self.app:
             out["app"] = self.app
+        if self.started_by:
+            out["started_by"] = self.started_by
+        if self.pairing:
+            out[PAIRING_ROW_FIELD] = 1
         out["device"] = self.device.to_dict()
         return out
 
@@ -509,7 +532,15 @@ def _parse_record(raw: Any, nonce: str) -> SessionRecord | None:
     # longer, and `note_client` replaces "now" with the real issue time the first time the
     # session is used.
     expiry = min(expiry, (device.minted_at or time.time()) + MAX_LIFETIME_SECS)
-    return SessionRecord(expiry=expiry, issuer=issuer, device=device, app=app)
+    started_by = str(raw.get("started_by") or "") if issuer == ISSUER_WINDOW else ""
+    return SessionRecord(
+        expiry=expiry,
+        issuer=issuer,
+        device=device,
+        app=app,
+        started_by=started_by[:64],
+        pairing=raw.get(PAIRING_ROW_FIELD) == 1,
+    )
 
 
 def _parse_ended(raw: Any) -> EndedSession | None:
@@ -555,19 +586,28 @@ def _parse_retired(raw: Any, now: float) -> tuple[bytes, float]:
     return key, at
 
 
-def _load_state() -> _State:
+def _load_state(*, strict: bool = False) -> _State:
     """Everything in the file: live records (expired ones dropped) and remembered endings.
 
     Returns an empty state on any read failure. Fail-CLOSED in effect: an unreadable store
-    means no nonce validates, so tokens are rejected rather than blanket-accepted.
+    means no nonce validates, so tokens are rejected rather than blanket-accepted. A file that
+    reads but isn't a store always loads as empty: nothing in it can be used, and the next save
+    writes a store over it. *strict* re-raises a failure to read the file at all (``OSError``),
+    for a caller that must know what was signed in: such a file may still hold sign-ins.
     """
     path = sessions_path()
     if not path.is_file():
         return _State({}, {})
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except OSError:
+        if strict:
+            raise
         logger.warning("session store unreadable — treating every session as absent")
+        return _State({}, {})
+    except ValueError:
+        # JSONDecodeError, UnicodeDecodeError and json's integer-digit limit are all ValueError.
+        logger.warning("session store is not one — treating every session as absent")
         return _State({}, {})
     if not isinstance(raw, dict):
         return _State({}, {})
@@ -650,9 +690,9 @@ def _save_state(state: _State) -> bool:
         return False
 
 
-def load_session_records() -> dict[str, SessionRecord]:
-    """``{nonce: SessionRecord}`` for every live stored session."""
-    return _load_state().records
+def load_session_records(*, strict: bool = False) -> dict[str, SessionRecord]:
+    """``{nonce: SessionRecord}`` for every live stored session (*strict*: :func:`_load_state`)."""
+    return _load_state(strict=strict).records
 
 
 def load_sessions() -> dict[str, float]:
@@ -697,10 +737,11 @@ def _recency(record: SessionRecord) -> float:
 
 
 def _enforce_limit(
-    state: _State, pool: str, keep: str, now: float
+    state: _State, pool: str, keep: str, now: float, *, spare: str = ""
 ) -> list[tuple[str, SessionRecord]]:
-    """Sign out the least recently used of *pool* beyond its limit. *keep* is never one."""
-    members = [(n, r) for n, r in state.records.items() if pool_of(r) == pool]
+    """Sign out the least recently used of *pool* beyond its limit. *keep* is never one, and
+    *spare*, a session *keep* is about to replace, is neither one nor counted."""
+    members = [(n, r) for n, r in state.records.items() if pool_of(r) == pool and n != spare]
     excess = len(members) - pool_cap(pool)
     if excess <= 0:
         return []
@@ -729,12 +770,15 @@ def remember_session(
     issuer: str = ISSUER_UNKNOWN,
     device: DeviceInfo | None = None,
     app: str = "",
+    spare: str = "",
+    started_by: str = "",
 ) -> Remembered:
     """Record one minted session so it survives a restart, and enforce its kind's limit.
 
     The caller drops each evicted session from memory and records its sign-out; a caller
     that must not hand out a session the registry cannot show (pairing) checks
-    ``persisted``. The write itself is best-effort (see :func:`_save_state`).
+    ``persisted``. The write itself is best-effort (see :func:`_save_state`). *spare* is the
+    session this one replaces, which the caller ends next: it isn't counted against the limit.
     """
     if not nonce:
         return Remembered()
@@ -745,10 +789,12 @@ def remember_session(
         issuer=issuer if issuer in ISSUERS else ISSUER_UNKNOWN,
         device=device or DeviceInfo(id=new_device_id(), minted_at=now),
         app=app if issuer == ISSUER_APP else "",
+        started_by=started_by if issuer == ISSUER_WINDOW else "",
+        pairing=True,
     )
     state.records[nonce] = record
     state.ended.pop(nonce, None)
-    evicted = _enforce_limit(state, pool_of(record), nonce, now)
+    evicted = _enforce_limit(state, pool_of(record), nonce, now, spare=spare)
     return Remembered(persisted=_save_state(state), evicted=tuple(evicted))
 
 
@@ -800,8 +846,11 @@ def note_client(
         if clean_ip and device.ip != clean_ip:
             device.ip = clean_ip
             wrote = True
-        if record.issuer not in (ISSUER_PAIR, ISSUER_ENROLL, ISSUER_APP):
-            name, kind = describe_user_agent(user_agent)
+        name, kind = describe_user_agent(user_agent)
+        # A link a browser presents where it signs nothing in stays a link: its row never takes a
+        # browser's kind or name from a carrier that isn't a browser's own sign-in.
+        as_a_link = kind in BROWSER_KINDS and not browser_carrier
+        if record.issuer not in (ISSUER_PAIR, ISSUER_ENROLL, ISSUER_APP) and not as_a_link:
             becomes_browser = (
                 browser_carrier and kind in BROWSER_KINDS and device.kind not in BROWSER_KINDS
             )

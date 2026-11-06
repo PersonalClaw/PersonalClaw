@@ -26,7 +26,7 @@
  *    is asked again later, waiting longer after each failure of that URL, a re-sign included;
  *  - a URL the gateway declines to sign is used as it is, and not asked about again;
  *  - the signatures are this sign-in's: a change of the pair (another sign-in, a sign-out) forgets
- *    them all, and what was declined. */
+ *    them all, what was declined, and that the route was absent. */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { PAIR_CHANGED, pairFetch, storedPair } from './pair'
 
@@ -75,10 +75,13 @@ function subscribe(listener: () => void): () => void {
   return () => { listeners.delete(listener) }
 }
 
+/** A change of the pair is a new sign-in, maybe on a gateway that has since gained the signing
+ *  route: every signature, every decline and the route's absence are forgotten with the old one. */
 function forget(): void {
   cache.clear()
   failures.clear()
   declined.clear()
+  mintAbsent = false
   bump()
 }
 
@@ -129,15 +132,40 @@ function failed(urls: string[]): void {
   for (const url of urls) failures.set(url, (failures.get(url) ?? 0) + 1)
 }
 
+/** The most URLs the signing route takes in one request (`signed_urls.MAX_URLS`). */
+export const MAX_URLS_PER_REQUEST = 64
+
+/** Sign *batch*'s URLs, in requests of at most {@link MAX_URLS_PER_REQUEST} each. */
 async function send(batch: Batch): Promise<void> {
   const urls = [...batch.urls.keys()]
-  if (!signs()) return
+  for (let at = 0; at < urls.length; at += MAX_URLS_PER_REQUEST) {
+    if (!signs()) return
+    await sendPart(batch, urls.slice(at, at + MAX_URLS_PER_REQUEST))
+  }
+}
+
+/** What the mint is sent for *url*: this origin's absolute URL as its path and query, so the answer
+ *  never depends on how a proxy in front of the gateway names the origin. */
+function onTheWire(url: string): string {
+  if (url.startsWith('/') && !url.startsWith('//')) return url
+  try {
+    const u = new URL(url)
+    return u.origin === window.location.origin ? u.pathname + u.search : url
+  } catch {
+    return url
+  }
+}
+
+async function sendPart(batch: Batch, urls: string[]): Promise<void> {
+  // Each URL as the mint is sent it, and the URLs of this part that it stands for.
+  const asked = new Map<string, string[]>()
+  for (const url of urls) asked.set(onTheWire(url), [...(asked.get(onTheWire(url)) ?? []), url])
   let r: Response | null = null
   try {
     r = await pairFetch(SIGN_PATH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-Key': 'dashboard:ui' },
-      body: JSON.stringify({ urls }),
+      body: JSON.stringify({ urls: [...asked.keys()] }),
     })
   } catch {
     r = null
@@ -156,19 +184,21 @@ async function send(batch: Batch): Promise<void> {
   try {
     const rows = ((await r.json()) as { urls?: { url?: unknown; signed?: unknown; exp?: unknown }[] }).urls ?? []
     for (const row of rows) {
-      if (typeof row.url !== 'string' || !batch.urls.has(row.url)) continue
-      answered.add(row.url)
-      failures.delete(row.url)
-      if (typeof row.signed !== 'string' || typeof row.exp !== 'number') {
-        declined.add(row.url)
-        continue
-      }
-      const replaced = batch.urls.get(row.url)
-      const current = cache.get(row.url)
-      if (!replaced || row.exp > replaced.exp) {
-        if (!current || row.exp >= current.exp) cache.set(row.url, { url: row.signed, exp: row.exp, signedAt: now, final: false })
-      } else {
-        cache.set(row.url, { ...(current ?? replaced), final: true })
+      if (typeof row.url !== 'string') continue
+      for (const url of asked.get(row.url) ?? []) {
+        answered.add(url)
+        failures.delete(url)
+        if (typeof row.signed !== 'string' || typeof row.exp !== 'number') {
+          declined.add(url)
+          continue
+        }
+        const replaced = batch.urls.get(url)
+        const current = cache.get(url)
+        if (!replaced || row.exp > replaced.exp) {
+          if (!current || row.exp >= current.exp) cache.set(url, { url: row.signed, exp: row.exp, signedAt: now, final: false })
+        } else {
+          cache.set(url, { ...(current ?? replaced), final: true })
+        }
       }
     }
   } catch {

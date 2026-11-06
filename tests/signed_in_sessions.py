@@ -92,15 +92,20 @@ def client_for(app: web.Application) -> TestClient:
 
 @dataclass(frozen=True)
 class SignIn:
-    """One minted session, and what a browser holding it sends."""
+    """One minted session, and what a browser holding it sends: its cookie, and the pair its page
+    keeps (``sign_in_pair``)."""
 
     token: str
     nonce: str
     session_id: str
+    pair: str = ""
 
     @property
     def headers(self) -> dict[str, str]:
-        return {"Cookie": f"{COOKIE}={self.token}", "Origin": ORIGIN}
+        sent = {"Cookie": f"{COOKIE}={self.token}", "Origin": ORIGIN}
+        if self.pair:
+            sent["X-PersonalClaw-Pair"] = self.pair
+        return sent
 
 
 def sign_in(
@@ -111,16 +116,17 @@ def sign_in(
     name: str = "Firefox on Linux",
     user: str = "jordan",
 ) -> SignIn:
-    """A session through *issuer*'s door whose device signed in *age* seconds ago."""
+    """A browser's sign-in through *issuer*'s door whose device signed in *age* seconds ago:
+    bound to its pair, as every sign-in a browser's cookie holds is."""
     device = session_store.DeviceInfo(id=session_store.new_device_id(), name=name, kind=kind)
     minted = token_auth.mint_session(
-        user, token_auth.browser_session_ttl(), issuer=issuer, device=device
+        user, token_auth.browser_session_ttl(), issuer=issuer, device=device, bound=True
     )
     if age:
         records = session_store.load_session_records()
         records[minted.nonce].device.minted_at -= age
         session_store.save_session_records(records)
-    return SignIn(minted.token, minted.nonce, minted.session_id)
+    return SignIn(minted.token, minted.nonce, minted.session_id, minted.pair)
 
 
 def owner_presence_rows(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

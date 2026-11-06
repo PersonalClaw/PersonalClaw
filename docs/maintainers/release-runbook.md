@@ -101,6 +101,17 @@ release candidate therefore needs no special flag or manual step: tag
 
 ## Before you tag
 
+**What a release's notes leave for the cut to fill in:**
+- getting-started's "Upgrading to sign-ins that need more than the cookie" names "the release that
+  brings this": name the version there;
+- desktop's "A gateway from 0.3.7 on needs the app from 0.3.7 on" paragraph names 0.3.7 three
+  times, and the Breaking changes and `pair_refusals.MIN_DESKTOP_VERSION` once each: when the
+  release is another version, name that one in all five;
+- the sign-in pairing ships with its desktop half, in one version. Never tag a gateway that pairs
+  its sign-ins (`"pairing"` on every session row it mints) on a commit without the desktop app's
+  window door (`?for=window`), and the release's Breaking changes name the minimum desktop
+  version (`pair_refusals.MIN_DESKTOP_VERSION`).
+
 ### 1. Bump the version in all seven places
 
 These are enforced by `tests/test_version_consistency.py`, which runs in PR CI, so a

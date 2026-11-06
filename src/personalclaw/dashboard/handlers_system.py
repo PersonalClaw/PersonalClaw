@@ -16,6 +16,7 @@ from aiohttp import web
 import personalclaw
 from personalclaw import home_gateway, record_files
 from personalclaw.config import loader as config_loader
+from personalclaw.dashboard.sign_in_pair import WINDOW_DOOR
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.stats import Stats
 
@@ -130,7 +131,8 @@ async def api_healthz(request: web.Request) -> web.Response:
             "pid": os.getpid(),
             "home_id": home_id,
             "root_ok": root_ok,
-            **({"proof": proof} if proof else {}),
+            # The build's window door rides only beside the proof: a caller trusts it no sooner.
+            **({"proof": proof, WINDOW_DOOR: True} if proof else {}),
         }
     )
 

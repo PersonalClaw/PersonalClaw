@@ -327,6 +327,10 @@ async def _security_headers_middleware(
             )
             resp.headers.setdefault("Pragma", "no-cache")
             resp.headers.setdefault("Expires", "0")
+        if request.get("admitted_by_signature"):
+            # A signed resource URL (signed_urls.py) is the one answer kept out of every cache,
+            # whatever its route chose: a copy would outlive the signature that admitted it.
+            resp.headers["Cache-Control"] = "private, no-store"
         resp.headers.setdefault("Content-Security-Policy", dashboard_csp(port))
         for name, value in SECURITY_HEADERS.items():
             resp.headers.setdefault(name, value)

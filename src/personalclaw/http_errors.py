@@ -244,7 +244,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "message says who asked and where the owner can make it."
     ),
     # ── a lifetime asked of the token endpoint (dashboard/handlers/core.py) — the limit is
-    # 90 days, and the message is the sentence that says so ──
+    # 90 days (30 for the desktop window's sign-in, ``?for=window``), and the message is the
+    # sentence that says so ──
     "token_ttl_invalid": "The requested lifetime is not a duration like 30m, 20h or 7d.",
     "token_ttl_too_long": (
         "The requested lifetime is longer than the 90-day limit; the message says why."
@@ -1585,6 +1586,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "PersonalClaw was still loading other images, so this one wasn't asked for. Press Load "
         "again."
     ),
+    # 403: an address was sent to be signed (`dashboard/signed_urls.py`) by something other than a
+    # browser's own page on its sign-in, so there's no cookie a signature could stand beside.
+    "signed_urls_need_a_page": "Only a browser's own PersonalClaw page can have addresses signed.",
 }
 
 
