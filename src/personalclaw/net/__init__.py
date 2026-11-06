@@ -15,7 +15,7 @@ redirect hop included; one that takes no client asks a
 consulted by both outbound and inbound checks.
 """
 
-from personalclaw.net.client import EgressBlocked, FetchResponse, fetch, open_url
+from personalclaw.net.client import USER_AGENT, EgressBlocked, FetchResponse, fetch, open_url
 from personalclaw.net.guard import GuardDecision, IpVerdict, classify_host, evaluate
 from personalclaw.net.http_clients import (
     RequestGuard,
@@ -39,6 +39,7 @@ from personalclaw.net.policy import (
 )
 
 __all__ = [
+    "USER_AGENT",
     "EgressBlocked",
     "FetchResponse",
     "fetch",

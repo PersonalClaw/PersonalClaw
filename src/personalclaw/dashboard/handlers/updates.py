@@ -611,24 +611,42 @@ async def _upgrade_wheel(state: DashboardState) -> str | None:
         argv = install_argv(["-U", spec, "--quiet"])
         state.push_update_progress("installing", f"Upgrading {spec}…")
         environment = await asyncio.to_thread(installed_distributions)
-        pip_up = await asyncio.create_subprocess_exec(
-            *argv,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=installer_env(),
-            # Own group: pip forks build backends / compilers / `git clone` for VCS
-            # specs, all inheriting these pipes. See kill_timed_out.
-            start_new_session=True,
-        )
-        try:
-            _, pip_err = await asyncio.wait_for(pip_up.communicate(), timeout=400)
-        except asyncio.TimeoutError:
-            await kill_timed_out(pip_up)
-            state.push_update_progress("error", "Upgrade timed out")
-            return None
-        except asyncio.CancelledError:
-            await kill_timed_out(pip_up)
-            raise
+        # Right after a release the index may not list it yet: an installer that finds no
+        # version of it is asked again after each wait (`UNPUBLISHED_RETRY_WAITS`). A Cancel
+        # during a wait cancels this task there, with nothing running to stop.
+        waits = list(self_update.UNPUBLISHED_RETRY_WAITS)
+        while True:
+            pip_up = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=installer_env(),
+                # Own group: pip forks build backends / compilers / `git clone` for VCS
+                # specs, all inheriting these pipes. See kill_timed_out.
+                start_new_session=True,
+            )
+            try:
+                _, pip_err = await asyncio.wait_for(pip_up.communicate(), timeout=400)
+            except asyncio.TimeoutError:
+                await kill_timed_out(pip_up)
+                state.push_update_progress("error", "Upgrade timed out")
+                return None
+            except asyncio.CancelledError:
+                await kill_timed_out(pip_up)
+                raise
+            unpublished = pip_up.returncode != 0 and self_update.finds_no_version(
+                mask_child_output(pip_err, limit=None, one_line=False), target
+            )
+            if not unpublished or not waits:
+                break
+            wait = waits.pop(0)
+            state.push_update_progress(
+                "installing",
+                f"PyPI has not published {self_update.normalize_version(target)} yet. "
+                f"Trying again in {wait:.0f} s…",
+            )
+            await asyncio.sleep(wait)
+            state.push_update_progress("installing", f"Upgrading {spec}…")
     except asyncio.CancelledError:
         changed = changed_distributions(environment) if environment is not None else ""
         said, as_it_was = self_update.stopped_upgrade_sentence(
@@ -648,6 +666,9 @@ async def _upgrade_wheel(state: DashboardState) -> str | None:
         # captured and logged but never sent to the UI, so the panel said
         # only "pip upgrade failed" and the user had to read gateway.log
         # to learn anything actionable (issue #51).
+        if unpublished:
+            state.push_update_progress("error", self_update.still_publishing_sentence(target))
+            return None
         summary = self_update.installer_error_summary(detail)
         state.push_update_progress(
             "error", f"Upgrade failed: {summary}" if summary else "Upgrade failed"

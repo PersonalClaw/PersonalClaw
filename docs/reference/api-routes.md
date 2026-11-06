@@ -694,7 +694,7 @@ The 950 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/memory/approval-rules` | the triage approval rules, with provenance. |
 | `POST` | `/api/memory/approval-rules` | teach one approve/deny rule. |
 | `DELETE` | `/api/memory/approval-rules/{key}` | revoke one rule. |
-| `POST` | `/api/memory/consolidate` | trigger immediate consolidation for testing. |
+| `POST` | `/api/memory/consolidate` | consolidate one conversation into memory now. |
 | `GET` | `/api/memory/context-preview` | preview what gets injected into prompts. |
 | `GET` | `/api/memory/daily-digests` | the per-day rollup nodes, |
 | `GET` | `/api/memory/entities` | the entity set with inbound-link counts. |

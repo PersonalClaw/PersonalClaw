@@ -1468,7 +1468,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "transport"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "sign_in"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "disabled"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "detail"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "detail"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "note"}
    ],
    "returns": "None"
   },
@@ -8068,6 +8069,7 @@
   "bases": ["ValueError"],
   "kind": "class"
  },
+ "personalclaw.sdk.net.USER_AGENT": {"kind": "value", "type": "str", "value": "'Mozilla/5.0 (compatible; PersonalClaw; +https://github.com/PersonalClaw/PersonalClaw)'"},
  "personalclaw.sdk.net.WEBHOOK": {"kind": "value", "type": "EgressPolicy", "value": "EgressPolicy(name='webhook', allow_schemes=('http', 'https'), allow_private=False, loopback_only=False, allow_hosts=(), deny_hosts=(), allow_only=False, max_redirects=5, max_bytes=5000000, timeout_s=30.0, pin_resolved_ip=True, on_violation='deny')"},
  "personalclaw.sdk.net.a2a_outbound_policy": {
   "kind": "function",

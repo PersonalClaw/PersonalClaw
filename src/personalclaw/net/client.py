@@ -137,6 +137,22 @@ def _pinned_resolver(host_to_ips: dict[str, list[str]]):
     return _PinnedResolver()
 
 
+#: How every request `net.fetch` and `net.open_url` send names PersonalClaw, unless its caller sets
+#: a User-Agent of its own (an integration's own name stays its own: a GitHub app's). In the form
+#: sites that refuse a generic client identity accept: Wikipedia's robot policy refuses the HTTP
+#: library's own ``Python/3.x aiohttp/…``, which every request without one used to send.
+#: No version in it: the name and where to read about it are what such a policy asks for, and the
+#: SDK publishes this value (`sdk.net.USER_AGENT`), which a version would change at every release.
+USER_AGENT = "Mozilla/5.0 (compatible; PersonalClaw; +https://github.com/PersonalClaw/PersonalClaw)"
+
+
+def _named(headers: dict[str, str] | None) -> dict[str, str]:
+    """*headers*, with :data:`USER_AGENT` added when they carry no User-Agent (in any case)."""
+    if any(k.lower() == "user-agent" for k in (headers or {})):
+        return dict(headers or {})
+    return {**(headers or {}), "User-Agent": USER_AGENT}
+
+
 async def fetch(
     url: str,
     *,
@@ -201,6 +217,7 @@ async def fetch_as(
     timeout = aiohttp.ClientTimeout(total=policy.timeout_s)
     cur_url = url
     cur_decision = decision
+    headers = _named(headers)
 
     for _hop in range(policy.max_redirects + 1):
         host = urlparse(cur_url).hostname or ""
@@ -337,5 +354,7 @@ def open_url(url: str, *, timeout_s: float, then: str = DOWNLOAD_AGAIN) -> http.
     when it is asked, and the client then resolves the name again for itself, so the connection
     is not held to the address the guard checked."""
     opener = urllib.request.build_opener(_AskTheGuardFirst(then))
+    # Named as every request `net.fetch` sends is (`USER_AGENT`), not as urllib's `Python-urllib/…`.
+    opener.addheaders = [("User-Agent", USER_AGENT)]
     response: http.client.HTTPResponse = opener.open(url, timeout=timeout_s)
     return response

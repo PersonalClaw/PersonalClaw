@@ -9,6 +9,7 @@ import {
 import { MemoryGraph } from './MemoryGraph'
 import { memoryEmbeddedStat } from './memoryEmbeddedStat'
 import { vaultSyncMessage } from './vaultSyncMessage'
+import { consolidateMessage } from './consolidateMessage'
 import {
   api, type MemorySettings, type SemanticEntry,
   type EpisodicEntry, type MemoryEvent, type MemoryVaultStatus, type MemoryVaultMode,
@@ -2382,8 +2383,7 @@ function SettingsTab({ stats, onConsolidated, focusPref }: {
       const keys = sessions.map((s) => s.key).filter(Boolean)
       if (keys.length === 0) { setConsolidateMsg('No active sessions to consolidate.'); setConsolidating(false); return }
       const results = await Promise.allSettled(keys.map((k) => api.consolidateMemory(k)))
-      const ok = results.filter((r) => r.status === 'fulfilled' && !(r.value as { error?: string }).error).length
-      setConsolidateMsg(`Consolidation started for ${ok}/${keys.length} session${keys.length === 1 ? '' : 's'}.`)
+      setConsolidateMsg(consolidateMessage(results))
     } catch (e) { setConsolidateMsg(e instanceof Error ? e.message : 'Failed') }
     setConsolidating(false); onConsolidated()
   }

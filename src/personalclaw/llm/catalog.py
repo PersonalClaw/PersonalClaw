@@ -626,6 +626,27 @@ FAILURE_DETAIL_CHARS = 600
 _VERSION_SEGMENT = re.compile(r"^v\d+[a-z0-9]*$", re.IGNORECASE)
 
 
+def openai_compatible_base(
+    endpoint: str | None, *, default_base: str = "https://api.openai.com/v1"
+) -> str:
+    """The base an OpenAI-compatible ``endpoint``'s chats, streams and embeddings go to
+    (`llm.openai.OpenAIProvider`): a bare host gets ``/v1``, the base its model list reads
+    (:func:`openai_compatible_models_url`), and a Base URL with any path is kept exactly as typed,
+    a trailing slash included.
+
+    The client sent to the Base URL as typed, so a vLLM server saved at its bare address listed
+    its models under ``/v1`` and then had every chat sent where it serves nothing. A Base URL with
+    a path is the provider's own (``…/api/coding/paas/v4``, ``…/v1beta/openai/``), and chats as
+    typed, as before. One with a path and no version (``…/api``) still lists its models under
+    ``/v1`` while it chats as typed: normalizing the Base URL when it is saved is what settles it.
+    """
+    base = endpoint or default_base
+    scheme, sep, rest = base.partition("://")
+    if "/" in (rest if sep else scheme).rstrip("/"):
+        return base
+    return base.rstrip("/") + "/v1"
+
+
 def openai_compatible_models_url(
     endpoint: str | None, *, default_base: str = "https://api.openai.com/v1"
 ) -> str:
@@ -962,6 +983,7 @@ __all__ = [
     "ModelManager",
     "capture_discovery_failures",
     "infer_capabilities",
+    "openai_compatible_base",
     "openai_compatible_discover_models",
     "openai_compatible_list_models",
     "openai_compatible_models_url",

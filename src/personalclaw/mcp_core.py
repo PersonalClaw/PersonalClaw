@@ -1220,6 +1220,39 @@ def _skill_library() -> tuple["AgentSkills | None", "SkillsLoader"]:
     return held, (held.library(loader) if held is not None else loader)
 
 
+def _skill_key(given: str, loader: "SkillsLoader") -> tuple[str, str]:
+    """The key the skill *given* is kept under, and a refusal when the name is not one skill's.
+
+    A skill is kept under its folder path (``imported/claude_code/trip-planner`` for one imported
+    from another agent tool), and its SKILL.md declares the name it is called by
+    (``trip-planner``). A key *loader* resolves is taken as it is. Otherwise the name one skill
+    *loader* sees declares is that skill's key; a name more than one declares is refused, naming
+    their keys. A name none declares is returned as given, for the caller's own "no skill named"."""
+    if loader.skill_file(given) is not None:
+        return given, ""
+    keys = sorted(
+        row["key"] for row in loader.list_skills() if str(row.get("name", "")).strip() == given
+    )
+    if len(keys) > 1:
+        return "", (
+            f"more than one skill is named '{given}': {', '.join(keys)}. Call it by one of "
+            "those keys."
+        )
+    return (keys[0] if keys else given), ""
+
+
+def _skill_for_call(given: str) -> tuple["SkillsLoader", str, str]:
+    """The skill library the calling agent may use, the key *given* names in it (`_skill_key`),
+    and why the call is refused, else ``""``: a name more than one skill declares, or a skill the
+    agent's skill list does not allow, refused by name rather than answered as one that does not
+    exist."""
+    held, loader = _skill_library()
+    key, refused = _skill_key(given, loader)
+    if not refused and held is not None and not held.allows(key):
+        refused = f"{held.refusal(key)}."
+    return loader, key, refused
+
+
 def _loop_skills(session_key: str) -> tuple[str, ...]:
     """The skills the loop whose worker session is *session_key* loads on its turn, or none for a
     session that is no loop's worker. *session_key* is the one the runtime holds, the chat's key
@@ -1252,9 +1285,9 @@ def _load_skill_resource(args: dict[str, Any]) -> str:
     rel_path = (args.get("path") or "").strip()
     if not skill_name or not rel_path:
         return tool_failure("both skill and path are required.")
-    held, loader = _skill_library()
-    if held is not None and not held.allows(skill_name):
-        return tool_failure(f"{held.refusal(skill_name)}.")
+    loader, skill_name, refused = _skill_for_call(skill_name)
+    if refused:
+        return tool_failure(refused)
     try:
         read = loader.read_resource(skill_name, rel_path)
     except SkillResourceRefused as exc:
@@ -1474,11 +1507,10 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         skill_name = (args.get("name") or "").strip()
         if not skill_name:
             return tool_failure("name is required.")
-        # The calling agent's skills only: one its skill list does not allow is refused by name,
-        # rather than answered as a skill that does not exist.
-        held, loader = _skill_library()
-        if held is not None and not held.allows(skill_name):
-            return tool_failure(f"{held.refusal(skill_name)}.")
+        # The calling agent's skills only (`_skill_for_call`).
+        loader, skill_name, refused = _skill_for_call(skill_name)
+        if refused:
+            return tool_failure(refused)
         content = loader.load_skill(skill_name)
         if content is None:
             return tool_failure(

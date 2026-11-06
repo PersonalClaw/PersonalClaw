@@ -15,7 +15,7 @@ schema types to ``string`` without any error. Real type objects cannot take that
 
 from dataclasses import dataclass, field
 
-from personalclaw.config.coercion import _meta, _num
+from personalclaw.config.coercion import _meta, _safe_int
 
 #: The five inbound surfaces of the shared access seam.
 #: Declared HERE, beside the dataclass, and imported by `inbound.auth`, the client
@@ -54,7 +54,7 @@ def _ea_surface_data(section: dict, surface: str) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
-def _capture_retention(section: dict) -> float:
+def _capture_retention(section: dict) -> int:
     """The capture retention window, resolved ONCE from either spelling.
 
     Two keys can express it in `config.json` — the nested `capture.retention_days`
@@ -65,10 +65,12 @@ def _capture_retention(section: dict) -> float:
     control from becoming inert against the new pruner. The nested key wins when
     explicitly present — which, after #2950, is always the operator-facing write path.
     """
+    # Whole days, through `_safe_int`: "inf" or "nan" take the default where they raised out of
+    # the dataclass's `int()`, and `_safe_int` takes the default for a boolean, as `_num` did.
     nested = _ea_surface_data(section, "capture").get("retention_days")
     if nested is not None:
-        return _num(nested, 30)
-    return _num(section.get("capture_retention_days"), 30)
+        return _safe_int(nested, 30)
+    return _safe_int(section.get("capture_retention_days"), 30)
 
 
 @dataclass

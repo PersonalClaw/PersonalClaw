@@ -309,6 +309,8 @@ class _ProbeResult:
     detail: str = ""
     #: How many starts of this definition in a row failed (`mcp_status.STOP_AFTER`).
     failures: int = 0
+    #: What the card says of a start that connected when its tool list was not read to its end.
+    note: str = ""
 
 
 # Module-level record of each server's last start: server name → result
@@ -333,11 +335,12 @@ def _probed_as(server: "McpServerInfo") -> str:
     return json.dumps(seal, sort_keys=True, separators=(",", ":"))
 
 
-def _get_cached(server: "McpServerInfo") -> tuple[str, list[dict[str, Any]], str, str]:
-    """``(status, tools, error, detail)`` of the last start of *server* as it is defined now; else
-    ``probing`` while a probe of it runs, and ``unknown`` before one starts. A server that failed
-    to start ``mcp_status.STOP_AFTER`` times in a row reads ``stopped``, with what its last start
-    found.
+def _get_cached(server: "McpServerInfo") -> tuple[str, list[dict[str, Any]], str, str, str]:
+    """``(status, tools, error, detail, note)`` of the last start of *server* as it is defined
+    now; else ``probing`` while a probe of it runs, and ``unknown`` before one starts. A server
+    that failed to start ``mcp_status.STOP_AFTER`` times in a row reads ``stopped``, with what its
+    last start found. ``note`` is what the start said of the tools it listed (an unfinished
+    list), or empty.
 
     However old the result, it stands until the next start replaces it: the Tools page re-probes
     every server on its own schedule, and meanwhile the last answer is the one there is."""
@@ -347,11 +350,11 @@ def _get_cached(server: "McpServerInfo") -> tuple[str, list[dict[str, Any]], str
     if cached is not None and cached.probed_as == _probed_as(server):
         if cached.failures >= mcp_status.STOP_AFTER:
             text = mcp_status.stopped_trying(server.name, cached.error)
-            return mcp_status.STOPPED, [], text, cached.detail
-        return cached.status, cached.tools, cached.error, cached.detail
+            return mcp_status.STOPPED, [], text, cached.detail, ""
+        return cached.status, cached.tools, cached.error, cached.detail, cached.note
     if _probing.get(server.name):
-        return PROBING, [], "", ""
-    return "unknown", [], "", ""
+        return PROBING, [], "", "", ""
+    return "unknown", [], "", "", ""
 
 
 def _keep(name: str, result: _ProbeResult) -> None:
@@ -390,6 +393,9 @@ def _cache_probe(server: "McpServerInfo") -> None:
             probed_as=seal,
             detail=server.detail,
             failures=0 if server.status == "ok" else carried,
+            # What the start said of its tool list (an unfinished one): kept, or the probe's own
+            # record, written after the connection's, would drop it from the card.
+            note=server.note,
         ),
     )
 
@@ -428,6 +434,7 @@ def note_start(
     *,
     tools: list[Any] | None = None,
     failure: "StartFailure | None" = None,
+    note: str = "",
 ) -> None:
     """Record one start of server *name* (sealed *seal*): connected with *tools*, or failed with
     *failure*. Called once per start, by the connection that made it (`mcp_client`), whoever asked
@@ -449,7 +456,7 @@ def note_start(
     prev = _probe_cache.get(name)
     same = prev is not None and prev.probed_as == seal
     if failure is None:
-        _keep(name, _ProbeResult("ok", listed_rows(tools or []), "", seal))
+        _keep(name, _ProbeResult("ok", listed_rows(tools or []), "", seal, note=note))
         if name not in _MANAGED_SERVER_NAMES:
             mcp_read_only_trust.observe(name, tools or [])
         return
@@ -591,6 +598,9 @@ class McpServerInfo:
     #: The tail of what a stdio server wrote to its error output when its last start failed: what
     #: its card shows behind Details. ``error`` is the one-line reason (`mcp_status`).
     detail: str = ""
+    #: On a server that connected: that its tool list was not read to its end, and how much was
+    #: (`mcp_client.McpServerConn._refresh_tools`), or ``""``.
+    note: str = ""
 
     def __post_init__(self) -> None:
         self.transport = mcp_transport(
@@ -623,6 +633,8 @@ class McpServerInfo:
         if self.detail:
             # A server's error output can print anything it was given, its variables included.
             d["detail"] = redact_for_display(self.detail)
+        if self.note:
+            d["note"] = self.note
         if self.disabled_tools:
             d["disabledTools"] = self.disabled_tools
         return d
@@ -832,7 +844,7 @@ def list_servers(*, include_disabled: bool = False) -> list[McpServerInfo]:
 
     # 3. Merge what each server's last start found, for what it is now (`_get_cached`).
     for s in servers.values():
-        s.status, s.tools, s.error, s.detail = _get_cached(s)
+        s.status, s.tools, s.error, s.detail, s.note = _get_cached(s)
 
     return list(servers.values())
 
@@ -899,6 +911,7 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
         else:
             server.status = "ok"
             server.tools = listed_rows(started.tools)
+            server.note = started.note
     if server.status in ("error", "signin"):
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
     return server
@@ -1014,7 +1027,7 @@ async def probe_server(server: McpServerInfo) -> McpServerInfo:
         # A new answer. The server came from `list_servers`, which carries what the last probe
         # found, and a probe that connected set only its status and tools: the card read "ok" over
         # the old "did not answer".
-        server.tools, server.error, server.detail = [], "", ""
+        server.tools, server.error, server.detail, server.note = [], "", "", ""
         await _probe(server)
     except Exception as exc:  # noqa: BLE001 — a probe that broke is this server's answer
         server.status = "error"
@@ -1053,7 +1066,7 @@ async def _probe(server: McpServerInfo) -> None:
     if start_refused(server.name, _probed_as(server)) is not None:
         # Stopped after failing to start again and again: the Tools page's own look starts it no
         # more than an agent does. Retry (`forget_probe`) does.
-        server.status, server.tools, server.error, server.detail = _get_cached(server)
+        server.status, server.tools, server.error, server.detail, server.note = _get_cached(server)
         return
 
     if server.is_remote:
@@ -1112,6 +1125,7 @@ async def _probe(server: McpServerInfo) -> None:
         return
     server.status = "ok"
     server.tools = listed_rows(started.tools)
+    server.note = started.note
 
 
 async def probe_one(name: str) -> McpServerInfo | None:

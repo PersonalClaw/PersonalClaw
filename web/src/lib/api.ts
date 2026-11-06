@@ -3317,6 +3317,9 @@ export interface McpServer {
   /** When its last start failed: the tail of what it wrote to its error output, which the card shows
    *  behind Details. `error` is the one-line reason (`mcp_status`). */
   detail?: string
+  /** On a server that connected: that its tool list was not read to its end, and how much was
+   *  (`mcp_client.McpServerConn._refresh_tools`). The card says it above the tools. */
+  note?: string
   /** A server at a URL's OAuth sign-in, when it has one or asked for one (`status: 'signin'`). */
   auth?: McpSignInState
   /** Whether the owner allowed what the server runs, as it is defined now (`mcp_grants`). */

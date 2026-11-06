@@ -10,12 +10,20 @@ The two flag parsers are deliberately opposite-polarity and must stay that way: 
 ambiguity fails ON (:func:`_guard_flag`), an exposure's fails OFF (:func:`_expose_flag`).
 """
 
+import math
+
 
 def _safe_int(value: object, default: int) -> int:
-    """Convert *value* to int, returning *default* on failure."""
+    """Convert *value* to int, returning *default* on failure.
+
+    A boolean takes the default too: ``True`` is ``1`` to Python, and a flag written where a count
+    belongs is not a count (``capture.retention_days: true`` would keep one day of recordings). So
+    does a number no int holds (``1e999`` reads as infinity, and ``int()`` of it overflows)."""
+    if isinstance(value, bool):
+        return default
     try:
         return int(value)  # type: ignore[call-overload]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -38,12 +46,17 @@ def _safe_float(value: object, default: float) -> float:
     """Convert *value* to float, returning *default* on failure (the ``_safe_int`` sibling).
 
     A malformed number in config.json must degrade to the shipped default, not raise — a config
-    typo should never make the whole file unloadable.
+    typo should never make the whole file unloadable. A boolean takes the default, as in
+    :func:`_safe_int`, and so does a value that is not finite (``"nan"``, ``"inf"``): no setting
+    means either, and a threshold of infinity is no threshold.
     """
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    if isinstance(value, bool):
         return default
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return number if math.isfinite(number) else default
 
 
 def _meta(label: str, help: str, **kwargs: object) -> dict:
@@ -104,18 +117,25 @@ def _num(value: object, default: float) -> float:
     a bare `float("abc")` raises, and an exception inside `AppConfig.load()`'s single
     expression does not degrade one field — it takes down the WHOLE config load, so a
     typo in a rate limit would present as an instance that cannot start. Clamping to
-    a sane range is the dataclass's `__post_init__`; this only guarantees a number.
+    a sane range is the dataclass's `__post_init__`; this only guarantees a finite number: a JSON
+    NaN passes the schema as a number, and the clamp's ``min(1000.0, nan)`` is 1000, the widest
+    rate there is.
     """
     if isinstance(value, bool):  # `True` is an int in Python; a flag is not a rate.
         return default
     if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
         try:
-            return float(value.strip())
+            number = float(value)
+        except OverflowError:
+            return default
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
         except ValueError:
             return default
-    return default
+    else:
+        return default
+    return number if math.isfinite(number) else default
 
 
 def _str_list(raw: object) -> list[str]:

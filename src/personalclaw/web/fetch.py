@@ -166,6 +166,28 @@ class FetchOutcome:
     risk_level: str = "safe"
 
 
+def _answered_with_an_error(status: int, url: str) -> FetchOutcome | None:
+    """The failed fetch a final answer outside 2xx is, or None for a page.
+
+    A refusal, a missing page, a rate limit and a server error are not the page: their body is
+    the site's words about the request, and returning it as the page read as "completed", with
+    Wikipedia's "Please set a user-agent" under "Fetched page". None of the body is returned, and
+    the page is not recorded as one the conversation has. 0 (no status known) is not an error.
+    """
+    if not status or 200 <= status < 300:
+        return None
+    if status in (401, 403, 429):
+        error = f"The site refused the request (HTTP {status})."
+    else:
+        error = f"The site returned HTTP {status}."
+    return FetchOutcome(
+        ok=False,
+        url=url,
+        error=error,
+        recovery_hints=["Read another source, or a search result for the same page."],
+    )
+
+
 async def web_fetch(
     url: str,
     *,
@@ -230,6 +252,11 @@ async def web_fetch(
 
         rendered = await render_url(url, policy=policy)
         if rendered.ok:
+            # A navigation the browser gave no response for reads 0, and is not a refusal.
+            if (
+                refused := _answered_with_an_error(rendered.status, rendered.url or url)
+            ) is not None:
+                return refused
             html_body, ctype, final_url = rendered.html, "text/html", rendered.url
         elif rendered.unavailable:
             logger.info("web_fetch render requested but Playwright unavailable; using HTTP fetch")
@@ -264,6 +291,8 @@ async def web_fetch(
                     "The site may be down or slow; retry, or fetch a different source."
                 ],
             )
+        if (refused := _answered_with_an_error(resp.status, resp.url or url)) is not None:
+            return refused
         html_body, ctype, final_url = resp.text, resp.headers.get("Content-Type", ""), resp.url
 
     # ③ extract — HTML through the shared trafilatura/nh3 core; non-HTML kept as text.

@@ -64,10 +64,6 @@ def _friendly_fetch_error(exc: Exception) -> tuple[str, str]:
 class WebUrlConnector(BaseConnector):
     """Connector that fetches and stores text content from any web URL."""
 
-    _HEADERS = {
-        "User-Agent": "PersonalClaw-KnowledgeBot/1.0 (compatible; +https://github.com/PersonalClaw/PersonalClaw)"  # noqa: E501
-    }
-
     def source_type(self) -> str:
         return "web_url"
 
@@ -96,7 +92,7 @@ class WebUrlConnector(BaseConnector):
         # policy could drift from the one the first fetch was judged against.
         policy = egress_policy_for(CONNECTOR)
         try:
-            resp = await net_fetch(url, policy=policy, headers=self._HEADERS)
+            resp = await net_fetch(url, policy=policy)
             if resp.status >= 400:
                 # net.fetch returns the status (unlike httpx.raise_for_status); a 4xx/5xx
                 # means the page isn't retrievable for us now — retryable 'unreachable'
@@ -196,7 +192,7 @@ class WebUrlConnector(BaseConnector):
                 break
             seen.add(target)
             try:
-                hop = await net_fetch(target, policy=policy, headers=self._HEADERS)
+                hop = await net_fetch(target, policy=policy)
             except EgressBlocked as exc:
                 # NOT re-raised: the bookmark the user saved was allowed: only the page's own
                 # redirect target is refused. Failing the whole ingest here would let any page
