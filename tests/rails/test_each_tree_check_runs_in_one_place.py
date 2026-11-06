@@ -36,6 +36,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from ci_run_job import read_run_job
 from rails_repo import REPO
 
 from tools.ci import catalogue, shards
@@ -209,8 +210,9 @@ def file_copies(root: Path, owned: Mapping[str, str] | None = None) -> set[tuple
 def named_runs(root: Path) -> set[tuple[str, str]]:
     """``(job, file)`` for each test file a job's pytest step names, outside the shards' own
     steps: a workflow job's as ``<workflow> <job>``, and a catalogue job's, which the tier
-    workflows run through run-job, as its id. A named folder counts as each ``test_*.py`` under
-    it."""
+    workflows run through run-job, as its id. A workflow step that runs an entry through run-job
+    is read as the entry's command (``tests/ci_run_job.py``). A named folder counts as each
+    ``test_*.py`` under it."""
     found: set[tuple[str, str]] = set()
     if (root / catalogue.CATALOGUE).is_file():
         for job_id, named in catalogue_runs(catalogue.read(root)):
@@ -223,8 +225,11 @@ def named_runs(root: Path) -> set[tuple[str, str]]:
                 else [named]
             )
             found |= {(job_id, rel) for rel in files}
+    listed = root / catalogue.CATALOGUE
+    held = listed.read_text(encoding="utf-8") if listed.is_file() else ""
     for workflow in sorted((root / ".github" / "workflows").glob("*.yml")):
-        data = yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}
+        # A step that runs a catalogue entry through run-job names what the entry's steps name.
+        data = read_run_job(held, yaml.safe_load(workflow.read_text(encoding="utf-8")) or {})
         for job, spec in (data.get("jobs") or {}).items():
             # A job that runs the suite's own shards is the suite, not a second place.
             for step in (spec or {}).get("steps") or []:

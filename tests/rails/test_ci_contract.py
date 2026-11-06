@@ -46,6 +46,7 @@ import site_baseline
 import source_pin_census
 import timeout_marks
 import yaml
+from ci_run_job import RUN_JOB_STEP
 from ci_run_job import as_spelled as _as_spelled
 from ci_run_job import catalogue_entries as _catalogue_entries
 from ci_run_job import read_run_job, run_job_call
@@ -1473,6 +1474,15 @@ def _swapped(old: Sequence[str], new: Sequence[str]) -> Callable[[list[str]], li
     return edit
 
 
+#: random-order's first order, written out for good: #5600 leaves the leg's steps its own (run-job
+#: would run its two orders back to back, with no state-leak report between), so the plants that
+#: need a written-out leg read it.
+_ORDER_ONE = (
+    'run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt"'
+    " --random-order-seed ${{ github.run_number }}1"
+)
+
+
 def _plant_step(
     name: str,
     job_id: str,
@@ -1498,11 +1508,11 @@ def _plant_step(
 
 
 def _with_run(run: str) -> Callable[[str], str]:
-    """A step edit: its run: (one line or a folded block) replaced by *run*, the lines after
-    ``run:`` as written, newline-ended."""
+    """A step edit: its run: (one line, or a folded block of any chomping: ``>``, ``>-``, ``>+``)
+    replaced by *run*, the lines after ``run:`` as written, newline-ended."""
 
     def edit(step: str) -> str:
-        found = re.search(r"\n        run: (?:>-\n(?:          .*\n?)+|.*)", step)
+        found = re.search(r"\n        run: (?:>[-+]?\n(?:          .*\n?)+|.*)", step)
         assert found, "the step runs nothing"
         # A folded block takes its last newline with it; the line after it keeps its own.
         kept = "\n" if found.group(0).endswith("\n") else ""
@@ -1510,6 +1520,31 @@ def _with_run(run: str) -> Callable[[str], str]:
         return step[: found.start()] + new + step[found.end() :]
 
     return edit
+
+
+def _with_step_env(line: str) -> Callable[[str], str]:
+    """A step edit: *line* (``NAME: value``) in the step's ``env:``, made where it has none."""
+
+    def edit(step: str) -> str:
+        if "\n        env:\n" in step:
+            return step.replace("\n        env:\n", f"\n        env:\n          {line}\n", 1)
+        at = step.index("\n        run: ")
+        return step[:at] + f"\n        env:\n          {line}" + step[at:]
+
+    return edit
+
+
+def _in_job(job_id: str, old: str, new: str) -> Callable[[Path], None]:
+    """A plant on breadth.yml job *job_id*'s own lines: its first *old* becomes *new*."""
+
+    def plant(root: Path) -> None:
+        text = (root / _BREADTH).read_text(encoding="utf-8")
+        first, last = _job_span(text, job_id)
+        job = text[first:last]
+        assert old in job, f"the plant's anchor is not in breadth.yml job {job_id}: {old!r}"
+        _write(root, _BREADTH, text[:first] + job.replace(old, new, 1) + text[last:])
+
+    return plant
 
 
 def _with_env(env: str) -> Callable[[str], str]:
@@ -5800,13 +5835,13 @@ ROWS: tuple[Row, ...] = (
         "breadth-non-reusable-legs-match-the-jobs",
         non_reusable_violations,
         (
-            _plant(
+            # Before the security leg's test step by its id, written out or through run-job.
+            _plant_step(
                 "a security leg that carries an earlier result",
-                _BREADTH,
-                "      - name: pytest (adversarial scanner corpus)\n",
-                "      - name: carry\n"
-                "        run: python3 tools/ci/breadth_evidence.py decide --key security\n"
-                "      - name: pytest (adversarial scanner corpus)\n",
+                "security",
+                "pytest",
+                lambda step: "\n      - name: carry\n"
+                "        run: python3 tools/ci/breadth_evidence.py decide --key security" + step,
             ),
             _plant(
                 "a new job running tests/security outside the set",
@@ -6133,17 +6168,17 @@ ROWS: tuple[Row, ...] = (
                 ' --attempt "$GITHUB_RUN_ATTEMPT"',
                 "",
             ),
-            _plant(
+            # Before the security leg's test step by its id, written out or through run-job.
+            _plant_step(
                 "a never-reused leg downloading the map",
-                _BREADTH,
-                "      - name: pytest (adversarial scanner corpus)\n",
-                "      - name: the earlier record's results\n"
+                "security",
+                "pytest",
+                lambda step: "\n      - name: the earlier record's results\n"
                 "        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
                 " # v8.0.2\n"
                 "        with:\n"
                 "          name: breadth-previous\n"
-                "          path: ${{ runner.temp }}/previous\n"
-                "      - name: pytest (adversarial scanner corpus)\n",
+                "          path: ${{ runner.temp }}/previous" + step,
             ),
             Control("the ref named, as the tree has it, passes", _nothing, fails=False),
         ),
@@ -6152,51 +6187,45 @@ ROWS: tuple[Row, ...] = (
         "breadth-collection-parses-loads-the-guard-over-the-whole-suite",
         collection_parses_violations,
         (
-            _plant(
-                "the leg without the guard",
-                _BREADTH,
-                " -n0 -p collection_parse_guard tests --junitxml",
-                " -n0 tests --junitxml",
-            ),
-            _plant(
+            # On the leg's command: its entry's argv, and its line while it writes one (#5600 moves
+            # it to run-job). Each narrowing keeps the words the plants before it edit, so it is
+            # the check, not a stale anchor, that fails it.
+            _plant_command("the leg without the guard", "collection-parses", 1, _dropped("-p", 2)),
+            _plant_command(
                 "the leg collecting the rails alone",
-                _BREADTH,
-                " -p collection_parse_guard tests --junitxml",
-                " -p collection_parse_guard tests/rails --junitxml",
+                "collection-parses",
+                1,
+                _swapped(["tests"], ["tests/rails"]),
             ),
-            _plant(
+            _plant_command(
                 "the leg loading another plugin of a longer name",
-                _BREADTH,
-                " -p collection_parse_guard tests --junitxml",
-                " -p collection_parse_guard_off tests --junitxml",
+                "collection-parses",
+                1,
+                _swapped(["collection_parse_guard"], ["collection_parse_guard_off"]),
             ),
-            # Each narrowing below keeps the text the plants above edit, so it is the check, not
-            # a stale anchor, that fails it.
-            _plant(
+            _plant_command(
                 "the leg ignoring the rails",
-                _BREADTH,
-                "pytest --collect-only -qq -n0 -p collection_parse_guard",
-                "pytest --collect-only -qq --ignore=tests/rails -n0 -p collection_parse_guard",
+                "collection-parses",
+                1,
+                _before("-n0", "--ignore=tests/rails"),
             ),
-            _plant(
+            _plant_command(
                 "the leg ignoring the rails by glob",
-                _BREADTH,
-                "pytest --collect-only -qq -n0 -p collection_parse_guard",
-                "pytest --collect-only -qq --ignore-glob=tests/rails/* -n0 -p "
-                "collection_parse_guard",
+                "collection-parses",
+                1,
+                _before("-n0", "--ignore-glob=tests/rails/*"),
             ),
-            _plant(
+            _plant_command(
                 "the leg deselecting by keyword",
-                _BREADTH,
-                "pytest --collect-only -qq -n0 -p collection_parse_guard",
-                "pytest --collect-only -qq -k not_rails -n0 -p collection_parse_guard",
+                "collection-parses",
+                1,
+                _before("-n0", "-k not_rails"),
             ),
-            _plant(
+            _plant_step(
                 "PYTEST_ADDOPTS in the leg's pytest step",
-                _BREADTH,
-                "          PYTHONPATH: tests\n        run: uv run pytest --collect-only",
-                "          PYTHONPATH: tests\n          PYTEST_ADDOPTS: --ignore=tests/rails\n"
-                "        run: uv run pytest --collect-only",
+                "collection-parses",
+                "pytest",
+                _with_step_env("PYTEST_ADDOPTS: --ignore=tests/rails"),
             ),
             _plant(
                 "PYTEST_ADDOPTS in the leg's job env",
@@ -6205,16 +6234,14 @@ ROWS: tuple[Row, ...] = (
                 '    timeout-minutes: 20\n    env:\n      PERSONALCLAW_SKIP_APP_BACKENDS: "1"\n'
                 "      PYTEST_ADDOPTS: --ignore=tests/rails\n",
             ),
-            _plant(
+            Control(
                 "PYTEST_ADDOPTS written to $GITHUB_ENV by an earlier step",
-                _BREADTH,
-                "        if: ${{ steps.decide.outputs.run != 'false' }}\n"
-                "        run: uv sync --locked --extra dev\n"
-                "      - name: pytest (collect the whole suite",
-                "        if: ${{ steps.decide.outputs.run != 'false' }}\n"
-                "        run: |\n          uv sync --locked --extra dev\n"
-                '          echo "PYTEST_ADDOPTS=--ignore=tests/rails" >> "$GITHUB_ENV"\n'
-                "      - name: pytest (collect the whole suite",
+                _in_job(
+                    "collection-parses",
+                    "        run: uv sync --locked --extra dev\n",
+                    "        run: |\n          uv sync --locked --extra dev\n"
+                    '          echo "PYTEST_ADDOPTS=--ignore=tests/rails" >> "$GITHUB_ENV"\n',
+                ),
             ),
         ),
     ),
@@ -6514,12 +6541,16 @@ ROWS: tuple[Row, ...] = (
                 _SUITE_PYTEST.replace('"-q",', '"--no-cov", "-q",'),
                 expect="the catalogue's python-suite passes --no-cov",
             ),
+            # random-order's first order folded over lines, as no leg #5600 leaves written out
+            # spells one: the fold is the plant's, so it holds whatever the security legs run.
             _plant(
                 "--no-cov inside a folded multi-line run",
                 _BREADTH,
-                "          uv run pytest\n          --junitxml=reports/junit-security-corpus.xml\n",
-                "          uv run pytest\n          --no-cov\n"
-                "          --junitxml=reports/junit-security-corpus.xml\n",
+                _ORDER_ONE,
+                _ORDER_ONE.replace(
+                    "run: uv run pytest -n auto",
+                    "run: >\n          uv run pytest\n          --no-cov\n          -n auto",
+                ),
             ),
             Control("the coverage shard's --cov passes", _nothing, fails=False),
         ),
@@ -9397,33 +9428,7 @@ def _plant_files(
     return Control(name, _edits(*edits), fails, expect)
 
 
-#: collection-parses's one pytest step, as breadth.yml and the catalogue spell it.
-_COLLECT_STEP = (
-    (_BREADTH, "run: uv run pytest --collect-only -qq"),
-    (catalogue.CATALOGUE, '"pytest", "--collect-only", "-qq",'),
-)
-
-
-def _collect_step(yml: str, toml: str) -> tuple[tuple[str, str, str], ...]:
-    """collection-parses's pytest step with its ``--collect-only`` replaced in both files."""
-    (b, b_old), (c, c_old) = _COLLECT_STEP
-    return (
-        (b, b_old, b_old.replace(" --collect-only", yml)),
-        (c, c_old, c_old.replace(' "--collect-only",', toml)),
-    )
-
-
 _RUNS_MARKED = "collection-parses: security is ordinary, but its steps run security-marked modules"
-
-_RAILS_MACOS_STEP = (
-    "        run: uv run pytest -n 2 --dist worksteal -q tests/rails"
-    " --junitxml=reports/junit-rails-macos.xml\n"
-)
-#: collection-parses's one step env, as breadth.yml and the catalogue spell it.
-_COLLECT_ENV = (
-    (_BREADTH, "          PYTHONPATH: tests\n"),
-    (catalogue.CATALOGUE, 'env = { PYTHONPATH = "tests" } },'),
-)
 
 
 def _ubuntu_suite_step_env(root: Path) -> None:
@@ -9442,13 +9447,65 @@ def _ubuntu_suite_step_env(root: Path) -> None:
     ).plant(root)
 
 
-def _collect_env(yml: str, toml: str) -> tuple[tuple[str, str, str], ...]:
-    """collection-parses's step env with one more variable in each file."""
-    (b, b_old), (c, c_old) = _COLLECT_ENV
-    return (
-        (b, b_old, b_old + f"          {yml}\n"),
-        (c, c_old, c_old.replace('"tests" }', f'"tests", {toml} }}')),
-    )
+#: The first order's step's name, as breadth.yml writes it and as a plant renames it.
+_ORDER_ONE_NAME = "pytest (random-order shard ${{ matrix.shard }}, first order)"
+_ORDER_ONE_RENAMED = "pytest (random-order shard ${{ matrix.shard }}, the first order)"
+#: The first order's step, by its id, where an env goes.
+_ORDER_ONE_STEP = "        id: pytest-1\n        continue-on-error: true\n"
+#: The line after the first order's step: a new step goes before it.
+_AFTER_ORDER_ONE = "      # The next order writes its own state-leak report where this one's is.\n"
+#: The first order's state-leak report, which a line goes after.
+_ORDER_ONE_LEAKS = (
+    "            mv reports/state-leaks.json"
+    ' "reports/random-order/state-leaks-${{ github.run_number }}1.json"\n          fi\n'
+)
+#: random-order's first order in its entry, and its second.
+_ENTRY_ORDER_ONE = '"--random-order-seed", "{run_number}1"'
+_ENTRY_ORDER_TWO = '"--random-order-seed", "{run_number}2"'
+
+
+def _entry_line(marker: str, edit: Callable[[str], str]) -> Callable[[Path], None]:
+    """A plant on the one catalogue line holding *marker*: the line becomes *edit*'s."""
+
+    def plant(root: Path) -> None:
+        text = (root / catalogue.CATALOGUE).read_text(encoding="utf-8")
+        lines = text.splitlines(keepends=True)
+        (at,) = [i for i, line in enumerate(lines) if marker in line]
+        lines[at] = edit(lines[at])
+        _write(root, catalogue.CATALOGUE, "".join(lines))
+
+    return plant
+
+
+def _order_one_env(workflow: str, entry: str) -> Callable[[Path], None]:
+    """random-order's first order with the step env *workflow* (its lines) in breadth.yml, and
+    the env table *entry* on its catalogue step (none when empty)."""
+
+    def plant(root: Path) -> None:
+        _edit(_BREADTH, _ORDER_ONE_STEP, _ORDER_ONE_STEP + "        env:\n" + workflow)(root)
+        if entry:
+            _entry_line(
+                _ENTRY_ORDER_ONE, lambda line: line.replace("] },", f"], env = {entry} }},")
+            )(root)
+
+    return plant
+
+
+def _collect_echo(root: Path) -> None:
+    """collection-parses's `--co` an echo's, before a pytest that collects nothing only: in its
+    entry as a step of its own, and on its line while the leg writes one."""
+    _entry_line(
+        '"collection_parse_guard"',
+        lambda line: '  { argv = ["echo", "--co"] },\n'
+        + line.replace('"pytest", "--collect-only", "-qq"', '"pytest", "-qq"'),
+    )(root)
+    line = "run: uv run pytest --collect-only -qq -n0 -p collection_parse_guard"
+    if line in (root / _BREADTH).read_text(encoding="utf-8"):
+        _edit(
+            _BREADTH,
+            line,
+            line.replace("uv run pytest --collect-only", "echo --co && uv run pytest"),
+        )(root)
 
 
 EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
@@ -9507,31 +9564,32 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             "e2e-other",
             expect="the pinned browser run is missing",
         ),
-        _plant_files(
+        # On the entry's argv, and on its line while the leg writes one (#5600 moves it to
+        # run-job): the census reads the command.
+        _plant_command(
             "collection-parses spelling it --co, which runs no test, passes",
-            _collect_step(" --co", ' "--co",'),
+            "collection-parses",
+            1,
+            _swapped(["--collect-only"], ["--co"]),
             fails=False,
         ),
-        _plant_files(
+        _plant_command(
             "collection-parses without --collect-only",
-            _collect_step("", ""),
+            "collection-parses",
+            1,
+            _dropped("--collect-only", 1),
             expect=_RUNS_MARKED,
         ),
-        _plant_files(
+        Control(
             "collection-parses with its --co hidden in an echo",
-            (
-                (
-                    _BREADTH,
-                    "run: uv run pytest --collect-only -qq",
-                    "run: echo --co && uv run pytest -qq",
-                ),
-                (catalogue.CATALOGUE, ' "--collect-only", "-qq",', ' "-qq",'),
-            ),
+            _collect_echo,
             expect=_RUNS_MARKED,
         ),
-        _plant_files(
+        _plant_command(
             "collection-parses with its --co only the value of -k",
-            _collect_step(" -k --co", ' "-k", "--co",'),
+            "collection-parses",
+            1,
+            _swapped(["--collect-only"], ["-k", "--co"]),
             expect=_RUNS_MARKED,
         ),
         _plant(
@@ -9555,12 +9613,12 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             'live = true\nreuse = "ttl:24"\npython = "3.12.15"\ntimeout_min = 15\n',
             expect="audit: reuse is ttl:24, but a live job's evidence is never reused",
         ),
-        _plant(
+        Control(
             "a command one token off the workflow's",
-            catalogue.CATALOGUE,
-            '"worksteal", "-q", "tests/rails", "--junitxml=reports/junit-rails-macos.xml"',
-            '"worksteal", "-qq", "tests/rails", "--junitxml=reports/junit-rails-macos.xml"',
-            expect="rails-macos: command step 1",
+            _entry_line(
+                _ENTRY_ORDER_ONE, lambda line: line.replace('"-q", "tests"', '"-qq", "tests"')
+            ),
+            expect="random-order: command step 2",
         ),
         _plant(
             "the first random-order seed drawn from another number than the run's",
@@ -9607,26 +9665,24 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             'security = "ordinary"\npython = "3.12.15"\ntimeout_min = 55\n',
             expect="python-suite: security is ordinary",
         ),
-        _plant(
+        Control(
             "a step without its workflow step's environment",
-            catalogue.CATALOGUE,
-            ', env = { PYTHONPATH = "tests" } },',
-            " },",
-            expect="collection-parses: command step 1",
+            _order_one_env("          PYTHONPATH: tests\n", ""),
+            expect="random-order: command step 2",
         ),
-        _plant(
+        Control(
             "the workflow step's environment changed without its entry",
-            _BREADTH,
-            "          PYTHONPATH: tests\n",
-            "          PYTHONPATH: tests:harness\n",
-            expect="collection-parses: command step 1",
+            _order_one_env("          PYTHONPATH: tests:harness\n", '{ PYTHONPATH = "tests" }'),
+            expect="random-order: command step 2",
         ),
         # GitHub expands only `${{ }}` in a step's env:, so `$RUNNER_TEMP` there is the literal
         # text, and the entry's `{runner_temp}` is the real folder when it runs locally.
-        _plant_files(
+        Control(
             "a step env that spells a placeholder the shell's way",
-            _collect_env("PW_SCRATCH: $RUNNER_TEMP/pw", 'PW_SCRATCH = "{runner_temp}/pw"'),
-            expect="collection-parses: command step 1",
+            _order_one_env(
+                "          PW_SCRATCH: $RUNNER_TEMP/pw\n", '{ PW_SCRATCH = "{runner_temp}/pw" }'
+            ),
+            expect="random-order: command step 2",
         ),
         Control(
             "a step env that spells a placeholder as an expression passes",
@@ -9642,30 +9698,24 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         ),
         Control("the catalogue removed", _remove(catalogue.CATALOGUE), expect="is missing"),
         # Both directions, in order: every validating run: line is one entry's step.
-        _plant(
-            "an entry missing a step breadth.yml runs: the rails leg without its scan",
-            catalogue.CATALOGUE,
-            '"--junitxml=reports/junit-rails-macos.xml"] },\n'
-            '  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },\n',
-            '"--junitxml=reports/junit-rails-macos.xml"] },\n',
-            expect="breadth.yml job rails-macos runs uv run python -m harness scan",
+        Control(
+            "an entry missing a step breadth.yml runs: random-order without its second order",
+            _entry_line(_ENTRY_ORDER_TWO, lambda line: ""),
+            expect="breadth.yml job random-order runs uv run pytest -n auto",
         ),
-        _plant(
+        Control(
             "a step listed twice",
-            catalogue.CATALOGUE,
-            '"tests/rails", "--junitxml=reports/junit-rails-macos.xml"] },\n',
-            '"tests/rails", "--junitxml=reports/junit-rails-macos.xml"] },\n'
-            '  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q",'
-            ' "tests/rails", "--junitxml=reports/junit-rails-macos.xml"] },\n',
-            expect="rails-macos: command step 2 repeats command step 1",
+            _entry_line(_ENTRY_ORDER_ONE, lambda line: line + line),
+            expect="random-order: command step 3 repeats command step 2",
         ),
         _plant(
             "a gate that a printf pipes into",
             _BREADTH,
-            _RAILS_MACOS_STEP,
-            _RAILS_MACOS_STEP + "      - name: a new gate\n"
-            "        run: printf '%s\\n' \"$PWD\" | uv run python scripts/new_gate.py\n",
-            expect="breadth.yml job rails-macos runs printf",
+            _AFTER_ORDER_ONE,
+            "      - name: a new gate\n"
+            "        run: printf '%s\\n' \"$PWD\" | uv run python scripts/new_gate.py\n"
+            + _AFTER_ORDER_ONE,
+            expect="breadth.yml job random-order runs printf",
         ),
         _plant(
             "a gate added to an install line",
@@ -9677,10 +9727,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a line no argv can be",
             _BREADTH,
-            "        run: uv run python -m harness scan\n",
-            "        run: |\n          uv run python -m harness scan\n"
-            "          echo it's scanned\n",
-            expect='breadth.yml job rails-macos runs "echo it\'s scanned"',
+            _ORDER_ONE_LEAKS,
+            _ORDER_ONE_LEAKS + "          echo it's moved\n",
+            expect='breadth.yml job random-order runs "echo it\'s moved"',
         ),
         # The census: an entry whose steps run a security-marked module is security posture.
         # By the entry's id, not its whole text, so a change to browse-live's inputs or toolchain
@@ -9855,9 +9904,10 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a run: line folded over two lines with a backslash still matches",
             _BREADTH,
-            "run: uv run pytest -n 2 --dist worksteal -q tests/rails --junitxml",
-            "run: |\n          uv run pytest -n 2 --dist worksteal -q tests/rails \\\n"
-            "            --junitxml",
+            _ORDER_ONE,
+            _ORDER_ONE.replace("run: uv run pytest", "run: |\n          uv run pytest").replace(
+                " --shard-list", " \\\n            --shard-list"
+            ),
             fails=False,
         ),
         # breadth.yml's half (#3909): every breadth job is an entry's, or orchestration.
@@ -9872,19 +9922,17 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a breadth command one token off its entry's",
             _BREADTH,
-            "--dist worksteal -q tests/rails --junitxml=reports/junit-rails-macos.xml",
-            "--dist worksteal -qq tests/rails --junitxml=reports/junit-rails-macos.xml",
-            expect="rails-macos: command step 1",
+            _ORDER_ONE,
+            _ORDER_ONE.replace(" -q tests ", " -qq tests "),
+            expect="random-order: command step 2",
         ),
         _plant(
             "a breadth step no entry holds",
             _BREADTH,
-            "        run: uv run pytest -n 2 --dist worksteal -q tests/rails"
-            " --junitxml=reports/junit-rails-macos.xml\n",
-            "        run: uv run pytest -n 2 --dist worksteal -q tests/rails"
-            " --junitxml=reports/junit-rails-macos.xml\n"
-            "      - name: a new check\n        run: uv run python scripts/new_check.py\n",
-            expect="breadth.yml job rails-macos runs uv run python scripts/new_check.py",
+            _AFTER_ORDER_ONE,
+            "      - name: a new check\n        run: uv run python scripts/new_check.py\n"
+            + _AFTER_ORDER_ONE,
+            expect="breadth.yml job random-order runs uv run python scripts/new_check.py",
         ),
         _plant(
             "a breadth entry's cap that is not its job's",
@@ -12727,30 +12775,32 @@ A_TIER_WORKFLOW_RUNS_EACH_TEST_THROUGH_RUN_JOB = _toolchain_row(
             "uv run pytest tests/test_more.py",
             expect="breadth.yml job ubuntu step 'planted' runs uv run pytest tests/test_more.py",
         ),
+        # On random-order's first order, which the list holds for good: #5600 leaves that leg's
+        # steps its own.
         Control(
             "a listed step renamed",
             _edit(
                 _BREADTH,
-                "      - name: pytest (every rail, tests/rails)\n",
-                "      - name: pytest (the rails)\n",
+                f"      - name: {_ORDER_ONE_NAME}\n",
+                f"      - name: {_ORDER_ONE_RENAMED}\n",
             ),
-            expect="breadth.yml job rails-macos step 'pytest (the rails)' runs uv run pytest",
+            expect=f"breadth.yml job random-order step {_ORDER_ONE_RENAMED!r} runs uv run pytest",
         ),
-        Control(
+        _plant_step(
             "a listed step gone, and its job running no run-job",
-            _edit(_BREADTH, _RAILS_MACOS_STEP, "        run: echo no rails tonight\n"),
+            "random-order",
+            "pytest-1",
+            _with_run("echo no first order tonight"),
             expect=(
-                "breadth.yml job rails-macos step 'pytest (every rail, tests/rails)' runs no"
-                " test any more, and its job runs no run-job"
+                f"breadth.yml job random-order step {_ORDER_ONE_NAME!r} runs no test any more, and"
+                " its job runs no run-job"
             ),
         ),
-        Control(
+        _plant_step(
             "a listed step moved to run-job passes",
-            _edit(
-                _BREADTH,
-                _RAILS_MACOS_STEP,
-                "        run: python3 -m tools.ci run-job rails-macos\n",
-            ),
+            "random-order",
+            "pytest-1",
+            _with_run("python3 -m tools.ci run-job random-order"),
             fails=False,
         ),
         _own_test(
@@ -12787,6 +12837,10 @@ _READ_THROUGH_RUN_JOB = (
     "no-macos-14-and-no-coverage-on-a-push",
     "nothing-throws-an-exit-status-away-unseen",
     "each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job",
+    "breadth-collection-parses-loads-the-guard-over-the-whole-suite",
+    "breadth-freshness-reads-its-own-ref",
+    "breadth-non-reusable-legs-match-the-jobs",
+    "no workflow command passes --no-cov",
 )
 #: The suite legs #5600 moves to run-job first, each with its entry and its shard count.
 _FIRST_RUN_JOB_LEGS = {
@@ -12799,14 +12853,46 @@ _FIRST_RUN_JOB_LEGS = {
 #: Each one's suite step's name, as breadth.yml writes it, and as it runs through run-job.
 _SUITE_STEP_NAME = {"canary": "pytest (canary shard ${{ matrix.shard }})"}
 _RUN_JOB_STEP_NAME = "the leg's catalogue job, through run-job (shard ${{ matrix.shard }})"
+#: The one-shard legs #5600 moves next, each one's entry its job's id: its test step's name as
+#: breadth.yml writes it, and the name it runs under through run-job.
+_NEXT_RUN_JOB_LEGS = {
+    "rails-macos": "pytest (every rail, tests/rails)",
+    "collection-parses": "pytest (collect the whole suite, counting parses of the source tree)",
+    "security": "pytest (adversarial scanner corpus)",
+    "security-macos": "pytest (adversarial scanner corpus)",
+}
+_LEG_STEP_NAME = "the leg's catalogue job, through run-job"
+#: rails-macos's scan, a step of its own while the leg writes its steps out. Through run-job the
+#: entry runs it, first (a red step ends run-job, so a red rails never skips it), and the leg's
+#: entry records the one step's outcome.
+_RAILS_MACOS_SCAN_STEP = (
+    "      # Fails the job itself, and its outcome is the entry's with the rails', so a carried\n"
+    "      # entry carries the scan's red too.\n"
+    "      - name: harness scan (static boundary scanner over the whole tree)\n"
+    "        id: scan\n"
+    "        if: ${{ steps.decide.outputs.run != 'false' }}\n"
+    "        run: uv run python -m harness scan\n"
+)
+_RAILS_MACOS_OUTCOME = (
+    "OUTCOME: ${{ steps.scan.outcome == 'success' && steps.pytest.outcome || 'failure' }}",
+    "OUTCOME: ${{ steps.pytest.outcome }}",
+)
+#: collection-parses's step env, which its entry's command holds.
+_COLLECTION_STEP_ENV = "        env:\n          PYTHONPATH: tests\n"
+#: Every leg #5600 moves, in order.
+RUN_JOB_LEGS = (*_FIRST_RUN_JOB_LEGS, *_NEXT_RUN_JOB_LEGS)
 
 
-def legs_through_run_job(root: Path, legs: Iterable[str] = tuple(_FIRST_RUN_JOB_LEGS)) -> None:
-    """breadth.yml under *root* with each of *legs* (:data:`_FIRST_RUN_JOB_LEGS`) running its
-    entry through run-job, by its shard: the leg's suite step renamed, its run: the one command."""
+def legs_through_run_job(root: Path, legs: Iterable[str] = RUN_JOB_LEGS) -> None:
+    """breadth.yml under *root* with each of *legs* (:data:`RUN_JOB_LEGS`) running its entry
+    through run-job, by its shard where it has more than one: the leg's test step renamed, its
+    run: the one command. A leg already through run-job is left as it is."""
     if not (root / _BREADTH).is_file():
         return
     for job_id in legs:
+        if job_id in _NEXT_RUN_JOB_LEGS:
+            _leg_through_run_job(root, job_id)
+            continue
         entry, count = _FIRST_RUN_JOB_LEGS[job_id]
         text = (root / _BREADTH).read_text(encoding="utf-8")
         if f"\n  {job_id}:\n" not in text:
@@ -12824,6 +12910,41 @@ def legs_through_run_job(root: Path, legs: Iterable[str] = tuple(_FIRST_RUN_JOB_
                 f' --shard ${{{{ matrix.shard }}}}/{count} --out "$RUNNER_TEMP/run-job"'
             ),
         ).plant(root)
+
+
+def _leg_through_run_job(root: Path, job_id: str) -> None:
+    """One of :data:`_NEXT_RUN_JOB_LEGS` running its entry through run-job (see there)."""
+    text = (root / _BREADTH).read_text(encoding="utf-8")
+    old = f"- name: {_NEXT_RUN_JOB_LEGS[job_id]}\n"
+    if f"\n  {job_id}:\n" not in text:
+        return
+    first, last = _job_span(text, job_id)
+    job = text[first:last]
+    if old not in job:
+        return
+    job = job.replace(old, f"- name: {_LEG_STEP_NAME}\n", 1)
+    if job_id == "rails-macos":
+        job = job.replace(_RAILS_MACOS_SCAN_STEP, "", 1).replace(*_RAILS_MACOS_OUTCOME, 1)
+        listed = root / catalogue.CATALOGUE
+        if listed.is_file():
+            held = listed.read_text(encoding="utf-8")
+            _write(
+                root,
+                catalogue.CATALOGUE,
+                held.replace(_RAILS_MACOS_PYTEST + _SCAN_STEP, _SCAN_STEP + _RAILS_MACOS_PYTEST, 1),
+            )
+    if job_id == "collection-parses":
+        job = job.replace(_COLLECTION_STEP_ENV, "", 1)
+    _write(root, _BREADTH, text[:first] + job + text[last:])
+    _plant_step(
+        "",
+        job_id,
+        "pytest",
+        _with_run(
+            f'>-\n          "$(uv python find "$PY")" -m tools.ci run-job {job_id}'
+            ' --out "$RUNNER_TEMP/run-job"'
+        ),
+    ).plant(root)
 
 
 def _reading(row: Row, control: Control, root: Path) -> tuple[bool, bool]:
@@ -12849,6 +12970,10 @@ READ_THROUGH_TIMEOUTS = {
     "each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job": (
         pytest.mark.timeout(140)
     ),
+    "breadth-collection-parses-loads-the-guard-over-the-whole-suite": pytest.mark.timeout(60),
+    "breadth-freshness-reads-its-own-ref": pytest.mark.timeout(60),
+    "breadth-non-reusable-legs-match-the-jobs": pytest.mark.timeout(60),
+    "no workflow command passes --no-cov": pytest.mark.timeout(60),
 }
 
 
@@ -12867,7 +12992,7 @@ def test_a_row_reads_a_leg_run_through_run_job_as_the_leg_written_out(
     laid["written"].reset(roots["through"])
     legs_through_run_job(roots["through"])
     laid["through"] = laid_tree.Laid.take(roots["through"])
-    with subtests.test("the scaffold, its first legs through run-job"):
+    with subtests.test("the scaffold, its legs through run-job"):
         assert row.check(roots["through"]) == []
     for index, control in enumerate(row.controls):
         with subtests.test(control.name):
@@ -12902,7 +13027,8 @@ def test_a_run_job_step_reads_as_its_entry_s_command_steps() -> None:
         "env": {"STEP": "1"},
         "run": f'"$(uv python find "$PY")" -m tools.ci run-job {entry.id} --out "$RUNNER_TEMP/x"',
     }
-    workflow = {"jobs": {"leg": {"steps": [{"run": "uv sync"}, step]}}}
+    # A written-out step that spells the reader's key itself loses it.
+    workflow = {"jobs": {"leg": {"steps": [{"run": "uv sync", RUN_JOB_STEP: "x"}, step]}}}
     first, *read = _read_run_job(tree, workflow)["jobs"]["leg"]["steps"]
     assert first == {"run": "uv sync"}
     assert len(read) == len(entry.command)
@@ -12911,6 +13037,7 @@ def test_a_run_job_step_reads_as_its_entry_s_command_steps() -> None:
         place = f" ({entry.id}, step {n} of {len(entry.command)})"
         assert one["name"] == "the entry" + ("" if last else place)
         assert one.get("id") == ("entry" if last else None)
+        assert one[RUN_JOB_STEP] == "entry"
         assert one["continue-on-error"] is True
         assert one["env"] == {"STEP": "1", **dict(command.env)}
         assert one.get("working-directory") == (command.workdir or None)
@@ -13212,7 +13339,7 @@ _OWNED_WORKFLOWS = (".github/workflows/breadth.yml",)
 _FAILS_ITS_JOB = frozenset(
     {"harness validate", "the whole-tree harness scan", "the gate aggregate", "the rails census"}
 )
-_SWALLOWED = re.compile(r"\|\|\s*(?:true|:)(?:\s|$|;)")
+_SWALLOWED = re.compile(r"\|\|\s*(?:true|:)(?=\s|$|;|[\"')])")
 
 
 #: The one `if:` a step that runs an owned check may carry, in a breadth leg that records an
@@ -13257,7 +13384,7 @@ def _carried_red_violations(
 ) -> list[str]:
     """The outcome a leg records is success whenever every step passed, and never when *step*
     did not pass, whatever its other steps did."""
-    sid = str(step.get("id") or "")
+    sid = str(step.get("id") or step.get(RUN_JOB_STEP) or "")
     if not sid:
         return [f"{where} has no id, so the outcome its leg's entry records cannot read it"]
     others = [
@@ -13284,7 +13411,9 @@ def _carried_red_violations(
 def owning_job_violations(root: Path) -> list[str]:
     """Each owned check is in a job of every tier that needs it (exactly one where marked), each
     of the breadth tier is a breadth.yml step, and every breadth.yml step that runs one fails its
-    job, every time the job runs, and its red in any entry its leg records."""
+    job, every time the job runs, and its red in any entry its leg records. A check run-job runs
+    among its entry's steps (#5600) may be in a continue-on-error step only when the entry its
+    leg records carries that step's red."""
     try:
         cat = catalogue.read(root)
     except FileNotFoundError:
@@ -13323,8 +13452,19 @@ def owning_job_violations(root: Path) -> list[str]:
                     if what not in _FAILS_ITS_JOB:
                         continue
                     where = f"{rel} {job_id}: the step that runs {what}"
-                    if step.get("continue-on-error") or job.get("continue-on-error"):
+                    if job.get("continue-on-error"):
                         bad.append(f"{where} has continue-on-error, so its red is swallowed")
+                    elif step.get("continue-on-error") and RUN_JOB_STEP not in step:
+                        bad.append(f"{where} has continue-on-error, so its red is swallowed")
+                    elif step.get("continue-on-error") and (
+                        outcome is None or _carried_red_violations(where, step, job, outcome)
+                    ):
+                        # A check run-job runs among its entry's steps: its red reaches the job
+                        # through the entry its leg records, or nowhere.
+                        bad.append(
+                            f"{where} has continue-on-error, in its run-job step, and its leg's"
+                            " entry does not carry that step's red"
+                        )
                     for line in run.splitlines():
                         if text in line and _SWALLOWED.search(line):
                             bad.append(f"{where} ends in `|| true`, so its red is swallowed")
@@ -13361,13 +13501,58 @@ _GATES_STEP = '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n
 #: other tier.
 _BREADTH_ONLY_COMMAND = 'junit = ["reports/junit-security-corpus-macos.xml"]\ncommand = [\n'
 _BREADTH_SCAN_GATE = "        id: scan\n        if: ${{ steps.decide.outputs.run != 'false' }}\n"
+#: A scan gated on more than the carry decision, and the decision written without its ``${{ }}``.
+_MORE = ("!= 'false' }}", "!= 'false' && github.event_name == 'schedule' }}")
+_BARE = (
+    "if: ${{ steps.decide.outputs.run != 'false' }}",
+    "if: steps.decide.outputs.run != 'false'",
+)
+#: rails-macos's rails, written out: the run-job step back to running them alone, with no scan.
+_RAILS_MACOS_PYTEST_LINE = (
+    "uv run pytest -n 2 --dist worksteal -q tests/rails --junitxml=reports/junit-rails-macos.xml"
+)
 
 
-def _entry_records(name: str, expression: str, fails: bool = True, expect: str = "") -> Control:
-    """rails-macos's record step records *expression*, whatever it recorded before: the plant
-    finds the step the row reads, so a rewritten OUTCOME cannot leave it without its text."""
+def _through_run_job_uncarried(root: Path) -> None:
+    """rails-macos through run-job, its entry recording success whatever the step did."""
+    legs_through_run_job(root, ("rails-macos",))
+    _entry_records("", "${{ 'success' }}").plant(root)
+
+
+def _rails_macos_runs_run_job(root: Path) -> bool:
+    """Whether breadth.yml under *root* runs rails-macos's entry through run-job, its scan one of
+    the entry's steps, not a step of its own (#5600)."""
+    text = (root / _OWNED_WORKFLOWS[0]).read_text(encoding="utf-8")
+    first, last = _job_span(text, "rails-macos")
+    return "-m tools.ci run-job rails-macos" in text[first:last]
+
+
+def _on_rails_macos(
+    name: str, written: Control, through: Control, fails: bool = True, expect: str = ""
+) -> Control:
+    """A plant on rails-macos's scan as the leg runs it: *written* while the leg writes its steps
+    out, *through* once it runs its entry through run-job, each with the control's reason."""
 
     def plant(root: Path) -> None:
+        (through if _rails_macos_runs_run_job(root) else written).plant(root)
+
+    return Control(name, plant, fails, expect)
+
+
+def _rails_macos_run_job_step(edit: Callable[[str], str]) -> Control:
+    """rails-macos's run-job step (``id: pytest``) edited by *edit*."""
+    return _plant_step("", "rails-macos", "pytest", edit)
+
+
+def _entry_records(
+    name: str, expression: str, fails: bool = True, expect: str = "", through: str = ""
+) -> Control:
+    """rails-macos's record step records *expression*, whatever it recorded before: the plant
+    finds the step the row reads, so a rewritten OUTCOME cannot leave it without its text. Once
+    the leg runs its entry through run-job, it records *through*, the same fault in that form."""
+
+    def plant(root: Path) -> None:
+        recorded = through if through and _rails_macos_runs_run_job(root) else expression
         path = root / _OWNED_WORKFLOWS[0]
         workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
         records = [
@@ -13376,7 +13561,7 @@ def _entry_records(name: str, expression: str, fails: bool = True, expect: str =
             if "breadth_evidence.py ran" in str(step.get("run", ""))
         ]
         assert len(records) == 1, f"the plant {name!r} found {len(records)} record steps"
-        records[0].setdefault("env", {})["OUTCOME"] = expression
+        records[0].setdefault("env", {})["OUTCOME"] = recorded
         _write(root, _OWNED_WORKFLOWS[0], yaml.safe_dump(workflow, sort_keys=False))
 
     return Control(name, plant, fails, expect)
@@ -13439,11 +13624,10 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             _VALIDATE_STEP + _SCAN_STEP.replace('"scan"', '"scan", "--diff", "--base", "{base}"'),
             expect="the whole-tree harness scan runs in no job of the change tier",
         ),
-        _plant(
+        _on_rails_macos(
             "the scan dropped from rails-macos, so breadth scans no tree",
-            catalogue.CATALOGUE,
-            _RAILS_MACOS_PYTEST + _SCAN_STEP,
-            _RAILS_MACOS_PYTEST,
+            _plant("", catalogue.CATALOGUE, _RAILS_MACOS_PYTEST + _SCAN_STEP, _RAILS_MACOS_PYTEST),
+            _plant("", catalogue.CATALOGUE, _SCAN_STEP + _RAILS_MACOS_PYTEST, _RAILS_MACOS_PYTEST),
             expect="the whole-tree harness scan runs in no job of the breadth tier",
         ),
         _plant(
@@ -13457,16 +13641,19 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             "rails-macos's entry recording the rails' outcome alone",
             "${{ steps.pytest.outcome }}",
             expect=_SCAN_RED_CARRIED.format("failure"),
+            through="${{ steps.decide.outcome }}",
         ),
         _entry_records(
             "rails-macos's entry naming the scan only as the rails' fallback",
             "${{ steps.pytest.outcome || steps.scan.outcome }}",
             expect=_SCAN_RED_CARRIED.format("failure"),
+            through="${{ steps.decide.outcome || steps.pytest.outcome }}",
         ),
         _entry_records(
             "rails-macos's entry red on a failed scan, and green on a cancelled one",
             "${{ steps.scan.outcome != 'failure' && steps.pytest.outcome || 'failure' }}",
             expect=_SCAN_RED_CARRIED.format("cancelled"),
+            through="${{ steps.pytest.outcome != 'failure' && 'success' || 'failure' }}",
         ),
         _entry_records(
             "rails-macos's entry recording 'failure' whatever ran, so no outcome is read",
@@ -13477,6 +13664,7 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             "rails-macos's entry read through a function the row cannot evaluate",
             "${{ format('{0}', steps.scan.outcome) }}",
             expect="cannot evaluate",
+            through="${{ format('{0}', steps.pytest.outcome) }}",
         ),
         _entry_records(
             "rails-macos's entry green only when the rails and the scan both are, written"
@@ -13484,46 +13672,85 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             "${{ steps.pytest.outcome == 'success' && steps.scan.outcome == 'success'"
             " && 'success' || 'failure' }}",
             fails=False,
+            through="${{ steps.pytest.outcome == 'success' && 'success' || 'failure' }}",
         ),
-        _plant(
+        _on_rails_macos(
             "breadth's scan step with no id, so its leg's entry cannot read it",
-            _OWNED_WORKFLOWS[0],
-            "        id: scan\n",
-            "",
+            _plant("", _OWNED_WORKFLOWS[0], "        id: scan\n", ""),
+            _rails_macos_run_job_step(lambda s: s.replace("\n        id: pytest\n", "\n", 1)),
             expect="breadth.yml rails-macos: the step that runs the whole-tree harness scan has"
             " no id",
         ),
-        _plant(
+        # Through run-job the scan's step is the leg's continue-on-error step, so the fault is
+        # an entry that does not carry its red.
+        _on_rails_macos(
             "continue-on-error on breadth's scan step",
-            _OWNED_WORKFLOWS[0],
-            "        id: scan\n",
-            "        id: scan\n        continue-on-error: true\n",
+            _plant(
+                "",
+                _OWNED_WORKFLOWS[0],
+                "        id: scan\n",
+                "        id: scan\n        continue-on-error: true\n",
+            ),
+            _entry_records("", "${{ 'success' }}"),
             expect="breadth.yml rails-macos: the step that runs the whole-tree harness scan has"
             " continue-on-error",
         ),
-        _plant(
+        _on_rails_macos(
             "breadth's scan step gone from breadth.yml, its entry kept",
-            _OWNED_WORKFLOWS[0],
-            "        run: uv run python -m harness scan\n",
-            "        run: echo scanned\n",
+            _plant(
+                "",
+                _OWNED_WORKFLOWS[0],
+                "        run: uv run python -m harness scan\n",
+                "        run: echo scanned\n",
+            ),
+            _rails_macos_run_job_step(_with_run(_RAILS_MACOS_PYTEST_LINE)),
             expect="no breadth.yml step runs the whole-tree harness scan",
         ),
-        _plant(
+        _on_rails_macos(
             "breadth's scan step gated on more than the carry decision",
-            _OWNED_WORKFLOWS[0],
-            _BREADTH_SCAN_GATE,
-            _BREADTH_SCAN_GATE.replace(
-                "!= 'false' }}", "!= 'false' && github.event_name == 'schedule' }}"
-            ),
+            _plant("", _OWNED_WORKFLOWS[0], _BREADTH_SCAN_GATE, _BREADTH_SCAN_GATE.replace(*_MORE)),
+            _rails_macos_run_job_step(lambda s: s.replace(*_MORE, 1)),
             expect="breadth.yml rails-macos: the step that runs the whole-tree harness scan runs"
             " under `if:",
         ),
-        _plant(
+        _on_rails_macos(
             "breadth's scan step under the carry decision written without ${{ }}, passes",
-            _OWNED_WORKFLOWS[0],
-            _BREADTH_SCAN_GATE,
-            "        id: scan\n        if: steps.decide.outputs.run != 'false'\n",
+            _plant("", _OWNED_WORKFLOWS[0], _BREADTH_SCAN_GATE, _BREADTH_SCAN_GATE.replace(*_BARE)),
+            _rails_macos_run_job_step(lambda s: s.replace(*_BARE, 1)),
             fails=False,
+        ),
+        # Only the reader marks a step as read from a run-job step: a written-out scan step that
+        # spells the key itself keeps the strict rule.
+        Control(
+            "a written-out scan step that spells run-job-step, with continue-on-error",
+            _in_job(
+                "rails-macos",
+                "      - name: Upload JUnit results (rails on macos-26-3.12)\n",
+                "      - name: a scan that claims a run-job step\n"
+                "        id: scan-claimed\n"
+                "        continue-on-error: true\n"
+                "        run-job-step: pytest\n"
+                "        run: uv run python -m harness scan\n"
+                "      - name: Upload JUnit results (rails on macos-26-3.12)\n",
+            ),
+            expect="breadth.yml rails-macos: the step that runs the whole-tree harness scan has"
+            " continue-on-error, so its red is swallowed",
+        ),
+        # A check inside a continue-on-error run-job step (#5600): green only when the leg's
+        # entry carries the step's red.
+        Control(
+            "the scan inside a continue-on-error run-job step, its red carried by the leg's"
+            " entry, passes",
+            lambda root: legs_through_run_job(root, ("rails-macos",)),
+            fails=False,
+        ),
+        Control(
+            "the scan inside a continue-on-error run-job step whose red the leg's entry does not"
+            " carry",
+            _through_run_job_uncarried,
+            expect="breadth.yml rails-macos: the step that runs the whole-tree harness scan has"
+            " continue-on-error, in its run-job step, and its leg's entry does not carry that"
+            " step's red",
         ),
         _plant(
             "rails-checks held to the merge tier only",
@@ -13561,11 +13788,21 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             'id = "security"\ntiers = ["merge", "breadth"]',
             expect="the security corpus runs in no job of the change tier",
         ),
-        _plant(
+        _on_rails_macos(
             "`|| true` after breadth's scan",
-            _OWNED_WORKFLOWS[0],
-            "        run: uv run python -m harness scan\n",
-            "        run: uv run python -m harness scan || true\n",
+            _plant(
+                "",
+                _OWNED_WORKFLOWS[0],
+                "        run: uv run python -m harness scan\n",
+                "        run: uv run python -m harness scan || true\n",
+            ),
+            _plant(
+                "",
+                catalogue.CATALOGUE,
+                _SCAN_STEP + _RAILS_MACOS_PYTEST,
+                '  { argv = ["sh", "-c", "uv run python -m harness scan || true"] },\n'
+                + _RAILS_MACOS_PYTEST,
+            ),
             expect="the step that runs the whole-tree harness scan ends in `|| true`",
         ),
         _plant(
