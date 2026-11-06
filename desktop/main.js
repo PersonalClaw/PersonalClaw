@@ -25,7 +25,7 @@ const {
 const { shutdownGateway } = require("./gatewayShutdown");
 const { quitWithin } = require("./quitSequence");
 const { makeSystemBrowser, navigationGuard, registerSystemBrowserIpc, windowOpenHandler } = require("./systemBrowser");
-const { buildGatewayEnv } = require("./gatewayEnv");
+const { appHome, buildGatewayEnv } = require("./gatewayEnv");
 const {
   HOME_NEWER_EXIT,
   HOME_SERVED_EXIT,
@@ -37,8 +37,10 @@ const {
   stoppedSentence,
 } = require("./gatewayLost");
 const homeGateway = require("./homeGateway");
-const { makeAdoptedWatch } = require("./adoptedWatch");
-const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require("./localSignIn");
+const { makeGatewayWatch } = require("./gatewayWatch");
+const { makeLocalSignIn, movedUrl, movesOnRestart, parseReadyLine, signOutRequest } = require("./localSignIn");
+const { PAGE_OWN_PAIR_HEADERS, PAIR_CHANGED, originKey, registerWindowTraffic } = require("./windowTraffic");
+const { classify: classifyRefusal } = require("./shellRefusal");
 const { openShellStore } = require("./shellStore");
 const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, pushToBuddy, registerBuddyIpc, registerBuddySettingsIpc } = require("./buddyWindow");
 const { makeDoorbell, mayRaise, openGatewaySocket } = require("./doorbell");
@@ -110,7 +112,10 @@ function resolveLoginPath() {
 
 const POLL_INTERVAL_MS = 500;
 const MAX_WAIT_MS = 120_000; // 2 min max wait for backend
-const PERSONALCLAW_HOME = process.env.PERSONALCLAW_HOME || path.join(os.homedir(), ".personalclaw");
+// Resolved as the gateway resolves its own (`appHome`): `~` expanded, links followed, a system
+// folder refused. A home kept as written while the gateway resolves it is two folders, and this
+// app's record watch then reads no record and withholds the windows' sign-in for good.
+const PERSONALCLAW_HOME = appHome(process.env).home;
 const { TAB_BAR_HEIGHT, makeWindowChrome } = require("./windowChrome");
 /** How often the menu bar reads its count of what waits on you and what is running, while the
  *  doorbell's socket is down (connected, it reads on each ring instead). */
@@ -147,7 +152,8 @@ let adoptedGateway = null;
  *  nothing that carries this home's credentials goes to the port it left (`credentialsWithheld`). */
 let gatewayGone = false;
 /** What the Gateways window's "This computer" row says (`connectDialog.describeLocal`): `starting`,
- *  `own`, `adopted`, `stopped` or `served`, with the sentence the last two carry. */
+ *  `own`, `found`, `adopted`, `stopped`, `served`, `older`, `signed_out` or `cant_sign_in`, with the
+ *  sentence a state carries. */
 let localState = { state: "starting", sentence: "" };
 
 /**
@@ -274,21 +280,18 @@ function startGateway() {
         // Nothing read from this pipe is logged: the ready line carries a live owner session.
         const ready = parseReadyLine(line);
         if (!ready) continue;
+        // Only while this child is still the app's gateway (`readyLineIsStale`).
+        if (readyLineIsStale(child, ready)) continue;
         if (settled) {
-          followRestartedGateway(ready).catch((err) =>
-            console.warn(`desktop: could not follow the restarted gateway: ${err.message}`)
-          );
+          takeReadyLine(child, ready, true);
           continue;
         }
         settled = true;
         clearTimeout(timer);
-        const taken = localGatewayUrl ? followRestartedGateway(ready) : adoptLocalGateway(ready);
-        taken
-          .catch((err) => console.warn(`desktop: could not take the started gateway: ${err.message}`))
-          .then(() => {
-            sendStatus("Connected ✓");
-            resolve(localGatewayUrl);
-          });
+        takeReadyLine(child, ready, false).then(() => {
+          sendStatus("Connected ✓");
+          resolve(localGatewayUrl);
+        });
       }
     });
     gatewayProcess.stderr.on("data", (c) => {
@@ -331,6 +334,31 @@ function startGateway() {
 function ownGatewayLives() {
   const child = gatewayProcess;
   return Boolean(child) && child.pid !== undefined && child.exitCode === null && child.signalCode === null;
+}
+
+/**
+ * Whether *child*, whose ready line *ready* is, is no longer this app's gateway: one the app is
+ * stopping, or one whose exit Node delivered before its last output. Such a line arms nothing and
+ * sends nothing; its session is kept, to be signed out at the next gateway proven to be there. A
+ * restart in place keeps the pid, so its line is taken.
+ */
+function readyLineIsStale(child, ready) {
+  if (gatewayProcess && gatewayProcess.pid === child.pid) return false;
+  if (ready.token) keepToSignOut(ready);
+  return true;
+}
+
+/**
+ * A ready line from the app's own child: this start is watched from it (the child's pid, its port
+ * and the secret it wrote), then taken, as the first start or a restart in place. The only place
+ * the own gateway's watch is armed from a start.
+ */
+function takeReadyLine(child, ready, settled) {
+  if (readyLineIsStale(child, ready)) return Promise.resolve();
+  const start = { pid: child.pid, port: ready.port, secretDigest: homeGateway.startDigest(PERSONALCLAW_HOME) };
+  gatewayWatch.own(start);
+  const taken = settled || localGatewayUrl ? followRestartedGateway(ready, { start }) : adoptLocalGateway(ready, { start });
+  return taken.catch((err) => console.warn(`desktop: could not take the gateway's ready line: ${err.message}`));
 }
 
 /**
@@ -383,9 +411,20 @@ async function stopGateway({ graceMs = GATEWAY_GRACE_MS, killGraceMs } = {}) {
 async function gatewayLost(exit) {
   startFailure = exit;
   gatewayGone = true;
+  gatewayWatch.drop();
+  withholdForGood();
   if (exit.code === HOME_NEWER_EXIT) setOlder();
   else setLocalState("stopped", stoppedSentence(exit));
   showNotConnected();
+}
+
+/** The gateway in use stopped: its origin is retired and the windows' cookie leaves the jar. A
+ *  gateway that starts again is signed in afresh. */
+function withholdForGood() {
+  if (!localSignIn) return;
+  localSignIn
+    .withhold(() => session.defaultSession.closeAllConnections(), { retire: true })
+    .catch((err) => console.warn(`desktop: could not withhold the windows' sign-in: ${err.message}`));
 }
 
 /** The app's own gateway was refused this home because a newer PersonalClaw has served it
@@ -443,7 +482,7 @@ async function reachHomeGateway({ waitMs = 0 } = {}) {
   if (!found.ok) return found;
   const signed = await homeGateway.signIn(found.gateway, PERSONALCLAW_HOME);
   if (!signed.ok) return { ok: false, reason: "sign_in", sentence: signed.sentence };
-  return { ok: true, gateway: found.gateway, ready: signed.ready };
+  return { ok: true, gateway: found.gateway, ready: signed.ready, pair: signed.pair };
 }
 
 /** The shell-store key of the chooser's "Use it automatically next time": a running gateway the
@@ -498,10 +537,11 @@ async function useRunningGateway() {
 async function adoptHomeGateway(found) {
   const followed = Boolean(localGatewayUrl);
   adoptedGateway = { pid: found.gateway.pid, port: found.gateway.port };
-  adoptedWatch.adopt(adoptedGateway);
+  const start = startOf(found.gateway);
+  gatewayWatch.adopt(start);
   startFailure = null;
-  if (followed) await followRestartedGateway(found.ready);
-  else await adoptLocalGateway(found.ready);
+  if (followed) await followRestartedGateway(found.ready, { pair: found.pair, start });
+  else await adoptLocalGateway(found.ready, { pair: found.pair, start });
   setLocalState("adopted");
   console.log(`desktop: using this home's gateway on port ${found.gateway.port} (pid ${found.gateway.pid}), which this app did not start`);
 }
@@ -516,14 +556,16 @@ async function adoptHomeGateway(found) {
  * with its sentence.
  */
 async function bringUpLocalGateway() {
+  // No watch outlives the start it followed: the next one is armed by its own ready line.
+  gatewayWatch.drop();
   setLocalState("starting");
   sendStatus("Starting PersonalClaw's gateway…");
   try {
     await startGateway();
     startFailure = null;
     adoptedGateway = null;
-    adoptedWatch.drop();
-    setLocalState("own");
+    // The window's door may have said otherwise on the way (`askWindowDoor`): that row stands.
+    if (localState.state === "starting") setLocalState("own");
     return true;
   } catch (err) {
     const exit = err.exit || { startError: err.message };
@@ -567,46 +609,225 @@ async function bringUpLocalGateway() {
 }
 
 /**
- * Follow an adopted gateway through the doorbell's news (`adoptedWatch.js`). Once its socket is lost,
- * nothing that carries this home's credentials goes to its port until `homeGateway.reach` proves it
- * there again; a socket that comes back up proves nothing. Proven where it was, the app registers
- * again, since the capability registry and the local secret are new with each start; moved, it is
- * found where it went; gone, the app says so.
+ * Follow the gateway in use through the doorbell's news (`gatewayWatch.js`), the app's own and one
+ * it found. Once its socket is lost, nothing that carries this home's credentials goes to its port,
+ * and the windows' cookie is out of the jar (`loseGateway`), until `homeGateway.reach` proves it
+ * there again; a socket that comes back up proves nothing.
+ *
+ * - **The same start proven back** (its pid, its port, the secret it wrote): the windows' session is
+ *   written back as it was, with nothing minted (`localSignIn.lift`).
+ * - **A gateway the app found, started again where it was:** the app signs in to the new start and
+ *   signs the old session out there (`takeBackAdoptedGateway`). Moved, it is found where it went;
+ *   gone, the app says so.
+ * - **The app's own gateway, started again:** its next ready line rotates the session
+ *   (`followRestartedGateway`), and its exit is `gatewayLost`.
+ *
+ * Only once the windows' sign-in is back does anything carry the credentials again: the
+ * registration (the capability registry and the local secret are new with each start), the
+ * doorbell, and the windows parked at their routes (`resumeGateway`).
  */
-const adoptedWatch = makeAdoptedWatch({
+const gatewayWatch = makeGatewayWatch({
   home: PERSONALCLAW_HOME,
   reach: (home) => homeGateway.reach(home),
   readRecord: (home) => homeGateway.readRecord(home),
   pidIsAlive: (pid) => homeGateway.pidIsAlive(pid),
-  follow: async () => {
-    const moved = await reachHomeGateway();
-    if (!moved.ok) return false;
-    await adoptHomeGateway(moved);
-    return true;
-  },
-  proven: ({ pid, port }) => {
-    adoptedGateway = { pid, port };
-    shellToken = null;
-    registerWithGateway().catch(() => {});
-    startPresenceRefresh();
-  },
-  gone: () => adoptedGone(),
+  follow: () => followMovedGateway(),
+  // The own gateway's lift is keyed to the start the held session came from, as a found one's is.
+  proven: (was, gateway) => (was.kind === "own" ? localSignIn.lift(lostAt, { start: startOf(gateway) }) : takeBackAdoptedGateway(was, gateway)),
+  back: (was) => resumeGateway(was),
+  gone: (was) => adoptedGone(was),
   log: (msg) => console.log(`desktop: ${msg}`),
 });
 
+/**
+ * The gateway the app found moved to another port: its start there is signed in to at its door, at
+ * most WINDOW_DOOR_ATTEMPTS times in all, as a new start on the same port is (`takeBackAdoptedGateway`).
+ * Once they are spent the windows stay parked, and the row offers nothing: Sign In Again signs in
+ * only at the windows' own address, never at another port. Resolves whether it is the gateway in
+ * use now.
+ */
+async function followMovedGateway() {
+  const found = await findHomeGateway();
+  if (!found.ok) return false;
+  const start = startOf(found.gateway);
+  if (!spendDoorAsk(start)) return false;
+  const gen = localSignIn.gen;
+  const signed = await homeGateway.signIn(found.gateway, PERSONALCLAW_HOME);
+  if (localSignIn.gen !== gen) {
+    if (signed.ok) keepToSignOut(signed.ready);
+    return false;
+  }
+  if (!signed.ok) {
+    if (signed.status === 400 || signed.status === 403) spendDoorAsks(start);
+    if (!doorAsksLeft(start)) {
+      console.warn(`desktop: the windows could not be signed in at the gateway on port ${start.port}; they stay parked`);
+      setLocalState("cant_sign_in", NOT_SIGNED_IN_AGAIN_SENTENCE);
+    }
+    return false;
+  }
+  await adoptHomeGateway({ ok: true, gateway: found.gateway, ready: signed.ready, pair: signed.pair });
+  return true;
+}
+
+/** The windows' sign-in generation at the last loss (`loseGateway`): a lift acts only on it. */
+let lostAt = 0;
+/** Sessions this app minted or replaced that are still live, each signed out at the next gateway proven
+ *  to be there (`signOutKept`): never at a port that is not. */
+let keptSessions = [];
+
+/** Keep *session* to be signed out once a gateway is proven there. */
+function keepToSignOut(session) {
+  if (session && session.token && !keptSessions.some((s) => s.token === session.token)) keptSessions.push(session);
+}
+
+/** Sign out every kept session the gateway in use can be asked about now, each within *timeoutMs*;
+ *  keep the rest. */
+async function signOutKept(timeoutMs) {
+  const list = keptSessions;
+  keptSessions = [];
+  for (const session of list) {
+    if (gatewayGone || gatewayWatch.withheld) keepToSignOut(session);
+    else await signOutLocalSession(session, timeoutMs);
+  }
+}
+
+/**
+ * The doorbell lost the gateway in use, or heard it restarting. In this order, before anything is
+ * awaited: the credentials are withheld (`gatewayWatch.lost`); the windows' sign-in is withheld and
+ * every connection the windows hold is closed; then the window cookie leaves the jar
+ * (`localSignIn.withhold`). The windows stay where they are, and what they send to the gateway is
+ * cancelled (`windowTraffic`). A gateway the app found has its origin retired with the session:
+ * its next sign-in is a new one, unless the same start is proven back.
+ */
+function loseGateway() {
+  const kind = gatewayWatch.kind;
+  if (!kind) return;
+  const already = gatewayWatch.withheld;
+  gatewayWatch.lost();
+  // Withheld already for this very loss: nothing more. A lift of the shell's own hold leaves the
+  // windows withheld at the old generation, and an End withholds nothing, so a later loss moves it.
+  if (already && localSignIn.withheld && lostAt === localSignIn.gen) return;
+  localSignIn
+    .withhold(() => session.defaultSession.closeAllConnections(), { retire: kind === "adopted" })
+    .catch((err) => console.warn(`desktop: could not withhold the windows' sign-in: ${err.message}`));
+  lostAt = localSignIn.gen;
+}
+
+/**
+ * A gateway the app found proved it serves this home on its port again. The same start (its pid
+ * and the secret it wrote) gets the windows' session back as it was, its origin no longer retired;
+ * a new start is signed in to afresh, and the session it replaces is signed out once the gateway is
+ * back (`resumeGateway`), at that start's own door. Resolves whether the windows' sign-in is back.
+ */
+async function takeBackAdoptedGateway(was, gateway) {
+  const start = startOf(gateway);
+  const sameStart =
+    gateway.pid === was.pid &&
+    Boolean(gateway.secretDigest) &&
+    gateway.secretDigest === was.secretDigest &&
+    Boolean(gateway.windowDoor) === windowDoorInUse;
+  if (sameStart) {
+    // One read with the held session at the proven port first: an ended sign-in is not lifted.
+    const read = await readHeldSessionAt(gateway.port);
+    if (read && read.verdict === "end") {
+      // With a pair, the sign-in ends (`noteShellRefusal`). Without one, the doorbell stops for this
+      // start, which ends it in the watch (`stopDoorbellForStart`): no later look reads it again.
+      if (localSignIn.held && localSignIn.held.pair) noteShellRefusal(read.stamp, read.status, read.body, { retiredToo: true });
+      else stopDoorbellForStart();
+      return false;
+    }
+    return localSignIn.lift(lostAt, { unretire: true, start });
+  }
+  // A new start: asked at its door WINDOW_DOOR_ATTEMPTS times in all, across looks and losses.
+  if (!spendDoorAsk(start)) return false;
+  const gen = localSignIn.gen;
+  const signed = await homeGateway.signIn(gateway, PERSONALCLAW_HOME);
+  if (localSignIn.gen !== gen) {
+    if (signed.ok) keepToSignOut(signed.ready);
+    return false;
+  }
+  if (!signed.ok) {
+    if (signed.status === 400 || signed.status === 403) spendDoorAsks(start);
+    if (!doorAsksLeft(start)) doorGaveUp(start, Boolean(gateway.windowDoor));
+    return false;
+  }
+  windowDoorInUse = Boolean(signed.ready.windowDoor);
+  // Pages that latched an End stay latched until Sign In Again's reloads run, whichever take-back
+  // brings the sign-in back (`latchedSinceEnd`).
+  const wasSignedOut = localSignIn.signedOut || latchedSinceEnd;
+  // The adopt's generation is taken in the tick it starts: a loss during its cookie write moves it.
+  const adopting = localSignIn.adopt(signed.ready, { pair: signed.pair, start });
+  const mine = localSignIn.gen;
+  keepToSignOut(await adopting);
+  if (localSignIn.gen !== mine) {
+    if (localSignIn.stamp().token !== signed.ready.token) keepToSignOut(signed.ready);
+    return false;
+  }
+  signedInAfresh = { wasSignedOut, gen: mine };
+  return true;
+}
+
+/** A found gateway's new start signed the windows in afresh (`takeBackAdoptedGateway`), for the
+ *  resume that follows at that generation: whether the gateway had signed this app out before it. */
+let signedInAfresh = null;
+/** Set at an End (`shellSignedOut`), cleared once Sign In Again's reloads run (`reloadAfterSignInAgain`):
+ *  the windows' pages latched the sign-out, and a resume a newer take-back overtook never reloaded them. */
+let latchedSinceEnd = false;
+
+/**
+ * The gateway in use is back and the windows' sign-in with it (`gatewayWatch`'s *back*): what
+ * carries the credentials goes again, once. A session replaced on the way is signed out at it.
+ */
+function resumeGateway(was) {
+  if (was.kind === "adopted") adoptedGateway = { pid: was.pid, port: was.port };
+  shellToken = null;
+  // Only the take-back this resume follows: a flag left by one whose hand-over never came is stale.
+  const afresh = signedInAfresh && signedInAfresh.gen === localSignIn.gen ? signedInAfresh : null;
+  signedInAfresh = null;
+  (async () => {
+    if (localSignIn.signedOut) return;
+    startPresenceRefresh();
+    await signOutKept();
+    await registerWithGateway();
+    // An End while the registration was out stops here: its sign-out stopped the doorbell, and
+    // nothing reloads or asks the door again.
+    if (localSignIn.signedOut) return;
+    // So does a start the watch has left while the sign-outs or the registration were out: what
+    // moved the watch (a ready line, an exit, a Start, a take-back, a follow or a gone gateway) does
+    // what follows.
+    if (startKey(gatewayWatch.start) !== startKey(was)) return;
+    // The shell's own hold came back without the windows (`localSignIn.lift`): the window's door is
+    // asked again, with what is left of this start's asks.
+    if (was.kind === "own" && localSignIn.forShell && localGatewayUrl && !credentialsWithheld()) {
+      await askWindowDoor({ port: Number(new URL(localGatewayUrl).port), url: localGatewayUrl }, localSignIn.start);
+      // And one that came while the ask was out.
+      if (startKey(gatewayWatch.start) !== startKey(was)) return;
+    }
+    // A new start signed in afresh brings the row back; the same start's lift leaves it as it was.
+    if (afresh) rowBackFromSignedOut();
+    if (!localSignIn.withheld) reloadParkedWindows();
+    // A sign-in afresh at the same address changed the session under the pages that stayed. After an
+    // End their pages latched the sign-out, so they reload as Sign In Again's do; otherwise each is
+    // told its pair changed, and reads it again in place.
+    if (afresh && afresh.wasSignedOut) reloadAfterSignInAgain();
+    else if (afresh) dispatchPairChanged();
+  })().catch((err) => console.warn(`desktop: could not take the gateway back: ${err.message}`));
+}
+
 /** Whether nothing that carries this home's credentials (the shell's session, the local secret, the
- *  capability token) may go to `localGatewayUrl` now: while a gateway the app found is unproven since
- *  the doorbell lost it, and once the gateway the app used stopped. */
+ *  capability token) may go to `localGatewayUrl` now: while the gateway in use is unproven since the
+ *  doorbell lost it, once it stopped, and once it ended this app's sign-in (`shellSignedOut`). */
 function credentialsWithheld() {
-  return gatewayGone || adoptedWatch.withheld;
+  return gatewayGone || gatewayWatch.withheld || Boolean(localSignIn && localSignIn.signedOut);
 }
 
 /** The adopted gateway stopped and nothing took its place: the app says so and offers the Gateways
  *  window. It did not stop it and does not start it again. */
-function adoptedGone() {
-  const { port } = adoptedGateway;
+function adoptedGone(was) {
+  const port = was ? was.port : adoptedGateway ? adoptedGateway.port : 0;
   adoptedGateway = null;
   gatewayGone = true;
+  withholdForGood();
   shellToken = null;
   stopPresenceRefresh();
   startFailure = { adoptedGone: true };
@@ -632,26 +853,154 @@ function originOf(url) {
  * A failure to write the cookie is logged and leaves the window to the gateway's sign-in page:
  * an honest "you're signed out" rather than a window that never loads.
  */
-async function adoptLocalGateway(ready) {
+async function adoptLocalGateway(ready, { pair = null, start = null, restarted = false } = {}) {
   localGatewayUrl = ready.url;
   gatewayStarts += 1;
   gatewayGone = false;
+  windowDoorInUse = Boolean(ready.windowDoor);
   try {
-    return await localSignIn.adopt(ready);
+    if (ready.windowDoor && !pair) return await takeWindowDoor(ready, start, { restarted });
+    return await localSignIn.adopt(ready, { pair, start });
   } catch (err) {
     console.warn(`desktop: could not sign the window in to ${ready.url}: ${err.message}`);
     return null;
   }
 }
 
+/** Whether the gateway in use has the window's own door: its ready line, or its proven answer, said so. */
+let windowDoorInUse = false;
+/** How many times the window's door is asked a start, at most, and how far apart. */
+const WINDOW_DOOR_ATTEMPTS = 3;
+const WINDOW_DOOR_RETRY_MS = 2000;
+/** The asks at the window's door spent on one gateway start (`{pid, secretDigest}`): WINDOW_DOOR_ATTEMPTS
+ *  a start in all, across looks and losses, for the app's own gateway and one it found. */
+let doorAsks = { key: "", spent: 0 };
+const startKey = (start) => `${start ? start.pid : ""}:${start ? start.secretDigest || "" : ""}`;
+/** Spend one of *start*'s asks; false once they are all spent. */
+function spendDoorAsk(start) {
+  const key = startKey(start);
+  if (doorAsks.key !== key) doorAsks = { key, spent: 0 };
+  if (doorAsks.spent >= WINDOW_DOOR_ATTEMPTS) return false;
+  doorAsks.spent += 1;
+  return true;
+}
+/** Spend every ask *start* has left: a refusal (400, 403) or a disagreement ends them. */
+function spendDoorAsks(start) {
+  doorAsks = { key: startKey(start), spent: WINDOW_DOOR_ATTEMPTS };
+}
+/** How many asks *start* has left. */
+function doorAsksLeft(start) {
+  return doorAsks.key === startKey(start) ? WINDOW_DOOR_ATTEMPTS - doorAsks.spent : WINDOW_DOOR_ATTEMPTS;
+}
+
+/** The gateway's start that *gateway*, a proven answer, names: `{pid, port, secretDigest}`. */
+function startOf(gateway) {
+  return { pid: gateway.pid, port: gateway.port, secretDigest: gateway.secretDigest || "" };
+}
+
+/**
+ * *start*'s asks at the window's door are spent and none signed the windows in: they stay parked.
+ * The flag the start proved is the one in use from now, so a press is judged by it. With the door,
+ * the This computer row says signed out, with Sign In Again; without it (a disagreement, or a start
+ * that has none), Sign In Again would be refused, so the row says so, with no action.
+ */
+function doorGaveUp(start, door) {
+  windowDoorInUse = door;
+  console.warn(`desktop: the windows could not be signed in at the gateway on port ${start.port}; they stay parked`);
+  if (door) setLocalState("signed_out", SIGNED_OUT_SENTENCE);
+  else setLocalState("cant_sign_in", NOT_SIGNED_IN_AGAIN_SENTENCE);
+}
+
+/**
+ * The app's own gateway has the window's own door (its ready line says so). The windows get a
+ * session of their own, with its pair, asked at that door (`askWindowDoor`). Until then the ready
+ * line's session serves the shell's own requests and no window loads (`localSignIn.holdForShell`).
+ * Resolves the session an earlier start held, for the caller to sign out, or null.
+ */
+async function takeWindowDoor(ready, start, { restarted = false } = {}) {
+  // The generation is taken in step with the hold's own bump, before anything is awaited.
+  const holding = localSignIn.holdForShell(ready, { start });
+  const gen = localSignIn.gen;
+  const earlier = await holding;
+  // At a restart, the follow brings parked windows back itself, once it has retired the old address.
+  await askWindowDoor(ready, start, gen, { reloadParked: !restarted });
+  return earlier;
+}
+
+/**
+ * Ask the window's door of the app's own gateway for the windows' session (`homeGateway.signIn`),
+ * through a proof on *ready*'s port whose pid is the child's, while *start* has asks left
+ * (WINDOW_DOOR_ATTEMPTS a start, WINDOW_DOOR_RETRY_MS apart), and while the generation is still
+ * *gen*, or, once it adopts, that adopt's. Once the windows' session is written, the ready line's is
+ * signed out, by Bearer. A loss stops the asks, and the same start proven back asks again with what
+ * is left (`resumeGateway`). A refusal (400, 403) or a proven answer that says it has no such door
+ * spends them all: nothing falls back to the ready line's session for the windows. Once none is
+ * left, the windows stay parked (`doorGaveUp`). Resolves whether this ask signed the windows in and
+ * saw it through.
+ */
+async function askWindowDoor(ready, start, gen = localSignIn.gen, { reloadParked = true } = {}) {
+  let asked = 0;
+  while (doorAsksLeft(start) > 0) {
+    if (asked > 0) await new Promise((r) => setTimeout(r, WINDOW_DOOR_RETRY_MS));
+    if (localSignIn.gen !== gen) return false;
+    spendDoorAsk(start);
+    asked += 1;
+    const found = await homeGateway.reach(PERSONALCLAW_HOME);
+    if (localSignIn.gen !== gen) return false;
+    const child = gatewayProcess;
+    const proven = found.ok && found.gateway.port === ready.port && Boolean(child) && found.gateway.pid === child.pid;
+    if (proven && !found.gateway.windowDoor) {
+      console.warn(`desktop: the gateway on ${ready.url} said it has the window's door, and its proven answer says it hasn't`);
+      spendDoorAsks(start);
+      doorGaveUp(start, false);
+      return false;
+    }
+    if (proven) {
+      // No lifetime asked: the gateway gives its own sign-in's, what the ready line's lasts.
+      const signed = await homeGateway.signIn(found.gateway, PERSONALCLAW_HOME, { ttl: null });
+      if (localSignIn.gen !== gen) {
+        if (signed.ok) keepToSignOut(signed.ready);
+        return false;
+      }
+      if (signed.ok) {
+        // As Sign In Again's: a loss or a newer ready line during the cookie write moves the
+        // generation, and nothing of this ask goes on; what it replaced is kept to be signed out.
+        const adopting = localSignIn.adopt(signed.ready, { pair: signed.pair, start });
+        const mine = localSignIn.gen;
+        const readySession = await adopting;
+        if (localSignIn.gen !== mine) {
+          keepToSignOut(readySession);
+          if (localSignIn.stamp().token !== signed.ready.token) keepToSignOut(signed.ready);
+          return false;
+        }
+        startPresenceRefresh();
+        keepToSignOut(readySession);
+        await signOutKept();
+        // Again after the sign-outs: a loss, a newer start, Sign In Again, a stop or a quit while they
+        // were out moves the generation, and this ask goes no further. The lift's resume reloads the
+        // parked windows and leaves the row, a newer start does both once it has retired this address,
+        // and Sign In Again does its own.
+        if (localSignIn.gen !== mine) return false;
+        rowBackFromSignedOut();
+        if (reloadParked) reloadParkedWindows();
+        return true;
+      }
+      if (signed.status === 400 || signed.status === 403) spendDoorAsks(start);
+    }
+  }
+  if (asked > 0) doorGaveUp(start, true);
+  return false;
+}
+
 /**
  * End *held* — a sign-in this shell holds — at the gateway it runs now. Best-effort: quitting and
  * a restart both carry on whatever the gateway answers. The request carries only that session's
- * own cookie, so it is the session ending itself (`/api/auth/logout`).
+ * own credential, so it is the session ending itself (`/api/auth/logout`): its cookie at a gateway
+ * without the window's door, as a Bearer with its own pair at one that has it (`signOutRequest`).
  */
 async function signOutLocalSession(held, timeoutMs) {
   if (!held || !localGatewayUrl) return false;
-  const { path: route, headers } = signOutRequest(held, Number(new URL(localGatewayUrl).port));
+  const { path: route, headers } = signOutRequest(held, Number(new URL(localGatewayUrl).port), { windowDoor: windowDoorInUse });
   const res = await postGateway(route, {}, headers, { signedIn: false, timeoutMs });
   return Boolean(res && res.revoked);
 }
@@ -666,22 +1015,44 @@ async function signOutLocalSession(held, timeoutMs) {
  * loads the same route at the new one, signed in. The session the old start handed out is signed
  * out, so a restart leaves one desktop sign-in in Settings → Devices, not one more each time.
  */
-async function followRestartedGateway(ready) {
+async function followRestartedGateway(ready, { pair = null, start = null } = {}) {
   const previousOrigin = originOf(localGatewayUrl);
-  const replaced = await adoptLocalGateway(ready);
+  const replaced = await adoptLocalGateway(ready, { pair, start, restarted: true });
+  if (previousOrigin && previousOrigin !== originOf(localGatewayUrl)) localSignIn.retireOrigin(previousOrigin);
   console.log(`desktop: the gateway restarted; it is now at ${localGatewayUrl}`);
   if (shellStore) rememberLocalGateway(shellStore, localGatewayUrl);
-  if (replaced) await signOutLocalSession(replaced);
   shellToken = null;
-  await registerWithGateway();
-  // The doorbell rings at the new address, with the new start's session.
+  // The doorbell rings at the new address, with the new start's session, right away.
   startPresenceRefresh();
+  keepToSignOut(replaced);
+  await signOutKept();
+  await registerWithGateway();
+  rowBackFromSignedOut();
   if (originOf(activeUrl) === previousOrigin) activeUrl = localGatewayUrl;
   for (const wc of webContents.getAllWebContents()) {
     if (wc.isDestroyed()) continue;
     const next = movedUrl(wc.getURL(), previousOrigin, localGatewayUrl);
-    if (next) wc.loadURL(next);
+    if (!next) continue;
+    // Only a page that loads on the window's cookie alone moves; any other window closes.
+    if (movesOnRestart(next)) {
+      loadOrPark(wc, next);
+    } else {
+      moveOffExempt(wc, next);
+    }
   }
+  reloadParkedWindows();
+}
+
+/**
+ * A window whose page at *next* doesn't load on the cookie alone, after a restart moved the
+ * gateway: the main window goes to the dashboard at its hash, the buddy is left to its own route,
+ * and any other window closes.
+ */
+function moveOffExempt(wc, next) {
+  const owner = BaseWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents === wc);
+  if (owner && owner === buddy?.window) return;
+  if (owner && owner !== mainWindow) owner.close();
+  else loadOrPark(wc, dashboardAt(localGatewayUrl, next));
 }
 
 // ── Capability bridge ↔ gateway registration ──
@@ -856,7 +1227,10 @@ function readLocalSecret() {
  * PATCH (`PATCH /api/config/personalclaw`, the menu bar's Show Buddy). */
 function postGateway(pathname, body, headers = {}, { signedIn = true, method = "POST", timeoutMs = 5000 } = {}) {
   return new Promise((resolve) => {
-    if (!localGatewayUrl || credentialsWithheld()) return resolve(null);
+    // A sign-out carries only the session it ends: it waits only for a proven gateway, not for the
+    // shell's own sign-in. Anything signed in needs the held session's credential to go.
+    if (!localGatewayUrl || gatewayGone || gatewayWatch.withheld) return resolve(null);
+    if (signedIn && (credentialsWithheld() || !localSignIn.authorization().Authorization)) return resolve(null);
     try {
       assertLoopbackTarget(localGatewayUrl, `${method} ${pathname}`);
     } catch (err) {
@@ -870,6 +1244,8 @@ function postGateway(pathname, body, headers = {}, { signedIn = true, method = "
     } catch {
       return resolve(null);
     }
+    // The sign-in this request carries, so a refusal acts on it alone (`noteShellRefusal`).
+    const stamp = signedIn ? localSignIn.stamp() : null;
     const req = http.request(
       {
         hostname: url.hostname,
@@ -891,6 +1267,7 @@ function postGateway(pathname, body, headers = {}, { signedIn = true, method = "
           if (res.statusCode !== 200) {
             // Log the STATUS only. An error body could quote a credential.
             console.warn(`desktop ${pathname} → HTTP ${res.statusCode}`);
+            if (stamp) noteShellRefusal(stamp, res.statusCode, buf);
             return resolve(null);
           }
           try {
@@ -912,6 +1289,290 @@ function postGateway(pathname, body, headers = {}, { signedIn = true, method = "
     req.write(payload);
     req.end();
   });
+}
+
+/**
+ * What a refusal of one of the shell's own requests says about the sign-in it carried (`shellRefusal`):
+ * the gateway ended it, or refused this app's own pair on it (a defect, logged as one). Acted on only
+ * while that sign-in is still the one held, once, and only on a gateway that gives a pair; a gateway
+ * that gives none is handled as it always was. Nothing mints a new sign-in here: the owner presses
+ * Sign In Again on the This computer row, or the gateway's next start signs the app in.
+ */
+function noteShellRefusal(stamp, status, body, { retiredToo = false } = {}) {
+  const verdict = classifyRefusal(status, parseJson(body));
+  if (verdict !== "end" && verdict !== "defect") return;
+  localSignIn
+    .end(stamp, { defect: verdict === "defect", retiredToo })
+    .then((ended) => {
+      if (ended) shellSignedOut();
+    })
+    .catch((err) => console.warn(`desktop: ${err.message}`));
+}
+
+/** *text* parsed as JSON, or null. */
+function parseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** The gateway signed this app out: nothing the shell sends carries the sign-in again, the menu bar
+ *  says not connected, and the This computer row says so, with Sign In Again. */
+function shellSignedOut() {
+  stopPresenceRefresh();
+  // Nothing is lifted for this start again. A found gateway's look keeps going with no credential; the
+  // app's own rests until its next ready line, its exit or a Sign In Again.
+  gatewayWatch.ended();
+  latchedSinceEnd = true;
+  shellToken = null;
+  if (trayPresence.available) trayPresence.setPresence(summarizePresence(null, null));
+  setLocalState("signed_out", SIGNED_OUT_SENTENCE);
+  console.log("desktop: the gateway signed this app out; it waits for Sign In Again");
+}
+
+/** What the This computer row says once the gateway signed this app out. */
+const SIGNED_OUT_SENTENCE = "This computer's gateway is running, but this app is signed out of it.";
+/** What a Sign In Again says when the gateway changed under the press. */
+const GATEWAY_CHANGED_SENTENCE = "This computer's gateway changed while this app signed in. Try again.";
+/** What a Sign In Again that can't sign in here says. */
+const NOT_SIGNED_IN_AGAIN_SENTENCE = "This app can't sign in to this computer's gateway again from here. Quit PersonalClaw and open it again.";
+
+/**
+ * Sign In Again, pressed on the This computer row: the one place a sign-in is minted after the
+ * gateway ended one, through the door its proven answer names (`homeGateway.signIn`). The row
+ * offers it only on a gateway with the window's door: only a sign-in that holds its pair is ever
+ * signed out (`localSignIn.end`), and only that door gives one. A press on any other gateway is
+ * refused and logged as a defect; one whose proven answer no longer names the door is refused too.
+ */
+async function signInAgain() {
+  if (!windowDoorInUse) {
+    console.warn("desktop: Sign In Again was pressed on a gateway without the window's door: a defect in this app; nothing was signed in");
+    return { ok: false, message: NOT_SIGNED_IN_AGAIN_SENTENCE };
+  }
+  // Where the press began: an answer that lands after a loss, a restart or a move is not adopted.
+  const gen = localSignIn.gen;
+  const at = localGatewayUrl;
+  const found = await homeGateway.reach(PERSONALCLAW_HOME);
+  if (!found.ok || !at || found.gateway.port !== Number(new URL(at).port)) {
+    return { ok: false, message: found.sentence || "This computer's gateway could not be reached." };
+  }
+  // The app's own gateway is the child it started: a proof naming another pid is not it.
+  if (!adoptedGateway && !(gatewayProcess && found.gateway.pid === gatewayProcess.pid)) {
+    return { ok: false, message: "This computer's gateway could not be reached." };
+  }
+  if (!found.gateway.windowDoor) {
+    console.warn(`desktop: the gateway on ${at} had the window's door, and its proven answer says it hasn't; nothing was signed in`);
+    return { ok: false, message: NOT_SIGNED_IN_AGAIN_SENTENCE };
+  }
+  if (localSignIn.gen !== gen || localGatewayUrl !== at) return { ok: false, message: GATEWAY_CHANGED_SENTENCE };
+  // The app's own gateway gives its own lifetime; one the app found, the door's 30 days.
+  const signed = await homeGateway.signIn(found.gateway, PERSONALCLAW_HOME, adoptedGateway ? {} : { ttl: null });
+  if (!signed.ok) return { ok: false, message: signed.sentence };
+  if (localSignIn.gen !== gen || localGatewayUrl !== at) {
+    keepToSignOut(signed.ready);
+    return { ok: false, message: GATEWAY_CHANGED_SENTENCE };
+  }
+  const start = startOf(found.gateway);
+  // The adopt starts and its generation is taken in one tick, and the watch follows the start this
+  // press proved before the cookie write is awaited: a loss or a ready line during the write moves
+  // the generation (and the watch with it), and then nothing of this press goes on.
+  const adopting = localSignIn.adopt(signed.ready, { pair: signed.pair, start });
+  const mine = localSignIn.gen;
+  if (adoptedGateway) {
+    adoptedGateway = { pid: start.pid, port: start.port };
+    gatewayWatch.adopt(start);
+  } else {
+    gatewayWatch.own(start);
+  }
+  // What it replaces is signed out later: the session the gateway ended, or the ready line's, which
+  // the shell held while the window's door gave the windows nothing.
+  keepToSignOut(await adopting);
+  if (localSignIn.gen !== mine) {
+    if (localSignIn.stamp().token !== signed.ready.token) keepToSignOut(signed.ready);
+    return { ok: false, message: GATEWAY_CHANGED_SENTENCE };
+  }
+  setLocalState(adoptedGateway ? "adopted" : "own");
+  shellToken = null;
+  doorbellBound = { key: "", failures: 0, stopped: false };
+  startPresenceRefresh();
+  await signOutKept();
+  await registerWithGateway();
+  reloadAfterSignInAgain();
+  reloadParkedWindows({ signedInAgain: true });
+  return { ok: true };
+}
+
+/**
+ * The windows on the held origin after Sign In Again, whose pages latched the sign-out: one that
+ * loads on the window's cookie alone (`movesOnRestart`) reloads, the buddy loads its own route, a
+ * main window anywhere else goes to the dashboard at its hash, and every other window is left as it
+ * is.
+ */
+function reloadAfterSignInAgain() {
+  latchedSinceEnd = false;
+  const origin = originOf(localGatewayUrl);
+  const bw = buddy?.window;
+  if (bw && !bw.isDestroyed() && bw.webContents && originOf(bw.webContents.getURL()) === origin) {
+    bw.webContents.loadURL(`${localGatewayUrl}/#/buddy`);
+  }
+  for (const win of appWindows()) {
+    const wc = win.webContents;
+    const url = wc.getURL();
+    if (originOf(url) !== origin) continue;
+    if (movesOnRestart(url)) wc.reload();
+    else if (win === mainWindow) wc.loadURL(dashboardAt(localGatewayUrl, url));
+  }
+}
+
+/** The dashboard at *base*, at the hash route *url* shows. */
+function dashboardAt(base, url) {
+  let hash = "";
+  try {
+    hash = new URL(url).hash;
+  } catch {
+    hash = "";
+  }
+  return `${base}/${hash}`;
+}
+
+/** Tell each live page on the held origin that its sign-in's pair changed (`PAIR_CHANGED`), so it
+ *  reads it again in place, with no reload. */
+function dispatchPairChanged() {
+  const origin = originOf(localGatewayUrl);
+  for (const wc of webContents.getAllWebContents()) {
+    if (wc.isDestroyed() || originOf(wc.getURL()) !== origin) continue;
+    wc.executeJavaScript(`document.dispatchEvent(new Event(${JSON.stringify(PAIR_CHANGED)}))`).catch(() => {});
+  }
+}
+
+/**
+ * One read with the held session at *port*, a found gateway proven back on it, before its
+ * same-start lift: `{verdict: "ok" | "end" | "keep" | "none", status, body, stamp}`, "end" being a
+ * refusal that ends the sign-in or names a defect (`shellRefusal`), or null when nothing answered.
+ */
+function readHeldSessionAt(port) {
+  const headers = localSignIn.heldAuthorization();
+  if (!headers.Authorization) return Promise.resolve(null);
+  const stamp = localSignIn.stamp();
+  return new Promise((resolve) => {
+    const req = http.request(
+      { hostname: "127.0.0.1", port, path: "/api/status", method: "GET", timeout: 5000, headers: { Accept: "application/json", ...headers } },
+      (res) => {
+        let buf = "";
+        res.on("data", (c) => (buf += c));
+        res.on("end", () => {
+          if (res.statusCode === 200) return resolve({ verdict: "ok", status: 200, body: buf, stamp });
+          const v = classifyRefusal(res.statusCode, parseJson(buf));
+          resolve({ verdict: v === "end" || v === "defect" ? "end" : v, status: res.statusCode, body: buf, stamp });
+        });
+      }
+    );
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.end();
+  });
+}
+
+/** The doorbell's failures before it came up on one start (`{key, failures, stopped}`): two, counted
+ *  across lifts, stop it for that start (`stopDoorbellForStart`). */
+let doorbellBound = { key: "", failures: 0, stopped: false };
+const DOORBELL_FAILURES = 2;
+/** How often the runtime record is read while the doorbell is up, and at the app's own gateway while
+ *  the bound has it stopped: its removal, or another pid or port in it, is a loss. */
+const RECORD_WATCH_MS = 2000;
+let recordWatch = null;
+
+const watchedKey = () => (gatewayWatch.start ? startKey(gatewayWatch.start) : "");
+
+/** The doorbell said lost or restarting: one more failure before up on this start. */
+function noteDoorbellFailure() {
+  const key = watchedKey();
+  if (doorbellBound.key !== key) doorbellBound = { key, failures: 0, stopped: false };
+  doorbellBound.failures += 1;
+  if (doorbellBound.failures >= DOORBELL_FAILURES) stopDoorbellForStart();
+}
+
+/**
+ * Stop the doorbell for the start in use, and keep it stopped for that start, lifts included: the
+ * gateway refuses this sign-in. With the window's door, the This computer row says signed out, with
+ * Sign In Again; without it, that Sign In Again would be refused, and the row says so. A found start
+ * is ended in the watch. The app's own keeps its same-start lift, and its record is still read with
+ * no credential while the doorbell is stopped, so a restart in place, which unpublishes it, is a loss
+ * within RECORD_WATCH_MS; its row describes the shell's sign-in, which a lift doesn't restore, so it
+ * stands.
+ */
+function stopDoorbellForStart() {
+  doorbellBound = { key: watchedKey(), failures: doorbellBound.failures, stopped: true };
+  stopPresenceRefresh();
+  console.warn("desktop: the gateway refuses this sign-in; the doorbell stops for this start");
+  // A found start is ended in the watch: with its doorbell stopped nothing would hear its loss, so no
+  // lift lets the windows back in, and the look, with no credential, still hears a gone, moved or new
+  // start. The app's own gateway keeps its lift: once a lift resumes, its record is read with no
+  // credential (`startPresenceRefresh`), so a restart in place is a loss; its exit and its next ready
+  // line settle the rest.
+  if (gatewayWatch.kind === "adopted") gatewayWatch.ended();
+  if (windowDoorInUse) setLocalState("signed_out", SIGNED_OUT_SENTENCE);
+  else setLocalState("cant_sign_in", NOT_SIGNED_IN_AGAIN_SENTENCE);
+}
+
+/**
+ * The runtime record, read every RECORD_WATCH_MS with no credential, on a timeout `stopRecordWatch`
+ * clears: while the doorbell is up, and at the app's own gateway while the bound has its doorbell
+ * stopped (`startPresenceRefresh`). Gone, or naming another pid or port than the start watched, it
+ * is a loss, and presence stops first: no socket opened before the loss speaks after it.
+ */
+function watchRecord() {
+  stopRecordWatch();
+  const read = () => {
+    recordWatch = null;
+    const start = gatewayWatch.start;
+    if (!start) return;
+    const record = homeGateway.readRecord(PERSONALCLAW_HOME);
+    const live = Boolean(record) && homeGateway.pidIsAlive(record.pid);
+    if (!live || record.pid !== start.pid || record.port !== start.port) {
+      noteRecordLoss(start, record, live);
+      stopPresenceRefresh();
+      return loseGateway();
+    }
+    recordWatch = setTimeout(read, RECORD_WATCH_MS);
+    if (recordWatch.unref) recordWatch.unref();
+  };
+  recordWatch = setTimeout(read, RECORD_WATCH_MS);
+  if (recordWatch.unref) recordWatch.unref();
+}
+
+/** The start the record watch last said a loss for: once a start, the line names the file and why. */
+let recordLossNoted = "";
+/** Say, once a start, which of the record watch's checks lost the gateway and at which file. The
+ *  record holds a pid and a port alone, so the line carries no credential. */
+function noteRecordLoss(start, record, live) {
+  if (recordLossNoted === startKey(start)) return;
+  recordLossNoted = startKey(start);
+  const file = path.join(PERSONALCLAW_HOME, homeGateway.RUNTIME_FILE);
+  const cause = !record
+    ? "is missing or unreadable"
+    : !live
+      ? `names pid ${record.pid}, which is not running`
+      : `names pid ${record.pid} on port ${record.port}, not this start's (pid ${start.pid}, port ${start.port})`;
+  console.warn(`desktop: the gateway's runtime record at ${file} ${cause}; the windows' sign-in is withheld until a proof brings it back`);
+}
+
+function stopRecordWatch() {
+  if (recordWatch) clearTimeout(recordWatch);
+  recordWatch = null;
+}
+
+/** The row back from signed out once a new start signed the windows in, with nothing withheld and
+ *  the doorbell not stopped for that start. */
+function rowBackFromSignedOut() {
+  const out = localState.state === "signed_out" || localState.state === "cant_sign_in";
+  const stopped = doorbellBound.stopped && doorbellBound.key === watchedKey();
+  if (out && !stopped && !localSignIn.signedOut && !localSignIn.withheld) setLocalState(adoptedGateway ? "adopted" : "own");
 }
 
 /** Announce the shell to the gateway and remember the token it mints. */
@@ -1258,24 +1919,96 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
    * SPA's (its capped-backoff reconnect is the published contract, and a second timer racing it
    * would duplicate every catch-up fetch). So the reachability probe starts HERE and nowhere else.
    */
-  view.webContents.on("did-fail-load", (_e, errorCode, errorDescription, failedUrl, isMainFrame) => {
-    if (!isMainFrame) return;
-    if (errorCode === -3) return; // ERR_ABORTED — a navigation we superseded ourselves
-    if (!activeUrl || activeUrl === localGatewayUrl) return; // the app's own gateway is watched elsewhere
-    console.warn(`load failed for ${failedUrl}: ${errorDescription} (${errorCode})`);
-    scheduleReachProbe(win);
-  });
+  view.webContents.on("did-fail-load", (_e, errorCode, errorDescription, failedUrl, isMainFrame) =>
+    windowLoadFailed(win, view.webContents, { errorCode, errorDescription, failedUrl, isMainFrame })
+  );
 
-  view.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
-    delete details.requestHeaders["Referer"];
-    callback({ requestHeaders: details.requestHeaders });
-  });
+  // The window's traffic is decided once, for every window, on the app's session
+  // (`registerWindowTraffic`, at `whenReady`): never here, per window.
+}
 
-  // A paired gateway that signs this app out says so on the page's OWN traffic: a
-  // 401/403 carrying `X-Auth-Required`. The credential-free health probe cannot see that — the
-  // probe presents no session — so the switcher's row read "Reachable" while the window showed
-  // the gateway's sentence. Status and headers only; the shell presents nothing.
-  view.webContents.session.webRequest.onCompleted((details) => {
+/** What a request the app's own webRequest listener cancelled fails with (`net::ERR_BLOCKED_BY_CLIENT`). */
+const ERR_BLOCKED_BY_CLIENT = -20;
+
+/**
+ * A window's main-frame load failed. A navigation the windows' traffic cancelled (`windowTraffic`),
+ * on any origin, parks this window alone on the offline page, to go back to its route once the
+ * gateway is back (`reloadParkedWindows`): probing a cancelled origin would only load it again, to
+ * be cancelled again. Any other failure at a gateway the owner added starts the reach probe.
+ */
+function windowLoadFailed(win, wc, { errorCode, errorDescription, failedUrl, isMainFrame }) {
+  if (!isMainFrame) return;
+  if (errorCode === -3) return; // ERR_ABORTED — a navigation we superseded ourselves
+  if (errorCode === ERR_BLOCKED_BY_CLIENT) {
+    park(wc, failedUrl);
+    return;
+  }
+  if (!activeUrl || activeUrl === localGatewayUrl) return; // the app's own gateway is watched elsewhere
+  console.warn(`load failed for ${failedUrl}: ${errorDescription} (${errorCode})`);
+  scheduleReachProbe(win);
+}
+
+/** Windows parked on the offline page while the windows' sign-in was withheld: webContents id → the
+ *  route each goes back to. */
+const parked = new Map();
+
+/** Show *wc* the offline page, keeping *url* for when the gateway is back. */
+function park(wc, url) {
+  if (!wc || wc.isDestroyed()) return;
+  parked.set(wc.id, url);
+  wc.loadFile(path.join(__dirname, "loading.html"), { query: { state: "offline" } });
+}
+
+/** Load *url* in *wc*, or park it there while the windows' sign-in to its origin is withheld. */
+function loadOrPark(wc, url) {
+  if (localSignIn && localSignIn.withheld && originOf(url) === originOf(localGatewayUrl)) {
+    park(wc, url);
+    return false;
+  }
+  wc.loadURL(url);
+  return true;
+}
+
+/**
+ * Every parked window goes back to its route. A route on the held origin loads there; one on an
+ * origin this run retired moves to the gateway's address now, by the restart move's rule
+ * (`movesOnRestart`); any other loads as it is, and the windows' traffic answers it again. After
+ * Sign In Again (*signedInAgain*), a parked main window whose route doesn't load on the cookie alone
+ * goes to the dashboard at its hash.
+ */
+function reloadParkedWindows({ signedInAgain = false } = {}) {
+  const retired = localSignIn ? localSignIn.trafficState().retired : new Set();
+  for (const [id, url] of [...parked]) {
+    parked.delete(id);
+    const wc = webContents.fromId(id);
+    if (!wc || wc.isDestroyed()) continue;
+    const onHeld = originOf(url) === originOf(localGatewayUrl);
+    if (!onHeld && !retired.has(originKey(url))) {
+      loadOrPark(wc, url);
+      continue;
+    }
+    const next = onHeld ? url : movedUrl(url, originOf(url), localGatewayUrl) || url;
+    const owner = BaseWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents === wc);
+    if (!onHeld && !movesOnRestart(next)) moveOffExempt(wc, next);
+    else if (signedInAgain && owner && owner === mainWindow && !movesOnRestart(next)) loadOrPark(wc, dashboardAt(localGatewayUrl, next));
+    else loadOrPark(wc, next);
+  }
+}
+
+/**
+ * Every request the app's windows make passes one decision (`windowTraffic.decide`), registered
+ * once on the app's session (`windowTraffic.registerWindowTraffic`): cancelled while the windows'
+ * sign-in is withheld or aimed at an origin this run left, and given the window session's pair
+ * where it goes.
+ *
+ * A paired gateway that signs this app out says so on the page's OWN traffic: a 401/403 carrying
+ * `X-Auth-Required`. The credential-free health probe cannot see that — the probe presents no
+ * session — so the switcher's row read "Reachable" while the window showed the gateway's sentence.
+ * Status and headers only; the shell presents nothing (`noteSessionEvent`).
+ */
+function watchWindowTraffic(appSession) {
+  registerWindowTraffic(appSession, localSignIn);
+  appSession.webRequest.onCompleted((details) => {
     noteSessionEvent(details).catch((err) => console.warn(`session note failed: ${err.message}`));
   });
 }
@@ -1317,7 +2050,7 @@ async function noteSessionEvent(details) {
   if (wc && !wc.isDestroyed()) {
     try {
       message = await wc.executeJavaScript(
-        `fetch('/api/status', {credentials: 'same-origin', headers: {Accept: 'application/json'}})
+        `fetch('/api/status', {credentials: 'same-origin', headers: { Accept: 'application/json', ...${PAGE_OWN_PAIR_HEADERS} }})
            .then(r => r.json().catch(() => null))
            .then(j => (j && j.error && typeof j.error.message === 'string') ? j.error.message : '')
            .catch(() => '')`
@@ -1502,7 +2235,7 @@ const trayPresence = makeTrayPresence({
  * any failure — a menu-bar refresh must never be able to throw into the app. */
 function getGateway(pathname) {
   return new Promise((resolve) => {
-    if (!localGatewayUrl || credentialsWithheld()) return resolve(null);
+    if (!localGatewayUrl || credentialsWithheld() || !localSignIn.authorization().Authorization) return resolve(null);
     let url;
     try {
       // The same re-assertion `postGateway` makes: this request carries the owner's session.
@@ -1511,6 +2244,7 @@ function getGateway(pathname) {
     } catch {
       return resolve(null);
     }
+    const stamp = localSignIn.stamp();
     const req = http.request(
       {
         hostname: url.hostname,
@@ -1524,7 +2258,10 @@ function getGateway(pathname) {
         let buf = "";
         res.on("data", (c) => (buf += c));
         res.on("end", () => {
-          if (res.statusCode !== 200) return resolve(null);
+          if (res.statusCode !== 200) {
+            noteShellRefusal(stamp, res.statusCode, buf);
+            return resolve(null);
+          }
           try {
             resolve(JSON.parse(buf));
           } catch {
@@ -1605,6 +2342,7 @@ function openBuddyMenu() {
 function socketGateway(url, gateway) {
   if (!localGatewayUrl || originOf(gateway) !== originOf(localGatewayUrl)) throw new Error("not the gateway this shell started");
   if (credentialsWithheld()) throw new Error("this home's gateway is not proven to be there since it was lost");
+  if (!localSignIn.authorization().Authorization) throw new Error("this app holds no sign-in to ring with");
   assertLoopbackTarget(localGatewayUrl, "WS /api/ws");
   return openGatewaySocket(url, gateway, () => localSignIn.authorization());
 }
@@ -1641,26 +2379,52 @@ const doorbell = makeDoorbell({
   openSocket: socketGateway,
   read: readPresence,
   onLevels: takePresence,
-  onConnection: (state) => {
-    // A restart the gateway announced is working, said as restarting, never offline (#3896).
-    trayPresence.setRestarting(state === "restarting");
-    pushToBuddy(buddy?.window, "connection", state);
-    // A gateway the app did not start prints it no ready line: its socket is how a restart or a stop is heard.
-    if (adoptedGateway) {
-      if (state === "up") adoptedWatch.up();
-      else adoptedWatch.lost();
-    }
-  },
+  onConnection: (state) => doorbellConnection(state),
   pollMs: PRESENCE_REFRESH_MS,
   log: (msg) => console.warn(`desktop: ${msg}`),
 });
 
+/**
+ * The doorbell's news. A restart the gateway announced is working, said as restarting, never
+ * offline (#3896). Lost or restarting, the gateway in use is withheld until a proof brings it back
+ * (`gatewayWatch`), and it counts toward the doorbell's bound for the start. Up, the runtime record
+ * is read while it stays up.
+ */
+function doorbellConnection(state) {
+  trayPresence.setRestarting(state === "restarting");
+  pushToBuddy(buddy?.window, "connection", state);
+  if (state === "up") {
+    doorbellBound = { key: watchedKey(), failures: 0, stopped: false };
+    gatewayWatch.up();
+    watchRecord();
+  } else {
+    stopRecordWatch();
+    noteDoorbellFailure();
+    loseGateway();
+  }
+}
+
+/** The buddy's page, at the gateway in use; none while the windows' sign-in is withheld. */
+function buddyUrl() {
+  return localGatewayUrl && !(localSignIn && localSignIn.withheld) ? `${localGatewayUrl}/#/buddy` : null;
+}
+
 /** Ring at the gateway this shell started; with no gateway, the menu simply reads "not connected". */
 function startPresenceRefresh() {
-  if (localGatewayUrl) doorbell.connect(localGatewayUrl);
+  // Nothing rings at a gateway the credentials are withheld from: the lift's resume rings again.
+  if (credentialsWithheld()) return;
+  // A doorbell the bound stopped for this start stays stopped for it, whatever lifts it. At the
+  // app's own gateway the record is still read: a restart in place unpublishes it, and that is a
+  // loss (`watchRecord`).
+  if (doorbellBound.stopped && doorbellBound.key === watchedKey()) {
+    if (gatewayWatch.kind === "own") watchRecord();
+    return;
+  }
+  if (localGatewayUrl && localSignIn && localSignIn.authorization().Authorization) doorbell.connect(localGatewayUrl);
 }
 
 function stopPresenceRefresh() {
+  stopRecordWatch();
   doorbell.stop();
 }
 
@@ -1672,9 +2436,53 @@ function openConnectDialog() {
   connectDialog.open();
 }
 
+/** The gateways the owner added, every registry row but the local one: the loopback origins a
+ *  window may load besides the held one (`localSignIn.setPaired`, `windowTraffic.decide`). */
+function syncPaired() {
+  if (!shellStore || !localSignIn) return;
+  const rows = loadRegistry(shellStore).endpoints || [];
+  localSignIn.setPaired(rows.filter((e) => e.id !== LOCAL_ENDPOINT_ID && e.kind !== "local").map((e) => e.base_url));
+}
+
+/**
+ * Removed before the first window loads: the window cookies an earlier version left for this
+ * computer's gateways at localhost and [::1] (`pc_token`, `pc_token_<port>`), all but a localhost
+ * gateway's own the owner added; the store is flushed.
+ */
+async function purgeStaleLocalCookies(appSession) {
+  const keep = new Set();
+  for (const row of (shellStore && loadRegistry(shellStore).endpoints) || []) {
+    if (row.id === LOCAL_ENDPOINT_ID || row.kind === "local") continue;
+    try {
+      const u = new URL(row.base_url);
+      // Only the cookie named for the port in the row's address: the scheme's default where it names none.
+      if (u.hostname === "localhost" || u.hostname === "[::1]") keep.add(`${u.hostname}:${u.port || (u.protocol === "https:" ? "443" : "80")}`);
+    } catch {
+      /* a row with no address keeps nothing */
+    }
+  }
+  let all = [];
+  try {
+    all = await appSession.cookies.get({});
+  } catch (err) {
+    console.warn(`desktop: could not read the app's cookies: ${err.message}`);
+    return;
+  }
+  for (const cookie of all) {
+    const host = String(cookie.domain || "").replace(/^\./, "");
+    const at = host === "localhost" ? "localhost" : host === "[::1]" || host === "::1" ? "[::1]" : "";
+    const named = /^pc_token(?:_(\d+))?$/.exec(cookie.name || "");
+    if (!at || !named) continue;
+    if (named[1] && keep.has(`${at}:${named[1]}`)) continue;
+    await appSession.cookies.remove(`http://${at}/`, cookie.name).catch((err) => console.warn(`desktop: could not remove ${cookie.name} for ${at}: ${err.message}`));
+  }
+  await appSession.cookies.flushStore().catch((err) => console.warn(`desktop: could not flush the app's cookies: ${err.message}`));
+}
+
 /** Re-probe every row's health, credential-free. Never mutates the registry. */
 async function refreshHealth() {
   if (!shellStore) return endpointHealth;
+  syncPaired();
   endpointHealth = await probeAll(loadRegistry(shellStore), { localBaseUrl: localGatewayUrl || "" });
   return endpointHealth;
 }
@@ -1763,7 +2571,7 @@ async function navigateToEndpoint(win, url, { isLocal = false } = {}) {
     if (isLocal) await waitForBackend(win);
     else await waitForEndpoint(win, url);
     if (win.isDestroyed()) return false;
-    wc.loadURL(url);
+    loadOrPark(wc, url);
     if (!isLocal) wc.once("did-finish-load", () => adoptInstanceName(wc, url));
     return true;
   } catch (err) {
@@ -1808,7 +2616,7 @@ async function adoptInstanceName(wc, url) {
   if (!row) return;
   try {
     const name = await wc.executeJavaScript(
-      `fetch('/api/companion/discovery', {credentials: 'same-origin'})
+      `fetch('/api/companion/discovery', {credentials: 'same-origin', headers: ${PAGE_OWN_PAIR_HEADERS}})
          .then(r => r.ok ? r.json() : null)
          .then(j => (j && typeof j.instance_name === 'string') ? j.instance_name : '')
          .catch(() => '')`
@@ -1843,6 +2651,7 @@ function connectHandlers() {
       const plan = await prepareEndpoint(input);
       if (!plan.ok) return plan;
       const { id } = confirmEndpoint(shellStore, plan, { label });
+      syncPaired();
       startupWarnings = [];
       const ok = await navigateToEndpoint(mainWindow, plan.navigateTo, { isLocal: plan.trust === "loopback" && plan.navigateTo === localGatewayUrl });
       if (ok) connectDialog.close();
@@ -1871,6 +2680,7 @@ function connectHandlers() {
     },
     forget: async (id) => {
       const result = forgetEndpoint(shellStore, id);
+      syncPaired();
       if (result.ok) {
         const next = { ...endpointHealth };
         delete next[id];
@@ -1886,6 +2696,11 @@ function connectHandlers() {
     // app's own gateway first (`bringUpLocalGateway`), and the main window on it.
     start: async () => {
       if (localState.state === "starting") return { ok: false, code: "starting", message: "A gateway for this home is already starting." };
+      // The row's Sign In Again: the gateway runs and ended this app's sign-in (`shellSignedOut`).
+      if (localState.state === "signed_out") {
+        const signed = await signInAgain();
+        return signed.ok ? handlers.switchTo(LOCAL_ENDPOINT_ID) : { ok: false, code: "signed_out", message: signed.message };
+      }
       if (!(await startLocalHere())) {
         return { ok: false, code: localState.state, message: localState.sentence || "No gateway could be brought up for this home." };
       }
@@ -1961,7 +2776,16 @@ async function showLoadingThenConnect(win) {
  */
 async function startLocalHere() {
   const hadGateway = Boolean(localGatewayUrl);
-  if (gatewayProcess) await stopGateway();
+  if (gatewayProcess) {
+    // The last start's session is still held: nothing carries it to the port while that start stops
+    // and the next one starts. The next ready line takes it from there (`adoptLocalGateway`).
+    if (localSignIn && localSignIn.held && !adoptedGateway) {
+      stopPresenceRefresh();
+      gatewayGone = true;
+      withholdForGood();
+    }
+    await stopGateway();
+  }
   if (!(await bringUpLocalGateway())) return false;
   if (!hadGateway) await setUpFirstGateway();
   return true;
@@ -1982,8 +2806,8 @@ async function useRunningHere() {
 /** The first gateway the windows have, set up as the app's start sets one up. */
 async function setUpFirstGateway() {
   if (shellStore) rememberLocalGateway(shellStore, localGatewayUrl);
-  await registerWithGateway();
   startPresenceRefresh();
+  await registerWithGateway();
   buddyPresence?.start();
 }
 
@@ -2007,7 +2831,7 @@ async function openNewTab() {
   try {
     if (isLocal) await waitForBackend(tabWin);
     else await waitForEndpoint(tabWin, target);
-    if (!tabWin.isDestroyed()) wc.loadURL(target);
+    if (!tabWin.isDestroyed()) loadOrPark(wc, target);
   } catch {
     if (!tabWin.isDestroyed()) tabWin.destroy();
   }
@@ -2109,7 +2933,8 @@ function startBuddy() {
   buddyPresence = makeBuddyPresence({
     buddy,
     store: shellStore,
-    url: () => (localGatewayUrl ? `${localGatewayUrl}/#/buddy` : null),
+    // Nothing loads the buddy while the windows' sign-in is withheld: it starts again once it is back.
+    url: () => buddyUrl(),
     prepare: guardBuddyContents,
     onStart: () => absence.start(),
     onStop: () => absence.stop(),
@@ -2243,7 +3068,8 @@ function makeThisAppsUpdater() {
     execPath: process.execPath,
     appImage: process.env.APPIMAGE || "",
     // The pin, unless the home is served by a gateway the app found running: its own install pins it.
-    policy: () => readUpdatePolicy({ home: PERSONALCLAW_HOME, ownGateway: !["adopted", "served"].includes(localState.state) }),
+    // The kind of gateway, not what the row says (a signed-out row is still one kind or the other).
+    policy: () => readUpdatePolicy({ home: PERSONALCLAW_HOME, ownGateway: !adoptedGateway && localState.state !== "served" }),
     // The app's own folder, which the system's temp cleaning never empties under a waiting update
     // and no other account can make: the updater keeps it 0700.
     workDir: path.join(app.getPath("userData"), "app-update"),
@@ -2255,7 +3081,7 @@ function makeThisAppsUpdater() {
     trash: (p) => shell.trashItem(p),
     request: require("https").request,
     store: shellStore,
-    ownsGateway: () => localState.state === "own",
+    ownsGateway: () => gatewayWatch.kind === "own",
     log: (msg) => console.log(`desktop: ${msg}`),
     onState: (state) => pushToBridged(BaseWindow.getAllWindows(), IPC_CHANNELS.appUpdateState, state),
   });
@@ -2268,7 +3094,8 @@ function startAppUpdater() {
   if (!appUpdater) return;
   const last = appUpdater.start();
   if (last && !last.ok) deepLinkInbox.receive("personalclaw://settings/updates");
-  if (localState.state === "own" || localState.state === "adopted") appUpdater.trashPrevious();
+  // Whether a gateway is up, not what the row says (a signed-out row is still a gateway that runs).
+  if (gatewayWatch.kind && !gatewayGone) appUpdater.trashPrevious();
 }
 
 /** The app menu's Check for Updates…: check now, and show the answer in Settings › Updates. */
@@ -2334,6 +3161,7 @@ if (!app.requestSingleInstanceLock()) {
       cookies: session.defaultSession.cookies,
       log: (msg) => console.warn(`desktop: ${msg}`),
     });
+    watchWindowTraffic(session.defaultSession);
     const appMenu = Menu.buildFromTemplate([
       ...appMenuTemplate(),
       { role: "editMenu" },
@@ -2402,6 +3230,10 @@ if (!app.requestSingleInstanceLock()) {
     // has the registry, and non-fatal by construction: a corrupt or unreadable store degrades to
     // spawn-local with a warning rather than taking the app down with it.
     shellStore = openShellStore({ home: PERSONALCLAW_HOME, log: (msg) => console.warn(`desktop: ${msg}`) });
+    // Before any window loads one: the gateways the owner added are the loopback origins it may,
+    // and no earlier version's localhost window cookie is left.
+    syncPaired();
+    await purgeStaleLocalCookies(session.defaultSession);
     makeHide(shellStore);
     appUpdater = makeThisAppsUpdater();
     // A locked screen or sleep is away at once; unlocking or waking reads the idle time again.
@@ -2434,13 +3266,13 @@ if (!app.requestSingleInstanceLock()) {
     // This home's running gateway when one serves it, else the app's own. One that cannot be
     // brought up is said on the Gateways window's "This computer" row (`showLoadingThenConnect`).
     await bringUpLocalGateway();
+    // Counts need `localGatewayUrl`, so the doorbell rings once the gateway is up, before the
+    // registration. With no gateway the menu simply reads "not connected".
+    startPresenceRefresh();
     // Needs localGatewayUrl from the READY line, so it follows the gateway start. A
     // failure here leaves the gateway reporting "not connected" — degraded but
     // honest — and never blocks the window.
     await registerWithGateway();
-    // Counts need `localGatewayUrl`, so the doorbell rings once the gateway is up. With no
-    // gateway the menu simply reads "not connected".
-    startPresenceRefresh();
 
     // ── spawn-local vs connect ──
     // `describeStartup` returns spawn-local for every reason it cannot fully justify doing
@@ -2525,6 +3357,7 @@ app.on("before-quit", (event) => {
         try {
           const held = localSignIn ? await localSignIn.release() : null;
           if (held) await signOutLocalSession(held, ms);
+          await signOutKept(ms);
         } catch (err) {
           console.warn(`desktop: sign-out on quit failed: ${err.message}`);
         }

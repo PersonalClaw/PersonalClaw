@@ -1,7 +1,64 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { AUTH_SWITCHES, INSTALL_KIND, NOT_PASSED_ON, buildGatewayEnv } = require("../gatewayEnv");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+const { AUTH_SWITCHES, INSTALL_KIND, NOT_PASSED_ON, appHome, buildGatewayEnv } = require("../gatewayEnv");
+
+/**
+ * `appHome`'s answers for a HOME and a PERSONALCLAW_HOME (`named`), which
+ * `tests/test_desktop_home_gateway_parity.py` checks are the loader's own (`resolve_config_dir`),
+ * so the app and its gateway resolve one home. Every folder but the system trees is under `/h`,
+ * which no machine has, so a link on the machine running the test can't change an answer.
+ */
+const HOME_VECTORS = Object.freeze([
+  { home: "/h", named: "~/pc", resolved: "/h/pc" },
+  { home: "/h", named: "~", resolved: "/h" },
+  { home: "/h", named: "/h/a/../pc", resolved: "/h/pc" },
+  { home: "/h", named: "/usr/local/pc", resolved: "/h/.personalclaw" },
+  { home: "/h", named: "/System/pc", resolved: "/h/.personalclaw" },
+  { home: "/h", named: "/", resolved: "/h/.personalclaw" },
+  { home: "/h", named: "", resolved: "/h/.personalclaw" },
+]);
+
+describe("appHome: the home the app runs in, resolved as its gateway resolves it", () => {
+  it("gives the loader's answer for each vector", () => {
+    for (const v of HOME_VECTORS) {
+      assert.equal(appHome({ HOME: v.home, PERSONALCLAW_HOME: v.named }).home, v.resolved, JSON.stringify(v));
+    }
+    assert.equal(appHome({ HOME: "/h" }).home, "/h/.personalclaw", "an unset home is the default");
+  });
+
+  it("says whether the environment named a home", () => {
+    assert.equal(appHome({ HOME: "/h", PERSONALCLAW_HOME: "~/pc" }).named, true);
+    assert.equal(appHome({ HOME: "/h", PERSONALCLAW_HOME: "/usr/pc" }).named, true, "a refused home was still named");
+    assert.equal(appHome({ HOME: "/h", PERSONALCLAW_HOME: "" }).named, false);
+    assert.equal(appHome({ HOME: "/h" }).named, false);
+  });
+
+  it("refuses a system tree on the resolved path, as the loader does: /etc is refused, macOS's /private/etc is not", () => {
+    const linked = (p) => (p === "/etc" || p.startsWith("/etc/") ? `/private${p}` : fs.realpathSync.native(p));
+    assert.equal(appHome({ HOME: "/h", PERSONALCLAW_HOME: "/etc/pc" }, { realpath: linked }).home, "/private/etc/pc");
+    const plain = (p) => (p === "/etc" ? "/etc" : fs.realpathSync.native(p));
+    assert.equal(appHome({ HOME: "/h", PERSONALCLAW_HOME: "/etc/pc" }, { realpath: plain }).home, "/h/.personalclaw");
+  });
+
+  it("follows a link to the folder it names: one into a system tree is refused, any other is its target", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pclaw-app-home-"));
+    const real = path.join(dir, "real");
+    fs.mkdirSync(real);
+    fs.symlinkSync(real, path.join(dir, "elsewhere"));
+    fs.symlinkSync("/usr", path.join(dir, "into-usr"));
+    assert.equal(appHome({ HOME: "/h", PERSONALCLAW_HOME: path.join(dir, "elsewhere", "pc") }).home, path.join(fs.realpathSync.native(real), "pc"));
+    assert.equal(appHome({ HOME: "/h", PERSONALCLAW_HOME: path.join(dir, "into-usr", "pc") }).home, "/h/.personalclaw");
+  });
+
+  it("makes a relative home absolute against the working folder", () => {
+    assert.equal(appHome({ HOME: "/h", PERSONALCLAW_HOME: "pc" }, { cwd: () => "/w" }).home, "/w/pc");
+  });
+});
 
 /**
  * The gateway spawn environment.
@@ -108,6 +165,15 @@ describe("buildGatewayEnv", () => {
     });
     assert.ok(!("PERSONALCLAW_ROLL_BACK_FROM" in env));
     assert.deepStrictEqual([...NOT_PASSED_ON], ["PERSONALCLAW_ROLL_BACK_FROM"]);
+  });
+
+  it("hands the gateway the home the app resolved when the app's environment named one, and none when it named none", () => {
+    assert.equal(buildGatewayEnv({ env: { ...base, PERSONALCLAW_HOME: "~/pc" } }).PERSONALCLAW_HOME, "/Users/someone/pc", "the gateway was handed the home as written");
+    assert.equal(buildGatewayEnv({ env: { ...base, PERSONALCLAW_HOME: "/usr/local/pc" } }).PERSONALCLAW_HOME, "/Users/someone/.personalclaw", "a refused home was handed on");
+    assert.ok(!("PERSONALCLAW_HOME" in built()), "an unset home was set for the gateway");
+    for (const v of HOME_VECTORS.filter((x) => x.named)) {
+      assert.equal(buildGatewayEnv({ env: { HOME: v.home, PERSONALCLAW_HOME: v.named } }).PERSONALCLAW_HOME, appHome({ HOME: v.home, PERSONALCLAW_HOME: v.named }).home, v.named);
+    }
   });
 
   it("never mutates the environment it was handed", () => {

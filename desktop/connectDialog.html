@@ -154,10 +154,11 @@
             // No gateway serves this computer's row: start one here, try again, or use this home's
             // running gateway, which the app did not start.
             const using = row.localAction.id === 'use';
+            const signing = using || row.localAction.id === 'sign-in';
             const act = el('button', 'primary', row.localAction.label);
             act.addEventListener('click', async () => {
               act.disabled = true;
-              act.textContent = using ? 'Signing in…' : 'Starting…';
+              act.textContent = signing ? 'Signing in…' : 'Starting…';
               const res = using ? await window.pclawConnect.use(false) : await window.pclawConnect.start();
               if (!res || !res.ok) renderBanners([{ code: 'start_failed', message: (res && res.message) || 'No gateway could be started here.' }]);
               load();

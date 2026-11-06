@@ -127,7 +127,8 @@ describe("machine-local credentials never leave loopback", () => {
   it("sends the shell's sign-in only through `postGateway`, `getGateway` and the doorbell's `socketGateway`", () => {
     // The session the ready line hands out is the owner's. Read from one place (`localSignIn`),
     // and put on a request by the three helpers that target the spawned gateway and nothing else.
-    const sites = [...MAIN.matchAll(/localSignIn\.authorization\(\)/g)];
+    // A check that one is held (`.Authorization` read alone) sends nothing.
+    const sites = [...MAIN.matchAll(/localSignIn\.authorization\(\)(?!\.Authorization)/g)];
     assert.strictEqual(sites.length, 3, `expected three sites, found ${sites.length}`);
     for (const m of sites) {
       const before = MAIN.slice(0, m.index);
@@ -136,6 +137,12 @@ describe("machine-local credentials never leave loopback", () => {
       assert.ok(opener > 0 && m.index < closer, "the sign-in is sent outside the three loopback helpers");
       assert.match(MAIN.slice(opener, closer), /assertLoopbackTarget\(localGatewayUrl/, "a helper that sends the sign-in re-asserts loopback");
     }
+    // The held session's one read before a found gateway's same-start lift goes to 127.0.0.1 alone.
+    const held = [...MAIN.matchAll(/localSignIn\.heldAuthorization\(\)/g)];
+    assert.equal(held.length, 1, "the held session is read for more than the one read before a lift");
+    const read = MAIN.slice(MAIN.indexOf("function readHeldSessionAt("), MAIN.indexOf("\n}\n", MAIN.indexOf("function readHeldSessionAt(")));
+    assert.ok(held[0].index > MAIN.indexOf("function readHeldSessionAt("), "the held session is read outside readHeldSessionAt");
+    assert.match(read, /hostname: "127\.0\.0\.1"/);
     // A sign-out is its own session ending itself, still through postGateway.
     const signOut = MAIN.slice(MAIN.indexOf("async function signOutLocalSession("));
     const body = signOut.slice(0, signOut.indexOf("\n}\n"));
@@ -148,6 +155,15 @@ describe("machine-local credentials never leave loopback", () => {
     // the gateway sets for it would outlive the app in its cookie file.
     assert.strictEqual(/[?&](app_)?token=/.test(MAIN), false, "main.js composes a URL with a token in it");
     assert.match(MAIN, /wc\.loadURL\(localGatewayUrl\)/, "the window no longer loads the bare origin");
+  });
+});
+
+describe("the app runs in the home its gateway resolves", () => {
+  it("takes its home from appHome, never as the environment wrote it", () => {
+    // The seam injects PERSONALCLAW_HOME as a constant, so no run under stand-ins can see this read.
+    assert.match(MAIN, /^const PERSONALCLAW_HOME = appHome\(process\.env\)\.home;$/m, "main reads its home as written");
+    assert.doesNotMatch(MAIN, /process\.env\.PERSONALCLAW_HOME\b/, "main reads PERSONALCLAW_HOME itself, past appHome");
+    assert.match(MAIN, /const \{[^}]*\bappHome\b[^}]*\} = require\("\.\/gatewayEnv"\);/, "appHome is not gatewayEnv's");
   });
 });
 
@@ -197,8 +213,16 @@ describe("the spawn-local path is unchanged", () => {
     assert.ok(start > 0, "the stdout reader is gone — this rail is now blind");
     const body = MAIN.slice(start, MAIN.indexOf("\n    });\n", start));
     assert.match(body, /parseReadyLine\(line\)/);
-    assert.match(body, /if \(settled\) \{\s*followRestartedGateway\(ready\)/, "a later ready line is dropped");
-    assert.match(body, /adoptLocalGateway\(ready\)/, "the first ready line signs nothing in");
+    assert.match(body, /if \(settled\) \{\s*takeReadyLine\(child, ready, true\)/, "a later ready line is dropped");
+    // Only from the child that is still the app's gateway: the handler asks before it hands a line on,
+    // and takeReadyLine asks first.
+    assert.match(body, /if \(!ready\) continue;\s*(\/\/[^\n]*\n\s*)*if \(readyLineIsStale\(child, ready\)\) continue;\s*if \(settled\)/, "the handler takes a line from a child that is no longer the gateway");
+    assert.match(MAIN, /function takeReadyLine\(child, ready, settled\) \{\s*if \(readyLineIsStale\(child, ready\)\) return Promise\.resolve\(\);/, "takeReadyLine takes a line from a child that is no longer the gateway");
+    assert.match(MAIN, /function readyLineIsStale\(child, ready\) \{\s*if \(gatewayProcess && gatewayProcess\.pid === child\.pid\) return false;/);
+    assert.match(body, /takeReadyLine\(child, ready, false\)/, "the first ready line signs nothing in");
+    const take = MAIN.slice(MAIN.indexOf("function takeReadyLine("), MAIN.indexOf("\n}\n", MAIN.indexOf("function takeReadyLine(")));
+    assert.match(take, /gatewayWatch\.own\(start\);[\s\S]*followRestartedGateway\(ready, \{ start \}\) : adoptLocalGateway\(ready, \{ start \}\)/);
+    assert.equal([...MAIN.matchAll(/gatewayWatch\.own\(start\)/g)].length, 2, "the own gateway's watch is armed outside the ready line and Sign In Again");
   });
 });
 
@@ -226,15 +250,41 @@ describe("the app starts its own gateway first, uses this home's running one onl
     assert.doesNotMatch(up, /reachHomeGateway|homeGateway\.signIn|adoptHomeGateway/, "the start signs in to a gateway nobody chose");
     assert.match(up, /if \(found\.ok\) \{\s*\/\/[^\n]*\n\s*if \(autoUseRunning\(\)\) return \(await useRunningGateway\(\)\)\.ok;\s*startFailure = \{ \.\.\.exit, found: true \};\s*setLocalState\("found", foundSentence\(found\.gateway\)\);\s*return false;/);
     assert.match(fnBody("autoUseRunning"), /shellStore\.getItem\(AUTO_USE_KEY\) === "1"/, "the standing yes is on unless the owner ticked it");
-    // Signing in to a gateway the app found happens in exactly one place, and is reached only from
-    // a press, the standing yes, and the adopted watch's follow of a gateway already in use.
+    // Signing in happens in five places, each after a proof: reachHomeGateway (a press, the standing
+    // yes), the watch's follow of a gateway in use that moved, its take-back of a gateway that
+    // started again where it was, the owner's Sign In Again, and the window's door of the app's own.
     const signIns = [...MAIN.matchAll(/homeGateway\.signIn\(/g)];
-    assert.equal(signIns.length, 1);
-    assert.ok(signIns[0].index > MAIN.indexOf("async function reachHomeGateway(") && signIns[0].index < MAIN.indexOf("const AUTO_USE_KEY"), "a sign-in outside reachHomeGateway");
-    const callers = [...MAIN.matchAll(/await reachHomeGateway\(/g)].map((m) => MAIN.slice(MAIN.lastIndexOf("\nfunction ", m.index) + 1 || MAIN.lastIndexOf("\nasync function ", m.index) + 1, m.index));
-    assert.equal(callers.length, 2, "reachHomeGateway gained a caller");
+    const inside = (fn, at) => at > MAIN.indexOf(`async function ${fn}(`) && at < MAIN.indexOf("\n}\n", MAIN.indexOf(`async function ${fn}(`));
+    const places = ["reachHomeGateway", "followMovedGateway", "takeBackAdoptedGateway", "signInAgain", "askWindowDoor"];
+    assert.equal(signIns.length, places.length);
+    for (const m of signIns) assert.ok(places.some((fn) => inside(fn, m.index)), "a sign-in outside the five places");
+    const callers = [...MAIN.matchAll(/await reachHomeGateway\(/g)];
+    assert.equal(callers.length, 1, "reachHomeGateway gained a caller");
     assert.match(fnBody("useRunningGateway"), /const found = await reachHomeGateway\(\);/);
-    assert.match(MAIN.slice(MAIN.indexOf("const adoptedWatch = makeAdoptedWatch({"), MAIN.indexOf("gone: () => adoptedGone(),")), /follow: async \(\) => \{\s*const moved = await reachHomeGateway\(\);/);
+    assert.match(MAIN.slice(MAIN.indexOf("const gatewayWatch = makeGatewayWatch({"), MAIN.indexOf("gone: (was) => adoptedGone(was),")), /follow: \(\) => followMovedGateway\(\),/);
+    // The follow asks a moved start's door within that start's asks, as the take-back does.
+    assert.match(fnBody("followMovedGateway"), /if \(!spendDoorAsk\(start\)\) return false;\s*const gen = localSignIn\.gen;\s*const signed = await homeGateway\.signIn\(found\.gateway, PERSONALCLAW_HOME\);/);
+  });
+
+  it("sends a page's own pair on every fetch main runs in a page, as the page itself would", () => {
+    const { PAGE_OWN_PAIR_HEADERS, PAIR_HEADER } = require("../windowTraffic");
+    const vm = require("node:vm");
+    const runs = [...MAIN.matchAll(/executeJavaScript\(\s*`([\s\S]*?)`/g)].map((m) => m[1]).filter((script) => /\bfetch\(/.test(script));
+    assert.ok(runs.length >= 2, "the injected fetches are gone: this scan is blind");
+    const pagePair = "C".repeat(43);
+    for (const raw of runs) {
+      assert.match(raw, /\$\{PAGE_OWN_PAIR_HEADERS\}/, raw.slice(0, 80));
+      const sent = [];
+      const page = {
+        window: { localStorage: { getItem: (key) => (key === "pc_pair" ? pagePair : null) } },
+        fetch: (url, init) => (sent.push({ url, headers: { ...(init && init.headers) } }), Promise.resolve({ ok: false, json: async () => null })),
+      };
+      vm.runInNewContext(raw.replace(/\$\{PAGE_OWN_PAIR_HEADERS\}/g, PAGE_OWN_PAIR_HEADERS), page);
+      assert.equal(sent.length, 1, raw.slice(0, 80));
+      assert.equal(sent[0].headers[PAIR_HEADER], pagePair, `${sent[0].url} went without the page's own pair`);
+    }
+    assert.match(fnBody("noteSessionEvent"), /\$\{PAGE_OWN_PAIR_HEADERS\}/);
+    assert.match(fnBody("adoptInstanceName"), /\$\{PAGE_OWN_PAIR_HEADERS\}/);
   });
 
   it("uses a running gateway only while its own is neither up nor starting, on a press and the standing yes alike, and keeps the box's answer", () => {
@@ -259,8 +309,8 @@ describe("the app starts its own gateway first, uses this home's running one onl
 
   it("holds an adopted gateway's session the way it holds a ready line's", () => {
     const adopt = fnBody("adoptHomeGateway");
-    assert.match(adopt, /await followRestartedGateway\(found\.ready\)/);
-    assert.match(adopt, /await adoptLocalGateway\(found\.ready\)/);
+    assert.match(adopt, /await followRestartedGateway\(found\.ready, \{ pair: found\.pair, start \}\)/);
+    assert.match(adopt, /await adoptLocalGateway\(found\.ready, \{ pair: found\.pair, start \}\)/);
   });
 
   it("stops, signals and kills only its own child", () => {
@@ -281,32 +331,42 @@ describe("the app starts its own gateway first, uses this home's running one onl
     }
   });
 
-  it("follows an adopted gateway through the doorbell, and registers again only once it is proven", () => {
-    // `adoptedWatch.js` decides; main.js routes the doorbell's news to it and does what it says.
-    const at = MAIN.indexOf("const adoptedWatch = makeAdoptedWatch({");
-    assert.ok(at > 0, "the adopted watch is gone — this rail is now blind");
+  it("follows the gateway in use through the doorbell, and registers again only once it is proven", () => {
+    // `gatewayWatch.js` decides; main.js routes the doorbell's news to it and does what it says.
+    const at = MAIN.indexOf("const gatewayWatch = makeGatewayWatch({");
+    assert.ok(at > 0, "the gateway watch is gone — this rail is now blind");
     const made = MAIN.slice(at, MAIN.indexOf("\n});\n", at));
     assert.match(made, /reach: \(home\) => homeGateway\.reach\(home\)/);
-    assert.match(made, /proven: \(\{ pid, port \}\) => \{\n\s+adoptedGateway = \{ pid, port \};\n\s+shellToken = null;\n\s+registerWithGateway\(\)/, "a restart's new registry is not registered with, or not with the proof's pid");
-    assert.match(made, /gone: \(\) => adoptedGone\(\)/);
-    assert.match(MAIN, /if \(adoptedGateway\) \{\n\s+if \(state === "up"\) adoptedWatch\.up\(\);\n\s+else adoptedWatch\.lost\(\);/);
+    assert.match(made, /proven: \(was, gateway\) => \(was\.kind === "own" \? localSignIn\.lift\(lostAt, \{ start: startOf\(gateway\) \}\) : takeBackAdoptedGateway\(was, gateway\)\)/);
+    assert.match(made, /back: \(was\) => resumeGateway\(was\)/);
+    assert.match(made, /gone: \(was\) => adoptedGone\(was\)/);
+    // The registration and the doorbell come only once the windows' sign-in is back.
+    // The doorbell first, right after the lift; then the kept sign-outs and the registration.
+    assert.match(fnBody("resumeGateway"), /shellToken = null;[\s\S]*startPresenceRefresh\(\);\s*await signOutKept\(\);\s*await registerWithGateway\(\);/, "a restart's new registry is not registered with");
+    // The app's start and a first gateway ring before they register, as every other sign-in does.
+    assert.match(fnBody("setUpFirstGateway"), /startPresenceRefresh\(\);\s*await registerWithGateway\(\);/);
+    assert.match(MAIN, /await bringUpLocalGateway\(\);[\s\S]{0,200}?\n\s*startPresenceRefresh\(\);[\s\S]{0,300}?\n\s*await registerWithGateway\(\);/);
+    assert.match(MAIN, /if \(state === "up"\) \{[\s\S]{0,160}gatewayWatch\.up\(\);[\s\S]{0,80}\} else \{[\s\S]{0,80}loseGateway\(\);/);
     assert.doesNotMatch(MAIN, /function watchAdoptedGateway\(/, "a second follower of the doorbell's news");
-    assert.match(fnBody("adoptHomeGateway"), /adoptedWatch\.adopt\(adoptedGateway\);[\s\S]*followRestartedGateway/, "a gateway is followed before the watch knows it");
+    assert.match(fnBody("adoptHomeGateway"), /gatewayWatch\.adopt\([\s\S]*followRestartedGateway/, "a gateway is followed before the watch knows it");
   });
 
   it("sends nothing that carries the home's credentials while they are withheld", () => {
     // The shell's session, the local secret and the capability token all leave through these three
     // doors; each asks first. Withheld from the doorbell's loss of an adopted gateway until a proof on
     // its port, and from the stop of the gateway the app used until a new one is in use.
-    assert.match(fnBody("postGateway"), /if \(!localGatewayUrl \|\| credentialsWithheld\(\)\) return resolve\(null\);/);
-    assert.match(fnBody("getGateway"), /if \(!localGatewayUrl \|\| credentialsWithheld\(\)\) return resolve\(null\);/);
+    // A sign-out (signedIn: false) waits only for a proven gateway; anything signed in waits for the
+    // shell's own sign-in too, and for a credential to carry.
+    assert.match(fnBody("postGateway"), /if \(!localGatewayUrl \|\| gatewayGone \|\| gatewayWatch\.withheld\) return resolve\(null\);\s*if \(signedIn && \(credentialsWithheld\(\) \|\| !localSignIn\.authorization\(\)\.Authorization\)\) return resolve\(null\);/);
+    assert.match(fnBody("getGateway"), /if \(!localGatewayUrl \|\| credentialsWithheld\(\) \|\| !localSignIn\.authorization\(\)\.Authorization\) return resolve\(null\);/);
     assert.match(fnBody("socketGateway"), /if \(credentialsWithheld\(\)\) throw/);
-    assert.match(fnBody("credentialsWithheld"), /return gatewayGone \|\| adoptedWatch\.withheld;/);
+    assert.match(fnBody("credentialsWithheld"), /return gatewayGone \|\| gatewayWatch\.withheld \|\| Boolean\(localSignIn && localSignIn\.signedOut\);/);
     assert.match(fnBody("gatewayLost"), /gatewayGone = true;/);
     assert.match(fnBody("adoptedGone"), /gatewayGone = true;/);
     assert.match(fnBody("adoptLocalGateway"), /gatewayGone = false;/);
-    const sends = [...MAIN.matchAll(/X-Local-Secret|X-Shell-Token|localSignIn\.authorization\(\)/g)].length;
-    assert.equal(sends, 6, "a new door carries the home's credentials: give it the same ask");
+    // A check that a credential is held (`.authorization().Authorization`) carries none.
+    const sends = [...MAIN.matchAll(/X-Local-Secret|X-Shell-Token|localSignIn\.authorization\(\)(?!\.Authorization)|localSignIn\.heldAuthorization\(\)/g)].length;
+    assert.equal(sends, 7, "a new door carries the home's credentials: give it the same ask");
   });
 
   it("opens the releases page for a home a newer PersonalClaw served at its one fixed address, with nothing the dialog sent", () => {
@@ -335,7 +395,7 @@ describe("a start that timed out is the app's own gateway, never another one (ma
       startFailure: null,
       adoptedGateway: null,
       localState: { state: "", sentence: "" },
-      adoptedWatch: { drop() {} },
+      gatewayWatch: { drop() {} },
       sendStatus() {},
       setOlder: () => did.push("older"),
       setLocalState: (state, sentence = "") => {
@@ -428,11 +488,37 @@ describe("there is no second retry loop racing the SPA", () => {
     assert.ok(stay > 0 && load > stay, "the reload is not gated on a reachable probe");
   });
 
+  it("drops the last start's watch before a start, and registers the windows' traffic once, before the first window", () => {
+    const up = MAIN.slice(MAIN.indexOf("async function bringUpLocalGateway("), MAIN.indexOf("\n}\n", MAIN.indexOf("async function bringUpLocalGateway(")));
+    assert.match(up, /^async function bringUpLocalGateway\(\) \{\s*(\/\/[^\n]*\n\s*)*gatewayWatch\.drop\(\);/, "a start runs with the last start's watch armed");
+    // Every webRequest listener is registered inside watchWindowTraffic, which whenReady calls once,
+    // before the first window; the stale localhost cookies are gone by then too.
+    const watch = MAIN.slice(MAIN.indexOf("function watchWindowTraffic("), MAIN.indexOf("\n}\n", MAIN.indexOf("function watchWindowTraffic(")));
+    for (const m of MAIN.matchAll(/webRequest\.on[A-Z]\w*\(/g)) {
+      assert.ok(m.index > MAIN.indexOf("function watchWindowTraffic(") && m.index < MAIN.indexOf("function watchWindowTraffic(") + watch.length, "a webRequest listener outside watchWindowTraffic");
+    }
+    // Across the file: watchWindowTraffic is defined once and called once, and registerWindowTraffic
+    // is called once, inside it. No window, view or other session registers its own.
+    assert.equal([...MAIN.matchAll(/watchWindowTraffic\(/g)].length, 2, "the windows' traffic is registered more than once");
+    const registers = [...MAIN.matchAll(/registerWindowTraffic\(/g)];
+    assert.equal(registers.length, 1, "the windows' traffic is registered outside watchWindowTraffic");
+    const watchAt = MAIN.indexOf("function watchWindowTraffic(");
+    assert.ok(registers[0].index > watchAt && registers[0].index < watchAt + watch.length, "the windows' traffic is registered outside watchWindowTraffic");
+    const ready = MAIN.slice(MAIN.indexOf("app.whenReady().then("));
+    assert.equal([...ready.matchAll(/watchWindowTraffic\(/g)].length, 1);
+    assert.ok(ready.indexOf("watchWindowTraffic(") < ready.indexOf("createWindow()"), "a window loads before its traffic is decided");
+    const purge = ready.indexOf("await purgeStaleLocalCookies(session.defaultSession);");
+    assert.ok(purge > ready.indexOf("syncPaired();") && purge < ready.indexOf("createWindow()"), "the first window loads before the stale cookies are gone");
+  });
+
   it("has no interval in the file: the menu bar's counts ride the doorbell, which polls only while down", () => {
     // The presence poll was the one interval here. The doorbell (`doorbell.js`) reads on each ring
     // while its socket is up and on its own timeouts while it is down, so a quit leaves no interval.
     assert.strictEqual([...MAIN.matchAll(/setInterval\(/g)].length, 0);
     assert.match(MAIN, /makeDoorbell\(/);
+    // The runtime record's read while the doorbell is up is a timeout its stop clears.
+    const stop = MAIN.slice(MAIN.indexOf("function stopPresenceRefresh("), MAIN.indexOf("\n}\n", MAIN.indexOf("function stopPresenceRefresh(")));
+    assert.match(stop, /stopRecordWatch\(\);\s*doorbell\.stop\(\);/);
   });
 });
 

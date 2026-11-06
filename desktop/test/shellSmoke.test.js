@@ -7,7 +7,8 @@ const { spawnSync } = require("node:child_process");
 const { PassThrough } = require("node:stream");
 const asar = require("@electron/asar");
 
-const { CODE_LOOP, SEED_CODE_LOOP, stubScript, writeStubBackend } = require("./smoke/writeStubBackend");
+const { CODE_LOOP, SEED, SEED_CODE_LOOP, SEED_FILES, stubScript, writeStubBackend } = require("./smoke/writeStubBackend");
+const { readRecord } = require("../homeGateway");
 const { COCKPIT_LINK, DEVTOOLS_SWITCH, MODE_LINK, LOOPBACK_PAGE, literal, MAIN_ERROR, SETTINGS_LINK, carriedOut, cliOptions, devtoolsPipe, landingMisses, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
 const { parseDeepLink } = require("../deepLinks");
 const { CONTROLS, PLANTED_MISSING, asarSources, debugSwitchProblems, missingEntries, packArchive, plantedCopy, shellSources } = require("./smoke/packedApp");
@@ -20,18 +21,24 @@ const { CONTROLS, PLANTED_MISSING, asarSources, debugSwitchProblems, missingEntr
 // error, how the asar is held to build.files, and the planted copies' plants.
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "pclaw-smoke-test-"));
+/** This process's environment with *home* as the home the shell passes its gateway, or none. */
+const shellEnv = (home = null) => {
+  const env = { ...process.env };
+  delete env.PERSONALCLAW_HOME;
+  return home ? { ...env, PERSONALCLAW_HOME: home } : env;
+};
 
 describe("the stub backend", () => {
-  it("hands the shell's arguments to the checkout's gateway, in the smoke's own home, on the scripted provider", () => {
+  it("hands the shell's arguments to the checkout's gateway, in the shell's home, on the scripted provider", () => {
     const dir = tmp();
     const script = writeStubBackend(dir, { backendDir: path.join(dir, "backend") });
     const text = fs.readFileSync(script, "utf8");
     assert.equal(path.basename(script), "personalclaw-backend", "where findPersonalclawBin looks");
     assert.ok(fs.statSync(script).mode & 0o100, "executable");
-    assert.match(text, new RegExp(`export PERSONALCLAW_HOME='${dir}/gateway-home'`));
+    assert.match(text, new RegExp(`\\|\\| PERSONALCLAW_HOME='${dir}/gateway-home'\nexport PERSONALCLAW_HOME\n`), "the smoke's own home only when the shell passes none");
     assert.match(text, /export PERSONALCLAW_SCRIPTED_MODEL_SCRIPT='.*web\/e2e\/fixtures\/scripted-chat\.json'/);
     assert.match(text, /exec '[^']*personalclaw' "\$@"\n$/);
-    for (const seed of ["config.json", "triggers.json"]) assert.ok(fs.existsSync(path.join(dir, "gateway-home", seed)), `seeded with ${seed}`);
+    for (const name of SEED_FILES) assert.ok(text.includes(`cp '${path.join(SEED, name)}' "$PERSONALCLAW_HOME/${name}"`), `seeded at launch with ${name}`);
     assert.match(text, /python3?' -c '/, "the code loop is seeded by the checkout's Python");
     assert.ok(fs.statSync(path.join(dir, "gateway-home", "workspace", CODE_LOOP.diff)).size > 0, "the file the cockpit link's diff names is in the loop's workspace, so its diff draws");
   });
@@ -56,11 +63,92 @@ describe("the stub backend", () => {
     const pidFile = path.join(dir, "gateway.pid");
     const script = path.join(dir, "stub");
     fs.writeFileSync(script, stubScript({ home: path.join(dir, "it's home"), workspace: dir, scripted: dir, command: fake, src: dir, pidFile }), { mode: 0o755 });
-    const run = spawnSync(script, ["gateway", "--port", "auto", "--json-ready", "--no-open"], { encoding: "utf8" });
+    const run = spawnSync(script, ["gateway", "--port", "auto", "--json-ready", "--no-open"], { encoding: "utf8", env: shellEnv() });
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /args: gateway --port auto --json-ready --no-open/);
     assert.match(run.stdout, new RegExp(`home: ${dir}/it's home`), "a quote in a path is kept, not broken out of");
     assert.match(fs.readFileSync(pidFile, "utf8"), /^\d+\n$/);
+  });
+  it("runs the gateway in the home the shell passes it, seeded there at launch, so the shell reads the record the gateway writes", () => {
+    const dir = tmp();
+    const seed = path.join(dir, "seed");
+    fs.mkdirSync(seed);
+    for (const name of SEED_FILES) fs.writeFileSync(path.join(seed, name), `{"seeded": "${name}"}\n`);
+    // In the gateway's place, what the gateway does as it starts: its runtime record, in its own home (gateway_base.py).
+    const fake = path.join(dir, "fake-personalclaw");
+    fs.writeFileSync(fake, '#!/bin/sh\nprintf \'{"pid": %s, "port": 51234}\\n\' "$$" > "$PERSONALCLAW_HOME/gateway.runtime.json"\n', { mode: 0o755 });
+    const pidFile = path.join(dir, "gateway.pid");
+    const script = path.join(dir, "stub");
+    fs.writeFileSync(script, stubScript({ home: path.join(dir, "gateway-home"), workspace: dir, scripted: dir, command: fake, src: dir, pidFile, seed }), { mode: 0o755 });
+    const shellHome = path.join(dir, "shell-home");
+    const run = spawnSync(script, ["gateway", "--port", "auto", "--json-ready", "--no-open"], { encoding: "utf8", env: shellEnv(shellHome) });
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(readRecord(shellHome), { pid: Number(fs.readFileSync(pidFile, "utf8")), port: 51234 }, "the shell's record watch finds no record of its gateway, and loses it");
+    assert.ok(!fs.existsSync(path.join(dir, "gateway-home")), "the gateway ran in a home apart from the shell's");
+    for (const name of SEED_FILES) assert.equal(fs.readFileSync(path.join(shellHome, name), "utf8"), `{"seeded": "${name}"}\n`, `the shell's home was not seeded with ${name}`);
+    for (const name of SEED_FILES) fs.writeFileSync(path.join(shellHome, name), "{}\n");
+    assert.equal(spawnSync(script, ["gateway"], { encoding: "utf8", env: shellEnv(shellHome) }).status, 0);
+    for (const name of SEED_FILES) assert.equal(fs.readFileSync(path.join(shellHome, name), "utf8"), "{}\n", `the home's own ${name} was seeded over`);
+    assert.equal(spawnSync(script, ["gateway"], { encoding: "utf8", env: shellEnv() }).status, 0);
+    assert.ok(readRecord(path.join(dir, "gateway-home")), "with no home passed, the gateway runs in the smoke's own");
+  });
+
+  /** A stand-in whose gateway says the home it was started in, under a user of the test's own. */
+  const refusing = ({ python = null } = {}) => {
+    const dir = tmp();
+    const seed = path.join(dir, "seed");
+    fs.mkdirSync(seed);
+    for (const name of SEED_FILES) fs.writeFileSync(path.join(seed, name), "{}\n");
+    const fake = path.join(dir, "fake-personalclaw");
+    fs.writeFileSync(fake, '#!/bin/sh\necho "ran in $PERSONALCLAW_HOME"\n', { mode: 0o755 });
+    const script = path.join(dir, "stub");
+    fs.writeFileSync(script, stubScript({ home: path.join(dir, "gateway-home"), workspace: dir, scripted: dir, command: fake, src: dir, pidFile: path.join(dir, "gateway.pid"), seed, python: python && python(dir) }), { mode: 0o755 });
+    // A home of this test's own stands for the user's: the default home is $HOME/.personalclaw.
+    const user = path.join(dir, "user");
+    fs.mkdirSync(user);
+    const run = (home) => spawnSync(script, ["gateway"], { encoding: "utf8", env: { ...shellEnv(home), HOME: user } });
+    return { dir, user, defaultHome: path.join(user, ".personalclaw"), run };
+  };
+  const REFUSED = /the smoke's gateway never runs in the default home/;
+
+  it("never runs the gateway in the default home, and writes nothing there first", () => {
+    const { defaultHome, run } = refusing();
+    for (const home of [defaultHome, `${defaultHome}/`]) {
+      const out = run(home);
+      assert.notEqual(out.status, 0, `the default home ${home} was not refused: ${out.stdout}`);
+      assert.match(out.stderr, REFUSED);
+      assert.doesNotMatch(out.stdout, /ran in/, `the gateway ran though the default home was passed: ${out.stdout}`);
+      assert.ok(!fs.existsSync(defaultHome), "wrote into the default home before refusing it");
+    }
+  });
+
+  it("refuses a link to the default home once it exists, and seeds nothing there", () => {
+    const { dir, defaultHome, run } = refusing();
+    fs.mkdirSync(defaultHome);
+    fs.writeFileSync(path.join(defaultHome, "config.json"), '{"the owner": "own"}\n');
+    fs.symlinkSync(defaultHome, path.join(dir, "link"));
+    const out = run(path.join(dir, "link"));
+    assert.notEqual(out.status, 0, `a link to the default home was not refused: ${out.stdout}`);
+    assert.match(out.stderr, REFUSED);
+    assert.doesNotMatch(out.stdout, /ran in/);
+    assert.ok(!fs.existsSync(path.join(defaultHome, "triggers.json")), "a seed was copied into the default home through the link");
+    assert.equal(fs.readFileSync(path.join(defaultHome, "config.json"), "utf8"), '{"the owner": "own"}\n');
+  });
+
+  it("asks the loader before it writes anything, where it has a Python: a home the loader calls the default gets nothing", () => {
+    // In the loader's place: a Python that answers every question with the default home's refusal.
+    const python = (dir) => {
+      const file = path.join(dir, "fake-python");
+      fs.writeFileSync(file, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      return file;
+    };
+    const { dir, run } = refusing({ python });
+    const alias = path.join(dir, "an-alias-only-the-loader-knows");
+    const out = run(alias);
+    assert.notEqual(out.status, 0, `the loader's refusal was not heeded: ${out.stdout}`);
+    assert.match(out.stderr, REFUSED);
+    assert.doesNotMatch(out.stdout, /ran in/);
+    assert.ok(!fs.existsSync(alias), "the home was made or seeded before the loader was asked");
   });
 });
 

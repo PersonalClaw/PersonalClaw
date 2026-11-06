@@ -591,7 +591,8 @@ describe("the tray's still orb", () => {
 
   it("takes an announced restart from the doorbell's connection, the one place the shell hears it", () => {
     const main = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "main.js"), "utf8");
-    const site = /onConnection: \(state\) => \{[\s\S]*?\n  \},/.exec(main);
+    assert.match(main, /onConnection: \(state\) => doorbellConnection\(state\),/, "the doorbell's news goes elsewhere");
+    const site = /function doorbellConnection\(state\) \{[\s\S]*?\n\}\n/.exec(main);
     assert.ok(site, "the doorbell's onConnection must be findable");
     assert.match(site[0], /trayPresence\.setRestarting\(state === "restarting"\);/);
     assert.equal((main.match(/setRestarting\(/g) || []).length, 1, "nothing else says restarting");
