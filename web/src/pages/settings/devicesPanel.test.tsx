@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { api, type DeviceRec, type DevicePairStart, type IntegrationRec } from '../../lib/api'
 import { encodeQr, qrPath } from '../../lib/qr'
 import { tab } from '../../lib/tab'
+import { TOUCH_TARGET } from '../../ui/Toggle'
 
 // ── Settings → Devices ────────────────────────────────────────────────────────────────────────
 //
@@ -516,6 +517,24 @@ describe('the list names every sign-in, and signs any of them out', () => {
     fireEvent.click(Array.from(dialog.querySelectorAll('button')).find((b) => /sign out all others/i.test(b.textContent ?? ''))!)
     await waitFor(() => expect(others).toHaveBeenCalledTimes(1))
     expect(one, 'one call, not a loop of single sign-outs').not.toHaveBeenCalled()
+  })
+
+  it('on a phone, every sign-out is a 44 px target', async () => {
+    // The UI matrix measured "Sign out <name>" and "Sign out all other devices" under 44 px at
+    // 320, 390, 412 and 768 px, once a second sign-in was listed. Each carries the compact widths'
+    // floor (`TOUCH_TARGET`); jsdom has no layout, so the classes that set the box are pinned.
+    vi.spyOn(api, 'devices').mockResolvedValue(rows())
+    mount()
+    await waitFor(() => expect(screen.getByText('Chrome on Mac')).toBeTruthy())
+    const signOuts = [
+      screen.getByRole('button', { name: /^Sign out all other devices$/i }),
+      ...screen.getAllByRole('button', { name: /^Sign out (?!all other devices)/i }),
+    ]
+    expect(signOuts.length, 'the others, each row and this device').toBeGreaterThan(2)
+    for (const button of signOuts) {
+      const name = button.getAttribute('aria-label') ?? button.textContent ?? ''
+      for (const floor of TOUCH_TARGET.split(' ')) expect(button.className, name).toContain(floor)
+    }
   })
 
   it('with only this device signed in there is no "sign out others" to offer', async () => {

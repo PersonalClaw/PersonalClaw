@@ -141,7 +141,7 @@ export function voidReason(sample: IdleSample, running: readonly string[]): stri
 
 /** The chats with a turn running on the gateway, read beside the page rather than by it, so the
  *  read is not one of the page's own requests. */
-export async function turnsRunning(page: Pick<Page, 'request' | 'evaluate'>): Promise<string[]> {
+export async function turnsRunning(page: Pick<Page, 'request' | 'evaluate' | 'context'>): Promise<string[]> {
   const res = await apiGet(page, '/api/chat/sessions')
   if (!res.ok()) throw new Error(`could not read whether a turn is running: GET /api/chat/sessions answered ${res.status()}`)
   const rows = (await res.json()) as { key: string; run_state?: { turn?: unknown } }[]
@@ -152,7 +152,7 @@ export async function turnsRunning(page: Pick<Page, 'request' | 'evaluate'>): Pr
  *  The page must carry the probe (`installIdleProbe`, as an init script) and be at rest. With
  *  `holds`, a window must hold that request too (`IdleRoute`). */
 export async function measureIdle(
-  page: Pick<Page, 'evaluate' | 'waitForTimeout' | 'request'>,
+  page: Pick<Page, 'evaluate' | 'waitForTimeout' | 'request' | 'context'>,
   holds?: string,
 ): Promise<{ sample: IdleSample; voided: string[] }> {
   const voided: string[] = []

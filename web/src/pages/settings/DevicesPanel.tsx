@@ -12,6 +12,7 @@ import { invalidateKeys, useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup } from './settingsUI'
 import { PairingQr } from './PairingQr'
 import { Button } from '../../ui/Button'
+import { TOUCH_TARGET } from '../../ui/Toggle'
 import { StatusPill, type StatusPillTone } from '../../ui/StatusPill'
 import { EmptyState, FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { relPast, absTime } from '../schedule/scheduleMeta'
@@ -355,7 +356,7 @@ export function DevicesPanel() {
             </div>
           </div>
         </div>
-        <Button size="xs" variant="danger" onClick={() => revoke(d)}
+        <Button size="xs" variant="danger" onClick={() => revoke(d)} className={TOUCH_TARGET}
           loading={revoking === d.id} ariaLabel={d.current ? 'Sign out of this device' : `Sign out ${name}`}>
           Sign out
         </Button>
@@ -519,7 +520,7 @@ export function DevicesPanel() {
         hint="Browsers, paired devices and the desktop app. Each kind has a limit of 20; past it, the one used least recently is signed out and told why, so a script minting tokens never signs one of these out."
         right={others > 0 ? (
           <Button size="xs" variant="secondary" onClick={() => revokeOthers(others)} loading={signingOutOthers}
-            ariaLabel="Sign out all other devices">
+            className={TOUCH_TARGET} ariaLabel="Sign out all other devices">
             Sign out all other devices
           </Button>
         ) : undefined}
