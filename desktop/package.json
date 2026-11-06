@@ -73,6 +73,7 @@
       "localSignIn.js",
       "homeGateway.js",
       "adoptedWatch.js",
+      "windowTraffic.js",
       "gatewayUrl.js",
       "endpointRegistry.js",
       "shellStore.js",
