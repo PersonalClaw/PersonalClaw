@@ -614,6 +614,11 @@ the `breadth.yml` jobs it maps to, in both directions, and every entry to the re
 - Each step is one of those jobs' `run:` lines, token for token, from the same working directory
   and with the same step `env`. An entry's steps come in `breadth.yml`'s order, and none comes
   twice.
+- Or each of those jobs runs the entry as `python -m tools.ci run-job <id>`, with
+  `--shard ${{ matrix.shard }}/N` for an entry of N shards, and the steps run from the catalogue
+  itself: #5600 moves the legs this way, one merge each. A `run:` line beside it that is one of
+  the entry's steps is still the entry's. The cap, runner, Python, env and installs are held as
+  before.
 - Every `run:` line of a mapped job is one entry's step. The only lines left out are a closed
   list in the row, each named for what it does: the runner's identity, the installs the
   toolchain names, and breadth's evidence lines (a leg's inputs, the one leg's decision to
@@ -654,6 +659,19 @@ the `breadth.yml` jobs it maps to, in both directions, and every entry to the re
   Contract run judges a head with main's copy of the row, so a head can't add to it. A listed
   step that goes is refused too, unless its job now runs `python -m tools.ci run-job`, so each
   leg moves in one merge.
+- Every other row that reads what a tier job runs reads a step that runs an entry through run-job
+  as the entry's command, through one reader, `tests/ci_run_job.py`: one step per command step,
+  its `run:` the step's argv with each placeholder as a workflow spells it, its `env` the step's
+  with the command's. An entry the catalogue refuses is still read from its TOML, so a row judges
+  what the leg would run. A run-job call with anything beside it (`|| true`, `; exit 0`, a
+  redirect) is read as written, so the masking row names a mask on it. So the basetemp,
+  planned-ids, shard-share, worker-count, coverage-on-a-push and exit-status rows, the row
+  holding each whole-tree check to a step that fails its job, and the JUnit report rails hold a
+  leg the same whether its steps are written out or run through run-job. A plant that edits a
+  leg's command edits the entry's argv and the leg's written-out line alike, and the row is read
+  twice, over `breadth.yml` as written and with its five suite legs through run-job, with the
+  same verdict on every plant both ways. The rows that hold the run-job line itself, the two
+  above and the catalogue row, read workflows as written.
 - The harness's `replay` and `exemplars` profiles are local shortcuts, not catalogue
   entries: the merge tier already runs what they gate. `python-suite` collects
   `tests/test_harness_replay.py` (every replay scenario against its baseline),

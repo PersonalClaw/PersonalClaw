@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from ci_run_job import read_run_job
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -224,9 +225,13 @@ def _paths(root: Path) -> list[Path]:
     ]
 
 
+#: The catalogue, which a step that runs an entry through run-job is read by.
+_CATALOGUE = "tools/ci/catalogue.toml"
+
+
 def scaffold(root: Path) -> None:
     """The row's scaffold: a copy of every file it reads, as the tree has them."""
-    for path in _paths(REPO):
+    for path in [*_paths(REPO), REPO / _CATALOGUE]:
         target = root / path.relative_to(REPO)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
@@ -240,16 +245,24 @@ def _lines(text: str) -> Iterator[str]:
             yield stripped
 
 
-def _workflow_jobs(root: Path) -> Iterator[tuple[str, str, dict[str, Any]]]:
+def _workflow_jobs(
+    root: Path, *, as_run: bool = False
+) -> Iterator[tuple[str, str, dict[str, Any]]]:
+    """Each workflow job under *root*: *as_run*, a step that runs a catalogue entry through
+    run-job read as the entry's command (tests/ci_run_job.py)."""
+    listed = root / _CATALOGUE
+    text = listed.read_text(encoding="utf-8") if as_run and listed.is_file() else ""
     for path in sorted(root.glob(".github/workflows/*.yml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if as_run:
+            doc = read_run_job(text, doc)
         for job_id, job in (doc.get("jobs") or {}).items():
             yield path.relative_to(root).as_posix(), str(job_id), job or {}
 
 
 def _masked_lines(root: Path) -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
-    for rel, _, job in _workflow_jobs(root):
+    for rel, _, job in _workflow_jobs(root, as_run=True):
         for step in job.get("steps") or []:
             found += [(rel, line) for line in _lines(str(step.get("run", "")))]
     for path in _paths(root):
@@ -264,6 +277,9 @@ def _on(value: object) -> bool:
 
 
 def violations(root: Path) -> list[str]:
+    """What throws an exit status away unseen under *root*. A command is read as it runs, so a
+    leg that runs its entry through run-job is held by the entry's command; a continue-on-error
+    is read as the workflow writes it, since the step is the site."""
     bad: list[str] = []
     masked = _masked_lines(root)
     for rel, line in masked:
@@ -349,10 +365,11 @@ def _read_together(
 #: The row's planted violations: (name, file, old text, new text). Each must fail the check.
 PLANTS: tuple[tuple[str, str, str, str], ...] = (
     (
+        # A written-out pytest line, which the rails leg keeps until #5600 runs it through run-job.
         "a pytest whose exit status is thrown away",
         _BREADTH,
-        '--shard-ids "$RUNNER_TEMP/ids/shard-ids-ubuntu-${{ matrix.shard }}.txt"\n',
-        '--shard-ids "$RUNNER_TEMP/ids/shard-ids-ubuntu-${{ matrix.shard }}.txt" || true\n',
+        "-q tests/rails --junitxml=reports/junit-rails-macos.xml\n",
+        "-q tests/rails --junitxml=reports/junit-rails-macos.xml || true\n",
     ),
     (
         "a validation step that may fail without failing its job",

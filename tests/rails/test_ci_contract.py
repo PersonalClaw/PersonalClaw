@@ -46,6 +46,10 @@ import site_baseline
 import source_pin_census
 import timeout_marks
 import yaml
+from ci_run_job import as_spelled as _as_spelled
+from ci_run_job import catalogue_entries as _catalogue_entries
+from ci_run_job import read_run_job, run_job_call
+from ci_run_job import run_lines as _run_lines
 from rails_repo import REPO
 
 from tools.ci import breadth_evidence, catalogue
@@ -93,16 +97,32 @@ def _tree(root: Path) -> Tree:
 # ── readers over a tree ────────────────────────────────────────────────────────────────────
 
 
-def _workflows(tree: Tree) -> Iterator[tuple[str, dict[str, Any]]]:
+def _workflows(tree: Tree, *, raw: bool = False) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Each workflow, parsed, each step that runs a catalogue entry through run-job read as the
+    entry's command (`_read_run_job`); *raw* reads every step as written."""
     for rel, text in tree.items():
         if rel.startswith(".github/workflows/"):
-            yield rel.rsplit("/", 1)[1], yaml.safe_load(text)
+            workflow = yaml.safe_load(text)
+            yield rel.rsplit("/", 1)[1], workflow if raw else _read_run_job(tree, workflow)
 
 
-def _jobs(tree: Tree) -> Iterator[tuple[str, str, dict[str, Any]]]:
-    for name, workflow in _workflows(tree):
+def _jobs(tree: Tree, *, raw: bool = False) -> Iterator[tuple[str, str, dict[str, Any]]]:
+    for name, workflow in _workflows(tree, raw=raw):
         for job_id, job in (workflow.get("jobs") or {}).items():
             yield name, job_id, job
+
+
+# ── A step that runs a catalogue entry through run-job, read as the entry's command (#5600) ──
+# `tests/ci_run_job.py` is the one reader: every row that reads what a job runs reads a step that
+# runs a catalogue entry through run-job as the entry's command, one step per command step, so a
+# row holds a leg to the same rule whether its steps are written out or run through run-job. The
+# rows that hold the run-job line itself read workflows raw: refusing a test step a tier runs
+# itself, holding each entry to its jobs, and refusing a test outside the catalogue.
+
+
+def _read_run_job(tree: Tree, workflow: Any) -> Any:
+    """*workflow* read by :func:`ci_run_job.read_run_job` against *tree*'s catalogue."""
+    return read_run_job(tree.get(catalogue.CATALOGUE, ""), workflow)
 
 
 def _job_steps(tree: Tree, job: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1360,6 +1380,148 @@ def _both(*plants: Callable[[Path], None]) -> Callable[[Path], None]:
     return plant
 
 
+# ── Plants on a leg's command, wherever the command is written (#5600) ─────────────────────
+# A breadth leg's command is written in breadth.yml while the leg runs it itself, and in the
+# catalogue alone once the leg runs it through run-job. A plant whose subject is the command edits
+# it in every place it is written, so the row reads the plant the same in either form; a plant
+# whose subject is a step finds the step by its id, which both forms keep.
+
+
+def _job_span(text: str, job_id: str) -> tuple[int, int]:
+    """Where workflow *text*'s job *job_id* starts and ends: its own lines, up to the next job's."""
+    start = text.find(f"\n  {job_id}:\n")
+    assert start >= 0, f"no job {job_id}"
+    following = re.search(r"\n  [\w-]+:\n", text[start + 1 :])
+    return start, start + 1 + following.start() if following else len(text)
+
+
+def _plant_command(
+    name: str,
+    entry_id: str,
+    step: int,
+    edit: Callable[[list[str]], list[str]],
+    fails: bool = True,
+    expect: str = "",
+    fields: tuple[str, str] | None = None,
+) -> Control:
+    """A violation planted in step *step* (from 1) of entry *entry_id*'s command, by *edit* on
+    its argv: in the catalogue, and in the breadth.yml line that writes it, while one does.
+    *fields*, ``(old, new)``, edits the entry's own fields with it, as a command a field must
+    agree with needs."""
+
+    def plant(root: Path) -> None:
+        text = (root / catalogue.CATALOGUE).read_text(encoding="utf-8")
+        start = text.index(f'\nid = "{entry_id}"\n')
+        end = text.find("\n[[job]]\n", start)
+        end = len(text) if end < 0 else end
+        block = text[start:end]
+        argvs = list(re.finditer(r"(?m)^  \{ argv = (\[.*?\])", block))
+        assert len(argvs) >= step, f"the plant {name!r}: {entry_id} has no step {step}"
+        found = argvs[step - 1]
+        old = json.loads(found.group(1))
+        new = edit(list(old))
+        assert new != old, f"the plant {name!r} changes nothing in {entry_id}'s step {step}"
+        block = block[: found.start(1)] + json.dumps(new) + block[found.end(1) :]
+        if fields is not None:
+            assert fields[0] in block, f"the plant {name!r}: {entry_id} has no {fields[0]!r}"
+            block = block.replace(fields[0], fields[1], 1)
+        _write(root, catalogue.CATALOGUE, text[:start] + block + text[end:])
+        for job_id in _CATALOGUE_JOBS[entry_id].jobs:
+            breadth = (root / _BREADTH).read_text(encoding="utf-8")
+            first, last = _job_span(breadth, job_id)
+            job = breadth[first:last]
+            for line in re.finditer(r"(?m)^        run: (.+)$", job):
+                words = [w for _, w in _run_lines(line.group(1)) if w]
+                if words == [old]:
+                    spelled = " ".join(_as_spelled(w) for w in new)
+                    job = job[: line.start(1)] + spelled + job[line.end(1) :]
+                    _write(root, _BREADTH, breadth[:first] + job + breadth[last:])
+                    break
+
+    return Control(name, plant, fails, expect)
+
+
+def _before(prefix: str, fragment: str) -> Callable[[list[str]], list[str]]:
+    """An argv edit: *fragment*'s words, read as a run: line reads them, before the first word
+    that starts with *prefix*."""
+
+    def edit(argv: list[str]) -> list[str]:
+        at = next(i for i, w in enumerate(argv) if w.startswith(prefix))
+        (words,) = [w for _, w in _run_lines(fragment) if w]
+        return argv[:at] + words + argv[at:]
+
+    return edit
+
+
+def _dropped(word: str, count: int) -> Callable[[list[str]], list[str]]:
+    """An argv edit: *word* and the *count* - 1 words after it gone."""
+
+    def edit(argv: list[str]) -> list[str]:
+        at = argv.index(word)
+        return argv[:at] + argv[at + count :]
+
+    return edit
+
+
+def _swapped(old: Sequence[str], new: Sequence[str]) -> Callable[[list[str]], list[str]]:
+    """An argv edit: the words *old*, in a row, become *new*."""
+
+    def edit(argv: list[str]) -> list[str]:
+        at = next(i for i in range(len(argv)) if argv[i : i + len(old)] == list(old))
+        return argv[:at] + list(new) + argv[at + len(old) :]
+
+    return edit
+
+
+def _plant_step(
+    name: str,
+    job_id: str,
+    step_id: str,
+    edit: Callable[[str], str],
+    fails: bool = True,
+    expect: str = "",
+) -> Control:
+    """A violation planted in breadth.yml job *job_id*'s step with ``id: <step_id>``, by *edit*
+    on the step's lines."""
+
+    def plant(root: Path) -> None:
+        text = (root / _BREADTH).read_text(encoding="utf-8")
+        first, last = _job_span(text, job_id)
+        at = text.find(f"\n        id: {step_id}\n", first)
+        assert first <= at < last, f"the plant {name!r} found no step {step_id} in {job_id}"
+        start = text.rfind("\n      - ", first, at)
+        end = text.find("\n      - ", at)
+        end = last if end < 0 or end > last else end
+        _write(root, _BREADTH, text[:start] + edit(text[start:end]) + text[end:])
+
+    return Control(name, plant, fails, expect)
+
+
+def _with_run(run: str) -> Callable[[str], str]:
+    """A step edit: its run: (one line or a folded block) replaced by *run*, the lines after
+    ``run:`` as written, newline-ended."""
+
+    def edit(step: str) -> str:
+        found = re.search(r"\n        run: (?:>-\n(?:          .*\n?)+|.*)", step)
+        assert found, "the step runs nothing"
+        # A folded block takes its last newline with it; the line after it keeps its own.
+        kept = "\n" if found.group(0).endswith("\n") else ""
+        new = f"\n        run: {run}".rstrip("\n") + kept
+        return step[: found.start()] + new + step[found.end() :]
+
+    return edit
+
+
+def _with_env(env: str) -> Callable[[str], str]:
+    """A step edit: an ``env:`` block, *env*'s lines, before its run:."""
+
+    def edit(step: str) -> str:
+        at = step.index("\n        run: ")
+        return step[:at] + "\n        env:" + env + step[at:]
+
+    return edit
+
+
 def _nothing(root: Path) -> None:
     """The scaffold as it is: a positive control for a shape it already holds."""
 
@@ -2159,7 +2321,7 @@ def _workflow(tree: Tree, name: str) -> dict[str, Any] | None:
         for rel, text in tree.items()
         if rel.startswith(".github/workflows/") and rel.rsplit("/", 1)[1] == name
     ]
-    return yaml.load(texts[-1], Loader=_LOADER) if texts else None
+    return _read_run_job(tree, yaml.load(texts[-1], Loader=_LOADER)) if texts else None
 
 
 def _needs(job: dict[str, Any]) -> list[str]:
@@ -5516,18 +5678,21 @@ ROWS: tuple[Row, ...] = (
                 "  shard-union-canary-renamed:\n",
                 expect="breadth.yml has no shard-union-canary job",
             ),
-            _plant(
+            _plant_command(
                 "a macos shard writing the ubuntu shard's id file",
-                _BREADTH,
-                '--shard-ids "$RUNNER_TEMP/ids/shard-ids-macos-${{ matrix.shard }}.txt"',
-                '--shard-ids "$RUNNER_TEMP/ids/shard-ids-ubuntu-${{ matrix.shard }}.txt"',
+                "suite-macos",
+                2,
+                _swapped(
+                    ["{runner_temp}/ids/shard-ids-macos-{shard}.txt"],
+                    ["{runner_temp}/ids/shard-ids-ubuntu-{shard}.txt"],
+                ),
                 expect="breadth.yml:macos writes its ids to",
             ),
-            _plant(
+            _plant_command(
                 "a shard that collects with no --shard-ids",
-                _BREADTH,
-                ' --shard-ids "$RUNNER_TEMP/ids/shard-ids-canary-${{ matrix.shard }}.txt"',
-                "",
+                "suite-canary",
+                2,
+                _dropped("--shard-ids", 2),
                 expect="breadth.yml:canary passes no --shard-ids",
             ),
             _plant(
@@ -6255,12 +6420,11 @@ ROWS: tuple[Row, ...] = (
                 "--leg canary:breadth.yml:junit-canary-:4",
                 "--leg canary:breadth.yml:junit-canaries-:4",
             ),
-            _plant(
+            _plant_command(
                 "a shard back on pytest-split",
-                _BREADTH,
-                'tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-arm.xml',
-                'tests --shard-list "$RUNNER_TEMP/shard.txt" --splits 4'
-                " --junitxml=reports/junit-arm.xml",
+                "suite-arm",
+                2,
+                _before("--junitxml=", "--splits 4"),
             ),
             Control("every shard, as the tree has it, passes", _nothing, fails=False),
         ),
@@ -6282,14 +6446,11 @@ ROWS: tuple[Row, ...] = (
                 ),
                 expect="the catalogue's python-suite runs the suite with no -n",
             ),
-            _plant(
+            _plant_command(
                 "a breadth shard with no -n",
-                _BREADTH,
-                "uv run pytest -n auto --dist worksteal -q tests"
-                ' --shard-list "$RUNNER_TEMP/shard.txt"'
-                " --junitxml=reports/junit-ubuntu.xml",
-                'uv run pytest -q tests --shard-list "$RUNNER_TEMP/shard.txt"'
-                " --junitxml=reports/junit-ubuntu.xml",
+                "suite-ubuntu",
+                2,
+                _dropped("-n", 4),
             ),
             _plant(
                 "an entry's pytest that names no path, so collects testpaths",
@@ -6324,16 +6485,13 @@ ROWS: tuple[Row, ...] = (
                 ),
                 fails=False,
             ),
-            _plant(
+            _plant_command(
                 "a breadth shard with --numprocesses=4 passes",
-                _BREADTH,
-                "uv run pytest -n auto --dist worksteal -q tests"
-                ' --shard-list "$RUNNER_TEMP/shard.txt"'
-                " --junitxml=reports/junit-ubuntu.xml",
-                "uv run pytest --numprocesses=4 --dist worksteal -q tests"
-                ' --shard-list "$RUNNER_TEMP/shard.txt"'
-                " --junitxml=reports/junit-ubuntu.xml",
+                "suite-ubuntu",
+                2,
+                _swapped(["-n", "auto"], ["--numprocesses=4"]),
                 fails=False,
+                fields=('workers = "auto"', "workers = 4"),
             ),
             Control("steps that name their own files, with no -n, pass", _nothing, fails=False),
         ),
@@ -7074,12 +7232,72 @@ ROWS = (*ROWS, CLOSED_PR_RUNS_ARE_CANCELLED)
 # `continue-on-error` in a workflow, a Dockerfile or a script under scripts/ is named there with
 # its reason, and an entry that matches nothing fails, so the list cannot rot.
 
+
+def _a_masked_run_job_line(mask: str) -> Callable[[Path], None]:
+    """ubuntu's leg running its entry through run-job, its run-job line followed by *mask*."""
+
+    def plant(root: Path) -> None:
+        legs_through_run_job(root, ("ubuntu",))
+        text = (root / _BREADTH).read_text(encoding="utf-8")
+        first, last = _job_span(text, "ubuntu")
+        tail = ' --out "$RUNNER_TEMP/run-job"\n'
+        job = text[first:last]
+        assert job.count(tail) == 1, "ubuntu has no one run-job line"
+        job = job.replace(tail, f"{tail[:-1]}{mask}\n")
+        _write(root, _BREADTH, text[:first] + job + text[last:])
+
+    return plant
+
+
+def _a_masked_shard_list_through_run_job(root: Path) -> None:
+    """ubuntu's leg running its entry through run-job with no shard-list step of its own, and
+    the entry's shard list run as `sh -c "... || true"`: a mask only the entry's command shows,
+    so the row sees it only by reading the run-job step as the entry's command."""
+    legs_through_run_job(root, ("ubuntu",))
+    text = (root / _BREADTH).read_text(encoding="utf-8")
+    first, last = _job_span(text, "ubuntu")
+    job = re.sub(
+        r"(?ms)^      - name: this shard's test files\n        id: shard\n.*?(?=^      - )",
+        "",
+        text[first:last],
+        count=1,
+    )
+    assert job != text[first:last], "ubuntu has no shard-list step"
+    _write(root, _BREADTH, text[:first] + job + text[last:])
+    mask = _plant_command(
+        "", "suite-ubuntu", 1, lambda argv: ["sh", "-c", f"{shlex.join(argv)} || true"]
+    )
+    mask.plant(root)
+
+
 NOTHING_IS_MASKED_UNSEEN = Row(
     name="nothing-throws-an-exit-status-away-unseen",
     check=ci_masking.violations,
     scaffold=ci_masking.scaffold,
     controls=(
         *(_plant(name, rel, old, new) for name, rel, old, new in ci_masking.PLANTS),
+        Control(
+            "a leg's shard list, through run-job, that throws its exit status away",
+            _a_masked_shard_list_through_run_job,
+            expect="throws an exit status away, and no entry names it",
+        ),
+        # A run-job line with a mask beside it is read as written, so the mask is the row's.
+        *(
+            Control(
+                f"a leg's run-job line that throws its exit status away: `{mask.strip()}`",
+                _a_masked_run_job_line(mask),
+                expect="throws an exit status away, and no entry names it",
+            )
+            for mask in (" || true", " || :")
+        ),
+        # Under the runner's `bash -e` a red run-job stops the step before `exit 0`, so nothing
+        # is thrown away; "every catalogue command is the workflow's" refuses the line.
+        Control(
+            "a leg's run-job line followed by `; exit 0`, which bash -e never reaches after a"
+            " red, passes",
+            _a_masked_run_job_line("; exit 0"),
+            fails=False,
+        ),
         Control("every masked site in the tree is named, with its reason", _nothing, fails=False),
     ),
 )
@@ -8361,20 +8579,13 @@ def suite_basetemp_violations(tree: Tree) -> list[str]:
     return bad
 
 
-_CANARY_RUN = (
-    'uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt"'
-    " --junitxml=reports/junit-canary.xml"
-    ' --shard-ids "$RUNNER_TEMP/ids/shard-ids-canary-${{ matrix.shard }}.txt"'
-)
-
-
 def _canary_basetemp(name: str, value: str, fails: bool = True) -> Control:
     """The canary's suite step with ``--basetemp`` *value* (the ``=`` or the space form)."""
-    return _plant(
+    return _plant_command(
         name,
-        _BREADTH,
-        _CANARY_RUN,
-        _CANARY_RUN.replace(" --junitxml=", f" {value} --junitxml="),
+        "suite-canary",
+        2,
+        _before("--junitxml=", value),
         fails,
         "" if not fails else "--basetemp",
     )
@@ -8399,11 +8610,11 @@ SUITE_TEMP_STAYS_OUT_OF_THE_HOME = _toolchain_row(
             '      PERSONALCLAW_SKIP_APP_BACKENDS: "1"\n      TMPDIR: ${{ runner.temp }}\n',
             expect="TMPDIR",
         ),
-        _plant(
+        _plant_step(
             "TMPDIR under runner.temp in a suite step's env",
-            _BREADTH,
-            f"        run: {_CANARY_RUN}\n",
-            f"        env:\n          TMPDIR: ${{{{ runner.temp }}}}\n        run: {_CANARY_RUN}\n",
+            "canary",
+            "pytest",
+            _with_env("\n          TMPDIR: ${{ runner.temp }}"),
             expect="TMPDIR",
         ),
         _canary_basetemp(
@@ -8755,22 +8966,6 @@ fi
 }
 
 
-def _run_lines(run: str) -> Iterator[tuple[str, list[str] | None]]:
-    """Each logical line of a run: block, a placeholder for each runner spelling, with its words
-    (``None`` for a line no argv could equal, such as an echo with an apostrophe)."""
-    for name, spellings in catalogue.PLACEHOLDERS.items():
-        for spelling in spellings:
-            run = run.replace(spelling, f"{{{name}}}")
-    for line in run.replace("\\\n", " ").splitlines():
-        try:
-            words = shlex.split(line, comments=True)
-        except ValueError:
-            yield line.strip(), None
-            continue
-        if words:
-            yield line.strip(), words
-
-
 _NOT_COMMAND_LINES = frozenset(
     tuple(words) for text in _NOT_COMMANDS.values() for _, words in _run_lines(text) if words
 )
@@ -9087,11 +9282,23 @@ def _catalogue_check(root: Path) -> list[str]:
             )
         if missing or not entry.jobs:
             continue
-        # An entry that runs in both workflows holds each one's run: lines on its own.
-        for prefix in _MAPPED_PREFIXES:
-            own = [c for c in entry.jobs if _prefix_of(c) == prefix]
-            if own:
-                _claim(job, [line for c in own for line in lines[c]], claims, bad)
+        through = _through_run_job(job, entry.jobs, lines)
+        if through:
+            # Every job of the entry runs it as one command, so the entry's steps run from the
+            # catalogue itself and no run: line need repeat them (#5600). The run-job line, and
+            # any of the entry's own steps a job still runs beside it, are the entry's.
+            steps = {step.argv for step in job.command}
+            for line in through:
+                claims[line].append(job.id)
+            for line in (line for c in entry.jobs for line in lines[c]):
+                if line.argv in steps and job.id not in claims[line]:
+                    claims[line].append(job.id)
+        else:
+            # An entry that runs in both workflows holds each one's run: lines on its own.
+            for prefix in _MAPPED_PREFIXES:
+                own = [c for c in entry.jobs if _prefix_of(c) == prefix]
+                if own:
+                    _claim(job, [line for c in own for line in lines[c]], claims, bad)
         _installs(job, [jobs[c] for c in entry.jobs], bad, _names(entry.jobs))
         mine = [line for line, holders in claims.items() if job.id in holders]
         _same_job(job, jobs, mine, bad, actions)
@@ -9102,6 +9309,31 @@ def _catalogue_check(root: Path) -> list[str]:
                 " and no entry's command holds it"
             )
     return bad
+
+
+def _run_job_line(argv: tuple[str, ...], job: catalogue.Job) -> bool:
+    """Whether *argv* (`run_job_call`) runs *job* through run-job: its own id, for a sharded job
+    ``--shard {shard}/N`` with its own N, and an ``--out`` folder allowed."""
+    call = run_job_call(argv)
+    if call is None or call[0] != job.id:
+        return False
+    rest = list(call[1])
+    if (job.shards or 1) > 1:
+        if rest[:2] != ["--shard", f"{{shard}}/{job.shards}"]:
+            return False
+        rest = rest[2:]
+    return rest == [] or (len(rest) == 2 and rest[0] == "--out")
+
+
+def _through_run_job(
+    job: catalogue.Job, mapped: tuple[str, ...], lines: dict[str, list[_Line]]
+) -> list[_Line]:
+    """The run-job lines of *job*, when every one of its mapped jobs runs it that way; else
+    none, and the entry's steps are its jobs' own run: lines."""
+    found = {c: [line for line in lines[c] if _run_job_line(line.argv, job)] for c in mapped}
+    if not mapped or not all(found.values()):
+        return []
+    return [line for c in mapped for line in found[c]]
 
 
 def _stops_at_a_failure(job: catalogue.Job, root: Path, bad: list[str]) -> None:
@@ -9224,6 +9456,49 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
     check=_catalogue_check,
     scaffold=_catalogue_scaffold,
     controls=(
+        _plant_step(
+            "a breadth leg running its entry through run-job passes",
+            "rails-macos",
+            "pytest",
+            _with_run("python3 -m tools.ci run-job rails-macos"),
+            fails=False,
+        ),
+        _plant_step(
+            "a sharded breadth leg running its entry through run-job, by its shard, passes",
+            "ubuntu",
+            "pytest",
+            _with_run(
+                ">-\n          python3 -m tools.ci run-job suite-ubuntu"
+                ' --shard ${{ matrix.shard }}/4 --out "$RUNNER_TEMP/run-job"'
+            ),
+            fails=False,
+        ),
+        _plant_step(
+            "a sharded breadth leg's run-job with no shard",
+            "ubuntu",
+            "pytest",
+            _with_run("python3 -m tools.ci run-job suite-ubuntu"),
+            expect="suite-ubuntu: command step 2",
+        ),
+        Control(
+            "a breadth leg's run-job line with a command after it",
+            _a_masked_run_job_line("; exit 0"),
+            expect="breadth.yml job ubuntu runs '{python}' -m tools.ci run-job suite-ubuntu",
+        ),
+        _plant_step(
+            "a sharded breadth leg's run-job by another N",
+            "ubuntu",
+            "pytest",
+            _with_run("python3 -m tools.ci run-job suite-ubuntu --shard ${{ matrix.shard }}/5"),
+            expect="suite-ubuntu: command step 2",
+        ),
+        _plant_step(
+            "a breadth leg running another entry's run-job",
+            "rails-macos",
+            "pytest",
+            _with_run("python3 -m tools.ci run-job security"),
+            expect="rails-macos: command step 1",
+        ),
         _pinned_named(
             "the pinned browser run under the other of its two names passes", "", fails=False
         ),
@@ -9367,26 +9642,13 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         ),
         Control("the catalogue removed", _remove(catalogue.CATALOGUE), expect="is missing"),
         # Both directions, in order: every validating run: line is one entry's step.
-        _plants(
-            "an entry missing a step breadth.yml runs: the suite without its pytest",
+        _plant(
+            "an entry missing a step breadth.yml runs: the rails leg without its scan",
             catalogue.CATALOGUE,
-            (
-                (
-                    '  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q",'
-                    ' "tests", "--shard-list", "{runner_temp}/shard.txt",'
-                    ' "--junitxml=reports/junit-ubuntu.xml", "--shard-ids",'
-                    ' "{runner_temp}/ids/shard-ids-ubuntu-{shard}.txt"] },\n',
-                    "",
-                ),
-                (
-                    'workers = "auto"\nshards = 4\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1",'
-                    ' PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\n'
-                    'junit = ["reports/junit-ubuntu.xml"]',
-                    'shards = 4\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1",'
-                    ' PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\njunit = []',
-                ),
-            ),
-            expect="breadth.yml job ubuntu runs uv run pytest -n auto --dist worksteal -q tests",
+            '"--junitxml=reports/junit-rails-macos.xml"] },\n'
+            '  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },\n',
+            '"--junitxml=reports/junit-rails-macos.xml"] },\n',
+            expect="breadth.yml job rails-macos runs uv run python -m harness scan",
         ),
         _plant(
             "a step listed twice",
@@ -9610,9 +9872,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a breadth command one token off its entry's",
             _BREADTH,
-            '-q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-ubuntu.xml',
-            '-qq tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-ubuntu.xml',
-            expect="suite-ubuntu: command step 2",
+            "--dist worksteal -q tests/rails --junitxml=reports/junit-rails-macos.xml",
+            "--dist worksteal -qq tests/rails --junitxml=reports/junit-rails-macos.xml",
+            expect="rails-macos: command step 1",
         ),
         _plant(
             "a breadth step no entry holds",
@@ -12227,7 +12489,7 @@ def raw_test_command_violations(tree: Tree) -> list[str]:
     """No job of any workflow file runs a test runner unless the job is a catalogue entry's."""
     mapped = {c for entry in _CATALOGUE_JOBS.values() for c in entry.jobs}
     bad: list[str] = []
-    for name, job_id, job in _jobs(tree):
+    for name, job_id, job in _jobs(tree, raw=True):
         if (str(job_id) if name == "breadth.yml" else f"{name}:{job_id}") in mapped:
             continue
         for n, step in enumerate(_job_steps(tree, job), 1):
@@ -12402,31 +12664,21 @@ _STEPS_THAT_RUN_THEIR_OWN_TEST: frozenset[tuple[str, str, str]] = frozenset(
 )
 
 
-def _runs_run_job(words: list[str]) -> bool:
-    """Whether one command is ``python -m tools.ci run-job``, behind ``uv run`` or not."""
-    words = [w for w in words if not re.fullmatch(r"[A-Za-z_]\w*=\S*", w)]
-    if words[:2] == ["uv", "run"]:
-        words = _skip_options(words[2:], _UV_RUN_VALUED)
-    if not words or not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", words[0].rsplit("/", 1)[-1]):
-        return False
-    args = [w for w in words[1:] if w != "-I"]
-    return args[:3] == ["-m", "tools.ci", "run-job"]
-
-
 def own_test_step_violations(tree: Tree) -> list[str]:
     """No step of a tier workflow runs a test runner itself, but the listed ones; and no listed
     step is gone unless its job runs run-job now."""
     bad: list[str] = []
     seen: set[tuple[str, str, str]] = set()
     runs_run_job: set[tuple[str, str]] = set()
-    for name, job_id, job in _jobs(tree):
+    for name, job_id, job in _jobs(tree, raw=True):
         if name not in _RUN_JOB_TIERS:
             continue
         for n, step in enumerate(_job_steps(tree, job), 1):
             label = str(step.get("name") or f"step {n}")
-            for words in _commands(str(step.get("run", ""))):
-                if _runs_run_job(words):
-                    runs_run_job.add((name, str(job_id)))
+            run = str(step.get("run", ""))
+            if any(words and run_job_call(words) for _, words in _run_lines(run)):
+                runs_run_job.add((name, str(job_id)))
+            for words in _commands(run):
                 runner = _test_runner(words)
                 if not runner:
                     continue
@@ -12520,6 +12772,154 @@ A_TIER_WORKFLOW_RUNS_EACH_TEST_THROUGH_RUN_JOB = _toolchain_row(
 )
 
 ROWS = (*ROWS, A_TIER_WORKFLOW_RUNS_EACH_TEST_THROUGH_RUN_JOB)
+
+
+# ── A row reads a leg run through run-job as the leg written out (#5600) ─────────────────────
+# Each row whose subject is what a breadth leg runs is run twice over every control: on its
+# scaffold as the tree has it, and with the suite legs #5600 moves first running their entries
+# through run-job, as breadth.yml will. Each control must read the same both ways: a red stays
+# red with its named reason, and a pass stays a pass. The plants whose subject is the workflow's
+# own line are on legs still written out: the rails leg's, which #5600's third task moves, so
+# they move with it.
+
+#: The rows whose subject is what a breadth leg runs.
+_READ_THROUGH_RUN_JOB = (
+    "every catalogue command is the workflow's",
+    "no suite step keeps pytest's temporary folders under the runner's home",
+    "breadth-each-suite-leg-is-held-to-its-own-planned-ids",
+    "every suite shard runs its share of its run's one plan",
+    "every pytest step that runs the suite sets its worker count",
+    "no-macos-14-and-no-coverage-on-a-push",
+    "nothing-throws-an-exit-status-away-unseen",
+    "each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job",
+)
+#: The suite legs #5600 moves to run-job first, each with its entry and its shard count.
+_FIRST_RUN_JOB_LEGS = {
+    "ubuntu": ("suite-ubuntu", 4),
+    "macos": ("suite-macos", 6),
+    "arm": ("suite-arm", 4),
+    "canary": ("suite-canary", 4),
+    "coverage-shard": ("coverage-shard", 6),
+}
+#: Each one's suite step's name, as breadth.yml writes it, and as it runs through run-job.
+_SUITE_STEP_NAME = {"canary": "pytest (canary shard ${{ matrix.shard }})"}
+_RUN_JOB_STEP_NAME = "the leg's catalogue job, through run-job (shard ${{ matrix.shard }})"
+
+
+def legs_through_run_job(root: Path, legs: Iterable[str] = tuple(_FIRST_RUN_JOB_LEGS)) -> None:
+    """breadth.yml under *root* with each of *legs* (:data:`_FIRST_RUN_JOB_LEGS`) running its
+    entry through run-job, by its shard: the leg's suite step renamed, its run: the one command."""
+    if not (root / _BREADTH).is_file():
+        return
+    for job_id in legs:
+        entry, count = _FIRST_RUN_JOB_LEGS[job_id]
+        text = (root / _BREADTH).read_text(encoding="utf-8")
+        if f"\n  {job_id}:\n" not in text:
+            continue
+        old = _SUITE_STEP_NAME.get(job_id, "pytest (shard ${{ matrix.shard }})")
+        first, last = _job_span(text, job_id)
+        job = text[first:last].replace(f"- name: {old}\n", f"- name: {_RUN_JOB_STEP_NAME}\n", 1)
+        _write(root, _BREADTH, text[:first] + job + text[last:])
+        _plant_step(
+            "",
+            job_id,
+            "pytest",
+            _with_run(
+                f'>-\n          "$(uv python find "$PY")" -m tools.ci run-job {entry}'
+                f' --shard ${{{{ matrix.shard }}}}/{count} --out "$RUNNER_TEMP/run-job"'
+            ),
+        ).plant(root)
+
+
+def _reading(row: Row, control: Control, root: Path) -> tuple[bool, bool]:
+    """Whether the row finds a violation under *root* once *control* is planted, and whether
+    one names the control's reason. A plant the catalogue refuses (a basetemp that reads the
+    environment, say) is still read as the leg's command (`ci_run_job.catalogue_entries`)."""
+    control.plant(root)
+    found = row.check(root)
+    return bool(found), any(control.expect in v for v in found)
+
+
+#: Each row's cap read twice, its controls written out and through run-job: twice its own.
+READ_THROUGH_TIMEOUTS = {
+    "every catalogue command is the workflow's": pytest.mark.timeout(240),
+    "no suite step keeps pytest's temporary folders under the runner's home": (
+        pytest.mark.timeout(60)
+    ),
+    "breadth-each-suite-leg-is-held-to-its-own-planned-ids": pytest.mark.timeout(60),
+    "every suite shard runs its share of its run's one plan": pytest.mark.timeout(60),
+    "every pytest step that runs the suite sets its worker count": pytest.mark.timeout(60),
+    "no-macos-14-and-no-coverage-on-a-push": pytest.mark.timeout(60),
+    "nothing-throws-an-exit-status-away-unseen": pytest.mark.timeout(80),
+    "each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job": (
+        pytest.mark.timeout(140)
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [pytest.param(n, marks=READ_THROUGH_TIMEOUTS[n], id=n) for n in _READ_THROUGH_RUN_JOB],
+)
+def test_a_row_reads_a_leg_run_through_run_job_as_the_leg_written_out(
+    name: str, subtests, tmp_path: Path
+) -> None:
+    (row,) = [r for r in ROWS if r.name == name]
+    roots = {"written": tmp_path / "written", "through": tmp_path / "through"}
+    row.scaffold(roots["written"])
+    laid = {"written": laid_tree.Laid.take(roots["written"])}
+    roots["through"].mkdir()
+    laid["written"].reset(roots["through"])
+    legs_through_run_job(roots["through"])
+    laid["through"] = laid_tree.Laid.take(roots["through"])
+    with subtests.test("the scaffold, its first legs through run-job"):
+        assert row.check(roots["through"]) == []
+    for index, control in enumerate(row.controls):
+        with subtests.test(control.name):
+            readings = []
+            for form in ("written", "through"):
+                roots[form] = roots[form].rename(tmp_path / f"{form}-{index}")
+                laid[form].reset(roots[form])
+                readings.append(_reading(row, control, roots[form]))
+            assert readings[1] == readings[0], (
+                f"{control.name}: (red, its reason) is {readings[0]} written out,"
+                f" {readings[1]} through run-job"
+            )
+
+
+def test_a_run_job_step_reads_as_its_entry_s_command_steps() -> None:
+    """`_read_run_job` on an entry of several steps that set env and a working directory: one
+    step per command step, the last with the step's name and id, each with the step's other
+    keys, its env the step's with the command's, its directory the command's, and its run: the
+    command's argv as a run: line reads it back."""
+    tree = _tree(REPO)
+    entry = next(
+        e
+        for e in _catalogue_entries(tree[catalogue.CATALOGUE]).values()
+        if len(e.command) > 1
+        and any(c.env for c in e.command)
+        and any(c.workdir for c in e.command)
+    )
+    step = {
+        "name": "the entry",
+        "id": "entry",
+        "continue-on-error": True,
+        "env": {"STEP": "1"},
+        "run": f'"$(uv python find "$PY")" -m tools.ci run-job {entry.id} --out "$RUNNER_TEMP/x"',
+    }
+    workflow = {"jobs": {"leg": {"steps": [{"run": "uv sync"}, step]}}}
+    first, *read = _read_run_job(tree, workflow)["jobs"]["leg"]["steps"]
+    assert first == {"run": "uv sync"}
+    assert len(read) == len(entry.command)
+    for n, (one, command) in enumerate(zip(read, entry.command, strict=True), 1):
+        last = n == len(entry.command)
+        place = f" ({entry.id}, step {n} of {len(entry.command)})"
+        assert one["name"] == "the entry" + ("" if last else place)
+        assert one.get("id") == ("entry" if last else None)
+        assert one["continue-on-error"] is True
+        assert one["env"] == {"STEP": "1", **dict(command.env)}
+        assert one.get("working-directory") == (command.workdir or None)
+        assert [w for _, w in _run_lines(one["run"]) if w] == [list(command.argv)]
 
 
 # ── The harness's replay and exemplar gates run in the merge tier (#3909) ─────────────────────
@@ -12914,6 +13314,7 @@ def owning_job_violations(root: Path) -> list[str]:
     seen: set[str] = set()
     for rel in _OWNED_WORKFLOWS:
         workflow = yaml.safe_load((root / rel).read_text(encoding="utf-8")) or {}
+        workflow = read_run_job((root / catalogue.CATALOGUE).read_text(encoding="utf-8"), workflow)
         for job_id, job in (workflow.get("jobs") or {}).items():
             outcome = _entry_outcome(job)
             for step in job.get("steps") or []:

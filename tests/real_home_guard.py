@@ -291,7 +291,7 @@ def runs_personalclaw(words: list[str]) -> bool:
 class Guard:
     """Refuses, records and charges every access under ``root``. See the module docstring."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, started_home: str | None = None) -> None:
         normal = os.path.normpath(os.path.abspath(root))
         forms = {normal, os.path.realpath(normal)}
         self.root = Path(normal)
@@ -300,6 +300,17 @@ class Guard:
         self._needles = tuple({os.path.basename(form) for form in forms})
         # The $HOME whose default resolution is ``root`` (``root`` is ``$HOME/.personalclaw``).
         self._home = os.path.dirname(normal)
+        # The $HOME the run began with, when it is not that one: a run-job step's scratch home.
+        # A PersonalClaw child that inherits it resolves the run's own default home, which every
+        # test of the run shares, so that child has no home of its own either (#5743).
+        started = os.path.normpath(os.path.abspath(started_home)) if started_home else None
+        real = started and os.path.realpath(started) == os.path.realpath(self._home)
+        self._started = None if real else started
+        # It and its real name, as ``root`` keeps both: on macOS a scratch home under
+        # /var/folders is /private/var/folders once a test resolves it.
+        self._started_forms = (
+            {self._started, os.path.realpath(self._started)} if self._started else set()
+        )
         # Per guard, so a guard a test drives beside the suite's own never reads its stamps.
         self._stamp_attr = f"_pclaw_started_by_test_{id(self):x}"
         self._lock = threading.Lock()
@@ -349,17 +360,38 @@ class Guard:
         return None
 
     def isolates(self, env: Mapping) -> bool:
-        """Whether a child started with ``env`` resolves a home other than ``root``."""
+        """Whether a child started with ``env`` resolves a home of its own: neither ``root`` nor,
+        when the run began with another ``$HOME``, that home's ``.personalclaw``."""
         home = _env_get(env, "PERSONALCLAW_HOME")
         if home:
             if home.startswith("~"):
                 child_home = _env_get(env, "HOME") or self._home
                 home = child_home + home[1:]
-            return self.owns(home) is None
+            return self.owns(home) is None and not self._in_the_runs_home(env)
         child_home = _env_get(env, "HOME")
         if not child_home:
             return False  # the child falls back to the passwd entry: the real home
-        return os.path.normpath(os.path.abspath(child_home)) != self._home
+        return os.path.normpath(os.path.abspath(child_home)) != self._home and not (
+            self._in_the_runs_home(env)
+        )
+
+    def _in_the_runs_home(self, env: Mapping) -> bool:
+        """Whether a child started with ``env`` resolves the default home of the ``$HOME`` the run
+        began with, when that is not ``root``'s: it inherits that ``HOME`` with no
+        ``PERSONALCLAW_HOME``, or its ``PERSONALCLAW_HOME`` names that home's ``.personalclaw``."""
+        if self._started is None:
+            return False
+        home = _env_get(env, "PERSONALCLAW_HOME")
+        if home:
+            if home.startswith("~"):
+                home = (_env_get(env, "HOME") or self._home) + home[1:]
+            home = os.path.normpath(os.path.abspath(home))
+            shared = [os.path.join(form, ".personalclaw") for form in self._started_forms]
+            return any(home == one or home.startswith(one + os.sep) for one in shared)
+        child_home = _env_get(env, "HOME")
+        return bool(child_home) and (
+            os.path.normpath(os.path.abspath(child_home)) in self._started_forms
+        )
 
     # ── the audit hook ───────────────────────────────────────────────────────────────────
 
@@ -400,17 +432,28 @@ class Guard:
             self.spawned.append(" ".join(words)[:160])
         if not runs_personalclaw(words):
             return
-        if self.isolates(os.environ if env is None else env):
+        seen = os.environ if env is None else env
+        if self.isolates(seen):
             return
         command = " ".join(words)
+        if self._in_the_runs_home(seen):
+            self.refuse(
+                event,
+                f"{self._started}{os.sep}.personalclaw — a PersonalClaw child process given the "
+                "home every test of this run shares (the HOME the run began with, and no "
+                f"PERSONALCLAW_HOME of its own): {command[:240]}",
+                shared=True,
+            )
+            return
         self.refuse(
             event,
             f"{self.root} — a PersonalClaw child process given no isolated home "
             f"(neither PERSONALCLAW_HOME nor HOME points elsewhere): {command[:240]}",
         )
 
-    def refuse(self, event: str, path: str) -> None:
-        """Record the access, charge it, and raise it into the caller."""
+    def refuse(self, event: str, path: str, *, shared: bool = False) -> None:
+        """Record the access, charge it, and raise it into the caller. ``shared``: a PersonalClaw
+        child given the home every test of the run shares, not the real one."""
         thread = threading.current_thread()
         started_by = getattr(thread, self._stamp_attr, None)
         during = self.test
@@ -430,6 +473,12 @@ class Guard:
         with self._lock:
             self._charged.append((owner, access))
         blame = owner or "no running test — reported at session end"
+        if shared:
+            raise RealHomeAccessError(
+                f"refused {event} in the run's own home {path} (charged to {blame}). A "
+                "PersonalClaw child a test starts needs a home of its own: set its "
+                "PERSONALCLAW_HOME to a folder under tmp_path."
+            )
         raise RealHomeAccessError(
             f"refused {event} under the real home {path} (charged to {blame}). A test must "
             "never touch the developer's real ~/.personalclaw — point this code at tmp_path, "
@@ -501,7 +550,8 @@ def _wrap_driver(guard: Guard) -> None:
 
 #: The one guard the suite runs under. ``tests/conftest.py`` installs it before importing
 #: ``personalclaw`` and wires it into pytest through :class:`Plugin`.
-GUARD = Guard(REAL_HOME)
+#: ``started_home`` is ``$HOME`` as the run began, read here, before any test can move it.
+GUARD = Guard(REAL_HOME, started_home=os.environ.get("HOME"))
 
 
 def render_for_test(accesses: list[Access]) -> str:
