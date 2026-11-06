@@ -34,8 +34,8 @@ export interface FilterSectionDef {
    *  name"); the chosen option's own label otherwise. */
   said?: (key: string) => string
   /** Rows after the choices that act rather than choose (Knowledge's New shelf, under its shelves).
-   *  Choosing one closes the menu. */
-  actions?: { label: string; icon?: LucideIcon; onSelect: () => void }[]
+   *  Choosing one closes the menu. A `hint` says what it needs, under its label. */
+  actions?: { label: string; icon?: LucideIcon; hint?: string; onSelect: () => void }[]
   /** Several choices at once (Chat history's tags, any of which a chat may carry): `value` is the
    *  chosen keys joined by commas, '' for none, and each row adds or removes its own key. */
   multi?: boolean
@@ -115,7 +115,7 @@ export function FilterSections({ sections, close }: { sections: FilterSectionDef
               onClick={() => s.onChange(s.multi ? toggledKey(s.value, o.key) : o.key)} />
           ))}
           {s.actions?.map((a) => (
-            <FilterRow key={a.label} label={a.label} icon={a.icon} selected={false} onClick={() => { close(); a.onSelect() }} />
+            <FilterRow key={a.label} label={a.label} icon={a.icon} hint={a.hint} selected={false} onClick={() => { close(); a.onSelect() }} />
           ))}
         </Section>
       ))}

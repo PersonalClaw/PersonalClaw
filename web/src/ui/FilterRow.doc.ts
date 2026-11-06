@@ -16,6 +16,7 @@ const doc: UiDoc = {
     { name: 'onClick', description: 'Select this row.' },
     { name: 'pressed', description: 'aria-pressed: whether this row is the chosen one. Section rows pass it, since the tint and the trailing check (aria-hidden) are invisible to a screen-reader user.' },
     { name: 'trailing', description: 'Trailing adornment, e.g. a section row\'s check mark, hidden from a screen reader.' },
+    { name: 'hint', description: 'What the row needs to act, drawn as a caption under its label and read as its description (a Repeatable list\'s Reset: every task must be done first).' },
   ],
   bestPractices: [
     { guidance: true, description: 'Render FilterRow for any "pick one of these facets" row rather than laying out an icon/label/count button by hand — it carries the tint, the weight bump, the count treatment and the hover and press tint.' },

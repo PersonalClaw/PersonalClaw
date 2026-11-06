@@ -449,7 +449,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       ],
       actions: projectLists
         .filter((l) => !!repeatableProject && l.project_id === repeatableProject.id)
-        .map((l) => ({ label: `Reset ${l.name}`, icon: RotateCcw, onSelect: () => { void resetRef.current(l) } })),
+        .map((l) => ({ label: `Reset ${l.name}`, icon: RotateCcw, hint: 'Every task must be done first', onSelect: () => { void resetRef.current(l) } })),
     })
     return sections
   }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned, tagFilter, inAProject,

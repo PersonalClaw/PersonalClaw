@@ -89,6 +89,11 @@ beforeEach(() => { resetMock.mockClear(); sessionStorage.clear() })
 afterEach(() => cleanup())
 
 describe('resetting a Repeatable list asks first', () => {
+  it('says what it needs, as its description: every task done first', async () => {
+    mount()
+    expect(await findReset()).toHaveAccessibleDescription('Every task must be done first')
+  })
+
   it('a declined confirm destroys NOTHING', async () => {
     mount()
     fireEvent.click(await findReset())

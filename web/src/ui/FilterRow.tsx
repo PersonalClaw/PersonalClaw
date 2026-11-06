@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react'
+import { type ReactNode, useId } from 'react'
 import { type LucideIcon } from 'lucide-react'
 import { withWeight } from '../design/fontWeight'
 
@@ -15,7 +15,7 @@ import { withWeight } from '../design/fontWeight'
  *  screen-reader user nothing.
  */
 export function FilterRow({
-  label, count, icon: Icon, selected, onClick, pressed, trailing,
+  label, count, icon: Icon, selected, onClick, pressed, trailing, hint,
 }: {
   label: string
   /** Rendered only when > 0 — a bare "0" beside a label reads as a broken count. */
@@ -27,17 +27,25 @@ export function FilterRow({
   pressed?: boolean
   /** Trailing adornment (a section row's check mark, `aria-hidden`). */
   trailing?: ReactNode
+  /** What the row needs to act, under its label (a Repeatable list's Reset: every task done
+   *  first), read as its description. */
+  hint?: string
 }) {
+  const hintId = useId()
   return (
-    <button type="button" onClick={onClick} aria-pressed={pressed}
-      className={`relative flex h-8 w-full items-center gap-s rounded-md px-s text-left transition-colors ${selected ? '' : 'hover:bg-surface-high active:bg-surface-high'}`}>
+    // With a hint the row is named by its label alone, and the hint is its description.
+    <button type="button" onClick={onClick} aria-pressed={pressed} aria-label={hint ? label : undefined} aria-describedby={hint ? hintId : undefined}
+      className={`relative flex w-full items-center gap-s rounded-md px-s text-left transition-colors ${hint ? 'min-h-8 py-1' : 'h-8'} ${selected ? '' : 'hover:bg-surface-high active:bg-surface-high'}`}>
       {selected && (
         <span aria-hidden
           className="absolute inset-0 rounded-md" style={{ background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' }} />
       )}
       {Icon && <Icon size={14} aria-hidden className="relative shrink-0" style={{ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface-var)' }} />}
-      <span data-type="label-s" className="relative min-w-0 flex-1 truncate"
-        style={withWeight({ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface)' }, selected ? 550 : 400)}>{label}</span>
+      <span className="relative min-w-0 flex-1">
+        <span data-type="label-s" className="block truncate"
+          style={withWeight({ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface)' }, selected ? 550 : 400)}>{label}</span>
+        {hint && <span id={hintId} data-type="caption" className="block truncate text-on-surface-low">{hint}</span>}
+      </span>
       {typeof count === 'number' && count > 0 && (
         <span data-type="caption" className="relative shrink-0 text-on-surface-low tabular-nums">{count}</span>
       )}
