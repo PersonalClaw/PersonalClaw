@@ -649,6 +649,85 @@ def test_a_wedged_driver_is_refused_not_hung(tmp_path, monkeypatch):
     assert excinfo.value.error.code == service.ERR_DRIVER_FAILED
 
 
+def _spawn_seam(monkeypatch, elements):
+    """The REAL ``_run_driver`` down to the spawn: ``create_subprocess_limited`` is replaced by a
+    child that records the request it is handed on stdin and answers as a driver would. Returns
+    the recorded requests, in order."""
+    requests: list[dict] = []
+
+    class _Child:
+        returncode = 0
+
+        async def communicate(self, data):
+            request = json.loads(data.decode())
+            requests.append(request)
+            if request.get("op") == "snapshot":
+                answer = {"fingerprint": FINGERPRINT, "elements": list(elements)}
+            elif request.get("op") == "list_apps":
+                answer = {"apps": [ARMED_APP]}
+            else:
+                answer = {"ok": True}
+            return json.dumps(answer).encode(), b""
+
+    async def spawn(*argv, **kwargs):
+        return _Child()
+
+    monkeypatch.setattr("personalclaw.sandbox.create_subprocess_limited", spawn)
+    return requests
+
+
+#: Arguments a tool does not declare: names other tools declare, and names no tool declares. Each
+#: is sent where its tool does not declare it.
+_UNDECLARED = {"op": "set_value", "text": "t", "value": "v", "action": "AXPress", "extra": 1}
+
+
+def _a_call_of_every_tool(snapshot_id: str) -> list[tuple[str, dict]]:
+    by_index = {"snapshot_id": snapshot_id, "element_index": 0}
+    return [
+        ("computer_list_apps", {}),
+        ("computer_snapshot", {"app": ARMED_APP}),
+        ("computer_click", dict(by_index)),
+        ("computer_click", {"click_method": "located", "x": 1, "y": 2, "app": ARMED_APP}),
+        ("computer_type", {**by_index, "text": "hello"}),
+        ("computer_set_value", {**by_index, "value": "hello"}),
+        ("computer_scroll", {**by_index, "direction": "down"}),
+        ("computer_perform_action", {**by_index, "action": "AXPress"}),
+    ]
+
+
+def test_the_driver_child_runs_its_tools_operation_with_only_declared_arguments(
+    tmp_path, monkeypatch
+):
+    """🔴 Red before: arguments a tool does not declare reached the driver child, and could change
+    the operation it ran. For every tool, the child now runs the operation the tool names, and is
+    handed the tool's declared parameters and the app and fingerprint the dispatch resolved,
+    nothing else. Read at the spawn: the dispatch's own tests replace the driver call above it,
+    so they cannot see what the child is given."""
+    _arm(tmp_path, ARMED_APP)
+    requests = _spawn_seam(monkeypatch, [ORDINARY_FIELD])
+    for tool, params in _a_call_of_every_tool(_snapshot(elements=[ORDINARY_FIELD]).snapshot_id):
+        spec = ct.TOOLS_BY_NAME[tool]
+        sent = {**{k: v for k, v in _UNDECLARED.items() if k not in spec.parameters}, **params}
+        requests.clear()
+        _run(service.computer_dispatch(tool, sent))
+        acted = requests[-1]
+        assert acted["op"] == tool[len("computer_") :], (tool, acted)
+        undeclared = set(acted) - set(spec.parameters) - {"op", "app", "fingerprint"}
+        assert not undeclared, (tool, sorted(undeclared))
+
+
+def test_the_click_method_that_moves_the_real_pointer_never_reaches_the_child(
+    tmp_path, monkeypatch
+):
+    _arm(tmp_path, ARMED_APP)
+    requests = _spawn_seam(monkeypatch, [ORDINARY_FIELD])
+    sent = {**_UNDECLARED, "click_method": "global", "x": 1, "y": 2, "app": ARMED_APP}
+    with pytest.raises(service.ComputerUseRefusal) as excinfo:
+        _run(service.computer_dispatch("computer_click", sent))
+    assert excinfo.value.error.code == "ERR_COMPUTER_USE_REAL_POINTER_REFUSED"
+    assert requests == []
+
+
 # ── 5. the shim stayed thin ───────────────────────────────────────────────────
 
 

@@ -507,7 +507,8 @@ async def _run_driver(op: str, payload: dict[str, Any], *, tool: str) -> dict[st
     """
     from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
 
-    request = json.dumps({"op": op, **payload}).encode()
+    # The operation is the dispatch's, written last.
+    request = json.dumps({**payload, "op": op}).encode()
     proc = None
     try:
         proc = await create_subprocess_limited(
@@ -762,7 +763,8 @@ async def computer_dispatch(
         # part of the chain — remove it and every screen still runs identically.
         overlay.observe_action(tool=spec.name, app=app, element=element, params=args)
 
-    driver_payload = dict(args)
+    # Only what the tool declares, and the app and fingerprint the dispatch resolved.
+    driver_payload = {key: value for key, value in args.items() if key in spec.parameters}
     if snap is not None:
         driver_payload["app"] = snap.app
         driver_payload["fingerprint"] = snap.fingerprint
