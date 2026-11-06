@@ -23,6 +23,8 @@ import { copyText } from '../app/clipboard'
 import { fingerprint, useBesideRegistration, useOpenBeside, type BesideBlock } from './OpenBeside'
 import { pairFetch } from '../lib/pair'
 import { useSignedSource } from '../lib/signedUrl'
+import { RemoteImage } from './RemoteImage'
+import { isArtifactImage } from '../lib/artifactImage'
 
 /** The one renderer for markdown this app did not write: a model's reply, a tool's result, a
  *  knowledge item's body (a feed entry, a scraped page, an uploaded file, a mirrored
@@ -33,8 +35,10 @@ import { useSignedSource } from '../lib/signedUrl'
  *     `EMBEDDED_FORMATTING` (`<kbd>`, `<br>`, `<sub>` …), which carry no URL, handler or
  *     style. A form, a frame, a style block or an image tag in a body is words on the page;
  *   · a link opens only for http, https and mailto (`webHref`);
- *   · an image loads only from https or the artifact library's own route (`imageSrc`) —
- *     what the page's Content-Security-Policy loads;
+ *   · an image from the artifact library's own route loads; an https image is a placeholder
+ *     naming its host, loaded only when the owner presses Load, by the gateway through its
+ *     network settings (`imageSrc`, `RemoteImage`): the page's policy loads no image from
+ *     another host;
  *   · a `<widget>` block runs in its sandboxed frame only where the caller opts in
  *     (`widgets`): the agent's own chat replies, the one place the model is given that
  *     contract. Anywhere else a widget tag is embedded HTML like any other.
@@ -251,17 +255,13 @@ function CodeBlock({ code, lang, onBeside }: { code: string; lang?: string; onBe
   )
 }
 
-/** A generated image in the artifact library: `/api/artifacts/<slug>/raw`, optionally with a
- *  `?version=N`. The one path on this gateway rendered text may load. */
-const ARTIFACT_IMAGE = /^\/api\/artifacts\/[^/?#\s]+\/raw(?:\?[^#\s]*)?$/
 
-/** An image's source if the page may load it, else undefined: an artifact image, or an https
- *  address. That is the page's own `img-src` minus what text never needs, so a body cannot
- *  make the dashboard fetch another path of its own API, and a plain-http image — which the
- *  policy refuses anyway — is not painted as a broken frame with a console error beside it. */
+/** An image's source if the page may show it, else undefined: an artifact image, which loads, or
+ *  an https address, which is a placeholder until Load (`RemoteImage`). A body cannot make the
+ *  dashboard fetch another path of its own API, and a plain-http image is its words. */
 function imageSrc(src: string): string | undefined {
   const s = src.trim()
-  if (ARTIFACT_IMAGE.test(s)) return s
+  if (isArtifactImage(s)) return s
   let url: URL
   try { url = new URL(s) } catch { return undefined }
   return url.protocol === 'https:' ? url.href : undefined
@@ -280,19 +280,10 @@ function markdownUrl(url: string, key: string, node: { tagName: string }): strin
 function MarkdownImage({ src, alt, chatSessionKey }: { src?: unknown; alt?: unknown; chatSessionKey?: string }) {
   const text = typeof alt === 'string' ? alt : ''
   if (typeof src !== 'string' || !src) return <span className="text-on-surface-low italic">{text || 'image'}</span>
-  if (ARTIFACT_IMAGE.test(src)) return <InlineArtifactImage src={src} alt={text} chatSessionKey={chatSessionKey} />
-  return <WebImage src={src} alt={text} />
-}
-
-/** An https image. One that does not load says nothing about why — it may be gone, blocked or
- *  offline — so it falls back to its alt text, the same words a refused source shows. */
-function WebImage({ src, alt }: { src: string; alt: string }) {
-  const [failed, setFailed] = useState(false)
-  if (failed) return <span className="text-on-surface-low italic">{alt || 'image'}</span>
-  return (
-    <img src={src} alt={alt} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)}
-      className="my-2 max-h-[28rem] max-w-full rounded-lg border border-outline-variant/40 object-contain" />
-  )
+  if (isArtifactImage(src)) return <InlineArtifactImage src={src} alt={text} chatSessionKey={chatSessionKey} />
+  // An https image is a request to a host the text's author picked: a placeholder naming it,
+  // until the owner presses Load (`RemoteImage`). Drawing it fetches nothing.
+  return <RemoteImage src={src} alt={text} />
 }
 
 /** Heuristic: does an inline-code string look like a clickable file path? A path from the home
@@ -410,9 +401,9 @@ const COMPONENTS: Record<string, React.ComponentType<any>> = {
     // holds it to the same rule, and is the path every row drawn from this text links out by.
     return <WebLink href={href} className="text-primary underline underline-offset-2 decoration-primary/40 hover:decoration-primary">{children}</WebLink>
   },
-  // Lazy and capped so an image cannot blow out the column; a refused source shows its alt
-  // text, a deleted artifact its Regenerate placeholder. (componentsWith() threads the chat
-  // session through for that placeholder.)
+  // Capped so an image cannot blow out the column; a refused source shows its alt text, an https
+  // one its Load placeholder, a deleted artifact its Regenerate placeholder. (componentsWith()
+  // threads the chat session through for that placeholder.)
   img({ src, alt }: any) { return <MarkdownImage src={src} alt={alt} /> },
   blockquote({ children }: any) { return <blockquote className="my-2 border-l border-outline-variant pl-m italic text-on-surface-var">{children}</blockquote> },
   hr() { return <hr className="my-4 border-outline-variant/40" /> },

@@ -159,11 +159,13 @@ describe('a pdf previews from either source', () => {
 
   it('resolves its source the same way the image renderer already did', () => {
     // Both are binary artifacts whose content is a URL ref; divergent resolution here is
-    // how one of them worked and the other did not.
-    const pdf = render(<PdfFilePreview content="/api/artifacts/p/raw" mode="dark" title="p" />)
-    expect(pdf.container.querySelector('object')!.getAttribute('data'))
-      .toBe('/api/artifacts/p/raw')
-    const img = render(<ImageFilePreview content="/api/artifacts/i/raw" mode="dark" title="i" />)
-    expect(img.container.querySelector('img')!.getAttribute('src')).toBe('/api/artifacts/i/raw')
+    // how one of them worked and the other did not. Each is read as the browser loads it,
+    // against the page: the image preview writes the whole same-origin address.
+    const resolved = (v: string | null) => new URL(v ?? '', window.location.href).href
+    const pdf = render(<PdfFilePreview content="/api/artifacts/r/raw" mode="dark" title="r" />)
+    const img = render(<ImageFilePreview content="/api/artifacts/r/raw" mode="dark" title="r" />)
+    const pdfSource = pdf.container.querySelector('object')!.getAttribute('data')
+    expect(resolved(img.container.querySelector('img')!.getAttribute('src'))).toBe(resolved(pdfSource))
+    expect(resolved(pdfSource)).toBe(new URL('/api/artifacts/r/raw', window.location.href).href)
   })
 })

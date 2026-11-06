@@ -8,7 +8,8 @@ import { Download, ShieldAlert, Sliders } from 'lucide-react'
 import type { PreviewProps } from './contentTypes'
 import { Markdown } from '../Markdown'
 import { SquareIconButton } from '../SquareIconButton'
-import { buildSrcdoc, readThemeVars } from '../widget/widgetSrcdoc'
+import { buildSrcdoc, readThemeVars, withPreviewPolicy } from '../widget/widgetSrcdoc'
+import { RemoteImage } from '../RemoteImage'
 import { useWidgetCss } from '../widget/widgetStyles'
 import { ReactWidgetFrame } from '../widget/ReactWidgetFrame'
 import { useWidgetWire } from '../widget/useWidgetActionBridge'
@@ -90,10 +91,12 @@ export const IframeHtmlPreview = memo(function IframeHtmlPreview({ content, mode
   )
 })
 
-/** A plain (no theme injection) sandboxed iframe for raw HTML *files* — matches
- *  the former FileViewer HtmlPreview (renders the file as a real document). */
+/** A plain (no theme injection) sandboxed iframe for raw HTML *files*, rendering the file as a
+ *  real document. The document carries its own policy ahead of its content (`withPreviewPolicy`):
+ *  it loads no image and fetches, posts or submits to no other site, whatever the page's policy a
+ *  `blob:` frame inherits. */
 export const RawHtmlPreview = memo(function RawHtmlPreview({ content }: PreviewProps) {
-  const blobUrl = useMemo(() => URL.createObjectURL(new Blob([content], { type: 'text/html;charset=utf-8' })), [content])
+  const blobUrl = useMemo(() => URL.createObjectURL(new Blob([withPreviewPolicy(content)], { type: 'text/html;charset=utf-8' })), [content])
   useEffect(() => () => URL.revokeObjectURL(blobUrl), [blobUrl])
   return <iframe src={blobUrl} sandbox="allow-scripts" title="HTML preview" className="h-full w-full border-none bg-white" />
 })
@@ -166,11 +169,33 @@ export const CsvTablePreview = memo(function CsvTablePreview({ content, path }: 
 })
 
 /** Image — a workspace file (by path) OR a kind:image artifact (content is the
- *  /api/artifacts/<slug>/raw URL ref). One renderer, source-agnostic. */
+ *  /api/artifacts/<slug>/raw URL ref). One renderer, source-agnostic. Only this gateway's, a
+ *  `data:` or a `blob:` picture is drawn: content that is an address on another site is a
+ *  placeholder naming its host until the owner presses Load (`RemoteImage`). */
 export const ImageFilePreview = memo(function ImageFilePreview({ path, content }: PreviewProps) {
-  // An artifact's content is a URL ref or data-URI; a file has no usable content.
-  const src = content && /^(https?:|data:|\/)/.test(content) ? content : undefined
-  return <div className="h-full overflow-auto"><ImagePreview path={path} src={src} /></div>
+  // An artifact's content is a URL ref or data-URI; a file has no usable content. Read as the
+  // browser reads it, once: a prefix test passes `/\host` and `/<tab>/host`, which are another host.
+  const value = (content ?? '').trim()
+  const name = (path || '').split('/').pop() || 'Image'
+  if (!value) return <div className="h-full overflow-auto"><ImagePreview path={path} /></div>
+  let url: URL | null = null
+  try { url = new URL(value, window.location.href) } catch { url = null }
+  if (url && (url.protocol === 'data:' || url.protocol === 'blob:')) {
+    return <div className="h-full overflow-auto"><ImagePreview path={path} src={value} /></div>
+  }
+  if (url && url.origin === window.location.origin) {
+    // The whole address, not its path: a path that starts `//host` is another host's to the
+    // browser, and only the parsed address keeps it this gateway's.
+    return <div className="h-full overflow-auto"><ImagePreview path={path} src={url.href} /></div>
+  }
+  // Another host. A scheme-less address (`//host`, `/\host`) is read as https, the one scheme a
+  // remote image loads over; plain http is shown as its words.
+  let remote: URL | null = null
+  try { remote = url ? new URL(value, 'https://gateway.invalid/') : null } catch { remote = null }
+  if (remote && remote.protocol === 'https:' && remote.host !== 'gateway.invalid') {
+    return <div className="flex h-full items-center justify-center overflow-auto p-l"><RemoteImage src={remote.href} alt={name} /></div>
+  }
+  return <p data-type="body-s" className="break-all px-l py-m text-on-surface-low">{value}</p>
 })
 
 /** PDF — a workspace file (by path) OR a kind:pdf artifact (content is the

@@ -1560,6 +1560,31 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # 404: no turn in the chat started with, or took in, the message a turn document names
     # (dashboard/chat_turns.py).
     "turn_not_found": "No turn in this chat started with that message.",
+    # ── an image a shown text names on another site, fetched on Load (handlers/remote_image.py) ──
+    # 403: an app's token; the owner's own press loads a remote image.
+    "remote_image_owner_only": "Only you load an image from another site; an app's token may not.",
+    # 403: the egress guard refused the address (a Denied host, a private or loopback address, or
+    # a redirect to one); the message names the host and why.
+    "remote_image_refused": (
+        "The image was not loaded: its address is refused by the network settings; the message "
+        "says why."
+    ),
+    # 415: the answer was not a PNG, JPEG, GIF, WebP or AVIF image, told by its first bytes.
+    "remote_image_not_an_image": (
+        "The address did not answer with a picture PersonalClaw shows, so nothing was shown."
+    ),
+    # 413: the image is larger than the fetch's cap (net.policy.REMOTE_IMAGE).
+    "remote_image_too_large": "The image is larger than PersonalClaw loads, so nothing was shown.",
+    # 502: the site could not be reached in time, or answered with something other than the image.
+    "remote_image_unreachable": (
+        "The image's site could not be reached, or did not send the image; the message says why."
+    ),
+    # 503: the load was still waiting for one of the route's workers at its deadline, so its site
+    # was asked nothing; a later press can load it.
+    "remote_image_busy": (
+        "PersonalClaw was still loading other images, so this one wasn't asked for. Press Load "
+        "again."
+    ),
 }
 
 

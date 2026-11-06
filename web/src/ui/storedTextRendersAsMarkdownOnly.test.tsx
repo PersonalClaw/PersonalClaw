@@ -19,8 +19,9 @@ import type { InboxItem, KnowledgeItem } from '../lib/api'
 //   · embedded HTML is shown as its text, except a short list of attribute-free formatting
 //     tags (`<kbd>`, `<br>`, `<sub>` …), which carry no URL, handler or style;
 //   · a link opens only for http, https and mailto;
-//   · an image loads only from https, the artifact library's own route, or an inline data
-//     image — what the page's policy loads;
+//   · an image loads only from the artifact library's own route; an https image is a
+//     placeholder naming its host, loaded only when the owner presses Load
+//     (`aRemoteImageLoadsOnlyWhenPressed.test.tsx`);
 //   · ordinary Markdown still renders as Markdown.
 
 /** Every attribute on every element, so "no handler anywhere" is a census, not a spot check. */
@@ -158,12 +159,13 @@ describe('a link opens only for http, https and mailto', () => {
 })
 
 describe('an image loads only from where the page loads images', () => {
-  it('an https image and an artifact image render', () => {
+  it('an artifact image renders, and an https image is a placeholder that loads nothing', () => {
     const { container } = render(
       <Markdown>{'![Revenue chart](https://images.example.com/chart.png)\n\n![Generated](/api/artifacts/sales-chart/raw?version=2)'}</Markdown>,
     )
     expect(Array.from(container.querySelectorAll('img')).map((i) => i.getAttribute('src')))
-      .toEqual(['https://images.example.com/chart.png', '/api/artifacts/sales-chart/raw?version=2'])
+      .toEqual(['/api/artifacts/sales-chart/raw?version=2'])
+    expect(container.textContent).toContain('images.example.com')
   })
 
   it.each([

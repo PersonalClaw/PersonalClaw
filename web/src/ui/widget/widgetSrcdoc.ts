@@ -9,6 +9,33 @@ const WIDGET_CSP =
   "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; "
   + "img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';"
 
+/** The policy an HTML file's preview carries ahead of its content (`RawHtmlPreview`): the widget
+ *  policy's posture without `'unsafe-eval'`. It holds in the frame itself, not only through the
+ *  page policy a `blob:` frame inherits: the document loads no image and fetches, posts or
+ *  submits to no other site. */
+export const HTML_PREVIEW_CSP =
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+  + "img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none';"
+
+/** What the HTML parser lets come before a doctype and still read it: a byte-order mark, then HTML's
+ *  own whitespace, comments as HTML ends them (`<!-->` and `<!--->` too, and `--!>`), and `<?`,
+ *  which HTML ends at its first `>`. Anything else, such as another space character, is text,
+ *  which opens the body. */
+const BEFORE_DOCTYPE = /^\uFEFF?(?:[\t\n\f\r ]+|<!--(?:-?>|[\s\S]*?--!?>)|<\?[^>]*>)*/
+
+/** *html* with the preview's own policy (:data:`HTML_PREVIEW_CSP`) and DNS prefetch turned off as
+ *  its first elements, after a doctype when it has one so the document keeps its mode. A policy
+ *  the document carries itself only narrows this one. */
+export function withPreviewPolicy(html: string): string {
+  const head = '<meta http-equiv="x-dns-prefetch-control" content="off">'
+    + `<meta http-equiv="Content-Security-Policy" content="${HTML_PREVIEW_CSP}">`
+  const lead = BEFORE_DOCTYPE.exec(html)?.[0] ?? ''
+  const doctype = /^<!doctype[^>]*>/i.exec(html.slice(lead.length))
+  if (!doctype) return head + html
+  const at = lead.length + doctype[0].length
+  return html.slice(0, at) + head + html.slice(at)
+}
+
 /** CSS that cannot end the `<style>` element it is placed in. */
 const styleSafe = (css: string) => css.replace(/<\/style/gi, '<\\/style')
 

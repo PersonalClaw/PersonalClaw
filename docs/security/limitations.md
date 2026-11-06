@@ -1207,6 +1207,13 @@ What the tier does not reach:
   run's session lasts; one already running before the session started watching the tab is left
   running, unjudged. Whatever is still held when the session ends, such a page or a frame still
   being judged, loads once it has ended.
+- **An image you press Load on.** The dashboard's page loads no image from another site by
+  itself: one in text it shows is a placeholder naming its host. Pressing Load, like opening a
+  link, sends that host whatever its address holds. The site sees the request come from
+  PersonalClaw, under its name, from the machine the gateway runs on. The gateway fetches it,
+  through the guard (`dashboard/handlers/remote_image.py`, a public host only, your Denied hosts
+  applied), so the request is checked and audited, not hidden. It is your own request, so a run's
+  egress tier does not hold it; your Denied hosts do.
 - **A frame of a rendered page whose own address redirects.** A page rendered with the
   `js-render` extra makes every request through the guard, and the egress layer follows each
   redirect itself, asking the guard of each hop (`web.render`). The page is then opened at the

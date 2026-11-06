@@ -82,10 +82,6 @@ _MARKUP_PATHS: dict[str, tuple[dict[str, int], str]] = {
         {"a document for a frame or file": 1},
         "an artifact card's sandboxed, inert preview frame",
     ),
-    "pages/files/browse/FilePreviews.tsx": (
-        {"a document for a frame or file": 1},
-        "an HTML file's preview in a sandboxed blob frame",
-    ),
     "ui/content/exporters.ts": (
         {"a document for a frame or file": 1},
         "a document export's download (a file, not a page)",

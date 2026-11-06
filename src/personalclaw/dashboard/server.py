@@ -220,6 +220,9 @@ SECURITY_HEADERS: dict[str, str] = {
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "X-Content-Type-Options": "nosniff",
+    # A browser may look up the host of each link on a page before anyone opens it; the links in
+    # a shown text name their hosts to nobody until one is opened.
+    "X-DNS-Prefetch-Control": "off",
 }
 
 
@@ -242,8 +245,10 @@ def dashboard_csp(port: int | None = None) -> str:
     No directive that loads code, a stylesheet or a font names another origin: the dashboard
     runs locally and fetches nothing from a third party. A widget's Tailwind CSS and a react
     artifact's React ride inside the widget's own document (``web/src/ui/widget/widgetStyles.ts``,
-    ``reactFrameRuntime.ts``), so no CDN is owed an allowance. ``img-src https:`` is the one
-    remote allowance, for the images in a rendered body.
+    ``reactFrameRuntime.ts``), so no CDN is owed an allowance. Nor does ``img-src``: an image in a
+    rendered body is a request to a host the body's author picked, carrying whatever its address
+    holds, so the page loads none itself. Such an image is a placeholder until the owner presses
+    Load, and the gateway fetches it through the egress guard (``handlers/remote_image.py``).
 
     ``connect-src`` names the loopback WebSocket at *port* — the port this page was served
     on, the only one the app ever opens a socket to (``location.host``) — rather than every
@@ -267,7 +272,7 @@ def dashboard_csp(port: int | None = None) -> str:
         # still gated by the permission system + SkillScanner at install.
         "script-src 'self' 'unsafe-inline' blob:; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob: https:; "
+        "img-src 'self' data: blob:; "
         # Monaco (locally bundled) inlines its codicon icon font as a data: URI;
         # without font-src the default-src 'self' fallback blocks it.
         "font-src 'self' data:; "

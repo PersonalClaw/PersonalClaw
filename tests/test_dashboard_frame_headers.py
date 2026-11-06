@@ -35,13 +35,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-#: Promoted from ad-hoc per-response headers to a global default by #2735. All three are
-#: security headers that belong on EVERY response; before this change they appeared only
-#: on specific artifact/file responses.
+#: Security headers that belong on EVERY response. The first three were promoted from ad-hoc
+#: per-response headers to a global default by #2735; before that they appeared only on
+#: specific artifact/file responses. X-DNS-Prefetch-Control joined them, all four together,
+#: with the page's image policy.
 EXPECTED_HEADERS = {
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "X-Content-Type-Options": "nosniff",
+    "X-DNS-Prefetch-Control": "off",
 }
 
 #: Doors through ``_security_headers_middleware``. ``/assets/`` takes the OTHER branch of
@@ -223,12 +225,14 @@ class TestOneStandardForBothSurfaces:
         dashboard = _parse_csp(dashboard_csp())
         assert artifact["frame-ancestors"] == dashboard["frame-ancestors"] == ["'self'"]
 
-    def test_neither_surface_loads_code_styles_or_fonts_from_another_origin(self) -> None:
-        """Local-first: what either surface runs, styles and sets in type with is served by this
-        gateway or held in the page — never fetched from a third party. A widget's Tailwind CSS
-        and a react artifact's React ride inside the widget's own document, so no CDN is owed an
-        allowance. A host source or a bare scheme (``https:``) in these directives is exactly a
-        third-party load, and every widget frame inherits the dashboard's policy."""
+    def test_neither_surface_loads_code_styles_fonts_or_images_from_another_origin(self) -> None:
+        """Local-first: what either surface runs, styles, sets in type with and shows as an image
+        is served by this gateway or held in the page — never fetched from a third party. A
+        widget's Tailwind CSS and a react artifact's React ride inside the widget's own document,
+        so no CDN is owed an allowance, and an image from another site is fetched by the gateway
+        on a press (``handlers/remote_image.py``). A host source or a bare scheme (``https:``) in
+        these directives is exactly a third-party load, and every widget frame inherits the
+        dashboard's policy."""
         from personalclaw.artifacts.deploy import ARTIFACT_SERVE_CSP
         from personalclaw.dashboard.server import dashboard_csp
 
@@ -237,7 +241,7 @@ class TestOneStandardForBothSurfaces:
             directives = _parse_csp(policy)
             # A policy missing the directive would fall back to default-src, checked too.
             assert "script-src" in directives and "style-src" in directives, surface
-            for name in ("default-src", "script-src", "style-src", "font-src"):
+            for name in ("default-src", "script-src", "style-src", "font-src", "img-src"):
                 remote = sorted(set(directives.get(name, [])) - local)
                 assert remote == [], f"the {surface} {name} names another origin: {remote}"
 

@@ -69,6 +69,15 @@ STRICT = EgressPolicy(name="strict")
 # Knowledge web-url / bookmark scrape: STRICT posture, connector-tuned caps.
 CONNECTOR = EgressPolicy(name="connector", max_bytes=10_000_000, timeout_s=20.0)
 
+# An image a shown text names on another site, fetched when the owner presses its Load
+# (`dashboard/handlers/remote_image.py`). STRICT's posture: public hosts only, the address pinned,
+# every redirect checked again. https only, as the page's renderer passes no other remote image,
+# and image-sized caps. The owner's Denied hosts are layered on by `remote_image_egress_policy`,
+# and nothing the owner allows: a text's author picked the address.
+REMOTE_IMAGE = EgressPolicy(
+    name="remote_image", allow_schemes=("https",), max_bytes=8_000_000, timeout_s=15.0
+)
+
 # WatchedSource poll fetch: a scheduled, unattended pull of a feed
 # or web listing page. Same STRICT public-only posture and CONNECTOR caps (10MB/20s) — a
 # source poll is a knowledge scrape on a timer — as a distinct profile so its egress
@@ -665,6 +674,14 @@ def egress_policy_for(base: EgressPolicy) -> EgressPolicy:
         deny_hosts=tuple(dict.fromkeys([*base.deny_hosts, *eg.deny_hosts])),
         allow_private=base.allow_private or bool(eg.allow_private),
     )
+
+
+def remote_image_egress_policy() -> EgressPolicy:
+    """:data:`REMOTE_IMAGE` with the owner's Denied hosts (``security.egress.deny_hosts``), and
+    nothing the owner allows: no allowed host, no private network. The address comes from text the
+    dashboard did not write, so it reaches a public host or nothing, whatever the instance opts
+    into for its own connections."""
+    return REMOTE_IMAGE.with_overrides(deny_hosts=egress_policy_for(REMOTE_IMAGE).deny_hosts)
 
 
 def fetch_action_egress_policy() -> EgressPolicy:

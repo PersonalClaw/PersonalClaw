@@ -52,8 +52,14 @@ www.reddit.com — FETCHED only when the user creates a watched knowledge source
 # None. A widget or react artifact's frame fetches nothing: its Tailwind CSS is compiled by the
 # dashboard and its React inlined from the installed packages, both inside the frame's own
 # document (web/src/ui/widget/widgetStyles.ts, reactFrameRuntime.ts), and no directive of the
-# dashboard's or the artifact server's policy that loads code, a stylesheet or a font names
-# another origin (tests/test_dashboard_frame_headers.py).
+# dashboard's or the artifact server's policy that loads code, a stylesheet, a font or an image
+# names another origin (tests/test_dashboard_frame_headers.py).
+# ── Browser-side, an image in text the dashboard shows ────────────────────────
+# None. The dashboard's page loads no image from another host (`img-src 'self' data: blob:`). An
+# image a shown text names on another site is a placeholder until the owner presses Load; the
+# gateway then fetches it through the egress guard (dashboard/handlers/remote_image.py, the
+# REMOTE_IMAGE profile: public hosts only, Denied hosts applied; the request is audited under
+# the route's own door, `dashboard.remote_image`, with every refusal), so there is no host to list.
 # ── Never fetched: namespace identifiers, DTDs and schema ids ─────────────────
 www.w3.org — XML namespace identifiers, never retrieved: the SVG namespace on inline `<svg xmlns=…>` markup (the token page `dashboard/token_auth.py` serves, among others), and the Atom namespace `knowledge_providers/feed_source.py` uses to NAME the elements it parses (`{http://www.w3.org/2005/Atom}entry`). That module does fetch — the feed the user configured — but never this namespace: an XML namespace is an identifier, not a URL to retrieve.
 schemas.openxmlformats.org — the WordprocessingML namespace, used to build ElementTree tag names when parsing a .docx locally.

@@ -12,6 +12,9 @@
  *  for in-DOM static markup only.
  */
 
+import { asTheUrlParserReadsIt, isArtifactImage } from '../../lib/artifactImage'
+import { CSS_DANGEROUS_FUNC_RE, CSS_VALUE_ALLOWED_RE } from '../widget/cssSanitize'
+
 type Profile = 'svg' | 'document'
 
 // Elements permitted for editorial documents (prose + structure + tables +
@@ -68,6 +71,14 @@ const URL_ATTRS = new Set(['href', 'src', 'xlink:href', 'cite'])
 const SAFE_SCHEMES = new Set(['http', 'https', 'mailto', 'tel'])
 // data: is for inline images only. data:text/html is a script-bearing document.
 const SAFE_DATA_URL = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);/
+// The attributes that make an element load an image, by element. Each keeps only a source the page
+// itself holds (a data image) or the artifact library: an image anywhere else is a request to a
+// host the markup's author picked, made the moment the preview opens. `srcset` is never allowed.
+const IMAGE_SOURCE_ATTRS: Record<string, string[]> = {
+  img: ['src'],
+  source: ['src'],
+  image: ['href', 'xlink:href'],
+}
 
 /** Normalise a URL value the way the URL parser does *before* it reads the scheme,
  *  so this check and the browser agree on where the scheme ends.
@@ -103,8 +114,10 @@ function normalizeUrl(v: string): string {
  *  no scheme at all — and nothing else reaches a `return true`.
  *
  *  A scheme-less value resolves against the app's own base URL. `//host` and `/\host`
- *  resolve off-origin, which is not an escalation: an absolute http(s) URL is
- *  allowlisted anyway. What matters is that neither can name a script scheme. */
+ *  resolve off-origin, which is not an escalation for a link: an absolute http(s) URL is
+ *  allowlisted anyway. What matters is that neither can name a script scheme. An image
+ *  source is held to less: only data the document holds or the artifact library
+ *  (`keepPageImages`). */
 function isSafeUrl(v: string): boolean {
   const s = normalizeUrl(v)
   if (!s) return false
@@ -113,6 +126,88 @@ function isSafeUrl(v: string): boolean {
   if (SAFE_SCHEMES.has(scheme[1])) return true
   if (scheme[1] === 'data') return SAFE_DATA_URL.test(s)
   return false
+}
+
+/** True for an image source the page holds or this gateway's artifact library serves. */
+function isPageImage(v: string): boolean {
+  return SAFE_DATA_URL.test(normalizeUrl(v)) || isArtifactImage(v)
+}
+
+/** The host an image source names, or `''` for a path on this gateway or no address at all. */
+function sourceHost(v: string): string {
+  const here = 'this-gateway.invalid'
+  try {
+    const url = new URL(v.trim(), `https://${here}/`)
+    return url.host === here ? '' : url.host
+  } catch {
+    return ''
+  }
+}
+
+/** Drop each image source on *el* the page may not load. An `img` left with none becomes its
+ *  words, and the host it named: "(image from example.com)". Returns the node now in its place. */
+function keepPageImages(el: Element): Node {
+  const tag = el.tagName.toLowerCase()
+  const sources = IMAGE_SOURCE_ATTRS[tag] ?? []
+  let from = ''
+  let dropped = false
+  // By the lower-cased name: an SVG is parsed as XML, where `HREF` is not `href`, and then
+  // injected as HTML, where it is.
+  for (const attr of Array.from(el.attributes)) {
+    if (!sources.includes(attr.name.toLowerCase()) || isPageImage(attr.value)) continue
+    from = from || sourceHost(attr.value)
+    el.removeAttribute(attr.name)
+    dropped = true
+  }
+  if (!dropped || tag !== 'img') return el
+  const words = el.getAttribute('alt')?.trim() || 'image'
+  const text = el.ownerDocument.createTextNode(from ? `${words} (image from ${from})` : words)
+  el.replaceWith(text)
+  return text
+}
+
+/** The paint and reference attributes, the ones whose value may name a `url(…)`. */
+const PAINT_REFERENCE_ATTRS = new Set(['fill', 'stroke', 'filter', 'mask', 'clip-path'])
+
+/** Each `url(…)` a paint or reference value names: its body in group 3. CSS whitespace only, the
+ *  leading run taken whole (the lookahead), and no whitespace or parenthesis in the body, which CSS
+ *  reads as a bad url. So each place it is tried, it is tried once: a long `url(` that never
+ *  closes is read in one pass. */
+const URL_FUNCTION = /url\((?=([\t\n\f\r ]*))\1(['"]?)([^'"()\t\n\f\r ]*)\2[\t\n\f\r ]*\)/gi
+
+/** Whether *value* names only parts of this same document: each `url(…)` in it is `url(#id)`,
+ *  and what is left is a plain value by cssSanitize's rule. A fallback colour after it
+ *  (`url(#g) red`) is kept. That rule allows no backslash: CSS reads an escape before it looks
+ *  for a function, so an escaped `url(` is still one. Nor any function that loads something
+ *  (`image-set(`, `image(`, `element(`, `paint(`), whatever it names, nor a url( the pattern
+ *  can't read. */
+function referencesOnlyItself(value: string): boolean {
+  for (const match of value.matchAll(URL_FUNCTION)) {
+    if (!match[3].startsWith('#')) return false
+  }
+  const rest = value.replace(URL_FUNCTION, ' ').trim()
+  return !rest || (CSS_VALUE_ALLOWED_RE.test(rest) && !CSS_DANGEROUS_FUNC_RE.test(rest))
+}
+
+/** Drop each attribute of *el* that is not allowed, or that points outside the document: a
+ *  script-scheme URL, a paint or reference `url(…)` to anything but this document's own parts,
+ *  and an `href` on anything but a link or an image source that is not a same-document `#id`
+ *  (`use`, a pattern, a gradient, `textPath`). Image sources are held to their own rule
+ *  (`keepPageImages`). */
+function cleanAttributes(el: Element): void {
+  const tag = el.tagName.toLowerCase()
+  const imageSources = IMAGE_SOURCE_ATTRS[tag] ?? []
+  for (const attr of Array.from(el.attributes)) {
+    const name = attr.name
+    const lower = name.toLowerCase()
+    if (!allowedAttr(name)) { el.removeAttribute(name); continue }
+    if ((URL_ATTRS.has(lower) || URL_ATTRS.has(name)) && !isSafeUrl(attr.value)) { el.removeAttribute(name); continue }
+    if (PAINT_REFERENCE_ATTRS.has(lower) && !referencesOnlyItself(attr.value)) { el.removeAttribute(name); continue }
+    const isHref = lower === 'href' || lower === 'xlink:href'
+    if (isHref && tag !== 'a' && !imageSources.includes(lower) && !asTheUrlParserReadsIt(attr.value).startsWith('#')) {
+      el.removeAttribute(name)
+    }
+  }
 }
 
 function allowedTag(profile: Profile, tag: string): boolean {
@@ -139,14 +234,9 @@ function clean(node: Element, profile: Profile): void {
       child.remove()
       continue
     }
-    // Strip disallowed / unsafe attributes.
-    for (const attr of Array.from(child.attributes)) {
-      const name = attr.name
-      if (!allowedAttr(name)) { child.removeAttribute(name); continue }
-      if ((URL_ATTRS.has(name.toLowerCase()) || URL_ATTRS.has(name)) && !isSafeUrl(attr.value)) {
-        child.removeAttribute(name)
-      }
-    }
+    // Strip disallowed / unsafe attributes, and every reference outside the document.
+    cleanAttributes(child)
+    if (keepPageImages(child) !== child) continue
     clean(child, profile)
   }
 }
@@ -169,9 +259,7 @@ export function sanitizeInlineHtml(raw: string, profile: Profile = 'document'): 
         if (!svg) return ''
         clean(svg, 'svg')
         // also strip attrs on the root svg
-        for (const attr of Array.from(svg.attributes)) {
-          if (!allowedAttr(attr.name)) svg.removeAttribute(attr.name)
-        }
+        cleanAttributes(svg)
         return svg.outerHTML
       }
       return ''
@@ -179,7 +267,7 @@ export function sanitizeInlineHtml(raw: string, profile: Profile = 'document'): 
     if (profile === 'svg') {
       const svg = doc.documentElement
       if (!svg || svg.tagName.toLowerCase() !== 'svg') return ''
-      for (const attr of Array.from(svg.attributes)) if (!allowedAttr(attr.name)) svg.removeAttribute(attr.name)
+      cleanAttributes(svg)
       clean(svg, 'svg')
       return svg.outerHTML
     }

@@ -8,7 +8,10 @@ of being re-derived under a console form's time pressure.
 Every answer below follows from one architecture fact: **the app is a WebView
 shell over the user's own self-hosted gateway.** There is no developer-operated
 backend. The only servers the app ever talks to are the ones the user types in —
-their own machines, on their own network ([mobile/README.md](../README.md)).
+their own machines, on their own network ([mobile/README.md](../README.md)). That
+holds for images too: the dashboard page loads none from another site, and one
+that shown text names is fetched by the user's own gateway, only when they press
+Load.
 
 ## The form answers
 

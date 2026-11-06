@@ -265,9 +265,24 @@ describe('sanitizeInlineHtml — legitimate content still renders', () => {
     ['data:image/svg+xml', 'data:image/svg+xml;base64,PHN2Zy8+'],
   ]
   for (const [what, url] of SAFE_URLS) {
-    it(`keeps ${what} on a link and an image`, () => {
-      const out = sanitizeInlineHtml(`<a href="${url}">t</a><img src="${url}" alt="x">`, 'document')
+    it(`keeps ${what} on a link`, () => {
+      const out = sanitizeInlineHtml(`<a href="${url}">t</a>`, 'document')
       expect(out, `href was dropped from ${url}`).toContain(`href="${url}"`)
+    })
+  }
+
+  // An image loads only from data the document holds and the artifact library: what the page's
+  // own policy loads, so a document cannot name an image on another site, or another path of
+  // this gateway's API.
+  const SAFE_IMAGES: Array<[string, string]> = [
+    ['data:image/png', 'data:image/png;base64,iVBORw0KGgo='],
+    ['data:image/jpeg', 'data:image/jpeg;base64,/9j/4AAQ'],
+    ['data:image/svg+xml', 'data:image/svg+xml;base64,PHN2Zy8+'],
+    ['an artifact image', '/api/artifacts/x/raw?version=1'],
+  ]
+  for (const [what, url] of SAFE_IMAGES) {
+    it(`keeps ${what} on an image`, () => {
+      const out = sanitizeInlineHtml(`<img src="${url}" alt="x">`, 'document')
       expect(out, `src was dropped from ${url}`).toContain(`src="${url}"`)
     })
   }
@@ -375,5 +390,133 @@ describe('sanitizeInlineHtml — legitimate content still renders', () => {
     const withPayload = sanitizeInlineHtml('<svg><a href="java\tscript:alert(1)"><unclosed', 'svg')
     expect(withPayload).not.toMatch(URL_ATTR_RE)
     expect(dangerousAttrs(withPayload)).toEqual([])
+  })
+})
+
+
+describe('sanitizeInlineHtml — an image from another site keeps no source', () => {
+  // A document or SVG preview is drawn in the page. An image source anywhere but the document's
+  // own data and the artifact library is a request to a host the markup's author picked, the
+  // moment the preview opens: it is dropped, and the image is shown as its words and its host.
+  const ELSEWHERE: Array<[string, string, string]> = [
+    ['https with a query and a fragment', 'https://example.com/a?q=1#f', 'example.com'],
+    ['HTTPS in upper case', 'HTTPS://example.com/a', 'example.com'],
+    ['a protocol-relative address', '//example.com/a', 'example.com'],
+    ['another path of this gateway', '/api/health', ''],
+  ]
+  for (const [what, url, host] of ELSEWHERE) {
+    it(`an image from ${what} keeps no source, and keeps its words`, () => {
+      const out = sanitizeInlineHtml(`<p>Before</p><img src="${url}" alt="Quarterly chart"><p>After</p>`, 'document')
+      const root = document.createElement('div')
+      root.innerHTML = out
+      expect(Array.from(root.querySelectorAll('[src]')).map((el) => el.getAttribute('src'))).toEqual([])
+      expect(out).not.toContain('example.com/a')
+      expect(root.textContent).toContain('Quarterly chart')
+      if (host) expect(root.textContent).toContain(`(image from ${host})`)
+    })
+  }
+
+  it('an SVG image from another site keeps no address, in either spelling', () => {
+    for (const markup of [
+      '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/p.png" width="10" height="10"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="https://example.com/p.png" width="10" height="10"/></svg>',
+    ]) {
+      const out = sanitizeInlineHtml(markup, 'svg')
+      expect(out, markup).not.toContain('https://example.com')
+    }
+  })
+
+  it('an SVG image from the document itself or the artifact library keeps its address', () => {
+    const data = sanitizeInlineHtml('<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,iVBORw0KGgo=" width="10" height="10"/></svg>', 'svg')
+    expect(data).toContain('data:image/png;base64,iVBORw0KGgo=')
+    const artifact = sanitizeInlineHtml('<svg xmlns="http://www.w3.org/2000/svg"><image href="/api/artifacts/x/raw" width="10" height="10"/></svg>', 'svg')
+    expect(artifact).toContain('/api/artifacts/x/raw')
+  })
+
+  it.each([
+    ['a bare relative file', 'img.png'],
+    ['a ../ path', '../a/b.png'],
+    ['an artifact path that climbs out of the library', '/api/artifacts/%2e%2e/raw'],
+  ])('an image from %s keeps no source', (_what, url) => {
+    const out = sanitizeInlineHtml(`<img src="${url}" alt="Chart">`, 'document')
+    expect(out).not.toContain(url)
+    expect(out).toContain('Chart')
+  })
+
+  it('an SVG references nothing outside itself, however its attributes are spelled', () => {
+    for (const markup of [
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(https://example.com/p.svg#a)" width="4" height="4"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect filter="url(\'https://example.com/f.svg#b\')" width="4" height="4"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><use href="https://example.com/sprite.svg#icon"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><use xlink:href="//example.com/sprite.svg#icon"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><linearGradient id="g" href="https://example.com/g.svg#h"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><image HREF="https://example.com/p.png" width="4" height="4"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect stroke="url(https://example.com/s.svg#a)" width="4" height="4"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect mask="url(https://example.com/m.svg#m)" width="4" height="4"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect clip-path="url(https://example.com/c.svg#c)" width="4" height="4"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect FILL="url(https://example.com/p.svg#a)" width="4" height="4"/></svg>',
+      // A CSS escape is read before the url check, so `\75 rl(` is `url(`.
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="\\75 rl(https://example.com/p.svg#a)" width="4" height="4"/></svg>',
+      `<svg xmlns="http://www.w3.org/2000/svg"><rect mask="image-set('https://example.com/p.png' 1x)" width="4" height="4"/></svg>`,
+    ]) {
+      expect(sanitizeInlineHtml(markup, 'svg'), markup).not.toContain('example.com')
+    }
+  })
+
+  it('words that mention url( are kept where they are words', () => {
+    const out = sanitizeInlineHtml('<p title="see url(https://example.com) for more">t</p><img src="data:image/png;base64,iVBORw0KGgo=" alt="a url( in words">', 'document')
+    expect(out).toContain('title="see url(https://example.com) for more"')
+    expect(out).toContain('alt="a url( in words"')
+  })
+
+  it('an SVG keeps its references to its own parts', () => {
+    const out = sanitizeInlineHtml(
+      '<svg xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g"/><symbol id="s"/></defs><rect fill="url(#g) red" width="4" height="4"/><use href="#s"/></svg>',
+      'svg',
+    )
+    expect(out).toContain('url(#g)')
+    expect(out).toContain('href="#s"')
+  })
+
+  it('a space the URL parser does not strip, before the #, is no reference to this document', () => {
+    for (const [markup, attr] of [
+      ['<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(&#160;#a)" width="4" height="4"/></svg>', 'fill='],
+      [`<svg xmlns="http://www.w3.org/2000/svg"><rect mask="url('&#160;#m')" width="4" height="4"/></svg>`, 'mask='],
+      ['<svg xmlns="http://www.w3.org/2000/svg"><use href="&#160;#s"/></svg>', 'href='],
+      ['<svg xmlns="http://www.w3.org/2000/svg"><image href="&#160;/api/artifacts/x/raw" width="4" height="4"/></svg>', 'href='],
+    ]) {
+      expect(sanitizeInlineHtml(markup, 'svg'), markup).not.toContain(attr)
+    }
+  })
+
+  it('a long unclosed url( is read in one pass', () => {
+    const rects = Array.from({ length: 300 }, () => `<rect fill="url(${' '.repeat(195)}" width="4" height="4"/>`).join('')
+    const began = performance.now()
+    const out = sanitizeInlineHtml(`<svg xmlns="http://www.w3.org/2000/svg">${rects}</svg>`, 'svg')
+    const long = sanitizeInlineHtml(`<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(${' '.repeat(2000)}" width="4" height="4"/></svg>`, 'svg')
+    expect(performance.now() - began).toBeLessThan(500)
+    expect(out).not.toContain('fill=')
+    expect(long).not.toContain('fill=')
+  })
+
+  it('a paint or reference value that calls a function that loads is dropped, whatever it names', () => {
+    for (const [name, value] of [['mask', 'image(#m)'], ['fill', 'element(#a)'], ['filter', 'paint(glow)']]) {
+      const out = sanitizeInlineHtml(`<svg xmlns="http://www.w3.org/2000/svg"><rect ${name}="${value}" width="4" height="4"/></svg>`, 'svg')
+      expect(out, `${name}=${value}`).not.toContain(`${name}=`)
+    }
+  })
+
+  it('a paint or reference value that names nothing outside is kept as it is', () => {
+    for (const [name, value] of [
+      ['fill', 'none'], ['fill', '#1a2b3c'], ['stroke', 'currentColor'], ['fill', 'rgb(10, 20, 30)'],
+      ['filter', "url('#f')"], ['clip-path', 'url(#c)'], ['mask', 'url( "#m" )'], ['stroke', 'url(#g) #000'],
+    ]) {
+      const out = sanitizeInlineHtml(`<svg xmlns="http://www.w3.org/2000/svg"><rect ${name}="${value.replace(/"/g, '&quot;')}" width="4" height="4"/></svg>`, 'svg')
+      expect(out, `${name}=${value}`).toContain(`${name}=`)
+    }
+  })
+
+  it('a link keeps its https address', () => {
+    expect(sanitizeInlineHtml('<a href="https://example.com/a">t</a>', 'document')).toContain('href="https://example.com/a"')
   })
 })

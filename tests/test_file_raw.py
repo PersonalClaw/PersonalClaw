@@ -42,6 +42,37 @@ _ICO_HEADER = b"\x00\x00\x01\x00" + b"\x00" * 100
 _SVG_CONTENT = b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"
 _SVG_WITH_XML = b"<?xml version='1.0'?><svg></svg>"
 _SVG_WITH_BOM = b"\xef\xbb\xbf<svg></svg>"
+#: What drawing programs write before the first element.
+_SVG_FROM_INKSCAPE = (
+    b"<?xml version='1.0' encoding='UTF-8'?>\n<!-- Created with Inkscape -->\n"
+    b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"
+)
+_SVG_WITH_A_DOCTYPE = (
+    b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '
+    b'"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">'
+    b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"
+)
+_SVG_FROM_ILLUSTRATOR = (
+    b'<?xml version="1.0" encoding="utf-8"?>\n'
+    b"<!-- Generator: Adobe Illustrator 27.0.0, SVG Export Plug-In . SVG Version: 6.00 -->\n"
+    b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '
+    b'"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [\n'
+    b'\t<!ENTITY ns_extend "http://ns.adobe.com/Extensibility/1.0/">\n'
+    b'\t<!ENTITY ns_svg "http://www.w3.org/2000/svg">\n'
+    b"]>\n"
+    b'<svg version="1.1" xmlns="&ns_svg;"></svg>'
+)
+_SVG_PREFIXED = b"<svg:svg xmlns:svg='http://www.w3.org/2000/svg'></svg:svg>"
+_SVG_FROM_BATIK = (
+    b'<?xml version="1.0" encoding="UTF-8"?>\n'
+    b"<!DOCTYPE svg PUBLIC '-//W3C//DTD SVG 1.0//EN'\n"
+    b"          'http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd'>\n"
+    b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"
+)
+_SVG_POLICY = (
+    "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; sandbox"
+)
+_XHTML = b"<html xmlns='http://www.w3.org/1999/xhtml'><body><svg></svg></body></html>"
 
 
 @pytest.mark.asyncio
@@ -68,14 +99,63 @@ async def test_serves_valid_image_formats(tmp_path, mock_sel, ext, data):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("data", [_SVG_CONTENT, _SVG_WITH_XML, _SVG_WITH_BOM])
+@pytest.mark.parametrize(
+    "data",
+    [
+        _SVG_CONTENT,
+        _SVG_WITH_XML,
+        _SVG_WITH_BOM,
+        _SVG_FROM_INKSCAPE,
+        _SVG_WITH_A_DOCTYPE,
+        _SVG_FROM_ILLUSTRATOR,
+        _SVG_PREFIXED,
+        _SVG_FROM_BATIK,
+    ],
+    ids=["plain", "xml", "bom", "inkscape", "doctype", "illustrator", "prefixed", "batik"],
+)
 async def test_serves_svg(tmp_path, mock_sel, data):
     f = tmp_path / "test.svg"
     f.write_bytes(data)
     with patch("personalclaw.dashboard.handlers._validate_dashboard_path", return_value=str(f)):
         async with TestClient(TestServer(_make_app())) as client:
             resp = await client.get(f"/api/file-raw?path={f}")
-            assert resp.status == 200
+            assert resp.status == 200, await resp.text()
+            assert resp.headers["Content-Type"] == "image/svg+xml"
+            assert resp.headers["Content-Security-Policy"] == _SVG_POLICY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "data",
+    [
+        b'<?xml version="1.0"?><!DOCTYPE html SYSTEM "x><svg ">' + _XHTML,
+        b"<?xml version='1.0'?><!DOCTYPE html SYSTEM 'x><svg '>" + _XHTML,
+        b'<?xml version="1.0"?><!DOCTYPE html [<!ENTITY a ">]><svg ">]>' + _XHTML,
+        b"<?xml version='1.0'?><!DOCTYPE html [<!ENTITY a '>]><svg '>]>" + _XHTML,
+        b"<!DOCTYPE svg [" + b'<!ENTITY e "x">' * 400 + b"]><svg></svg>",
+        b"<?xml version='1.0'?><SVG xmlns='http://www.w3.org/1999/xhtml'></SVG>",
+    ],
+    ids=[
+        "a quoted > in its id",
+        "a single-quoted > in its id",
+        "a quoted ]> in its subset",
+        "a single-quoted ]> in its subset",
+        "a subset past 4 KiB",
+        "an upper-case SVG element, which XML names apart",
+    ],
+)
+async def test_a_file_whose_first_element_is_not_an_svg_is_not_served_as_one(
+    tmp_path, mock_sel, data
+):
+    """Only a file whose first element is an SVG is one. A doctype is read as XML reads it, quoted
+    literals whole, and one that doesn't close in the span read is no proof of anything."""
+    f = tmp_path / "test.svg"
+    f.write_bytes(data)
+    with patch("personalclaw.dashboard.handlers._validate_dashboard_path", return_value=str(f)):
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.get(f"/api/file-raw?path={f}")
+            assert resp.status == 403, resp.headers.get("Content-Type")
+            assert "not a recognized format" in (await resp.json())["error"]
 
 
 @pytest.mark.asyncio
@@ -187,3 +267,15 @@ async def test_resolve_serves_relative_workspace_media(tmp_path, mock_sel):
             assert ok.headers["X-Content-Type-Options"] == "nosniff"
     finally:
         os.remove(img)
+
+
+def test_the_svg_check_reads_a_doctype_in_one_pass():
+    """The doctype is matched possessively: an unclosed subset fails at once, not after trying
+    every way to split its whitespace."""
+    import time
+
+    from personalclaw.dashboard.handlers.files import _first_element_is_svg
+
+    began = time.monotonic()
+    assert _first_element_is_svg(b"<!DOCTYPE svg [" + b" " * 28 + b"x") is False
+    assert time.monotonic() - began < 1.0
