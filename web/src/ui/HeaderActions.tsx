@@ -652,12 +652,16 @@ export function HeaderActions({ children, className, overflowClassName }: {
     return () => ro.disconnect()
   }, [regVersion])
 
-  // The live row's trailing slot, after the `…` (`usePlaced`): one target per primary member, in the
-  // row's order, each set once it mounts. A member that mounts late (a cockpit's Commit once git
-  // status arrives) lands at its place among them, and none of the others moves.
+  // The live row's trailing slot, after the `…` (`usePlaced`): one target per primary member the
+  // row keeps, in the row's order. A target is laid out only for a member the last measure placed:
+  // one that mounts late (a cockpit's Commit once git status arrives) draws in place for the one
+  // render before the measure, which paints nothing, and its target is then inserted at its place,
+  // so none of the others' targets moves (a moved one took its button, and its focus, with it). A
+  // primary in the `…` has no target, so it leaves no empty one, and no gap, after the `…`.
   const trailingIds = useMemo(
-    () => inRowOrder([...regs.current.values()].filter((r) => r.trailing), domOrder).map((r) => r.id),
-    [regVersion, domOrder])
+    () => inRowOrder([...regs.current.values()].filter((r) => r.trailing && domOrder.has(r.id) && !r.inOverflow
+      && (tier !== 'overflow' || visibleIds === null || visibleIds.has(r.id))), domOrder).map((r) => r.id),
+    [regVersion, domOrder, tier, visibleIds])
   const [slots, setSlots] = useState<Map<number, HTMLElement>>(() => new Map())
   const slotRefs = useRef(new Map<number, (el: HTMLElement | null) => void>())
   const slotRef = (id: number) => {
