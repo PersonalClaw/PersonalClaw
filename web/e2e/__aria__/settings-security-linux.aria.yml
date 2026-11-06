@@ -45,7 +45,7 @@
     - text: # Denied commands Shell patterns blocked from execution # Suspicious patterns Prompt-injection / exfiltration signatures watched # Tool schemas Tools with enforced argument validation # Redaction paths Sensitive paths redacted from output
     - heading "Signed-in devices" [level=#]
     - paragraph: Every browser, paired device and token that can reach this gateway is listed under Devices, where you can sign any of them out — or all but this one.
-    - text: # device is signed in, and # tokens are live.
+    - text: # device is signed in, and # token is live.
     - link "Review signed-in devices":
       - /url: "#/settings/devices"
     - heading "Sign-in lifetime" [level=#]

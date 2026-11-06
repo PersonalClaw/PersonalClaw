@@ -110,7 +110,7 @@
     - text: Kill switch · budgets · outbound scan Audit log Chain intact all # events verified
     - button "Open Devices & Access settings"
     - heading "Devices & Access" [level=#]
-    - text: # paired device Headless Chrome on <platform> Sender trust No trusted senders Strangers must pair before they can talk External access No inbound access Allow inbound access
+    - text: # paired devices Headless Chrome on <platform> · Script Sender trust No trusted senders Strangers must pair before they can talk External access No inbound access Allow inbound access
     - switch "Allow inbound access" [disabled]
     - text: Nothing outside can reach in Companion apps Not advertising LAN discovery
     - switch "LAN discovery" [disabled]
