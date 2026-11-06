@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { join, relative } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
+import { tagsOf } from '../test/jsxTags'
 import { isThePrimary } from '../ui/HeaderActions'
 
 // ── Every page-level control is in the page header's action area ─────────────────────────────
@@ -55,25 +56,9 @@ const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; to
  *  controls moved. */
 const BUDGET: Record<string, number> = {}
 
-/** Each opening tag of the named elements in a source, in order: from its `<` to the `>` that ends
- *  it, read brace-aware (`exclusiveChoiceNamed`'s `tags()`), so an arrow-function prop
- *  (`onClick={() => go()}`) does not end the tag, nor a `>` in a quoted value. */
-export function tagsOf(src: string, names: string[]): { name: string; at: number; text: string }[] {
-  const out: { name: string; at: number; text: string }[] = []
-  const alts = names.map((n) => n.replace('.', '\\.')).join('|')
-  for (const m of src.matchAll(new RegExp(`<(${alts})(?=[\\s/>])`, 'g'))) {
-    let depth = 0
-    let quote = ''
-    for (let i = m.index! + m[0].length; i < src.length; i++) {
-      const ch = src[i]
-      if (quote) { if (ch === '\\') i++; else if (ch === quote) quote = ''; continue }
-      if (ch === '"' || ch === "'" || (depth > 0 && ch === '`')) quote = ch
-      else if (ch === '{') depth++
-      else if (ch === '}') depth--
-      else if (ch === '>' && depth === 0) { out.push({ name: m[1], at: m.index!, text: src.slice(m.index!, i + 1) }); break }
-    }
-  }
-  return out
+/** Whether *src* gives a `HeaderFilter` a label of its own. */
+export function writesAFilterLabel(src: string): boolean {
+  return tagsOf(src, ['HeaderFilter']).some((t) => /\slabel=/.test(t.text))
 }
 
 /** Where each `role="group"` element of a source runs: from its opening tag to the close that
@@ -218,8 +203,14 @@ describe('the header holds one view switch, and a filter that says what is set',
   it('no page writes a HeaderFilter label of its own', () => {
     // The label is composed from the sections' chosen options (`headerFilterLabel`), so it always
     // names what is set; a page can choose only the word before them (`prefix`).
-    const own = sources().filter(([, src]) => /<HeaderFilter\b[^>]*\slabel=/.test(src)).map(([f]) => f)
+    const own = sources().filter(([, src]) => writesAFilterLabel(src)).map(([f]) => f)
     expect(own).toEqual([])
+  })
+
+  it('reads a HeaderFilter tag whole for its label', () => {
+    // An `onOpen={() => …}` before the label ended the tag at its `=>`, and the label went unread.
+    expect(writesAFilterLabel('<HeaderFilter sections={s} onOpen={() => go()} label="Mine" />')).toBe(true)
+    expect(writesAFilterLabel('<HeaderFilter sections={s} onOpen={() => go()} prefix="Show" />')).toBe(false)
   })
 })
 
