@@ -6,21 +6,13 @@ import { withWeight } from '../design/fontWeight'
  *  one. The tint moves to a new row at once: a filter changes many times an hour, so it no
  *  longer slides between rows, and a press shows by the hover colour, with no scale.
  *
- *  Extracted because a second surface needed it. `ui/FilterMenu`'s dropdown rows
- *  and the App Store's persistent category/source rail are the SAME control at two
- *  viewport widths — the rail owns the two dimensions when it is on screen and the
- *  dropdown carries them when it is not — so they cannot be two hand-laid buttons that
- *  merely look alike today. Both render this.
+ *  `ui/FilterMenu`'s section rows render it, the header filter's among them. It lives in `ui/`
+ *  because the `design/primitiveAdoption` ratchet counts a page-level hand-rolled button as
+ *  bespoke chrome.
  *
- *  It lives in `ui/` for a second reason the `design/primitiveAdoption` ratchet makes
- *  concrete: a page-level hand-rolled button element is bespoke chrome, and copying this row
- *  into `pages/apps/` raised that count. Extraction moves the button into the primitive
- *  layer instead of asking the ratchet for slack.
- *
- *  `pressed` is opt-in. The dropdown rows sit inside a popover whose selection is already
- *  announced by the trailing check, so they leave it undefined; the rail's rows are
- *  toggle buttons whose only selection signal IS `aria-pressed`, so a tint alone would tell
- *  a screen-reader user nothing.
+ *  `pressed` says which row is chosen. The rows pass it: the trailing check is drawn for the eye
+ *  and hidden from a screen reader (`aria-hidden`), so a tint and a check alone would tell a
+ *  screen-reader user nothing.
  */
 export function FilterRow({
   label, count, icon: Icon, selected, onClick, pressed, trailing,
@@ -31,9 +23,9 @@ export function FilterRow({
   icon?: LucideIcon
   selected: boolean
   onClick: () => void
-  /** Set only where the row is a toggle button rather than a popover row. */
+  /** Whether the row is the chosen one, for a screen reader (`aria-pressed`). */
   pressed?: boolean
-  /** Trailing adornment (the dropdown's check mark). */
+  /** Trailing adornment (a section row's check mark, `aria-hidden`). */
   trailing?: ReactNode
 }) {
   return (

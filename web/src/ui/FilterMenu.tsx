@@ -144,10 +144,8 @@ function Row({ option, selected, onClick }: { option: FilterOption; selected: bo
   return (
     <>
       {option.groupLabel && <div data-type="caption" className="mt-1 px-2 pt-1.5 text-on-surface-low uppercase tracking-wide border-t border-on-surface/8">{option.groupLabel}</div>}
-      {/* The row itself is `ui/FilterRow` — the App Store's persistent
-          category/source rail renders the same one, because it and this dropdown are one
-          control at two viewport widths. The selected-row tint lives there. */}
-      {/* `pressed` says which row is chosen: the check is drawn for the eye, and a screen reader
+      {/* The row itself is `ui/FilterRow`, where the selected-row tint lives. `pressed` says
+          which row is chosen: the check is drawn for the eye (`aria-hidden`), and a screen reader
           heard the same label for the chosen row and the rest (the chips these rows replaced
           announced it). */}
       <FilterRow label={option.label} count={option.count} icon={Icon} selected={selected} pressed={selected}
