@@ -55,6 +55,27 @@ const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; to
  *  controls moved. */
 const BUDGET: Record<string, number> = {}
 
+/** Each opening tag of the named elements in a source, in order: from its `<` to the `>` that ends
+ *  it, read brace-aware (`exclusiveChoiceNamed`'s `tags()`), so an arrow-function prop
+ *  (`onClick={() => go()}`) does not end the tag, nor a `>` in a quoted value. */
+export function tagsOf(src: string, names: string[]): { name: string; at: number; text: string }[] {
+  const out: { name: string; at: number; text: string }[] = []
+  const alts = names.map((n) => n.replace('.', '\\.')).join('|')
+  for (const m of src.matchAll(new RegExp(`<(${alts})(?=[\\s/>])`, 'g'))) {
+    let depth = 0
+    let quote = ''
+    for (let i = m.index! + m[0].length; i < src.length; i++) {
+      const ch = src[i]
+      if (quote) { if (ch === '\\') i++; else if (ch === quote) quote = ''; continue }
+      if (ch === '"' || ch === "'" || (depth > 0 && ch === '`')) quote = ch
+      else if (ch === '{') depth++
+      else if (ch === '}') depth--
+      else if (ch === '>' && depth === 0) { out.push({ name: m[1], at: m.index!, text: src.slice(m.index!, i + 1) }); break }
+    }
+  }
+  return out
+}
+
 /** Where each `role="group"` element of a source runs: from its opening tag to the close that
  *  balances it. */
 function groupRanges(src: string): [number, number][] {
@@ -84,7 +105,8 @@ export function toggleRows(src: string): number {
 }
 
 /** The rows of pressed toggles drawn with no group round them: a `.map` whose element is a button
- *  with `aria-pressed`, as Tasks' task-list chips were, outside any `role="group"` (counted above). */
+ *  (or a `motion.button`) with `aria-pressed`, as Tasks' task-list chips were, outside any
+ *  `role="group"` (counted above). */
 export function pressedRows(src: string): number {
   const groups = groupRanges(src)
   let rows = 0
@@ -98,7 +120,7 @@ export function pressedRows(src: string): number {
       if (src[end] === '(') depth++
       else if (src[end] === ')' && --depth === 0) break
     }
-    if (/<button\b[^>]*?aria-pressed=/.test(src.slice(at, end))) rows += 1
+    if (tagsOf(src.slice(at, end), ['button', 'motion.button']).some((t) => /\saria-pressed=/.test(t.text))) rows += 1
   }
   return rows
 }
@@ -156,6 +178,14 @@ describe('every page-level control is in the page header', () => {
     expect(pressedRows('{rows.map((r) => <button type="button" onClick={go}>{r}</button>)}')).toBe(0)
   })
 
+  it('reads a row tag whole, an arrow-function prop and all, and a motion button too', () => {
+    // An `onClick={() => …}` before `aria-pressed` ended the tag at its `=>`, and the row was missed.
+    expect(pressedRows('{lists.map((l) => <button type="button" onClick={() => pick(l)} aria-pressed={on}>{l.name}</button>)}')).toBe(1)
+    expect(pressedRows('{lists.map((l) => <motion.button layout onClick={() => pick(l)} aria-pressed={on}>{l.name}</motion.button>)}')).toBe(1)
+    expect(pressedRows('{lists.map((l) => <button title="a > b" aria-pressed={on}>{l.name}</button>)}'), 'a > in a quoted value').toBe(1)
+    expect(pressedRows('{lists.map((l) => <button onClick={() => pick(l)}>{l.name}</button>)}')).toBe(0)
+  })
+
   it('counts a row of pressed toggles, and a group of anything else not', () => {
     const row = '<div role="group" aria-label="Filter by tag">\n  <button aria-pressed={on}>a</button>\n</div>'
     expect(toggleRows(row)).toBe(1)
@@ -211,8 +241,9 @@ export function railPrimary(attrs: string): boolean {
 export function headerOrderFindings(src: string): string[] {
   const out: string[] = []
   for (const block of src.matchAll(/<HeaderActions[\s>][\s\S]*?<\/HeaderActions>/g)) {
-    const members = [...block[0].matchAll(/<(HeaderControl|HeaderMenu)\b([\s\S]*?)\/?>/g)]
-      .map((m) => ({ attrs: m[2], label: /label=("[^"]*"|\{[^}]*\})/.exec(m[2])?.[1].slice(0, 40) ?? m[1] }))
+    const members = tagsOf(block[0], ['HeaderControl', 'HeaderMenu'])
+      .map((t) => ({ ...t, attrs: t.text.slice(t.name.length + 1, -1) }))
+      .map((m) => ({ attrs: m.attrs, label: /\slabel=("[^"]*"|\{[^}]*\})/.exec(m.attrs)?.[1].slice(0, 40) ?? m.name }))
       .filter((m) => !/\binOverflow\b/.test(m.attrs))
       .map((m) => ({
         ...m,
@@ -267,6 +298,9 @@ describe('every header cluster keeps the one order', () => {
     expect(headerOrderFindings(cluster('<HeaderControl label="Go" variant="primary" /><HeaderControl label="New chat" inOverflow />'))).toEqual([])
     // Alternatives may follow one another.
     expect(headerOrderFindings(cluster('{a ? <HeaderControl label="Save" variant="primary" /> : <HeaderControl label="Edit" variant="primary" />}'))).toEqual([])
+    // A member's tag is read whole: an `onClick={() => …}` before its other props hid them.
+    expect(headerOrderFindings(cluster('<HeaderControl onClick={() => go()} label="Start" priority="primary" /><HeaderControl label="Cancel" />'))).toEqual(['"Cancel" after the primary'])
+    expect(headerOrderFindings(cluster('<HeaderControl label="Pin" /><HeaderControl onClick={() => drop()} label="Delete" danger />'))).toEqual(['"Delete" (destructive) after "Pin"'])
   })
 })
 
@@ -299,6 +333,37 @@ export function clusterStrangers(file: string, src: string, readModule: (from: s
   }
   return out
 }
+
+/** Where a module registers a member with the cluster (`useHeaderChild`) but does not mark what it
+ *  draws: the cluster reads each member's width and its place in the row off its mark in the
+ *  probes, so an unmarked one measures as a guess and keeps no place. */
+export function unmarkedMembers(src: string): string[] {
+  const calls = [...src.matchAll(/useHeaderChild\(/g)].length - [...src.matchAll(/function useHeaderChild\(/g)].length
+  if (calls <= 0) return []
+  const out: string[] = []
+  const taking = [...src.matchAll(/const\s*\{([^}]*)\}\s*=\s*useHeaderChild\(/g)].filter((m) => /\bmark\b/.test(m[1])).length
+  if (taking < calls) out.push(`${calls - taking} of ${calls} useHeaderChild calls take no mark`)
+  const marks = [...src.matchAll(/\bmark\(/g)].length
+  if (marks < calls) out.push(`${calls} useHeaderChild calls and ${marks} mark( calls`)
+  return out
+}
+
+describe('every member marks what it draws', () => {
+  it('in every module that registers one', () => {
+    const files = [...pageFiles(), ...filesUnder(join(SRC, 'app'), (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n)),
+      ...filesUnder(join(SRC, 'ui'), (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))]
+    const found = files.flatMap((f) => unmarkedMembers(strip(readSource(f))).map((x) => `${rel(f)}: ${x}`))
+    expect(found).toEqual([])
+  })
+
+  it('reads a module as the rule says', () => {
+    expect(unmarkedMembers("const { tier, mark } = useHeaderChild({ priority: 'low' })\nreturn mark(<Pill />)")).toEqual([])
+    expect(unmarkedMembers("const { tier } = useHeaderChild({ priority: 'low' })\nreturn <Pill />"))
+      .toEqual(['1 of 1 useHeaderChild calls take no mark', '1 useHeaderChild calls and 0 mark( calls'])
+    expect(unmarkedMembers("const { mark } = useHeaderChild({})\nreturn <Pill />")).toEqual(['1 useHeaderChild calls and 0 mark( calls'])
+    expect(unmarkedMembers('export function useHeaderChild(reg) {}'), 'the hook itself').toEqual([])
+  })
+})
 
 describe('every control in a header row is a member of its cluster', () => {
   const resolve = (from: string, spec: string): string | null => {
