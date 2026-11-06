@@ -215,10 +215,11 @@ jobs:
             *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
           esac
           tmux -V
-      - name: pytest (shard ${{ matrix.shard }})
+      - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-ubuntu.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-ubuntu-${{ matrix.shard }}.txt"
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci run-job suite-ubuntu --shard ${{ matrix.shard }}/4 --out "$RUNNER_TEMP/run-job"
       # The ids this shard collected, for the union check (`shard-union`). None is uploaded
       # when pytest wrote none, and the union reads that as red.
       - name: Upload the test ids this shard collected (ubuntu · shard ${{ matrix.shard }})
@@ -331,10 +332,11 @@ jobs:
             *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
           esac
           tmux -V
-      - name: pytest (shard ${{ matrix.shard }})
+      - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n 2 --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-macos.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-macos-${{ matrix.shard }}.txt"
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci run-job suite-macos --shard ${{ matrix.shard }}/6 --out "$RUNNER_TEMP/run-job"
       # The ids this shard collected, for the union check (`shard-union`). None is uploaded
       # when pytest wrote none, and the union reads that as red.
       - name: Upload the test ids this shard collected (macos · shard ${{ matrix.shard }})
@@ -646,10 +648,11 @@ jobs:
             *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
           esac
           tmux -V
-      - name: pytest (shard ${{ matrix.shard }})
+      - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-arm.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-arm-${{ matrix.shard }}.txt"
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci run-job suite-arm --shard ${{ matrix.shard }}/4 --out "$RUNNER_TEMP/run-job"
       # The ids this shard collected, for the union check (`shard-union`). None is uploaded
       # when pytest wrote none, and the union reads that as red.
       - name: Upload the test ids this shard collected (arm · shard ${{ matrix.shard }})
@@ -752,10 +755,11 @@ jobs:
             --external "shard_files=${SHARD_FILES:?no shard list}"
       - name: Install (locked)
         run: uv sync --locked --extra dev
-      - name: pytest (shard ${{ matrix.shard }})
+      - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal --cov=personalclaw tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-coverage-shard.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-coverage-shard-${{ matrix.shard }}.txt"
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci run-job coverage-shard --shard ${{ matrix.shard }}/6 --out "$RUNNER_TEMP/run-job"
       # The ids this shard collected, for the union check (`shard-union`). None is uploaded
       # when pytest wrote none, and the union reads that as red.
       - name: Upload the test ids this shard collected (coverage-shard · shard ${{ matrix.shard }})
@@ -1101,10 +1105,11 @@ jobs:
             *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
           esac
           tmux -V
-      - name: pytest (canary shard ${{ matrix.shard }})
+      - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-canary.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-canary-${{ matrix.shard }}.txt"
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci run-job suite-canary --shard ${{ matrix.shard }}/4 --out "$RUNNER_TEMP/run-job"
       # The ids this shard collected, for the union check (`shard-union`). None is uploaded
       # when pytest wrote none, and the union reads that as red.
       - name: Upload the test ids this shard collected (canary · shard ${{ matrix.shard }})
