@@ -39,7 +39,7 @@ COOKIE = f"pc_token_{PORT}"
 #: The gateway's own origin, which the WebSocket's origin check admits, so a refusal of the
 #: upgrade below can only be the sign-in's, never the origin's.
 OWN_ORIGIN = f"http://127.0.0.1:{PORT}"
-SECRET_CHAT = "something only the owner should read"
+OWNERS_CHAT = "something only the owner should read"
 #: What a browser sends, so the sign-in a link makes is a browser's, as it is in use.
 CHROME = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -97,7 +97,7 @@ async def _gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClien
     itself. Any page path no route matches is the shell, as ``fallbacks.spa_fallback`` serves it."""
     monkeypatch.setattr(fallbacks.handlers, "index", shell)
     log = ConversationLog(base_dir=tmp_path / "sessions")
-    log.append("dashboard_a-chat", "user", SECRET_CHAT)
+    log.append("dashboard_a-chat", "user", OWNERS_CHAT)
     from personalclaw.dashboard.state import DashboardState
 
     state = DashboardState(sessions=mock.MagicMock(count=0), start_time=0.0, conversation_log=log)
@@ -171,7 +171,7 @@ async def test_the_cookies_value_replayed_as_a_bearer_is_refused(tmp_path, monke
         value, _pair = await _signed_in(client)
         replayed = await client.get("/api/sessions", headers={"Authorization": f"Bearer {value}"})
         await _asked_again(replayed, "pair_missing")
-        assert SECRET_CHAT not in await replayed.text()
+        assert OWNERS_CHAT not in await replayed.text()
     finally:
         await client.close()
 
