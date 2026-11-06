@@ -110,8 +110,14 @@ app reads, and the app signs its windows in with it:
 - **Quitting signs it out.** While the app runs, Settings → Devices & Access → Devices lists it as "PersonalClaw
   desktop app". Quitting ends that sign-in, and the next launch makes a new one.
 - **A restart signs the windows in again.** When the gateway restarts in place, it comes back on
-  a new port with a new sign-in. The app follows it there: each window reloads the page it was
-  on, signed in, and the sign-in from before the restart is ended.
+  a new port with a new sign-in. The app follows it there: each window on the dashboard or an
+  app's own page reloads it, signed in, the main window goes to the dashboard, any other window
+  closes, and the sign-in from before the restart is ended.
+- **A gateway that goes away gets nothing.** While the app has lost its gateway, nothing the
+  windows send reaches it, and their sign-in is out of the app's cookies. The windows stay where
+  they are and come back by themselves once the app has made sure the same gateway is back, and
+  after a restart in place or the app's own update. A gateway this app didn't start that is
+  stopped and started again reads as gone: use it again from the This computer row.
 
 So everything else on this computer meets the same door a browser does. Another program cannot
 list or answer your approvals without signing in, an app you installed reaches only the routes
@@ -119,8 +125,11 @@ its permissions declare, and the credential an agent CLI's tools hold opens only
 it exists for.
 
 If the app is signed out from another device (Settings → Devices & Access → Devices), or its sign-in runs out
-(`auth.session_ttl`, 30 days by default), the window says so. Quit PersonalClaw and open it again
-to sign it back in.
+(`auth.session_ttl`, 30 days by default; or 30 days, at a gateway this app didn't start), the window
+says so, and the Gateways window's This computer row says the app is signed out, with **Sign In
+Again**. The row says the same when a gateway can't sign the app's windows in after three tries;
+where Sign In Again can't help, it reads **Can't sign in**, with what to do. With a gateway older
+than this app, quit PersonalClaw and open it again instead.
 
 ## When a gateway already serves your home
 
@@ -341,7 +350,8 @@ The three cases are genuinely different and the app treats them differently:
 | Anywhere else (the public internet) | **refused** | allowed once you confirm |
 
 A name, `localhost` included, is never taken as this computer: the app asks first, as it does for
-an address on your network.
+an address on your network. A gateway you reach at localhost through a proxy on another port signs
+in again after each launch, so add it by its 127.0.0.1 address.
 
 Plaintext to a public address is refused rather than warned about. A gateway reached over the
 internet goes through your own tunnel, which terminates TLS, and the session cookie it sets is
