@@ -302,19 +302,20 @@ def test_observation_fails_open_on_any_input():
 
 
 def test_a_named_pointer_method_records_its_own_spelling(tmp_path, monkeypatch):
-    """The real-cursor warp must be one filter away everywhere it appears — the SEL
-    gets `computer_click:global`, and the overlay keeps the same distinction so a
-    watching human can tell a pointerless press from their own mouse being taken."""
+    """A coordinate click must be one filter away everywhere it appears — the SEL gets
+    `computer_click:located`, and the overlay keeps the same distinction so a watching human can
+    tell a pointerless press from a click aimed at a point. (The method that moves the real pointer
+    is refused in the dispatch and again in the driver, so no trail point carries it.)"""
     _arm(tmp_path, ARMED_APP)
     _fake_driver(monkeypatch)
     _run(
         service.computer_dispatch(
             "computer_click",
-            {"click_method": "global", "x": 10.0, "y": 20.0, "app": ARMED_APP},
+            {"click_method": "located", "x": 10.0, "y": 20.0, "app": ARMED_APP},
         )
     )
     (point,) = overlay.motion_trail()
-    assert point["method"] == "global"
+    assert point["method"] == "located"
     assert (point["x"], point["y"]) == (10.0, 20.0)
 
 

@@ -105,6 +105,12 @@ ERROR_CODES: dict[str, str] = {
         "resolvable — the implementation is simply absent, so nothing the operator configures "
         "on that machine changes the answer. Nothing was clicked, typed or changed."
     ),
+    "ERR_COMPUTER_USE_REAL_POINTER_REFUSED": (
+        "The click method named moves the operator's real pointer, and computer use refuses it "
+        "until such input can be held to the application the call names. Nothing was clicked. "
+        "An element press ('auto') or a click at a point in the named application ('located') "
+        "still works."
+    ),
     "ERR_COMPUTER_USE_UNATTENDED_NOT_GRANTED": (
         "A run with no human watching it (a cron fire, a channel message, an inbound caller) "
         "asked to drive the desktop, and the operator's out-of-band enable document does not "

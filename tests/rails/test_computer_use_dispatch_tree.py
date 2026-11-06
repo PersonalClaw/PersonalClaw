@@ -22,6 +22,7 @@ def _dispatch_call_order() -> list[str]:
     tree = ast.parse(inspect.getsource(service.computer_dispatch))
     watched = {
         "require_enabled",
+        "_refuse_the_real_pointer",
         "check_app",
         "_require_fresh_element",
         "check_input_target",
@@ -49,7 +50,8 @@ def test_the_dispatch_calls_the_screens_in_source_order():
     order = _dispatch_call_order()
     assert order[0] == "require_enabled", f"the keystone is not the first call: {order}"
     assert (
-        order.index("check_app")
+        order.index("_refuse_the_real_pointer")
+        < order.index("check_app")
         < order.index("_require_fresh_element")
         < order.index("check_input_target")
         < order.index("_run_driver")

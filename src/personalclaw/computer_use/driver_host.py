@@ -12,7 +12,9 @@ stdin and one JSON response on stdout.
 and never screens an input target. By the time an operation reaches this module the dispatch has
 already decided, audited, and committed; a second copy of any of those checks here would be a
 second home for one policy, and this is the process an operator's own driver code will one day
-run inside. Its only job is to turn one operation into one OS call and report honestly.
+run inside. Its only job is to turn one operation into one OS call and report honestly. The one
+refusal a driver repeats is a deliberate second wall: the click method that moves the real
+pointer, refused in the dispatch first, until such input can be held to the named application.
 ``tests/test_computer_use_dispatch.py::test_the_driver_child_makes_no_policy_decision`` asserts
 that by AST.
 

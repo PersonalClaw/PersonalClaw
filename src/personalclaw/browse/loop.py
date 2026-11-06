@@ -131,8 +131,8 @@ PARK_HUMAN_CHALLENGE = "human_challenge"
 SEL_EVENT_SOURCE = "browse"
 SEL_OPERATION_PARK = "browse.park"
 #: A vision click, audited as its OWN operation — the same discipline as the desktop driver's
-#: ``computer_click:located``/``:global`` (``computer_use/service.py:_operation``): "a real-cursor
-#: warp is one filter away from every other click". A coordinate click that shared the park row's
+#: ``computer_click:located`` (``computer_use/service.py:_operation``): "a coordinate click is
+#: one filter away from every other click". A coordinate click that shared the park row's
 #: operation would be indistinguishable from an ordinary one in the audit, which is the only place
 #: anyone can later ask "did this run ever click something the DOM never described".
 SEL_OPERATION_VISION_CLICK = "browse.click:vision"

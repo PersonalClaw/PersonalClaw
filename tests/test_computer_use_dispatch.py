@@ -649,6 +649,85 @@ def test_a_wedged_driver_is_refused_not_hung(tmp_path, monkeypatch):
     assert excinfo.value.error.code == service.ERR_DRIVER_FAILED
 
 
+def _spawn_seam(monkeypatch, elements):
+    """The REAL ``_run_driver`` down to the spawn: ``create_subprocess_limited`` is replaced by a
+    child that records the request it is handed on stdin and answers as a driver would. Returns
+    the recorded requests, in order."""
+    requests: list[dict] = []
+
+    class _Child:
+        returncode = 0
+
+        async def communicate(self, data):
+            request = json.loads(data.decode())
+            requests.append(request)
+            if request.get("op") == "snapshot":
+                answer = {"fingerprint": FINGERPRINT, "elements": list(elements)}
+            elif request.get("op") == "list_apps":
+                answer = {"apps": [ARMED_APP]}
+            else:
+                answer = {"ok": True}
+            return json.dumps(answer).encode(), b""
+
+    async def spawn(*argv, **kwargs):
+        return _Child()
+
+    monkeypatch.setattr("personalclaw.sandbox.create_subprocess_limited", spawn)
+    return requests
+
+
+#: Arguments a tool does not declare: names other tools declare, and names no tool declares. Each
+#: is sent where its tool does not declare it.
+_UNDECLARED = {"op": "set_value", "text": "t", "value": "v", "action": "AXPress", "extra": 1}
+
+
+def _a_call_of_every_tool(snapshot_id: str) -> list[tuple[str, dict]]:
+    by_index = {"snapshot_id": snapshot_id, "element_index": 0}
+    return [
+        ("computer_list_apps", {}),
+        ("computer_snapshot", {"app": ARMED_APP}),
+        ("computer_click", dict(by_index)),
+        ("computer_click", {"click_method": "located", "x": 1, "y": 2, "app": ARMED_APP}),
+        ("computer_type", {**by_index, "text": "hello"}),
+        ("computer_set_value", {**by_index, "value": "hello"}),
+        ("computer_scroll", {**by_index, "direction": "down"}),
+        ("computer_perform_action", {**by_index, "action": "AXPress"}),
+    ]
+
+
+def test_the_driver_child_runs_its_tools_operation_with_only_declared_arguments(
+    tmp_path, monkeypatch
+):
+    """🔴 Red before: arguments a tool does not declare reached the driver child, and could change
+    the operation it ran. For every tool, the child now runs the operation the tool names, and is
+    handed the tool's declared parameters and the app and fingerprint the dispatch resolved,
+    nothing else. Read at the spawn: the dispatch's own tests replace the driver call above it,
+    so they cannot see what the child is given."""
+    _arm(tmp_path, ARMED_APP)
+    requests = _spawn_seam(monkeypatch, [ORDINARY_FIELD])
+    for tool, params in _a_call_of_every_tool(_snapshot(elements=[ORDINARY_FIELD]).snapshot_id):
+        spec = ct.TOOLS_BY_NAME[tool]
+        sent = {**{k: v for k, v in _UNDECLARED.items() if k not in spec.parameters}, **params}
+        requests.clear()
+        _run(service.computer_dispatch(tool, sent))
+        acted = requests[-1]
+        assert acted["op"] == tool[len("computer_") :], (tool, acted)
+        undeclared = set(acted) - set(spec.parameters) - {"op", "app", "fingerprint"}
+        assert not undeclared, (tool, sorted(undeclared))
+
+
+def test_the_click_method_that_moves_the_real_pointer_never_reaches_the_child(
+    tmp_path, monkeypatch
+):
+    _arm(tmp_path, ARMED_APP)
+    requests = _spawn_seam(monkeypatch, [ORDINARY_FIELD])
+    sent = {**_UNDECLARED, "click_method": "global", "x": 1, "y": 2, "app": ARMED_APP}
+    with pytest.raises(service.ComputerUseRefusal) as excinfo:
+        _run(service.computer_dispatch("computer_click", sent))
+    assert excinfo.value.error.code == "ERR_COMPUTER_USE_REAL_POINTER_REFUSED"
+    assert requests == []
+
+
 # ── 5. the shim stayed thin ───────────────────────────────────────────────────
 
 
@@ -933,7 +1012,7 @@ def test_auto_never_resolves_to_a_pointer_method():
 def test_an_unknown_click_method_refuses_rather_than_falling_back(tmp_path, monkeypatch):
     """The direction a fallback would go is the dangerous one. An unresolvable method must not
     become ``auto`` (which would silently retarget the call) nor a coordinate click (which
-    would move the operator's cursor); it refuses and lists the three that exist."""
+    would move the operator's cursor); it refuses and lists the two that work."""
     _arm(tmp_path, ARMED_APP)
     _fake_driver(monkeypatch, elements=[ORDINARY_FIELD])
     snap = _snapshot()
@@ -945,23 +1024,34 @@ def test_an_unknown_click_method_refuses_rather_than_falling_back(tmp_path, monk
             )
         )
     assert excinfo.value.error.code == service.ERR_BAD_ARGUMENT
-    assert excinfo.value.error.suggestions == service._CLICK_METHODS
+    assert excinfo.value.error.suggestions == service._WORKING_CLICK_METHODS == ("auto", "located")
 
 
 def test_a_pointer_click_is_audited_under_its_own_operation(tmp_path, monkeypatch, sel_rows):
-    """The pointer paths must be distinguishable in the audit. They are: the real-cursor warp
-    records ``computer_click:global``, so it is one field filter away from every ordinary
-    click — and it still passes the keystone and the app allowlist to get there."""
+    """The pointer paths must be distinguishable in the audit. They are: a coordinate click
+    records ``computer_click:located`` with its point, so it is one field filter away from every
+    ordinary click, and it still passes the keystone and the app allowlist to get there."""
     _arm(tmp_path, ARMED_APP)
-    _fake_driver(monkeypatch)
+    calls = _fake_driver(monkeypatch)
     _run(
         service.computer_dispatch(
             "computer_click",
-            {"click_method": "global", "x": 10, "y": 20, "app": ARMED_APP},
+            {"click_method": "located", "x": 10.5, "y": 20, "app": ARMED_APP},
         )
     )
-    rows = sel_rows()
-    assert [row["operation"] for row in rows] == ["computer_click:global"], rows
+    assert calls == ["click"]
+    (row,) = sel_rows()
+    assert (row["operation"], row["outcome"]) == ("computer_click:located", "approved"), row
+    assert row["metadata"] == {"x": 10.5, "y": 20}, row
+
+
+def test_a_refused_pointer_click_still_names_its_method_and_its_point(
+    tmp_path, monkeypatch, sel_rows
+):
+    """🔴 Red before: a refused attempt's row named the bare tool, so a refused coordinate click
+    read like a refused element press, and no row carried the point a click was aimed at."""
+    _arm(tmp_path, ARMED_APP)
+    _fake_driver(monkeypatch)
     with pytest.raises(policy.ComputerUsePolicyRefusal):
         _run(
             service.computer_dispatch(
@@ -969,7 +1059,149 @@ def test_a_pointer_click_is_audited_under_its_own_operation(tmp_path, monkeypatc
                 {"click_method": "located", "x": 1, "y": 2, "app": "Terminal"},
             )
         )
-    assert sel_rows()[-1]["error"] == policy.ERR_APP_NOT_ALLOWED
+    (row,) = sel_rows()
+    assert (row["operation"], row["outcome"], row["error"]) == (
+        "computer_click:located",
+        "denied",
+        policy.ERR_APP_NOT_ALLOWED,
+    ), row
+    assert row["metadata"] == {"x": 1, "y": 2}, row
+
+
+def test_the_method_that_moves_the_real_pointer_is_refused_before_the_driver(
+    tmp_path, monkeypatch, sel_rows
+):
+    """🔴 Red before: the method that moves the operator's real pointer reached the driver. It is
+    refused in the dispatch now, before anything is screened or posted, and the refused attempt
+    is audited with its method and its point."""
+    _arm(tmp_path, ARMED_APP)
+    calls = _fake_driver(monkeypatch)
+    with pytest.raises(service.ComputerUseRefusal) as excinfo:
+        _run(
+            service.computer_dispatch(
+                "computer_click",
+                {"click_method": "global", "x": 10, "y": 20, "app": ARMED_APP},
+            )
+        )
+    error = excinfo.value.error
+    assert error.code == service.ERR_REAL_POINTER_REFUSED
+    assert "real pointer" in error.what
+    assert error.why and "'auto'" in error.fix and "'located'" in error.fix
+    assert error.suggestions == ("auto", "located")
+    assert calls == [], "the driver was asked for something"
+    (row,) = sel_rows()
+    assert (row["operation"], row["outcome"], row["error"]) == (
+        "computer_click:global",
+        "denied",
+        service.ERR_REAL_POINTER_REFUSED,
+    ), row
+    assert row["resources"] == f"app={ARMED_APP}", row
+    assert row["metadata"] == {"x": 10, "y": 20}, row
+
+
+def test_a_click_on_a_disarmed_machine_still_names_its_method_and_its_point(tmp_path, sel_rows):
+    """The keystone's own refusal is a refused attempt too: its row names the method and the point
+    the call asked for."""
+    with pytest.raises(enable_state.ComputerUseDisabled):
+        _run(
+            service.computer_dispatch(
+                "computer_click",
+                {"click_method": "global", "x": 3, "y": 4, "app": ARMED_APP},
+            )
+        )
+    (row,) = sel_rows()
+    assert (row["operation"], row["outcome"], row["error"]) == (
+        "computer_click:global",
+        "denied",
+        enable_state.ERR_DISABLED,
+    ), row
+    assert row["metadata"] == {"x": 3, "y": 4}, row
+
+
+def test_an_element_press_still_runs_and_carries_no_point(tmp_path, monkeypatch, sel_rows):
+    """Even sent with a stray point: an element press is aimed at an element, not a point."""
+    _arm(tmp_path, ARMED_APP)
+    calls = _fake_driver(monkeypatch, elements=[ORDINARY_FIELD])
+    snap = _snapshot(elements=[ORDINARY_FIELD])
+    _run(
+        service.computer_dispatch(
+            "computer_click",
+            {"snapshot_id": snap.snapshot_id, "element_index": 0, "x": 3, "y": 4},
+        )
+    )
+    assert calls[-1] == "click", calls
+    row = sel_rows()[-1]
+    assert (row["operation"], row["outcome"]) == ("computer_click", "approved"), row
+    assert row["metadata"] == {}, row
+
+
+def test_a_refused_click_with_a_point_past_the_float_range_keeps_its_row_and_its_refusal(
+    tmp_path, monkeypatch, sel_rows
+):
+    """An integer past the float range is not a finite number, and reading it as one must not
+    raise: the attempt still gets its typed refusal and its one denied row."""
+    _arm(tmp_path, ARMED_APP)
+    _fake_driver(monkeypatch)
+    with pytest.raises(service.ComputerUseRefusal) as excinfo:
+        _run(
+            service.computer_dispatch(
+                "computer_click",
+                {"click_method": "global", "x": 10**400, "y": 5, "app": ARMED_APP},
+            )
+        )
+    assert excinfo.value.error.code == service.ERR_REAL_POINTER_REFUSED
+    (row,) = sel_rows()
+    assert (row["outcome"], row["error"]) == ("denied", service.ERR_REAL_POINTER_REFUSED), row
+    assert row["metadata"] == {"y": 5}, row
+
+
+def test_a_disarmed_click_with_a_point_past_the_float_range_keeps_its_row(tmp_path, sel_rows):
+    with pytest.raises(enable_state.ComputerUseDisabled):
+        _run(
+            service.computer_dispatch(
+                "computer_click",
+                {"click_method": "located", "x": 10**400, "y": 5, "app": ARMED_APP},
+            )
+        )
+    (row,) = sel_rows()
+    assert (row["operation"], row["error"]) == ("computer_click:located", enable_state.ERR_DISABLED)
+    assert row["metadata"] == {"y": 5}, row
+
+
+def test_the_real_pointer_is_refused_before_the_allowlist_is_read(tmp_path, monkeypatch, sel_rows):
+    """The refusal does not wait on the app: named off the allowlist, the call is still refused for
+    its method, not for its app."""
+    _arm(tmp_path, ARMED_APP)
+    _fake_driver(monkeypatch)
+    with pytest.raises(service.ComputerUseRefusal) as excinfo:
+        _run(
+            service.computer_dispatch(
+                "computer_click", {"click_method": "global", "x": 1, "y": 2, "app": "Terminal"}
+            )
+        )
+    assert excinfo.value.error.code == service.ERR_REAL_POINTER_REFUSED
+    assert sel_rows()[-1]["error"] == service.ERR_REAL_POINTER_REFUSED
+
+
+def test_the_schema_offers_only_the_click_methods_that_run():
+    enum = ct.TOOLS_BY_NAME["computer_click"].parameters["click_method"]["enum"]
+    assert tuple(enum) == service._WORKING_CLICK_METHODS
+
+
+@pytest.mark.parametrize(
+    "bad", [True, float("nan"), float("inf"), "10", None, 10**400, -(10**400), 2 * 10**308]
+)
+def test_a_point_that_is_not_a_finite_number_is_left_out_of_the_row(
+    tmp_path, monkeypatch, sel_rows, bad
+):
+    _arm(tmp_path, ARMED_APP)
+    _fake_driver(monkeypatch)
+    _run(
+        service.computer_dispatch(
+            "computer_click", {"click_method": "located", "x": bad, "y": 5, "app": ARMED_APP}
+        )
+    )
+    assert sel_rows()[-1]["metadata"] == {"y": 5}
 
 
 # ── 9. step 7 — what comes back ──────────────────────────────────────────────

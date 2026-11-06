@@ -581,11 +581,10 @@ def click_located(pid: int, x: float, y: float) -> None:
 def click_global(x: float, y: float) -> None:
     """Warp the operator's REAL cursor to *x*,*y* and click there.
 
-    **The only function in this codebase that moves the physical pointer.** It is reachable only
-    when a model names ``click_method="global"`` — ``auto`` never resolves onto it (enforced
-    in ``service._click_method``) — and the dispatch audits it under its own SEL
-    operation so a real-cursor warp is one filter away from every ordinary click.
-    ``test_only_one_function_warps_the_real_cursor`` pins that this remains the sole caller.
+    **The only function in this codebase that moves the physical pointer, and nothing calls it.**
+    Its method is refused in the dispatch and again in the driver, a deliberate second wall, until
+    such input can be held to the named application; a rail holds that no code calls this.
+    ``test_only_one_function_warps_the_real_cursor`` pins that this remains the sole warper.
     """
     frameworks = _load()
     point = _CGPoint(x=float(x), y=float(y))

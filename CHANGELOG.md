@@ -50,6 +50,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A generated image in a chat that can't be loaded right now no longer reads as deleted. Only an image the gateway says is gone shows its prompt and offers Regenerate; any other failure says the image can't be shown, so a refused load never offers a model call.**
 - **The desktop app reaches the gateway it starts at the address that gateway listens on, `127.0.0.1`, where it used `localhost`.**
 
+### Security
+
+- **Computer use refuses the click method that moves the real pointer until it can be held to the named application. A refused click is audited with its method and the point it was aimed at, as an allowed one is; an element press and a click at a point in the named application work as before.**
+- **A computer-use call runs only the driver operation its tool names, and hands the driver only the arguments that tool declares.**
+
 ## [0.3.6] — 2026-11-03
 
 Settings opens on seventeen cards in three groups, one for each of its pages, where it had forty pages: each page holds the settings that belong together, a card carries the switches people change most, search finds a setting by its own name, and every old link opens its section. An open page says when PersonalClaw's interface was updated and offers Reload, and a toast waits while you are on it. Turning off or removing a native app is refused with why, a skill an app seeded that you changed outlives the app, and an app update a stop cut short is finished at the next start. A pin on Home opens its artifact, the composer's agent-and-model menu works from the keyboard, and a loop's page names its work folder without your account's name and keeps its tab in the address. An answered approval's notification says how it ended, and an approval's note names the chat or the loop that asks, or the Inbox for work no page answers. In the sidebar, the Group by control sits in the search row, a chat's state is a dot that glows while it runs or waits on you, and the icon and name stay in its centre.

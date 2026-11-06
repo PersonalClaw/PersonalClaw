@@ -148,13 +148,12 @@ TOOL_SURFACE: tuple[ToolSpec, ...] = (
             **_ELEMENT_PARAMS,
             "click_method": {
                 "type": "string",
-                "enum": ["auto", "located", "global"],
+                "enum": ["auto", "located"],
                 "description": (
                     "auto (default): accessibility press on the element, no pointer motion. "
                     "located: post a click to the target process at x,y without moving the "
-                    "real cursor. global: warp the operator's real cursor and click — the only "
-                    "method that touches their physical pointer, so it must be asked for by "
-                    "name."
+                    "real cursor. A method that moves the operator's real pointer is refused "
+                    "until such input can be held to the named application."
                 ),
             },
             "x": {"type": "number", "description": "Coordinate methods only."},
