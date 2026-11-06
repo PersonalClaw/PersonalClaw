@@ -43,6 +43,7 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 
 import pytest
+import real_home_guard
 
 from personalclaw.workflows.secrets import SECRET_KEY_HINTS, SECRET_KEY_WORD_HINTS
 from personalclaw.workflows.workspace import looks_secret
@@ -576,21 +577,34 @@ asyncio.run(main())
 """
 
 
-def test_a_busy_gateway_asked_where_it_waits_goes_on_answering(tmp_path):
-    """🔴 Red before: the ask sent SIGUSR1, which the stall watch answered with faulthandler's dump
-    of every thread, and that dump, taken while the gateway's other threads ran Python, crashed it
-    (CPython 3.12 within a few such dumps; the rail above's gateway, whose watch formats every
-    thread's stack every 10 ms, reset the next request on a pull request's run). The ask now sends
-    nothing: the gateway goes on answering, and nothing in its log was written by faulthandler."""
+def _busy_gateway_argv(home: Path, port: int) -> list[str]:
+    """How the busy stand-in is started: a Python whose code imports ``personalclaw``."""
+    return [sys.executable, "-c", BUSY_GATEWAY, str(home), "gateway", "--port", str(port)]
+
+
+def _a_busy_gateway_goes_on_answering_the_ask(tmp_path: Path) -> None:
+    """Start the busy stand-in in a home of its own, ask it where it waits as a spec does, and hold
+    that it goes on answering with nothing of faulthandler's in its log.
+
+    The stand-in gets a home of its own, whatever the run's: PERSONALCLAW_HOME is its home, and
+    HOME a scratch folder. The ask keeps the run's environment: the guard judges no node child, and
+    the ask only reads the default home's path."""
     home = tmp_path / "home"
+    user = tmp_path / "user"
     out = tmp_path / "out"
-    home.mkdir()
-    out.mkdir()
+    for folder in (home, user, out):
+        folder.mkdir()
     port = _free_port()
-    env = {**os.environ, "PERSONALCLAW_LOOP_STALL_SECONDS": "0.01", "PYTHONPATH": str(REPO / "src")}
+    env = {
+        **os.environ,
+        "HOME": str(user),
+        "PERSONALCLAW_HOME": str(home),
+        "PERSONALCLAW_LOOP_STALL_SECONDS": "0.01",
+        "PYTHONPATH": str(REPO / "src"),
+    }
     env.pop("PERSONALCLAW_LOOP_STALL_WATCHDOG", None)
     gateway = subprocess.Popen(
-        [sys.executable, "-c", BUSY_GATEWAY, str(home), "gateway", "--port", str(port)],
+        _busy_gateway_argv(home, port),
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -623,3 +637,30 @@ def test_a_busy_gateway_asked_where_it_waits_goes_on_answering(tmp_path):
     finally:
         os.killpg(gateway.pid, signal.SIGKILL)
         gateway.wait()
+
+
+def test_a_busy_gateway_asked_where_it_waits_goes_on_answering(tmp_path):
+    """🔴 Red before: the ask sent SIGUSR1, which the stall watch answered with faulthandler's dump
+    of every thread, and that dump, taken while the gateway's other threads ran Python, crashed it
+    (CPython 3.12 within a few such dumps; the rail above's gateway, whose watch formats every
+    thread's stack every 10 ms, reset the next request on a pull request's run). The ask now sends
+    nothing: the gateway goes on answering, and nothing in its log was written by faulthandler."""
+    _a_busy_gateway_goes_on_answering_the_ask(tmp_path)
+
+
+def test_a_run_under_the_real_home_still_gives_the_busy_gateway_a_home_of_its_own(
+    tmp_path, monkeypatch
+):
+    """🔴 Red before (the stand-in took the run's environment with nothing that names a home
+    added): breadth's rails leg keeps the runner's own ``HOME`` and sets no ``PERSONALCLAW_HOME``,
+    and the real-home guard refused the stand-in, "a PersonalClaw child process given no isolated
+    home". Under run-job a step's ``HOME`` is a scratch one, so no pull request's run saw it. Here
+    the run's ``HOME`` is the real home, as the guard spells it, with no ``PERSONALCLAW_HOME``, and
+    the stand-in still starts, and still answers."""
+    monkeypatch.setenv("HOME", str(real_home_guard.REAL_HOME.parent))
+    monkeypatch.delenv("PERSONALCLAW_HOME", raising=False)
+    assert not real_home_guard.GUARD.isolates(os.environ), "premise: the run's home is the real one"
+    assert real_home_guard.runs_personalclaw(
+        _busy_gateway_argv(tmp_path / "home", _free_port())
+    ), "premise: the guard judges the stand-in a PersonalClaw child"
+    _a_busy_gateway_goes_on_answering_the_ask(tmp_path)
