@@ -165,8 +165,11 @@ describe('a button that reveals content says that it does', () => {
   // loop cockpit's Details button, which shows and hides its rail — was never counted, and it announced
   // a pressed toggle where a rail appeared. The optional `{` opener takes that shape in, with any
   // `;`-ended statements before the flip; their class stops at `{`, `}`, `;` and a line break, so it
-  // cannot leave the block either.
-  const TOGGLE = /onClick=\{\(\) => (?:\{\s*(?:[^{}\n;]+;\s*)*)?(?:[^&{}\n]+&& )?set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => (?:\{\s*(?:[^{}\n;]+;\s*)*)?(?:[^&{}\n]+&& )?set\w+\(!\w+\)/g
+  // cannot leave the block either. Each statement starts at a character that is not a space, and the
+  // guard's class stops at `;` too, so a handler's text is read one way only: with a space allowed at
+  // a statement's start, a run of ` :;` could be split exponentially many ways (CodeQL's
+  // inefficient-regular-expression alert).
+  const TOGGLE = /onClick=\{\(\) => (?:\{\s*(?:[^{}\n;\s][^{}\n;]*;\s*)*)?(?:[^&{}\n;]+&& )?set\w+\(\(?\w*\)? ?=> ?!\w+\)|onClick=\{\(\) => (?:\{\s*(?:[^{}\n;\s][^{}\n;]*;\s*)*)?(?:[^&{}\n;]+&& )?set\w+\(!\w+\)/g
 
   it('the old matcher is BLIND to a guarded flip — the gap is structural', () => {
     // Synthetic and exact: the first line is the one that sat outside the census since it was written.
@@ -209,6 +212,16 @@ describe('a button that reveals content says that it does', () => {
     // A block that sets without flipping is not a toggle, and the block stays inside its own handler.
     expect(sees('onClick={() => { setOpen(true); setSelected(null) }}')).toBe(false)
     expect(sees('onClick={() => { run() }} onBlur={() => { reset(); setOpen(!open) }}')).toBe(false)
+    TOGGLE.lastIndex = 0
+  })
+
+  it('reads a long run of statements in linear time', () => {
+    // 28 ` :;` took the space-led class seconds (its time doubled with each one); this one takes none.
+    const shape = 'onClick={() => {' + ' :;'.repeat(28)
+    const started = performance.now()
+    TOGGLE.lastIndex = 0
+    expect(TOGGLE.test(shape)).toBe(false)
+    expect(performance.now() - started).toBeLessThan(1000)
     TOGGLE.lastIndex = 0
   })
 
