@@ -7,7 +7,7 @@ import {
   seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel, settleDom, settleEntranceAnimations, type SettleReport,
 } from './helpers'
 import { FIXED_CLOCK } from './fixedClock'
-import { AUDIT_VERIFIED, LEARNING_WEEK, SYSTEM_READING, answerStubbedRead, type StubbedRead } from './stubbedReads'
+import { AUDIT_VERIFIED, BOOT_ROOTS, FILE_ROOTS, LEARNING_WEEK, SYSTEM_READING, answerStubbedRead, type StubbedRead } from './stubbedReads'
 
 // ── Visual-regression baselines — every nav route × both themes ─────────────
 // This is the safety rail. Its baselines are made and compared against the pinned image's browser
@@ -90,6 +90,7 @@ test.use({ actionTimeout: 30_000 })
 
 /** Reads a shot answers with fixed values (`StubbedRead`, `e2e/stubbedReads.ts`), and why there. */
 const VISUAL_STUBS: Record<string, StubbedRead[]> = {
+  files: [FILE_ROOTS],
   learning: [LEARNING_WEEK],
   settings: [AUDIT_VERIFIED, SYSTEM_READING],
 }
@@ -373,6 +374,14 @@ test.describe('visual: each pin holds', { tag: '@visual' }, () => {
     }, FIXED_CLOCK.dashboard)
     expect(shown.length, 'the band draws its hours').toBeGreaterThan(0)
     expect(shown.filter((t) => !given.includes(t)), 'a time no fixture gave').toEqual([])
+  })
+
+  test("Files names the roots the home had at boot, whatever the other specs made", async ({ page }) => {
+    await assertPristineFlywheel(page)
+    await seedTheme(page, 'light')
+    await loadPinned(page, 'files')
+    const roots = page.getByRole('radiogroup', { name: 'File root' }).getByRole('radio')
+    await expect(roots).toHaveText(BOOT_ROOTS)
   })
 
   test("Settings' tiles read the fixed count and reading, not the run's", async ({ page }) => {

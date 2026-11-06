@@ -97,3 +97,17 @@ export const SYSTEM_READING: StubbedRead = {
   patch: (live) => ({ ...live, cpu_pct: 12, mem_used_gb: 3.2, mem_total_gb: 15.6, mem_free_gb: 12.4 }),
   why: "the cpu and memory are the runner's own, read live",
 }
+
+/** The roots Files names: the two folders the run's home has at boot. The gateway lists a root only
+ *  where its folder exists (`dashboard/handlers/files.py`), and a sibling spec's turn or upload in
+ *  the shared home makes Uploads and each project's context along the way. So the shot named two
+ *  roots on one run and five on another (PR CI's e2e-pinned, run 42190053229), and at 390 px the
+ *  header's root switch folds to one pill when it cannot hold them all. The folded switch is held
+ *  by `src/ui/aFoldedSwitchSaysItsValue.test.tsx`, and this pin by `src/design/visualPins.test.ts`. */
+export const BOOT_ROOTS = ['Workspace', 'Outbox']
+
+export const FILE_ROOTS: StubbedRead = {
+  url: /\/api\/file-list$/,
+  patch: (live: { roots?: { label: string }[] }) => ({ ...live, roots: (live.roots ?? []).filter((r) => BOOT_ROOTS.includes(r.label)) }),
+  why: "a root is listed only where its folder exists, and other specs make Uploads and a project's context in the shared home",
+}
