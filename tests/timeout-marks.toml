@@ -380,6 +380,11 @@ cap = 40
 reason = "the route census over the whole package, parsed once since #5359 (7.8 s to 3.0 s locally); 32 s on CI before it (breadth's coverage leg, 2026-10-24)"
 
 [[mark]]
+site = "tests/test_app_owned_skills.py::test_a_kept_note_one_test_leaves_unsaid_is_not_the_next_tests_to_say"
+cap = 50
+reason = "a child pytest that runs two of this file's tests in the order breadth's random-order leg ran them (4.6 s locally under coverage); the like child pytest of tests/test_a_child_a_test_starts_imports_the_tree_under_test.py took 23 s on CI at worst"
+
+[[mark]]
 site = "tests/test_baseline_denylist_integrity.py::TestSharedSource.test_no_module_keeps_a_second_in_code_copy_of_the_baseline"
 cap = 50
 reason = "a census of the package for a second copy of the baseline denylist; 20 s on CI at worst (breadth's coverage leg, 2026-10-24)"

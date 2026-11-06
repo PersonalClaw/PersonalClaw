@@ -14,8 +14,11 @@ app's — is never touched.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
+import nested_pytest
 import pytest
 
 from personalclaw.apps import app_manager, manager
@@ -228,6 +231,33 @@ def test_an_unchanged_seeded_skill_still_goes_with_its_app(tmp_path):
     assert app_manager.disable("skilly") is True
     assert not (skills_dir() / "deploy").exists()
     assert app_runtime.take_kept("skilly") == []
+
+
+@pytest.mark.timeout(50)
+def test_a_kept_note_one_test_leaves_unsaid_is_not_the_next_tests_to_say(tmp_path):
+    """🔴 Red before: breadth's random-order leg ran the later-enable test below just before the one
+    above (seed 372, run 42170607590). It disables through ``app_manager.disable``, which leaves
+    the kept note for its caller to say, and the next test took that note as its own.
+    ``tests/conftest.py`` forgets the notes between tests now. Here the two run in that order in a
+    pytest of their own."""
+    here = Path(__file__)
+    order = [
+        f"{here}::test_a_kept_skill_is_not_taken_back_by_a_later_enable",
+        f"{here}::test_an_unchanged_seeded_skill_still_goes_with_its_app",
+    ]
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
+    ran = subprocess.run(
+        [*nested_pytest.argv(tmp_path), "-q", "-p", "no:cacheprovider", "-n", "0"]
+        + ["--no-cov", "--color=no", *order],
+        cwd=here.parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    said = ran.stdout + ran.stderr
+    assert ran.returncode == 0, said
+    assert "2 passed" in said, said
 
 
 def test_a_damaged_record_leaves_the_folder_as_it_is(tmp_path):
