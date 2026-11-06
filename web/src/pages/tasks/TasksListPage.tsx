@@ -361,12 +361,17 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     [tagFilter],
   )
 
-  // Tasks within the active scope, tag and list, before status/search — feeds board + DAG
+  // Tasks within the active scope, tag, list and Assigned, before status/search — feeds board + DAG
   // (which present their own statuses) so each narrowing applies to every view, the List section's
-  // as the tag's.
-  const scopedTasks = useMemo(
+  // and Mine as the tag's: the filter's label says what the page shows.
+  // `narrowedTasks` is that set before Mine, which the Mine empty state counts.
+  const mineOnly = !!owner && assigned === ASSIGNED_MINE
+  const narrowedTasks = useMemo(
     () => (tasks ?? []).filter(inScope).filter(hasTag).filter((t) => !listProp || t.task_list_id === listProp),
     [tasks, inScope, hasTag, listProp])
+  const scopedTasks = useMemo(
+    () => (mineOnly ? narrowedTasks.filter((t) => isMine(t, owner)) : narrowedTasks),
+    [narrowedTasks, mineOnly, owner])
 
   // The unified Filter & sort menu's sections. Sort hides on board/dag (they present + order
   // their own statuses), so the menu only ever offers what the current view honors. Status stays
@@ -567,10 +572,17 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
 
   // The nothing-on-screen state for the views that render `scopedTasks` (board + DAG). They
   // have no status/search branch to blame, so scope was the only narrower they could name —
-  // and with a Tag filter now applying to them too, "No tasks match this scope." would blame
-  // the wrong control. A tag is dismissable in place, so it gets its own escape; a scope is
-  // chosen by navigation and keeps the neutral sentence.
-  const nothingInView = tagFilter !== TAG_ANY ? (
+  // and with a Tag, a list and Mine now applying to them too, "No tasks match this scope." would
+  // blame the wrong control. Each of those is undone in place, so each gets its own escape (Clear
+  // tag, All lists, Everyone); a scope is chosen by navigation and keeps the neutral sentence.
+  // Mine is named first where it is what emptied the view: the tasks before it are there, and none
+  // is the owner's.
+  const others = narrowedTasks.length
+  const nothingInView = mineOnly && others > 0 ? (
+    <EmptyState icon={UserRound} title="No tasks of yours here"
+      hint={others === 1 ? 'The one task here is not assigned to you.' : `None of the ${others} tasks here is assigned to you.`}
+      action={{ label: 'Everyone', onClick: () => setAssigned(ASSIGNED_EVERYONE) }} />
+  ) : tagFilter !== TAG_ANY ? (
     <EmptyState icon={Tag} title={`No tasks tagged “${tagFilter}”`}
       hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none carrying this tag here.`}
       action={{ label: 'Clear tag', onClick: () => setTag(TAG_ANY) }} />
@@ -582,9 +594,9 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
   )
 
-  // Board and the graph draw the scoped tasks (scope, tag and list), never the search's results or
-  // the ready read, so only the tasks' own read holds them on the skeleton or stands in their place
-  // with its error: a ready read that failed under a query held Board on the skeleton for good.
+  // Board and the graph draw the scoped tasks (scope, tag, list and Mine), never the search's
+  // results or the ready read, so only the tasks' own read holds them on the skeleton or stands in
+  // their place with its error: a ready read that failed under a query held Board on the skeleton.
   const drawingTheTasks = (drawn: ReactNode) => (
     tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
       : tasks === null ? <ListSkeleton rows={6} what="tasks" /> : tasks.length === 0 ? (
@@ -676,7 +688,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
               q && filter !== 'all' && matchesAnyStatus > 0 ? (
                 // The search matched, and the chosen Status left none of its matches: Status is the
                 // narrower to name, and the way out is any status, not clearing the search.
-                <EmptyState icon={Filter} title={`No ${FILTERS.find((f) => f.key === filter)?.label ?? filter} tasks match “${q}”`}
+                <EmptyState icon={Filter} title={`No tasks match “${q}” with Status ${FILTERS.find((f) => f.key === filter)?.label ?? filter}`}
                   hint={`${matchesAnyStatus} task${matchesAnyStatus === 1 ? '' : 's'} match${matchesAnyStatus === 1 ? 'es' : ''} the search — just none with this status.`}
                   action={{ label: 'Any status', onClick: () => setFilter('all') }} />
               ) : q ? (

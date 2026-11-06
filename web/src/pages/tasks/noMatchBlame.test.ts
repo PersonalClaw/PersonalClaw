@@ -25,7 +25,8 @@ describe('the tasks no-match state names its narrower', () => {
   })
 
   it('a search that narrows to nothing names the query and offers Clear search', () => {
-    expect(src).toMatch(/No tasks match “\$\{q\}”/)
+    // Anchored to the search branch's own title: the Status title goes on (" with Status …").
+    expect(src).toMatch(/No tasks match “\$\{q\}”`\}/)
     expect(src).toMatch(/label: 'Clear search', onClick: \(\) => setQ\(''\)/)
   })
 
