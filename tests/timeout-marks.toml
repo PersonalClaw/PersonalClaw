@@ -135,6 +135,26 @@ cap = 140
 reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice its own 70 s cap"
 
 [[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[breadth-collection-parses-loads-the-guard-over-the-whole-suite]"
+cap = 60
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice the suite's 30 s default"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[breadth-freshness-reads-its-own-ref]"
+cap = 60
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice the suite's 30 s default"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[breadth-non-reusable-legs-match-the-jobs]"
+cap = 60
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice the suite's 30 s default"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[no workflow command passes --no-cov]"
+cap = 60
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice the suite's 30 s default"
+
+[[mark]]
 site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[every catalogue command is the workflow's]"
 cap = 120
 reason = "74 planted controls, each the catalogue and both workflows read and matched token for token; 58 s on CI at worst (a merge leg, 2026-10-24)"

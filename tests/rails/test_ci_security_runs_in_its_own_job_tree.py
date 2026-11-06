@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from ci_run_job import read_run_job
 from packaging.specifiers import SpecifierSet
 from rails_repo import REPO
 from test_each_tree_check_runs_in_one_place import named_runs
@@ -73,7 +74,11 @@ def violations(root: Path) -> list[str]:
         if workflow == CATALOGUE_OWNER:
             bad += _entry_violations(cat, job_id, runner, named, pythons)
             continue
-        data = yaml.safe_load((root / _WORKFLOWS / workflow).read_text(encoding="utf-8"))
+        # A step that runs the catalogue's entry through run-job is read as its steps (#5600).
+        data = read_run_job(
+            (root / catalogue.CATALOGUE).read_text(encoding="utf-8"),
+            yaml.safe_load((root / _WORKFLOWS / workflow).read_text(encoding="utf-8")),
+        )
         job = (data.get("jobs") or {}).get(job_id)
         if not isinstance(job, dict):
             bad.append(f"{workflow} has no {job_id} job")
@@ -193,6 +198,30 @@ def _in_job(rel: str, job_id: str, old: str, new: str) -> Callable[[Path], None]
     return plant
 
 
+def _runs_run_job(root: Path, job_id: str) -> bool:
+    """Whether breadth.yml job *job_id* under *root* runs its entry through run-job (#5600)."""
+    lines = (root / _BREADTH).read_text(encoding="utf-8").splitlines(keepends=True)
+    start = lines.index(f"  {job_id}:\n") + 1
+    end = next((i for i in range(start, len(lines)) if re.match(r"  \S", lines[i])), len(lines))
+    return f"-m tools.ci run-job {job_id}" in "".join(lines[start:end])
+
+
+def _as_the_leg_runs(
+    job_id: str, written: Callable[[Path], None], through: Callable[[Path], None]
+) -> Callable[[Path], None]:
+    """*written* while breadth.yml job *job_id* writes its pytest step out, *through* once it
+    runs its entry through run-job, where the entry's argv is the leg's command."""
+
+    def plant(root: Path) -> None:
+        (through if _runs_run_job(root, job_id) else written)(root)
+
+    return plant
+
+
+def _nothing(root: Path) -> None:
+    """No edit: the plant's other half is the whole of it."""
+
+
 def _plants(*plants: Callable[[Path], None]) -> Callable[[Path], None]:
     """One control made of several edits, applied in order."""
 
@@ -265,12 +294,12 @@ CONTROLS = (
     ),
     Control(
         "breadth's macOS corpus step gated",
+        # The leg's test step by its id, written out or through run-job.
         _in_job(
             _BREADTH,
             "security-macos",
-            "      - name: pytest (adversarial scanner corpus)\n",
-            "      - name: pytest (adversarial scanner corpus)\n"
-            "        if: ${{ github.event_name == 'workflow_dispatch' }}\n",
+            "        id: pytest\n",
+            "        id: pytest\n        if: ${{ github.event_name == 'workflow_dispatch' }}\n",
         ),
         "breadth.yml:security-macos runs pytest under if:",
     ),
@@ -310,11 +339,15 @@ CONTROLS = (
     Control(
         "breadth's macOS leg narrowed to one file, in its workflow and its catalogue entry",
         _plants(
-            _in_job(
-                _BREADTH,
+            _as_the_leg_runs(
                 "security-macos",
-                "          tests/security\n",
-                "          tests/security/test_app_signature.py\n",
+                _in_job(
+                    _BREADTH,
+                    "security-macos",
+                    "          tests/security\n",
+                    "          tests/security/test_app_signature.py\n",
+                ),
+                _nothing,
             ),
             _edit(
                 catalogue.CATALOGUE,
@@ -329,11 +362,24 @@ CONTROLS = (
     ),
     Control(
         "breadth's macOS leg running a file the shards collect too",
-        _in_job(
-            _BREADTH,
+        _as_the_leg_runs(
             "security-macos",
-            "          tests/test_supply_chain_gates.py\n",
-            "          tests/test_supply_chain_gates.py\n          tests/test_ci_shards.py\n",
+            _in_job(
+                _BREADTH,
+                "security-macos",
+                "          tests/test_supply_chain_gates.py\n",
+                "          tests/test_supply_chain_gates.py\n          tests/test_ci_shards.py\n",
+            ),
+            _edit(
+                catalogue.CATALOGUE,
+                (
+                    '"--junitxml=reports/junit-security-corpus-macos.xml", "tests/security",'
+                    ' "tests/test_supply_chain_scanner.py", "tests/test_supply_chain_gates.py"',
+                    '"--junitxml=reports/junit-security-corpus-macos.xml", "tests/security",'
+                    ' "tests/test_supply_chain_scanner.py", "tests/test_supply_chain_gates.py",'
+                    ' "tests/test_ci_shards.py"',
+                ),
+            ),
         ),
         "breadth.yml:security-macos runs tests/test_ci_shards.py, which is not the corpus",
     ),
@@ -367,6 +413,29 @@ def test_each_planted_violation_is_caught(control: Control, tmp_path: Path) -> N
     found = violations(root)
     if control.fails:
         assert found, f"the planted violation went unseen: {control.name}"
+        assert any(control.expect in v for v in found), "\n".join(found)
+    else:
+        assert found == [], "\n".join(found)
+
+
+@pytest.mark.parametrize("control", CONTROLS, ids=lambda c: c.name)
+def test_each_control_reads_the_same_with_the_legs_through_run_job(
+    control: Control, tmp_path: Path
+) -> None:
+    """The legs #5600 moves to run-job, the security legs among them, hold the rule as they do
+    written out: the scaffold with every one of them through run-job holds it, and each control
+    fails or passes on it as above."""
+    from test_ci_contract import RUN_JOB_LEGS, legs_through_run_job
+
+    _scaffold(tmp_path / "scaffold")
+    legs_through_run_job(tmp_path / "scaffold", RUN_JOB_LEGS)
+    assert violations(tmp_path / "scaffold") == []
+    root = tmp_path / "control"
+    shutil.copytree(tmp_path / "scaffold", root)
+    control.plant(root)
+    found = violations(root)
+    if control.fails:
+        assert found, f"the planted violation went unseen through run-job: {control.name}"
         assert any(control.expect in v for v in found), "\n".join(found)
     else:
         assert found == [], "\n".join(found)

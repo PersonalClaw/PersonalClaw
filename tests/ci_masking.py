@@ -362,14 +362,20 @@ def _read_together(
     return bad
 
 
+#: The end of random-order's first order, its report and its ids.
+_ORDER_ONE_END = (
+    "--junitxml=reports/junit-random-order-1.xml"
+    ' --shard-ids "$RUNNER_TEMP/ids/shard-ids-random-order-${{ matrix.shard }}.txt"\n'
+)
 #: The row's planted violations: (name, file, old text, new text). Each must fail the check.
 PLANTS: tuple[tuple[str, str, str, str], ...] = (
     (
-        # A written-out pytest line, which the rails leg keeps until #5600 runs it through run-job.
+        # random-order's first order: a pytest line written out for good, since #5600 leaves that
+        # leg's steps its own.
         "a pytest whose exit status is thrown away",
         _BREADTH,
-        "-q tests/rails --junitxml=reports/junit-rails-macos.xml\n",
-        "-q tests/rails --junitxml=reports/junit-rails-macos.xml || true\n",
+        _ORDER_ONE_END,
+        _ORDER_ONE_END.replace("\n", " || true\n"),
     ),
     (
         "a validation step that may fail without failing its job",

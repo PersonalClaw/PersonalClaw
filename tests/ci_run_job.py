@@ -21,6 +21,9 @@ from typing import Any
 
 from tools.ci import catalogue
 
+#: The key each step read from a run-job step carries: the run-job step's id, whose outcome
+#: is the step's own.
+RUN_JOB_STEP = "run-job-step"
 #: Each catalogue placeholder as a workflow line spells it, the first of its spellings.
 SPELLINGS = {name: spellings[0] for name, spellings in catalogue.PLACEHOLDERS.items()}
 
@@ -135,9 +138,19 @@ def read_run_job(catalogue_text: str, workflow: Any) -> Any:
     through run-job read as the entry's command: one step per command step, its run: the step's
     argv as the workflow spells it, its env the run-job step's with the command step's, its
     directory the command step's, and its other keys the run-job step's. The last keeps the
-    step's name and id; each one before it names its place in the entry."""
+    step's name and id; each one before it names its place in the entry. Every one names the
+    run-job step's id as its ``run-job-step``, the step whose outcome is its own: an id is the
+    workflow's to hold once, so the ones before the last carry none."""
+    if not isinstance(workflow, dict):
+        return workflow
+    # Only the reader marks a step as read from a run-job step: a key the workflow spells
+    # itself goes, so no written-out step reads as one.
+    for job in (workflow.get("jobs") or {}).values():
+        for step in (job.get("steps") if isinstance(job, dict) else None) or []:
+            if isinstance(step, dict):
+                step.pop(RUN_JOB_STEP, None)
     entries = catalogue_entries(catalogue_text)
-    if not entries or not isinstance(workflow, dict):
+    if not entries:
         return workflow
     for job in (workflow.get("jobs") or {}).values():
         steps = job.get("steps") if isinstance(job, dict) else None
@@ -163,6 +176,8 @@ def read_run_job(catalogue_text: str, workflow: Any) -> Any:
                     else f"{step.get('name') or 'run-job'} ({entry.id}, step {n} of"
                     f" {len(entry.command)})"
                 )
+                if "id" in step:
+                    one[RUN_JOB_STEP] = step["id"]
                 if last and "id" in step:
                     one["id"] = step["id"]
                 one["run"] = " ".join(as_spelled(w) for w in command.argv)

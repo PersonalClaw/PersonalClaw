@@ -837,12 +837,15 @@ class TestCorpusIsComplete:
         ],
     )
     def test_each_tier_has_a_security_job_that_runs_the_corpus(self, workflow, job, runner):
-        """And breadth.yml's own jobs run it nightly on Linux and macOS."""
+        """And breadth.yml's own jobs run it nightly on Linux and macOS: a step that runs the
+        catalogue's entry through run-job runs what the entry's steps run (#5600)."""
         import yaml
+        from ci_run_job import read_run_job
 
         wf = REPO_ROOT / ".github" / "workflows" / workflow
         assert wf.is_file(), f"missing workflow: {wf}"
-        data = yaml.safe_load(wf.read_text(encoding="utf-8"))
+        listed = (REPO_ROOT / "tools" / "ci" / "catalogue.toml").read_text(encoding="utf-8")
+        data = read_run_job(listed, yaml.safe_load(wf.read_text(encoding="utf-8")))
         spec = (data.get("jobs") or {}).get(job)
         assert spec is not None, f"no {job} job in {workflow}"
         assert str(spec.get("runs-on", "")).startswith(runner), spec.get("runs-on")
