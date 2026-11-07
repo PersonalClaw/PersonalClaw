@@ -193,6 +193,18 @@ async def _gone(pid: int, timeout: float = 10.0) -> bool:
     return True
 
 
+async def _row_status(http, name: str, status: str, timeout: float = 30.0) -> dict[str, Any]:
+    """The server's card says *status*, waiting for it rather than assuming a fixed 1 s is enough
+    on a busy machine."""
+    deadline = time.monotonic() + timeout
+    while True:
+        row = await _row(http, name)
+        if row["status"] == status:
+            return row
+        assert time.monotonic() < deadline, f"{name} never reached {status!r}: {row}"
+        await asyncio.sleep(0.05)
+
+
 @pytest.mark.asyncio
 async def test_a_first_start_still_installing_is_left_to_finish_and_then_looked_at(
     tmp_path, monkeypatch
@@ -337,15 +349,14 @@ async def test_a_program_left_to_finish_is_stopped_once_its_time_is_up(
         # not installing, and is stopped and said not to answer.
         pids = server.pid_list()
         assert len(pids) == 2 and await _gone(pids[1]), pids
-        row = await _row(http, "mute")
-        assert row["status"] == "error", row
+        row = await _row_status(http, "mute", "error")
         assert "did not answer within 1 second, so PersonalClaw stopped it" in row["error"], row
 
         # Its owner's Retry gives a start its time again: one that is installing by then is not cut
         # off for an earlier one that never answered.
         retried = await http.post("/api/mcp/probe/mute")
         assert retried.status == 200, await retried.text()
-        assert (await _row(http, "mute"))["status"] == "probing"
+        await _row_status(http, "mute", "probing")
         third = server.pid_list()[-1]
         assert len(server.pid_list()) == 3 and _alive(third), server.pid_list()
         await _all_finished()
