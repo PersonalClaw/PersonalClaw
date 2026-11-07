@@ -17,7 +17,9 @@ workflow engine's binding context (`BindingContext.secret_resolver`, reached thr
 and the pipe grammar). A trigger action config is a flat `{provider, config}` dict resolved at
 dispatch with no binding tree, so reusing it would mean building a fake context around two lines of
 string substitution. What IS shared is the thing that matters: both resolve through the one resolver
-(`llm.credentials.resolve_secret`), so a key means one thing across the whole product. An automation
+(`llm.credentials.resolve_secret`). An automation's own action reads the gateway's environment
+first; a workflow run reads the store alone, and so does what checks the references a run is handed
+(:func:`check`), as that run will read them. An automation
 runs in no project, so its action reads only the global secrets: a project's secret is read by that
 project's runs alone (a workflow run an automation starts in a project reads it in its own steps).
 
@@ -101,9 +103,10 @@ def default_resolver(key: str) -> str:
     """Resolve one key as an automation reads it: the global secret, through the one resolver
     (`llm.credentials.resolve_secret`, with no project). "" when unset.
 
-    The same resolver and the same empty-on-missing contract a workflow step has, so a key
-    resolves identically whether a workflow or a trigger asks. The caller decides what "" means;
-    `resolve()` below treats it as a refusal.
+    The same resolver and the same empty-on-missing contract a workflow step has. An automation's
+    action reads the gateway's environment first, where a workflow step reads the store alone
+    (`workflows.node_bindings._secrets_for`). The caller decides what "" means; `resolve()` below
+    treats it as a refusal.
     """
     from personalclaw.llm import credentials as llm_credentials
 
@@ -218,8 +221,9 @@ def check(keys: list[str] | tuple[str, ...], *, project_id: str = "") -> None:
     """Raise `UnresolvedSecret` for the first of *keys* a run of *project_id* could not read: a
     name nothing reads by name, or one neither its project's secrets nor the global ones hold.
 
-    Through the one resolver (`llm.credentials.resolve_secret`), as the run will read each when a
-    step uses it. The value it reads is dropped here."""
+    Through the one resolver (`llm.credentials.resolve_secret`), from the store alone, as the run
+    will read each when a step uses it: a name only the gateway's environment holds is not one the
+    run reads by name. The value it reads is dropped here."""
     from personalclaw.llm import credentials as llm_credentials
 
     for key in keys:
@@ -227,7 +231,8 @@ def check(keys: list[str] | tuple[str, ...], *, project_id: str = "") -> None:
         if refused is not None:
             raise UnresolvedSecret(key, refused=refused)
         try:
-            present = bool(llm_credentials.resolve_secret(key, project_id=project_id).secret)
+            read = llm_credentials.resolve_secret(key, project_id=project_id, environment=False)
+            present = bool(read.secret)
         except KeyError:
             present = False
         except Exception:  # noqa: BLE001 - an unreadable store is a missing secret, not a crash

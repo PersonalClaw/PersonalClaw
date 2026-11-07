@@ -146,6 +146,19 @@ describe('an inherit-from-host row is not a vault row', () => {
     expect(screen.queryByText(/^set$/i)).toBeNull()
   })
 
+  it('names the workflows that name it, and says a workflow reads it once it is stored', async () => {
+    // A workflow reads only what Settings → Secrets stores, so a host value is named, not used.
+    const consumers = [{ kind: 'workflow' as const, id: 'deploy', label: 'Deploy the site' }]
+    await mount(async () => payload([
+      { name: 'DEPLOY_TOKEN', scope: 'host', consumers },
+      { name: 'GITHUB_TOKEN', scope: 'global', consumers },
+    ]))
+    expect(screen.getAllByText('Named by')).toHaveLength(1)
+    expect(screen.getAllByText('Used by')).toHaveLength(1)
+    expect(screen.getAllByText('A workflow reads it once it is stored above.')).toHaveLength(1)
+    expect(screen.getByText(/reads none of them/)).toBeTruthy()
+  })
+
   it('its Remove control is reachable but refuses, WITH the reason', async () => {
     await mount(async () => payload([{ name: 'SSH_AUTH_SOCK', scope: 'host' }]))
     const remove = screen.getByRole('button', { name: /remove/i })

@@ -125,7 +125,10 @@ the standalone location has to be declared for a downloaded `compose.yaml` to
 work at all.
 
 Copy `.env.example` and set only what you need — every variable is optional with
-a sensible default. Common ones:
+a sensible default. What it sets is the container's environment, which a
+workflow does not read: a workflow's secret is saved in Settings → Secrets, or in
+the container with `personalclaw setup --credential NAME` (it reads the value
+from the variable `NAME`). Common ones:
 
 | Variable | Default | Notes |
 |---|---|---|

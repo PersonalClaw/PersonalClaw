@@ -485,7 +485,11 @@ and is `internal`, since whoever pressed Run did not write it. Neither is retrya
 secret the credential store does not hold is refused, never substituted: the store
 answers "" for a missing key, and a request carrying it fails at its receiver with
 nothing naming the key. The store is the one Settings → Secrets writes, read through one
-resolver (`llm/credentials.py` `resolve_secret`, reading `config/credentials.py`). **A run
+resolver (`llm/credentials.py` `resolve_secret`, reading `config/credentials.py`). **A workflow
+reads a secret from that store alone, never from the gateway's own environment** (its steps, and
+run start's check of them, pass `environment=False`, as the agent's shell does): a name only the
+environment holds, from the shell or app that launched the gateway or a container's `env_file`, is
+a secret that is not set. **A run
 that belongs to a project reads that project's secret first** (Settings → Secrets keeps it in
 the same store under the project's own key) **and the global secret of the same name
 second; a run with no project reads only the global one** (`secrets_vault.reading_order`).

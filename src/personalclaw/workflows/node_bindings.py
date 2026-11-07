@@ -309,7 +309,7 @@ def _secrets_for(
 
     def _filled(key: str) -> str:
         try:
-            read = resolve_secret(key, project_id=project)
+            read = resolve_secret(key, project_id=project, environment=False)
         except SecretNameRefused as refused:
             raise _refuse(refused) from None
         except KeyError:

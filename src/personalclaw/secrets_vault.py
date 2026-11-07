@@ -336,10 +336,11 @@ def list_presence(
 ) -> list[SecretPresence]:
     """The vault's rows: globals, this project's, and inherit-from-host — presence only.
 
-    *project_id* narrows the project rows to one project; empty means "every project's". Host and
-    global rows are unconditional, because a project's secrets are resolved against the same
-    process environment and the same store — a project view that hid them would show a user
-    fewer credentials than their project can actually reach.
+    *project_id* narrows the project rows to one project; empty means "every project's". Global
+    rows are unconditional, because a project's runs read the global secrets too, and so are host
+    rows: a provider entry and an automation read the process environment, though a workflow
+    doesn't (``llm.credentials.resolve_secret``'s ``environment``). A project view that hid them
+    would show a user fewer credentials than what they own can reach.
 
     *consumers* is injected rather than derived here so the sync read model stays sync:
     :func:`consumers_for` has to await the workflow def providers, and a module that needs an

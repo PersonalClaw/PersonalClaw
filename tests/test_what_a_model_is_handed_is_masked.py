@@ -1052,12 +1052,17 @@ def test_a_workflow_stage_gets_the_name_and_an_action_step_the_value(tmp_path, m
     that runs its config itself is handed the value."""
     from workflows_stage_completion_shared import _FakeSubagents
 
+    from personalclaw.config import credentials as cred
     from personalclaw.workflows import store
     from personalclaw.workflows.controller import EngineServices, RunController
     from personalclaw.workflows.models import WorkflowRun
 
     monkeypatch.setattr("personalclaw.workflows.leases.config_dir", lambda: tmp_path)
-    monkeypatch.setenv("DEPLOY_PASS", PASSWORD)
+    # Saved as Settings → Secrets saves it: a workflow reads the store alone. Registered first, so
+    # monkeypatch removes what the save mirrors into the environment.
+    monkeypatch.setenv("DEPLOY_PASS", "x")
+    monkeypatch.delenv("DEPLOY_PASS")
+    cred.save_credential("DEPLOY_PASS", PASSWORD)
     ran: dict[str, Any] = {}
 
     class _Action:

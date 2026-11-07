@@ -8,9 +8,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### ⚠️ Breaking changes — read before upgrading
+
+- **A workflow's `{{secret:NAME}}` reads only Settings → Secrets, never the gateway's starting environment: a container's `env_file` or `environment:`, a service unit, the shell or app that starts it, or a `.env` in the folder it starts in. A workflow that references or declares a secret set only there is refused at run start, or the step that uses it fails. Save it in Settings → Secrets (in a container, `personalclaw setup --credential NAME`), then take it out of that environment, so every reader uses one copy. A model provider's key and an automation's own action read the environment as before.**
+
 ### Security
 
 - **A workflow step whose provider an input or another step chooses is handed `{{secret:NAME}}` references as a step that names its provider is: an agent step (Run Prompt, Invoke Agent) and an app's model turn keep each reference as its name, and Run workflow hands the run it starts the reference. A step whose provider resolves to none fails without reading its secrets, and a step whose provider hands its config to a model or to a run it starts is refused when a secret's value was filled into it.**
+- **A workflow reads its secrets from Settings → Secrets alone, never from the gateway's own environment. A `{{secret:NAME}}` whose name only that environment holds (the shell or app that launched the gateway, a container's `env_file`) is a secret that is not set: run start says so, and so does the step, and an automation, a hook or a step that would start a run handed it is refused before the run starts. A name both hold is read from Settings → Secrets.**
+- **The first sign-in password a container sets with `PERSONALCLAW_LOGIN_PASSWORD` is taken out of the gateway's environment once it has been read, and out of the one its Restart or an applied update starts it with, so nothing the gateway starts inherits it.**
 
 ### Changed
 

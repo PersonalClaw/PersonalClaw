@@ -158,7 +158,9 @@ def _check_credentials(
 
             def lookup(key: str) -> bool:  # type: ignore[misc]
                 try:
-                    read = llm_credentials.resolve_secret(key, project_id=project_id, home=home)
+                    read = llm_credentials.resolve_secret(
+                        key, project_id=project_id, home=home, environment=False
+                    )
                 except llm_credentials.SecretNameRefused as refused:
                     raise _Refused(refused) from None
                 except KeyError:

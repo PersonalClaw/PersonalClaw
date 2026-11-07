@@ -140,6 +140,9 @@ NAMED_MODULES: dict[str, str] = {
     "tests/test_a_step_whose_provider_comes_from_its_run_keeps_its_references.py": (
         "a step whose provider a binding chooses is handed its references as a named one is"
     ),
+    "tests/test_a_workflow_reads_its_secrets_from_the_store_alone.py": (
+        "a workflow reads its secrets from the store alone, never the gateway's environment"
+    ),
     "tests/test_a_secret_a_run_is_handed_stays_its_reference.py": (
         "a run is handed a secret's reference, never its value, and only one it can read"
     ),

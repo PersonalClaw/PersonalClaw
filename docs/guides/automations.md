@@ -98,8 +98,9 @@ with a warning, and says it is not firing, until a check reads something it can 
 
 An automation can also be **refused before it runs**, because something its action needs is gone:
 the app that provides the action is deactivated, was removed or did not start, a `{{secret:…}}` the
-action uses is not in Settings → Secrets, or it has no action at all. An automation runs in no
-project, so its action reads the global secrets only; a secret kept for one project is read by that
+action uses is set neither in Settings → Secrets nor, for its own action, in the gateway's
+environment, or it has no action at all. An automation runs in no project, so its action reads the
+global secrets only; a secret kept for one project is read by that
 project's work (a workflow run an automation starts in a project reads it in its own steps). What
 an action a secret was filled into prints, returns or fails with is masked of that value, however
 short, before its run history, its last error, the note that reports the run and Run now's answer

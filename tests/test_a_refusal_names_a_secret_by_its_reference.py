@@ -106,12 +106,24 @@ def state() -> _State:
 
 @pytest.fixture(autouse=True)
 def secrets(monkeypatch):
-    """The owner's secrets, read as each path reads one: an automation and a workflow step through
-    the one resolver (`llm.credentials.resolve_secret`, which reads a global secret the gateway
-    holds in its environment), the agent's shell from the store (`command_secrets.stored_secret`).
+    """The owner's secrets, read as each path reads one: an automation through the one resolver
+    (`llm.credentials.resolve_secret`, which reads a global secret the gateway holds in its
+    environment), a workflow step through the same resolver from the store alone (its reader,
+    `config.credentials.find_credential`), and the agent's shell from the store
+    (`command_secrets.stored_secret`).
     """
+    from personalclaw.config import credentials as cred
+
     for name, value in SECRETS.items():
         monkeypatch.setenv(name, value)
+    stored = cred.find_credential
+    monkeypatch.setattr(
+        cred,
+        "find_credential",
+        lambda key, *, home=None: (
+            (SECRETS[key], "file") if key in SECRETS else stored(key, home=home)
+        ),
+    )
     monkeypatch.setattr(
         "personalclaw.agents.native.command_secrets.stored_secret",
         lambda key: SECRETS.get(key, ""),

@@ -20,19 +20,22 @@ SDK), so an app could name another owner's key and read it out of ``.env``.
 deletes the file once every value reads back from there.
 
 **Resolving a name** is :func:`resolve_secret`, the one rule every reader of a named secret goes
-through. A run that belongs to a project reads that project's secret first (stored in the same
-store under the project's own key, ``secrets_vault.project_secret_key``) and the global one
-second; anything with no project — an automation, a settings record, a provider entry, an app —
-reads only the global one (``secrets_vault.reading_order``). A global name is read from the process
-environment (a container passes a secret that way, and the store mirrors every named secret into
-it), then the keychain, then ``<home>/.env``; a project's secret is read from the store only,
-because it is never copied into the environment. Two kinds of name are refused before any value is
-read (:func:`name_refusal`): an OWNED key (``PCSECRET_…``,
+through. A run that belongs to a project reads that project's secret first (stored in the same store
+under the project's own key, ``secrets_vault.project_secret_key``) and the global one second;
+anything with no project — an automation, a settings record, a provider entry, an app — reads only
+the global one (``secrets_vault.reading_order``). A global name is read from the process environment
+first (the store mirrors every named secret into it), then the keychain, then ``<home>/.env``, by a
+reader that reads the environment: a provider entry, an automation's own action, an app, a knowledge
+connector pack. A workflow (its steps, run start's check of them, and the check of what a run is
+handed) and the agent's shell fill a reference from the store alone, so a name only the gateway's
+environment holds is not one a workflow's reference fills. A project's secret is read from the store
+only, because it is never copied into the environment. Two kinds of name are refused before any
+value is read (:func:`name_refusal`): an OWNED key (``PCSECRET_…``,
 :func:`personalclaw.config.credentials.is_owned_key`), with :class:`OwnedCredentialRefused`, since
 it belongs to the settings record that references it and that reference (``config.secret_refs``,
-owner-checked since #3626) is the only way it is read; and a project's stored key
-(``PCPROJ_…``), with :class:`ProjectSecretRefused`, since a reference names a secret by its own
-name and the run's project decides which one it reads.
+owner-checked since #3626) is the only way it is read; and a project's stored key (``PCPROJ_…``),
+with :class:`ProjectSecretRefused`, since a reference names a secret by its own name and the run's
+project decides which one it reads.
 
 Property 11 (Provider SDK Lazy Import): stdlib and ``personalclaw.config`` imports only, so no
 provider SDK is pulled in through here.
@@ -172,12 +175,15 @@ def resolve_secret(
     preflight, the agent's shell fill, an automation's action, a knowledge connector, a provider
     entry's ``credential`` and an app (:meth:`CredentialStore.resolve`).
 
-    A global name is read from the process environment first when *environment* is true (the
-    owner's own configuration: a workflow step, an automation, a provider entry). The agent's
-    shell passes ``False``: there the agent chooses the name, and the gateway's environment holds
-    what a sandbox keeps from the command. A project's secret is read from the store only — it is
-    never copied into the environment. *home* names the store to read, its ``.env`` and its own
-    keychain namespace (the active home's by default).
+    A global name is read from the process environment first when *environment* is true (the owner's
+    own configuration: an automation, a provider entry, an app, a knowledge connector pack). The
+    agent's shell passes ``False``: there the agent chooses the name, and the gateway's environment
+    holds what a sandbox keeps from the command. So does a workflow, in its steps, in run start's
+    check of them and in the check of the references a run is handed (``triggers.secrets.check``): a
+    workflow's secret is one saved in Settings → Secrets, and a name only the gateway's environment
+    holds is not one it reads by name. A project's secret is read from the store only — it is never
+    copied into the environment. *home* names the store to read, its ``.env`` and its own keychain
+    namespace (the active home's by default).
 
     Raises :class:`SecretNameRefused` (a ``KeyError``) for a name nothing reads by name, before any
     value is read, and :class:`KeyError` when no scope holds *name*.
