@@ -144,15 +144,25 @@ def _first_probe_waits(monkeypatch, secs: float) -> None:
 
 
 class _Silent:
-    """A server that never says a word and never ends, and writes down its pid."""
+    """A server that never says a word and never ends on its own. It writes down its pid, and when
+    it is told to stop (``SIGTERM``), on the clock every process on the machine reads alike
+    (``time.monotonic``); then it stops as it would have."""
 
     def __init__(self, root: Path, name: str) -> None:
         self.pids = root / f"{name}.pids"
+        self.stops = root / f"{name}.stops"
         self.script = _write_script(
             root / f"{name}_server.py",
             f"""
-            import os, time
+            import os, signal, time
 
+            def _told_to_stop(signum, _frame):
+                with open({str(self.stops)!r}, "a", encoding="utf-8") as fh:
+                    fh.write(f"{{os.getpid()}} {{time.monotonic()!r}}\\n")
+                signal.signal(signum, signal.SIG_DFL)
+                os.kill(os.getpid(), signum)
+
+            signal.signal(signal.SIGTERM, _told_to_stop)
             with open({str(self.pids)!r}, "a", encoding="utf-8") as fh:
                 fh.write(f"{{os.getpid()}}\\n")
             time.sleep(120)
@@ -163,6 +173,15 @@ class _Silent:
         if not self.pids.exists():
             return []
         return [int(p) for p in self.pids.read_text(encoding="utf-8").split()]
+
+    def told_to_stop_at(self, pid: int) -> float:
+        """When *pid* was told to stop (``time.monotonic``)."""
+        if self.stops.exists():
+            for line in self.stops.read_text(encoding="utf-8").splitlines():
+                stopped, at = line.split()
+                if int(stopped) == pid:
+                    return float(at)
+        raise AssertionError(f"{pid} was never told to stop")
 
     def spec(self) -> dict[str, Any]:
         return {"command": str(self.script), "args": ["--fixture"]}
@@ -182,6 +201,20 @@ async def _all_finished(timeout: float = 30.0) -> None:
     while mcp_stdio._finishing or mcp_discovery._RECHECKS:
         assert time.monotonic() < deadline, "what was left to finish never ended"
         await asyncio.sleep(0.05)
+
+
+def _record_leaves(monkeypatch) -> list[float]:
+    """When each start was left to finish (`mcp_stdio._leave_to_finish`), in the order they were
+    left, on the clock a :class:`_Silent` program writes its stop on."""
+    left: list[float] = []
+    leave = mcp_stdio._leave_to_finish
+
+    def _leave(server: str, program: tuple[str, ...], proc: Any) -> None:
+        left.append(time.monotonic())
+        leave(server, program, proc)
+
+    monkeypatch.setattr(mcp_stdio, "_leave_to_finish", _leave)
+    return left
 
 
 async def _gone(pid: int, timeout: float = 10.0) -> bool:
@@ -321,18 +354,23 @@ async def test_a_server_that_spoke_and_then_stalled_is_stopped_as_before(
 async def test_a_program_left_to_finish_is_stopped_once_its_time_is_up(
     tmp_path, monkeypatch
 ) -> None:
+    """Each start's time is read from when it was left to finish to when it was told to stop, so a
+    busy machine only makes it longer: no check reads whether a program lives at a moment the test
+    picked."""
     server = _Silent(tmp_path, "mute")
     monkeypatch.setattr(mcp_discovery, "_get_probe_timeout", lambda: 1)
     monkeypatch.setattr(mcp_stdio, "FINISH_SECS", 1.0)
+    left = _record_leaves(monkeypatch)
     async with _tools_page(monkeypatch) as http:
         await _save(http, "mute", server.spec())
         await _settled(http)
-        [first] = server.pid_list()
-        assert _alive(first), "it was stopped as the probe gave up, not left to finish"
-
         await _all_finished()
 
+        first = server.pid_list()[0]
         assert await _gone(first), "it outlived the time it was given to finish"
+        assert len(left) == 1, f"it was stopped as the probe gave up, not left to finish: {left}"
+        given = server.told_to_stop_at(first) - left[0]
+        assert given >= mcp_stdio.FINISH_SECS, f"it was stopped {given:.3f}s after it was left"
         # It was looked at again once stopped; a server left once that has not answered since is
         # not installing, and is stopped and said not to answer.
         pids = server.pid_list()
@@ -346,9 +384,15 @@ async def test_a_program_left_to_finish_is_stopped_once_its_time_is_up(
         retried = await http.post("/api/mcp/probe/mute")
         assert retried.status == 200, await retried.text()
         assert (await _row(http, "mute"))["status"] == "probing"
-        third = server.pid_list()[-1]
-        assert len(server.pid_list()) == 3 and _alive(third), server.pid_list()
         await _all_finished()
+        assert len(left) == 2, f"the Retry's start was not left to finish: {left}"
+        pids = server.pid_list()
+        assert len(pids) == 4, pids  # the Retry's start, and the one look after it
+        third = pids[2]
+        given = server.told_to_stop_at(third) - left[1]
+        assert (
+            given >= mcp_stdio.FINISH_SECS
+        ), f"the Retry's start was stopped {given:.3f}s after it was left"
         assert all([await _gone(pid) for pid in server.pid_list()]), "something outlived its time"
 
 
