@@ -387,7 +387,7 @@ jobs:
     needs: [freshness]
     if: ${{ !cancelled() }}
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       PERSONALCLAW_SKIP_APP_BACKENDS: "1"
       PERSONALCLAW_TEST_CONTAINER_RUNTIME: "1"
