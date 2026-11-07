@@ -12,12 +12,13 @@ it the identity of the job that built it: not what the workflow text names, but 
   it compiled from its locked sdist rather than installed as a wheel (``--built-from-source``, the
   record ``tools/ci/cryptography_from_sdist.py`` writes: the sdist and wheel it built, the Rust and
   the OpenSSL it built with); and what it built (``--artifact``, file globs, and ``--image``).
-- ``collect`` runs in the manifest job. It finds each record's own job in this run by the
-  runner's name, and reads that job's set-up log from the API: the runner image GitHub reports
-  there, and every action the job downloaded, nested ones included, each with the SHA it
-  resolved to (:func:`parse_setup`). It writes the list the manifest's ``builds`` holds
-  (:func:`collect`), and refuses a record whose job it cannot find, a record with no image of
-  its own, and a log that names no runner image, no action, or an action without its SHA.
+- ``collect`` runs in the manifest job. It finds each record's own job in this run's newest
+  attempt by the runner's name (:func:`run_jobs`), and reads that job's set-up log from the API:
+  the runner image GitHub reports there, and every action the job downloaded, nested ones
+  included, each with the SHA it resolved to (:func:`parse_setup`). It writes the list the
+  manifest's ``builds`` holds (:func:`collect`), and refuses a record whose job it cannot find, a
+  record with no image of its own, and a log that names no runner image, no action, or an action
+  without its SHA.
 
 The runner's image is recorded twice, since GitHub reports it twice: the set-up log's ``Image``
 and ``Version``, and the image's own ``ImageOS`` and ``ImageVersion`` as the job read them. The
@@ -358,8 +359,14 @@ def _log_at(opener: urllib.request.OpenerDirector, url: str, token: str) -> str:
 
 
 def run_jobs(get: Callable[[str], Any], repository: str, run_id: int) -> list[Mapping[str, Any]]:
-    """Every job of the run, in every attempt: a job a rerun did not repeat is its own attempt's."""
-    answer = get(f"/repos/{repository}/actions/runs/{run_id}/jobs?filter=all&per_page=100")
+    """Every job of the run's newest attempt, each once (``filter=latest``).
+
+    A rerun of failed jobs lists each job it did not repeat in the new attempt too: a new id, the
+    same runner, start and log. So ``filter=all`` names such a job once per attempt, on one runner,
+    and :func:`collect` could read no build record against a log after a rerun that carried over
+    a builder (#5987). The newest attempt holds every job once, a rerun job as it ran last.
+    """
+    answer = get(f"/repos/{repository}/actions/runs/{run_id}/jobs?filter=latest&per_page=100")
     jobs = answer.get("jobs") if isinstance(answer, dict) else None
     if not isinstance(jobs, list) or answer.get("total_count", len(jobs)) > len(jobs):
         raise Refused(f"cannot read every job of run {run_id}: {str(answer)[:200]}")

@@ -303,10 +303,152 @@ def test_collect_reads_the_runs_jobs_and_logs_through_the_api(
     out = tmp_path / "builds.json"
     argv = ["collect", "--records", str(records), "--repository", "owner/project"]
     assert bi.main([*argv, "--run-id", "42", "--out", str(out)]) == 0
-    assert paths == ["/repos/owner/project/actions/runs/42/jobs?filter=all&per_page=100"]
+    assert paths == ["/repos/owner/project/actions/runs/42/jobs?filter=latest&per_page=100"]
     assert [b["job"] for b in json.loads(out.read_text())] == ["artifacts / build"]
     monkeypatch.delenv("RUNS_TOKEN")
     assert bi.main([*argv, "--run-id", "42", "--out", str(out)]) == 2
+
+
+# ── a run with a rerun ─────────────────────────────────────────────────────────────────────────
+
+#: Release rehearsal run 42367171391 as the jobs API listed it (``run_attempt``, ``id``, name,
+#: runner, its start on 2026-11-07; the image legs' names shortened): attempt 1, whose
+#: desktop-mac (x64) failed, and attempt 2, its "Re-run failed jobs". Attempt 2 lists every job,
+#: the ones it carried over with a new id but the runner and start they ran with: build is
+#: 128387625871 and 128395592435, both on 1000174440.
+RERUN = [
+    (1, 128387562210, "version", "GitHub Actions 1000174436", "11:12:08"),
+    (1, 128387625791, "artifacts / desktop-mac (arm64)", "GitHub Actions 1000174438", "11:12:25"),
+    (1, 128387625837, "artifacts / desktop-mac (x64)", "GitHub Actions 1000174439", "11:12:26"),
+    (1, 128387625854, "artifacts / desktop-linux", "GitHub Actions 1000174441", "11:12:25"),
+    (1, 128387625871, "artifacts / build", "GitHub Actions 1000174440", "11:12:25"),
+    (1, 128388173537, "artifacts / images (web)", "GitHub Actions 1000174487", "11:15:12"),
+    (1, 128388173568, "artifacts / images (gateway)", "GitHub Actions 1000174490", "11:15:27"),
+    (1, 128394115859, "artifacts / gateway-dashboard", "GitHub Actions 1000174577", "11:44:31"),
+    (1, 128394116814, "artifacts / manifest", None, "11:43:28"),
+    (2, 128395568957, "artifacts / desktop-mac (x64)", "GitHub Actions 1000174593", "11:50:32"),
+    (2, 128395569570, "artifacts / desktop-linux", "GitHub Actions 1000174441", "11:12:25"),
+    (2, 128395570023, "version", "GitHub Actions 1000174436", "11:12:08"),
+    (2, 128395570368, "artifacts / desktop-mac (arm64)", "GitHub Actions 1000174438", "11:12:25"),
+    (2, 128395570414, "artifacts / images (gateway)", "GitHub Actions 1000174490", "11:15:27"),
+    (2, 128395570433, "artifacts / images (web)", "GitHub Actions 1000174487", "11:15:12"),
+    (2, 128395570530, "artifacts / gateway-dashboard", "GitHub Actions 1000174577", "11:44:31"),
+    (2, 128395592435, "artifacts / build", "GitHub Actions 1000174440", "11:12:25"),
+    (2, 128398985492, "artifacts / manifest", "GitHub Actions 1000174637", "12:06:48"),
+]
+#: The runner each of that run's six build records named: the x64 one is its rerun's.
+RERUN_BUILDERS = [
+    "1000174440",
+    "1000174438",
+    "1000174593",
+    "1000174441",
+    "1000174487",
+    "1000174490",
+]
+
+
+def _jobs(rows: list[tuple]) -> list[dict[str, object]]:
+    return [
+        {
+            "run_attempt": attempt,
+            "id": job_id,
+            "name": name,
+            "runner_name": runner,
+            "started_at": at,
+        }
+        for attempt, job_id, name, runner, at in rows
+    ]
+
+
+def _api(rows: list[tuple]):
+    """The jobs API as it answers for these rows: ``filter=all`` every attempt's, and
+    ``filter=latest`` the newest attempt's alone."""
+    newest = max(row[0] for row in rows)
+
+    def get(path: str) -> object:
+        query = path.partition("?")[2]
+        if "filter=all" in query:
+            listed = _jobs(rows)
+        elif "filter=latest" in query:
+            listed = _jobs([row for row in rows if row[0] == newest])
+        else:
+            raise AssertionError(f"the jobs API was asked {path}")
+        return {"total_count": len(listed), "jobs": listed}
+
+    return get
+
+
+def _collect(rows: list[tuple], runners: list[str]) -> tuple[list[dict], list[int]]:
+    read: list[int] = []
+
+    def log(job_id: int) -> str:
+        read.append(job_id)
+        return SET_UP
+
+    records = [_record(runner_name=f"GitHub Actions {r}") for r in runners]
+    return bi.collect(records, bi.run_jobs(_api(rows), "owner/project", 42), log), read
+
+
+def test_a_rerun_of_failed_jobs_reads_each_build_once_as_its_newest_attempt_lists_it() -> None:
+    """A release run whose failed job was rerun keeps its manifest: each builder is read once, the
+    carried-over ones by their newest attempt's id, whose log is the one they ran with."""
+    with pytest.raises(bi.Refused, match="no job of this run ran on GitHub Actions 1000174439"):
+        _collect(RERUN, ["1000174439"])  # the failed x64 job's runner, which its rerun replaced
+    builds, read = _collect(RERUN, RERUN_BUILDERS)
+    assert [b["job"] for b in builds] == [
+        "artifacts / build",
+        "artifacts / desktop-linux",
+        "artifacts / desktop-mac (arm64)",
+        "artifacts / desktop-mac (x64)",
+        "artifacts / images (gateway)",
+        "artifacts / images (web)",
+    ]
+    assert sorted(read) == [
+        128395568957,
+        128395569570,
+        128395570368,
+        128395570414,
+        128395570433,
+        128395592435,
+    ], "the newest attempt's ids, the rerun x64 job's own among them"
+
+
+def test_a_full_rerun_reads_only_the_newest_attempt() -> None:
+    """Every job of a full re-run runs again, on new runners: a record of the attempt before it
+    names a runner the newest attempt never used, and is refused."""
+    first = [(1, 10 + n, f"job {n}", f"GitHub Actions {100 + n}", "10:00") for n in range(3)]
+    again = [(2, 20 + n, f"job {n}", f"GitHub Actions {200 + n}", "11:00") for n in range(3)]
+    builds, read = _collect(first + again, ["200", "201", "202"])
+    assert [b["job"] for b in builds] == ["job 0", "job 1", "job 2"]
+    assert read == [20, 21, 22]
+    with pytest.raises(bi.Refused, match="no job of this run ran on GitHub Actions 100"):
+        _collect(first + again, ["100"])
+
+
+def test_two_jobs_on_one_runner_in_one_attempt_are_still_refused() -> None:
+    rows = [
+        (2, 30, "artifacts / build", "GitHub Actions 300", "11:00"),
+        (2, 31, "artifacts / desktop-linux", "GitHub Actions 300", "11:05"),
+    ]
+    with pytest.raises(bi.Refused, match="2 jobs of this run ran on GitHub Actions 300"):
+        _collect(rows, ["300"])
+
+
+def test_a_run_with_more_jobs_than_one_page_is_refused() -> None:
+    """The API's page holds 100 jobs: a run it says has more is refused, not read in part."""
+    jobs = _jobs([(1, n, f"job {n}", f"GitHub Actions {n}", "10:00") for n in range(100)])
+    with pytest.raises(bi.Refused, match="cannot read every job of run 42"):
+        bi.run_jobs(lambda path: {"total_count": 101, "jobs": jobs}, "owner/project", 42)
+
+
+def test_a_run_with_no_rerun_reads_as_it_always_did() -> None:
+    """One attempt: its jobs are the newest attempt's, read as before."""
+    once = [row for row in RERUN if row[0] == 1 and row[1] != 128387625837]
+    runners = [r for r in RERUN_BUILDERS if r != "1000174593"]
+    builds, read = _collect(once, runners)
+    records = [_record(runner_name=f"GitHub Actions {r}") for r in runners]
+    assert builds == bi.collect(records, _jobs(once), _logs())
+    assert sorted(read) == [128387625791, 128387625854, 128387625871, 128388173537, 128388173568]
 
 
 # ── a library built from source ────────────────────────────────────────────────────────────────
