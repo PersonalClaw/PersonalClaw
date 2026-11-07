@@ -55,6 +55,14 @@ pytestmark = pytest.mark.security
 _HOME = str(pathlib.Path.home())
 
 
+def _without_the_home(spelling: str) -> str:
+    """*spelling*'s test id, with the home it starts with written as ``{home}``. A test's id
+    names what it checks, so it is the same on every machine and under every home a shard runs
+    with, ``/`` among them; the test itself still checks the spelling with the real home in it."""
+    home = _HOME + "/"
+    return "{home}/" + spelling[len(home) :] if spelling.startswith(home) else spelling
+
+
 # ── 1. Case ───────────────────────────────────────────────────────────────
 
 
@@ -85,6 +93,7 @@ def test_no_sensitive_dir_is_reachable_by_shifting_a_key():
         f"{_HOME}//.ssh//id_rsa",
         f"{_HOME}/tmp/../.ssh/id_rsa",
     ],
+    ids=_without_the_home,
 )
 def test_every_spelling_of_one_key_is_blocked(spelling):
     """The respelling table, as assertions. Only the two case rows were failing."""

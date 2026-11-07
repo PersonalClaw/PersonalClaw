@@ -197,6 +197,20 @@ class _State:
         self.notes.append((kind, title, body))
 
 
+class _PlannerState(_State):
+    """The dashboard state a planner pass reads. None of its turns waits on its owner, so only the
+    hold can stretch the pass's time budget, and a pass that spent it on the hold would time out."""
+
+    def get_or_create_session(self, *_: Any, **__: Any) -> Any:
+        return MagicMock(_extra_tool_roots=[])
+
+    def push_sessions_update(self) -> None:
+        pass
+
+    def waiting_on_owner(self, _session: str) -> bool:
+        return False
+
+
 class _Nudge:
     def __init__(self, lid: str, session_name: str) -> None:
         self.id, self.session_name, self.active, self.cycle_count = lid, session_name, True, 0
@@ -498,14 +512,12 @@ def test_a_planner_pass_waits_out_the_switch_without_timing_out(
     files_dir = tmp_path / "loopdir"
     files_dir.mkdir()
     planner = _Session("loop-plan-abcd1234", running=True)
-    state = MagicMock()
-    state._sessions = {planner.key: planner}
-    state.sessions = _Sessions()
+    state = _PlannerState()
+    state._sessions[planner.key] = planner
     svc = MagicMock()
     svc.add = AsyncMock()
     svc.remove = AsyncMock()
     svc.get_by_session.return_value = _Nudge("N1", planner.key)
-    state.get_or_create_session.return_value = MagicMock(_extra_tool_roots=[])
 
     async def _go() -> str:
         incident.activate("a drill")
@@ -523,7 +535,16 @@ def test_a_planner_pass_waits_out_the_switch_without_timing_out(
                 timeout_secs=0.2,
             )
         )
-        await asyncio.sleep(0.5)  # well past the pass's own time budget
+        # The pass says it saw the switch by stopping its turn in flight. Wait for that, however
+        # late the pass reaches its first poll, then hold it past its own 0.2 s time budget.
+        seen_by = asyncio.get_running_loop().time() + 10
+        while not state.sessions.stopped and not task.done():
+            assert (
+                asyncio.get_running_loop().time() < seen_by
+            ), "the pass never stopped its turn for the switch"
+            await asyncio.sleep(0.01)
+        assert state.sessions.stopped, "the planner pass ended before it saw the switch"
+        await asyncio.sleep(0.5)  # well past the pass's own time budget, all of it held
         assert not task.done(), "a held planner pass timed out"
         incident.resume()
         (files_dir / "plan_steps.json").write_text('{"steps": []}')

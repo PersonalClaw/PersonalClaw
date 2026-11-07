@@ -359,32 +359,45 @@ class TestRunBudget:
         from personalclaw.guardrails.budgets import Budget, reset_meter
 
         reset_meter()
-        # Two children of 1500 tokens each; a 2000-token run ceiling bites on #2.
+        # Three children of 1500 tokens each under a 3000-token run ceiling. The first leaves room;
+        # the second brings the run to 3000, its ceiling, so the third, waiting behind them, is
+        # never started. Only a run scope that adds up its children stops this fan-out.
         sessions = _completing_sessions(cost=0.0)
         mgr = SubagentManager(
             sessions=sessions,
             ctx_builder=_mock_ctx_builder(),
             on_done=AsyncMock(),
             is_yolo=lambda: True,
-            max_concurrent=1,  # serialize so the mid-flight re-check bites the 2nd
+            max_concurrent=1,  # serialize so the later children wait in the queue
         )
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
             patch(
                 "personalclaw.guardrails.budgets.run_budget_from_config",
-                return_value=Budget(max_tokens=2000),
+                return_value=Budget(max_tokens=3000),
             ),
         ):
-            first = mgr.spawn("c1", parent_session_key="dashboard:x", parent_run="workflow:A")
-            second = mgr.spawn("c2", parent_session_key="dashboard:x", parent_run="workflow:A")
-            await mgr._tasks[first.id]  # type: ignore[union-attr]
+            kids = [
+                mgr.spawn(f"c{i}", parent_session_key="dashboard:x", parent_run="workflow:A")
+                for i in (1, 2, 3)
+            ]
+            assert all(k is not None for k in kids)
+            first, second, third = kids
+            assert second.queued and third.queued, "the later children wait behind the first"
+            for _ in kids:  # each child that starts, in turn; none starts more than once
+                if not mgr._tasks:
+                    break
+                await asyncio.gather(*list(mgr._tasks.values()), return_exceptions=True)
+            assert not mgr._tasks, "a child was still running after every child had its turn"
             await mgr.flush_deliveries()
-            # first child charged 1500 tokens → over the 2000 ceiling after it
-            assert "workflow:A" in mgr._fanout_stops
-            assert "budget" in mgr._fanout_stops["workflow:A"]
-            # the queued second child is refused with the typed reason on drain
-            assert second is not None
+            # the first two ran to their ends, 1500 tokens each
+            for kid in (first, second):
+                assert kid.done and not kid.never_ran and not kid.error, (kid.task, kid.error)
+            # the third, still queued, is refused on drain with the run scope's typed reason
+            assert third.done and third.never_ran, (third.done, third.never_ran, third.error)
+            assert third.error.startswith("spawn refused: run budget exceeded"), third.error
+            assert "run token budget exceeded (3000/3000)" in third.error, third.error
         reset_meter()
 
     @pytest.mark.asyncio

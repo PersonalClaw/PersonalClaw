@@ -32,6 +32,16 @@ from personalclaw.guardrails.registries import (
 
 HOME = str(Path.home())
 
+#: PLAN ROW 2 with the home written out, as a caller may pass it: the table's one row built from
+#: this machine's home. Its test id says ``{home}`` instead (``_IDS``).
+_PRE_EXPANDED = (
+    f"{HOME}/ws/../.bashrc",
+    f"{HOME}/ws/**",
+    False,
+    "PLAN ROW 2, pre-expanded: the same property must hold when the caller passes "
+    "absolute paths rather than '~'.",
+)
+
 # (item, pattern, expected, why)
 CASES: tuple[tuple[str, str, bool, str], ...] = (
     # ── the three rows the plan named ────────────────────────────────────────
@@ -64,13 +74,7 @@ CASES: tuple[tuple[str, str, bool, str], ...] = (
         "PLAN ROW 2 (control): a real path inside the allowed subtree still matches, so "
         "row 2 is not passing because the matcher matches nothing.",
     ),
-    (
-        f"{HOME}/ws/../.bashrc",
-        f"{HOME}/ws/**",
-        False,
-        "PLAN ROW 2, pre-expanded: the same property must hold when the caller passes "
-        "absolute paths rather than '~'.",
-    ),
+    _PRE_EXPANDED,
     # PLAN ROW 3 (a relative item against an absolute deny) is cwd-dependent, so it lives
     # in its own chdir-fixed test below.
     # ── expansion of the queried item ────────────────────────────────────────
@@ -125,7 +129,20 @@ CASES: tuple[tuple[str, str, bool, str], ...] = (
 )
 
 
-@pytest.mark.parametrize(("item", "pattern", "expected", "why"), CASES)
+#: Each row's test id: pytest's own, but for the row built from the home, whose id names the home
+#: as ``{home}``, so it is the same under every home a shard runs with. The row itself is still
+#: checked with the real home in it.
+_IDS = [
+    (
+        "{home}/ws/../.bashrc-{home}/ws/**-False-PLAN ROW 2, pre-expanded"
+        if row is _PRE_EXPANDED
+        else None
+    )
+    for row in CASES
+]
+
+
+@pytest.mark.parametrize(("item", "pattern", "expected", "why"), CASES, ids=_IDS)
 def test_path_glob_table(item: str, pattern: str, expected: bool, why: str):
     assert path_glob(item, pattern) is expected, why
 
