@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 from personalclaw import ids
 from personalclaw.dashboard import chat_intake
 from personalclaw.dashboard.chat_intake import MESSAGE_ID, RECEIPT, Receipt
-from personalclaw.own_words import OWN_WORDS, PASTES
+from personalclaw.own_words import OWN_WORDS, PASTES, WIDGET_ACTION
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.turn_source import ASKED_FOR_BY, DASHBOARD_SOURCE, source_of
 
@@ -53,6 +53,7 @@ class ChatQueue:
         attended: bool = False,
         message_id: str = "",
         receipt: Mapping[str, Any] | None = None,
+        from_a_widget: bool = False,
     ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
@@ -69,6 +70,8 @@ class ChatQueue:
         ``attended`` says the owner typed it where they are (:data:`ATTENDED`).
         ``message_id`` is the message's id, which the row it runs as keeps (one is minted when its
         door gave none), and ``receipt`` what its send was answered (``chat_intake.RECEIPT``).
+        ``from_a_widget`` says it came from a widget (``own_words.WIDGET_ACTION``): the page is
+        told, so its Edit gives it back still marked, and the row it runs as keeps the marker.
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {"id": qid, "content": content, **source_of(source)}
@@ -89,6 +92,8 @@ class ChatQueue:
             item[ON_RECORD] = True
         if attended:
             item[ATTENDED] = True
+        if from_a_widget:
+            item[WIDGET_ACTION] = True
         self._queue.append(item)
         return qid
 
@@ -189,7 +194,12 @@ def shown(item: Mapping[str, Any]) -> dict[str, Any]:
     words, _ = redact_exfiltration_urls(str(item.get("content") or ""))
     words, _ = redact_credentials(words)
     pastes = item.get(PASTES)
-    return {"content": words, **({PASTES: [dict(p) for p in pastes]} if pastes else {})}
+    return {
+        "content": words,
+        **({PASTES: [dict(p) for p in pastes]} if pastes else {}),
+        # A widget's message: its Edit gives it back to the composer still marked.
+        **({WIDGET_ACTION: True} if item.get(WIDGET_ACTION) is True else {}),
+    }
 
 
 def queued_pastes(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:

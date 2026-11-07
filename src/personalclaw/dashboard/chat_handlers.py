@@ -73,6 +73,7 @@ from personalclaw.own_words import (
     OWN_WORDS,
     PASTES,
     RAN_PROMPT,
+    came_from_a_widget,
     left_as_marker,
     pasted_blocks,
     pastes_of,
@@ -291,7 +292,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     _own = typed_text(said, _pasted)
     _own_recorded = _own if _own != message else None
     heard = (user_meta or {}).get("input_origin") == "voice"
-    _labelled = bool((user_meta or {}).get("ui_label"))
+    _from_a_widget = came_from_a_widget(user_meta)  # a widget's words: none of its links are theirs
     if user_meta:
         user_meta = _redact_meta(user_meta)
     if _own_recorded is not None:
@@ -358,7 +359,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         session.color_theme = color_theme
     if reply_style is not None:
         session.reply_style = reply_style
-    if not _labelled:
+    if not _from_a_widget:
         take_in_the_users_links(request.get("app", ""), session.key, message)
     if taken.disposition == chat_intake.REPLACED:
         chat_phase.restate(state, session)  # one more message waits behind the turn

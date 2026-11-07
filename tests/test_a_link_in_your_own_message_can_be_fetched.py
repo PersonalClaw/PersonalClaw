@@ -245,6 +245,10 @@ def _gateway(state: Any, *, app: str = "") -> web.Application:
     gw.router.add_post(
         "/api/chat/sessions/{session}/edit-resend", chat.api_chat_session_edit_resend
     )
+    gw.router.add_post("/api/chat/sessions/{session}/fork", chat.api_chat_session_fork)
+    gw.router.add_post(
+        "/api/chat/sessions/{session}/fork-rewound", chat.api_chat_session_fork_rewound
+    )
     return gw
 
 
@@ -398,6 +402,25 @@ async def test_a_widget_actions_payload_grants_nothing_and_your_words_do(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_a_widget_action_with_no_label_grants_nothing_though_you_sent_it(tmp_path):
+    """🔴 Red before: a raw-HTML widget's action has no label, its visible text is its turn, and
+    a link in it was taken as yours. It reaches the chat as a message you sent, from the composer
+    the widget put it in, and the page marks it as a widget's (``widget_action``): its words are
+    the widget's, so a link in it is still not yours."""
+    async with _site() as site:
+        _network()
+        url = f"{site.base}/releases"
+        sent = _model(_call("c1", "web_fetch", url=url))
+        await _say(
+            await _state(tmp_path, sent, _WebTools()),
+            "[UI] open: " + json.dumps({"href": url}),
+            meta={"widget_action": True},
+        )
+        assert site.hits == []
+    assert _the_provenance_refusal(_answers(sent)["c1"])
+
+
+@pytest.mark.asyncio
 async def test_a_channel_message_of_yours_grants_its_link_and_a_fenced_one_does_not():
     """A channel message from you (or a sender you trust) enters as your words; a tracked group's
     message from anyone else enters fenced, as data, and a link inside a fence is not yours."""
@@ -487,6 +510,208 @@ async def test_a_message_you_edit_and_resend_grants_its_link(tmp_path):
                 assert resp.status == 200, await resp.text()
         out = await web_fetch(url, session_key=_turn_key("edited"))
         assert site.hits == ["/releases"], out.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {"widget_action": True},
+        {"ui_label": "Open the release page"},
+        # A genui control's label that names the link itself: the label is the widget's too.
+        {"ui_label": "Open the release page at {url}"},
+    ],
+    ids=["marked", "genui", "genui-link-in-label"],
+)
+@pytest.mark.parametrize("how", ["as-it-is", "edited", "rewound"])
+async def test_a_widgets_message_sent_again_grants_nothing_and_stays_marked(tmp_path, meta, how):
+    """🔴 Red before: Edit and resend, or Rewind to here, on a message that came from a widget took
+    its links as yours, and the row it wrote in its place no longer said where it came from. Sent
+    again as it is, edited, or rewound to, it is still the widget's words."""
+    state = _make_state(tmp_path)
+    session = state.get_or_create_session("widgets")
+    async with _site() as site:
+        _network()
+        url = f"{site.base}/releases"
+        said = "[UI] open: " + json.dumps({"href": url})
+        meta = {k: v.format(url=url) if isinstance(v, str) else v for k, v in meta.items()}
+        session.append("user", said, "msg msg-u", meta=dict(meta))
+        session.append("assistant", "opening it", "msg msg-a")
+        if how == "rewound":
+            session.append("user", "and the notes?", "msg msg-u")
+            session.append("assistant", "here", "msg msg-a")
+        session.drain()
+        body: dict[str, Any] = {"index": 0, "content": said}
+        if how == "edited":
+            body["content"] = f"{said} please"
+        if how == "rewound":
+            body["rewind"] = True
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", AsyncMock()):
+            async with TestClient(TestServer(_gateway(state))) as client:
+                resp = await client.post("/api/chat/sessions/widgets/edit-resend", json=body)
+                assert resp.status == 200, await resp.text()
+        await web_fetch(url, session_key=_turn_key("widgets"))
+        assert site.hits == []
+    resent = [m for m in session.messages if m.get("role") == "user"][-1]
+    assert (resent.get("meta") or {}).get("widget_action") is True, resent
+
+
+@pytest.mark.asyncio
+async def test_a_page_mark_on_a_resend_grants_nothing_wherever_its_row_is_found(tmp_path):
+    """🔴 The page says the message it sent again came from a widget (``widget_action`` in the
+    body). Its ts matches no row, so the resend lands on the owner's own row by its index: the
+    page's mark still takes the link away, as a mark from the page can only take grants away."""
+    state = _make_state(tmp_path)
+    session = state.get_or_create_session("page-mark")
+    session.append("user", "read the release page", "msg msg-u")
+    session.append("assistant", "which one?", "msg msg-a")
+    session.drain()
+    async with _site() as site:
+        _network()
+        url = f"{site.base}/releases"
+        body = {
+            "index": 0,
+            "ts": "1999-01-01T00:00:00+00:00",
+            "content": f"read the release page at {url}",
+            "widget_action": True,
+        }
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", AsyncMock()):
+            async with TestClient(TestServer(_gateway(state))) as client:
+                resp = await client.post("/api/chat/sessions/page-mark/edit-resend", json=body)
+                assert resp.status == 200, await resp.text()
+        await web_fetch(url, session_key=_turn_key("page-mark"))
+        assert site.hits == []
+    resent = [m for m in session.messages if m.get("role") == "user"][-1]
+    assert (resent.get("meta") or {}).get("widget_action") is True, resent
+
+
+async def _branch(client: TestClient, session: Any, how: str) -> str:
+    """Branch the chat *session* the way the page does (*how*): a fork of all of it, or a rewind
+    tail restored as a fork (an owner's Rewind of its first message, then that tail's restore).
+    Returns the branch's name."""
+    if how == "fork":
+        resp = await client.post(f"/api/chat/sessions/{session.key}/fork", json={})
+    else:
+        with patch("personalclaw.dashboard.chat_regenerate.run_chat", AsyncMock()):
+            resp = await client.post(
+                f"/api/chat/sessions/{session.key}/edit-resend",
+                json={"index": 0, "content": "start over", "rewind": True},
+            )
+            assert resp.status == 200, await resp.text()
+        resp = await client.post(
+            f"/api/chat/sessions/{session.key}/fork-rewound", json={"index": 0}
+        )
+    data = await resp.json()
+    assert resp.status == 200, data
+    return data["key"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("branch", ["fork", "fork-rewound"])
+@pytest.mark.parametrize("row", ["marked", "genui"])
+@pytest.mark.parametrize("how", ["as-it-is", "edited", "rewound"])
+async def test_a_widgets_message_in_a_branch_grants_nothing_and_stays_marked(
+    tmp_path, branch, row, how
+):
+    """🔴 Red before: a fork of a chat, or a rewind tail restored as one, copied a widget's row
+    without its marker, so in the branch its resend, edited or not, or a rewind to it took the
+    widget's links as yours. In the branch it is still the widget's words, and an owner's row there
+    still grants (the next test)."""
+    state = _make_state(tmp_path)
+    trunk = state.get_or_create_session("trunk")
+    async with _site() as site:
+        _network()
+        url = f"{site.base}/releases"
+        said = "[UI] open: " + json.dumps({"href": url})
+        meta = {"widget_action": True} if row == "marked" else {"ui_label": "Open the release page"}
+        trunk.append("user", "show me the release", "msg msg-u")
+        trunk.append("assistant", "here is a widget", "msg msg-a")
+        trunk.append("user", said, "msg msg-u", meta=dict(meta))
+        trunk.append("assistant", "opening it", "msg msg-a")
+        trunk.append("user", "and the notes?", "msg msg-u")
+        trunk.append("assistant", "here", "msg msg-a")
+        trunk.drain()
+        async with TestClient(TestServer(_gateway(state))) as client:
+            name = await _branch(client, trunk, branch)
+            fork = state._sessions[name]
+            copied = [m for m in fork.messages if m.get("role") in ("user", "assistant")]
+            assert copied[2]["content"] == said
+            assert chat_fork_meta(copied[2]) == (
+                {"widget_action": True}
+                | ({} if row == "marked" else {"ui_label": "Open the release page"})
+            ), copied[2]
+            body: dict[str, Any] = {"index": 2, "content": said}
+            if how == "edited":
+                body["content"] = f"{said} please"
+            if how == "rewound":
+                body["rewind"] = True
+            with patch("personalclaw.dashboard.chat_regenerate.run_chat", AsyncMock()):
+                resp = await client.post(f"/api/chat/sessions/{name}/edit-resend", json=body)
+                assert resp.status == 200, await resp.text()
+        await web_fetch(url, session_key=_turn_key(name))
+        assert site.hits == []
+    resent = [m for m in fork.messages if m.get("role") == "user"][-1]
+    assert (resent.get("meta") or {}).get("widget_action") is True, resent
+
+
+def chat_fork_meta(m: dict) -> dict:
+    """What of a copied row's meta says whose words it is."""
+    meta = m.get("meta") or {}
+    return {k: meta[k] for k in ("widget_action", "ui_label") if k in meta}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("branch", ["fork", "fork-rewound"])
+async def test_your_own_message_in_a_branch_still_grants_its_link(tmp_path, branch):
+    state = _make_state(tmp_path)
+    trunk = state.get_or_create_session("trunk")
+    async with _site() as site:
+        _network()
+        url = f"{site.base}/releases"
+        trunk.append("user", "show me the release", "msg msg-u")
+        trunk.append("assistant", "which one?", "msg msg-a")
+        trunk.append("user", "[UI] open", "msg msg-u", meta={"widget_action": True})
+        trunk.append("assistant", "opening it", "msg msg-a")
+        trunk.drain()
+        async with TestClient(TestServer(_gateway(state))) as client:
+            name = await _branch(client, trunk, branch)
+            fork = state._sessions[name]
+            assert chat_fork_meta(fork.messages[0]) == {}
+            with patch("personalclaw.dashboard.chat_regenerate.run_chat", AsyncMock()):
+                resp = await client.post(
+                    f"/api/chat/sessions/{name}/edit-resend",
+                    json={"index": 0, "content": f"show me the release at {url}"},
+                )
+                assert resp.status == 200, await resp.text()
+        out = await web_fetch(url, session_key=_turn_key(name))
+        assert site.hits == ["/releases"], out.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("marked", [True, False], ids=["marked", "unmarked-control"])
+async def test_a_widgets_message_sent_while_a_turn_runs_grants_nothing(tmp_path, marked):
+    """Sent mid-turn, a widget's message is queued and its links are not yours; the same text
+    unmarked, as a control, is fetched."""
+    state = _make_state(tmp_path)
+    session = state.get_or_create_session("busy")
+    session.task = asyncio.get_running_loop().create_future()  # a turn is running
+    async with _site() as site:
+        _network()
+        url = f"{site.base}/releases"
+        body: dict[str, Any] = {
+            "session": "busy",
+            "message": "[UI] open: " + json.dumps({"href": url}),
+        }
+        if marked:
+            body["meta"] = {"widget_action": True}
+        async with TestClient(TestServer(_gateway(state))) as client:
+            resp = await client.post("/api/chat?ws=1", json=body)
+            assert (await resp.json())["disposition"] == "queued"
+        await web_fetch(url, session_key=_turn_key("busy"))
+        assert site.hits == ([] if marked else ["/releases"])
+    # The queue keeps the marker, so the page's Edit and the row it runs as do too.
+    assert (session._queue[-1].get("widget_action") is True) is marked
+    session.task.cancel()
 
 
 @pytest.mark.asyncio

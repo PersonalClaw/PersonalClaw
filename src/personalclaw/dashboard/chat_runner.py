@@ -178,6 +178,8 @@ from personalclaw.loop import posture as loop_posture
 from personalclaw.own_words import (
     OWN_WORDS,
     PASTES,
+    WIDGET_ACTION,
+    came_from_a_widget,
     own_words,
     queued_words,
     record_prompt_run,
@@ -5605,6 +5607,12 @@ async def run_chat(
                             "ts": session.messages[-1].get("ts", ""),
                             "message_id": session.messages[-1]["meta"][chat_intake.MESSAGE_ID],
                             **({PASTES: _pasted} if _pasted else {}),
+                            # A widget's message says so live, as its row does on a reload.
+                            **(
+                                {WIDGET_ACTION: True}
+                                if came_from_a_widget(session.messages[-1].get("meta"))
+                                else {}
+                            ),
                         },
                     )
 
