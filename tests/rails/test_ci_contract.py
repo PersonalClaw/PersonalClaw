@@ -627,6 +627,34 @@ def _plants(
     return Control(name, plant, fails, expect)
 
 
+def _rails_macos_cap() -> str:
+    """rails-macos's ``timeout_min`` as this tree's catalogue holds it.
+
+    Three plants edit that entry's lines, and their text names its cap. A contract run plants
+    ``main``'s rails into a head's tree, so a head that moves the cap would leave text that names
+    the old one finding nothing; read from the tree, the cap is the one the plants meet. Anything
+    but exactly one rails-macos entry with exactly one cap is refused here, before any plant: a
+    plant whose text is not there must fail, never pass for planting nothing.
+    """
+    text = (REPO / catalogue.CATALOGUE).read_text(encoding="utf-8")
+    entries = [e for e in text.split("\n[[job]]\n") if '\nid = "rails-macos"\n' in f"\n{e}"]
+    caps = re.findall(r"^timeout_min = (\d+)$", entries[0], re.M) if len(entries) == 1 else []
+    if len(entries) != 1 or len(caps) != 1:
+        raise AssertionError(
+            f"{catalogue.CATALOGUE}: {len(entries)} rails-macos entries, {len(caps)} caps in them"
+        )
+    return caps[0]
+
+
+_RAILS_MACOS_CAP = _rails_macos_cap()
+#: The rails-macos lines the three plants edit, as the tree holds them.
+_RAILS_MACOS_LINES = (
+    f'platform = "macos-26"\npython = "3.12.15"\nreuse = "tree"\ntimeout_min = {_RAILS_MACOS_CAP}\n'
+    'workers = 2\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", '
+    'PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\njunit = ["reports/junit-rails-macos.xml"]'
+)
+
+
 def _plant_in_job(
     name: str, rel: str, job_id: str, old: str, new: str, expect: str = "", fails: bool = True
 ) -> Control:
@@ -9881,15 +9909,15 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a Python that differs from the job's",
             catalogue.CATALOGUE,
-            'platform = "macos-26"\npython = "3.12.15"\nreuse = "tree"\ntimeout_min = 30\n',
-            'platform = "macos-26"\npython = "3.12.14"\nreuse = "tree"\ntimeout_min = 30\n',
+            _RAILS_MACOS_LINES,
+            _RAILS_MACOS_LINES.replace('python = "3.12.15"', 'python = "3.12.14"', 1),
             expect="rails-macos: python is 3.12.14, and breadth.yml's setup-uv sets 3.12.15 before",
         ),
         _plant(
             "no Python where the job sets one",
             catalogue.CATALOGUE,
-            'platform = "macos-26"\npython = "3.12.15"\nreuse = "tree"\ntimeout_min = 30\n',
-            'platform = "macos-26"\nreuse = "tree"\ntimeout_min = 30\n',
+            _RAILS_MACOS_LINES,
+            _RAILS_MACOS_LINES.replace('python = "3.12.15"\n', "", 1),
             expect="rails-macos: python is unset, and breadth.yml's setup-uv sets 3.12.15 before",
         ),
         _plant(
@@ -9937,9 +9965,11 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a breadth entry's cap that is not its job's",
             catalogue.CATALOGUE,
-            'reuse = "tree"\ntimeout_min = 30\n',
-            'reuse = "tree"\ntimeout_min = 25\n',
-            expect="rails-macos: timeout_min is 25, and breadth.yml's cap is 30",
+            _RAILS_MACOS_LINES,
+            _RAILS_MACOS_LINES.replace(
+                f"timeout_min = {_RAILS_MACOS_CAP}\n", "timeout_min = 25\n", 1
+            ),
+            expect=f"rails-macos: timeout_min is 25, and breadth.yml's cap is {_RAILS_MACOS_CAP}",
         ),
         _plant(
             "a breadth entry whose shard count is not its matrix's",
