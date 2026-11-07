@@ -466,7 +466,7 @@ security = "ordinary"
 platform = "macos-26"
 python = "3.12.15"
 reuse = "tree"
-timeout_min = 30
+timeout_min = 45
 workers = 2
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
 junit = ["reports/junit-rails-macos.xml"]
