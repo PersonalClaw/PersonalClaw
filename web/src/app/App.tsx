@@ -52,7 +52,7 @@ import { runInTerminal, runInTerminalWhenReady, subscribeTerminal, hasActiveTerm
 import { LoadError, LoadingStatus } from '../ui/ListScaffold'
 import { useQuery } from '../lib/data'
 import { resolveAppIcon } from '../pages/apps/appIcon'
-import { useWidgetActionLauncher } from '../ui/widget/useWidgetActionBridge'
+import { isStagedWidgetNonce, useWidgetActionLauncher } from '../ui/widget/useWidgetActionBridge'
 import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
 import { ViewModesProvider, useViewModeState } from './viewModes'
 import type { AppSummary } from '../lib/api'
@@ -399,6 +399,10 @@ function AppInner() {
       const qs = new URLSearchParams()
       if (d.prompt) qs.set('seed', d.prompt)
       if (d.agent) qs.set('agent', d.agent)
+      // A widget action the owner said yes to, staged in memory: the new chat drains it by this
+      // nonce, which is no use to anyone without the stage (ui/widget/useWidgetActionBridge.ts).
+      // Only the shell's own launch names one: an app's event that names any other is ignored.
+      if (isStagedWidgetNonce(d.widgetAction)) qs.set('widget_action', d.widgetAction)
       const q = qs.toString()
       // A staged session keeps its ?seed too (investigate pre-fills the
       // composer with an editable opening question — never auto-sent).
@@ -425,7 +429,7 @@ function AppInner() {
   // band) route through the same `ne:launch-chat` above. Registered at the shell so
   // every widget host inherits routing; a mounted chat page claims the bridge ahead
   // of this fallback, keeping a chat-born action in its own conversation.
-  useWidgetActionLauncher()
+  useWidgetActionLauncher(sub ? `${route}/${sub}` : route)
   // The terminal drawer, on every page: ⌘J or ⌘`, the corner's toggle and the palette.
   const [termDrawer, setTermDrawer] = useState(false)
   // a command queued by "Run in terminal" while no terminal was live yet — sent

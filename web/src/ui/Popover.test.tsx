@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, waitFor } from '@testing-library/react'
 import { Popover } from './Popover'
+import { FRAMES_MAY_HAVE_MOVED } from './framesMayHaveMoved'
 
 // ── Popover placement contract ────────────────────────────────────────────────
 // `placement` is a PREFERENCE, not a promise. The same composer renders docked low
@@ -88,5 +89,23 @@ describe('Popover placement flips to the side with room', () => {
     anchorAt(40)
     const flyout = openMenu('top')
     expect(flyout.style.transformOrigin).toContain('top')
+  })
+})
+
+describe('a Popover gone from over the page', () => {
+  it('🔴 says the widget frames under it may have moved once its flyout has gone', async () => {
+    // A pointer resting where a frame now sits did not move onto it (`ui/framesMayHaveMoved`).
+    let said = 0
+    const count = () => { said++ }
+    window.addEventListener(FRAMES_MAY_HAVE_MOVED, count)
+    try {
+      openMenu()
+      expect(said, 'open: nothing yet').toBe(0)
+      act(() => { screen.getByText('Open').click() })
+      await waitFor(() => expect(screen.queryByTestId('menu-body')).toBeNull())
+      await waitFor(() => expect(said).toBe(1))
+    } finally {
+      window.removeEventListener(FRAMES_MAY_HAVE_MOVED, count)
+    }
   })
 })

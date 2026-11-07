@@ -12,7 +12,9 @@ export type SendButtonKind =
   | 'sent'       // transient success bloom right after an idle send
   | 'send'       // idle, draft meets minChars — the live send affordance
   | 'send-disabled' // idle, draft too short — dimmed, inert
-  | 'send-held'   // idle, draft ready but a file it carries is still uploading — dimmed, inert
+  | 'send-held'   // idle, draft ready but held (a file it carries is uploading, or a widget's message just landed) — dimmed, inert
+  | 'steer-held'  // a steer that is held (a widget's message just landed) — dimmed, inert
+  | 'queue-held'  // a queue that is held (a widget's message just landed) — dimmed, inert
 
 export interface SendButtonInputs {
   processing: boolean
@@ -22,6 +24,7 @@ export interface SendButtonInputs {
   canSteer?: boolean // the running turn takes a draft in (its runtime pulls one) — else it queues
   justSent: boolean  // the transient post-send bloom window is open
   held?: boolean     // a file the message carries is still uploading — an idle send waits for it
+  heldAll?: boolean  // every send waits, a steer or a queue too (a widget's message just landed)
 }
 
 /** Resolve which action button the composer shows. Order matters: a one-shot
@@ -30,10 +33,14 @@ export interface SendButtonInputs {
  *  'sent' bloom, then send/disabled. */
 export function resolveSendButton(s: SendButtonInputs): SendButtonKind {
   if (s.processing) return 'processing'
-  if (s.streaming) return s.canQueue && s.canSend ? (s.canSteer ? 'steer' : 'queue') : 'stop'
+  if (s.streaming) {
+    if (!s.canQueue || !s.canSend) return 'stop'
+    if (s.heldAll) return s.canSteer ? 'steer-held' : 'queue-held'
+    return s.canSteer ? 'steer' : 'queue'
+  }
   if (s.justSent) return 'sent'
   if (!s.canSend) return 'send-disabled'
-  return s.held ? 'send-held' : 'send'
+  return s.held || s.heldAll ? 'send-held' : 'send'
 }
 
 /** Whether a given button kind is clickable (has an onClick). 'sent' and

@@ -66,11 +66,11 @@ describe('a reloaded widget-action turn', () => {
 
 describe('the live send path (source-asserted — ChatPage is not mountable here)', () => {
   it('forwards the bridge label as the turn label', () => {
-    expect(chatSource).toContain("useWidgetActionBridge((text, meta) => { void send(text, { uiLabel: meta.label }) })")
+    expect(chatSource).toContain('send: (text, meta) => { void send(text, { uiLabel: meta.label, widgetAction: true }) },')
   })
 
   it('drains a staged non-chat action WITH its label', () => {
-    expect(chatSource).toContain('void send(pending.text, { uiLabel: pending.label })')
+    expect(chatSource).toContain('void send(pending.text, { uiLabel: pending.label, widgetAction: true })')
   })
 
   it('builds the local bubble from the label first', () => {

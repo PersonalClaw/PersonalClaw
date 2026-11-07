@@ -140,7 +140,8 @@ export async function routeGenUiAction(
   }
   // chat-born: the action becomes the next user turn. `label` is what the bubble
   // shows; `llmFriendlyMessage` is what the model reads.
-  publishWidgetAction(dual.llmFriendlyMessage, { label: dual.humanFriendlyMessage })
+  // `pressed`: this runs from the owner's click or submit on a control the page rendered.
+  publishWidgetAction(dual.llmFriendlyMessage, { label: dual.humanFriendlyMessage, pressed: true })
   return { ok: true, outcome: 'chat-turn' }
 }
 

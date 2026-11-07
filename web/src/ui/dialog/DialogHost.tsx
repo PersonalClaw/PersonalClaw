@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { DialogShell } from './DialogShell'
+import { framesMayHaveMoved } from '../framesMayHaveMoved'
 import { closeDialog, subscribeDialogs, type DialogRequest, type DialogResult } from './dialogStore'
 
 interface HostDialog extends DialogRequest { id: number }
@@ -15,8 +16,9 @@ export function DialogHost() {
 
   useEffect(() => subscribeDialogs((list) => setDialogs(list as HostDialog[])), [])
 
+  // A dialog gone from over the page's frames: they are coming to rest under the pointer again.
   return (
-    <AnimatePresence>
+    <AnimatePresence onExitComplete={framesMayHaveMoved}>
       {dialogs.map((d) => (
         <DialogShell
           key={d.id}

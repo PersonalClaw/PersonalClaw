@@ -6,6 +6,7 @@ import { IconButton } from './IconButton'
 import { useFocusTrap } from './useFocusTrap'
 import { spring, physics, expr } from '../design/motion'
 import { SURFACE_WIDTHS } from '../app/appearance'
+import { framesMayHaveMoved } from './framesMayHaveMoved'
 
 /** Reusable centered modal with a scrim. Header carries the title and a single
  *  close (X) button; Escape and a scrim click also dismiss it.
@@ -30,6 +31,8 @@ export function Modal({ title, icon, onClose, children, layoutId }: {
 }) {
   const trapRef = useFocusTrap<HTMLDivElement>()
   const reduce = useReducedMotion()
+  // Gone from over the page's widget frames: they are coming to rest under the pointer again.
+  useEffect(() => () => framesMayHaveMoved(), [])
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h)

@@ -152,9 +152,11 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
 
   // height-sync + action forwarding, over the shared (provenance-validated) wire.
   // This child document carries HOST_SCRIPT's `e.isTrusted` click gate, so it is
-  // entitled to forward actions — see useWidgetActionBridge.ts for the contract.
+  // entitled to forward actions, which the owner then sees unsent — see
+  // useWidgetActionBridge.ts for the contract.
   useWidgetWire(iframeRef, {
     forwardActions: true,
+    title,
     // 🔴 THE ERROR CHANNEL HAD A PRODUCER AND NO CONSUMER HERE. `widget-error` is part of the
     // documented wire contract and three things in the child post it (the react error boundary, a
     // script failure, and now a form submit the sandbox cannot deliver) — but this host passed no

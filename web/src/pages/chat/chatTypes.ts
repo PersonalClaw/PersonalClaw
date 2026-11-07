@@ -380,6 +380,9 @@ export interface ChatTurn {
   // A user turn's message id (`meta.message_id`, a frame's `message_id`, or the id this page sent
   // it under): what a repeat of the send is told apart by, and what a steer names its turn by.
   messageId?: string
+  // A user turn a widget raised (`meta.widget_action`, or a genui press's `meta.ui_label`): not the
+  // owner's own words, so ↑ recall skips it and a quote of it says "A widget said".
+  fromWidget?: boolean
   // Episodic memory citations surfaced into THIS assistant turn. The reply
   // cites facts inline as `[Memory N]`; the Markdown renderer resolves each token
   // against this list into a deep-link to the episode. Absent on turns with no
@@ -445,7 +448,7 @@ export interface ChatTurn {
   // discarded tail(s) are retained here so the divider chip can show "N messages
   // kept in history" and the read-only disclosure can render them. Each snapshot's
   // `messages` begins with the edited turn's OLD content. Absent = never rewound.
-  rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]
+  rewound?: { messages: { role: string; content: string; ts?: string; meta?: { widget_action?: boolean; ui_label?: string } }[]; ts?: string }[]
   // Branch mechanic: the index of this turn's LAST message in the
   // BACKEND's visible user/assistant list — the coordinate `POST .../fork` and
   // `edit-resend` speak (`at_message_index`, inclusive). It is NOT the turn's array
@@ -625,7 +628,11 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], sources: chatSources(turns) }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; input_obj?: unknown; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; secret_file?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; message_id?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string; duration_ms?: unknown }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
+/** What select-to-quote names a widget's message by ("A widget said:"); the draft such a quote
+ *  lands in is marked as holding a widget's words. */
+export const WIDGET_SAID = 'A widget'
+
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string; meta?: { widget_action?: boolean; ui_label?: string } }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; input_obj?: unknown; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; secret_file?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; message_id?: string; original?: string; ui_label?: string; widget_action?: boolean; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string; duration_ms?: unknown }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
 
 /** The blocks a sent message of hers carries (`meta.pastes` on its row, `pastes` on a frame that
  *  tells a page of it), or undefined when it carries none. */
@@ -804,6 +811,8 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       if (ran) ut.ranPrompt = ran
       if (m.meta?.steered === true) ut.steered = true
       if (typeof m.meta?.message_id === 'string') ut.messageId = m.meta.message_id
+      // A widget's message, as the gateway's own rule reads it (`own_words.came_from_a_widget`).
+      if (m.meta?.widget_action === true || !!m.meta?.ui_label) ut.fromWidget = true
       joinedSkills = joinedSkillsOf(m)
       ut.visibleIndex = visible
       turns.push(ut)

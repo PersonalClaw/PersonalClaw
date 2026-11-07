@@ -9434,7 +9434,7 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
-  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; title_needs_model?: string; messages: ChatHistoryMsg[]; run_state: RunState; pending_questions?: QuestionCardFrame[]; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string; pastes?: { seq: number; lines: number; content: string }[] }[]; bookmarks?: string[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
+  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; title_needs_model?: string; messages: ChatHistoryMsg[]; run_state: RunState; pending_questions?: QuestionCardFrame[]; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string; pastes?: { seq: number; lines: number; content: string }[]; widget_action?: boolean }[]; bookmarks?: string[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
     /** Branch lineage: the parent's persisted HISTORY key (`dashboard:<key>`) when
      *  this session was branched, plus the parent's title resolved at read time. Served
      *  here — not carried in navigation state — so the breadcrumb survives a reload.
@@ -9683,7 +9683,7 @@ export const api = {
   // every tab); returns the now-active index. 409 if the session is mid-turn.
   switchVariant: (session: string, index: number) =>
     post<{ ok: boolean; index: number }>(`/api/chat/sessions/${session}/switch-variant`, { index }),
-  editResend: (session: string, content: string, ts?: string, index?: number, messageId?: string, rewind?: boolean, ask?: { again?: boolean; confirm?: string }, pastes?: { seq: number; lines: number; content: string }[]) =>
+  editResend: (session: string, content: string, ts?: string, index?: number, messageId?: string, rewind?: boolean, ask?: { again?: boolean; confirm?: string; widget?: boolean }, pastes?: { seq: number; lines: number; content: string }[]) =>
     post<{ ok: boolean; rewound: number } & Partial<ChatReceipt>>(`/api/chat/sessions/${session}/edit-resend`,
       // Prefer the original turn's ts to LOCATE the message; always send the index
       // as a fallback (un-hydrated optimistic turns have no ts). The message sent in its place
@@ -9695,7 +9695,9 @@ export const api = {
       // changed something (`retry_repeats_steps`); `confirm` is their yes to that question.
       // pastes = the blocks they pasted into it, which `content` holds in their markers' place
       // (`asSent`): their row keeps them, so their bubble shows each as its chip.
-      { content, ...(ts ? { ts } : {}), ...(index !== undefined ? { index } : {}), client_message_id: messageId ?? newMessageId(), ...(rewind ? { rewind: true } : {}), ...(ask?.again ? { again: true } : {}), ...(ask?.confirm ? { confirm: ask.confirm } : {}), ...(pastes?.length ? { pastes } : {}) }),
+      // widget_action = the message shown came from a widget: the gateway grants none of its
+      // links, whichever row it locates (a mark from the page can only take grants away).
+      { content, ...(ts ? { ts } : {}), ...(index !== undefined ? { index } : {}), client_message_id: messageId ?? newMessageId(), ...(rewind ? { rewind: true } : {}), ...(ask?.again ? { again: true } : {}), ...(ask?.confirm ? { confirm: ask.confirm } : {}), ...(ask?.widget ? { widget_action: true } : {}), ...(pastes?.length ? { pastes } : {}) }),
   // Interrupt the running turn but KEEP the queue (unlike /stop). Optional queueId
   // promotes that queued message to the front so it runs next (queue_promoted WS echo).
   interruptChat: (session: string, queueId?: string) =>

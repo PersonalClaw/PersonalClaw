@@ -91,6 +91,10 @@ export function useArtifactIteration(
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [annotating, setAnnotating] = useState(false)
+  // Read by the wire's annotation handler, which binds once: an annotation counts only while
+  // annotate mode is on, so a frame cannot fill the correction rail by itself.
+  const annotatingRef = useRef(annotating)
+  annotatingRef.current = annotating
   const [annotations, setAnnotations] = useState<WidgetAnnotation[]>([])
 
   // Re-seed the RAIL when the source's declared values change (a save landed, or a
@@ -201,6 +205,7 @@ export function useArtifactIteration(
   }, [post])
 
   const onAnnotation = useCallback((annotation: WidgetAnnotation) => {
+    if (!annotatingRef.current) return
     setAnnotations((list) => (list.length >= MAX_ANNOTATIONS ? list : [...list, annotation]))
   }, [])
 
@@ -223,9 +228,10 @@ export function useArtifactIteration(
         // Default: the widget bridge. A mounted chat host answers in place;
         // otherwise the shell's launcher opens a chat — the ONE routing path.
         const slug = target.slug
+        // `pressed`: this runs from the owner's press on the rail's Send, in the page.
         publishWidgetAction(
           finishActionText(directive, slug ? { saved: true, slug } : undefined),
-          slug ? { slug } : {},
+          { ...(slug ? { slug } : {}), pressed: true },
         )
       }
       setAnnotations([])

@@ -63,8 +63,8 @@ export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
   }, [srcdoc])
 
   // height-sync + error surfacing over the shared (provenance-validated) wire.
-  // NOT an action host: the react harness has no `e.isTrusted` click gate, so a
-  // react widget's own script could mint a turn with no human gesture.
+  // NOT an action host: the react harness has no `e.isTrusted` click gate, so it forwards
+  // no action at all (an action a gated host forwards is still only put in front of the owner).
   useWidgetWire(iframeRef, {
     onHeight: (h) => setHeight(Math.min(Math.max(h, MIN_HEIGHT), MAX_HEIGHT)),
     onError: setError,

@@ -96,12 +96,26 @@ const TRANSCRIPT_FRAMES = new Set([
 
 /** A message waiting in the chat's queue, as the strip shows it: their words with each block they
  *  pasted into it as its marker (`content`), and the blocks, which Edit gives back with it. */
-export interface QueuedMessage { id: string; content: string; pastes?: TurnPaste[] }
+export interface QueuedMessage {
+  id: string
+  content: string
+  pastes?: TurnPaste[]
+  /** The id of the message as it was sent, when the frame that queued it said (`queue_push`). */
+  messageId?: string
+  /** It came from a widget (the gateway's `widget_action`): its Edit gives it back still marked. */
+  fromWidget?: boolean
+}
 
 /** A queued message as the gateway tells it (a `queue_push` frame, a read of the chat). */
-function queuedMessage(id: string, content: string, raw: unknown): QueuedMessage {
+function queuedMessage(id: string, content: string, raw: unknown, messageId?: unknown, widget?: unknown): QueuedMessage {
   const pastes = pastesOf(raw)
-  return { id, content: shownText(content, pastes), ...(pastes ? { pastes } : {}) }
+  return {
+    id,
+    content: shownText(content, pastes),
+    ...(pastes ? { pastes } : {}),
+    ...(typeof messageId === 'string' && messageId ? { messageId } : {}),
+    ...(widget === true ? { fromWidget: true } : {}),
+  }
 }
 /** What `useChatStream` returns: the open chat as its regions read it. */
 export type ChatStream = ReturnType<typeof useChatStream>
@@ -577,7 +591,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         writeCachedDetail(sessionId, d)
         // rehydrate any still-pending queued messages (mid-stream FIFO) so a reload
         // mid-queue shows them again above the composer.
-        setQueued(Array.isArray(d.queue) ? d.queue.filter((q) => q && q.id).map((q) => queuedMessage(q.id, q.content, q.pastes)) : [])
+        setQueued(Array.isArray(d.queue) ? d.queue.filter((q) => q && q.id).map((q) => queuedMessage(q.id, q.content, q.pastes, undefined, q.widget_action)) : [])
         // What the page keeps of the chat beside its stream (the composer's posture, ↑/↓ recall) is
         // restored by the page from this same read.
         sinks.current.onOpened(d)
@@ -1010,7 +1024,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
       // events keep the strip above the composer in sync.
       case 'queue_push': {
         const id = String(d.queue_id ?? '')
-        if (id) setQueued((prev) => (prev.some((q) => q.id === id) ? prev : [...prev, queuedMessage(id, String(d.content ?? ''), d.pastes)]))
+        if (id) setQueued((prev) => (prev.some((q) => q.id === id) ? prev : [...prev, queuedMessage(id, String(d.content ?? ''), d.pastes, d.message_id, d.widget_action)]))
         // A steer the turn ended without taking, queued to run next: it is in the strip now.
         if (d.message_id) setSteered((prev) => prev.filter((s) => s.id !== d.message_id))
         break
@@ -1088,7 +1102,8 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         if (d.ts && adoptedUserTs.current.has(String(d.ts))) break
         // Their bubble shows each block they pasted as its chip, as the chat does read back.
         const pastes = pastesOf(d.pastes)
-        const sentTurn = { ...userTurn(shownText(content, pastes), d.ts ? String(d.ts) : undefined, pastes), ...(d.message_id ? { messageId: String(d.message_id) } : {}) }
+        // A widget's message (a steer or a queued one) says so, as its row does on a reload.
+        const sentTurn = { ...userTurn(shownText(content, pastes), d.ts ? String(d.ts) : undefined, pastes), ...(d.message_id ? { messageId: String(d.message_id) } : {}), ...(d.widget_action === true ? { fromWidget: true } : {}) }
         // Their steer, which the running turn has just taken: their bubble goes here, below what the
         // answer said so far (settled by the `chat_segment` before this frame), and the answer
         // goes on below it. Nothing ends or starts: it is the same turn, and it is running.

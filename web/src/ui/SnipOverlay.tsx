@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { Crop } from 'lucide-react'
+import { framesMayHaveMoved } from './framesMayHaveMoved'
 import { Button } from './Button'
 import { useFocusTrap } from './useFocusTrap'
 import { spring, physics, expr } from '../design/motion'
@@ -66,6 +67,8 @@ export function SnipOverlay({ frame, width, height, onCancel, onConfirm }: {
 }) {
   const trapRef = useFocusTrap<HTMLDivElement>()
   const reduce = useReducedMotion()
+  // Gone from over the page's widget frames: they are coming to rest under the pointer again.
+  useEffect(() => () => framesMayHaveMoved(), [])
   const stageRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ x: number; y: number } | null>(null)
   const [rect, setRect] = useState<SnipRect>(() => contain({ x: 0, y: 0, width, height }, width, height))

@@ -1285,8 +1285,11 @@ change to one region touches that region's files:
   effort, memory mode, reply style) and writes each pick to the session,
   saying so when the session refuses one. It sends: a new chat's first send
   creates the session and hands its run across the remount, a send during a
-  turn steers it or waits in the queue, a slash command it runs itself, and a
-  widget action sends its label as the turn. It also attaches files, pastes,
+  turn steers it or waits in the queue, a slash command it runs itself, a
+  widget action pressed on the page sends its label as the turn, and one a frame
+  raises fills the draft, its Send, Steer, Queue and Enter held a moment, or
+  waits as a chip while the owner uses the composer (`WidgetDraftChips`; what
+  holds is in `docs/architecture/widgets.md`). It also attaches files, pastes,
   knowledge, artifacts and screen captures, optimizes a prompt, transcribes
   hands-free speech, applies a session template and stops a turn.
   `ChatComposer.tsx` draws the notice line, the queue, the routing chip and

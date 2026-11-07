@@ -45,6 +45,11 @@ export interface DialogRequest {
   fields?: DialogField[]
   /** Optional lucide icon component for the header. */
   icon?: React.ComponentType<{ size?: number | string }>
+  /** A confirm the owner must mean (DialogShell): Cancel takes focus, Enter anywhere confirms
+   *  nothing, and Confirm answers only once the sheet has been in full view a moment. For an
+   *  ask a page's own content can raise, where a key meant for something else must not be the
+   *  yes. */
+  deliberate?: boolean
 }
 
 /** What a dialog resolves to. confirm/alert → boolean; prompt → the field-value
@@ -102,6 +107,8 @@ export interface ConfirmOptions {
   /** Tint the confirm button + show a warning icon for destructive actions. */
   danger?: boolean
   icon?: React.ComponentType<{ size?: number | string }>
+  /** See {@link DialogRequest.deliberate}. */
+  deliberate?: boolean
 }
 
 /** Styled async replacement for window.confirm(). Resolves true on confirm,
@@ -116,6 +123,7 @@ export async function confirm(opts: ConfirmOptions | string): Promise<boolean> {
     confirmLabel: o.confirmLabel,
     cancelLabel: o.cancelLabel,
     icon: o.icon,
+    deliberate: o.deliberate,
   })
   return res === true
 }

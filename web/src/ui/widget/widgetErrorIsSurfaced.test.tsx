@@ -57,7 +57,8 @@ describe('a widget error reaches the user', () => {
     // needs are the attribute and the reason.
     const message = 'This widget cannot submit: a widget sends data with data-action on the button (form submission is blocked in the widget sandbox).'
     mountAndPost({ type: 'widget-error', message })
-    expect(String(notified[0][0])).toBe(message)
+    // Named by the frame it came from (its title, "W"), and otherwise as the child said it.
+    expect(String(notified[0][0])).toBe(`W: ${message}`)
   })
 
   it('ignores a message that did not come from THIS frame', () => {

@@ -125,8 +125,10 @@ Widgets send events back to the agent. Add `data-action` (and optional
 <button data-action="approve" data-payload='{"id":"123"}'>Approve</button>
 ```
 
-On click, the dashboard auto-submits a user message: `[UI] approve: {"id":"123"}`.
-You receive it as the next turn and can respond with text, a new widget, or both.
+On click, the dashboard puts a message in the owner's message box (outside a chat, it asks
+them first): `[UI] approve: {"id":"123"}`. Once they send it, you receive it as the next turn
+and can respond with text, a new widget, or both. A click never sends it by itself, and a link
+in it is not one the owner gave you.
 
 **Forms:** inputs with a `name` attribute are auto-collected on click and merged
 into the payload as `formData`. Use this for creation forms — render pre-filled
@@ -138,7 +140,7 @@ inputs, the user adjusts values, clicks submit, and you receive every field:
 <button data-action="create_task">Create</button>
 ```
 
-**Living views (auto-refresh).** A widget can be a *living dashboard* that pulls fresh
+**Living views (refresh on the owner's click).** A widget can be a *living dashboard* that pulls fresh
 data on demand instead of freezing a snapshot at creation. Give it a refresh button:
 
 ```html
@@ -146,8 +148,8 @@ data on demand instead of freezing a snapshot at creation. Give it a refresh but
 ```
 
 When the widget has been **saved as an artifact** (it has a stable slug), the dashboard
-appends `(refresh artifact "<slug>" in place)` to the `[UI] refresh` message it sends you.
-On that turn: re-fetch the current data (call the tools/searches that produced it), read
+appends `(refresh artifact "<slug>" in place)` to the `[UI] refresh` message it puts in front
+of the owner; once they send it, re-fetch the current data (call the tools/searches that produced it), read
 the artifact with `artifact_get("<slug>")`, then `artifact_update("<slug>", ...)` with the
 freshly-rendered HTML and the base that read named — the SAME artifact updates in place
 (versioned), so the open view re-renders with live data rather than spawning a new artifact. This is how you build a "my open items" / "current status"

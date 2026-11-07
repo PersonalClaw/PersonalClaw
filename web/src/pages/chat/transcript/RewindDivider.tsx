@@ -44,12 +44,17 @@ export function RewindDivider({ snapshots, canFork, onFork }: {
               )}
             </div>
             <div className="flex flex-col gap-2 px-3 py-2.5">
-              {(latest?.messages ?? []).map((m, mi) => (
-                <div key={mi} className={`text-[0.8125rem] leading-relaxed ${m.role === 'user' ? 'text-on-surface-var' : 'text-on-surface-low'}`}>
-                  <span className="mr-1.5 text-on-surface-low text-[0.6875rem] uppercase tracking-wide">{m.role === 'user' ? 'You' : 'Assistant'}</span>
+              {(latest?.messages ?? []).map((m, mi) => {
+                // A widget's message kept in the tail is a widget's, here as in the transcript.
+                const fromWidget = m.role === 'user' && (m.meta?.widget_action === true || !!m.meta?.ui_label)
+                return (
+                <div key={mi} className={`text-[0.8125rem] leading-relaxed ${m.role === 'user' ? 'text-on-surface-var' : 'text-on-surface-low'}`}
+                  data-from-widget={fromWidget ? '' : undefined}>
+                  <span className="mr-1.5 text-on-surface-low text-[0.6875rem] uppercase tracking-wide">{fromWidget ? 'A widget' : m.role === 'user' ? 'You' : 'Assistant'}</span>
                   <span className="whitespace-pre-wrap">{m.content.length > 400 ? m.content.slice(0, 400) + '…' : m.content}</span>
                 </div>
-              ))}
+                )
+              })}
             </div>
           </motion.div>
         )}
