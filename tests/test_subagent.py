@@ -226,6 +226,8 @@ class TestSpawnWithoutApprovalCallback:
         assert second.id != first.id  # ids never collide
         # the queued spawn is addressable via get()
         assert manager.get(second.id) is second
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            await manager.cancel_all()
 
 
 class TestSpawnWithApprovalCallback:
@@ -1133,7 +1135,13 @@ class TestATimeLimitThatEndsAWaitSaysSo:
         info = SubagentInfo(id="clock001", task="look it up", parent_session_key="")
         manager._agents[info.id] = info
         manager._running_count = 1
-        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+        # The prompt built as it is in the gateway (the probe, the catalog scan, a thread hop) is
+        # not what these tests time: on a slow machine it can take the whole 1 s limit by itself.
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch("personalclaw.subagent.first_prompt", AsyncMock(return_value="built_message")),
+        ):
             await manager._run(info)
         return info, client, manager
 
