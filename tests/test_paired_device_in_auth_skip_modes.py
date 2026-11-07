@@ -39,6 +39,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from browser_sign_in import browser_token, pair_of
 
 from personalclaw.auth import pairing
 from personalclaw.dashboard import session_store as ss
@@ -46,6 +47,7 @@ from personalclaw.dashboard import token_auth
 from personalclaw.dashboard.handlers import auth as auth_h
 from personalclaw.dashboard.handlers import browse_connector as bc_h
 from personalclaw.dashboard.handlers import devices as devices_h
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER
 
 PORT = 10000
 COOKIE = f"pc_token_{PORT}"
@@ -100,8 +102,13 @@ def _client(server: TestServer) -> TestClient:
 
 async def _pair_a_device(owner: TestClient, device: TestClient) -> str:
     """Mint a code as the owner, redeem it as the device. Returns the device's session cookie."""
-    owner_token = token_auth.generate_token("owner", ttl_seconds=3600)
-    started = await owner.post("/api/devices/pair/start", json={}, cookies={COOKIE: owner_token})
+    owner_token = browser_token("owner", 3600)
+    started = await owner.post(
+        "/api/devices/pair/start",
+        json={},
+        cookies={COOKIE: owner_token},
+        headers={PAIR_HEADER: pair_of(owner_token)},
+    )
     assert started.status == 200, await started.text()
     code = (await started.json())["code"]
 
@@ -115,7 +122,13 @@ async def _pair_a_device(owner: TestClient, device: TestClient) -> str:
 
 
 async def _attach(client: TestClient, cookies: dict[str, str] | None) -> aiohttp.ClientResponse:
-    return await client.post("/api/browse/connector", json={}, cookies=cookies or {})
+    """The connector's attach, sent with the pair of the sign-in its cookie holds, as its worker
+    sends it."""
+    held = (cookies or {}).get(COOKIE, "")
+    paired = {PAIR_HEADER: pair_of(held)} if held.count(".") == 1 else {}
+    return await client.post(
+        "/api/browse/connector", json={}, cookies=cookies or {}, headers=paired
+    )
 
 
 # ── vacuity floor: the paired-device gate is LIVE on the strict path ──────
@@ -138,7 +151,7 @@ async def test_the_paired_device_gate_is_live_on_the_strict_path(_isolated) -> N
         assert (await ok.json())["ok"] is True
 
         # The owner's own session authenticates fine and is still NOT a device.
-        owner_token = token_auth.generate_token("owner", ttl_seconds=3600)
+        owner_token = browser_token("owner", 3600)
         refused = await _attach(owner, {COOKIE: owner_token})
         assert refused.status == 403
         assert (await refused.json())["error"]["code"] == "browse_connector_unpaired"
@@ -167,7 +180,9 @@ async def test_a_paired_device_is_still_a_device_under_the_local_network_bypass(
         assert anon.status == 200, await anon.text()
         assert (await anon.json())["user"].startswith("local-net:")
 
-        named = await device.get("/api/probe", cookies={COOKIE: cookie})
+        named = await device.get(
+            "/api/probe", cookies={COOKIE: cookie}, headers={PAIR_HEADER: pair_of(cookie)}
+        )
         assert (await named.json())["nonce"], "a validated session cookie must name its session"
 
         attached = await _attach(device, {COOKIE: cookie})
@@ -215,11 +230,14 @@ def test_presented_session_nonce_resolves_a_real_paired_session(_isolated) -> No
         def __init__(self, cookies: dict[str, str]) -> None:
             self.query: dict[str, str] = {}
             self.cookies = cookies
-            self.headers: dict[str, str] = {}
+            held = cookies.get(COOKIE, "")
+            self.headers: dict[str, str] = {PAIR_HEADER: pair_of(held)} if held else {}
+            self.method = "GET"
+            self.path = "/api/probe"
 
     device = ss.DeviceInfo(id="abc123", name="Pixel", kind="mobile")
     minted = token_auth.mint_session(
-        devices_h.PAIRED_DEVICE_USER, 3600, issuer=ss.ISSUER_PAIR, device=device
+        devices_h.PAIRED_DEVICE_USER, 3600, issuer=ss.ISSUER_PAIR, device=device, bound=True
     )
     assert minted.persisted, "the fixture must persist a real device row"
     token, nonce = minted.token, minted.nonce

@@ -25,6 +25,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from browser_sign_in import handed_pair, shell
 
 from personalclaw.auth import credentials as creds
 from personalclaw.auth import pairing
@@ -33,6 +34,8 @@ from personalclaw.dashboard import token_auth
 from personalclaw.dashboard.handlers import auth as auth_h
 from personalclaw.dashboard.handlers import core as core_h
 from personalclaw.dashboard.handlers import devices as devices_h
+from personalclaw.dashboard.pair_refusals import MIN_DESKTOP_VERSION
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER
 
 PORT = 10000
 SECRET = "synthetic-local-secret"
@@ -100,8 +103,7 @@ async def _status(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "user": request.get("user", "")})
 
 
-async def _page(request: web.Request) -> web.Response:
-    return web.Response(text="<html>the dashboard</html>", content_type="text/html")
+_page = shell
 
 
 def _gateway_app(port: int = PORT) -> web.Application:
@@ -123,26 +125,41 @@ def _gateway_app(port: int = PORT) -> web.Application:
 
 
 class Device:
-    """One device: its own cookie jar and its own User-Agent, like a real browser or phone."""
+    """One device: its own cookie jar and its own User-Agent, like a real browser or phone, and
+    the pair its page keeps (``sign_in_pair``): taken from the sign-in that hands it over (the
+    ``?token=`` document's scrub script, a sign-in's answer, the exchange's header) and sent with
+    every request, as ``web/src/lib/pair.ts`` sends it."""
 
     def __init__(self, server: TestServer, user_agent: str) -> None:
         self.server = server
         self.user_agent = user_agent
+        self.pair = ""
         self.http = aiohttp.ClientSession(
             cookie_jar=aiohttp.CookieJar(unsafe=True), headers={"User-Agent": user_agent}
         )
 
-    async def get(self, path: str, **kw: Any) -> aiohttp.ClientResponse:
-        resp = await self.http.get(self.server.make_url(path), allow_redirects=False, **kw)
-        await resp.read()
+    def _sent(self, kw: dict[str, Any]) -> dict[str, Any]:
+        if self.pair:
+            kw["headers"] = {PAIR_HEADER: self.pair, **(kw.get("headers") or {})}
+        return kw
+
+    async def _kept(self, resp: aiohttp.ClientResponse) -> aiohttp.ClientResponse:
+        handed = handed_pair(resp.headers, resp.content_type, await resp.read())
+        if handed:
+            self.pair = handed
         return resp
+
+    async def get(self, path: str, **kw: Any) -> aiohttp.ClientResponse:
+        resp = await self.http.get(
+            self.server.make_url(path), allow_redirects=False, **self._sent(kw)
+        )
+        return await self._kept(resp)
 
     async def post(self, path: str, body: Any = None, **kw: Any) -> aiohttp.ClientResponse:
         resp = await self.http.post(
-            self.server.make_url(path), json=body if body is not None else {}, **kw
+            self.server.make_url(path), json=body if body is not None else {}, **self._sent(kw)
         )
-        await resp.read()
-        return resp
+        return await self._kept(resp)
 
     async def signed_in(self) -> bool:
         return (await self.get("/api/status")).status == 200
@@ -208,6 +225,18 @@ class Gateway:
                 self.server.make_url("/api/status"), headers={"Authorization": f"Bearer {token}"}
             )
             return resp.status
+
+
+def _startup_link() -> str:
+    """The link the gateway prints, and opens, when it starts."""
+    return token_auth.mint_session("local-startup", 3600, issuer=ss.ISSUER_STARTUP).token
+
+
+def _cookie_nonce(device: Device) -> str:
+    """The session *device*'s cookie holds: its own sign-in, never the link it opened."""
+    held = [c.value for c in device.http.cookie_jar if c.key == COOKIE and c.value]
+    assert held, "the device holds no session cookie"
+    return token_auth.token_nonce(held[0])
 
 
 async def _refusal(device: Device, path: str = "/api/status") -> dict[str, Any]:
@@ -460,10 +489,13 @@ async def test_the_session_cookie_outlives_its_session_so_the_end_can_be_explain
 # "session not found" for a sign-in whose ending nobody remembers, and "Forbidden" on an
 # internal route. A script's Bearer keeps its one uniform code.
 
+#: A current desktop app's window: the first version with the window door, wherever that moves.
 DESKTOP = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "PersonalClaw/0.2.0 Chrome/140.0.0.0 Electron/38.2.0 Safari/537.36"
+    f"PersonalClaw/{MIN_DESKTOP_VERSION} Chrome/140.0.0.0 Electron/38.2.0 Safari/537.36"
 )
+#: The last desktop app from before the window door.
+OLDER_DESKTOP = DESKTOP.replace(f"PersonalClaw/{MIN_DESKTOP_VERSION}", "PersonalClaw/0.3.6")
 
 
 @pytest.mark.asyncio
@@ -522,8 +554,8 @@ async def test_a_sign_in_whose_ending_nobody_remembers_says_it_ended() -> None:
     or the store was cleared. Main answered "session not found"."""
     async with Gateway() as gw:
         browser = gw.device(CHROME)
-        token = await gw.sign_in_with_link(browser)
-        nonce = token_auth.token_nonce(token)
+        await gw.sign_in_with_link(browser)
+        nonce = _cookie_nonce(browser)
         stored = json.loads(ss.sessions_path().read_text())
         stored["sessions"].pop(nonce)
         ss.sessions_path().write_text(json.dumps(stored))
@@ -572,13 +604,15 @@ async def test_a_script_still_reads_the_one_uniform_code() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_paired_desktop_app_is_told_where_it_pairs_again() -> None:
+@pytest.mark.parametrize("agent", [DESKTOP, OLDER_DESKTOP], ids=["current app", "older app"])
+async def test_a_paired_desktop_app_is_told_where_it_pairs_again(agent: str) -> None:
     """The desktop app redeems a pairing link in its own Gateways window, not in a browser, so
-    "choose Pair a device" alone left it holding a code with nowhere to put it."""
+    "choose Pair a device" alone left it holding a code with nowhere to put it. An older app is
+    told to update first, and then the same."""
     async with Gateway() as gw:
         browser = gw.device(CHROME)
         await gw.sign_in_with_link(browser)
-        desktop = gw.device(DESKTOP)
+        desktop = gw.device(agent)
         device_id = await gw.pair(desktop, using=browser)
         assert (await browser.post(f"/api/devices/{device_id}/revoke")).status == 200
         message = (await _refusal(desktop))["message"]
@@ -594,8 +628,9 @@ async def _desktop_window(
     window and its device id."""
     window = gw.device(DESKTOP)
     user = "local-startup" if issuer == ss.ISSUER_READY else "local-app"
-    minted = token_auth.mint_session(user, ttl, issuer=issuer)
+    minted = token_auth.mint_session(user, ttl, issuer=issuer, bound=True)
     window.http.cookie_jar.update_cookies({COOKIE: minted.token}, gw.server.make_url("/"))
+    window.pair = minted.pair
     assert await window.signed_in(), "the window the app signed in is not signed in"
     return window, minted.session_id
 
@@ -635,8 +670,9 @@ async def test_the_desktop_app_on_a_gateway_it_found_is_told_to_open_the_app_aga
         assert "personalclaw token" not in message, message
 
         tab = gw.device(CHROME)
-        minted = token_auth.mint_session("local-app", 3600, issuer=ss.ISSUER_TOKEN)
+        minted = token_auth.mint_session("local-app", 3600, issuer=ss.ISSUER_TOKEN, bound=True)
         tab.http.cookie_jar.update_cookies({COOKIE: minted.token}, gw.server.make_url("/"))
+        tab.pair = minted.pair
         assert await tab.signed_in()
         assert (await browser.post(f"/api/devices/{minted.session_id}/revoke")).status == 200
         told = (await _refusal(tab))["message"]
@@ -721,7 +757,11 @@ async def test_the_list_names_every_signed_in_device_its_kind_first_and_last_see
         assert by_name["Chrome on Mac"]["kind"] == "browser"
         assert by_name["curl"]["kind"] == "cli"
         assert all(row["issuer"] != "app" for row in rows), "an app token is not a device"
-        assert len(rows) == 4, [row["name"] for row in rows]
+        # Each `personalclaw token` link a browser opened stays the token it is, beside the
+        # browser's own sign-in: still a Bearer for whoever holds it, and never a second browser.
+        links = [row for row in rows if row["kind"] == "unknown"]
+        assert [row["issuer"] for row in links] == ["token", "token"], links
+        assert len(rows) == 6, [row["name"] for row in rows]
         now = time.time()
         for row in rows:
             assert 0 < row["minted_at"] <= now, row
@@ -766,7 +806,9 @@ async def test_sign_out_all_other_devices_keeps_only_this_one() -> None:
 
         resp = await browser_a.post("/api/devices/revoke-others", CONFIRM)
         assert resp.status == 200
-        assert (await resp.json())["revoked"] == 3
+        # The phone, the second browser, the script's token, and the two links the browsers
+        # opened, which are tokens still.
+        assert (await resp.json())["revoked"] == 5
 
         assert await browser_a.signed_in()
         for device in (phone, browser_b):
@@ -801,12 +843,14 @@ async def test_a_browser_that_opens_a_new_link_is_still_one_sign_in() -> None:
     identical "Chrome on Mac" rows, and a live credential nobody would ever sign out."""
     async with Gateway() as gw:
         browser = gw.device(CHROME)
-        first = await gw.sign_in_with_link(browser)
-        await gw.sign_in_with_link(browser)
+        first = await gw.sign_in_with_link(browser, _startup_link())
+        replaced = _cookie_nonce(browser)
+        await gw.sign_in_with_link(browser, _startup_link())
 
         rows = (await (await browser.get("/api/devices")).json())["devices"]
         assert [r["name"] for r in rows] == ["Chrome on Mac"], rows
-        assert await gw.bearer_status(first) == 403, "the replaced sign-in is still live"
+        assert replaced not in ss.load_session_records(), "the replaced sign-in is still live"
+        assert await gw.bearer_status(first) == 403, "the startup link it opened is still live"
 
 
 @pytest.mark.asyncio
@@ -861,7 +905,8 @@ async def test_every_sign_in_and_sign_out_is_in_the_security_log(sel_events) -> 
     assert "signed_out_others" in reasons and "signed_out" in reasons, reasons
     dumped = json.dumps(sel_events, default=str)
     assert link not in dumped, "a token in the security log is a token in every log shipper"
-    assert len(nonces) == 3
+    # Two links, each still a token, the two browsers' own sign-ins, and the phone.
+    assert len(nonces) == 5
     for nonce in nonces:
         assert nonce not in dumped, "the eviction row used to carry the whole nonce"
 

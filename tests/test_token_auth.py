@@ -7,9 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp import web
+from browser_sign_in import browser_token, pair_of
 from yarl import URL
 
 from personalclaw.dashboard.session_store import POOL_CAPS, POOL_TOKEN
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER, bound
 from personalclaw.dashboard.token_auth import (
     LINK_WINDOW_SECS,
     MAX_SESSION_TTL_SECS,
@@ -232,15 +234,15 @@ def _make_request(
 @pytest.mark.parametrize("via", ["query", "cookie"])
 async def test_middleware_accepts_valid_token(via: str) -> None:
     mw = token_auth_middleware()
-    token = generate_token("testuser", ttl_seconds=300)
 
     if via == "cookie":
-        # Pre-bind IP and mark consumed so cookie path works
-        bind_token_ip(token, "127.0.0.1")
-        mark_consumed(token)
-        req = _make_request(cookies={"pc_token_10000": token})
+        # A browser's sign-in, as its page sends it: the cookie and the pair.
+        token = browser_token("testuser", 300)
+        req = _make_request(
+            cookies={"pc_token_10000": token}, headers={PAIR_HEADER: pair_of(token)}
+        )
     else:
-        req = _make_request(query={"token": token})
+        req = _make_request(query={"token": generate_token("testuser", ttl_seconds=300)})
 
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
@@ -261,7 +263,10 @@ async def test_cookie_set_on_query_param_auth() -> None:
 
     cookie_header = resp.cookies.get("pc_token_10000")
     assert cookie_header is not None
-    assert cookie_header.value == token
+    # The browser's own sign-in, bound to its pair, never the link itself.
+    assert cookie_header.value != token
+    assert bound(cookie_header.value)
+    assert resp.headers["Cache-Control"] == "no-store"
     assert cookie_header["httponly"] is True or "httponly" in str(cookie_header).lower()
     assert cookie_header["samesite"] == "Lax"
     assert cookie_header["path"] == "/"
@@ -273,12 +278,12 @@ async def test_cookie_set_on_query_param_auth() -> None:
 @pytest.mark.asyncio
 async def test_cookie_not_reset_when_present() -> None:
     mw = token_auth_middleware()
-    token = generate_token("existing", ttl_seconds=300)
+    token = browser_token("existing", 300)
     # Simulate prior query-param auth
     bind_token_ip(token, "127.0.0.1")
     mark_consumed(token)
 
-    req = _make_request(cookies={"pc_token_10000": token})
+    req = _make_request(cookies={"pc_token_10000": token}, headers={PAIR_HEADER: pair_of(token)})
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
     # Cookie should NOT be re-set on cookie-based auth
@@ -346,11 +351,17 @@ async def test_live_pwa_paths_require_auth(path: str) -> None:
 
     Anyone tempted to add these to a bypass set to "fix installability" should note
     what would then be readable without a session.
+
+    A service worker this gateway didn't serve removes itself
+    (``test_a_service_worker_this_gateway_did_not_serve_removes_itself``).
     """
     mw = token_auth_middleware()
     req = _make_request(path=path)  # No token at all
     resp = await mw(req, _ok_handler)
     assert resp.status in (302, 403)
+    checked = await mw(_make_request(path=path, headers={"Service-Worker": "script"}), _ok_handler)
+    assert checked.status == 200
+    assert "registration.unregister()" in checked.text, "an update check got the real worker"
 
 
 # -- Loopback connections still require a token (port-forward safety) --
@@ -391,11 +402,16 @@ async def test_internal_path_non_loopback_denied_in_local_only_mode() -> None:
 @pytest.mark.asyncio
 async def test_internal_path_non_loopback_cookie_auth_when_not_local_only() -> None:
     """When local_only=False, non-loopback with valid cookie is granted."""
-    token = generate_token("testuser", ttl_seconds=300)
+    token = browser_token("testuser", 300)
     mw = token_auth_middleware(
         internal_routes=frozenset({"GET /api/spawn"}), internal_secret="s", local_only=False
     )
-    req = _make_request(path="/api/spawn", remote="10.0.0.1", cookies={"pc_token_10000": token})
+    req = _make_request(
+        path="/api/spawn",
+        remote="10.0.0.1",
+        cookies={"pc_token_10000": token},
+        headers={PAIR_HEADER: pair_of(token)},
+    )
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
 
@@ -414,14 +430,14 @@ async def test_internal_path_non_loopback_no_cookie_denied() -> None:
 @pytest.mark.asyncio
 async def test_internal_path_non_loopback_wrong_secret_denied() -> None:
     """When local_only=False, wrong X-Internal-Secret is denied even with cookie."""
-    token = generate_token("testuser", ttl_seconds=300)
+    token = browser_token("testuser", 300)
     mw = token_auth_middleware(
         internal_routes=frozenset({"GET /api/spawn"}), internal_secret="real", local_only=False
     )
     req = _make_request(
         path="/api/spawn",
         remote="10.0.0.1",
-        headers={"X-Internal-Secret": "wrong"},
+        headers={PAIR_HEADER: pair_of(token), "X-Internal-Secret": "wrong"},
         cookies={"pc_token_10000": token},
     )
     resp = await mw(req, _ok_handler)
@@ -431,14 +447,14 @@ async def test_internal_path_non_loopback_wrong_secret_denied() -> None:
 @pytest.mark.asyncio
 async def test_internal_path_non_loopback_valid_secret_and_cookie_granted() -> None:
     """Both valid secret and valid cookie on non-loopback → granted."""
-    token = generate_token("testuser", ttl_seconds=300)
+    token = browser_token("testuser", 300)
     mw = token_auth_middleware(
         internal_routes=frozenset({"GET /api/spawn"}), internal_secret="real", local_only=False
     )
     req = _make_request(
         path="/api/spawn",
         remote="10.0.0.1",
-        headers={"X-Internal-Secret": "real"},
+        headers={PAIR_HEADER: pair_of(token), "X-Internal-Secret": "real"},
         cookies={"pc_token_10000": token},
     )
     resp = await mw(req, _ok_handler)
@@ -553,10 +569,15 @@ async def test_mixed_path_loopback_with_secret_granted() -> None:
 async def test_mixed_path_non_loopback_with_valid_cookie_granted() -> None:
     """DCV/SSH-forwarded browser: non-loopback + valid cookie → granted (no false banner)."""
     mw = token_auth_middleware(mixed_internal_routes=frozenset({"GET /api/spawn"}))
-    token = generate_token("dcvuser", ttl_seconds=300)
+    token = browser_token("dcvuser", 300)
     bind_token_ip(token, "10.0.0.1")
     mark_consumed(token)
-    req = _make_request(path="/api/spawn", remote="10.0.0.1", cookies={"pc_token_10000": token})
+    req = _make_request(
+        path="/api/spawn",
+        remote="10.0.0.1",
+        cookies={"pc_token_10000": token},
+        headers={PAIR_HEADER: pair_of(token)},
+    )
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
 
@@ -575,7 +596,7 @@ async def test_strict_path_non_loopback_still_hard_denied() -> None:
     """Strict internal path: non-loopback → hard-denied even with valid cookie
     (invariant: machine-to-machine isolation preserved)."""
     mw = token_auth_middleware(internal_routes=frozenset({"POST /api/send-message"}))
-    token = generate_token("attacker", ttl_seconds=300)
+    token = browser_token("someone_else", 300)
     bind_token_ip(token, "10.0.0.1")
     mark_consumed(token)
     req = _make_request(
@@ -583,6 +604,7 @@ async def test_strict_path_non_loopback_still_hard_denied() -> None:
         method="POST",
         remote="10.0.0.1",
         cookies={"pc_token_10000": token},
+        headers={PAIR_HEADER: pair_of(token)},
     )
     resp = await mw(req, _ok_handler)
     assert resp.status == 403
@@ -865,12 +887,16 @@ async def test_different_ports_use_different_cookie_names() -> None:
 async def test_wrong_port_cookie_rejected() -> None:
     """Server A must reject a cookie set by server B (different port suffix)."""
     mw_a = token_auth_middleware(port=7777)
-    token_b = generate_token("user_b", ttl_seconds=300)
+    token_b = browser_token("user_b", 300)
     bind_token_ip(token_b, "127.0.0.1")
     mark_consumed(token_b)
 
     # Send server B's cookie to server A — wrong cookie name
-    req = _make_request(cookies={"pc_token_6777": token_b}, remote="127.0.0.1")
+    req = _make_request(
+        cookies={"pc_token_6777": token_b},
+        headers={PAIR_HEADER: pair_of(token_b)},
+        remote="127.0.0.1",
+    )
     resp = await mw_a(req, _ok_handler)
     assert resp.status == 403
 
@@ -887,10 +913,14 @@ async def test_non_default_port_full_cycle() -> None:
     assert resp1.status == 200
     cookie = resp1.cookies.get("pc_token_6777")
     assert cookie is not None
-    assert cookie.value == token
+    assert cookie.value != token and bound(cookie.value)
 
-    # Step 2: cookie-based auth on subsequent request
-    req2 = _make_request(cookies={"pc_token_6777": token}, remote="10.0.0.1")
+    # Step 2: cookie-based auth on subsequent request, with the pair the page kept
+    req2 = _make_request(
+        cookies={"pc_token_6777": cookie.value},
+        headers={PAIR_HEADER: pair_of(cookie.value)},
+        remote="10.0.0.1",
+    )
     resp2 = await mw(req2, _ok_handler)
     assert resp2.status == 200
 
@@ -917,13 +947,13 @@ async def test_app_token_bearer_sets_request_app() -> None:
     """An owner cookie + an app-scoped Bearer token → request['app'] adopts the
     app claim (owner user unchanged). This is how an app's fetch is scoped."""
     mw = token_auth_middleware()
-    owner = generate_token("alice", ttl_seconds=300)
+    owner = browser_token("alice", 300)
     bind_token_ip(owner, "127.0.0.1")
     mark_consumed(owner)
     app_tok = generate_token("alice", ttl_seconds=300, app="notes")
     req = _capturing_request(
         cookies={"pc_token_10000": owner},
-        headers={"Authorization": f"Bearer {app_tok}"},
+        headers={PAIR_HEADER: pair_of(owner), "Authorization": f"Bearer {app_tok}"},
     )
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
@@ -935,12 +965,13 @@ async def test_app_token_bearer_sets_request_app() -> None:
 async def test_app_token_via_query_param_sets_request_app() -> None:
     """The /api/ws handshake can't set headers, so the app token rides ?app_token=."""
     mw = token_auth_middleware()
-    owner = generate_token("alice", ttl_seconds=300)
+    owner = browser_token("alice", 300)
     bind_token_ip(owner, "127.0.0.1")
     mark_consumed(owner)
     app_tok = generate_token("alice", ttl_seconds=300, app="notes")
     req = _capturing_request(
         cookies={"pc_token_10000": owner},
+        headers={PAIR_HEADER: pair_of(owner)},
         query={"app_token": app_tok},
     )
     resp = await mw(req, _ok_handler)
@@ -953,13 +984,13 @@ async def test_app_token_for_other_user_is_ignored() -> None:
     """An app token minted for a DIFFERENT owner must NOT scope this session — a
     layered token can only narrow within the SAME authenticated user."""
     mw = token_auth_middleware()
-    owner = generate_token("alice", ttl_seconds=300)
+    owner = browser_token("alice", 300)
     bind_token_ip(owner, "127.0.0.1")
     mark_consumed(owner)
     foreign = generate_token("mallory", ttl_seconds=300, app="notes")
     req = _capturing_request(
         cookies={"pc_token_10000": owner},
-        headers={"Authorization": f"Bearer {foreign}"},
+        headers={PAIR_HEADER: pair_of(owner), "Authorization": f"Bearer {foreign}"},
     )
     resp = await mw(req, _ok_handler)
     assert resp.status == 200
@@ -1043,11 +1074,13 @@ async def test_internal_path_cookie_auth_no_secret_header_records_reason_not_err
     success path that used to stuff its allow reason into ``error`` (#2948)."""
     from personalclaw.sel import sel
 
-    token = generate_token("browseruser", ttl_seconds=300)
+    token = browser_token("browseruser", 300)
     bind_token_ip(token, "127.0.0.1")
     mark_consumed(token)
     mw = token_auth_middleware(internal_routes=frozenset({"GET /api/spawn"}), internal_secret="s")
-    req = _make_request(path="/api/spawn", cookies={"pc_token_10000": token})
+    req = _make_request(
+        path="/api/spawn", cookies={"pc_token_10000": token}, headers={PAIR_HEADER: pair_of(token)}
+    )
 
     resp = await mw(req, _ok_handler)
 

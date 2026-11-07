@@ -9,9 +9,9 @@ authentication off for every request, so on a desktop install:
   rather than the operations it is for;
 * any process on the computer could answer an approval holding no credential at all.
 
-The shell now signs its own windows in with the owner session the gateway's ready line hands it
-for this start, as the cookie ``pc_token_<port>`` for the port that line names
-(``desktop/localSignIn.js``), and sends the same session on its own requests as a Bearer header.
+The shell now signs its own windows in with a session of their own (``/api/token/local?for=window``
+on a gateway that pairs its sign-ins), as the cookie ``pc_token_<port>`` for the port the ready line
+names (``desktop/localSignIn.js``), with the pair the main process adds to the window's requests.
 
 Driven as the desktop runs it: the environment is the one the shell's own builder produces,
 executed, and the gateway is the real one (``start_dashboard``) on a real loopback socket, started
@@ -159,11 +159,27 @@ class _Gateway(SimpleNamespace):
 
         return mint_startup_token(ISSUER_READY, None).token
 
-    def window(self, token: str) -> dict[str, str]:
+    async def window_sign_in(self) -> tuple[str, str]:
+        """The window's own sign-in, as the shell takes it on a gateway that pairs its sign-ins
+        (``/api/token/local?for=window``, with the home's local secret): its token, which the shell
+        sets as the window's cookie, and its pair, which the main process adds to the window's
+        requests."""
+        async with aiohttp.ClientSession() as http:
+            async with http.get(
+                self.base + "/api/token/local?for=window",
+                headers={"X-Local-Secret": self.internal_secret()},
+            ) as resp:
+                assert resp.status == 200, await resp.text()
+                answer = await resp.json()
+        return answer["token"], answer["pair"]
+
+    def window(self, token: str, pair: str) -> dict[str, str]:
         """What a request from the shell's window carries: the session cookie the shell sets,
-        named for the port the ready line names, and the page's own origin."""
+        named for the port the ready line names, the pair the main process adds, and the page's
+        own origin."""
         return {
             "Cookie": f"pc_token_{self.port}={token}",
+            "X-PersonalClaw-Pair": pair,
             "Origin": f"http://127.0.0.1:{self.port}",
         }
 
@@ -241,7 +257,9 @@ async def test_the_window_signed_in_by_the_shell_answers_it(desktop) -> None:
     approval_id, future = await _held_approval(desktop.state)
 
     status, _headers, text = await desktop.request(
-        "POST", f"/api/approvals/{approval_id}/approve", desktop.window(desktop.ready_token())
+        "POST",
+        f"/api/approvals/{approval_id}/approve",
+        desktop.window(*await desktop.window_sign_in()),
     )
 
     assert status == 200, (status, text)
@@ -276,15 +294,15 @@ async def test_an_approval_needs_a_sign_in_even_when_the_shell_inherits_a_switch
 async def test_an_apps_call_outside_its_permissions_is_refused(desktop) -> None:
     from personalclaw.dashboard.token_auth import app_session_token, validate_token_with_app
 
-    owner = desktop.ready_token()
+    owner, pair = await desktop.window_sign_in()
     _valid, user, _reason, _app = validate_token_with_app(owner, use_session_exp=True)
     app_token = app_session_token(user, APP)[0]
     # What an app's page in the window sends: the window's session, plus its own app token.
-    as_the_app = {**desktop.window(owner), "Authorization": f"Bearer {app_token}"}
+    as_the_app = {**desktop.window(owner, pair), "Authorization": f"Bearer {app_token}"}
 
     declared, _h, declared_text = await desktop.request("GET", DECLARED, as_the_app)
     undeclared, _h, undeclared_text = await desktop.request("GET", "/api/devices", as_the_app)
-    as_you, _h, you_text = await desktop.request("GET", "/api/devices", desktop.window(owner))
+    as_you, _h, you_text = await desktop.request("GET", "/api/devices", desktop.window(owner, pair))
 
     assert declared == 200, (declared, declared_text)
     assert as_you == 200, (as_you, you_text)
@@ -330,7 +348,8 @@ async def test_the_session_cookie_is_named_for_the_port_the_gateway_serves_on(de
     every gateway does: the cookie a browser's sign-in link leaves is the cookie the shell sets."""
     token = desktop.ready_token()
     async with aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar()) as http:
-        async with http.get(f"{desktop.base}/api/approvals?token={token}") as resp:
+        # Where the dashboard exchanges a link for a browser's own sign-in (link_exchange).
+        async with http.get(f"{desktop.base}/api/auth/session?token={token}") as resp:
             assert resp.status == 200, await resp.text()
             names = {c.key for c in resp.cookies.values() if c.value}
 

@@ -26,6 +26,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from browser_sign_in import handed_pair, shell
 
 from personalclaw import push
 from personalclaw.auth import credentials as creds
@@ -36,6 +37,7 @@ from personalclaw.dashboard.handlers import auth as auth_h
 from personalclaw.dashboard.handlers import core as core_h
 from personalclaw.dashboard.handlers import devices as devices_h
 from personalclaw.dashboard.handlers.push import register_push_routes
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER
 
 PORT = 10000
 SECRET = "synthetic-local-secret"
@@ -95,8 +97,7 @@ async def _status(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-async def _page(request: web.Request) -> web.Response:
-    return web.Response(text="<html>the dashboard</html>", content_type="text/html")
+_page = shell
 
 
 def _gateway_app() -> web.Application:
@@ -128,26 +129,40 @@ def _browser_keys() -> dict[str, str]:
 
 
 class Device:
+    """One device, its cookie jar, and the pair its page keeps and sends (``sign_in_pair``)."""
+
     def __init__(self, server: TestServer, user_agent: str, name: str) -> None:
         self.server = server
         self.name = name
+        self.pair = ""
         self.http = aiohttp.ClientSession(
             cookie_jar=aiohttp.CookieJar(unsafe=True), headers={"User-Agent": user_agent}
         )
+
+    def _sent(self) -> dict[str, str]:
+        return {PAIR_HEADER: self.pair} if self.pair else {}
+
+    async def _kept(self, resp: aiohttp.ClientResponse) -> aiohttp.ClientResponse:
+        handed = handed_pair(resp.headers, resp.content_type, await resp.read())
+        if handed:
+            self.pair = handed
+        return resp
 
     @property
     def endpoint(self) -> str:
         return f"https://push.example/send/{self.name}"
 
     async def get(self, path: str) -> aiohttp.ClientResponse:
-        resp = await self.http.get(self.server.make_url(path), allow_redirects=False)
-        await resp.read()
-        return resp
+        resp = await self.http.get(
+            self.server.make_url(path), allow_redirects=False, headers=self._sent()
+        )
+        return await self._kept(resp)
 
     async def post(self, path: str, body: Any = None) -> aiohttp.ClientResponse:
-        resp = await self.http.post(self.server.make_url(path), json=body or {})
-        await resp.read()
-        return resp
+        resp = await self.http.post(
+            self.server.make_url(path), json=body or {}, headers=self._sent()
+        )
+        return await self._kept(resp)
 
     async def turn_on_push(self) -> None:
         """The companion page's Turn on push: this browser's subscription, under its push id."""
@@ -370,7 +385,8 @@ async def test_a_sign_in_that_ran_out_is_not_woken(woken, monkeypatch) -> None:
         laptop = gw.device(CHROME, "laptop")
         await gw.sign_in_with_link(laptop)
         await laptop.turn_on_push()
-        (ends,) = [r.expiry for r in ss.signed_in_sessions().values()]
+        # The browser's own sign-in: the link it opened is a token beside it.
+        (ends,) = [r.expiry for r in ss.signed_in_sessions().values() if r.device.kind == "browser"]
 
     _pinged()
     assert woken == [laptop.endpoint], "the floor: while the sign-in lasts, it is woken"

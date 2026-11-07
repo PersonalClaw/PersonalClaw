@@ -112,6 +112,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/auth/password` — set the owner's sign-in password, or change it.
 - `POST /api/auth/rotate-key` — replace the key every sign-in is signed with.
 - `GET /api/auth/session` — the authenticated account view (Settings → Account).
+- `POST /api/auth/signed-urls` — sign the page's resource URLs on its own sign-in.
 - `GET /api/auth/status` — what the login UI needs to render itself.
 - `GET /api/autonomy` — every governed action type, its rung, and what it has earned.
 - `POST /api/autonomy/demote` — hand a type's autonomy back. Body ``{key}``.

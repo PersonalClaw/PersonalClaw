@@ -173,11 +173,12 @@ async def index(request: web.Request) -> web.Response:
     # A `?token=` link: the token middleware sets the session cookie on THIS response, so by
     # the time the document runs the URL copy of the credential is only something to leak.
     # The scrub is inlined first in <head> — ahead of every resource declaration, and
-    # independent of whether the app bundle then loads at all.
+    # independent of whether the app bundle then loads at all. It carries the pair of the sign-in
+    # the link just made (`link_exchange`), which only this answer ever does.
     if request.query.get("token"):
         from personalclaw.dashboard.owner_token_url import inject_scrub
 
-        html = inject_scrub(html)
+        html = inject_scrub(html, pair=str(request.get("sign_in_pair") or ""))
     return web.Response(text=html, content_type="text/html")
 
 
@@ -1364,11 +1365,13 @@ async def api_token_local(request: web.Request) -> web.Response:
             resources="invalid-secret",
         )
         return web.json_response({"error": "invalid secret"}, status=403)
+    window = request.query.get("for") == "window"
     ttl = DEFAULT_TOKEN_TTL_SECS
     ttl_param = request.query.get("ttl", "")
     if ttl_param:
         parsed = parse_duration(ttl_param)
-        if parsed is None or parsed > MAX_SESSION_TTL_SECS:
+        longest = WINDOW_MAX_TTL_SECS if window else MAX_SESSION_TTL_SECS
+        if parsed is None or parsed > longest:
             await sel_log_async(
                 _sel().log_api_access,
                 caller=request.remote or "unknown",
@@ -1381,8 +1384,15 @@ async def api_token_local(request: web.Request) -> web.Response:
                 return json_error(
                     "token_ttl_invalid", message=lifetimes.unreadable(ttl_param), status=400
                 )
-            return json_error("token_ttl_too_long", message=lifetimes.too_long(parsed), status=400)
+            too_long = (
+                "The desktop window's sign-in can last at most 30 days. Ask for 30d or less."
+                if window
+                else lifetimes.too_long(parsed)
+            )
+            return json_error("token_ttl_too_long", message=too_long, status=400)
         ttl = parsed
+    if window:
+        return await _window_sign_in(request, expected, ttl if ttl_param else 0)
     minted = mint_session("local-app", ttl, issuer=ISSUER_TOKEN)
     await sel_log_async(
         _sel().log_api_access,
@@ -1399,6 +1409,55 @@ async def api_token_local(request: web.Request) -> web.Response:
             "expires_at": minted.expires_at,
             "open_within": minted.open_within_secs,
         }
+    )
+
+
+#: The longest sign-in the window door mints: what the desktop asks of the token door today.
+WINDOW_MAX_TTL_SECS = 30 * 24 * 3600
+
+
+async def _window_sign_in(request: web.Request, local_secret: str, ttl: int) -> web.Response:
+    """``GET /api/token/local?for=window`` — the desktop app's own window, signed in.
+
+    A browser's bound sign-in (``sign_in_pair``) under its own door, ``window``: counted as a
+    browser, answered with its pair, which the app's main process adds to the window's requests.
+    It lasts the ``?ttl=`` the app asks for, up to :data:`WINDOW_MAX_TTL_SECS`, as the token door
+    answers it today, else a browser sign-in's (``auth.session_ttl``). Settings → Devices & Access
+    → Devices lists it as the desktop app whatever its User-Agent: the app sends none of its own.
+    It records which gateway start minted it, so its started-by proof (``owner_presence``) lasts
+    that start only.
+    """
+    from personalclaw.dashboard.session_store import ISSUER_WINDOW
+    from personalclaw.dashboard.sign_in_pair import started_by_digest
+    from personalclaw.dashboard.token_auth import browser_session_ttl, client_of
+
+    ttl = ttl or browser_session_ttl()
+    device = client_of(request)
+    device.kind, device.name = "desktop", "PersonalClaw desktop app"
+    minted = mint_session(
+        "owner",
+        ttl,
+        issuer=ISSUER_WINDOW,
+        device=device,
+        bound=True,
+        started_by=started_by_digest(local_secret),
+    )
+    await sel_log_async(
+        _sel().log_api_access,
+        caller=request.remote or "unknown",
+        operation="token.local",
+        outcome="success",
+        source="local-bootstrap",
+        resources="window-signed-in",
+    )
+    return web.json_response(
+        {
+            "token": minted.token,
+            "pair": minted.pair,
+            "expires_in": minted.lifetime_secs,
+            "expires_at": minted.expires_at,
+        },
+        headers={"Cache-Control": "no-store"},
     )
 
 

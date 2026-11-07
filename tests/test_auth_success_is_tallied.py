@@ -19,11 +19,12 @@ import asyncio
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from browser_sign_in import browser_token, pair_of
 
 import personalclaw.dashboard.token_auth as token_auth
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER
 from personalclaw.dashboard.token_auth import (
     bind_token_ip,
-    generate_token,
     mark_consumed,
     revoke_all_sessions,
     token_auth_middleware,
@@ -64,7 +65,7 @@ def _app(**mw_kwargs) -> web.Application:
 
 
 def _session_token(user: str = "owner") -> str:
-    token = generate_token(user, ttl_seconds=3600)
+    token = browser_token(user, 3600)
     bind_token_ip(token, "127.0.0.1")
     mark_consumed(token)
     return token
@@ -79,7 +80,11 @@ async def test_a_polling_session_writes_one_row_and_a_count(audit):
     token = _session_token()
     async with TestClient(TestServer(_app())) as http:
         for i in range(40):
-            resp = await http.get("/api/loops" if i % 2 else "/api/system", cookies={COOKIE: token})
+            resp = await http.get(
+                "/api/loops" if i % 2 else "/api/system",
+                cookies={COOKIE: token},
+                headers={PAIR_HEADER: pair_of(token)},
+            )
             assert resp.status == 200
 
     assert len(_auth_rows(audit, "ok")) == 1, "a row per request is back"
@@ -106,8 +111,12 @@ async def test_two_sessions_of_one_user_are_two_actors(audit):
     phone, laptop = _session_token(), _session_token()
     async with TestClient(TestServer(_app())) as http:
         for _ in range(3):
-            await http.get("/api/loops", cookies={COOKIE: phone})
-            await http.get("/api/loops", cookies={COOKIE: laptop})
+            await http.get(
+                "/api/loops", cookies={COOKIE: phone}, headers={PAIR_HEADER: pair_of(phone)}
+            )
+            await http.get(
+                "/api/loops", cookies={COOKIE: laptop}, headers={PAIR_HEADER: pair_of(laptop)}
+            )
     assert len(_auth_rows(audit, "ok")) == 2
 
 
@@ -118,9 +127,11 @@ async def test_a_closed_window_is_summarized_by_the_next_request(audit, monkeypa
     token = _session_token()
     async with TestClient(TestServer(_app())) as http:
         for _ in range(5):
-            await http.get("/api/loops", cookies={COOKIE: token})
+            await http.get(
+                "/api/loops", cookies={COOKIE: token}, headers={PAIR_HEADER: pair_of(token)}
+            )
         await asyncio.sleep(0.3)
-        await http.get("/api/loops", cookies={COOKIE: token})
+        await http.get("/api/loops", cookies={COOKIE: token}, headers={PAIR_HEADER: pair_of(token)})
 
     rows = _auth_rows(audit, "ok")
     summaries = [r for r in rows if r.metadata.get("summary")]

@@ -51,8 +51,13 @@
     - status
     - heading "Signed in (#)" [level=#]
     - paragraph: Browsers, paired devices and the desktop app. Each kind has a limit of #; past it, the one used least recently is signed out and told why, so a script minting tokens never signs one of these out.
+    - button "Sign out all other devices"
     - text: Headless Chrome on <platform> This device Browser · Last seen <when> · from #.#.#.# · Signed in with the harness token (--json-ready) Signed in <when> · session expires <month> #, #:# <am/pm>
     - button "Sign out of this device": Sign out
+    - heading "Tokens (#)" [level=#]
+    - paragraph: "Links and tokens that no browser has opened: from personalclaw token, personalclaw run, a script, or the gateway's startup line. Each lasts what it was minted for; up to # can be live at once, and past that the one used least recently is signed out."
+    - text: Script Token · Last seen <when> · from #.#.#.# · The harness token (--json-ready) Issued <when> · stops working <month> #, #:# <am/pm>
+    - button "Sign out Script": Sign out
   - region "Sender trust":
     - heading "Sender trust" [level=#]
     - paragraph: Who can talk to your agent through each chat channel, and what happens to someone it doesn't know. Each channel below says what a stranger gets there and how you let someone in.

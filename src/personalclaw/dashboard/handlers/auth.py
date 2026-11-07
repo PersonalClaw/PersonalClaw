@@ -56,7 +56,6 @@ from personalclaw.dashboard.token_auth import (
     renew_sign_in,
     secure_cookies,
     signed_out_notice,
-    validate_token,
 )
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
@@ -298,12 +297,13 @@ async def api_auth_login(request: web.Request) -> web.Response:
             return json_error(ERR_INVALID, status=401)
 
     ttl = browser_session_ttl(cfg)
-    token = mint_session(
-        username.strip() or "owner", ttl, issuer=ISSUER_LOGIN, device=client_of(request)
-    ).token
+    minted = mint_session(
+        username.strip() or "owner", ttl, issuer=ISSUER_LOGIN, device=client_of(request), bound=True
+    )
     _clear_failures(ip)
-    resp = web.json_response({"ok": True, "expires_in": ttl})
-    _set_session_cookie(request, resp, token, ttl)
+    # The pair goes to the page that signed in (`sign_in_pair`), never in the cookie.
+    resp = web.json_response({"ok": True, "expires_in": ttl, "pair": minted.pair})
+    _set_session_cookie(request, resp, minted.token, ttl)
     await sel_log_async(
         _sel().log_api_access,
         caller=username.strip() or "owner",
@@ -368,14 +368,18 @@ async def api_auth_logout(request: web.Request) -> web.Response:
         return json_error(ERR_ORIGIN, status=403)
 
     cookie = _cookie_name(request)
-    token = request.cookies.get(cookie, "") or request.query.get("token", "")
     caller = request.get("user") or (request.remote or "unknown")
+    # The session that authorized THIS request, on whichever carrier brought it: the cookie, a
+    # Bearer (the desktop app's own calls, a script) or a link. Never another one the request
+    # merely carries beside it.
+    nonce = str(request.get("session_nonce") or "")
     revoked = False
-    if token:
+    if nonce:
         try:
-            from personalclaw.dashboard.token_auth import revoke_token
+            from personalclaw.dashboard.token_auth import END_SIGNED_OUT, revoke_nonce, sign_out
 
-            revoked = revoke_token(token, actor=caller)
+            revoke_nonce(nonce)
+            revoked = sign_out([nonce], END_SIGNED_OUT, actor=caller) > 0
         except Exception:  # noqa: BLE001
             logger.warning("could not revoke the session on logout", exc_info=True)
 
@@ -417,11 +421,16 @@ async def api_auth_session(request: web.Request) -> web.Response:
 
     Behind normal token auth, so this one MAY report the configured state: the caller already
     holds a valid session. Still never the hash or the TOTP secret.
+
+    ``signed_in`` says whether this request named a session (``request["session_nonce"]``). The
+    two modes that skip the sign-in admit a request without one, so a 200 alone doesn't mean
+    this browser is signed in: the ``/pair`` page reads this to decide whether to send itself home.
     """
     cfg = _auth_cfg()
     st = creds.status()
     return web.json_response(
         {
+            "signed_in": bool(request.get("session_nonce")),
             "login_enabled": bool(cfg.login_enabled),
             "credential_configured": bool(st["configured"]),
             "username": st["username"],
@@ -562,13 +571,33 @@ async def api_auth_confirm(request: web.Request) -> web.Response:
     if refused is not None:
         return refused
     ttl = browser_session_ttl(_auth_cfg())
+    # The session that authorized this request, on whichever carrier brought it, never just what
+    # the cookie holds; an app's session renews nothing.
     minted = renew_sign_in(
         request,
-        request.cookies.get(_cookie_name(request), ""),
+        "" if request.get("app") else str(request.get("session_nonce") or ""),
         ttl,
         owner=str(creds.status()["username"] or "owner"),
     )
-    resp = web.json_response({"ok": True, "expires_in": ttl, "recent_for": PRESENCE_WINDOW_SECS})
+    if minted is None:
+        # A desktop window's own sign-in is never replaced: it shows the owner is here by having
+        # been started on this computer (owner_presence.PROOF_STARTED_BY). One an earlier start
+        # signed in shows nothing, and no password changes that: it is told the window's way back.
+        from personalclaw.dashboard.owner_presence import PROOF_STARTED_BY, presence_proof
+
+        if presence_proof(request) != PROOF_STARTED_BY:
+            return json_error(
+                "fresh_sign_in_required",
+                message=(
+                    "This window was signed in by an earlier start of PersonalClaw. To sign it "
+                    "in again, quit PersonalClaw and open it again."
+                ),
+                status=401,
+            )
+        return web.json_response({"ok": True, "recent_for": PRESENCE_WINDOW_SECS})
+    resp = web.json_response(
+        {"ok": True, "expires_in": ttl, "recent_for": PRESENCE_WINDOW_SECS, "pair": minted.pair}
+    )
     _set_session_cookie(request, resp, minted.token, ttl)
     return resp
 
@@ -606,12 +635,12 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
     # 30 days by default) rather than the 90-day limit: a phone in a drawer should not hold a
     # live session for the longest a credential may last.
     ttl = browser_session_ttl(cfg)
-    token = mint_session(
-        "enrolled-device", ttl, issuer=ISSUER_ENROLL, device=client_of(request)
-    ).token
+    minted = mint_session(
+        "enrolled-device", ttl, issuer=ISSUER_ENROLL, device=client_of(request), bound=True
+    )
     _clear_failures(ip)
-    resp = web.json_response({"ok": True, "expires_in": ttl})
-    _set_session_cookie(request, resp, token, ttl)
+    resp = web.json_response({"ok": True, "expires_in": ttl, "pair": minted.pair})
+    _set_session_cookie(request, resp, minted.token, ttl)
     await sel_log_async(
         _sel().log_api_access,
         caller=ip,
@@ -635,7 +664,10 @@ async def login_page(request: web.Request) -> web.Response:
         raise web.HTTPFound("/")
     # A browser sent here because its session ended still carries that session's cookie; say
     # why it ended above the form, in the words every other surface uses for it.
-    notice = signed_out_notice(request.cookies.get(_cookie_name(request), ""))
+    notice = signed_out_notice(
+        request.cookies.get(_cookie_name(request), ""),
+        user_agent=request.headers.get("User-Agent", ""),
+    )
     notice_block = (
         f"<p class='notice' role='status'>{notice_html(notice.message)}</p>" if notice else ""
     )
@@ -646,15 +678,6 @@ async def login_page(request: web.Request) -> web.Response:
         content_type="text/html",
         headers={"Cache-Control": "no-store"},
     )
-
-
-def has_valid_session(request: web.Request) -> bool:
-    """Whether *request* already carries a valid session (used by the redirect decision)."""
-    token = request.query.get("token") or request.cookies.get(_cookie_name(request), "")
-    if not token:
-        return False
-    valid, _uid, _reason = validate_token(token, use_session_exp=True)
-    return bool(valid)
 
 
 # The form deliberately mirrors the existing 403 gate's visual language (same tokens, same
@@ -722,7 +745,11 @@ document.getElementById('cf').addEventListener('submit', function (ev) {
       return { ok: r.ok, status: r.status, data: d };
     });
   }).then(function (res) {
-    if (res.ok) { window.location.assign(PersonalClawOwnerToken.home()); return; }
+    if (res.ok) {
+      PersonalClawOwnerToken.keepPair(res.data && res.data.pair);
+      window.location.assign(PersonalClawOwnerToken.home());
+      return;
+    }
     var code = (res.data && res.data.error && res.data.error.code) || '';
     err.textContent = MESSAGES[code] || ('Pairing failed (HTTP ' + res.status + ').');
     btn.disabled = false;
@@ -750,7 +777,11 @@ document.getElementById('f').addEventListener('submit', function (ev) {
       return { ok: r.ok, status: r.status, data: d };
     });
   }).then(function (res) {
-    if (res.ok) { window.location.assign(PersonalClawOwnerToken.home()); return; }
+    if (res.ok) {
+      PersonalClawOwnerToken.keepPair(res.data && res.data.pair);
+      window.location.assign(PersonalClawOwnerToken.home());
+      return;
+    }
     // `json_error` emits {"error": {"code", "message"}} (the one wire envelope). Reading
     // `res.data.error` as a bare string made every MESSAGES lookup miss, so this page only ever
     // said "Sign-in failed." and the auth_totp_required branch below could never fire.

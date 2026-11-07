@@ -64,6 +64,7 @@ from unittest import mock
 import pytest
 from aiohttp import ClientConnectionError, ClientSession, WSServerHandshakeError, web
 from aiohttp.test_utils import TestServer
+from browser_sign_in import pair_of
 
 from personalclaw.dashboard import exposure
 from personalclaw.dashboard import origin as origin_mod
@@ -72,6 +73,7 @@ from personalclaw.dashboard import token_auth
 from personalclaw.dashboard import ws as ws_mod
 from personalclaw.dashboard.handlers import core as handlers_core
 from personalclaw.dashboard.origin import build_allowed_origins
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER, bound
 from personalclaw.dashboard.state import DashboardState
 
 PORT = 10000
@@ -273,14 +275,16 @@ def _app() -> tuple[web.Application, list[dict[str, str]]]:
 
 
 def _paired_token(*, device: bool = True) -> str:
-    """A real signed token — issued by PAIRING, or (``device=False``) an ordinary one."""
+    """A real signed token — issued by PAIRING, or (``device=False``) an ordinary browser's
+    sign-in. Both are bound to their pair, as every sign-in a cookie holds is."""
     if not device:
-        return token_auth.generate_token("owner")
+        return token_auth.mint_session("owner", 3600, issuer=ss.ISSUER_LOGIN, bound=True).token
     minted = token_auth.mint_session(
         "owner",
         3600,
         issuer=ss.ISSUER_PAIR,
         device=ss.DeviceInfo(id="dev-1", name="Phone", kind="mobile"),
+        bound=True,
     )
     assert minted.persisted, "the fixture must persist a real paired row"
     return minted.token
@@ -359,6 +363,9 @@ async def _open(rig: _Rig, token: str, *, origin: str | None = None) -> Any:
     a native client has no document and therefore none to send.
     """
     headers = {"Cookie": f"{COOKIE}={token}"}
+    if bound(token):
+        # A paired device's sign-in comes with its pair, which a native client sends as a header.
+        headers[PAIR_HEADER] = pair_of(token)
     if origin is not None:
         headers["Origin"] = origin
     sess = ClientSession()

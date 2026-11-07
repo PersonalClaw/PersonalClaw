@@ -410,6 +410,27 @@ Settings → Updates still checks once when you press it, and `personalclaw upda
 when you run it by hand. This is a separate switch from `updates.auto`: one governs whether
 PersonalClaw *looks*, the other whether it *installs*.
 
+### Upgrading to sign-ins that need more than the cookie
+
+- **Every browser and every paired phone or device signs in again, once.** A browser's sign-in
+  now needs more than its cookie, so the first start of the release that brings this signs out
+  every browser, phone and paired device signed in before it. Sign in again in each browser: open
+  a new link with `personalclaw token`, or sign in with your password. Then pair your phones again
+  from Settings → Devices & Access → Devices, and turn their notifications back on. A token that
+  was never used, or used only by a script whose client names itself in its User-Agent (as curl
+  does), keeps working as a Bearer. Any other token that was used, by a client that sends no
+  User-Agent say, is signed out too: get a new one with `personalclaw token`. Going back to an
+  older release and then upgrading again signs everyone out again, the same way.
+- **A `personalclaw token` link signs a browser in for what is left of its life**, 20 hours at
+  most by default (`--ttl` sets it). Sign in with your password for a longer one.
+- **Reload the browse connector, then pair it again** from Settings → Devices & Access → Devices
+  in that browser, before any other sign-in there.
+- **A copied session cookie opens no data.** By itself it opens only the dashboard's page and its
+  build files ([Security limitations §24](../security/limitations.md#24-a-browsers-sign-in-and-what-still-opens-without-its-page)).
+  A script that sent a browser's cookie is answered 403 `session_required`; send a
+  `personalclaw token` token as `Authorization: Bearer` instead. A
+  `?token=` link opened anywhere but the dashboard opens that one request and signs no browser in.
+
 ### Upgrading from 0.3.0
 
 - **The dashboard API is version 3.** A client that declares version 2

@@ -13,7 +13,7 @@ import { SignedImg } from '../ui/SignedMedia'
 import { downloadFrom } from './download'
 import { resetSignedOutForTests } from './signedOut'
 import { keepPair } from './pair'
-import { SIGN_PATH, bindSignedSource, resetSignedUrlsForTests, signUrl, signUrls, useSignedUrl } from './signedUrl'
+import { MAX_URLS_PER_REQUEST, SIGN_PATH, bindSignedSource, resetSignedUrlsForTests, signUrl, signUrls, useSignedUrl } from './signedUrl'
 
 const A = 'A'.repeat(43)
 const RAW = '/api/artifacts/cat/raw?version=2'
@@ -215,6 +215,18 @@ describe('how the signer asks', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('a new pair asks a gateway that had no signing route again: it may have gained one', async () => {
+    window.localStorage.setItem('pc_pair', A)
+    fetchSpy.mockResolvedValueOnce(json(404, { error: { code: 'not_found', message: 'no' } }))
+    expect(await signUrls([RAW])).toEqual([RAW])
+    expect(await signUrls([RAW])).toEqual([RAW])
+    expect(mintCalls()).toHaveLength(1)
+    fetchSpy.mockImplementation(async (_u: string, init: RequestInit) => signedRows(JSON.parse(String(init.body)).urls))
+    keepPair('B'.repeat(43))
+    expect((await signUrls([RAW]))[0]).toContain('pc_sig=')
+    expect(mintCalls()).toHaveLength(2)
   })
 
   it('the signatures are this sign-in’s: a new pair forgets them', async () => {
@@ -440,5 +452,27 @@ describe('what the signer never asks every second', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('a render that wants more than the route takes in one request sends them 64 at a time', async () => {
+    window.localStorage.setItem('pc_pair', A)
+    fetchSpy.mockImplementation(async (_u: string, init: RequestInit) => {
+      const urls = JSON.parse(String(init.body)).urls as string[]
+      if (urls.length > MAX_URLS_PER_REQUEST) return json(400, { error: { code: 'invalid_request', message: 'too many' } })
+      return signedRows(urls)
+    })
+    const many = Array.from({ length: 130 }, (_, i) => `/api/artifacts/a${i}/raw`)
+    const signed = await signUrls(many)
+    expect(mintCalls().map((c) => JSON.parse(String((c[1] as RequestInit).body)).urls.length)).toEqual([64, 64, 2])
+    expect(signed.every((u, i) => u.startsWith(many[i]) && u.includes('pc_sig='))).toBe(true)
+  })
+
+  it("this origin's absolute URL goes to the mint as its path and query, and comes back signed", async () => {
+    window.localStorage.setItem('pc_pair', A)
+    fetchSpy.mockImplementation(async (_u: string, init: RequestInit) => signedRows(JSON.parse(String(init.body)).urls))
+    const absolute = `${window.location.origin}${RAW}`
+    const [signed] = await signUrls([absolute])
+    expect(JSON.parse(String((mintCalls()[0][1] as RequestInit).body)).urls).toEqual([RAW])
+    expect(signed).toContain('pc_sig=')
   })
 })

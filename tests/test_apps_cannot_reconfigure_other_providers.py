@@ -53,6 +53,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
+from browser_sign_in import browser_token
 from shared_app_rows import (
     RecordedRows,
     Row,
@@ -306,7 +307,7 @@ async def _gateway(routes: list[tuple[str, str, Any]]) -> AsyncIterator[_Provide
     from personalclaw import mcp_client
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
     from personalclaw.dashboard.server import app_permission_middleware
-    from personalclaw.dashboard.token_auth import generate_token, token_auth_middleware
+    from personalclaw.dashboard.token_auth import token_auth_middleware
 
     wire = types.ModuleType(WIRE)
     wire.built = []  # type: ignore[attr-defined]
@@ -329,7 +330,7 @@ async def _gateway(routes: list[tuple[str, str, Any]]) -> AsyncIterator[_Provide
             instance_routes.register_instance_routes(app)
             for method, template, handler in routes:
                 app.router.add_route(method, template, handler)
-            owner = generate_token("owner", ttl_seconds=600)
+            owner = browser_token("owner", 600)
             async with TestClient(TestServer(app), cookie_jar=DummyCookieJar()) as client:
                 yield _ProviderGateway(client, owner, wire, board)
     finally:

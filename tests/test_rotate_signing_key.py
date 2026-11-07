@@ -25,6 +25,7 @@ import time
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from browser_sign_in import browser_headers
 
 from personalclaw.dashboard import session_store, token_auth
 from personalclaw.dashboard.handlers.devices import register_device_routes
@@ -48,7 +49,7 @@ def _isolated(tmp_path, monkeypatch):
 
 
 def _mint(issuer: str = token_auth.ISSUER_LOGIN) -> token_auth.MintedSession:
-    return token_auth.mint_session("owner", 7 * 86400, issuer=issuer)
+    return token_auth.mint_session("owner", 7 * 86400, issuer=issuer, bound=True)
 
 
 async def _client() -> TestClient:
@@ -62,7 +63,8 @@ async def _client() -> TestClient:
 
 
 def _cookie(token: str) -> dict[str, str]:
-    return {"Cookie": f"pc_token_{PORT}={token}"}
+    """What the page holding *token* sends: the cookie and its pair."""
+    return browser_headers(token, port=PORT)
 
 
 # ── the rotation itself ────────────────────────────────────────────────────────

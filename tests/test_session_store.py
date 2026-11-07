@@ -211,9 +211,12 @@ def test_missing_store_reads_as_empty(home):
     assert ss.load_sessions() == {}
 
 
-def test_malformed_store_reads_as_empty_fail_closed(home, caplog):
+@pytest.mark.parametrize(
+    "content", [b"{not json", "{}".encode("utf-16")], ids=["not JSON", "not UTF-8"]
+)
+def test_malformed_store_reads_as_empty_fail_closed(home, caplog, content):
     """An unreadable store must mean "no session", never "accept everything"."""
-    ss.sessions_path().write_text("{not json", encoding="utf-8")
+    ss.sessions_path().write_bytes(content)
     with caplog.at_level("WARNING"):
         assert ss.load_sessions() == {}
 

@@ -24,9 +24,10 @@
  *    refused, and that backs off like any failure);
  *  - a failed request (the network, an answer other than the route's) leaves the URL as it was and
  *    is asked again later, waiting longer after each failure of that URL, a re-sign included;
- *  - a URL the gateway declines to sign is used as it is, and not asked about again;
+ *  - a URL the gateway declines to sign keeps what it had (a signature already held, else the URL
+ *    as it is), and is not asked about again;
  *  - the signatures are this sign-in's: a change of the pair (another sign-in, a sign-out) forgets
- *    them all, and what was declined. */
+ *    them all, what was declined, and that the route was absent. */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { PAIR_CHANGED, pairFetch, storedPair } from './pair'
 
@@ -75,10 +76,13 @@ function subscribe(listener: () => void): () => void {
   return () => { listeners.delete(listener) }
 }
 
+/** A change of the pair is a new sign-in, maybe on a gateway that has since gained the signing
+ *  route: every signature, every decline and the route's absence are forgotten with the old one. */
 function forget(): void {
   cache.clear()
   failures.clear()
   declined.clear()
+  mintAbsent = false
   bump()
 }
 
@@ -115,6 +119,12 @@ function fresh(entry: Signed | undefined, now: number): entry is Signed {
   return !!entry && now < staleAt(entry)
 }
 
+/** *url*'s signature when one is held and still fresh. */
+function freshSignature(url: string): string | undefined {
+  const entry = cache.get(url)
+  return fresh(entry, Date.now() / 1000) ? entry.url : undefined
+}
+
 /** When *entry* is asked for again: at 80% of its life, or at its end when it's the session's last. */
 function staleAt(entry: Signed): number {
   return entry.final ? entry.exp : entry.signedAt + (entry.exp - entry.signedAt) * RESIGN_AT
@@ -129,15 +139,40 @@ function failed(urls: string[]): void {
   for (const url of urls) failures.set(url, (failures.get(url) ?? 0) + 1)
 }
 
+/** The most URLs the signing route takes in one request (`signed_urls.MAX_URLS`). */
+export const MAX_URLS_PER_REQUEST = 64
+
+/** Sign *batch*'s URLs, in requests of at most {@link MAX_URLS_PER_REQUEST} each. */
 async function send(batch: Batch): Promise<void> {
   const urls = [...batch.urls.keys()]
-  if (!signs()) return
+  for (let at = 0; at < urls.length; at += MAX_URLS_PER_REQUEST) {
+    if (!signs()) return
+    await sendPart(batch, urls.slice(at, at + MAX_URLS_PER_REQUEST))
+  }
+}
+
+/** What the mint is sent for *url*: this origin's absolute URL as its path and query, so the answer
+ *  never depends on how a proxy in front of the gateway names the origin. */
+function onTheWire(url: string): string {
+  if (url.startsWith('/') && !url.startsWith('//')) return url
+  try {
+    const u = new URL(url)
+    return u.origin === window.location.origin ? u.pathname + u.search : url
+  } catch {
+    return url
+  }
+}
+
+async function sendPart(batch: Batch, urls: string[]): Promise<void> {
+  // Each URL as the mint is sent it, and the URLs of this part that it stands for.
+  const asked = new Map<string, string[]>()
+  for (const url of urls) asked.set(onTheWire(url), [...(asked.get(onTheWire(url)) ?? []), url])
   let r: Response | null = null
   try {
     r = await pairFetch(SIGN_PATH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-Key': 'dashboard:ui' },
-      body: JSON.stringify({ urls }),
+      body: JSON.stringify({ urls: [...asked.keys()] }),
     })
   } catch {
     r = null
@@ -156,19 +191,21 @@ async function send(batch: Batch): Promise<void> {
   try {
     const rows = ((await r.json()) as { urls?: { url?: unknown; signed?: unknown; exp?: unknown }[] }).urls ?? []
     for (const row of rows) {
-      if (typeof row.url !== 'string' || !batch.urls.has(row.url)) continue
-      answered.add(row.url)
-      failures.delete(row.url)
-      if (typeof row.signed !== 'string' || typeof row.exp !== 'number') {
-        declined.add(row.url)
-        continue
-      }
-      const replaced = batch.urls.get(row.url)
-      const current = cache.get(row.url)
-      if (!replaced || row.exp > replaced.exp) {
-        if (!current || row.exp >= current.exp) cache.set(row.url, { url: row.signed, exp: row.exp, signedAt: now, final: false })
-      } else {
-        cache.set(row.url, { ...(current ?? replaced), final: true })
+      if (typeof row.url !== 'string') continue
+      for (const url of asked.get(row.url) ?? []) {
+        answered.add(url)
+        failures.delete(url)
+        if (typeof row.signed !== 'string' || typeof row.exp !== 'number') {
+          declined.add(url)
+          continue
+        }
+        const replaced = batch.urls.get(url)
+        const current = cache.get(url)
+        if (!replaced || row.exp > replaced.exp) {
+          if (!current || row.exp >= current.exp) cache.set(url, { url: row.signed, exp: row.exp, signedAt: now, final: false })
+        } else {
+          cache.set(url, { ...(current ?? replaced), final: true })
+        }
       }
     }
   } catch {
@@ -226,8 +263,10 @@ function nextAsk(url: string): number | null {
 }
 
 export interface SignedSource {
-  /** The URL to load: *url* as it is without signing, else its signature once the gateway
-   *  answers (`undefined` until then, so the browser never loads a URL a pairing gateway refuses). */
+  /** The URL to load: *url* as it is where nothing signs; else its signature, from the first render
+   *  when a fresh one is held, or once the signer answers (`undefined` until then, so nothing is
+   *  loaded before it answers). After a failed request, or when the gateway declines to sign it,
+   *  a signature already held stays in use; with none held, the URL is used as it is. */
   src: string | undefined
   /** Whether {@link retry} could try anything: something signs here, the URL is the gateway's, the
    *  gateway hasn't declined to sign it, and its one retry isn't used up. Read it in the `error`
@@ -261,7 +300,11 @@ export function useSignedSource(url: string | undefined): SignedSource {
     void run(false)
     return () => { alive = false; if (timer !== undefined) clearTimeout(timer) }
   }, [url, willSign, current])
-  const src = !url ? undefined : !willSign ? url : signed && signed.from === url ? signed.to : undefined
+  // A fresh signature already held is used from the first render, so an element mounted again (a
+  // reply's blocks at the end of its stream, a chat opened again) shows what it showed, at once,
+  // and the signer is asked nothing.
+  const held = url && willSign ? freshSignature(url) : undefined
+  const src = !url ? undefined : !willSign ? url : signed && signed.from === url ? signed.to : held
   const canRetry = () => !!url && signable(url) && signs() && !declined.has(url) && retried.current !== url
   const retry = async (): Promise<boolean> => {
     if (!url || !canRetry()) return false

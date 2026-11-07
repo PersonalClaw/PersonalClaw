@@ -1435,6 +1435,21 @@ What this does not hold:
 agent reads of yours. Connect a shared channel to an agent whose memory and read-only tools you are
 content to have used for them, and answer the calls they ask for yourself.
 
+## 24. A browser's sign-in, and what still opens without its page
+
+A browser's sign-in is bound to a value only the dashboard's own page keeps, and every request on
+it sends that value beside the cookie (`dashboard/sign_in_pair.py`). A resource the browser loads
+by itself is opened by an address the page had signed for that sign-in
+(`dashboard/signed_urls.py`).
+
+What this does not hold:
+
+- **The build files.** The cookie alone opens the dashboard's page and its build files, which hold
+  no data.
+- **A signed address.** A copy of one, beside the cookie, opens that one resource until it expires.
+- **A channel's dashboard link.** The hour-long link a channel hands its owner is a token for that
+  hour: whoever holds it can use it as a Bearer until it ends.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -1464,7 +1479,8 @@ work someone else asked for, for #20; writing each file a restore, an import or 
 and reading each file an export sends, through folders opened without following a link, from the
 home down, for #21; a fence that holds a repository's git settings and hook scripts against the
 agent's shell while git's own commands still record what they must, and one that holds your own
-files on Linux, for #22). This page will
+files on Linux, for #22; a signed address only the page that asked for it can use, and a channel
+link that signs one browser in, for #24). This page will
 shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

@@ -56,12 +56,16 @@ async def _status(headers: dict[str, str], mode: AuthMode = AuthMode.LOCAL_TOKEN
 async def test_a_signed_in_browser_is_told_how_long_its_sign_in_has_left(carrier):
     """🔴 Red on main: `minutes_remaining` was absent for every request."""
     three_days = 3 * 86400
-    minted = token_auth.mint_session("owner", three_days, issuer=token_auth.ISSUER_LOGIN)
+    minted = token_auth.mint_session(
+        "owner", three_days, issuer=token_auth.ISSUER_LOGIN, bound=True
+    )
+    # A browser's sign-in, on either carrier, comes with its pair.
     headers = (
         {"Cookie": f"pc_token_{PORT}={minted.token}"}
         if carrier == "cookie"
         else {"Authorization": f"Bearer {minted.token}"}
     )
+    headers["X-PersonalClaw-Pair"] = minted.pair
     body = await _status(headers)
     assert "minutes_remaining" in body, body
     expected = (minted.expires_at - time.time()) / 60

@@ -7,7 +7,7 @@
  * only answer that offers Regenerate, a model call; any other answer says it can't be shown now.
  * Driven through a stubbed `fetch`, so the wire is what is asserted.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetSignedOutForTests } from '../lib/signedOut'
 import { SIGN_PATH, resetSignedUrlsForTests } from '../lib/signedUrl'
@@ -62,6 +62,67 @@ describe('a chat image that fails, on a gateway that signs nothing', () => {
     fireEvent.error(container.querySelector('img')!)
     expect(await screen.findByText(/This image can’t be shown right now/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Regenerate image/ })).toBeNull()
+  })
+})
+
+describe('a chat image waiting for its signature', () => {
+  // On a gateway that signs it, the image's address is unknown until the signature comes back. The
+  // image is its own element from the first render all the same, with the box it keeps, so a
+  // reopened chat lands where it will stay; and nothing asks for the image before then: no source,
+  // the address nowhere in the page, and no alt text in the meantime.
+  const BOX = ['my-2', 'max-h-[28rem]', 'max-w-full', 'rounded-lg', 'border', 'border-outline-variant/40', 'object-contain']
+  const SIGNED = `${RAW}&pc_exp=1&pc_sig=s`
+
+  it("is the image's own element from the first render, and asks for nothing until it is signed", async () => {
+    window.localStorage.setItem('pc_pair', PAIR)
+    let sign!: (r: Response) => void
+    fetchSpy.mockImplementation((input: RequestInfo | URL) =>
+      String(input) === SIGN_PATH ? new Promise<Response>((r) => { sign = r }) : Promise.resolve(answer(200)))
+    const { container } = render(<Markdown chatSessionKey="dashboard_a-chat">{IMAGE}</Markdown>)
+    const held = container.querySelector('[data-image-pending]')
+    expect(held, "the image's box is in the first layout").not.toBeNull()
+    expect(held!.tagName, "it is the image's own element").toBe('IMG')
+    expect([...held!.classList].sort(), 'the classes of the image it becomes, and no other').toEqual([...BOX].sort())
+    expect(held!.getAttribute('alt'), 'no alt text while it waits').toBe('')
+    expect(held!.textContent).toBe('')
+    expect(container.querySelector('[src], [srcset]'), 'nothing that loads').toBeNull()
+    expect(document.documentElement.outerHTML, 'the address is nowhere in the page while it waits').not.toContain('/api/artifacts/')
+    await waitFor(() => expect(fetchSpy.mock.calls.some((c) => String(c[0]) === SIGN_PATH)).toBe(true))
+    expect(fetchSpy.mock.calls.filter((c) => String(c[0]).includes('/api/artifacts/')), 'the image is not asked for').toHaveLength(0)
+    expect(document.documentElement.outerHTML, 'nor once its signature is asked for').not.toContain('/api/artifacts/')
+    sign(answer(200, { urls: [{ url: RAW, signed: SIGNED, exp: Math.floor(Date.now() / 1000) + 600 }] }))
+    const img = await waitFor(() => {
+      const el = container.querySelector('img[src]')
+      expect(el).not.toBeNull()
+      return el!
+    })
+    expect(img, 'the same element takes its source').toBe(held)
+    expect(img.getAttribute('src')).toBe(SIGNED)
+    expect(img.getAttribute('alt'), 'and its alt').toBe('a cat on a mat')
+    expect([...img.classList].sort()).toEqual([...BOX].sort())
+    expect(img.hasAttribute('data-image-pending')).toBe(false)
+  })
+
+  it('drawn again with a fresh signature held, is signed from its first render, and the signer is not asked again', async () => {
+    window.localStorage.setItem('pc_pair', PAIR)
+    fetchSpy.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input) === SIGN_PATH
+        ? answer(200, { urls: [{ url: RAW, signed: SIGNED, exp: Math.floor(Date.now() / 1000) + 600 }] })
+        : answer(200))
+    const signings = () => fetchSpy.mock.calls.filter((c) => String(c[0]) === SIGN_PATH).length
+    const first = render(<Markdown chatSessionKey="dashboard_a-chat">{IMAGE}</Markdown>)
+    await waitFor(() => expect(first.container.querySelector('img')?.getAttribute('src')).toBe(SIGNED))
+    first.unmount()
+    expect(signings()).toBe(1)
+    // A reply's blocks mount again at the end of its stream: the image they mount is the one shown.
+    const again = render(<Markdown chatSessionKey="dashboard_a-chat">{IMAGE}</Markdown>)
+    const img = again.container.querySelector('img')
+    expect(img?.getAttribute('src'), 'signed from its first render').toBe(SIGNED)
+    expect(img?.getAttribute('alt')).toBe('a cat on a mat')
+    expect(img?.hasAttribute('data-image-pending')).toBe(false)
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(signings(), 'the signer is not asked again').toBe(1)
+    expect(again.container.querySelector('img')?.getAttribute('src')).toBe(SIGNED)
   })
 })
 

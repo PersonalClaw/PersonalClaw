@@ -2,7 +2,8 @@
 
 The published Docker images are a projection of the **same release artifact** as
 every other install path — the gateway image bundles the wheel (with the
-prebuilt dashboard) and the web image bundles the SPA behind an nginx TLS proxy.
+prebuilt dashboard) and the web image is the nginx TLS front that passes every request to the
+gateway.
 There are no per-channel special builds.
 
 This guide covers self-hosted Docker deployments: ports, volumes, the `.env`
@@ -60,7 +61,7 @@ Two services come up:
 | Service | Image | Purpose |
 |---|---|---|
 | `personalclaw-gateway` | `ghcr.io/personalclaw/personalclaw-gateway` | the agent gateway (dashboard API + channels) |
-| `personalclaw-web` | `ghcr.io/personalclaw/personalclaw-web` | nginx TLS/HTTP2 proxy serving the SPA + streaming to the gateway |
+| `personalclaw-web` | `ghcr.io/personalclaw/personalclaw-web` | nginx TLS/HTTP2 front: every request, streams and sockets included, goes to the gateway |
 
 Pin a specific release with `PERSONALCLAW_IMAGE_TAG` in `.env` (defaults to
 `latest`). Build locally instead of pulling by overlaying `compose.build.yaml`:
@@ -156,6 +157,12 @@ Both URLs carry the container's own port (10000). Nothing inside the container c
 which host port you published, so it does not guess: if you mapped a different one
 (`-p 127.0.0.1:8080:10000`), open the URL on that port instead. The command and the
 startup log both say so.
+
+To use the app through the web front, open the same link there: replace
+`http://127.0.0.1:10000` with `https://127.0.0.1:3443`, so it starts
+`https://127.0.0.1:3443/?token=`. The web front passes every page to the gateway, so the sign-in
+happens there and stays with that address. The two addresses share one sign-in cookie, so
+signing in at one signs the other out: pick one, and use it.
 
 ## Owner login (a password instead of a token URL)
 

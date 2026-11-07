@@ -32,6 +32,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
+from browser_sign_in import browser_token, pair_of
 
 from personalclaw.auth import pairing
 from personalclaw.browse import target as bt
@@ -40,6 +41,7 @@ from personalclaw.dashboard import token_auth
 from personalclaw.dashboard.handlers import auth as auth_h
 from personalclaw.dashboard.handlers import browse_connector as bc
 from personalclaw.dashboard.handlers import devices as devices_h
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER
 
 PORT = 10001
 COOKIE = f"pc_token_{PORT}"
@@ -104,8 +106,13 @@ def _client(server: TestServer) -> TestClient:
 
 async def _pair_a_device(owner: TestClient, device: TestClient) -> tuple[str, str]:
     """Mint a code as the owner, redeem it as the device. Returns (device cookie, device id)."""
-    owner_token = token_auth.generate_token("owner", ttl_seconds=3600)
-    started = await owner.post("/api/devices/pair/start", json={}, cookies={COOKIE: owner_token})
+    owner_token = browser_token("owner", 3600)
+    started = await owner.post(
+        "/api/devices/pair/start",
+        json={},
+        cookies={COOKIE: owner_token},
+        headers={PAIR_HEADER: pair_of(owner_token)},
+    )
     assert started.status == 200, await started.text()
     code = (await started.json())["code"]
     done = await device.post(
@@ -132,7 +139,12 @@ async def test_a_paired_device_attaches_as_the_user_browser_connector(_isolated,
 
         assert bt.connector_status().connected is False, "vacuity floor: nothing attached yet"
 
-        attached = await device.post("/api/browse/connector", json={}, cookies={COOKIE: token})
+        attached = await device.post(
+            "/api/browse/connector",
+            json={},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert attached.status == 200, await attached.text()
         assert (await attached.json())["device_id"] == device_id
 
@@ -148,18 +160,29 @@ async def test_the_attached_connector_is_listed_as_a_connected_device(_isolated,
     server = TestServer(_app())
     async with _client(server) as owner, _client(server) as device:
         token, device_id = await _pair_a_device(owner, device)
-        attached = await device.post("/api/browse/connector", json={}, cookies={COOKIE: token})
+        attached = await device.post(
+            "/api/browse/connector",
+            json={},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert attached.status == 200, await attached.text()
 
-        owner_token = token_auth.generate_token("owner", ttl_seconds=3600)
-        listed = await owner.get("/api/devices", cookies={COOKIE: owner_token})
+        owner_token = browser_token("owner", 3600)
+        listed = await owner.get(
+            "/api/devices",
+            cookies={COOKIE: owner_token},
+            headers={PAIR_HEADER: pair_of(owner_token)},
+        )
         assert listed.status == 200
         rows = (await listed.json())["devices"]
         row = next((r for r in rows if r["id"] == device_id), None)
         assert row is not None, "the connector must be a listed device"
         assert row["issuer"] == ss.ISSUER_PAIR, "listed via the shipped pairing, not a fork"
 
-        seen = await device.get("/api/browse/connector", cookies={COOKIE: token})
+        seen = await device.get(
+            "/api/browse/connector", cookies={COOKIE: token}, headers={PAIR_HEADER: pair_of(token)}
+        )
         assert seen.status == 200
         payload = await seen.json()
         assert payload["connected"] is True and payload["device_id"] == device_id
@@ -171,7 +194,12 @@ async def test_the_attached_connector_is_listed_as_a_connected_device(_isolated,
 async def _attached(owner: TestClient, device: TestClient) -> tuple[str, str]:
     """A paired device, attached as the connector. Returns (device cookie, device id)."""
     token, device_id = await _pair_a_device(owner, device)
-    attached = await device.post("/api/browse/connector", json={}, cookies={COOKIE: token})
+    attached = await device.post(
+        "/api/browse/connector",
+        json={},
+        cookies={COOKIE: token},
+        headers={PAIR_HEADER: pair_of(token)},
+    )
     assert attached.status == 200, await attached.text()
     return token, device_id
 
@@ -184,10 +212,17 @@ async def test_attaching_names_no_page(_isolated, enabled) -> None:
     async with _client(server) as owner, _client(server) as device:
         token, device_id = await _pair_a_device(owner, device)
         attached = await device.post(
-            "/api/browse/connector", json={"cdp_url": OWNER_PAGE_URL}, cookies={COOKIE: token}
+            "/api/browse/connector",
+            json={"cdp_url": OWNER_PAGE_URL},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
         )
         assert attached.status == 200, await attached.text()
-        polled = await device.get("/api/browse/connector/tabs", cookies={COOKIE: token})
+        polled = await device.get(
+            "/api/browse/connector/tabs",
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert polled.status == 200, await polled.text()
         assert await polled.json() == {"runs": []}
         assert bt.run_tabs_for(device_id) == []
@@ -202,7 +237,11 @@ async def test_a_run_asks_the_attached_browser_for_a_tab_named_after_its_task(
         token, device_id = await _attached(owner, device)
         tab = bt.request_run_tab(group="Check the lamp prices", device_id=device_id)
         assert tab is not None
-        polled = await device.get("/api/browse/connector/tabs", cookies={COOKIE: token})
+        polled = await device.get(
+            "/api/browse/connector/tabs",
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert await polled.json() == {
             "runs": [
                 {
@@ -222,12 +261,25 @@ async def test_a_browser_that_is_not_the_connector_is_told_which_way(_isolated, 
     async with _client(server) as owner, _client(server) as first, _client(server) as second:
         first_token, _ = await _pair_a_device(owner, first)
         second_token, _ = await _pair_a_device(owner, second)
-        polled = await first.get("/api/browse/connector/tabs", cookies={COOKIE: first_token})
+        polled = await first.get(
+            "/api/browse/connector/tabs",
+            cookies={COOKIE: first_token},
+            headers={PAIR_HEADER: pair_of(first_token)},
+        )
         assert polled.status == 409, await polled.text()
         assert (await polled.json())["error"]["code"] == "browse_connector_not_attached"
 
-        await second.post("/api/browse/connector", json={}, cookies={COOKIE: second_token})
-        polled = await first.get("/api/browse/connector/tabs", cookies={COOKIE: first_token})
+        await second.post(
+            "/api/browse/connector",
+            json={},
+            cookies={COOKIE: second_token},
+            headers={PAIR_HEADER: pair_of(second_token)},
+        )
+        polled = await first.get(
+            "/api/browse/connector/tabs",
+            cookies={COOKIE: first_token},
+            headers={PAIR_HEADER: pair_of(first_token)},
+        )
         assert polled.status == 409, await polled.text()
         assert (await polled.json())["error"]["code"] == "browse_connector_replaced"
 
@@ -241,7 +293,11 @@ async def test_the_switch_turned_off_does_not_detach_the_browser(_isolated, monk
     async with _client(server) as owner, _client(server) as device:
         token, _device_id = await _attached(owner, device)
         assert bt.connector_status().connected is False, "vacuity: the switch reads off"
-        polled = await device.get("/api/browse/connector/tabs", cookies={COOKIE: token})
+        polled = await device.get(
+            "/api/browse/connector/tabs",
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert polled.status == 200, await polled.text()
         assert await polled.json() == {"runs": []}
 
@@ -255,12 +311,22 @@ async def test_the_runs_tab_is_announced_once_and_never_re_pointed(_isolated, en
         token, device_id = await _attached(owner, device)
         tab = bt.request_run_tab(group="Check the lamp prices", device_id=device_id)
         route = f"/api/browse/connector/tabs/{tab.request_id}"
-        announced = await device.post(route, json={"cdp_url": CDP_URL}, cookies={COOKIE: token})
+        announced = await device.post(
+            route,
+            json={"cdp_url": CDP_URL},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert announced.status == 200, await announced.text()
         assert (await announced.json())["state"] == "open"
         assert bt.run_tab(tab.request_id).cdp_url == CDP_URL
 
-        again = await device.post(route, json={"cdp_url": OWNER_PAGE_URL}, cookies={COOKIE: token})
+        again = await device.post(
+            route,
+            json={"cdp_url": OWNER_PAGE_URL},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert again.status == 404, await again.text()
         assert (await again.json())["error"]["code"] == "browse_run_tab_unknown"
         assert bt.run_tab(tab.request_id).cdp_url == CDP_URL, "a second announce re-pointed it"
@@ -275,7 +341,12 @@ async def test_only_the_browser_a_run_asked_may_answer_for_its_tab(_isolated, en
         tab = bt.request_run_tab(group="Check the lamp prices", device_id=device_id)
         route = f"/api/browse/connector/tabs/{tab.request_id}"
         for body in ({"cdp_url": OWNER_PAGE_URL}, {"state": "closed"}):
-            resp = await other.post(route, json=body, cookies={COOKIE: other_token})
+            resp = await other.post(
+                route,
+                json=body,
+                cookies={COOKIE: other_token},
+                headers={PAIR_HEADER: pair_of(other_token)},
+            )
             assert resp.status == 404, await resp.text()
         assert bt.run_tab(tab.request_id).state == "requested"
 
@@ -293,7 +364,12 @@ async def test_a_public_or_non_websocket_page_is_refused_on_the_loopback_rail(
         tab = bt.request_run_tab(group="Check the lamp prices", device_id=device_id)
         route = f"/api/browse/connector/tabs/{tab.request_id}"
         for bad in (PUBLIC_CDP_URL, "http://127.0.0.1:9222/json/version", ""):
-            resp = await device.post(route, json={"cdp_url": bad}, cookies={COOKIE: token})
+            resp = await device.post(
+                route,
+                json={"cdp_url": bad},
+                cookies={COOKIE: token},
+                headers={PAIR_HEADER: pair_of(token)},
+            )
             assert resp.status == 400, await resp.text()
             assert (await resp.json())["error"]["code"] == "browse_connector_endpoint_invalid"
         assert bt.run_tab(tab.request_id).state == "requested", "a refused page was recorded"
@@ -306,13 +382,33 @@ async def test_the_tabs_take_over_and_end_are_reported(_isolated, enabled) -> No
         token, device_id = await _attached(owner, device)
         tab = bt.request_run_tab(group="Check the lamp prices", device_id=device_id)
         route = f"/api/browse/connector/tabs/{tab.request_id}"
-        await device.post(route, json={"cdp_url": CDP_URL}, cookies={COOKIE: token})
+        await device.post(
+            route,
+            json={"cdp_url": CDP_URL},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
 
-        taken = await device.post(route, json={"state": "taken_over"}, cookies={COOKIE: token})
+        taken = await device.post(
+            route,
+            json={"state": "taken_over"},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert taken.status == 200 and (await taken.json())["state"] == "taken_over"
-        closed = await device.post(route, json={"state": "closed"}, cookies={COOKIE: token})
+        closed = await device.post(
+            route,
+            json={"state": "closed"},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert closed.status == 200 and (await closed.json())["state"] == "closed"
-        late = await device.post(route, json={"state": "taken_over"}, cookies={COOKIE: token})
+        late = await device.post(
+            route,
+            json={"state": "taken_over"},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert late.status == 404, "a closed tab cannot be taken over"
         assert bt.run_tab(tab.request_id).state == "closed"
 
@@ -324,9 +420,19 @@ async def test_a_browser_that_cannot_open_the_runs_tab_says_so(_isolated, enable
         token, device_id = await _attached(owner, device)
         tab = bt.request_run_tab(group="Check the lamp prices", device_id=device_id)
         route = f"/api/browse/connector/tabs/{tab.request_id}"
-        said = await device.post(route, json={"state": "unavailable"}, cookies={COOKIE: token})
+        said = await device.post(
+            route,
+            json={"state": "unavailable"},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert said.status == 200 and (await said.json())["state"] == "unavailable"
-        late = await device.post(route, json={"cdp_url": CDP_URL}, cookies={COOKIE: token})
+        late = await device.post(
+            route,
+            json={"cdp_url": CDP_URL},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert late.status == 404, "a tab the browser said it could not open was announced"
 
 
@@ -338,7 +444,9 @@ async def test_a_report_names_a_page_or_one_known_state(_isolated, enabled) -> N
         tab = bt.request_run_tab(group="Check the lamp prices", device_id=device_id)
         route = f"/api/browse/connector/tabs/{tab.request_id}"
         for body in ({}, {"state": "focused"}, {"cdp_url": CDP_URL, "state": "closed"}):
-            resp = await device.post(route, json=body, cookies={COOKIE: token})
+            resp = await device.post(
+                route, json=body, cookies={COOKIE: token}, headers={PAIR_HEADER: pair_of(token)}
+            )
             assert resp.status == 400, (body, await resp.text())
             assert (await resp.json())["error"]["code"] == "browse_run_tab_report_invalid"
         assert bt.run_tab(tab.request_id).state == "requested"
@@ -370,14 +478,23 @@ async def test_a_granted_run_is_bound_to_the_tab_the_browser_opened_for_it(
         waiting = asyncio.create_task(bg.open_run_tab(granted, timeout=5))
         runs: list[dict] = []
         for _ in range(200):
-            polled = await device.get("/api/browse/connector/tabs", cookies={COOKIE: token})
+            polled = await device.get(
+                "/api/browse/connector/tabs",
+                cookies={COOKIE: token},
+                headers={PAIR_HEADER: pair_of(token)},
+            )
             runs = (await polled.json())["runs"]
             if runs:
                 break
             await asyncio.sleep(0.01)
         assert [r["group"] for r in runs] == ["Check the lamp prices"]
         route = f"/api/browse/connector/tabs/{runs[0]['request_id']}"
-        await device.post(route, json={"cdp_url": CDP_URL}, cookies={COOKIE: token})
+        await device.post(
+            route,
+            json={"cdp_url": CDP_URL},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
 
         bound = await waiting
         assert bound.bound_tab == runs[0]["request_id"]
@@ -420,17 +537,27 @@ async def test_an_owner_session_cannot_attach_a_connector(_isolated, enabled) ->
     and nothing is registered — which is what keeps the connector from forking pairing."""
     server = TestServer(_app())
     async with _client(server) as owner:
-        owner_token = token_auth.generate_token("owner", ttl_seconds=3600)
-        resp = await owner.post("/api/browse/connector", json={}, cookies={COOKIE: owner_token})
+        owner_token = browser_token("owner", 3600)
+        resp = await owner.post(
+            "/api/browse/connector",
+            json={},
+            cookies={COOKIE: owner_token},
+            headers={PAIR_HEADER: pair_of(owner_token)},
+        )
         assert resp.status == 403, await resp.text()
         assert (await resp.json())["error"]["code"] == "browse_connector_unpaired"
         assert bt.connector_status().connected is False
         for leg in (
-            owner.get("/api/browse/connector/tabs", cookies={COOKIE: owner_token}),
+            owner.get(
+                "/api/browse/connector/tabs",
+                cookies={COOKIE: owner_token},
+                headers={PAIR_HEADER: pair_of(owner_token)},
+            ),
             owner.post(
                 "/api/browse/connector/tabs/abc",
                 json={"cdp_url": CDP_URL},
                 cookies={COOKIE: owner_token},
+                headers={PAIR_HEADER: pair_of(owner_token)},
             ),
         ):
             refused = await leg
@@ -448,12 +575,19 @@ async def test_detach_clears_the_connector(_isolated, enabled) -> None:
     server = TestServer(_app())
     async with _client(server) as owner, _client(server) as device:
         token, device_id = await _pair_a_device(owner, device)
-        await device.post("/api/browse/connector", json={}, cookies={COOKIE: token})
+        await device.post(
+            "/api/browse/connector",
+            json={},
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token)},
+        )
         assert bt.connector_status().connected is True, "vacuity floor: attached before detach"
         tab = bt.request_run_tab(group="Check the lamp prices", device_id=device_id)
         assert tab is not None
 
-        gone = await device.delete("/api/browse/connector", cookies={COOKIE: token})
+        gone = await device.delete(
+            "/api/browse/connector", cookies={COOKIE: token}, headers={PAIR_HEADER: pair_of(token)}
+        )
         assert gone.status == 200, await gone.text()
         assert bt.connector_status().connected is False, "detach must clear the registry"
         assert bt.run_tab(tab.request_id) is None, "a detached browser holds no run's tab"

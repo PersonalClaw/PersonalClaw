@@ -566,13 +566,13 @@ async def test_proxy_never_forwards_the_sign_in_pair_and_never_passes_back_a_sig
             return False
 
         def request(self, method, url, **kwargs):
-            sent.update(headers=kwargs.get("headers") or {})
+            sent.update(headers=kwargs.get("headers") or {}, url=str(url))
             return _Upstream()
 
     monkeypatch.setattr(aiohttp, "ClientSession", _Session)
     req = make_mocked_request(
         "GET",
-        "/apps/demo/api/things",
+        "/apps/demo/api/things?pc_sig=the-signature&pc_exp=1&keep=1",
         headers={"X-PersonalClaw-Pair": "Q" * 43, "Cookie": "pc_token_10000=owner"},
         match_info={"name": "demo", "tail": "things"},
     )
@@ -581,5 +581,8 @@ async def test_proxy_never_forwards_the_sign_in_pair_and_never_passes_back_a_sig
     assert sent, "the proxy never reached the upstream call"
     assert {k.lower() for k in sent["headers"]}.isdisjoint({"x-personalclaw-pair", "cookie"})
     assert "Q" * 43 not in str(sent["headers"])
+    # A signed address's two keys are the owner's too: the backend gets the rest of the query.
+    assert "pc_sig" not in sent["url"] and "pc_exp" not in sent["url"]
+    assert "keep=1" in sent["url"]
     assert "X-Auth-Required" not in resp.headers
     assert resp.headers.get("X-App") == "kept"

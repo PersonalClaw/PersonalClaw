@@ -37,12 +37,14 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from browser_sign_in import browser_token, pair_of
 
 from personalclaw.auth import pairing
 from personalclaw.dashboard import session_store as ss
 from personalclaw.dashboard import token_auth
 from personalclaw.dashboard.handlers import auth as auth_h
 from personalclaw.dashboard.handlers import devices as devices_h
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER
 
 PORT = 10000
 COOKIE = f"pc_token_{PORT}"
@@ -102,9 +104,12 @@ def _client(server: TestServer) -> TestClient:
 
 async def _pair_a_device(owner: TestClient, device: TestClient, ip: str) -> tuple[str, str]:
     """Mint a code as the owner, redeem it as the device. Returns (device cookie, device id)."""
-    owner_token = token_auth.generate_token("owner", ttl_seconds=3600)
+    owner_token = browser_token("owner", 3600)
     started = await owner.post(
-        "/api/devices/pair/start", json={}, cookies={COOKIE: owner_token}, headers={"X-Real-IP": ip}
+        "/api/devices/pair/start",
+        json={},
+        cookies={COOKIE: owner_token},
+        headers={PAIR_HEADER: pair_of(owner_token), "X-Real-IP": ip},
     )
     assert started.status == 200, await started.text()
     code = (await started.json())["code"]
@@ -135,16 +140,22 @@ async def test_the_ip_check_is_live_on_the_query_param_exchange(_isolated) -> No
     server = TestServer(_app())
     async with _client(server) as owner, _client(server) as device:
         token, _device_id = await _pair_a_device(owner, device, IP_HOME)
-
-        # First query-param use binds the token to the address it arrived from.
-        bound = await device.get(
+        # A paired device's sign-in is a browser's bound one: it never rides the query at all.
+        as_a_link = await device.get(
             "/api/device-probe", params={"token": token}, headers={"X-Real-IP": IP_HOME}
+        )
+        assert as_a_link.status == 403, "a bound sign-in opened as a link"
+        link = token_auth.generate_token("owner", ttl_seconds=3600)
+
+        # First query-param use binds the link to the address it arrived from.
+        bound = await device.get(
+            "/api/device-probe", params={"token": link}, headers={"X-Real-IP": IP_HOME}
         )
         assert bound.status == 200, await bound.text()
 
         # The SAME credential, the same route, one different address.
         moved = await device.get(
-            "/api/device-probe", params={"token": token}, headers={"X-Real-IP": IP_ROAMED}
+            "/api/device-probe", params={"token": link}, headers={"X-Real-IP": IP_ROAMED}
         )
         assert moved.status == 403, "the query-param path must reject a moved token"
         # The refusal says why: this link already signed in another device.
@@ -166,21 +177,19 @@ async def test_a_device_session_roams_between_client_ips(_isolated) -> None:
         token, _device_id = await _pair_a_device(owner, device, IP_HOME)
 
         first = await device.get(
-            "/api/device-probe", cookies={COOKIE: token}, headers={"X-Real-IP": IP_HOME}
+            "/api/device-probe",
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token), "X-Real-IP": IP_HOME},
         )
         assert first.status == 200, await first.text()
         assert (await first.json())["user"] == devices_h.PAIRED_DEVICE_USER
 
-        # Bind the token to IP_HOME through the query path, so the roam below is denied for the
-        # ?token= exchange at the very moment the cookie is accepted. The contrast is the point:
-        # a build that bound cookie sessions too would fail HERE, not in some future refactor.
-        primed = await device.get(
-            "/api/device-probe", params={"token": token}, headers={"X-Real-IP": IP_HOME}
-        )
-        assert primed.status == 200, await primed.text()
-
+        # The address binding is a link's alone (the leg above proves it denies a move), and a
+        # bound sign-in never rides the query, so nothing binds this one to an address.
         roamed = await device.get(
-            "/api/device-probe", cookies={COOKIE: token}, headers={"X-Real-IP": IP_ROAMED}
+            "/api/device-probe",
+            cookies={COOKIE: token},
+            headers={PAIR_HEADER: pair_of(token), "X-Real-IP": IP_ROAMED},
         )
         assert roamed.status == 200, "a device session must ride the cookie, not the address"
         assert (await roamed.json())["user"] == devices_h.PAIRED_DEVICE_USER
@@ -212,7 +221,8 @@ async def test_a_roam_does_not_need_a_token_auth_change(_isolated) -> None:
     payload = json.loads(token_auth._b64url_decode(token.split(".")[0]))
     # Exactly the claim set an owner-token carries — `nonce` is the store handle every session
     # has, not a device claim. An extra key here IS a forbidden second credential type.
-    assert set(payload) == {"sub", "exp", "session_exp", "iat", "nonce"}, "a claim was added"
+    # `pb` binds it to its pair (sign_in_pair.BOUND_CLAIM), as every browser's sign-in is bound.
+    assert set(payload) == {"sub", "exp", "session_exp", "iat", "nonce", "pb"}, "a claim was added"
     assert payload["sub"] == devices_h.PAIRED_DEVICE_USER
     assert device_id not in json.dumps(payload), "the device id must live in the store, not here"
 
@@ -237,22 +247,33 @@ async def test_revoke_refuses_the_devices_next_http_request(_isolated) -> None:
     async with _client(server) as owner, _client(server) as device:
         token, device_id = await _pair_a_device(owner, device, IP_HOME)
 
-        before = await device.get("/api/device-probe", cookies={COOKIE: token})
+        before = await device.get(
+            "/api/device-probe", cookies={COOKIE: token}, headers={PAIR_HEADER: pair_of(token)}
+        )
         assert before.status == 200, "the vacuity floor: the device must be in before it is out"
 
-        owner_token = token_auth.generate_token("owner", ttl_seconds=3600)
+        owner_token = browser_token("owner", 3600)
         revoked = await owner.post(
-            f"/api/devices/{device_id}/revoke", json={}, cookies={COOKIE: owner_token}
+            f"/api/devices/{device_id}/revoke",
+            json={},
+            cookies={COOKIE: owner_token},
+            headers={PAIR_HEADER: pair_of(owner_token)},
         )
         assert revoked.status == 200, await revoked.text()
         assert (await revoked.json())["revoked"] == 1
 
-        after = await device.get("/api/device-probe", cookies={COOKIE: token})
+        after = await device.get(
+            "/api/device-probe", cookies={COOKIE: token}, headers={PAIR_HEADER: pair_of(token)}
+        )
         assert after.status == 403, "the very next request must be refused"
 
         # And the panel the owner is looking at agrees, from the same read the UI performs:
         # the owner's own sign-in is listed, the revoked phone is not.
-        listed = await owner.get("/api/devices", cookies={COOKIE: owner_token})
+        listed = await owner.get(
+            "/api/devices",
+            cookies={COOKIE: owner_token},
+            headers={PAIR_HEADER: pair_of(owner_token)},
+        )
         assert listed.status == 200
         rows = (await listed.json())["devices"]
         assert [row["id"] for row in rows if row["issuer"] == ss.ISSUER_PAIR] == []
@@ -270,10 +291,13 @@ async def test_a_revoked_device_stays_refused_across_a_restart(_isolated) -> Non
     server = TestServer(_app())
     async with _client(server) as owner, _client(server) as device:
         token, device_id = await _pair_a_device(owner, device, IP_HOME)
-        owner_token = token_auth.generate_token("owner", ttl_seconds=3600)
+        owner_token = browser_token("owner", 3600)
         assert (
             await owner.post(
-                f"/api/devices/{device_id}/revoke", json={}, cookies={COOKIE: owner_token}
+                f"/api/devices/{device_id}/revoke",
+                json={},
+                cookies={COOKIE: owner_token},
+                headers={PAIR_HEADER: pair_of(owner_token)},
             )
         ).status == 200
 
@@ -281,5 +305,7 @@ async def test_a_revoked_device_stays_refused_across_a_restart(_isolated) -> Non
         token_auth._state.clear_all()
         token_auth.reset_secret_cache()
 
-        after = await device.get("/api/device-probe", cookies={COOKIE: token})
+        after = await device.get(
+            "/api/device-probe", cookies={COOKIE: token}, headers={PAIR_HEADER: pair_of(token)}
+        )
         assert after.status == 403, "the durable half of the revoke must bite too"

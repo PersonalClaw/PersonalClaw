@@ -76,6 +76,21 @@ def _app() -> web.Application:
     return app
 
 
+def _signed_in_app() -> web.Application:
+    """:func:`_app`'s routes behind the real sign-in check, for a route that acts on the session
+    that authorized its request (logout)."""
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+    app = web.Application(
+        middlewares=[token_auth.token_auth_middleware(port=PORT), request_boundary_middleware()]
+    )
+    app["port"] = PORT
+    app["allowed_origins"] = {"http://localhost:10000"}
+    app.router.add_post("/api/auth/login", auth_h.api_auth_login)
+    app.router.add_post("/api/auth/logout", auth_h.api_auth_logout)
+    return app
+
+
 # ── The happy path, and what the cookie is ────────────────────────────────
 
 
@@ -594,14 +609,16 @@ async def test_logout_revokes_the_session_not_just_the_cookie(_isolated) -> None
     """Clearing the cookie alone leaves the token live for anyone holding a copy."""
     creds.set_password("jordan", GOOD_PASSWORD)
     _enable_login(_isolated)
-    async with TestClient(TestServer(_app())) as client:
+    async with TestClient(TestServer(_signed_in_app())) as client:
         login = await client.post(
             "/api/auth/login", json={"username": "jordan", "password": GOOD_PASSWORD}
         )
         token = login.cookies[f"pc_token_{PORT}"].value
         assert token_auth.validate_token(token, use_session_exp=True)[0] is True
 
-        out = await client.post("/api/auth/logout")
+        # The page sends the pair the sign-in answered with, as on every request.
+        pair = (await login.json())["pair"]
+        out = await client.post("/api/auth/logout", headers={"X-PersonalClaw-Pair": pair})
         assert out.status == 200
         assert (await out.json())["revoked"] is True
 

@@ -21,6 +21,7 @@ interface OwnerToken {
   scrub(): boolean
   connectUrl(raw: string): string
   home(): string
+  keepPair(value: unknown): boolean
 }
 
 declare global {
@@ -110,5 +111,36 @@ describe('home — where a successful sign-in lands', () => {
     expect(T().home()).toBe('/#/projects/p-1')
     history.replaceState(null, '', '/login')
     expect(T().home()).toBe('/')
+  })
+})
+
+describe('keepPair — the sign-in pair a pairing gateway answers with', () => {
+  const PAIR = 'Q'.repeat(43)
+  beforeEach(() => { window.localStorage.clear() })
+
+  it('keeps a pair in this origin\'s storage, where lib/pair.ts reads it, and says it changed', () => {
+    const changed = vi.fn()
+    document.addEventListener('personalclaw:pair-changed', changed)
+    expect(T().keepPair(PAIR)).toBe(true)
+    expect(window.localStorage.getItem('pc_pair')).toBe(PAIR)
+    expect(changed).toHaveBeenCalledTimes(1)
+    document.removeEventListener('personalclaw:pair-changed', changed)
+  })
+
+  it('ignores an answer with no pair, or one without its shape: every other gateway changes nothing', () => {
+    for (const value of [undefined, null, '', 'short', 'Q'.repeat(44), `${'Q'.repeat(42)}!`, 42]) {
+      expect(T().keepPair(value), String(value)).toBe(false)
+    }
+    expect(window.localStorage.getItem('pc_pair')).toBeNull()
+  })
+
+  it('keeps the data-pair a ?token= document carries on the script tag, and removes the attribute', () => {
+    const tag = document.createElement('script')
+    tag.setAttribute('data-pair', PAIR)
+    tag.textContent = SOURCE
+    document.head.appendChild(tag)
+    expect(window.localStorage.getItem('pc_pair')).toBe(PAIR)
+    expect(tag.hasAttribute('data-pair')).toBe(false)
+    tag.remove()
   })
 })

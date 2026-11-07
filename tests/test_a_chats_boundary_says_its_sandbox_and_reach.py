@@ -22,6 +22,7 @@ from collections.abc import Iterator
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from browser_sign_in import browser_headers, browser_token
 
 from personalclaw import sandbox
 from personalclaw.guardrails import policy
@@ -263,7 +264,7 @@ async def test_only_a_signed_in_owner_reaches_it(tmp_path, backend):
     from personalclaw.apps.permissions import ROUTE_AUTHZ, OwnerOnly
     from personalclaw.dashboard.chat import api_chat_boundary
     from personalclaw.dashboard.server import app_permission_middleware
-    from personalclaw.dashboard.token_auth import generate_token, token_auth_middleware
+    from personalclaw.dashboard.token_auth import token_auth_middleware
 
     assert isinstance(ROUTE_AUTHZ["GET /api/chat/boundary"], OwnerOnly)
     reached: list[str] = []
@@ -284,8 +285,8 @@ async def test_only_a_signed_in_owner_reaches_it(tmp_path, backend):
         assert "sandbox" not in await resp.text()
         assert reached == []
 
-        owner = generate_token("owner", ttl_seconds=600)
-        resp = await client.get("/api/chat/boundary", headers={"Cookie": f"pc_token_10000={owner}"})
+        owner = browser_token("owner", 600)
+        resp = await client.get("/api/chat/boundary", headers=browser_headers(owner))
         assert resp.status == 200
         assert reached == ["/api/chat/boundary"]
 

@@ -411,9 +411,13 @@ def _ready_token(lines: "queue.Queue[str]", deadline: float) -> str:
             return str(json.loads(line[len("PERSONALCLAW_READY:") :])["token"])
 
 
-def _get(port: int, path: str, cookie: str = "") -> http.client.HTTPResponse:
+def _get(port: int, path: str, cookie: str = "", pair: str = "") -> http.client.HTTPResponse:
+    """GET *path*, sent as a page holding *cookie* and the pair beside it (``sign_in_pair``)."""
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
-    conn.request("GET", path, headers={"Cookie": cookie} if cookie else {})
+    headers = {"Cookie": cookie} if cookie else {}
+    if pair:
+        headers["X-PersonalClaw-Pair"] = pair
+    conn.request("GET", path, headers=headers)
     response = conn.getresponse()
     response.read()
     conn.close()
@@ -465,13 +469,16 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
     threading.Thread(target=lambda: [lines.put(line) for line in stdout], daemon=True).start()
     try:
         token = _ready_token(lines, time.monotonic() + 45)
-        handshake = _get(port, f"/?token={token}")
+        # The dashboard's own fetch exchange: it signs the browser in without a built page.
+        handshake = _get(port, f"/api/auth/session?token={token}")
         cookie = SimpleCookie(handshake.getheader("Set-Cookie") or "").get(f"pc_token_{port}")
         assert cookie is not None and cookie.value, "the token handshake set no session cookie"
-        session = cookie.value
+        session, pair = cookie.value, handshake.getheader("X-PersonalClaw-Pair") or ""
+        assert pair, "the token handshake handed the page no pair"
+        signed_in = {"cookie": f"pc_token_{port}={session}", "pair": pair}
         for path in ("/api/dashboard/config", "/api/loops", "/api/themes"):
-            assert _get(port, path, cookie=f"pc_token_{port}={session}").status == 200, path
-        _get(port, "/api/dashboard/config", cookie=f"pc_token_{port}=not-{session}")
+            assert _get(port, path, **signed_in).status == 200, path
+        _get(port, "/api/dashboard/config", cookie=f"pc_token_{port}=not-{session}", pair=pair)
         # And what the harness does when a spec finds the gateway unanswering
         # (`askTheGatewayWhereItWaits`): it probes the gateway, sends it nothing, and prints the
         # record, with its log's tail, into the job's log, which is as public as the kept log.
@@ -498,7 +505,7 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
         # first line: one dump of every thread runs longer than that).
         assert re.search(r'File ".*", line \d+, in ', printed), "the printed tail holds no dump"
         assert gateway.poll() is None, f"the gateway ended after the ask ({gateway.poll()})"
-        assert _get(port, "/api/themes", cookie=f"pc_token_{port}={session}").status == 200
+        assert _get(port, "/api/themes", **signed_in).status == 200
     finally:
         os.killpg(gateway.pid, signal.SIGTERM)
         try:
@@ -525,7 +532,7 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
     text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in kept)
     assert STALL_MARK in text, "the watch dumped no stack, so no dump was checked"
     values = {f"the planted {name}": value for name, value in planted.items()}
-    values.update({"the READY token": token, "the session's token": session})
+    values.update({"the READY token": token, "the session's token": session, "its pair": pair})
     leaked = sorted(what for what, value in values.items() if value in text)
     assert leaked == [], f"the kept gateway log holds {leaked} in clear"
     record = (Path(places["outputDir"]) / "gateway-unanswered.txt").read_text(encoding="utf-8")

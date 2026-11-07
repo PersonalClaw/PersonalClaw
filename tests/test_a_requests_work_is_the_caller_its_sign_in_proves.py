@@ -25,10 +25,12 @@ import pytest
 from a_requests_work_is_the_caller_its_sign_in_proves_shared import _header_reads
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from browser_sign_in import browser_token, pair_of
 from chat_test_helpers import _make_state
 
 from personalclaw.dashboard import session_store, token_auth
 from personalclaw.dashboard.memory_write_gate import memory_write_middleware
+from personalclaw.dashboard.sign_in_pair import PAIR_HEADER
 from personalclaw.guardrails import budgets as budgets_mod
 from personalclaw.guardrails.policy import is_unattended_session
 from personalclaw.routing import rates as rates_mod
@@ -91,9 +93,9 @@ def _you() -> tuple[dict[str, str], dict[str, str]]:
 def _the_app() -> tuple[dict[str, str], dict[str, str]]:
     """``(headers, cookies)`` of a request the app makes: your session, narrowed by the app's own
     token, as the app SDK sends every request."""
-    owner = token_auth.generate_token("owner", ttl_seconds=600)
+    owner = browser_token("owner", 600)
     app_token = token_auth.generate_token("owner", ttl_seconds=600, app=APP)
-    return {"Authorization": f"Bearer {app_token}"}, {COOKIE: owner}
+    return {"Authorization": f"Bearer {app_token}", PAIR_HEADER: pair_of(owner)}, {COOKIE: owner}
 
 
 def _personalclaw() -> tuple[dict[str, str], dict[str, str]]:
