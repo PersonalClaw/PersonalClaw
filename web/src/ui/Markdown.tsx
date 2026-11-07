@@ -203,9 +203,14 @@ function InlineArtifactImage({ src, alt, chatSessionKey }: {
       </div>
     )
   }
+  const box = 'my-2 max-h-[28rem] max-w-full rounded-lg border border-outline-variant/40 object-contain'
+  // Until its signature comes back it is this same image element with no source, so the first
+  // layout already has the box it keeps, and a chat reopened at its end stays there. With no source
+  // nothing asks for the image, and its alt waits too, so no alt text or broken-image icon shows.
+  // Once signed, the same element takes its source and its alt.
   return (
-    shown ? <img src={shown} alt={alt} loading="lazy" onError={() => { void onError() }}
-      className="my-2 max-h-[28rem] max-w-full rounded-lg border border-outline-variant/40 object-contain" /> : null
+    <img src={shown} alt={shown ? alt : ''} loading="lazy" data-image-pending={shown ? undefined : ''}
+      onError={shown ? () => { void onError() } : undefined} className={box} />
   )
 }
 

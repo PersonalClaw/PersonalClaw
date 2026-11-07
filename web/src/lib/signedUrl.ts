@@ -24,7 +24,8 @@
  *    refused, and that backs off like any failure);
  *  - a failed request (the network, an answer other than the route's) leaves the URL as it was and
  *    is asked again later, waiting longer after each failure of that URL, a re-sign included;
- *  - a URL the gateway declines to sign is used as it is, and not asked about again;
+ *  - a URL the gateway declines to sign keeps what it had (a signature already held, else the URL
+ *    as it is), and is not asked about again;
  *  - the signatures are this sign-in's: a change of the pair (another sign-in, a sign-out) forgets
  *    them all, what was declined, and that the route was absent. */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -116,6 +117,12 @@ export function signs(): boolean {
 
 function fresh(entry: Signed | undefined, now: number): entry is Signed {
   return !!entry && now < staleAt(entry)
+}
+
+/** *url*'s signature when one is held and still fresh. */
+function freshSignature(url: string): string | undefined {
+  const entry = cache.get(url)
+  return fresh(entry, Date.now() / 1000) ? entry.url : undefined
 }
 
 /** When *entry* is asked for again: at 80% of its life, or at its end when it's the session's last. */
@@ -256,8 +263,10 @@ function nextAsk(url: string): number | null {
 }
 
 export interface SignedSource {
-  /** The URL to load: *url* as it is without signing, else its signature once the gateway
-   *  answers (`undefined` until then, so the browser never loads a URL a pairing gateway refuses). */
+  /** The URL to load: *url* as it is where nothing signs; else its signature, from the first render
+   *  when a fresh one is held, or once the signer answers (`undefined` until then, so nothing is
+   *  loaded before it answers). After a failed request, or when the gateway declines to sign it,
+   *  a signature already held stays in use; with none held, the URL is used as it is. */
   src: string | undefined
   /** Whether {@link retry} could try anything: something signs here, the URL is the gateway's, the
    *  gateway hasn't declined to sign it, and its one retry isn't used up. Read it in the `error`
@@ -291,7 +300,11 @@ export function useSignedSource(url: string | undefined): SignedSource {
     void run(false)
     return () => { alive = false; if (timer !== undefined) clearTimeout(timer) }
   }, [url, willSign, current])
-  const src = !url ? undefined : !willSign ? url : signed && signed.from === url ? signed.to : undefined
+  // A fresh signature already held is used from the first render, so an element mounted again (a
+  // reply's blocks at the end of its stream, a chat opened again) shows what it showed, at once,
+  // and the signer is asked nothing.
+  const held = url && willSign ? freshSignature(url) : undefined
+  const src = !url ? undefined : !willSign ? url : signed && signed.from === url ? signed.to : held
   const canRetry = () => !!url && signable(url) && signs() && !declined.has(url) && retried.current !== url
   const retry = async (): Promise<boolean> => {
     if (!url || !canRetry()) return false
