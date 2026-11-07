@@ -74,10 +74,24 @@ export function scratchGatewayOrExit(home) {
 
 /** Sign a Playwright browser context in, the way the gateway's sign-in link does: `/?token=`
  *  sets the session cookie. Through the context's own request client, which shares its cookies,
- *  so no page is opened (a recording context would record it). */
+ *  so no page is opened (a recording context would record it).
+ *
+ *  A gateway that pairs its sign-ins refuses that cookie without the sign-in's pair, which it
+ *  answers in the `X-PersonalClaw-Pair` header and the page keeps in its origin storage
+ *  (`web/src/lib/pair.ts`). The pair is seeded into that storage for the gateway's own origin
+ *  before any page script runs, so every page the context opens sends it as the app does. A
+ *  gateway that doesn't pair answers none, and nothing is seeded. Returns the pair, or ''. */
 export async function signIn(context, gateway) {
   const answer = await context.request.get(`${gateway.url}/?token=${encodeURIComponent(gateway.token)}`)
   if (!answer.ok()) {
     throw new Refused(`the gateway of ${gateway.home} did not sign this browser in: HTTP ${answer.status()}`)
   }
+  const pair = answer.headers()['x-personalclaw-pair'] || ''
+  if (pair) {
+    await context.addInitScript(([origin, value]) => {
+      if (window.location.origin !== origin) return
+      try { window.localStorage.setItem('pc_pair', value) } catch { /* no storage: the page asks again */ }
+    }, [new URL(gateway.url).origin, pair])
+  }
+  return pair
 }

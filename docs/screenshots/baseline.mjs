@@ -92,7 +92,10 @@ const screens = [
 
 const browser = await chromium.launch()
 const api = await browser.newContext()
-await signIn(api, gateway)
+// This context only calls the gateway's own routes (no page), so the sign-in's pair, which a page
+// would keep in its storage, rides on each of its requests instead.
+const pair = await signIn(api, gateway)
+if (pair) await api.setExtraHTTPHeaders({ 'X-PersonalClaw-Pair': pair })
 
 // ── the three detail routes, each found or made through the product's own routes ────────────────
 
