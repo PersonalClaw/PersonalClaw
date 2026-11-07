@@ -34,11 +34,13 @@ function editorOf(composerRef: RefObject<HTMLElement | null>): HTMLElement | nul
   return composerRef.current?.querySelector<HTMLElement>('.cm-content') ?? null
 }
 
-export function ComposerFold({ folded, onUnfold, composerRef, draft, onType, children }: {
+export function ComposerFold({ folded, onUnfold, composerRef, draft, from, onType, children }: {
   folded: boolean
   onUnfold: () => void
   composerRef: RefObject<HTMLElement | null>
   draft: string
+  /** The draft is the message a widget put here: its frame's title, `''` for an untitled one. */
+  from?: string
   /** Puts a key typed while folded at the end of the draft. */
   onType: (key: string) => void
   children: ReactNode
@@ -75,6 +77,9 @@ export function ComposerFold({ folded, onUnfold, composerRef, draft, onType, chi
 
   const text = draft.trim()
   const preview = text.length > DRAFT_PREVIEW ? `${text.slice(0, DRAFT_PREVIEW).trimEnd()}…` : text
+  const whose = from ? `\u201c${from}\u201d` : 'a widget'
+  const label = !preview ? 'Write a reply'
+    : from !== undefined ? `Continue the message ${whose} put here: ${preview}` : `Continue your draft: ${preview}`
   return (
     <>
       {folded && (
@@ -83,7 +88,7 @@ export function ComposerFold({ folded, onUnfold, composerRef, draft, onType, chi
             title={`Unfold the composer (${bindingLabel('reading-mode')})`}
             className="max-w-full shadow-md">
             <PanelBottomOpen size={14} aria-hidden className="shrink-0 text-on-surface-low" />
-            <span className="truncate text-on-surface-var">{preview ? `Continue your draft: ${preview}` : 'Write a reply'}</span>
+            <span className="truncate text-on-surface-var">{label}</span>
             <kbd aria-hidden className="rounded-md bg-surface-highest px-1.5 py-0.5 font-mono text-on-surface-var text-[0.75rem]">{bindingLabel('reading-mode')}</kbd>
           </Button>
         </span>

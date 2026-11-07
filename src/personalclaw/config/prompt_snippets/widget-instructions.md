@@ -10,7 +10,7 @@ Widgets can send events back to the agent. Add `data-action` and optional `data-
 ```html
 <button data-action="approve" data-payload='{"id":"123"}'>Approve</button>
 ```
-When clicked, the dashboard auto-submits a user message: `[UI] approve: {"id":"123"}`. The agent receives it and can respond with text, a new widget, or both.
+When clicked, the dashboard puts a message in the owner's message box, or asks them first when the widget is not in a chat: `[UI] approve: {"id":"123"}`. It never sends by itself: once the owner sends it, the agent receives it and can respond with text, a new widget, or both.
 
 A widget button runs nothing by itself: its click only comes back to you as that message. When the owner asks for a button that runs something, make it an automation with `automation_create` and `kind: "manual"`: the chat shows it with a Run now button that runs it.
 
@@ -28,7 +28,7 @@ Widgets can send events back to the agent. Add `data-action` and optional `data-
 ```html
 <button data-action="approve" data-payload='{"id":"123"}'>Approve</button>
 ```
-When clicked, the dashboard auto-submits a user message: `[UI] approve: {"id":"123"}`. Form inputs with `name` attributes are auto-collected and merged into the payload as `formData`.
+When clicked, the dashboard puts a message in the owner's message box (or asks them first outside a chat) and never sends it by itself: `[UI] approve: {"id":"123"}`. Form inputs with `name` attributes are auto-collected and merged into the payload as `formData`.
 
 A widget button runs nothing by itself: its click only comes back to you as that message. For a button that runs something, make it an automation with `automation_create` and `kind: "manual"`.
 

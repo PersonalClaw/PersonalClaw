@@ -138,11 +138,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // The composer: the draft and what it carries, the selection, Stop, and `send`, which every region
   // sends through (`chat/composer/useChatComposer`).
   const composer = useChatComposer({
-    sessionId, navigate, seed, initialProjectId, initialAgent, initialTaskMode: taskModeFromQuery(query) ?? 'agent',
+    // A widget's message carried here (`?from_widget=1`, MissingChat), and the nonce of a widget
+    // action the shell staged on the owner's yes (`?widget_action=`).
+    sessionId, navigate, seed, seedFromWidget: query?.from_widget === '1', widgetActionNonce: query?.widget_action || '', initialProjectId, initialAgent, initialTaskMode: taskModeFromQuery(query) ?? 'agent',
     pendingRouting, setRoutingSuggestion, setLiveRun, started, stream,
     followNewTurn: () => followNewTurn(), oweSpokenReply: (sid) => oweSpokenReply(sid),
   })
-  const { adoptDetail, applyTemplate, composerFocused, composerRef, focusComposerSoon, input, memoryMode, notice, quoteToComposer, selection, send, setInput, setSelection } = composer
+  const { adoptDetail, applyTemplate, composerFocused, composerRef, focusComposerSoon, input, memoryMode, notice, quoteToComposer, replaceDraft, selection, send, setInput, setSelection } = composer
   // The task mode in the address (`?mode=`), for what is shown only (`chat/composer/taskModeInUrl`).
   // A new thread the address moves to another mode is set up as one a link opens: in that mode,
   // with approval back to Normal.
@@ -188,7 +190,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const stage = <ChatComposer composer={composer} stream={stream} sessionId={sessionId} started={started} navigate={navigate} onOpenFile={setOpenFile}
     voiceCfg={voiceCfg} speakingTurn={speakingTurn} onBriefAgent={header.briefAgent} onChangeFolder={header.setWorkspaceDir} />
 
-  if (missing) return <MissingChat draft={input} navigate={navigate} />
+  if (missing) return <MissingChat draft={input} fromWidget={composer.draftIsAWidgets} navigate={navigate} />
   // A failed read with nothing painted: say it failed, and let the user retry. (A transcript
   // painted from the fresh cache stays on screen — a failed REVALIDATION of it is not news.)
   if (loadFailure && !started) return (
@@ -265,11 +267,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               </div>
             </>
           ) : !started ? (
-            <ChatHero name={name} stage={stage} onPickStarter={applyTemplate} onPickSuggestion={(s) => setInput(s)} />
+            <ChatHero name={name} stage={stage} onPickStarter={applyTemplate} onPickSuggestion={(s) => replaceDraft(s)} />
           ) : (
             <>
               <Transcript transcript={transcript} stream={stream} sessionId={sessionId} memoryMode={memoryMode} navigate={navigate}
-                onOpenFile={setOpenFile} onQuote={quoteToComposer} onPickFollowup={(t) => { setInput(t); focusComposerSoon() }}
+                onOpenFile={setOpenFile} onQuote={quoteToComposer} onPickFollowup={(t) => { replaceDraft(t); focusComposerSoon() }}
                 send={send} speak={speak} speakingTurn={speakingTurn} mapAudio={mapAudio}
                 liveLine={
                   // A turn whose last frame said how it ended is over, though its stream has not closed.
@@ -304,6 +306,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   />
                 </span>
                 <ComposerFold folded={folded} onUnfold={() => setReading(false)} composerRef={composerRef} draft={input}
+                  from={composer.widgetDraft ? (composer.widgetDraft.frame ?? '') : undefined}
                   onType={(key) => setInput((prev) => prev + key)}>
                   {stage}
                 </ComposerFold>

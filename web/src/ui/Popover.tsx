@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { fvs } from '../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
+import { framesMayHaveMoved } from './framesMayHaveMoved'
 import { overlayEnter } from '../design/motion'
 
 /** Vertical room a menu needs before a side is considered viable. Matches the
@@ -287,7 +288,8 @@ export function Popover({
   }
 
   const flyout = (
-    <AnimatePresence>
+    // A flyout gone from over the page's widget frames: they are coming to rest again.
+    <AnimatePresence onExitComplete={framesMayHaveMoved}>
       {open && (portal ? anchor != null : true) && (
         <motion.div
           ref={menuRef}

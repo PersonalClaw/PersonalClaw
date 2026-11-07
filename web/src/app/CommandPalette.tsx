@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState, useId } from 'react'
 import { useFocusTrap } from '../ui/useFocusTrap'
 import { AnimatePresence, motion } from 'framer-motion'
+import { framesMayHaveMoved } from '../ui/framesMayHaveMoved'
 import { CornerDownLeft, ArrowRight, MessageSquare, Brain, BookOpen, ListChecks, Keyboard } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { overlayEnter } from '../design/motion'
@@ -146,7 +147,8 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
   }
 
   return (
-    <AnimatePresence>
+    // Gone from over the page's widget frames: they are coming to rest under the pointer again.
+    <AnimatePresence onExitComplete={framesMayHaveMoved}>
       {open && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           className="fixed inset-0 z-[var(--z-toast)] flex items-start justify-center px-l pt-[14vh]"

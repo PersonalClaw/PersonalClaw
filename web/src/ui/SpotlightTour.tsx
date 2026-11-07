@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ArrowLeft, ArrowRight, Check, X, type LucideIcon } from 'lucide-react'
+import { framesMayHaveMoved } from './framesMayHaveMoved'
 import { Button } from './Button'
 import { IconButton } from './IconButton'
 import { useFocusTrap } from './useFocusTrap'
@@ -68,6 +69,8 @@ export function SpotlightTour({ steps, index, label, onIndex, onExit }: {
 }) {
   const trapRef = useFocusTrap<HTMLDivElement>()
   const reduce = useReducedMotion()
+  // Gone from over the page's widget frames: they are coming to rest under the pointer again.
+  useEffect(() => () => framesMayHaveMoved(), [])
   const step = steps[index]
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [box, setBox] = useState<Box | null>(null)

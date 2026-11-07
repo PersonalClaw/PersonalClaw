@@ -154,11 +154,18 @@ export interface ComposerProps {
   /** Whether the running turn takes a draft in (Steer) rather than running it after the turn
    *  ends (Queue). Follows the turn the host is showing, never assumed. */
   canSteer?: boolean
-  /** Why a ready draft cannot be sent yet: a file it carries is still uploading. Non-empty → the
-   *  Send button is off and carries this as its reason. Enter still hands the draft to `onSend`,
-   *  so the host refuses it with this same sentence where the user is looking — a key that did
-   *  nothing would explain nothing. A steer into a running turn is not held: it carries no files. */
+  /** Why a ready draft cannot be sent yet: a file it carries is still uploading, or a widget's
+   *  message has just landed in it. Non-empty → the Send button is off and carries this as its
+   *  reason. Enter still hands the draft to `onSend`, so the host refuses it with this same
+   *  sentence where the user is looking — a key that did nothing would explain nothing. A steer
+   *  or a queued message is held too only with `sendHeldEverywhere`. */
   sendHeldReason?: string
+  /** The held reason holds its Send, Steer, Queue and Enter (a widget's message has just
+   *  landed in the draft): Steer and Queue are off and carry it, as Send does. */
+  sendHeldEverywhere?: boolean
+  /** Put words in the draft that are the owner's alone (hands-free's dictation): the host
+   *  replaces the draft with them, so they carry nothing of a widget's. Defaults to onChange. */
+  onReplace?: (value: string) => void
   /** 0–100 context-window usage for the bound session, read in the composer's Context control
    *  (`ContextDisclosure`) and nowhere else until the owner pins it. `undefined` means the backend
    *  reported NO measurement — the control then says why rather than show a fabricated 0%. A

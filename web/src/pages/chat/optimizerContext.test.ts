@@ -10,6 +10,11 @@ describe('buildOptimizerContext', () => {
     expect(ctx).toBe('user: read config.py\nassistant: It sets the port.')
   })
 
+  it('🔴 labels a message that came from a widget as a widget\'s', () => {
+    const ctx = buildOptimizerContext([turn('user', 'Show the view'), { ...turn('user', '[UI] open: {"url":"https://x.example/a"}'), fromWidget: true }])
+    expect(ctx).toBe('user: Show the view\na widget: [UI] open: {"url":"https://x.example/a"}')
+  })
+
   it('orders newest LAST', () => {
     // Deliberately asymmetric: a symmetric fixture passes either orientation, which is
     // how a reversed context ships green.

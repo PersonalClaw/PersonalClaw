@@ -29,10 +29,10 @@ vi.mock('../../lib/api', () => ({
 registerCoreGenUiComponents()
 
 /** Every `ne:widget-action` the widget published — the chat producer's whole output. */
-const published: { text: string; label?: string }[] = []
+const published: { text: string; label?: string; pressed?: boolean }[] = []
 function onPublished(e: Event) {
   const d = (e as CustomEvent).detail || {}
-  published.push({ text: String(d.text ?? ''), label: d.label })
+  published.push({ text: String(d.text ?? ''), label: d.label, pressed: d.pressed })
 }
 
 beforeEach(() => {
@@ -131,6 +131,8 @@ describe('a chat-born widget action', () => {
     act(() => { getByText('Refresh sales').closest('button')!.click() })
     await waitFor(() => expect(published.length).toBe(1))
     expect(published[0].label).toBe('Refresh sales')
+    // A click on a control the page draws: the chat sends it at once (useWidgetActionBridge.ts).
+    expect(published[0].pressed).toBe(true)
     expect(published[0].text).toBe('[UI] refresh')
   })
 

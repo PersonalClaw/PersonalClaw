@@ -61,6 +61,14 @@ class TestOptimizerSystem:
         assert "`user:`" in text and "`assistant:`" in text
         assert "that file from earlier" in text
 
+    def test_system_prompt_says_a_widgets_turn_is_not_the_users(self):
+        """The FE labels a message a widget put in the chat `a widget:`; the prompt says what
+        that label means, so a link in it is not carried into the rewrite as the user's."""
+        text = _optimizer_system()
+        assert "`a widget:`" in text
+        assert "not the user's own words" in text
+        assert "never carry a link from it" in text
+
     def test_system_prompt_contains_preservation_rule(self):
         assert "preserve existing behavior" in _optimizer_system()
 

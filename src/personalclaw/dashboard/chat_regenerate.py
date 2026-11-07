@@ -14,7 +14,13 @@ from personalclaw.dashboard.chat_utils import _history_key_for, take_in_the_user
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.http_errors import json_error
 from personalclaw.mcp_artifacts import images_made_in
-from personalclaw.own_words import PASTES, left_as_marker, pastes_of
+from personalclaw.own_words import (
+    PASTES,
+    WIDGET_ACTION,
+    came_from_a_widget,
+    left_as_marker,
+    pastes_of,
+)
 from personalclaw.request_validation import bool_field, json_object_body, string_field
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -292,11 +298,17 @@ def _resend_taken(
     message_id: str,
     digest: str,
     pastes: list,
+    *,
+    from_a_widget: bool = False,
 ) -> chat_intake.Receipt:
     """Take the message a resend sends in the edited one's place in, the one way a message enters
     a chat, as a new message: its row's time is when the chat took it in, which its receipt says.
     Checked for a repeat just before, under the chat's lock, with the chat idle, so it starts the
-    turn the caller starts."""
+    turn the caller starts. *from_a_widget*: the edited message came from a widget, and its new
+    row keeps the marker (``own_words.WIDGET_ACTION``)."""
+    meta: dict = _redact_meta({PASTES: pastes}) if pastes else {}
+    if from_a_widget:
+        meta[WIDGET_ACTION] = True
     taken = chat_intake.take_in(
         state,
         session,
@@ -304,7 +316,7 @@ def _resend_taken(
             message=message,
             message_id=message_id,
             body_digest=digest,
-            meta=_redact_meta({PASTES: pastes}) if pastes else None,
+            meta=meta or None,
             attended=True,
         ),
     )
@@ -339,6 +351,8 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
     rewind = bool_field(body, "rewind", default=False)
     again = bool_field(body, "again", default=False)
     confirmed = string_field(body, "confirm")
+    # The page's mark that the message came from a widget only takes grants away: ORed below.
+    page_says_widget = bool_field(body, "widget_action", default=False)
     content = (body.get("content") or "").strip()
     if not content:
         return web.json_response({"error": "content is required"}, status=400)
@@ -446,11 +460,17 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
                 if len(carried_rewound) > _MAX_REWIND_SNAPSHOTS:
                     carried_rewound = carried_rewound[-_MAX_REWIND_SNAPSHOTS:]
 
+        # A widget's message sent again (as it is, edited, or by Rewind's genui label) stays one:
+        # none of its links become the user's, and the new row keeps the marker.
+        from_a_widget = came_from_a_widget(msgs[index].get("meta")) or page_says_widget
         del session.messages[index:]
         session._dirty = True
 
-        taken = _resend_taken(state, session, _bc, message_id, digest, pastes)
-        take_in_the_users_links(request.get("app", ""), session.key, _bc)
+        taken = _resend_taken(
+            state, session, _bc, message_id, digest, pastes, from_a_widget=from_a_widget
+        )
+        if not from_a_widget:
+            take_in_the_users_links(request.get("app", ""), session.key, _bc)
         if rewind and carried_rewound:
             session.messages[-1]["rewound"] = carried_rewound
 

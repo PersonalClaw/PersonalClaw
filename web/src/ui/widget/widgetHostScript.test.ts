@@ -1,9 +1,10 @@
-/** The CHILD half of the widget bridge: the human-gesture gate, executed.
+/** The CHILD half of the widget bridge: the click gate, executed.
  *
- *  HOST_SCRIPT runs inside the widget's sandboxed frame, and its `e.isTrusted` check
- *  is the invariant that a widget's OWN script cannot synthesize an action — only a
- *  real human click on a `[data-action]` element may reach the host. Grepping for the
- *  line would not prove it: this file runs the shipped source and asserts the refusal.
+ *  HOST_SCRIPT runs inside the widget's sandboxed frame, and its `e.isTrusted` check stops
+ *  that listener forwarding an untrusted click (a widget's `el.click()`). It does not stop a
+ *  widget's own script posting a message itself, so the parent never sends what a frame
+ *  posts: it puts it in front of the owner (useWidgetActionBridge.ts). Grepping for the line
+ *  would not prove the gate: this file runs the shipped source and asserts the refusal.
  *
  *  jsdom cannot mint a trusted event and `isTrusted` is not redefinable on an instance,
  *  so the fixture captures the click handler the script installs and invokes it with
@@ -11,8 +12,7 @@
  *  `isTrusted: true`, does post. The untrusted leg is additionally driven through the
  *  real dispatch path (`el.click()`), which is exactly what a widget's script has.
  *
- *  The frame's document is the only place this gate can live, which is also why a host
- *  whose child carries no such gate (the react harness) does not opt into action
+ *  A host whose child carries no such gate (the react harness) does not opt into action
  *  forwarding at all — see useWidgetActionBridge.ts. */
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
 import { HOST_SCRIPT_SOURCE } from './widgetSrcdoc'

@@ -32,6 +32,16 @@ describe('resolveSendButton', () => {
     expect(resolveSendButton({ ...base, streaming: true, canQueue: true, canSteer: true, canSend: true, held: true })).toBe('steer')
   })
 
+  it('a hold on every send (a widget\'s message just landed) holds a steer and a queue too', () => {
+    expect(resolveSendButton({ ...base, streaming: true, canQueue: true, canSteer: true, canSend: true, heldAll: true })).toBe('steer-held')
+    expect(resolveSendButton({ ...base, streaming: true, canQueue: true, canSend: true, heldAll: true })).toBe('queue-held')
+    expect(resolveSendButton({ ...base, canSend: true, heldAll: true })).toBe('send-held')
+    expect(sendButtonIsActive('steer-held')).toBe(false)
+    expect(sendButtonIsActive('queue-held')).toBe(false)
+    // With nothing to send, the turn's Stop is still there.
+    expect(resolveSendButton({ ...base, streaming: true, canQueue: true, heldAll: true })).toBe('stop')
+  })
+
   it('just after send → transient sent bloom, inert (smoke: send→ confirmation)', () => {
     // justSent wins over the idle send/disabled choice, and is not clickable.
     expect(resolveSendButton({ ...base, justSent: true })).toBe('sent')

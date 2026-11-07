@@ -136,6 +136,9 @@ export const HOST_SCRIPT_SOURCE = `(function(){
     var el = e.target.closest('[data-action]');
     if (!el) return;
     e.preventDefault();
+    // A real press focuses this frame, even one whose mousedown the widget cancelled: the parent
+    // counts an action only while its frame holds focus.
+    window.focus();
     send(el);
   });
   // 🔴 A FORM SUBMIT USED TO VANISH. The frame is sandboxed \`allow-scripts\` with no
@@ -159,7 +162,7 @@ export const HOST_SCRIPT_SOURCE = `(function(){
     var el = (e.submitter && e.submitter.closest && e.submitter.closest('[data-action]'))
       || (form.matches && form.matches('[data-action]') ? form : null)
       || (form.querySelector && form.querySelector('[data-action]'));
-    if (el) { send(el); return; }
+    if (el) { window.focus(); send(el); return; }
     parent.postMessage({type:'widget-error', message:'This widget cannot submit: a widget sends data with data-action on the button (form submission is blocked in the widget sandbox).'}, '*');
   });
 })();`
@@ -177,10 +180,11 @@ const HOST_SCRIPT = `<script>\n${HOST_SCRIPT_SOURCE}\n<\/script>`
  *     frame cannot forge a `__edit_mode_*` message.
  *   · **A key is a name, not an expression.** Keys are re-validated here even though
  *     the parent validated them, because this is where they become CSS.
- *   · **An annotation is a human gesture.** `e.isTrusted` gates it exactly as it
- *     gates an action — a widget's own script must not be able to mint a correction
- *     directive about itself. While annotating, the click is consumed in the CAPTURE
- *     phase so the action forwarder below never also sees it.
+ *   · **An annotation's click is gated as an action's is.** `e.isTrusted` stops this listener
+ *     forwarding an untrusted click; a widget's own script can still post an annotation
+ *     itself, so the host takes one only in annotate mode, and the correction goes out only
+ *     on the owner's Send. While annotating, the click is consumed in the CAPTURE phase so
+ *     the action forwarder below never also sees it.
  *
  *  Exported as SOURCE so those rules are executed by editModeChildScript.test.ts
  *  rather than grepped for. */

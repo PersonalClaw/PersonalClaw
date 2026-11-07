@@ -1,11 +1,12 @@
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from 'react'
 import { EditorState, Compartment } from '@codemirror/state'
-import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view'
+import { EditorView, highlightSpecialChars, keymap, placeholder as cmPlaceholder } from '@codemirror/view'
 import { markdown } from '@codemirror/lang-markdown'
 import { liveMarkdown, liveMarkdownTheme } from './liveMarkdown'
 import { MentionMenu, type MentionPick } from './MentionMenu'
 import { SlashMenu } from './SlashMenu'
 import { enterKeyAction } from './enterKeyAction'
+import { HIDDEN_CHAR_CLASS } from '../widget/actionTurn'
 
 /** Detect an active `@query` at the caret (word-boundary @, query has no space). */
 function activeMention(value: string, caret: number): { query: string; at: number } | null {
@@ -219,6 +220,10 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
           liveMarkdown,
           liveMarkdownTheme,
           EditorView.lineWrapping,
+          // A zero-width, bidi or other hidden character a pasted or widget-written message
+          // carries shows as a marker instead of reordering or hiding what is sent; the
+          // characters ordinary writing carries stay as they are (`HIDDEN_CHAR_CLASS`).
+          highlightSpecialChars({ addSpecialChars: HIDDEN_CHAR_CLASS }),
           // The accessible name belongs on CM's contenteditable (role=textbox)
           // itself — on the host div (role-less) aria-label is a prohibited
           // attribute and the textbox stays nameless (axe: aria-prohibited-attr

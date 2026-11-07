@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { failureSentence, reportActionFailure } from '../../../app/reportingWrite'
 import { notify } from '../../../app/appSdk'
 import { usePlatform } from '../../../app/usePlatform'
@@ -8,7 +8,7 @@ import { useScreenShare } from '../../../ui/composer/useScreenShare'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../../../ui/composer/displayCapture'
 import { optimizeFailure, optimizeOutcome } from '../../../ui/composer/optimizeOutcome'
 import type { ComposerValue } from '../../../ui/composer/types'
-import { useWidgetActionBridge, takePendingWidgetAction } from '../../../ui/widget/useWidgetActionBridge'
+import { coolWidgetHost, declineWidgetHost, useWidgetActionBridge, takePendingWidgetAction } from '../../../ui/widget/useWidgetActionBridge'
 import { api, ApiError, hasApiCode, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type DiscoveredAgent, type MemoryMode, type SessionTemplate } from '../../../lib/api'
 import { idleRunState } from '../../../lib/workPhase'
 import { rewindPreviewText } from '../../../lib/rewindPreview'
@@ -20,7 +20,7 @@ import { buildOptimizerContext } from '../optimizerContext'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, pruneBlocks, asSent, takeIn } from '../pasteBlocks'
 import type { TurnPaste } from '../PasteChip'
 import type { RoutingSuggestion } from '../RoutingChip'
-import { type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText, withSent, runningTurnId } from '../chatTypes'
+import { type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText, withSent, runningTurnId, WIDGET_SAID } from '../chatTypes'
 import { isMessageId, newMessageId } from '../../../lib/messageIds'
 import { readCachedDetail, writeCachedDetail, type ChatDetail, type ChatStream } from '../useChatStream'
 import { contextReport } from '../../../ui/composer/ContextDisclosure'
@@ -93,11 +93,70 @@ function endedMeanwhile(e: unknown): undefined {
   throw e
 }
 
-export function useChatComposer({ sessionId, navigate, seed, initialProjectId, initialAgent, initialTaskMode = 'agent', pendingRouting, setRoutingSuggestion, setLiveRun, started, stream, followNewTurn, oweSpokenReply }: {
+/** A message a widget put in the composer, or offered to: the text it put there, and the frame
+ *  it came from (its page-assigned mount id, which a "no" is kept by, and its title). */
+export interface WidgetDraft {
+  /** The frame's own text, as it put it. */
+  text: string
+  host?: string
+  frame?: string
+  /** It replaced the frame's own earlier message, still unedited. */
+  replaced?: boolean
+  /** The owner's own words the draft held before the frame's message was added after them:
+   *  never the frame's, so a later post of the frame's never replaces them and its × gives
+   *  them back. Only ever taken from a draft that held no widget's words. */
+  own?: string
+  /** The widget's message the draft already held when this one joined it (an Add, a queued
+   *  Edit or a quote): the × puts it back, still marked, rather than unmarking its words. */
+  prev?: WidgetDraft
+  /** A quote of a widget's words, not a frame's message: no frame to name or decline. */
+  quoted?: boolean
+  /** The widget's words and the owner's can't be told apart in the draft any more: it stays
+   *  marked until the owner empties or replaces it. */
+  mixed?: boolean
+}
+
+/** What a draft that already holds *d*'s mark carries when more widget text joins it: the
+ *  owner's recorded part, and the earlier mark to put back. From an unmarked draft, its text
+ *  is the owner's part. */
+function joining(d: { text: string; widget: WidgetDraft | null }): Pick<WidgetDraft, 'own' | 'prev'> {
+  if (d.widget) return { own: d.widget.own, prev: d.widget }
+  return { own: d.text.trim() ? d.text : undefined }
+}
+
+/** A draft that holds the owner's part, then the frame's message after it. */
+function joined(own: string | undefined, text: string): string {
+  return own?.trim() ? `${own.trimEnd()}\n\n${text}` : text
+}
+
+/** A composer the owner used this recently is theirs: a widget's message waits as a chip. */
+const OWNER_INPUT_GAP_MS = 2000
+/** After a widget fills the composer, its Send, Steer, Queue and Enter are held this long,
+ *  unless the owner edits the draft or presses in the editor first. */
+const FILL_ARM_MS = 1000
+/** What the held Send says while a widget's message has just landed. */
+export const FILL_HOLD = 'Read the message the widget put here first'
+/** What the notice line says when the × took a widget's message out, but the owner's part before
+ *  it has changed since, so what is left can't be told apart from it. */
+export const PART_CHANGED_NOTICE = 'Your part changed, so what is left stays marked: none of its links count as yours. Delete all of it to start your own.'
+/** Why a goal loop won't start from a draft that holds a widget's words. */
+export const GOAL_REFUSAL = 'A goal loop takes its task as yours: take the widget\u2019s words out first.'
+/** The same, for a draft whose words can't be told apart from the widget's (it has no ×). */
+const GOAL_REFUSAL_MIXED = 'A goal loop takes its task as yours. Delete all of the draft first: its words can\u2019t be told apart from the widget\u2019s.'
+/** What the notice line says when a draft's words can't be told apart from a widget's. */
+export const MIXED_NOTICE = 'The widget\u2019s words and yours are mixed in this draft, so it stays marked: none of its links count as yours. Delete all of it to start your own.'
+
+export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = false, widgetActionNonce = '', initialProjectId, initialAgent, initialTaskMode = 'agent', pendingRouting, setRoutingSuggestion, setLiveRun, started, stream, followNewTurn, oweSpokenReply }: {
   sessionId: string | null
   navigate: (p: string, opts?: { replace?: boolean }) => void
   /** The draft a launch pre-fills (`?seed=`). */
   seed: string
+  /** The seed is a widget's message carried over (`?from_widget=1`, MissingChat): what is sent
+   *  from it says so. */
+  seedFromWidget?: boolean
+  /** The nonce of a widget action the shell staged on the owner's yes (`?widget_action=`):
+   *  this mount drains that stage and sends it. */
+  widgetActionNonce?: string
   /** The project a launch scopes the new chat to (`?project=`). */
   initialProjectId: string
   /** The agent a launch picks (`?agent=`). */
@@ -126,7 +185,49 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   // session starts (project_id is fixed at create, like memory mode).
   const [projectId, setProjectId] = useSyncedDraft(initialProjectId)
 
-  const [input, setInput] = useState(seed)
+  // The draft and where it came from, as ONE state. `widget` is set when a widget put the text
+  // here (or the draft carries a widget's message back): whatever is sent from it says so
+  // (`widget_action`), edited or not. It is cleared only with the text — by the owner's own edit
+  // that empties the draft, or by send's own clears — in the same update, so no effect can run
+  // between a widget's offer and the text it set.
+  const [draft, setDraft] = useState<{ text: string; widget: WidgetDraft | null }>(
+    // Carried over from a missing chat, whose draft held a widget's words: which of them are the
+    // owner's isn't carried, so the × can't take any out (it says why).
+    () => ({ text: seed, widget: seedFromWidget && seed.trim() ? { text: seed, mixed: true } : null }),
+  )
+  const input = draft.text
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  /** Change the draft's text; where it came from goes only if the text is gone. */
+  const setInput = useCallback((v: string | ((cur: string) => string)) => {
+    setDraft((d) => {
+      const text = typeof v === 'function' ? v(d.text) : v
+      return text === d.text ? d : { text, widget: text.trim() ? d.widget : null }
+    })
+  }, [])
+  // When the owner last typed in the composer or sent: a widget's message never lands in a
+  // composer they used a moment ago, and the arming after a fill ends at their own edit.
+  const ownerInputAt = useRef(Number.NEGATIVE_INFINITY)
+  // A widget's message just landed: its Send, Steer, Queue and Enter are held FILL_ARM_MS, said
+  // on the held Send, Steer and Queue (`fillHold`). Only the timer, the owner's edit or a press
+  // in the editor ends it, never a press on one of those buttons.
+  const [fillHeld, setFillHeld] = useState(false)
+  const fillHeldRef = useRef(false)
+  const fillTimer = useRef<number | undefined>(undefined)
+  const endFillHold = useCallback(() => {
+    window.clearTimeout(fillTimer.current)
+    if (!fillHeldRef.current) return
+    fillHeldRef.current = false
+    setFillHeld(false)
+  }, [])
+  useEffect(() => () => window.clearTimeout(fillTimer.current), [])
+  // Held only while the draft still holds the widget's message.
+  const fillHold = fillHeld && draft.widget !== null ? FILL_HOLD : ''
+  // A widget's message the owner has not taken yet: shown as a chip, filled only on Add.
+  const [widgetSuggestion, setWidgetSuggestion] = useState<WidgetDraft | null>(null)
+  // The message ids of what this composer sent from a widget: a queued one given back to the
+  // draft by Edit keeps the marker.
+  const widgetSentIds = useRef(new Set<string>())
   const [composerFocused, setComposerFocused] = useState(false)
   const [promptPaletteOpen, setPromptPaletteOpen] = useState(false)
   // Bumped to open the model / agent / effort / project pickers for the "/model",
@@ -205,10 +306,24 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   const [optimizing, setOptimizing] = useState(false)
   // the draft as it was just before an optimize-prompt rewrite, so the user can
   // revert if they don't like the optimized version (otherwise it's lost).
-  const [preOptimize, setPreOptimize] = useState<string | null>(null)
+  // It keeps the draft's mark with it, and the rewrite it was replaced by: only a send of that
+  // rewrite carries the saved words as its original, and a widget's words sent that way still say
+  // whose they are.
+  const [preOptimize, setPreOptimize] = useState<{ text: string; widget: WidgetDraft | null; optimized: string } | null>(null)
+  /** Whether the draft is a widget's: it holds a widget's mark, or it is an Optimize's rewrite of
+   *  a widget's message, untouched since. Every send of the draft, and every way it leaves the
+   *  composer, reads this one rule. */
+  const draftIsAWidgets = draft.widget !== null || (preOptimize?.widget != null && input.trim() === preOptimize.optimized.trim())
   // The line above the composer that says what failed (it stays until dismissed, or until the
   // next send) or what just happened (it clears on its own): `ui/composer/ComposerNotice`.
   const notice = useComposerNotice()
+  /** The line as it stands now, for a step that lands after an await. */
+  const noticeRef = useRef(notice.notice)
+  noticeRef.current = notice.notice
+  // The fill hold's reason on the notice line goes when the hold does: its timer, the owner's
+  // edit or press, or the draft no longer holding the widget's message.
+  const { clear: clearNotice } = notice
+  useEffect(() => { if (!fillHold) clearNotice('widget-hold') }, [fillHold, clearNotice])
   // Screen context. The HOST owns the display stream because it
   // also owns the header chip that must stay lit for the stream's whole life — a
   // composer-local stream could not keep a header indicator honest. Errors ride the
@@ -273,21 +388,158 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Widget action bridge: an interactive `<widget>` button posts widget-action, the
-  // frame validates + republishes it, and this conversation sends it as the next
-  // turn. Claiming the bridge here is what keeps a chat-born action in THIS session
+  // Widget action bridge. Claiming it here is what keeps a chat-born action in THIS session
   // rather than falling through to the shell's launcher.
-  // `meta.label` is the genui dual payload's `humanFriendlyMessage`: the bubble
-  // shows THAT, the model receives `text`. Absent for a raw-HTML widget, whose turn
-  // text is its own visible text.
-  useWidgetActionBridge((text, meta) => { void send(text, { uiLabel: meta.label }) })
+  //   · pressed in the page (a genui button or form, the correction rail's Send): the press was
+  //     the owner's, so it is sent as the next turn. `meta.label` is the genui dual payload's
+  //     `humanFriendlyMessage`: the bubble shows THAT, the model receives `text`;
+  //   · raised by a frame (an interactive `<widget>`): put in an idle composer when the owner
+  //     gave that frame its focus, else offered as a chip they can Add; unsent either way.
+  //     Nothing a frame's own document does can stand for the owner's press, so their Send is
+  //     the only thing that sends it. A draft of theirs is never replaced by one.
+  // Either way the turn says it came from a widget (`widget_action`), and the gateway takes
+  // none of its links as the owner's own.
+  useWidgetActionBridge({
+    // Why a post the owner made in a widget did nothing (turned down, or a moment after an
+    // answer), said where they look.
+    // An error on the line (a held send's reason, a failed send) stays: this is only news, and
+    // the frame may say it again once the error is gone.
+    told: (said) => {
+      if (notice.notice?.tone === 'error') return false
+      notice.showInfo(said)
+      return true
+    },
+    send: (text, meta) => { void send(text, { uiLabel: meta.label, widgetAction: true }) },
+    offer: (text, meta) => {
+      const offered: WidgetDraft = { text, host: meta.host, frame: meta.frame }
+      // A frame whose focus the owner didn't give it (they didn't click, tap or Tab into it, as
+      // the page reads it) only offers: its message waits as a chip, never fills the composer.
+      if (!meta.earned) { setWidgetSuggestion(offered); return }
+      const d = draftRef.current
+      // The frame's own earlier message, still as it put it and with no words of the owner's
+      // beside it: this one replaces it.
+      if (d.widget?.host && d.widget.host === meta.host && !d.widget.own && d.text === d.widget.text) {
+        fillWithWidget({ ...offered, replaced: true })
+        return
+      }
+      // A composer the owner is using is theirs: the message waits as a chip they can Add.
+      if (composerInUse()) { setWidgetSuggestion(offered); return }
+      fillWithWidget(offered)
+    },
+  })
+
+  /** Whether the owner is using the composer: it holds focus or anything of a draft, or they
+   *  typed or sent in the last {@link OWNER_INPUT_GAP_MS}. */
+  function composerInUse(): boolean {
+    const active = document.activeElement
+    if (active && composerRef.current?.contains(active)) return true
+    if (draftRef.current.text.trim() || pasteBlocks.length || attachedPaths.length) return true
+    if (mentionedFiles.length || mentionedKnowledge.length || mentionedArtifacts.length) return true
+    // A file still uploading, or a capture waiting for its crop, is a draft under way too.
+    if (uploads.length > 0 || snip !== null) return true
+    return Date.now() - ownerInputAt.current < OWNER_INPUT_GAP_MS
+  }
+
+  /** Put a widget's message in the composer (after the owner's part, if any), unsent, and hold
+   *  its Send, Steer, Queue and Enter a moment so a reflexive Enter or press does not send it. */
+  function fillWithWidget(w: WidgetDraft, base = ''): void {
+    setDraft({ text: joined(base, w.text), widget: w })
+    setWidgetSuggestion(null)
+    window.clearTimeout(fillTimer.current)
+    fillHeldRef.current = true
+    setFillHeld(true)
+    fillTimer.current = window.setTimeout(endFillHold, FILL_ARM_MS)
+  }
+
+  /** Replace the draft with words that are not a widget's (a picked suggestion, follow-up or
+   *  starter, a spoken message): it holds no widget's message after. */
+  const replaceDraft = useCallback((text: string) => { setDraft({ text, widget: null }) }, [])
+
+  /** The owner's own edit of the draft: it ends a fill's arming, and one that empties a widget's
+   *  message is their no to that frame. */
+  const editInput = useCallback((v: string) => {
+    ownerInputAt.current = Date.now()
+    endFillHold()
+    const d = draftRef.current
+    if (d.widget && !v.trim()) declineWidgetHost(d.widget.host)
+    setDraft((cur) => ({ text: v, widget: v.trim() ? cur.widget : null }))
+  }, [endFillHold])
+
+  /** A press in the composer's editor ends a fill's hold (ChatComposer calls it for a pointerdown
+   *  inside the editor only: a press on Send, Steer or Queue is not one). */
+  const touchComposer = useCallback(() => { endFillHold() }, [endFillHold])
+
+  /** Add the waiting widget message: into an empty draft, or after the owner's own. */
+  function addWidgetSuggestion(): void {
+    const w = widgetSuggestion
+    if (!w) return
+    const d = draftRef.current
+    // Add is the owner's answer to that frame: its next message waits a moment.
+    coolWidgetHost(w.host)
+    fillWithWidget({ ...w, ...joining(d) }, d.text)
+  }
+
+  /** Dismiss the waiting widget message: the owner's no to that frame. */
+  function dismissWidgetSuggestion(): void {
+    declineWidgetHost(widgetSuggestion?.host)
+    setWidgetSuggestion(null)
+  }
+
+  /** Take the widget's message out of the draft (the × on its chip): the owner's no to its frame,
+   *  which the notice line says. Its text comes out where it still is as the frame put it (its
+   *  last occurrence: it was added last). What is left comes back:
+   *  - nothing: an empty draft, unmarked;
+   *  - an earlier widget's message it joined: put back, still marked;
+   *  - the owner's recorded part and anything after the frame's text, which only they wrote:
+   *    unmarked;
+   *  - an owner's part since changed: marked, and the line says why.
+   *  Where the frame's text was edited past finding (or is an Optimize's rewrite), the draft stays
+   *  as it is, still marked, and the line says why. */
+  function clearWidgetDraft(): void {
+    const d = draftRef.current
+    const w = d.widget
+    if (!w) return
+    declineWidgetHost(w.host)
+    // The × is the owner's no to that frame: its later messages go nowhere, and the line says so,
+    // with why the draft stays marked where it does, as one line.
+    const no = w.host && !w.quoted ? `${w.frame ? `\u201c${w.frame}\u201d` : 'The widget'} is turned down while this chat is open.` : ''
+    const say = (more = '') => { const line = [no, more].filter(Boolean).join(' '); if (line) notice.showInfo(line) }
+    const at = w.text && !w.mixed ? d.text.lastIndexOf(w.text) : -1
+    if (at < 0) {
+      setDraft({ text: d.text, widget: { ...w, mixed: true } })
+      say(MIXED_NOTICE)
+      return
+    }
+    endFillHold()
+    const rest = (d.text.slice(0, at) + d.text.slice(at + w.text.length)).replace(/\n{3,}/g, '\n\n').trim()
+    // Nothing left: the next words are the owner's.
+    if (!rest) { setDraft({ text: '', widget: null }); say(); return }
+    if (w.prev) { setDraft({ text: rest, widget: w.prev }); say(); return }
+    // What is left is the owner's recorded part, and anything after the frame's text, which only
+    // they wrote there (a widget's words joining after would have been marked as their own).
+    if (d.text.slice(0, at).trim() === (w.own ?? '').trim()) { setDraft({ text: rest, widget: null }); say(); return }
+    setDraft({ text: rest, widget: { text: '', own: w.own, mixed: true } })
+    say(PART_CHANGED_NOTICE)
+  }
+
+  /** Give a queued message back to the draft (its Edit), marked when it came from a widget: the
+   *  gateway says so (*queuedFromWidget*), or this composer sent it from one. */
+  function takeBackQueued(back: string, messageId?: string, queuedFromWidget = false): void {
+    const fromWidget = queuedFromWidget || (!!messageId && widgetSentIds.current.has(messageId))
+    setDraft((d) => ({
+      text: joined(d.text, back),
+      // The owner's draft before it stays theirs, apart from the widget's message after it; a
+      // widget's message it already held stays marked under it.
+      widget: fromWidget ? { text: back, ...joining(d) } : d.widget,
+    }))
+  }
 
   // A widget action raised from a NON-chat host (artifact-library preview, dashboard
-  // tile band) staged its `[UI]` text and navigated here through `ne:launch-chat`.
-  // Drain it once and send — the action's whole point is that it lands as a turn.
+  // tile band) was staged by the owner's press — in the page, or on the shell's ask — and
+  // navigated here through `ne:launch-chat`. Drain it once and send it.
   useEffect(() => {
-    const pending = takePendingWidgetAction()
-    if (pending) void send(pending.text, { uiLabel: pending.label })
+    const pending = takePendingWidgetAction(widgetActionNonce)
+    if (pending) void send(pending.text, { uiLabel: pending.label, widgetAction: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -371,7 +623,10 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   // `/compact` and any other command fall through to the backend, which either
   // handles them server-side (e.g. compaction) or dispatches to the native
   // harness. Returns true when handled client-side so send() stops.
-  function handleSlashCommand(t: string): boolean {
+  function handleSlashCommand(t: string, fromWidget = false): boolean {
+    // A turn the page writes for the command is still the words it was sent with: a widget's,
+    // when they were.
+    const said = () => ({ ...userTurn(t), ...(fromWidget ? { fromWidget } : {}) })
     if (!t.startsWith('/')) return false
     const [cmd, ...rest] = t.split(/\s+/)
     const arg = rest.join(' ').trim()
@@ -395,9 +650,9 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
         // A goal loop is a thread of its own (#3824): a new chat hands its draft to the loop composer,
         // which drafts and plans it as ever. A started chat is already its own thread, so it says
         // where a goal loop starts instead of sending the text to the model.
-        setInput('')
         if (started) {
-          setTurns((prev) => [...prev, userTurn(t), assistantTurn(GOAL_FROM_A_NEW_THREAD)])
+          setInput('')
+          setTurns((prev) => [...prev, said(), assistantTurn(GOAL_FROM_A_NEW_THREAD)])
           return true
         }
         startGoalLoop(arg)
@@ -410,12 +665,12 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
         return true
       case '/help':
         setInput('')
-        setTurns((prev) => [...prev, userTurn(t), assistantTurn(SLASH_HELP)])
+        setTurns((prev) => [...prev, said(), assistantTurn(SLASH_HELP)])
         return true
       case '/context':
         // The same rows the Context control lists, from the same reading, so the two agree.
         setInput('')
-        setTurns((prev) => [...prev, userTurn(t), assistantTurn(contextReport({ pct: stream.contextPct, window: stream.contextWindow, parts: stream.contextParts }))])
+        setTurns((prev) => [...prev, said(), assistantTurn(contextReport({ pct: stream.contextPct, window: stream.contextWindow, parts: stream.contextParts }))])
         return true
       default:
         return false
@@ -435,10 +690,29 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
 
   async function send(
     text = input,
-    opts?: { original?: string; inputOrigin?: string; uiLabel?: string },
+    opts?: { original?: string; inputOrigin?: string; uiLabel?: string; widgetAction?: boolean },
   ) {
     const t = text.trim()
     if (!t) return
+    // A turn that came from a widget: pressed in the page, or the draft itself sent while it holds
+    // a widget's message (read from the same state as the draft's text). Another send made while
+    // the draft holds one (a follow-up, Check this work, /compact) is not that draft.
+    // A spoken message (hands-free) is the owner's words, never the draft's own send.
+    const ownDraft = text === input && opts?.inputOrigin !== 'voice'
+    // The draft's own send of an Optimize's rewrite, untouched since: the only send whose original
+    // is the saved draft. A widget's words the rewrite was made from make it a widget's turn too.
+    const fromRewrite = ownDraft && preOptimize !== null && t === preOptimize.optimized.trim()
+    const fromWidget = opts?.widgetAction === true || (ownDraft && draftIsAWidgets)
+    // A widget filled the composer a moment ago and the owner has not edited it or pressed in it
+    // since: an Enter, Send, Steer or Queue now is a reflex, not their decision.
+    if (ownDraft && draft.widget && fillHeldRef.current) {
+      // Said where the owner is looking, as an upload's hold is.
+      notice.showError(FILL_HOLD, 'widget-hold')
+      return
+    }
+    // Sending a widget's draft is the owner's answer to that frame: its next message waits.
+    if (ownDraft && draft.widget) coolWidgetHost(draft.widget.host)
+    ownerInputAt.current = Date.now()
     // Sending dismisses any follow-up chips from the prior turn and
     // clears a pending routing suggestion — the moment passed.
     if (followups.length) setFollowups([])
@@ -460,7 +734,7 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       if (m) {
         const prompt = (m[1] ?? '').trim()
         setInput('')
-        if (prompt) void optimizeAndSend(prompt)
+        if (prompt) void optimizeAndSend(prompt, fromWidget)
         return
       }
       // /undo [N] — roll back the last N conversation turns (default 1). Async (hits the
@@ -484,11 +758,11 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       }
     }
     // GUI-affordance slash commands run instantly and never hit the model.
-    if (!isStreaming && handleSlashCommand(t)) return
+    if (!isStreaming && handleSlashCommand(t, fromWidget)) return
     // Optimize provenance: if this send carries an explicit `original` (from
     // /optimize), use it; otherwise the Sparkles preview path leaves the optimized
     // text in the input with `preOptimize` holding what the user first typed.
-    const original = opts?.original ?? (preOptimize !== null && preOptimize.trim() !== t ? preOptimize.trim() : undefined)
+    const original = opts?.original ?? (fromRewrite && preOptimize.text.trim() !== t ? preOptimize.text.trim() : undefined)
     // Her message as it leaves the page, whichever way it goes from here (a steer, a queued send,
     // a send): `llmText` holds each block she pasted in place of its marker, which is what the
     // agent reads and her row keeps, and `turnPastes` are the blocks, which her row keeps beside it
@@ -533,7 +807,10 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     // on screen anywhere.
     if (isStreaming) {
       const messageId = idFor(llmText)
-      const meta = turnPastes.length ? { pastes: turnPastes } : undefined
+      if (fromWidget) widgetSentIds.current.add(messageId)
+      const meta = turnPastes.length || fromWidget
+        ? { ...(turnPastes.length ? { pastes: turnPastes } : {}), ...(fromWidget ? { widget_action: true } : {}) }
+        : undefined
       const deliver = (mode: string | undefined, expectedMessageId: string | undefined) => {
         ensureSession()
           .then((s) => api.sendChat(llmText, s, meta, mode, undefined, { messageId, expectedMessageId }).then((r) => [s, r] as const))
@@ -549,7 +826,7 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
             oweSpokenReply(r.session || s)
             if (r.disposition !== 'started' || r.duplicate) return  // its frames draw it
             followNewTurn()
-            setTurns((prev) => withSent(prev, { ...userTurn(t, r.accepted_at, turnPastes.length ? turnPastes : undefined), messageId: r.message_id }))
+            setTurns((prev) => withSent(prev, { ...userTurn(t, r.accepted_at, turnPastes.length ? turnPastes : undefined), messageId: r.message_id, ...(fromWidget ? { fromWidget } : {}) }))
             markStreaming(true)
             dropTextRun()
           })
@@ -574,7 +851,9 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     // looking, and the text is kept: a caller that emptied the draft to send it gets it back
     // there, unless the user has typed something else since. A steer (above) carries no files.
     if (uploadHold) {
-      if (!opts?.uiLabel) setInput((cur) => (cur.trim() ? cur : t))
+      // Back into an empty composer only, still marked when it came from a widget: the owner's own
+      // draft is never marked by it.
+      if (!opts?.uiLabel) setDraft((d) => (d.text.trim() ? d : { text: t, widget: fromWidget ? (d.widget ?? { text: t }) : null }))
       notice.showError(uploadHold, 'upload')
       return
     }
@@ -586,6 +865,7 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     // receipt says when the chat took it in, which is the row's: Edit & resend locates a message
     // by it.
     const messageId = idFor(llmText)
+    if (fromWidget) widgetSentIds.current.add(messageId)
     const clientTs = new Date().toISOString()
     // When optimized: bubble shows `original` as primary + `t` (optimized) collapsed.
     // When this turn came from a genui widget action, `uiLabel` is the dual
@@ -596,10 +876,10 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     const uiLabel = opts?.uiLabel?.trim() || undefined
     // Sending is asking for the outcome: follow the new turn wherever the view was.
     followNewTurn()
-    setTurns((prev) => withSent(prev, { ...userTurn(uiLabel ?? original ?? t, clientTs, turnPastes.length ? turnPastes : undefined, files, original ? t : undefined), messageId }))
+    setTurns((prev) => withSent(prev, { ...userTurn(uiLabel ?? original ?? t, clientTs, turnPastes.length ? turnPastes : undefined, files, original ? t : undefined), messageId, ...(fromWidget ? { fromWidget } : {}) }))
     // A widget action is not something the user TYPED, so it never joins ↑-history —
     // replaying a machine payload as a prompt is not an affordance anyone wants.
-    if (!uiLabel) setPromptHistory((prev) => { const h = original ?? t; return withPrompt([...prev], { text: h, pastes: pruneBlocks(h, pasteBlocks).map(({ seq, lines, content }) => ({ seq, lines, content })) }).slice(-50) })
+    if (!uiLabel && !fromWidget) setPromptHistory((prev) => { const h = original ?? t; return withPrompt([...prev], { text: h, pastes: pruneBlocks(h, pasteBlocks).map(({ seq, lines, content }) => ({ seq, lines, content })) }).slice(-50) })
     const knowledgeIds = mentionedKnowledge.map((k) => k.id)
     const artifactSlugs = mentionedArtifacts.map((a) => a.slug)
     // dropTextRun: a fresh send must open a NEW coalesced text run. A follow-up in an
@@ -627,6 +907,8 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       // than the machine payload. Without this the transcript is honest live and shows
       // raw JSON after F5 — the defect surviving one refresh.
       if (uiLabel) meta.ui_label = uiLabel
+      // Came from a widget: the gateway takes none of its links as the owner's own.
+      if (fromWidget) meta.widget_action = true
       // On a brand-new chat, seed the instant-paint cache with THIS user message so
       // the post-create remount paints it immediately (no skeleton over the user's
       // own words) — mirrors the persisted history shape hydrateTurns expects.
@@ -657,7 +939,9 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       // The server did NOT save this message, so it goes back into the draft — which the
       // not-found state carries into a new chat — rather than sitting in the transcript as
       // a sent bubble above a one-line refusal.
-      if (hasApiCode(e, 'session_not_found')) { setInput(llmText); setMissing(true); return }
+      // It goes back with the mark it had: the draft's own, so the × still takes out only the
+      // widget's words; a press in the page's whole text.
+      if (hasApiCode(e, 'session_not_found')) { setDraft({ text: llmText, widget: ownDraft && draft.widget ? draft.widget : fromWidget ? { text: llmText } : null }); setMissing(true); return }
       // A failure is not something the assistant said, so it is the turn's error strip with the
       // platform's sentence, not a warning-sign line of prose carrying the raw error.
       patchLastAssistant((segs) => [...segs, { kind: 'error', text: failureSentence('send this message', e) }])
@@ -697,6 +981,8 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
    *  new chat was scoped to. The loop composer drafts and plans it as it always has, through the
    *  loop-start route and its guards, and opens the loop's thread once it is made. */
   function startGoalLoop(task: string = input) {
+    // A goal loop's task is the owner's to give: a draft that holds a widget's words stays here.
+    if (draftIsAWidgets) { notice.showInfo(draft.widget?.mixed ? GOAL_REFUSAL_MIXED : GOAL_REFUSAL); return }
     const params = new URLSearchParams({ kind: 'goal' })
     if (task.trim()) params.set('task', task.trim())
     if (projectId) params.set('project', projectId)
@@ -733,15 +1019,27 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       // catch was a bare comment, so `changed:false` (a ~15s wait, byte-identical text) and
       // an unreachable optimizer both rendered as nothing at all. See `optimizeOutcome`.
       const out = optimizeOutcome(await api.optimizePrompt(t, ctx))
-      if (out.kind === 'rewritten') { setPreOptimize(input); setInput(out.optimized) }
-      else notify(out.message, out.level)
+      if (out.kind === 'rewritten') {
+        // The draft changed while the optimizer ran (the ×, a pick, dictation, a send): the
+        // rewrite is of words no longer there, so it is dropped rather than put in their place.
+        if (draftRef.current.text !== input) {
+          // Said unless the line already says something (the ×'s no, which matters more).
+          if (!noticeRef.current) notice.showInfo('The draft changed while it was being optimized, so the rewrite was dropped.')
+          return
+        }
+        setPreOptimize({ text: input, widget: draft.widget, optimized: out.optimized })
+        // The rewrite is the optimizer's words over a widget's, and no part of it can be told
+        // apart: it stays marked, with no ×, until Revert brings back the saved draft.
+        const w = draftRef.current.widget
+        setDraft({ text: out.optimized, widget: w ? { ...w, mixed: true } : null })
+      } else notify(out.message, out.level)
     } catch (e) { const f = optimizeFailure(e); notify(f.message, f.level) }
     finally { setOptimizing(false) }
   }
   // /optimize one-shot: optimize `raw` in the background, then send the optimized
   // text (recording `raw` as the original so the bubble shows both). If the
   // optimizer returns unchanged or errors, just send the original as-is.
-  async function optimizeAndSend(raw: string) {
+  async function optimizeAndSend(raw: string, fromWidget = false) {
     setOptimizing(true)
     let optimized = ''
     try {
@@ -755,8 +1053,9 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       if (out.kind === 'rewritten' && out.optimized.trim() !== raw) optimized = out.optimized.trim()
     } catch { /* fall through — send the original unchanged */ }
     finally { setOptimizing(false) }
-    if (optimized) await send(optimized, { original: raw })
-    else await send(raw)
+    // `/optimize` emptied the draft first, so a widget's message says so through the send itself.
+    if (optimized) await send(optimized, { original: raw, widgetAction: fromWidget })
+    else await send(raw, { widgetAction: fromWidget })
   }
   // Put the caret in the composer once the text just set into it has rendered: a revert, a
   // follow-up pick, a paste marker or a palette insert each leaves focus where the user is not.
@@ -766,7 +1065,10 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   // restore the pre-optimize draft (the optimize rewrite is otherwise lossy).
   function revertOptimize() {
     if (preOptimize === null) return
-    setInput(preOptimize)
+    const saved = preOptimize
+    // The saved words, with only the mark they had: one a widget's message added since doesn't
+    // cover them.
+    setDraft({ text: saved.text, widget: saved.widget })
     setPreOptimize(null)
     // Clearing preOptimize unmounts this button, so without this focus lands on <body>
     // and the next keystroke goes nowhere — you reverted in order to keep typing.
@@ -892,6 +1194,15 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     if (answer?.stopped && turnSeqRef.current === turn) sayTurnEnded('stopped')
   }
 
+  /** Send the draft with a rendered saved prompt after it (the prompt palette's Send): one turn,
+   *  a widget's when the draft is one (`draftIsAWidgets`). */
+  function sendWithPrompt(rendered: string) {
+    const full = input.trim() ? `${input}\n${rendered}` : rendered
+    const widgetAction = draftIsAWidgets
+    setInput('')
+    void send(full, { widgetAction })
+  }
+
   // Insert a rendered prompt (from the prompt palette) into the composer at the end,
   // then focus so the user can keep editing before sending.
   function insertPrompt(text: string) {
@@ -903,12 +1214,17 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   // select-to-quote: insert the highlighted passage into the composer as an
   // attributed blockquote. `attribution` ("You" / the agent name) prefixes the
   // block so the quoted passage carries who said it.
-  function quoteToComposer(text: string, attribution?: string) {
+  function quoteToComposer(text: string, attribution?: string, widgetWords = attribution === WIDGET_SAID) {
     const q = text.trim()
     if (!q) return
     const lines = q.split('\n').map((l) => `> ${l}`)
     const block = attribution ? `> **${attribution} said:**\n${lines.join('\n')}` : lines.join('\n')
-    setInput((prev) => (prev ? `${prev}\n\n${block}\n\n` : `${block}\n\n`))
+    // A widget's words quoted are still a widget's (the passage is one of its messages, or a
+    // selection that takes in any of one): the draft they land in says so.
+    setDraft((d) => ({
+      text: d.text ? `${d.text}\n\n${block}\n\n` : `${block}\n\n`,
+      widget: widgetWords ? { text: block, quoted: true, ...joining(d) } : d.widget,
+    }))
     // The composer is a CodeMirror editor (.cm-content), not a <textarea> — focus
     // it so the user can keep typing after quoting a selection.
     composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus()
@@ -1077,12 +1393,14 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     // separately because it feeds the composer INPUT (and enables Send), not the selection.
     const patch = sessionTemplatePatch(t)
     if (Object.keys(patch).length) applySelection(patch)
-    if (t.first_prompt) setInput(t.first_prompt)
+    if (t.first_prompt) replaceDraft(t.first_prompt)
     notify(`Started from "${t.name}".`, 'info')
   }
 
   async function attach(files: File[]) {
     setAttachError(null)
+    // Attaching is using the composer: a widget's message waits as a chip a moment after.
+    ownerInputAt.current = Date.now()
     // The rows go up before the size check, which reads the gateway's limits: sending is held
     // from the moment a file is attached, not from the moment its bytes start to move.
     const batch = ++uploadBatch.current
@@ -1185,7 +1503,8 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     // recall works immediately on a revisited chat (not only after sending a
     // new message this render). Oldest→newest, deduped against repeats.
     setPromptHistory(hydrateTurns(d.messages || []).reduce<RecalledPrompt[]>((acc, t) => {
-      if (t.role !== 'user') return acc
+      // A widget's message is not something the owner typed (as `send` keeps it out, live).
+      if (t.role !== 'user' || t.fromWidget) return acc
       const txt = turnText(t).trim()
       if (txt) withPrompt(acc, { text: txt, pastes: t.pastes ?? [] })
       return acc
@@ -1209,6 +1528,7 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   }
 
   return {
+    widgetDraft: draft.widget, draftIsAWidgets, sendWithPrompt, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft,
     setRoutingSuggestion, acpFor, activatePlanMode, startGoalLoop, adoptDetail, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
   }
 }

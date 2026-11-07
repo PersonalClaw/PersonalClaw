@@ -9,12 +9,15 @@ import { copyText } from '../../../app/clipboard'
  *  enclosing turn); Copy copies the plain text. Positioning tracks BOTH mouseup
  *  and `selectionchange` so keyboard/touch selections get the toolbar too (not
  *  only mouse drags). */
-export function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
+export function SelectionQuote({ scrollRef, onQuote, attributionFor, widgetWordsIn }: {
   scrollRef: React.RefObject<HTMLDivElement | null>
-  onQuote: (text: string, attribution?: string) => void
+  onQuote: (text: string, attribution?: string, widgetWords?: boolean) => void
   attributionFor: (node: Node | null) => string | undefined
+  /** Whether the selection takes in any of a widget's messages: what it quotes is then a
+   *  widget's words, wherever its other ends lie. */
+  widgetWordsIn?: (range: Range) => boolean
 }) {
-  const [pos, setPos] = useState<{ x: number; y: number; text: string; attribution?: string } | null>(null)
+  const [pos, setPos] = useState<{ x: number; y: number; text: string; attribution?: string; widgetWords?: boolean } | null>(null)
   const barRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const root = scrollRef.current
@@ -36,6 +39,7 @@ export function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
         y: r.top - pr.top + root.scrollTop - 8,
         text,
         attribution: attributionFor(range.commonAncestorContainer),
+        widgetWords: widgetWordsIn?.(range) ?? false,
       })
     }
     const onUp = (e: MouseEvent) => {
@@ -68,12 +72,12 @@ export function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
       document.removeEventListener('selectionchange', onSelChange)
       root.removeEventListener('mousedown', onDown)
     }
-  }, [scrollRef, attributionFor])
+  }, [scrollRef, attributionFor, widgetWordsIn])
   if (!pos) return null
   const clear = () => { setPos(null); window.getSelection()?.removeAllRanges() }
   return (
     <SelectionToolbar ref={barRef} x={pos.x} y={pos.y} actions={[
-      { icon: Quote, label: 'Quote', onPress: () => { onQuote(pos.text, pos.attribution); clear() } },
+      { icon: Quote, label: 'Quote', onPress: () => { onQuote(pos.text, pos.attribution, pos.widgetWords); clear() } },
       { icon: Clipboard, label: 'Copy', onPress: () => { void copyText(pos.text, 'the selection'); clear() } },
     ]} />
   )

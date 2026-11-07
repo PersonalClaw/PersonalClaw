@@ -39,7 +39,7 @@ from aiohttp import web
 from personalclaw import ids
 from personalclaw.http_errors import json_error
 from personalclaw.ledger.hashing import canonical_digest
-from personalclaw.own_words import OWN_WORDS
+from personalclaw.own_words import OWN_WORDS, WIDGET_ACTION, came_from_a_widget
 from personalclaw.turn_source import (
     DASHBOARD_SOURCE,
     MERGED,
@@ -344,6 +344,7 @@ def _take(state: DashboardState, session: _ChatSession, intake: Intake) -> Recei
             message_id=intake.message_id,
             receipt={**noted, "disposition": STEERED_IN},
             steered_into=_id_of(current),
+            from_a_widget=came_from_a_widget(intake.meta),
         )
     ):
         disposition, into = STEERED_IN, _id_of(current)
@@ -360,6 +361,7 @@ def _take(state: DashboardState, session: _ChatSession, intake: Intake) -> Recei
             attended=intake.attended,
             message_id=intake.message_id,
             receipt={**noted, "disposition": disposition},
+            from_a_widget=came_from_a_widget(intake.meta),
         )
     receipt = Receipt(session.key, intake.message_id, accepted_at, disposition, into)
     _taken(session)[intake.message_id] = _Taken(intake.body_digest, receipt)
@@ -409,8 +411,12 @@ def carried(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         return {
             **({MESSAGE_ID: item[MESSAGE_ID]} if item.get(MESSAGE_ID) else {}),
             **({RECEIPT: dict(item[RECEIPT])} if item.get(RECEIPT) else {}),
+            **({WIDGET_ACTION: True} if item.get(WIDGET_ACTION) is True else {}),
         }
     return {
+        # One row for several messages: a widget's among them marks it, so none of its links
+        # become the user's on a resend (``own_words.came_from_a_widget``).
+        **({WIDGET_ACTION: True} if any(item.get(WIDGET_ACTION) is True for item in items) else {}),
         MERGED: [
             {
                 MESSAGE_ID: item.get(MESSAGE_ID, ""),
@@ -418,7 +424,7 @@ def carried(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 **({RECEIPT: dict(item[RECEIPT])} if item.get(RECEIPT) else {}),
             }
             for item in items
-        ]
+        ],
     }
 
 

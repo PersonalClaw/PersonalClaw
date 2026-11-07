@@ -7,8 +7,9 @@
  *   1. **Only the parent may drive it.** A `__edit_mode_*` message from anything that
  *      is not `window.parent` is refused — the mirror image of the provenance check
  *      the host performs on the way back.
- *   2. **An annotation is a human gesture.** `e.isTrusted` gates a click exactly as it
- *      gates a `[data-action]`; a widget's own `el.click()` mints nothing.
+ *   2. **An annotation's click is gated as an action's is.** `e.isTrusted` stops the listener
+ *      forwarding a widget's own `el.click()`; the parent never sends what a frame posts, and
+ *      takes an annotation only in annotate mode.
  *   3. **While annotating, a click is CONSUMED.** It marks the element and does not
  *      also fire the widget's own action, which would send the agent a form submission
  *      the user never made.

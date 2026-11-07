@@ -31,6 +31,22 @@ from typing import Any
 
 from personalclaw.turn_source import Row, sent_by_owner
 
+#: The ``meta`` key the page puts on a message that came from a widget: an action a widget's frame
+#: put in the composer, or a press on a control the page draws for a widget. Read by
+#: :func:`came_from_a_widget`.
+WIDGET_ACTION = "widget_action"
+
+
+def came_from_a_widget(meta: object) -> bool:
+    """Whether a message's *meta* says it came from a widget: the page's ``widget_action`` marker,
+    or a genui control's ``ui_label``. Its words are the widget's, edited or not, so none of its
+    links become the user's (``dashboard.chat_utils.take_in_the_users_links``), sent first or sent
+    again."""
+    return isinstance(meta, Mapping) and (
+        bool(meta.get("ui_label")) or meta.get(WIDGET_ACTION) is True
+    )
+
+
 #: The ``meta`` key of a message whose text holds more than its sender typed: the words they did
 #: type, ``""`` when none. Written only by the code that composed the row; a send's own meta never
 #: carries it (``dashboard.chat_handlers`` drops it), because a key a client could set would let a

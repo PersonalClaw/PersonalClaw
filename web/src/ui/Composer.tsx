@@ -45,7 +45,7 @@ export function Composer({
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, contextParts, contextActions, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
-  replyStyle, sendHeldReason, hostPills, settled = false,
+  replyStyle, sendHeldReason, sendHeldEverywhere = false, onReplace, hostPills, settled = false,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -129,8 +129,9 @@ export function Composer({
     confirmationPhrases: handsFree!.confirmationPhrases,
     exitPhrases: handsFree!.exitPhrases,
     muted: (handsFree!.muteWhileSpeaking ?? true) && !!handsFree!.speaking,
-    onBuffer: (text) => onChange(text),
-    onSubmit: (text) => { onChange(text); onHandsFreeSubmit!(text) },
+    // Dictation is the owner's words: it replaces the draft (onReplace), never joins a widget's.
+    onBuffer: (text) => (onReplace ?? onChange)(text),
+    onSubmit: (text) => { (onReplace ?? onChange)(text); onHandsFreeSubmit!(text) },
   } : undefined)
 
   // Push-to-talk: the desktop shell's global chord drives the
@@ -230,7 +231,7 @@ export function Composer({
     : mic.muted
       ? 'Hands-free voice — paused while speaking'
       : `Hands-free voice — say “${handsFree?.confirmationPhrases[0] ?? 'go ahead'}” to send`
-  const sendKind = resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, canSteer: !!canSteer, justSent, held: !!sendHeldReason })
+  const sendKind = resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, canSteer: !!canSteer, justSent, held: !!sendHeldReason, heldAll: !!sendHeldReason && sendHeldEverywhere })
   // While a turn runs the button is the Stop control: a stop square with a thin arc turning round
   // it (`docs/design/agent-orb.md`). The lap is `design/motion`'s `sweep()`, which is null under
   // reduced motion, and then no arc is drawn: a loop has no shorter version. The arc reads the
@@ -305,7 +306,7 @@ export function Composer({
           `still` while the turn waits on the owner, `instant` under reduced motion (no arc). */}
       {/* A draft typed during a turn makes the send button Steer or Queue, so the turn's Stop sits
           beside it, secondary: the same action, name and tooltip, since a phone has no Esc. */}
-      {(sendKind === 'steer' || sendKind === 'queue') && (
+      {(sendKind === 'steer' || sendKind === 'queue' || sendKind === 'steer-held' || sendKind === 'queue-held') && (
         <IconButton icon={Square} label="Stop this turn" title={stopTitle} size={40} onClick={onStop} className="max-md:min-h-11 max-md:min-w-11" />
       )}
       <span className="relative inline-flex" data-stop-sweep={sendKind === 'stop' ? (!stopSweep ? 'instant' : turning ? 'animated' : 'still') : undefined}>
@@ -322,6 +323,11 @@ export function Composer({
             // mid-stream with a typed draft, on a turn that cannot take it in → it runs next.
             case 'queue':
               return <IconButton icon={ListPlus} label="Queue — sent when this turn ends" filled size={40} onClick={() => onSend()} />
+            // Held, as an idle Send is, while a widget's message has just landed in the draft.
+            case 'steer-held':
+              return <IconButton icon={CornerDownLeft} label="Steer — send into the running turn" disabledReason={sendHeldReason} filled={false} disabled size={40} onClick={undefined} />
+            case 'queue-held':
+              return <IconButton icon={ListPlus} label="Queue — sent when this turn ends" disabledReason={sendHeldReason} filled={false} disabled size={40} onClick={undefined} />
             // While a turn runs, with nothing typed: the turn's Stop, in reach whatever the
             // transcript's scroll, named as Esc's action is named, and its tooltip shows that key
             // (`ui/TurnStatusRow` listens for it).

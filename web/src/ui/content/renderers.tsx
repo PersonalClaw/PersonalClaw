@@ -63,7 +63,7 @@ function looksLikeMarkdown(content: string): boolean {
  *  This is the artifact-library PREVIEW of an interactive widget, so it carries the
  *  action wire too: the child document ships HOST_SCRIPT's `isTrusted` click gate,
  *  and a `[data-action]` click here would otherwise be dropped on the floor. The
- *  shell's launcher turns it into the first turn of a chat. */
+ *  shell's launcher asks the owner, and their yes makes it the first turn of a chat. */
 export const IframeHtmlPreview = memo(function IframeHtmlPreview({ content, mode, title, iterate }: PreviewProps) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   // The iteration child script ships ONLY when the host offers iteration, so every
@@ -74,7 +74,7 @@ export const IframeHtmlPreview = memo(function IframeHtmlPreview({ content, mode
   const blobUrl = useMemo(() => URL.createObjectURL(new Blob([srcdoc], { type: 'text/html;charset=utf-8' })), [srcdoc])
   useEffect(() => () => URL.revokeObjectURL(blobUrl), [blobUrl])
   const it = useArtifactIteration(frameRef, { source: content, target: iterate ?? {} })
-  useWidgetWire(frameRef, { forwardActions: true, ...it.wire })
+  useWidgetWire(frameRef, { forwardActions: true, title, ...it.wire })
   const [railOpen, setRailOpen] = useState(false)
   return (
     <div className="flex h-full w-full">

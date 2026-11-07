@@ -263,6 +263,21 @@ describe('annotate mode — two marked elements, ONE correction', () => {
     expect(screen.getAllByRole('textbox').filter((el) => el.getAttribute('aria-label')?.startsWith('Correction for'))).toHaveLength(2)
   })
 
+  it('🔴 counts an anchor only while annotate mode is on', async () => {
+    // Red before: an anchor the frame posted with annotate off joined the rail anyway, so a
+    // widget's own script could fill the correction the owner then sends.
+    const { child } = await mount({ slug: 'card' })
+    fromChild(child, anchorA)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Mark elements/i })) })
+    expect(screen.queryByLabelText('Correction for [data-testid="cta"]')).toBeNull()
+    fromChild(child, anchorB)
+    expect(await screen.findByLabelText('Correction for p.price')).toBeTruthy()
+    // Off again (the toggle), and a later anchor is refused as the first was.
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Click elements to mark them/i })) })
+    fromChild(child, anchorA)
+    expect(screen.queryByLabelText('Correction for [data-testid="cta"]')).toBeNull()
+  })
+
   it('dispatches ONE directive carrying BOTH anchors to the host target (a design loop)', async () => {
     const correction = vi.fn(async (_next: string): Promise<void> => {})
     const { child } = await mount({ slug: 'card', correction })
@@ -288,7 +303,11 @@ describe('annotate mode — two marked elements, ONE correction', () => {
 
   it('with no host target, routes through the widget bridge with the living-view refresh suffix', async () => {
     const published: string[] = []
-    const record = (e: Event) => { published.push(String((e as CustomEvent).detail?.text)) }
+    const pressed: unknown[] = []
+    const record = (e: Event) => {
+      published.push(String((e as CustomEvent).detail?.text))
+      pressed.push((e as CustomEvent).detail?.pressed)
+    }
     window.addEventListener('ne:widget-action', record as EventListener)
     try {
       const { child } = await mount({ slug: 'sales-snapshot' })
@@ -302,6 +321,8 @@ describe('annotate mode — two marked elements, ONE correction', () => {
       expect(published[0]).toContain('[data-testid="cta"]')
       expect(published[0]).toContain('p.price')
       expect(published[0].endsWith('(refresh artifact "sales-snapshot" in place)')).toBe(true)
+      // The rail's Send is a press in the page: sent at once (useWidgetActionBridge.ts).
+      expect(pressed).toEqual([true])
     } finally {
       window.removeEventListener('ne:widget-action', record as EventListener)
     }

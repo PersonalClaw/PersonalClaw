@@ -45,6 +45,7 @@ BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
     ("dashboard/chat_handlers.py", "api_chat_sessions_cleanup", "dry_run"): False,
     ("dashboard/chat_regenerate.py", "api_chat_session_edit_resend", "again"): False,
     ("dashboard/chat_regenerate.py", "api_chat_session_edit_resend", "rewind"): False,
+    ("dashboard/chat_regenerate.py", "api_chat_session_edit_resend", "widget_action"): False,
     ("dashboard/chat_tags.py", "api_chat_tag_create", "status"): False,
     ("dashboard/chat_tags.py", "api_chat_tag_update", "status"): "optional",
     ("dashboard/handlers/autonudge.py", "api_autonudge_update", "active"): None,

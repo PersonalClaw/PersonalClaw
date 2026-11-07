@@ -34,6 +34,7 @@ import { QueueStack } from './QueueStack'
 import { AutoNudgeMenuItem } from './AutoNudgeMenuItem'
 import { ExecutionBoundary, PERMISSION_MODES, TaskModePill, said, useBoundaryReading } from './ExecutionBoundary'
 import { MEMORY_MODES } from '../memoryModeCopy'
+import { WidgetDraftChips } from './WidgetDraftChips'
 import { publishChatEnvironment, useBoundaryAsks } from '../inspector/chatEnvironment'
 import { publishContextReading, setContextPinned, useContextPinned } from '../../../app/pinnedContext'
 
@@ -88,7 +89,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
   /** The reply being read out, which hands-free waits on. */
   speakingTurn: number | null
 }) {
-  const { acpFor, activatePlanMode, startGoalLoop, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion } = composer
+  const { acpFor, activatePlanMode, startGoalLoop, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion, widgetDraft, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft, sendWithPrompt } = composer
   const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, contextParts, sessionCost, autoChain, startedBy, workingDir } = stream
   // The status-line pin is the owner's; the reading it shows is this chat's, live, and goes with it.
   const contextPinned = useContextPinned()
@@ -136,6 +137,9 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
       {/* The composer's notice: what failed (voice input, screen sharing, a switched answer, a
           branch…), which stays until dismissed or the next send, or what just happened. */}
       <ComposerNoticeLine notice={notice.notice} onDismiss={notice.clear} />
+      {/* A widget's message: the draft one put here, or one waiting while you use the composer. */}
+      <WidgetDraftChips draft={widgetDraft} suggestion={widgetSuggestion} onClear={clearWidgetDraft}
+        onAdd={addWidgetSuggestion} onDismiss={dismissWidgetSuggestion} />
       {toast && (
         <div className="mb-2 flex items-center gap-1.5 text-[0.75rem] text-on-surface-var">
           <Check size={13} className="shrink-0 text-ok" /><span>{toast}</span>
@@ -218,8 +222,8 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
           // with what she pasted into it, and after the draft she is writing, if any: the
           // message leaves the queue, so nothing of it may be lost on the way to the composer.
           setQueued((prev) => prev.filter((x) => x.id !== q.id)); const s = sessionRef.current; if (s) api.cancelQueued(s, q.id).catch(reportActionFailure('cancel that queued message'))
-          const back = takeBack(q.content, q.pastes ?? [])
-          setInput((cur) => (cur.trim() ? `${cur.trimEnd()}\n\n${back}` : back))
+          // Marked again when it was sent from a widget's message.
+          takeBackQueued(takeBack(q.content, q.pastes ?? []), q.messageId, q.fromWidget)
         }}
         onInterrupt={(id) => {
           // Interrupt-now: soft-stop the running turn and run THIS queued message
@@ -227,14 +231,15 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
           // The queue_promoted WS echo reorders the strip on every client.
           const s = sessionRef.current; if (s) api.interruptChat(s, id).catch(reportActionFailure('interrupt this turn'))
         }} />
-      <div className="relative">
+      {/* A press in the editor ends a widget fill's hold; one on Send, Steer or Queue does not. */}
+      <div className="relative" onPointerDownCapture={(e) => { if ((e.target as Element | null)?.closest?.('.cm-editor')) touchComposer() }}>
         {/* Saved-prompt palette + auto-nudge now live INSIDE the composer's "+"
             menu (onOpenPrompts + plusMenuExtra) — no more chips overlapping the
             composer's top edge. The palette modal still renders here. */}
         {promptPaletteOpen && (
           <PromptPalette
             onInsert={insertPrompt}
-            onSend={(t) => { const full = input.trim() ? `${input}\n${t}` : t; setInput(''); void send(full) }}
+            onSend={sendWithPrompt}
             onClose={() => setPromptPaletteOpen(false)} />
         )}
         {artifactPickerOpen && (
@@ -297,7 +302,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
             renders nothing unless chat really is resolving to a floor provider — which is
             false on every home that has bound anything. */}
         <BundledFloorNotice />
-        <ComposerStage ref={composerRef} settled={!started} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
+        <ComposerStage ref={composerRef} settled={!started} value={input} onChange={(v) => { editInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} phase={turnPhase} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
           replyStyle={{ ...replyStyle.pill, onSelect: (s) => void replyStyle.pill.onSelect(s) }}
@@ -359,11 +364,11 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
           onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} onLargePaste={onLargePaste}
           openModelSignal={openModelSignal} openAgentSignal={openAgentSignal} openReasoningSignal={openReasoningSignal}
           onOptimize={optimize} optimizing={optimizing} history={historyTexts} onRecall={recallPrompt}
-          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={uploadHold} contextPct={contextPct} contextWindow={contextWindow} sessionCost={sessionId ? sessionCost : null} contextPin={{ pinned: contextPinned, onPin: setContextPinned }} onCompact={sessionId ? () => { void send('/compact') } : undefined}
+          onTranscribe={transcribe} onMicError={(msg) => notice.showError(msg, 'voice-input')} canQueue canSteer={takesSteers} sendHeldReason={fillHold || uploadHold} sendHeldEverywhere={!!fillHold} contextPct={contextPct} contextWindow={contextWindow} sessionCost={sessionId ? sessionCost : null} contextPin={{ pinned: contextPinned, onPin: setContextPinned }} onCompact={sessionId ? () => { void send('/compact') } : undefined}
           contextParts={contextParts}
           contextActions={sessionId ? { tools: () => navigate('tools'), memory: () => navigate('memory?tab=recall'), compact: () => { void send('/compact') } } : undefined} servedModel={lastServedModel(turns)} autoChain={autoChain} askBeforeModelSwitch={sessionId ? askBeforeSwitch(sessionId) : undefined}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
-          onHandsFreeSubmit={(t) => void send(t, { inputOrigin: 'voice' })}
+          onReplace={(v) => { replaceDraft(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length) setFollowups([]) }} onHandsFreeSubmit={(t) => { void send(t, { inputOrigin: 'voice' }) }}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }}
           hostPills={(
             <>

@@ -54,13 +54,25 @@ describe('widget bridge: single path', () => {
 
   it('routes non-chat hosts through the ONE ne:launch-chat path', () => {
     const bridge = files.find((f) => f.rel === BRIDGE)?.text ?? ''
-    expect(bridge).toContain('launchChat')
+    expect(bridge).toContain("'ne:launch-chat'")
     // The fallback must not grow its own navigation: a `navigate(`/hash write here
     // would be a second way into chat that no other launcher shares.
     expect(bridge).not.toMatch(/navigate\(|location\.hash\s*=|history\.(push|replace)State/)
-    // …and `ne:launch-chat` itself stays owned by the SDK helper the bridge calls.
-    const emitters = files.filter((f) => f.text.includes("new CustomEvent('ne:launch-chat'")).map((f) => f.rel)
-    expect(emitters).toEqual([join('app', 'appSdk.tsx')])
+    // …and `ne:launch-chat` is raised in two places only, both into the ONE handler (App.tsx): the
+    // apps' SDK helper, and the bridge, whose launch carries the nonce its new chat drains a
+    // staged action by (an option the apps' SDK does not offer).
+    const emitters = files
+      .filter((f) => f.text.includes('new CustomEvent(') && f.text.includes("'ne:launch-chat'"))
+      .map((f) => f.rel)
+      .sort()
+    expect(emitters).toEqual([join('app', 'appSdk.tsx'), BRIDGE].sort())
+  })
+
+  it('lets the shell\'s launch name a staged action only through the stage\'s own check', () => {
+    // An app raises `ne:launch-chat` too; only a nonce the bridge staged may reach the new chat.
+    const app = files.find((f) => f.rel === join('app', 'App.tsx'))?.text ?? ''
+    const named = app.split('\n').filter((line) => /widget_action|widgetAction/.test(line) && !line.trim().startsWith('//'))
+    expect(named.map((line) => line.trim())).toEqual(["if (isStagedWidgetNonce(d.widgetAction)) qs.set('widget_action', d.widgetAction)"])
   })
 
   it('keeps the chat host a consumer of the hook, never a second listener', () => {
@@ -68,7 +80,7 @@ describe('widget bridge: single path', () => {
     const page = files.find((f) => f.rel === join('pages', 'ChatPage.tsx'))?.text ?? ''
     const chat = files.find((f) => f.rel === join('pages', 'chat', 'composer', 'useChatComposer.ts'))?.text ?? ''
     expect(chat).toContain('useWidgetActionBridge(')
-    expect(chat).toContain('takePendingWidgetAction()')
+    expect(chat).toContain('takePendingWidgetAction(widgetActionNonce)')
     expect(chat).not.toContain("addEventListener('message'")
     expect(page, 'the page is not a second host').not.toContain('useWidgetActionBridge(')
     expect(page).not.toContain("addEventListener('message'")

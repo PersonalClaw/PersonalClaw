@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, cleanup } from '@testing-library/react'
 import { useState } from 'react'
-import { userTurn, assistantTurn, type ChatTurn } from '../chatTypes'
+import { userTurn, assistantTurn, markCoordOf, WIDGET_SAID, type ChatTurn } from '../chatTypes'
 import type { ComposerValue } from '../../../ui/composer/types'
 
 // ── The transcript's controller ─────────────────────────────────────────────────────────────────
@@ -39,13 +39,13 @@ let useTranscript: typeof import('./useTranscript')['useTranscript']
 const TURNS: ChatTurn[] = [userTurn('Why does the feed refetch?', '2026-10-01T09:00:00Z'), assistantTurn('It ignores the validators.')]
 
 /** The page around the controller: the URL, the composer's selection, a stream that holds turns. */
-function mount({ sessionId = SESSION as string | null, query = {} as Record<string, string>, send = vi.fn(() => Promise.resolve()) } = {}) {
+function mount({ sessionId = SESSION as string | null, query = {} as Record<string, string>, send = vi.fn(() => Promise.resolve()), initial = TURNS } = {}) {
   const setQuery = vi.fn()
   const notice = { notice: null, showError: vi.fn(), showInfo: vi.fn(), clear: vi.fn() }
   const markStreaming = vi.fn()
   const readSnapshot = vi.fn(() => Promise.reject(new Error('offline')))
   const hook = renderHook(() => {
-    const [turns, setTurns] = useState<ChatTurn[]>(TURNS)
+    const [turns, setTurns] = useState<ChatTurn[]>(initial)
     const [selection, setSelection] = useState<ComposerValue>({ agent: 'researcher', model: 'Auto', approval: 'normal', taskMode: 'ask', reasoning: '' })
     const [bookmarks, setBookmarks] = useState<readonly string[]>([])
     const t = useTranscript({
@@ -70,6 +70,79 @@ beforeEach(async () => {
   ;({ useTranscript } = await import('./useTranscript'))
 })
 afterEach(() => cleanup())
+
+describe('a quote says whose words it is', () => {
+  it('🔴 names a widget\'s message as a widget\'s, and yours as yours', () => {
+    // Red before: a passage quoted from a widget's message read "You said:", and the draft it
+    // landed in was the owner's own, so its links were granted as theirs.
+    const turns: ChatTurn[] = [
+      userTurn('my own words', '2026-11-01T09:00:00Z'),
+      assistantTurn('ok'),
+      { ...userTurn('[UI] refresh', '2026-11-01T09:00:02Z'), fromWidget: true },
+    ]
+    const { result } = mount({ initial: turns })
+    // The turn nodes as the transcript draws and registers them: each says its side, and a
+    // widget's is marked.
+    const nodes = turns.map((turn, i) => {
+      const el = document.createElement('div')
+      el.dataset.transcriptTurn = turn.role
+      if (turn.role === 'user' && turn.fromWidget) el.dataset.fromWidget = ''
+      el.textContent = 'x'
+      result.current.t.turnNodes.current.set(markCoordOf(turn, i), el)
+      return el
+    })
+    expect(result.current.t.attributionForNode(nodes[0].firstChild)).toBe('You')
+    expect(result.current.t.attributionForNode(nodes[2].firstChild)).toBe(WIDGET_SAID)
+    expect(result.current.t.attributionForNode(nodes[1].firstChild)).toBe('researcher')
+  })
+})
+
+describe('a widget\'s message keeps its mark', () => {
+  const turns: ChatTurn[] = [
+    userTurn('my own words', '2026-11-01T09:00:00Z'),
+    assistantTurn('ok'),
+    { ...userTurn('[UI] refresh', '2026-11-01T09:00:02Z'), fromWidget: true },
+  ]
+
+  it('says a selection takes in a widget\'s words when it runs across into one of its messages', () => {
+    const { result } = mount({ initial: turns })
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    ;(result.current.t.scrollRef as { current: HTMLDivElement | null }).current = host
+    const nodes = turns.map((turn, i) => {
+      const el = document.createElement('div')
+      el.dataset.transcriptTurn = turn.role
+      if (turn.role === 'user' && turn.fromWidget) el.dataset.fromWidget = ''
+      el.textContent = `turn ${i}`
+      host.appendChild(el)
+      return el
+    })
+    const across = document.createRange()
+    across.setStart(nodes[0].firstChild as Text, 2)
+    across.setEnd(nodes[2].firstChild as Text, 3)
+    expect(result.current.t.widgetWordsIn(across)).toBe(true)
+    const within = document.createRange()
+    within.setStart(nodes[0].firstChild as Text, 0)
+    within.setEnd(nodes[1].firstChild as Text, 2)
+    expect(result.current.t.widgetWordsIn(within)).toBe(false)
+    host.remove()
+  })
+
+  it('🔴 sends a widget\'s message edited and sent again marked, and keeps the mark on the page', async () => {
+    h.editResend.mockResolvedValue({})
+    const { result } = mount({ initial: turns })
+    await act(async () => { await result.current.t.editResend(2, '[UI] refresh: {"range":"90d"}') })
+    expect(h.editResend).toHaveBeenCalledTimes(1)
+    expect(h.editResend.mock.calls[0][6]).toMatchObject({ widget: true })
+    // The page's own cut, with the gateway's snapshot unread, keeps it a widget's.
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.turns.at(-1)).toMatchObject({ role: 'user', fromWidget: true })
+    // The owner's own message goes without it: the ask carries no widget at all.
+    const own = mount({ initial: turns.slice(0, 2).concat([userTurn('and again', '2026-11-01T09:00:04Z')]) })
+    await act(async () => { await own.result.current.t.editResend(2, 'and again, shorter') })
+    expect(h.editResend.mock.calls[1][6]).not.toHaveProperty('widget')
+  })
+})
 
 describe('useTranscript keeps the find bar', () => {
   it('opens and closes it on ⌘F while a session is open', () => {

@@ -18,7 +18,7 @@ import { asSent } from '../pasteBlocks'
 import { applyQuestionResolved } from '../questionFrames'
 import { turnOutcomeOf } from '../turnOutcome'
 import type { QuestionReply } from '../QuestionCard'
-import { type ChatTurn, userTurn, turnText, markCoordOf } from '../chatTypes'
+import { type ChatTurn, userTurn, turnText, WIDGET_SAID } from '../chatTypes'
 import type { ChatStream } from '../useChatStream'
 import type { ApproveAction } from './AssistantSegments'
 import { newMessageId } from '../../../lib/messageIds'
@@ -418,8 +418,9 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     // runs only on her yes, sent back as `confirmed`, and a No leaves the page as it was.
     const again = !!turn && t === turnText(turn)
     const landed = await replaceTurns(
-      (s) => api.editResend(s, sent.text, turn?.ts, turnIndex, messageId, asRewind, { again, confirm: confirmed }, sent.pastes),
-      (prev) => [...prev.slice(0, turnIndex), { ...userTurn(t, newTs, sent.pastes.length ? sent.pastes : undefined), messageId }],
+      (s) => api.editResend(s, sent.text, turn?.ts, turnIndex, messageId, asRewind, { again, confirm: confirmed, ...(turn?.fromWidget ? { widget: true } : {}) }, sent.pastes),
+      // A widget's message sent again is still a widget's.
+      (prev) => [...prev.slice(0, turnIndex), { ...userTurn(t, newTs, sent.pastes.length ? sent.pastes : undefined), messageId, ...(turn?.fromWidget ? { fromWidget: true } : {}) }],
       (e) => {
         if (askToRepeat(e, (yes) => editResend(turnIndex, content, rewind, yes))) return
         if (fromEditor) setEditFailure(failureSentence(what, e)); else reportActionFailure(what)(e)
@@ -456,22 +457,28 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     }
   }
 
-  // Resolve who said the selected passage: walk up from the selection node to the
-  // enclosing turn's DOM node (turnNodes), then read that turn's role. Attribute the
-  // agent side to its name when one is bound, else the neutral "Assistant".
+  // Resolve who said the selected passage from the nodes around it: a widget's message (its turn,
+  // or a row of a rewound tail) carries `data-from-widget`, and a turn's node says its side of the
+  // exchange (`data-transcript-turn`). Read from the node, not through the Session Map's
+  // coordinate, which a turn the page adds live can share with an earlier one. The agent side is
+  // named by the agent when one is bound, else the neutral "Assistant".
   function attributionForNode(node: Node | null): string | undefined {
-    if (!node) return undefined
-    for (const [coord, el] of turnNodes.current.entries()) {
-      if (el.contains(node)) {
-        // The registry is keyed by the map's coordinate, so the owning turn is the one whose
-        // coordinate matches — not `turns[coord]`, which is the array lookup the key change
-        // above made wrong.
-        const turn = turns.find((t, i) => markCoordOf(t, i) === coord)
-        if (!turn) return undefined
-        return turn.role === 'user' ? 'You' : (agent || 'Assistant')
-      }
-    }
-    return undefined
+    const el = node instanceof Element ? node : node?.parentElement ?? null
+    if (!el) return undefined
+    // A widget's message is not the owner's words: a quote of it says whose they are.
+    if (el.closest('[data-from-widget]')) return WIDGET_SAID
+    const turn = el.closest<HTMLElement>('[data-transcript-turn]')
+    if (!turn) return undefined
+    return turn.dataset.transcriptTurn === 'user' ? 'You' : agent || 'Assistant'
+  }
+
+  /** Whether *range* takes in any of a widget's messages: a quote of it holds a widget's words,
+   *  wherever the selection's ends lie (one across turns has no single owner). */
+  function widgetWordsIn(range: Range): boolean {
+    const root = scrollRef.current
+    if (!root) return false
+    for (const el of root.querySelectorAll('[data-from-widget]')) if (range.intersectsNode(el)) return true
+    return false
   }
 
   // The tool results that show a run's or a loop's live card: the first to name each, however often the
@@ -569,6 +576,6 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     // What a turn offers.
     liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure,
     editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun,
-    attributionForNode,
+    attributionForNode, widgetWordsIn,
   }
 }

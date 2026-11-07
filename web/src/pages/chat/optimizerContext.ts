@@ -30,6 +30,9 @@ export const CTX_TURN_CHARS = 400
  *  rather than "the speaker stopped mid-sentence". */
 const CLIP = '…'
 const LABELS: Record<ChatTurn['role'], string> = { user: 'user: ', assistant: 'assistant: ' }
+/** A user turn that came from a widget: its words are the widget's, not the user's, so a link in
+ *  it reads as the widget's to the optimizer too. No wider than the assistant's label. */
+const WIDGET_LABEL = 'a widget: '
 const WIDEST_LABEL = LABELS.assistant.length
 
 /** The largest context this module can produce: every one of `CTX_MAX_TURNS` turns
@@ -56,7 +59,8 @@ export function buildOptimizerContext(turns: ChatTurn[]): string {
     // One turn per line, so a line boundary always means a turn boundary. The handler
     // snaps its backstop truncation to newlines; an embedded newline here would let it
     // cut mid-turn while still looking boundary-aligned.
-    lines.push(LABELS[t.role] + clipped.replace(/\s*\n\s*/g, ' '))
+    const label = t.role === 'user' && t.fromWidget ? WIDGET_LABEL : LABELS[t.role]
+    lines.push(label + clipped.replace(/\s*\n\s*/g, ' '))
   }
   return lines.reverse().join('\n')
 }

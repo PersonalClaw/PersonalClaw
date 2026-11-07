@@ -57,7 +57,7 @@ from personalclaw.dashboard.chat_utils import (
     persisted_history_key,
 )
 from personalclaw.memory_locality import folder_on_record
-from personalclaw.own_words import OWN_WORDS, PASTES
+from personalclaw.own_words import OWN_WORDS, PASTES, WIDGET_ACTION, came_from_a_widget
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.turn_source import STEERED
@@ -188,6 +188,7 @@ def steer(
     message_id: str = "",
     receipt: Mapping[str, Any] | None = None,
     steered_into: str = "",
+    from_a_widget: bool = False,
 ) -> bool:
     """Send *message* into the turn running on *session*: True when that turn takes steers, so it
     will (``SessionManager.add_steer``); False when the caller queues it instead.
@@ -198,7 +199,8 @@ def steer(
     pasted into it (*pastes*, ``own_words.PASTES``), which the message holds in their markers'
     place and her row shows as their chips. So are its id (*message_id*), what its send was
     answered (*receipt*) and the message whose turn it joins (*steered_into*), which the row keeps
-    (``chat_intake``) and a requeue carries."""
+    (``chat_intake``) and a requeue carries, and whether it came from a widget (*from_a_widget*,
+    ``own_words.WIDGET_ACTION``), which its row keeps so a resend of it grants none of its links."""
     if not state.sessions.add_steer(_history_key_for(session.key), message):
         return False
     meta: dict[str, Any] = {"input_origin": "voice"} if heard else {}
@@ -206,6 +208,8 @@ def steer(
         meta[OWN_WORDS] = own_words
     if pastes:
         meta[PASTES] = [dict(p) for p in pastes]
+    if from_a_widget:
+        meta[WIDGET_ACTION] = True
     if message_id:
         meta.update({MESSAGE_ID: message_id, RECEIPT: dict(receipt or {})})
         meta[STEERED_INTO] = steered_into
@@ -238,6 +242,8 @@ def take_steer(state: DashboardState, session: _ChatSession, text: str) -> dict[
             **({"message_id": meta[MESSAGE_ID]} if meta.get(MESSAGE_ID) else {}),
             # The blocks she pasted into it, so her bubble shows each as its chip, as on a reload.
             **({PASTES: meta[PASTES]} if meta.get(PASTES) else {}),
+            # A widget's message says so live, as its row does on a reload.
+            **({WIDGET_ACTION: True} if came_from_a_widget(meta) else {}),
         },
     )
     return row
@@ -293,6 +299,7 @@ def end_steers(
                 attended=True,  # the owner's steer, typed where they are
                 message_id=said.get(MESSAGE_ID, ""),  # still the message its send was answered for
                 receipt=said.get(RECEIPT),
+                from_a_widget=said.get(WIDGET_ACTION) is True,
             )
         except Exception:
             logger.warning("failed to requeue an undelivered steer", exc_info=True)

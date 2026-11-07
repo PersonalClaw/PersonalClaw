@@ -137,6 +137,33 @@ describe('useChatStream folds the session’s frames', () => {
     expect(result.current.queued.map((q) => q.id)).toEqual(['q-1'])
   })
 
+  it('keeps what a queued message is from the frame that queued it: its id, and a widget\'s mark', async () => {
+    // The composer's Edit gives a queued widget message back marked by these (`takeBackQueued`).
+    const { result } = await opened()
+    frame('queue_push', { queue_id: 'q-3', content: '[UI] open', message_id: 'msg_01jbxq3c6m8n9p2r4s5t6v7w8y', widget_action: true })
+    frame('queue_push', { queue_id: 'q-4', content: 'my own words', message_id: 'msg_01jbxq3c6m8n9p2r4s5t6v7w8z' })
+    frame('queue_push', { queue_id: 'q-5', content: 'not a mark', widget_action: 'yes' })
+    const byId = Object.fromEntries(result.current.queued.map((q) => [q.id, q]))
+    expect(byId['q-3']).toMatchObject({ messageId: 'msg_01jbxq3c6m8n9p2r4s5t6v7w8y', fromWidget: true })
+    expect(byId['q-4'].fromWidget).toBeUndefined()
+    expect(byId['q-4'].messageId).toBe('msg_01jbxq3c6m8n9p2r4s5t6v7w8z')
+    expect(byId['q-5'].fromWidget, 'only `true` marks it').toBeUndefined()
+  })
+
+  it('🔴 marks a turn the gateway starts from a widget\'s steered or queued message, and only that one', async () => {
+    // A steer the turn took, and a queued message the drain started, arrive as `chat_user_message`
+    // with `widget_action` when they came from a widget: a quote of that bubble says so.
+    const { result } = await opened()
+    frame('chat_user_message', { content: '[UI] open', ts: '2026-10-01T09:01:00Z', widget_action: true })
+    expect(result.current.turns.at(-1)).toMatchObject({ role: 'user', fromWidget: true })
+    frame('chat_done', { outcome: 'complete' })
+    frame('chat_user_message', { content: 'my own words', ts: '2026-10-01T09:02:00Z' })
+    expect(result.current.turns.at(-1)?.fromWidget).toBeUndefined()
+    frame('chat_done', { outcome: 'complete' })
+    frame('chat_user_message', { content: 'not a mark', ts: '2026-10-01T09:03:00Z', widget_action: 'yes' })
+    expect(result.current.turns.at(-1)?.fromWidget, 'only `true` marks it').toBeUndefined()
+  })
+
   it('starts the streaming claim on a turn the gateway starts, and settles it on chat_done', async () => {
     const s = sinks()
     const { result } = await opened(s)

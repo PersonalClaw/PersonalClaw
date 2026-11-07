@@ -9,7 +9,8 @@ from personalclaw.dashboard.chat_utils import (
     _history_key_for,
     persisted_history_key,
 )
-from personalclaw.dashboard.state import DashboardState
+from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.own_words import WIDGET_ACTION, came_from_a_widget
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.turn_source import source_of
@@ -17,6 +18,43 @@ from personalclaw.turn_source import source_of
 logger = logging.getLogger(__name__)
 
 _MAX_SESSIONS_FOR_FORK = 500
+
+
+def _widget_mark(m: dict) -> dict | None:
+    """The meta a copy of *m* keeps when it is a widget's message
+    (``own_words.came_from_a_widget``): the marker, and a genui control's label. Its words are the
+    widget's in the branch too, so a resend or a rewind there grants none of its links, as it
+    would grant none here."""
+    meta = m.get("meta")
+    if m.get("role") != "user" or not came_from_a_widget(meta):
+        return None
+    out: dict = {WIDGET_ACTION: True}
+    label = meta.get("ui_label") if isinstance(meta, dict) else None
+    if isinstance(label, str) and label:
+        out["ui_label"] = label
+    return out
+
+
+def _copy_rows(new_session: _ChatSession, rows: list[dict]) -> None:
+    """Copy *rows* into the branch *new_session*, unbroadcast, each with the role, ts and source it
+    has here; a copied turn is still the turn it was, so a widget's message stays a widget's
+    (`_widget_mark`). The assistant's words are redacted as they are copied."""
+    for m in rows:
+        role = m.get("role", "assistant")
+        content = m.get("content", "")
+        if role != "user":
+            content, _ = redact_exfiltration_urls(content)
+            content, _ = redact_credentials(content)
+        cls = "msg msg-u" if role == "user" else "msg msg-a"
+        new_session.append(
+            role,
+            content,
+            cls,
+            ts=m.get("ts", ""),
+            broadcast=False,
+            meta=_widget_mark(m),
+            source=source_of(m),
+        )
 
 
 async def api_chat_session_fork(request: web.Request) -> web.Response:
@@ -138,17 +176,7 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
     new_session._titled = True
 
     try:
-        for m in visible:
-            role = m.get("role", "assistant")
-            content = m.get("content", "")
-            if role != "user":
-                content, _ = redact_exfiltration_urls(content)
-                content, _ = redact_credentials(content)
-            cls = "msg msg-u" if role == "user" else "msg msg-a"
-            # A copied turn is still the turn it was: it keeps where it came from.
-            new_session.append(
-                role, content, cls, ts=m.get("ts", ""), broadcast=False, source=source_of(m)
-            )
+        _copy_rows(new_session, visible)
         new_session.drain()
         save_session_to_history(state, new_session)
         new_session._resumed_count = len(new_session.messages)
@@ -257,16 +285,7 @@ async def api_chat_session_fork_rewound(request: web.Request) -> web.Response:
         new_session.title = f"Rewound from {parent_title}"
         new_session._titled = True
         try:
-            for m in reconstructed:
-                role = m.get("role", "assistant")
-                content = m.get("content", "")
-                if role != "user":
-                    content, _ = redact_exfiltration_urls(content)
-                    content, _ = redact_credentials(content)
-                cls = "msg msg-u" if role == "user" else "msg msg-a"
-                new_session.append(
-                    role, content, cls, ts=m.get("ts", ""), broadcast=False, source=source_of(m)
-                )
+            _copy_rows(new_session, reconstructed)
             new_session.drain()
             save_session_to_history(state, new_session)
             new_session._resumed_count = len(new_session.messages)
