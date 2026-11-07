@@ -197,6 +197,18 @@ def _stamp(home: Path) -> dict:
     return json.loads((home / gateway_base.VERSION_FILE).read_text(encoding="utf-8"))
 
 
+def _running(monkeypatch: pytest.MonkeyPatch, version: str) -> None:
+    """This process runs *version*, as a claim reads it: ``personalclaw.__version__``.
+
+    Not ``personalclaw._version``: once any test has patched ``__version__`` itself, monkeypatch's
+    undo leaves it set as a plain attribute, at the version it read then, and a patched
+    ``_version`` is never asked again. Before 0.3.7 that left-over attribute was 0.3.6, the version
+    these tests patch in, so they passed by chance."""
+    import personalclaw
+
+    monkeypatch.setattr(personalclaw, "__version__", version)
+
+
 def _write_stamp(home: Path, newest: str) -> None:
     path = home / gateway_base.VERSION_FILE
     path.write_text(json.dumps({"newest": newest, "at": 1}), encoding="utf-8")
@@ -280,9 +292,7 @@ def test_a_refused_claim_holds_no_lock_in_its_process(stamped_home: Path, monkey
     then, not only when its process ends."""
     import fcntl
 
-    import personalclaw
-
-    monkeypatch.setattr(personalclaw, "_version", lambda: "0.3.6")
+    _running(monkeypatch, "0.3.6")
     monkeypatch.setattr(gateway_base, "_held", {})
     with pytest.raises(gateway_base.HomeServedByNewer) as refused:
         gateway_base.claim_home()
@@ -477,9 +487,7 @@ def test_update_says_how_to_restart_into_an_older_release(stamped_home: Path) ->
 def test_a_service_restart_rolls_the_home_back_itself(stamped_home: Path, monkeypatch) -> None:
     """launchd and systemd start the gateway with an environment of their own, so ``personalclaw
     restart`` lowers the stamp before it asks the service to restart."""
-    import personalclaw
-
-    monkeypatch.setattr(personalclaw, "_version", lambda: "0.3.6")
+    _running(monkeypatch, "0.3.6")
     with pytest.raises(gateway_base.HomeServedByNewer):
         gateway_base.roll_back_for_a_service("0.3.8")
     assert _stamp(stamped_home)["newest"] == "0.3.7"
@@ -495,9 +503,7 @@ def test_a_service_restart_rolls_the_home_back_itself(stamped_home: Path, monkey
 def test_the_restart_command_applies_the_rollback_before_the_service_restarts(
     stamped_home: Path, monkeypatch
 ) -> None:
-    import personalclaw
-
-    monkeypatch.setattr(personalclaw, "_version", lambda: "0.3.6")
+    _running(monkeypatch, "0.3.6")
     order: list[str] = []
     service = type("Service", (), {"name": "personalclaw.test"})()
     monkeypatch.setattr(cli_server.service_controller, "this_homes_service", lambda: service)
@@ -516,9 +522,7 @@ def test_the_restart_command_applies_the_rollback_before_the_service_restarts(
 def test_the_restart_command_refuses_a_rollback_naming_another_version(
     stamped_home: Path, monkeypatch, capsys
 ) -> None:
-    import personalclaw
-
-    monkeypatch.setattr(personalclaw, "_version", lambda: "0.3.6")
+    _running(monkeypatch, "0.3.6")
     service = type("Service", (), {"name": "personalclaw.test"})()
     monkeypatch.setattr(cli_server.service_controller, "this_homes_service", lambda: service)
     restarted: list = []
