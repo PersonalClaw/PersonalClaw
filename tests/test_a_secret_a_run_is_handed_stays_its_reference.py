@@ -50,6 +50,8 @@ ALL_VALUES = (VALUE, PROJECT_VALUE, OTHER_VALUE)
 REFERENCE = "{{secret:" + NAME + "}}"
 OTHER_REFERENCE = "{{secret:" + OTHER + "}}"
 
+pytestmark = pytest.mark.security
+
 
 def _project_key(project_id: str, name: str = NAME) -> str:
     from personalclaw.secrets_vault import project_secret_key
@@ -143,6 +145,20 @@ STARTER = {
         "id": "start",
         "config": {
             "provider": "run-workflow",
+            "with": {"workflow": "orchard-sync", "inputs": {"token": REFERENCE}},
+        },
+    },
+}
+#: STARTER with its provider written as a binding that the run's input `which` fills.
+BOUND_STARTER = {
+    "name": "orchard-bound-starter",
+    "version": 1,
+    "inputs": _inputs("which"),
+    "root": {
+        "kind": "action",
+        "id": "start",
+        "config": {
+            "provider": "{{inputs.which}}",
             "with": {"workflow": "orchard-sync", "inputs": {"token": REFERENCE}},
         },
     },
@@ -535,6 +551,24 @@ async def test_a_step_hands_the_run_it_starts_the_reference(home, runs, spec):
     _store()
 
     await _start(spec, runs)
+
+    assert runs.recorder.sent == [{"auth": f"Bearer {VALUE}"}], runs.recorder.sent
+    child = _only_run_of("orchard-sync")
+    assert child.inputs == {"token": REFERENCE}
+    assert _secret_rows(child.id) == [(NAME, "global")]
+    assert _holders(home) == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_workflow_step_named_by_an_input_hands_the_run_it_starts_the_reference(
+    home, runs
+):
+    """A step whose provider comes from its run's input is the step it names: the run it starts is
+    handed the reference, counted on its record, and fills it where its own step uses it.
+    🔴 Red before: the child run's inputs held the value, with nothing on its record."""
+    _store()
+
+    await _start(BOUND_STARTER, runs, which="run-workflow")
 
     assert runs.recorder.sent == [{"auth": f"Bearer {VALUE}"}], runs.recorder.sent
     child = _only_run_of("orchard-sync")

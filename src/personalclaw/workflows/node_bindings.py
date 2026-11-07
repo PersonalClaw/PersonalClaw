@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.knowledge import session_brief
 from personalclaw.workflows import deliverable, input_secrets, store
-from personalclaw.workflows.bindings import BindingContext, BindingError, item_prefixes
+from personalclaw.workflows.bindings import BindingContext, BindingError, item_prefixes, resolve
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     LoopMode,
@@ -124,28 +124,31 @@ def item_output(ctl: RunController, path: str, node_id: str) -> Any:
 
 
 def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
+    fields = _step_fields(ctl, item)
+    # Scoped to the step's own fan-out item: a sibling it binds is that item's instance, not
+    # whichever item last wrote the node id.
+    return item_context(ctl, item.path, **fields, secret_resolver=_secrets_for(ctl, item, fields))
+
+
+def _step_fields(ctl: RunController, item: ReadyNode) -> dict[str, Any]:
+    """Everything *item*'s context holds but its secret resolver: what its bindings read."""
     watcher_path = _enclosing_watcher(ctl, item.path)
     seen = ctl._seen.get(watcher_path) if watcher_path else None
     last_output, has_last = _last_output(ctl, item.path)
-    # Scoped to the step's own fan-out item: a sibling it binds is that item's instance, not
-    # whichever item last wrote the node id.
-    return item_context(
-        ctl,
-        item.path,
-        item=item.item,
-        has_item=item.has_item,
-        iter_index=item.iter_index,
-        last_output=last_output,
-        has_last=has_last,
-        sibling_outputs=_sibling_outputs(ctl, item.path),
-        previous_output=_previous_output(ctl, item.path),
-        has_previous=_previous_output(ctl, item.path) is not None,
-        seen_filter=seen.unseen if seen else None,
-        brief=_session_brief(ctl),
-        secret_resolver=_secrets_for(ctl, item),
-        input_secrets=input_secrets.of_run(ctl.run),
-        run_document=deliverable.document_path(ctl.run, ctl.spec),
-    )
+    return {
+        "item": item.item,
+        "has_item": item.has_item,
+        "iter_index": item.iter_index,
+        "last_output": last_output,
+        "has_last": has_last,
+        "sibling_outputs": _sibling_outputs(ctl, item.path),
+        "previous_output": _previous_output(ctl, item.path),
+        "has_previous": _previous_output(ctl, item.path) is not None,
+        "seen_filter": seen.unseen if seen else None,
+        "brief": _session_brief(ctl),
+        "input_secrets": input_secrets.of_run(ctl.run),
+        "run_document": deliverable.document_path(ctl.run, ctl.spec),
+    }
 
 
 #: Node kinds whose bound config is the text of a model call: a stage's agent task, an infer
@@ -153,9 +156,21 @@ def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
 _MODEL_FACING_KINDS = frozenset({NodeKind.STAGE, NodeKind.INFER, NodeKind.VISUALIZE})
 
 
-def _step_provider(ctl: RunController, node: Node) -> Any:
-    """The provider an action *node* dispatches to, looked up the way ``engine.dispatch_action``
-    will look it up, or ``None`` for a node that is no action."""
+def _no_secret(key: str) -> str:
+    """The resolver a step's ``provider`` is read with: it names no secret
+    (``engine_support.no_secret``, the one the dispatch reads it with again and refuses by)."""
+    from personalclaw.workflows.engine_support import no_secret
+
+    return no_secret(key)
+
+
+def _step_provider(ctl: RunController, item: ReadyNode, fields: dict[str, Any]) -> Any:
+    """The provider the action step *item* dispatches to, resolved and looked up the way
+    ``engine.dispatch_action`` does: its ``provider`` resolved against the same run state
+    (*fields*), with no secret filled in, then looked up by that name. ``None`` for a step that is
+    no action, and for one whose provider resolves to no provider: a binding that doesn't resolve,
+    or a name nothing registers."""
+    node = item.node
     if node.kind != NodeKind.ACTION:
         return None
     getter = ctl.services.get_provider
@@ -167,7 +182,15 @@ def _step_provider(ctl: RunController, node: Node) -> Any:
 
         _ensure_default_providers_registered()
         getter = get_action_provider
-    return getter(str((node.config or {}).get("provider", "") or ""))
+    raw = (node.config or {}).get("provider", "")
+    if isinstance(raw, str) and "{{" not in raw:
+        return getter(raw)  # written by name: nothing about the run is read to find it
+    ctx = item_context(ctl, item.path, **fields, secret_resolver=_no_secret)
+    try:
+        name = resolve(raw, ctx)
+    except BindingError:
+        return None
+    return getter(str(name or ""))
 
 
 def _config_reaches_a_model(node: Node, provider: Any) -> bool:
@@ -202,8 +225,17 @@ def _agent_works_for_the_run(node: Node, provider: Any) -> bool:
     return isinstance(provider, (InvokeAgentActionProvider, RunPromptActionProvider))
 
 
-def _secrets_for(ctl: RunController, item: ReadyNode) -> Callable[[str], str]:
+def _secrets_for(
+    ctl: RunController, item: ReadyNode, fields: dict[str, Any] | None = None
+) -> Callable[[str], str]:
     """How *item*'s ``{{secret:NAME}}`` references resolve in this run.
+
+    Which kind of step it is, is its provider's (:func:`_step_provider`): the one its dispatch
+    resolves its ``provider`` to, as written or bound to an input, out of *fields* (the rest of the
+    step's context). An action step whose provider resolves to none keeps each reference as the
+    name and reads nothing: what would be handed the value can't be known, and the step fails at
+    its dispatch: an unknown provider, a binding that doesn't resolve, or a provider that names a
+    secret, refused in its own words.
 
     A step whose config is text a model is handed (:func:`_config_reaches_a_model`) keeps each
     reference as the name: filled in there, the value would be in the model's context. Left as the
@@ -235,10 +267,11 @@ def _secrets_for(ctl: RunController, item: ReadyNode) -> Callable[[str], str]:
     from personalclaw.secrets_vault import stored_scope
 
     project = str(getattr(ctl.run, "project_id", "") or "")
-    provider = _step_provider(ctl, item.node)
+    provider = _step_provider(ctl, item, fields if fields is not None else _step_fields(ctl, item))
     if _hands_a_run_its_inputs(item.node, provider):
         return input_secrets.Handed()
-    handed_on = _config_reaches_a_model(item.node, provider)
+    unknown = item.node.kind == NodeKind.ACTION and provider is None
+    handed_on = unknown or _config_reaches_a_model(item.node, provider)
     records_handed_on = handed_on and _agent_works_for_the_run(item.node, provider)
     recorded: set[str] = set()
 

@@ -170,6 +170,47 @@ def handed_on(resolver: Any, value: Any) -> tuple[tuple[str, ...], Failure | Non
     return tuple(sorted(name for name in resolver.kept if present[name])), None
 
 
+def not_kept_for(provider: Any, cfg: Any, ctx: BindingContext) -> Failure | None:
+    """🔴 The refusal for a step whose provider hands its config on, to a model
+    (``hands_config_to_a_model``) or to a run it starts (``hands_config_to_a_run``), when its
+    bindings, resolved to *cfg*, weren't resolved for that provider: a secret's value was filled
+    into them, or a run's inputs keep references that nothing counted (:class:`Handed`). ``None``
+    otherwise, a run handed no reference among them.
+
+    ``node_bindings._secrets_for`` chooses the step's resolver from the provider it resolves the
+    step's ``provider`` to, as the dispatch resolves it (``engine_support.action_provider``). This
+    is the dispatch's own check that the two agree, whatever chose the resolver, so a provider that
+    hands its config on is never handed a value, nor references a run it starts would not fill."""
+    to_a_model = bool(getattr(provider, "hands_config_to_a_model", False))
+    to_a_run = bool(getattr(provider, "hands_config_to_a_run", False))
+    if not (to_a_model or to_a_run):
+        return None
+    if ctx.filled:
+        where = "a model" if to_a_model else "the run it starts"
+        cause = (
+            f"this step hands what it's given to {where}, and a secret's value was filled into it "
+            "instead of its reference, so the step was not run"
+        )
+    elif (
+        to_a_run
+        and ctx.secret_resolver is not None
+        and not isinstance(ctx.secret_resolver, Handed)
+        and references_in(cfg)
+    ):
+        cause = (
+            "this step starts a run with what it's given, and the secret references it hands on "
+            "weren't counted for that run, so the run was not started"
+        )
+    else:
+        return None
+    return Failure(
+        failure_class=FailureClass.PERMISSION,
+        cause_plain=cause,
+        remediation="run the workflow again; if its provider is a binding, write it by name",
+        terminal_reason=REFUSED_TO_START,
+    )
+
+
 def hand_to_child(
     raw: Any, ctx: BindingContext, project_id: str
 ) -> tuple[dict[str, Any], dict[str, Any], Failure | None]:

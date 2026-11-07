@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Security
+
+- **A workflow step whose provider an input or another step chooses is handed `{{secret:NAME}}` references as a step that names its provider is: an agent step (Run Prompt, Invoke Agent) and an app's model turn keep each reference as its name, and Run workflow hands the run it starts the reference. A step whose provider resolves to none fails without reading its secrets, and a step whose provider hands its config to a model or to a run it starts is refused when a secret's value was filled into it.**
+
 ### Changed
 
 - **The Nix flake installs 0.3.7.**

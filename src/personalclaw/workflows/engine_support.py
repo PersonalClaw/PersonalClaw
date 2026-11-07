@@ -8,7 +8,7 @@ from typing import Any
 from personalclaw import filled_secrets
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.failure_taxonomy import binding_failure
-from personalclaw.workflows.models import Failure, Node, NodeKind
+from personalclaw.workflows.models import Failure, FailureClass, Node, NodeKind
 
 #: node `model_tier` → model use case. A tier is an INTENT; the use-case bridge owns the
 #: mapping to a real provider, so a template stays portable across provider setups.
@@ -40,6 +40,79 @@ def _condition_keys(node: Node) -> frozenset[str]:
     if node.kind is NodeKind.GATE:
         return frozenset({"expr", "success_when"})
     return frozenset({"success_when"})
+
+
+def provider_names_a_secret(key: str) -> tuple[str, str]:
+    """The cause and the remedy for a step whose ``provider`` names the secret *key*: a provider
+    chooses where the step's config goes, so no secret may choose it."""
+    return (
+        f"a step's provider can't name the secret {key!r}",
+        "write the provider by name, or bind it to an input that holds no secret",
+    )
+
+
+class ProviderNamesASecret(BindingError):
+    """A step's ``provider`` read the secret :attr:`key` (:func:`no_secret`)."""
+
+    def __init__(self, key: str) -> None:
+        cause, remedy = provider_names_a_secret(key)
+        super().__init__(cause, remediation=remedy, caller_supplied=True)
+        self.key = key
+
+
+def no_secret(key: str) -> str:
+    """The resolver a step's ``provider`` is read with: it names no secret. The provider chooses
+    where the step's config goes, so a value filled in there would choose by the secret."""
+    raise ProviderNamesASecret(key)
+
+
+def _secret_a_provider_reads(written: Any, ctx: BindingContext) -> str | None:
+    """The secret a step's provider *written* reads, piped or through a run input that holds one:
+    read against *ctx*'s run state as the dispatch reads it, with :func:`no_secret`. None when it
+    reads none, or doesn't resolve for another reason (the resolved name answers that)."""
+    if not isinstance(written, str) or "{{" not in written:
+        return None
+    try:
+        resolve(written, replace(ctx, secret_resolver=no_secret, filled=[]))
+    except ProviderNamesASecret as named:
+        return named.key
+    except BindingError:
+        return None
+    return None
+
+
+def action_provider(
+    node: Node, cfg: dict[str, Any], ctx: BindingContext, get_provider: Any
+) -> tuple[Any, Failure | None]:
+    """The provider the action step *node* dispatches to, its ``provider`` as *cfg* resolved it,
+    looked up with *get_provider* (the dispatch's ``_provider_lookup``, which names the registry);
+    or the failure that refuses the step: a provider that names a secret, as it resolved or as it is
+    written (:func:`provider_names_a_secret`), no provider at all, a name nothing registers, or a
+    resolved config *cfg* that wasn't resolved for that provider
+    (``input_secrets.not_kept_for``)."""
+    from personalclaw.workflows import input_secrets
+    from personalclaw.workflows.secrets import SECRET_BINDING_RE
+
+    name = str(cfg.get("provider", "") or "")
+    named = SECRET_BINDING_RE.search(name)
+    key = named.group(1) if named else _secret_a_provider_reads(node.config.get("provider"), ctx)
+    if key is not None:
+        cause, remedy = provider_names_a_secret(key)
+        return None, Failure(failure_class=FailureClass.USER, cause_plain=cause, remediation=remedy)
+    if not name:
+        return None, Failure(
+            failure_class=FailureClass.USER,
+            cause_plain="action node has no `provider`",
+            remediation="set `config.provider` to a registered action provider",
+        )
+    provider = get_provider(name)
+    if provider is None:
+        return None, Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=f"unknown action provider {name!r}",
+            remediation="install the app that provides it, or pick a registered provider",
+        )
+    return provider, input_secrets.not_kept_for(provider, cfg, ctx)
 
 
 def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Failure | None]:

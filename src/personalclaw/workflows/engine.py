@@ -1198,6 +1198,13 @@ async def dispatch_subworkflow(
     )
 
 
+def _provider_lookup(get_provider: Any) -> Any:
+    """*get_provider*, or the registry's lookup, named in the dispatch that runs the step."""
+    from personalclaw.action_providers.registry import get_action_provider
+
+    return get_provider or get_action_provider
+
+
 @_commits_effects
 async def dispatch_action(
     node: Node,
@@ -1228,25 +1235,9 @@ async def dispatch_action(
     if failure or handoff_failure:
         return NodeResult(state=InstanceState.FAILED, failure=failure or handoff_failure)
     name = str(cfg.get("provider", "") or "")
-    if not name:
-        return _fail(
-            FailureClass.USER,
-            "action node has no `provider`",
-            "set `config.provider` to a registered action provider",
-        )
-
-    getter = get_provider
-    if getter is None:
-        from personalclaw.action_providers.registry import get_action_provider
-
-        getter = get_action_provider
-    provider = getter(name)
-    if provider is None:
-        return _fail(
-            FailureClass.USER,
-            f"unknown action provider {name!r}",
-            "install the app that provides it, or pick a registered provider",
-        )
+    provider, unfit = engine_support.action_provider(node, cfg, ctx, _provider_lookup(get_provider))
+    if unfit is not None:
+        return NodeResult(state=InstanceState.FAILED, failure=unfit)
     from personalclaw.apps.app_work import action_refusal
 
     if refused := action_refusal(run_id, name):

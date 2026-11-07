@@ -495,16 +495,24 @@ name with the reason, so a step cannot read another record's key or another proj
 secret. A project's secret is never copied into the gateway's environment, which every child
 the gateway starts inherits.
 
-A `{{secret:KEY}}` is filled in only where the step runs its config itself. A step whose
-config is text for a model (a `stage`, `infer` or `visualize` step, and an `action` whose
-provider's action is a model turn, `ActionProvider.hands_config_to_a_model`) keeps the
-reference as the name (`node_bindings._secrets_for`): filled in there, the value would be
-in the model's context. A stage's agent uses the name in a command, and PersonalClaw's `bash`
-tool fills it in as the command runs, with the run's project: the stage's lineage carries it
-(`engine.leaf_spawn_env`, from the run's record). The agent an Invoke Agent or Run Prompt step
-starts works for the run's project the same way: the engine sets `ActionContext.project_id`
-from the run's record, never from the step's config, and the provider starts its agent with it
-(`SubagentManager.spawn(project_id=…)`), so that agent's session is the project's.
+A `{{secret:KEY}}` is filled in only where the step runs its config itself. Which kind of step an
+`action` is, is its provider's: the one its `provider` resolves to, as written or bound to an input
+or another step's output, resolved against the run as its dispatch resolves it and with no secret in
+it (`node_bindings._step_provider`). An `action` whose provider resolves to none keeps its
+references and reads no secret, and fails at its dispatch: an unknown provider, a binding that
+doesn't resolve, or a provider that names a secret, refused in its own words. The dispatch checks
+the two agree: a provider that hands its config to a model or to a run it starts is refused when a
+secret's value was filled into its config, or when a run's inputs kept references nothing counted
+(`input_secrets.not_kept_for`). A step whose config is text for a model (a `stage`, `infer` or
+`visualize` step, and an `action` whose provider's action is a model turn,
+`ActionProvider.hands_config_to_a_model`) keeps the reference as the name
+(`node_bindings._secrets_for`): filled in there, the value would be in the model's context. A
+stage's agent uses the name in a command, and PersonalClaw's `bash` tool fills it in as the command
+runs, with the run's project: the stage's lineage carries it (`engine.leaf_spawn_env`, from the
+run's record). The agent an Invoke Agent or Run Prompt step starts works for the run's project the
+same way: the engine sets `ActionContext.project_id` from the run's record, never from the step's
+config, and the provider starts its agent with it (`SubagentManager.spawn(project_id=…)`), so that
+agent's session is the project's.
 
 **What a step returns is masked of every value its bindings filled in.** A command, a script or
 any action a step ran with a filled value can print it, return it or fail with it, and a
