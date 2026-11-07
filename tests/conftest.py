@@ -538,6 +538,24 @@ def _a_test_leaves_the_environment_as_it_found_it(request):
 
 
 @pytest.fixture(autouse=True)
+def _personalclaw_reads_its_version_afresh():
+    """Take out a ``__version__`` a test left on the ``personalclaw`` module, so the next test reads
+    the version as the package serves it, through ``personalclaw._version``.
+
+    The package never sets ``__version__`` itself: its module ``__getattr__`` answers it from
+    ``_version()``. A test that patches ``__version__`` with ``monkeypatch`` leaves it behind,
+    because the undo sets back the value it read, as a plain attribute, and from then on a test
+    that patches ``_version`` is never asked. Before 0.3.7 that left-over value was the one such
+    tests patched in, so they passed by chance. The ``monkeypatch`` below requests this fixture,
+    so it is torn down after the undo.
+    """
+    yield
+    package = sys.modules.get("personalclaw")
+    if package is not None:
+        vars(package).pop("__version__", None)
+
+
+@pytest.fixture(autouse=True)
 def _no_test_reaches_a_server_it_did_not_start():
     """Fail the test that tried to connect to a server it did not start. The connection itself was
     refused before it was made: tests/port_guard.py."""
@@ -622,9 +640,14 @@ def _a_git_configuration_of_its_own(monkeypatch):
 
 
 @pytest.fixture
-def monkeypatch(_a_test_leaves_the_environment_as_it_found_it, monkeypatch):
+def monkeypatch(
+    _a_test_leaves_the_environment_as_it_found_it,
+    _personalclaw_reads_its_version_afresh,
+    monkeypatch,
+):
     """pytest's own ``monkeypatch``, set up after the environment rail so it is undone before the
-    rail looks.
+    rail looks, and after the version's clean-up, so a patched ``__version__`` is undone before
+    that takes out what the undo left.
 
     A fixture set up earlier is torn down later. A fixture a ``usefixtures`` mark names is set up
     ahead of every autouse fixture, so without this one that takes ``monkeypatch`` (the

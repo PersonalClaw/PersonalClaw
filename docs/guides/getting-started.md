@@ -413,8 +413,8 @@ PersonalClaw *looks*, the other whether it *installs*.
 ### Upgrading to sign-ins that need more than the cookie
 
 - **Every browser and every paired phone or device signs in again, once.** A browser's sign-in
-  now needs more than its cookie, so the first start of the release that brings this signs out
-  every browser, phone and paired device signed in before it. Sign in again in each browser: open
+  now needs more than its cookie, so the first start of 0.3.7 signs out every browser, phone and
+  paired device signed in before it. Sign in again in each browser: open
   a new link with `personalclaw token`, or sign in with your password. Then pair your phones again
   from Settings → Devices & Access → Devices, and turn their notifications back on. A token that
   was never used, or used only by a script whose client names itself in its User-Agent (as curl
