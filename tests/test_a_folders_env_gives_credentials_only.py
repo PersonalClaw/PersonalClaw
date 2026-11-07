@@ -21,6 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import certifi
 import pytest
 
 pytestmark = pytest.mark.security
@@ -74,6 +75,11 @@ def _run(folder: Path, home: Path, env_file: dict[str, str] | None = None) -> tu
         if not k.startswith(("PERSONALCLAW_", "PYTEST_")) and k not in FOLDER_ENV
     }
     child["HOME"] = str(home.parent)
+    # A CA bundle of the child's own, so it starts the same on every machine: where OpenSSL has no
+    # default CA file, the entry point names the system's bundle in the environment itself
+    # (`_ssl_compat`), before the folder's `.env` is read, and so before the line the folder
+    # gives for it.
+    child["SSL_CERT_FILE"] = certifi.where()
     src = Path(__file__).resolve().parents[1] / "src"
     child["PYTHONPATH"] = os.pathsep.join([str(src), child.get("PYTHONPATH", "")])
     done = subprocess.run(
