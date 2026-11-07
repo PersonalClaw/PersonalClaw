@@ -38,6 +38,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from personalclaw import filled_secrets
 from personalclaw.guardrails.audit import AttemptRecord, current_caller, now_ms, record_attempt
 from personalclaw.guardrails.breaker import CircuitBreaker, get_breaker
 from personalclaw.guardrails.budgets import (
@@ -68,6 +69,7 @@ from personalclaw.guardrails.scan import (
     ScanResult,
     scan_outbound,
     scan_request,
+    text_parts_changed,
     unscanned_chars,
 )
 from personalclaw.guardrails.wire import record_outbound
@@ -569,32 +571,51 @@ class ModelCallGuard(ModelProvider):
         rather than re-scanning at the recording seam is not a style choice: only this text is
         what went on the wire, and a second scan at another moment can differ from it, because
         the mode is re-read on every call (`_refresh_scan_mode`). One scan, one chokepoint, and
-        the result carried forward."""
+        the result carried forward.
+
+        🔴 Masked first of every secret's value the work making the call was handed
+        (``filled_secrets.masked_here``): a step's or a fire's filled values, which no shape the
+        scan knows finds, never reach a model or the record of what was sent."""
+        before, text = text, filled_secrets.masked_here(text)
         self._refresh_scan_mode()
-        return self._publish(scan_outbound(text, mode=self._scan_mode), original=text)
+        # Compared with what is sent, never kept: a prompt the mask changed reads as altered.
+        return self._publish(scan_outbound(text, mode=self._scan_mode), original=before)
 
     async def _prescan_long(self, text: str) -> str:
         """:meth:`_prescan`, with a prompt past ``SCAN_OFF_LOOP_CHARS`` scanned off the event loop,
         so the gateway's other work does not wait it out."""
         if len(text) <= SCAN_OFF_LOOP_CHARS:
             return self._prescan(text)
+        before, text = text, filled_secrets.masked_here(text)
         self._refresh_scan_mode()
         result = await asyncio.to_thread(scan_outbound, text, mode=self._scan_mode)
-        return self._publish(result, original=text)
+        return self._publish(result, original=before)
 
     async def _prescan_request(self, messages: list[dict]) -> list[dict]:
         """:meth:`_prescan` for a structured request (:meth:`complete`): each text part, a system,
         user, tool or assistant message's, is scanned at the same mode and the ladder applied to the
         whole request (``scan.scan_request``), on a copy that is the same bytes on every call for
         the same history. A request with more than ``SCAN_OFF_LOOP_CHARS`` not scanned before is
-        scanned off the event loop. Published and refused as :meth:`_prescan` is."""
+        scanned off the event loop. Masked, published and refused as :meth:`_prescan` is."""
         self._refresh_scan_mode()
         mode = self._scan_mode
+        before: str | None = None
+        if held := filled_secrets.held_here():
+            given: list[str] = []
+
+            def _masked(text: str) -> str:
+                given.append(text)
+                return filled_secrets.masked(text, held)
+
+            # Only the parts the scan reads are masked: a short value would change an opaque
+            # signature or a tool call's id, and the provider would refuse the request.
+            messages = text_parts_changed(messages, _masked)
+            before = "\n\n".join(text for text in given if text)  # compared, never kept
         if unscanned_chars(messages, mode=mode) > SCAN_OFF_LOOP_CHARS:
             scan = await asyncio.to_thread(scan_request, messages, mode=mode)
         else:
             scan = scan_request(messages, mode=mode)
-        self._publish(scan.result, original=scan.original)
+        self._publish(scan.result, original=scan.original if before is None else before)
         return scan.messages
 
     def _publish(self, result: ScanResult, *, original: str) -> str:

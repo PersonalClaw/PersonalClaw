@@ -54,7 +54,10 @@ delete.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+from personalclaw import filled_secrets
 
 #: What stands in for a credential value, everywhere. Contains characters an HTML attribute value,
 #: a URL query value and a sentinel ``TYPE`` argument can all carry, so it is deliberately NOT
@@ -173,8 +176,149 @@ def is_credential_input(
     return any(token in haystack for token in CREDENTIAL_NAME_TOKENS)
 
 
+_SECRET_REFERENCE = re.compile(r"\{\{\s*secret\s*:([^}]*)\}\}", re.IGNORECASE)
+
+#: What a start page's references are blanked to before it is parsed: a host's letters, so a parse
+#: reads it where the browser would read the value.
+_BLANKED = "pclawblankedreference"
+
+#: A scheme and the slashes after it, however many, as a browser reads ``https:/h`` and
+#: ``https:///h``: the scheme, then an authority.
+_SCHEME_SLASHES = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*):/*")
+
+
+def _read_as_a_browser_does(address: str) -> str:
+    """*address* as a browser reads it before it parses it: tabs and line breaks dropped and a
+    backslash read as a slash."""
+    return re.sub(r"[\t\r\n]", "", address).strip().replace("\\", "/")
+
+
+def _as_a_browser_reads(page: str) -> tuple[str, str, str]:
+    """*page*'s scheme, host and port as a browser reads them (:func:`_read_as_a_browser_does`),
+    a scheme followed by any slashes read as ``scheme://``."""
+    text = _SCHEME_SLASHES.sub(lambda m: f"{m.group(1)}://", _read_as_a_browser_does(page), count=1)
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return "", "", ""
+    authority = parts.netloc.rpartition("@")[2]
+    host, _, port = authority.rpartition(":") if authority.count(":") == 1 else (authority, "", "")
+    return parts.scheme.lower(), host.lower(), port
+
+
+def start_page_refusal(written: object) -> tuple[str, str] | None:
+    """Why a browse start page, as written (or with each reference kept as its name), is refused,
+    as (what, fix); None when it isn't. A secret in its scheme, host or port stays in the origin
+    browse shows of every address (:func:`origin_of`); a page that names one and has no scheme or
+    host is read by the browser where the value lands; and what a pipe makes of a secret no mask
+    follows. A start page that isn't text is refused, and so is one that names a secret and isn't
+    an http or https address."""
+    if written is None or written == "":
+        return None
+    if not isinstance(written, str):
+        return (
+            "a browse start page has to be an address written as text",
+            "write the start page as one address",
+        )
+    found = list(_SECRET_REFERENCE.finditer(written))
+    if any("|" in m.group(1) for m in found):
+        return (
+            "a browse start page can't pipe a secret, since no mask follows what the pipe makes of "
+            "it",
+            "take the {{secret:…}} out of the pipe",
+        )
+    if not found:
+        return None
+    scheme, host, port = _as_a_browser_reads(_SECRET_REFERENCE.sub(_BLANKED, written))
+    if not scheme or not host or any(_BLANKED in part for part in (scheme, host, port)):
+        return (
+            "a browse start page can't name a secret in its scheme, host or port, since the "
+            "address browse shows keeps them",
+            "take the {{secret:…}} out of the host",
+        )
+    if scheme not in ("http", "https"):
+        return (
+            "a browse start page that names a secret has to be an http or https address",
+            "take the {{secret:…}} out of it, or open an http or https address",
+        )
+    return None
+
+
+def start_page_moved(written: object, filled: object) -> tuple[str, str] | None:
+    """Why the start page *filled*, as its references filled it in, is refused for opening
+    somewhere *written* (with each reference blanked) does not: a value that ends the login, its
+    ``/`` or ``@``, moves the rest of the address into the host. None when both name one origin."""
+    if not isinstance(written, str) or not isinstance(filled, str) or written == filled:
+        return None
+    if not _SECRET_REFERENCE.search(written):
+        return None
+    if _as_a_browser_reads(_SECRET_REFERENCE.sub(_BLANKED, written)) == _as_a_browser_reads(filled):
+        return None
+    return (
+        "a browse start page can't hold a secret whose value changes the site it opens, since the "
+        "address browse shows keeps its host",
+        "take the {{secret:…}} out of the address",
+    )
+
+
+def origin_of(url: str) -> str:
+    """*url* as its origin alone, ``scheme://host[:port]/``: no login, path, query or fragment.
+    What browse shows of every address while its work holds a stored secret's value
+    (``filled_secrets.held_here``), since a site can carry that value on in a form no mask follows
+    (a redirect's encoded return address). An address with no host shows its scheme alone
+    (``about:``, ``data:``, ``file:``), and anything else :data:`WITHHELD`."""
+    try:
+        parts = urlsplit(_read_as_a_browser_does(url))
+        port = parts.port
+    except ValueError:
+        return WITHHELD
+    if parts.hostname and not _A_HOST.fullmatch(parts.hostname):
+        return WITHHELD
+    if parts.scheme and parts.hostname:
+        host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+        return f"{parts.scheme}://{host}{f':{port}' if port else ''}/"
+    if parts.scheme and not parts.netloc:
+        return f"{parts.scheme}:"
+    return WITHHELD
+
+
+#: A host as an origin shows one: a name, or a bracketed address literal.
+_A_HOST = re.compile(r"[\w.-]+|\[[0-9A-Fa-f:.]+\]|[0-9A-Fa-f:.]+")
+
+#: An address written in a sentence, up to a space: a scheme of up to 32 characters after no word
+#: (so a ``word:value`` that starts a word reads as one); one glued to a word when a slash or a
+#: backslash follows its colon, or when it is a scheme a browser opens or runs; or, after no word, a
+#: path up to a quote or a bracket. A glued ``name:value`` is left as it is unless its name ends in
+#: one of those schemes, and so is a glued scheme that isn't one with no slash or backslash after
+#: its colon. Each ends before the punctuation that ends a sentence. The bound keeps it linear.
+_ADDRESS_IN_TEXT = re.compile(
+    r"(?:(?<![\w/])[A-Za-z][A-Za-z0-9+.-]{0,31}:\S*"
+    r"|[A-Za-z][A-Za-z0-9+.-]{0,31}:[/\\]\S*"
+    r"|(?i:https?|wss?|ftp|file|mailto|javascript|vbscript|data|blob|tel|sms|about):\S*"
+    r"|(?<![\w/])/[^\s\"'<>()\[\]]*)[^\s\"'<>()\[\].,;:!?]"
+)
+
+
+def screen_text(text: str) -> str:
+    """*text*, a sentence or a note browse records, as browse shows it: while its work holds a
+    stored secret's value, each address in it as its origin (:func:`origin_of`) and the rest masked
+    of that value (``filled_secrets.masked_here``); and always with each credential parameter
+    :data:`WITHHELD` (:func:`screen_url`'s screen)."""
+    raw = text or ""
+    if raw and filled_secrets.held_here():
+        raw = filled_secrets.masked_here(addresses_as_origins(raw))
+    return _screened_parameters(raw)
+
+
+def addresses_as_origins(text: str) -> str:
+    """*text* with each address in it as its origin (:func:`origin_of`)."""
+    return _ADDRESS_IN_TEXT.sub(lambda m: origin_of(m.group(0)), text)
+
+
 def screen_url(url: str) -> str:
     """Replace credential-bearing query/fragment VALUES with :data:`WITHHELD`, keeping the keys.
+
+    While the work holds a stored secret's value, every URL is its origin alone (:func:`origin_of`).
 
     Applied where a URL is READ from the browser rather than where it is displayed, so one call
     covers every downstream consumer at once — the outline header, the fence's ``source_id``, the
@@ -191,6 +335,13 @@ def screen_url(url: str) -> str:
     turn a privacy control into an outage.
     """
     raw = url or ""
+    if raw and filled_secrets.held_here():
+        return origin_of(raw)
+    return _screened_parameters(raw)
+
+
+def _screened_parameters(raw: str) -> str:
+    """*raw* with each credential parameter's value :data:`WITHHELD` (:func:`screen_url`)."""
     if not raw or ("?" not in raw and "#" not in raw):
         return raw
     try:

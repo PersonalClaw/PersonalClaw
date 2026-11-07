@@ -42,7 +42,7 @@ from personalclaw.workflows.models import (
     valid_name,
     walk,
 )
-from personalclaw.workflows.step_arguments import authored_refusal
+from personalclaw.workflows.step_arguments import BOUND_NAME, HOLDERS, authored_refusal, bound_name
 
 SEVERITY_ERROR = "error"
 SEVERITY_WARNING = "warning"
@@ -193,7 +193,7 @@ GATE_TEXT_READ: dict[GateKind, frozenset[str]] = {
 
 #: Why each kind does not show a key it does not read, the second sentence of the warning.
 _GATE_WORDS_GO: dict[GateKind, str] = {
-    GateKind.JUDGE: "A judge's model is sent its `prompt`, and nothing else.",
+    GateKind.JUDGE: "A judge's model is sent its `prompt` and its `evidence`, and nothing else.",
     GateKind.EXPRESSION: (
         "An expression gate asks nobody: the engine decides it, and what its failure says is its "
         "`message`. To ask a person, make it an approval."
@@ -216,6 +216,36 @@ def _unshown_gate_text(gate: GateKind, cfg: dict[str, Any]) -> list[tuple[str, s
 
 def _add(res: ValidationResult, code: str, msg: str, path: str = "", sev: str = SEVERITY_ERROR):
     res.issues.append(Issue(code=code, message=msg, path=path, severity=sev))
+
+
+def _add_authored_refusals(res: ValidationResult, cfg: dict[str, Any], path: str) -> None:
+    """What an action step's config, as authored, is refused at its save: an argument only an
+    automation may give its provider (``step_arguments.authored_refusal``), one named by a binding
+    under either holder (``step_arguments.bound_name``), and a browse start page that names a
+    secret where its origin shows it (:func:`_browse_start_page_refusal`)."""
+    if refused := authored_refusal(cfg):
+        _add(res, "WF_ARGUMENT_RUN_IDENTITY", f"This step {refused}", path)
+    if any(bound_name(cfg, where) is not None for where in HOLDERS):
+        _add(res, "WF_ARGUMENT_NAME_BOUND", "{}: {}".format(*BOUND_NAME), path)
+    if (page := _browse_start_page_refusal(cfg)) is not None:
+        _add(res, "WF_BROWSE_START_PAGE_SECRET", f"{page[0]}: {page[1]}", path)
+
+
+def _browse_start_page_refusal(cfg: dict[str, Any]) -> tuple[str, str] | None:
+    """Why a browse step's start page, as written under either holder, a mapping or pairs
+    (``step_arguments.arguments``), is refused at its save
+    (``browse.credentials.start_page_refusal``): the dispatch picks its holder from the run's
+    values, which a save can't see. None for any other step."""
+    if str(cfg.get("provider") or "") != "browse":
+        return None
+    from personalclaw.browse.credentials import start_page_refusal
+    from personalclaw.workflows.step_arguments import arguments
+
+    for where in HOLDERS:
+        args = arguments(cfg, where=where) or {}
+        if (refused := start_page_refusal(args.get("start_url"))) is not None:
+            return refused
+    return None
 
 
 def validate_node_tree(root: Node, *, strict: bool = False) -> ValidationResult:
@@ -507,8 +537,7 @@ def _validate_shape(
             _add(
                 res, "WF_PAYLOAD_RUN_IDENTITY", f"This step {run_identity_sentence(written)}", path
             )
-        if refused := authored_refusal(cfg):
-            _add(res, "WF_ARGUMENT_RUN_IDENTITY", f"This step {refused}", path)
+        _add_authored_refusals(res, cfg, path)
 
     elif kind == NodeKind.WAIT:
         seal = cfg.get("seal")

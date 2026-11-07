@@ -273,13 +273,12 @@ class ActionProvider(ABC):
 
     @property
     def hands_config_to_a_model(self) -> bool:
-        """Whether this provider's action IS a model turn: its config becomes text an agent's model
-        is handed (a task, a saved prompt's variables, a question for a second model).
-
-        A ``{{secret:KEY}}`` in such a config is therefore never filled in at dispatch
-        (``triggers.secrets.resolve``): it stays the name, and the agent's own tools fill it when
-        they run (the ``bash`` tool does), so the value never reaches the model. False by default,
-        because every other provider runs its config itself, and resolving there is the point.
+        """Whether a model reads this provider's config (an agent's task, a classifier's rules, a
+        reranker's query): a ``{{secret:KEY}}`` there stays its name, at a step's dispatch and an
+        automation's fire alike, and an agent's own tools fill it where they run a command with it
+        (the ``bash`` tool does), so the value never reaches the model. Declaring it also turns off
+        held credential settings for the action (``triggers.held_secrets``). False by default,
+        because every other provider uses its config itself, and filling it there is the point.
         """
         return False
 

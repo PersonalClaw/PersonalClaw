@@ -569,13 +569,17 @@ Data leaving the running system:
   automation's action and a workflow step mask each value their dispatch filled in out of what they
   return the same way, before a run history, a step's output or ledger, a note or Run now's answer
   keeps or shows it, and out of the audit rows and log lines the work writes as it runs
-  (`filled_secrets`). Text handed to a model keeps the reference as the name: a
-  trigger whose action is a model turn (`ActionProvider.hands_config_to_a_model`) and a workflow's
-  stage, infer and visualize steps do not fill it in, so the agent's tools do. A workflow run is
-  handed a reference in its inputs as the reference, by an automation's Run workflow action and by
-  a step that starts a run, so no record of the run holds the value; the run fills only the
-  references the one who started it wrote, where a step uses them (`workflows/input_secrets.py`),
-  and text that reads as a reference in an input anyone else supplied stays text. What this cannot
+  (`filled_secrets`). Text handed to a model keeps the reference as the name: a trigger or step
+  whose action's config a model reads (`ActionProvider.hands_config_to_a_model`: a model turn,
+  Browse's goal, the triage digest, knowledge retrieval), a workflow's stage, infer and visualize
+  steps, and a judge gate's prompt and evidence do not fill it in: the reference stays its name, and
+  an agent's own tools fill it where an agent runs a command with it. And a prompt sent through the
+  model-call guard is masked of each secret value the work sending it was handed, as written or
+  encoded (`filled_secrets.masked_here`). A workflow run is handed a reference in its inputs as the
+  reference, by an automation's Run workflow action and by a step that starts a run, so no record of
+  the run holds the value; the run fills only the references the one who started it wrote, where a
+  step uses them (`workflows/input_secrets.py`), and text that reads as a reference in an input
+  anyone else supplied stays text. What this cannot
   cover is in [limitations §11](limitations.md#11-what-reaches-a-model-is-masked-by-shape-and-an-agent-clis-own-tools-are-outside-it).
 - **Credential-excluding exports** (`portability.py`): `.env`, `sel_hmac.key`,
   and `session_map.json` are on the export exclusion list.

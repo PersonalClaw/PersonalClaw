@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
-from personalclaw import lasting_work, record_files
+from personalclaw import filled_secrets, lasting_work, record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.audit_subject import log_title
 from personalclaw.filled_secrets import masked, masked_answer
@@ -1295,11 +1295,8 @@ async def run_script_hook(
     from personalclaw.guardrails.denylist import enforce_action
 
     _session_key = _dispatch_key(hook, hook_event)
-    _deny = enforce_action(
-        hook.provider,
-        config,
-        ctx,
-        session_key=_session_key,
+    _deny = enforce_action(  # quoted as written: a secret by its reference
+        hook.provider, config, ctx, session_key=_session_key, written=hook.provider_config
     )
     if _deny.blocked:
         _record("blocked")
@@ -1341,8 +1338,10 @@ async def run_script_hook(
 
     try:
         # What the action reaches is held to the egress tier of the identity the denylist and the
-        # rung judged it under, whichever turn's event fired it.
-        with egress_held_to(_session_key):
+        # rung judged it under, whichever turn's event fired it; what it was filled with is held
+        # for the writers and the model-call guard to mask (`filled_secrets.handed`, as a fire
+        # holds it).
+        with egress_held_to(_session_key), filled_secrets.handed(filled):
             result = masked_answer(
                 await provider.execute(config, ctx, timeout=hook.timeout), filled
             )

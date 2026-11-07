@@ -70,11 +70,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from personalclaw import filled_secrets
 from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
@@ -211,6 +213,69 @@ async def _decide(prompt: str) -> str:
     return await one_shot_completion(prompt, use_case=USE_CASE)
 
 
+def config_problem(config: dict[str, Any]) -> str:
+    """Why an automation's browse action can't be saved, as each fire refuses it: a start page
+    that names a secret where the address browse shows keeps it
+    (``browse.credentials.start_page_refusal``); "" when it can."""
+    from personalclaw.browse.credentials import start_page_refusal
+
+    refused = start_page_refusal(config.get("start_url"))
+    return f"{refused[0]}: {refused[1]}" if refused else ""
+
+
+#: The parks that hand the tab to a person, who needs the page it is on: a sign-in, a challenge
+#: only they may answer, and a tab they brought to the front.
+HAND_OVER_PARKS = frozenset({PARK_LOGIN_REQUIRED, PARK_HUMAN_CHALLENGE, PARK_TAKEN_OVER})
+
+
+async def forget_where_it_went(session: Any, result: Any = None) -> None:
+    """After a run whose work held a stored secret's value (``filled_secrets.held_here``), its tab
+    is left blank with its history reset (``CdpSession.leave_blank``), so no address it went to
+    stays behind in it, however the run ended. Nothing for a run that held none, nor for one whose
+    *result* parks handing the tab to a person (:data:`HAND_OVER_PARKS`): the run after the
+    hand-over leaves it blank when it ends."""
+    handed_over = bool(getattr(result, "parked", False)) and (
+        getattr(result, "park_reason", "") in HAND_OVER_PARKS
+    )
+    if filled_secrets.held_here() and not handed_over:
+        await session.leave_blank()
+
+
+def _holds_a_secret(result: Any) -> bool:
+    """Whether a run's vision park is the one a held secret's value makes, not a missing model."""
+    from personalclaw.browse.vision import REASON_HOLDS_A_SECRET
+
+    return REASON_HOLDS_A_SECRET in str(getattr(result, "park_detail", "") or "")
+
+
+#: A ``{{secret:…}}`` however it is written, a pipe on it included.
+_NAMES_A_SECRET = re.compile(r"\{\{\s*secret\s*:", re.IGNORECASE)
+
+#: What refuses a goal that names a secret, as (what, why, fix): at a step's dispatch, however the
+#: goal reads it (``model_text_refusal``), and here, as an automation's fire hands it over.
+GOAL_REFUSAL = (
+    "browse's goal can't name a secret",
+    "the goal is what browse's model reads, and a secret's value never reaches a model",
+    "take the {{secret:…}} out of the goal: to sign in, let the run pause and sign in yourself",
+)
+
+
+def _config_refusal(goal: str, start_url: str) -> tuple[str, str, str] | None:
+    """What refuses a browse config before anything opens, as (what, why, fix): a goal or a start
+    page missing, or a goal holding a secret's reference. The goal is what browse's model reads,
+    and browse never types a credential: a site's sign-in is the owner's, through the handoff
+    (``browse.loop``'s credential fields)."""
+    if not goal or not start_url:
+        return (
+            "browse needs both `goal` and `start_url`",
+            "the action config named neither a task nor a page to start from",
+            'set config to {"goal": "…", "start_url": "https://…"}',
+        )
+    if _NAMES_A_SECRET.search(goal):
+        return GOAL_REFUSAL
+    return None
+
+
 class BrowseActionProvider(ActionProvider):
     """Drive a real browser toward a goal, bounded by steps, budget and the egress policy.
 
@@ -227,6 +292,21 @@ class BrowseActionProvider(ActionProvider):
     def display_name(self) -> str:
         return "Browse the web"
 
+    #: The config keys browse's model reads: its goal. A ``{{secret:KEY}}`` there stays a name, and
+    #: a goal that names one is refused (:func:`_config_refusal`). Its start page is filled, to be
+    #: opened, and the model-call guard masks the value out of every prompt the page reaches.
+    model_text_keys = frozenset({"goal"})
+    #: Its model may be handed no reference there: no tool of browse's fills one.
+    model_text_refusal = GOAL_REFUSAL
+    #: The address it opens first, filled: refused at its save, its dispatch and a fire when it
+    #: names a secret where its origin would show it (``browse.credentials.start_page_refusal``).
+    start_page_key = "start_url"
+
+    @property
+    def hands_config_to_a_model(self) -> bool:
+        """Browse's goal is what its model reads (:attr:`model_text_keys`)."""
+        return True
+
     async def execute(
         self,
         action_config: dict[str, Any],
@@ -236,13 +316,8 @@ class BrowseActionProvider(ActionProvider):
         started = time.monotonic()
         goal = str(action_config.get("goal") or "").strip()
         start_url = str(action_config.get("start_url") or "").strip()
-        if not goal or not start_url:
-            return self._error(
-                "browse needs both `goal` and `start_url`",
-                why="the action config named neither a task nor a page to start from",
-                fix='set config to {"goal": "…", "start_url": "https://…"}',
-                started=started,
-            )
+        if (unfit := _config_refusal(goal, start_url)) is not None:
+            return self._error(unfit[0], why=unfit[1], fix=unfit[2], started=started)
 
         from personalclaw.browse.target import (
             TARGET_USER_BROWSER,
@@ -452,7 +527,7 @@ class BrowseActionProvider(ActionProvider):
                 close_check = make_close_check(grant)
                 takeover_check = make_takeover_check(grant)
 
-            session, page, closer = None, None, None
+            session, page, closer, result = None, None, None, None
             try:
                 session, page, closer = await self._open(action_config, ctx, cdp_url=cdp_url)
             except BrowseUnavailable as exc:
@@ -495,7 +570,7 @@ class BrowseActionProvider(ActionProvider):
             finally:
                 if closer is not None:
                     try:
-                        await closer()
+                        await closer(result)
                     except Exception:
                         logger.debug("browse: session close failed", exc_info=True)
 
@@ -580,11 +655,12 @@ class BrowseActionProvider(ActionProvider):
             session.page_transport, screenshot_dir=Path(raw_dir) if raw_dir else None
         )
 
-        async def close() -> None:
+        async def close(result: Any = None) -> None:
             # The session's own work ends first, so nothing it still runs for a frame fails on
             # the closed socket and records a denial after the run; the socket closes however
             # that ends.
             try:
+                await forget_where_it_went(session, result)
                 await session.close()
             finally:
                 await transport.close()
@@ -727,7 +803,7 @@ class BrowseActionProvider(ActionProvider):
         noted = [n for n in noted if n]
         if not noted:
             return f"{head}, and noted nothing."
-        said = "; ".join(noted)
+        said = filled_secrets.masked_here("; ".join(noted))  # before its cut
         if len(said) > _SUMMARY_NOTES_MAX:
             return f"{head}. Noted: {said[: _SUMMARY_NOTES_MAX - 1].rstrip(' .;')}…"
         return f"{head}. Noted: {said}."
@@ -743,6 +819,7 @@ class BrowseActionProvider(ActionProvider):
         That is the leak this method's own comment warns about, two reasons older than the rail, so
         the sentences are added here rather than left for the rail to keep reporting.
         """
+        then = ""
         if result.park_reason == PARK_STEP_EXHAUSTED:
             head = f"Browse stopped after {result.step_count} steps without finishing"
         elif result.park_reason == PARK_BUDGET_EXHAUSTED:
@@ -763,6 +840,15 @@ class BrowseActionProvider(ActionProvider):
             # the run produced nothing. Worth saying plainly — the cause is a policy decision about
             # the URL, which is actionable, unlike a model that gave up.
             head = "Browse could not start because the egress policy refused the starting URL"
+        elif result.park_reason == PARK_VISION_UNAVAILABLE and _holds_a_secret(result):
+            head = (
+                "Browse stopped: vision grounding is off while this step holds a stored secret's "
+                "value, since a screenshot could show it"
+            )
+            then = (
+                " Take the {{secret:…}} out of the start page, or turn vision grounding off for "
+                "this step."
+            )
         elif result.park_reason == PARK_VISION_UNAVAILABLE:
             # The honest refusal, as a sentence. `park_detail` carries the actionable half (the
             # model to pull and its licence) and is surfaced beside this; the head says WHY the run
@@ -784,7 +870,7 @@ class BrowseActionProvider(ActionProvider):
         else:
             head = f"Browse stopped early ({result.park_reason})"
         kept = f"{len(result.notes)} note(s) kept" if result.notes else "no notes recorded"
-        return f"{head}; {kept}. Last page: {result.final_url or 'unknown'}."
+        return f"{head}; {kept}. Last page: {result.final_url or 'unknown'}.{then}"
 
     def _error(
         self,

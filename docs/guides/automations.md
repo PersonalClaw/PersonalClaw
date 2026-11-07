@@ -106,8 +106,9 @@ an action a secret was filled into prints, returns or fails with is masked of th
 short, before its run history, its last error, the note that reports the run and Run now's answer
 keep or show it: a command that echoes its token is recorded with `[REDACTED: credential]` where
 the token was. So is what the action writes itself as it runs: the audit log's row for a command
-refused before it ran or for a request, and the gateway log. A value the command changes on the
-way (encodes, cuts short, splits) is not recognised. A `{{secret:…}}` in a **Run workflow**
+refused before it ran or for a request, and the gateway log. A value is masked as written, as a
+JSON string writes it, percent-encoded or HTML-escaped; not a value the work changed otherwise (cut
+short, split, or encoded another way). A `{{secret:…}}` in a **Run workflow**
 action's inputs is handed to the run as the reference, never the value: the run's record, its run
 list entry, a preview's row in the run history and the prompt of a model step that reads the input
 hold the reference, and the run fills it in where one of its steps uses the input, the run's

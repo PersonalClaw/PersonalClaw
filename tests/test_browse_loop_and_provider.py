@@ -277,7 +277,7 @@ class TestTheProviderContract:
 
         seen: list[tuple[str, dict]] = []
 
-        def _spy(provider_name, action_config, ctx=None, session_key=""):
+        def _spy(provider_name, action_config, ctx=None, session_key="", written=None):
             seen.append((provider_name, dict(action_config or {})))
             return dl.DenyDecision(
                 blocked=True, verdict="block", reason="spied", matched="test:spy"

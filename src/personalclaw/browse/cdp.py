@@ -237,6 +237,8 @@ _JUDGEMENTS_IN_FLIGHT = 4
 
 #: Where a blocked page is sent. ``about:blank`` is not egress — it is the teardown.
 BLANK_URL = "about:blank"
+#: What a tab sends to forget where it went (:meth:`CdpSession.leave_blank`).
+_RESET_HISTORY = "Page.resetNavigationHistory"
 
 #: Chrome reports a failed/stopped load under this scheme; re-judging it would fight our
 #: own enforcement.
@@ -617,6 +619,18 @@ class GatedCdpSession:
                 await self._settled.wait()
                 continue
             return
+
+    async def leave_blank(self) -> None:
+        """Leave the tab on :data:`BLANK_URL` with its history reset, so no address the run went to
+        stays behind in it (a run whose work held a stored secret's value). Best effort: a tab
+        already gone is left as it is."""
+        for method, params in ((NAVIGATE, {"url": BLANK_URL}), (_RESET_HISTORY, {})):
+            try:
+                await self._transport.send(method, params)
+            except Exception:  # noqa: BLE001 - the tab may already be gone
+                logger.debug(
+                    "browse: could not send %s while leaving the tab", method, exc_info=True
+                )
 
     async def close(self) -> None:
         """End the session's own work, before its transport closes: every task it started for a
@@ -1650,8 +1664,9 @@ class GatedCdpSession:
             if self._closed:
                 logger.debug("browse: a teardown ended with the session (%s)", exc)
                 return
-            self._quarantine = (
-                f"could not enforce the block on {blocked.host or blocked.url!r} ({exc}); "
+            where = blocked.host or _screened(blocked.url)
+            self._quarantine = _held_masked(
+                f"could not enforce the block on {where!r} ({exc}); "
                 "this session no longer navigates"
             )
             logger.error("browse: %s", self._quarantine)
@@ -1793,7 +1808,9 @@ class GatedCdpSession:
         WHY ``ungated`` for the second: nothing was refused, and a ``denied`` row is filed under
         the audit surface's Denied family, which would assert a refusal that never happened. The
         word is the one a tool call that ran without asking the host writes, and no family claims
-        it."""
+        it. Each address and reason in it is masked of the values its work holds
+        (``filled_secrets.masked_here``), as every audit row the work writes is."""
+        host, reason = _held_masked(outcome.host or ""), _held_masked(outcome.reason or "")
         try:
             SecurityEventLog().log(
                 SecurityEvent(
@@ -1806,11 +1823,11 @@ class GatedCdpSession:
                     operation=operation,
                     tool_kind=SEL_TOOL_KIND,
                     outcome="ungated" if unjudged else "denied",
-                    resources=f"host={outcome.host}" if outcome.host else "host=",
+                    resources=f"host={host}",
                     metadata={
-                        "host": outcome.host,
-                        "url": outcome.url,
-                        "reason": outcome.reason,
+                        "host": host,
+                        "url": _held_masked(_screened(outcome.url)),
+                        "reason": reason,
                         "risk_level": outcome.risk_level,
                         "cdp_method": operation,
                         "phase": phase,
@@ -1868,3 +1885,18 @@ class _PageTransport:
         refused once the session is quarantined, as every page command is."""
         self._refuse_if_quarantined(NAVIGATE_TO_HISTORY_ENTRY)
         return await self._session.go_back()
+
+
+def _held_masked(text: str) -> str:
+    """*text* masked of each value the work running here holds (``filled_secrets.masked_here``)."""
+    from personalclaw.filled_secrets import masked_here
+
+    return masked_here(text)
+
+
+def _screened(url: str) -> str:
+    """*url* as browse shows it (``credentials.screen_url``): its origin alone while the work holds
+    a stored secret's value."""
+    from personalclaw.browse.credentials import screen_url
+
+    return screen_url(url)

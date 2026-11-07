@@ -570,6 +570,7 @@ FOUNDATION_UNITS: dict[str, str] = {
     "shell_syntax": "measured: how a shell splits a command line; imported by 9, imports none",
     "filled_secrets": "measured: what a filled secret keeps, masked; imported by 5, imports 1",
     "address_logins": "measured: the login an address carries, found; imported by 5, imports none",
+    "known_value_forms": "role: the forms security's mask by value matches; imports none",
 }
 
 

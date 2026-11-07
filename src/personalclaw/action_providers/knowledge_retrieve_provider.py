@@ -87,6 +87,12 @@ class KnowledgeRetrieveActionProvider(ActionProvider):
     def display_name(self) -> str:
         return "Retrieve Knowledge"
 
+    @property
+    def hands_config_to_a_model(self) -> bool:
+        """The query is what the reranking model is sent, so a ``{{secret:KEY}}`` in it stays a
+        name."""
+        return True
+
     def effect(self, action_config: dict[str, Any]) -> RiskLevel:
         """A read: it queries the knowledge store and changes nothing."""
         return RiskLevel.SAFE

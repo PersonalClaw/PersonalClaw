@@ -60,12 +60,18 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, runtime_checkable
 
 from personalclaw.browse.compress import assert_no_base64, compress_page
-from personalclaw.browse.credentials import screen_action_render, screen_url
-from personalclaw.browse.extraction import ROLE_LINK, ElementRef, PageExtraction, extract_page
+from personalclaw.browse.credentials import screen_action_render, screen_text, screen_url
+from personalclaw.browse.extraction import (
+    ROLE_LINK,
+    ElementRef,
+    PageExtraction,
+    extract_page,
+    shown_words,
+)
 from personalclaw.browse.handoff import PARK_LOGIN_REQUIRED
 from personalclaw.browse.sentinels import (
     Action,
@@ -486,8 +492,9 @@ async def verify_submission(
             "submission probably never reached the server",
         )
 
-    extraction = extract_page(html_after, url=url_after)
-    fenced = _fence_page(_outline_text(extraction, ""), url_after)
+    shown = screen_url(url_after)  # the raw one only decided whether the page changed
+    extraction = extract_page(html_after, url=shown)
+    fenced = _fence_page(_outline_text(extraction, ""), shown)
     raw = ""
     try:
         raw = await decide(f"{_VERIFY_INSTRUCTION}\n\nTHE PAGE NOW SHOWS:\n{fenced}")
@@ -496,7 +503,7 @@ async def verify_submission(
     verdict_text = (raw or "").strip()
     upper = verdict_text.upper()
     if upper.startswith("FORM_OK"):
-        return VERDICT_FORM_OK, f"submission verified at {url_after}"
+        return VERDICT_FORM_OK, f"submission verified at {shown}"
     reason = verdict_text[len("FORM_FAILED") :].strip(" :-") if "FORM_FAILED" in upper else ""
     return (
         VERDICT_FORM_FAILED,
@@ -635,7 +642,7 @@ async def run_browse_loop(
         """Record a completed step and relay it to the live mirror. The ONE place a step is
         appended, so every step — including an unparseable reply, a stuck park and DONE — reaches
         the mirror, and the sink cannot be forgotten at one of five call sites."""
-        st.steps.append(bs)
+        st.steps.append(bs := _screened_step(bs))
         if on_step is None:
             return
         try:
@@ -823,7 +830,7 @@ async def run_browse_loop(
             # Screened even though the model can only note what it was shown (which is screened
             # already): notes are PERSISTED and shown to the user, so this is the one recorded
             # surface where a defence-in-depth pass costs nothing and a miss is durable.
-            st.notes.append(screen_url(action.text))
+            st.notes.append(screen_text(action.text))
             outcome_note = "recorded"
         elif isinstance(action, NavigateAction):
             safe_target = screen_url(action.url)
@@ -862,7 +869,7 @@ async def run_browse_loop(
                     settle=settle,
                 )
                 verification = verdict
-                st.notes.append(screen_url(note))
+                st.notes.append(screen_text(note))
                 outcome_note = note
                 try:
                     # The POST-SUBMIT url is the single highest-value screen in this loop: a login
@@ -941,8 +948,8 @@ async def _click_vision(
     """Ground ``action.description`` on the step screenshot and click it. ``(note, park_reason)``.
 
     ``park_reason`` is ``""`` for every outcome the agent can usefully retry (not enabled, not
-    found, a ref existed all along) and a park constant for the two it cannot: no vision model, and
-    a challenge only a human may answer.
+    found, a ref existed all along) and a park constant for the three it cannot: no vision model, a
+    challenge only a human may answer, and a step that holds a stored secret's value.
 
     The guard order is the contract:
 
@@ -1000,6 +1007,9 @@ async def _click_vision(
     if result.outcome == vision.OUTCOME_REFUSED_CHALLENGE:
         _audit_vision_click(outcome=result.outcome, detail=result.reason)
         return result.reason, PARK_HUMAN_CHALLENGE
+    if result.outcome == vision.OUTCOME_HOLDS_A_SECRET:
+        _audit_vision_click(outcome=result.outcome, detail=result.reason)
+        return result.reason, PARK_VISION_UNAVAILABLE
     if result.outcome == vision.OUTCOME_NO_MODEL:
         _audit_vision_click(outcome=result.outcome, detail=vision.REASON_NO_VISION_MODEL)
         # The typed honest refusal. The detail names the models a user could pull, because a park
@@ -1061,7 +1071,7 @@ def _audit_vision_click(
     try:
         from personalclaw.sel import sel
 
-        payload: dict[str, Any] = {"detail": detail[:200]}
+        payload: dict[str, Any] = {"detail": shown_words(detail)[:200]}
         if point is not None:
             payload["x"], payload["y"] = point
         sel().log_api_access(
@@ -1158,6 +1168,12 @@ def _first_action(raw: str) -> Action | None:
     return parse_sentinel(raw or "")
 
 
+def _screened_step(step: BrowseStep) -> BrowseStep:
+    """*step* with its action and its note as browse shows them, before anything keeps, relays or
+    cuts them (``extraction.shown_words``)."""
+    return replace(step, action=shown_words(step.action), note=shown_words(step.note))
+
+
 def _note_repeat(state: _LoopState, rendered: str) -> str:
     """Track consecutive identical actions. Returns "", "warn" or "park"."""
     if state.recent and state.recent[-1] != rendered:
@@ -1180,6 +1196,7 @@ def _park(state: _LoopState, *, goal: str, url: str, reason: str, detail: str) -
     failure would bury the notes under a red error and invite an automatic retry from step 1.
     The one exception is a first-navigation denial, which produced nothing.
     """
+    detail = shown_words(detail)
     _audit_park(reason=reason, detail=detail, url=url, notes=len(state.notes))
     return BrowseLoopResult(
         ok=reason != PARK_NAVIGATION_BLOCKED,

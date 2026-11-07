@@ -553,6 +553,7 @@ class TestTheSkipIsVisibleInTheRunsSurface:
         across every item.
         """
         from personalclaw.action_providers.base import ActionResult
+        from personalclaw.workflows.bindings import BindingContext
         from personalclaw.workflows.engine import dispatch_action
         from personalclaw.workflows.models import Node
 
@@ -570,7 +571,7 @@ class TestTheSkipIsVisibleInTheRunsSurface:
         _run(
             dispatch_action(
                 node,
-                MagicMock(),
+                BindingContext(),
                 get_provider=lambda _n: _Capture(),
                 run_id="run-x",
                 instance_path=TRIAGE_PATH,
@@ -580,7 +581,11 @@ class TestTheSkipIsVisibleInTheRunsSurface:
         # The floor: absent an engine-supplied path the key is simply not there — the provider is
         # never handed a fabricated one to write, which is how the invisible rows happened.
         seen.clear()
-        _run(dispatch_action(node, MagicMock(), get_provider=lambda _n: _Capture(), run_id="run-x"))
+        _run(
+            dispatch_action(
+                node, BindingContext(), get_provider=lambda _n: _Capture(), run_id="run-x"
+            )
+        )
         assert "instance_path" not in seen, seen
 
     def test_the_controller_hands_the_running_instances_path_to_the_provider(

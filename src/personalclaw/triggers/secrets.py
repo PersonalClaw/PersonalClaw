@@ -176,6 +176,19 @@ def _resolved(config: Any, resolver: Callable[[str], str] | None) -> tuple[Any, 
     return _sub(config), tuple(values.values())
 
 
+class ActionRefused(UnresolvedSecret):
+    """A trigger's action whose config names a secret where its provider refuses one (Browse's start
+    page: ``browse.credentials.start_page_refusal``), refused as an unset one is, in its own
+    words."""
+
+    def __init__(self, message: str) -> None:
+        Exception.__init__(self, message)
+        self.key = ""
+        self.refused = None
+        #: What the run's record says of it, in its own words (``cannot_run.missing_secret``).
+        self.said = message
+
+
 def resolve_for(provider: Any, config: Any, *, trigger_id: str = "") -> tuple[Any, tuple[str, ...]]:
     """*config* as the action *provider* is handed it, by either dispatch (a fire, and a run by
     hand or from outside), and the values filled into it: every `{{secret:KEY}}` filled
@@ -194,8 +207,21 @@ def resolve_for(provider: Any, config: Any, *, trigger_id: str = "") -> tuple[An
     *trigger_id* names the automation whose config this is: what it keeps in the credential store
     (``triggers.held_secrets``) is filled first, under its own key, and counted among the values
     filled, and a key of its that is gone refuses the fire."""
+    page = getattr(provider, "start_page_key", None) if isinstance(config, dict) else None
+    written = config.get(page) if page else None
+    if page:
+        from personalclaw.browse.credentials import start_page_refusal
+
+        if (refused := start_page_refusal(written)) is not None:
+            raise ActionRefused(f"{refused[0]}: {refused[1]}")
+    kept: dict[str, Any] = {}
     if getattr(provider, "hands_config_to_a_model", False):
-        return config, ()
+        keys = getattr(provider, "model_text_keys", None)
+        if not keys or not isinstance(config, dict):
+            return config, ()
+        # Only the keys its model reads keep their references (Browse's goal); the rest it runs.
+        kept = {key: config[key] for key in keys if key in config}
+        config = {key: value for key, value in config.items() if key not in kept}
     if getattr(provider, "hands_config_to_a_run", False):
         project = config.get("project_id", "") if isinstance(config, dict) else ""
         check(references(config), project_id=str(project or ""))
@@ -204,7 +230,12 @@ def resolve_for(provider: Any, config: Any, *, trigger_id: str = "") -> tuple[An
 
     config, held = fill(trigger_id, config)
     config, filled = _resolved(config, None)
-    return config, held + filled
+    if page and isinstance(config, dict):
+        from personalclaw.browse.credentials import start_page_moved
+
+        if (moved := start_page_moved(written, config.get(page))) is not None:
+            raise ActionRefused(f"{moved[0]}: {moved[1]}")
+    return ({**config, **kept} if kept else config), held + filled
 
 
 def handed(provider: Any, config: Any) -> tuple[str, ...]:

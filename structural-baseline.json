@@ -243,6 +243,7 @@
       "http_errors",
       "ids",
       "instants",
+      "known_value_forms",
       "loaded_modules",
       "log_sinks",
       "loop_watch",
@@ -327,6 +328,7 @@
       "http_errors": "measured: the one wire error emitter and its codes; imported by 10, none",
       "identity": "measured: the owner's attribution name; imported by 15 units, imports 1",
       "instants": "measured: stored timestamps with their offset; imported by 21, imports none",
+      "known_value_forms": "role: the forms security's mask by value matches; imports none",
       "net": "role: the one outbound network chokepoint (imported by 39; 5 upward imports are debt)",
       "notification_kinds": "measured: the notification kind registry; imported by 25, imports none",
       "record_files": "measured: a JSON record file with one lock; imported by 28 units, imports 3",
@@ -740,7 +742,8 @@
           "textfmt",
           "shell_syntax",
           "filled_secrets",
-          "address_logins"
+          "address_logins",
+          "known_value_forms"
         ],
         "name": "foundation-imports-only-foundation",
         "rationale": "The foundation is what every layer stands on, so it may import only itself. A foundation unit that imports a domain unit puts the whole domain under everything that imports it, which is how one import cycle came to hold 268 of the 358 units: config, imported by 159 units, imports apps, agents, providers and workflows. Measured 73 edges across 17 files on 2026-10-31, grandfathered as a floor; each one cut is a cheap first cut of that cycle.",

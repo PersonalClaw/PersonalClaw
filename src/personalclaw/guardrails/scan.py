@@ -383,6 +383,13 @@ def _scanned_message(message: Any, scan: Callable[[str], str]) -> Any:
     return out
 
 
+def text_parts_changed(messages: list[dict], change: Callable[[str], str]) -> list[dict]:
+    """*messages* with each text part :func:`scan_request` reads passed through *change*, in copies
+    (the caller's are never changed). A model's reasoning record, its signature and a tool call's
+    id go as they are."""
+    return [_scanned_message(message, change) for message in messages or []]
+
+
 def unscanned_chars(messages: list[dict], *, mode: str) -> int:
     """How many characters of a request :func:`scan_request` has not scanned lately at *mode*:
     the text it would scan now, rather than remember."""

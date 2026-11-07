@@ -144,6 +144,13 @@ class BindingContext:
     #: Resolver for `{{secret:KEY}}`. Injected so nothing here reads the credential
     #: store directly — that also keeps secrets out of unit tests by default.
     secret_resolver: Any = None
+    #: The resolver for `model_text`, the step's config keys whose text a model is sent: it keeps
+    #: each reference as the name (`node_bindings.context_for`). None where every key resolves with
+    #: `secret_resolver`.
+    kept_resolver: Any = None
+    #: The step's config keys a model reads, a judge gate's `prompt` and `evidence`, resolved with
+    #: `kept_resolver` by `engine_support.resolve_config`; every other key with `secret_resolver`.
+    model_text: frozenset[str] = frozenset()
     #: Every secret's value `secret_resolver` filled in while the step's bindings resolved: what
     #: the step was handed and may print, return or fail with, so its dispatch masks each of them
     #: out of what it returns before the run keeps it (`engine_support.masked`).

@@ -449,22 +449,23 @@ def unsendable_message_refusal(
 
 
 def _refused_command(workflow: Any) -> str:
-    """Why every run of *workflow* would be refused before its `bash` command ran: the shell
-    denylist refuses its text (`bash_provider.config_problem`). "" for any other action."""
-    action = _inline_action_of(workflow)
-    if str(action.get("provider") or "") != "bash":
-        return ""
-    from personalclaw.action_providers.bash_provider import config_problem
+    """Why every run of *workflow* would be refused before its action ran: the shell denylist
+    refuses a `bash` command's text (`bash_provider.config_problem`), or a `browse` start page names
+    a secret where the address browse shows keeps it (`browse_provider.config_problem`). "" for
+    any other action."""
+    from personalclaw.action_providers import bash_provider, browse_provider
 
+    action = _inline_action_of(workflow)
+    own = {"bash": bash_provider, "browse": browse_provider}.get(str(action.get("provider") or ""))
     config = action.get("config")
-    return config_problem(config if isinstance(config, dict) else {})
+    return own.config_problem(config if isinstance(config, dict) else {}) if own else ""
 
 
 def denied_command_refusal(workflow: Any) -> AutomationToolResult | None:
-    """Refuse a `bash` action whose command the shell denylist refuses (:func:`_refused_command`):
-    every run would refuse it. The Triggers page asks the same question where it saves
-    (`dashboard/handlers/triggers._action_problem`); this is the chat's and the CLI's door, for
-    `create` and `update` alike."""
+    """Refuse a `bash` action whose command the shell denylist refuses, or a `browse` action whose
+    start page every fire refuses (:func:`_refused_command`). The Triggers page asks the same
+    question where it saves (`dashboard/handlers/triggers._action_problem`); this is the chat's and
+    the CLI's door, for `create` and `update` alike."""
     problem = _refused_command(workflow)
     return AutomationToolResult(False, f"Error: {problem}") if problem else None
 

@@ -25,6 +25,7 @@ from personalclaw.command_paths import (
     shell_expands_to,
     strip_shell_quotes,
 )
+from personalclaw.known_value_forms import _encoded_forms, _form_pattern
 from personalclaw.project_secrets import PROJECT_SECRET_FILE_PATTERNS, is_project_secret_name
 from personalclaw.sel import SecurityEvent, SecurityEventLog
 from personalclaw.shell_syntax import Word, lex, simple_commands
@@ -1613,17 +1614,20 @@ def redact_known_values(text: str, values: Iterable[str]) -> str:
     For the code that itself handed those values out: a command it ran with a resolved
     ``{{secret:KEY}}`` or a credential in its environment. The shape-based mask cannot see a
     password like ``correct-horse-battery``, and this code knows it exactly. Every value however
-    short, as written and as a JSON string writes it, longest first so a value that contains
-    another is replaced whole; a mask already in *text* stays as it is, so a second pass changes
-    nothing. A caller that only guesses a value is a credential holds it to
-    :data:`GUESSED_VALUE_MIN_LEN` first.
+    short, as written, as a JSON string writes it, percent-encoded (as a URL's path or query carries
+    it, either case) and HTML-escaped, longest first so a value that contains another is replaced
+    whole; a mask already in *text* stays as it is, so a second pass changes nothing. A caller that
+    only guesses a value is a credential holds it to :data:`GUESSED_VALUE_MIN_LEN` first.
     """
     known = {v for v in values if isinstance(v, str) and v}
     if not text or not known:
         return text
     forms = known | {json.dumps(v, ensure_ascii=a)[1:-1] for v in known for a in (True, False)}
-    wanted = [_KNOWN_VALUE_MASK, *sorted(forms, key=len, reverse=True)]
-    return re.compile("|".join(map(re.escape, wanted))).sub(_KNOWN_VALUE_MASK, text)
+    forms |= {f for v in known for f in _encoded_forms(v)}
+    wanted = [re.escape(_KNOWN_VALUE_MASK)] + [
+        _form_pattern(form) for form in sorted(forms, key=len, reverse=True)
+    ]
+    return re.compile("|".join(wanted)).sub(_KNOWN_VALUE_MASK, text)
 
 
 def redact_values_for_display(value: Any) -> Any:

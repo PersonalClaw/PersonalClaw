@@ -46,6 +46,10 @@ HELD = "orchard-lantern"
 #: A path an action names, as it was written with the secret, and the same path written out.
 WRITTEN = "{{secret:DEPLOY_KEY_DIR}}/keys"
 WRITTEN_OUT = VALUE + "/keys"
+#: A path under the same folder written with a pipe that keeps the value's tail: it fills to
+#: ``~/.ssh/rchard-lantern/keys``, which holds ``HELD[1:]`` but not the value, so no mask of the
+#: value hides it; run on the reference, the pipe keeps no ``{{secret:`` head.
+PIPED = "~/.ssh/{{secret:DEPLOY_KEY_DIR | slice(8,99)}}/keys"
 
 #: A secret naming the program a command runs, for the agent's shell, where the command is all the
 #: action denylist reads.
@@ -56,7 +60,10 @@ TOOL_COMMAND_OUT = HELD + " restart personalclaw"
 #: A session nobody is in: a scheduled job's turn.
 NOBODY = "cron:rotate-keys"
 
-SECRETS = {NAME: VALUE, TOOL: HELD}
+#: A secret whose value is a number, which a numeric pipe reads and its reference can't be.
+WAIT = "DEPLOY_WAIT"
+
+SECRETS = {NAME: VALUE, TOOL: HELD, WAIT: "45"}
 
 
 class _Recorder:
@@ -287,6 +294,73 @@ def _a_workflow_step(path: str, rec: _Recorder, _state: _State, _work: Path):
     return controller.run.error_message, [record, *_texts(store.run_dir(run.id))]
 
 
+def _a_workflow_step_through_an_input(
+    path: str, rec: _Recorder, _state: _State, _work: Path, *, beside: bool = False
+):
+    """A workflow's action step whose path reads a run input that holds the reference, the run
+    handed that reference as one (`workflows.input_secrets`); *beside* another argument that a
+    numeric pipe reads through a run input holding a reference, which resolves filled and not with
+    the reference kept."""
+    from personalclaw.workflows import input_secrets, store
+    from personalclaw.workflows.controller import EngineServices, RunController
+    from personalclaw.workflows.models import OriginKind, RunOrigin, WorkflowRun
+
+    written = path.replace("{{secret:" + NAME, "{{inputs.dir")
+    step = {"provider": "bash", "with": {"command": "ls", "cwd": written}}
+    if beside:
+        step["with"]["timeout"] = "{{inputs.wait | clamp(1, 60)}}"
+    spec = {
+        "name": "rotate-keys",
+        "inputs": {"dir": {"required": False}, "wait": {"required": False}},
+        "root": {
+            "kind": "sequence",
+            "id": "s",
+            "children": [{"kind": "action", "id": "rotate", "config": step}],
+        },
+    }
+    inputs = {"dir": "{{secret:" + NAME + "}}"} if "{{secret:" in path else {}
+    inputs |= {"wait": "{{secret:" + WAIT + "}}"} if beside else {}
+    run = store.create(
+        WorkflowRun(
+            id="",
+            workflow_name=spec["name"],
+            origin=RunOrigin(kind=OriginKind.MANUAL),
+            inputs=inputs,
+            extra=input_secrets.stamp({}, inputs, [NAME, WAIT]),
+        )
+    )
+    store.write_spec(run.id, spec)
+    controller = RunController(run, spec, services=EngineServices(get_provider=lambda name: rec))
+    asyncio.run(controller.run_to_completion(timeout=20))
+    kept = store.get(run.id)
+    record = json.dumps(dataclasses.asdict(kept), default=str) if kept is not None else ""
+    return controller.run.error_message, [record, *_texts(_home())]
+
+
+def _a_workflow_step_through_an_input_beside_an_unkept_argument(
+    path: str, rec: _Recorder, state: _State, work: Path
+):
+    """🔴 Red before: the other argument failed the arguments' kept read, so the refusal and its
+    security row quoted the path as filled."""
+    return _a_workflow_step_through_an_input(path, rec, state, work, beside=True)
+
+
+def _a_lifecycle_trigger(path: str, rec: _Recorder, _state: _State, _work: Path):
+    """A lifecycle trigger's action on its event (`hooks.run_script_hook`)."""
+    from personalclaw.hooks import ScriptHook, run_script_hook
+
+    hook = ScriptHook(
+        id="h-rotate",
+        name="Rotate keys",
+        event="SessionStart",
+        provider="bash",
+        provider_config={"command": "ls", "cwd": path},
+        capabilities={"providers": ["bash"]},
+    )
+    result = asyncio.run(run_script_hook(hook, "", {"event": "SessionStart"}))
+    return str(result.error or ""), [repr(result), *_texts(_home())]
+
+
 def _the_agents_shell(command: str, _rec: _Recorder, _state: _State, work: Path):
     """The agent's own bash tool in a session nobody is in."""
     from personalclaw.agents.native.builtin_tools import NativeBuiltinToolProvider
@@ -302,8 +376,21 @@ Door = Callable[[str, _Recorder, _State, Path], tuple[str, list[str]]]
 #: was written with the secret, and the same written out.
 DOORS: dict[str, tuple[Door, str, str]] = {
     "a-fire": (_a_fire, WRITTEN, WRITTEN_OUT),
+    "a-lifecycle-trigger": (_a_lifecycle_trigger, WRITTEN, WRITTEN_OUT),
     "a-webhooks-fire": (_a_webhooks_fire, WRITTEN, WRITTEN_OUT),
     "a-workflow-step": (_a_workflow_step, WRITTEN, WRITTEN_OUT),
+    "a-workflow-step-through-an-input": (_a_workflow_step_through_an_input, WRITTEN, WRITTEN_OUT),
+    "a-workflow-step-piping-it": (_a_workflow_step, PIPED, WRITTEN_OUT),
+    "a-workflow-step-piping-it-through-an-input": (
+        _a_workflow_step_through_an_input,
+        PIPED,
+        WRITTEN_OUT,
+    ),
+    "a-workflow-step-through-an-input-beside-an-unkept-argument": (
+        _a_workflow_step_through_an_input_beside_an_unkept_argument,
+        WRITTEN,
+        WRITTEN_OUT,
+    ),
     "the-agents-shell": (_the_agents_shell, TOOL_COMMAND, TOOL_COMMAND_OUT),
 }
 
@@ -326,9 +413,9 @@ def test_a_refusal_names_a_secret_by_its_reference_and_shows_its_value_nowhere(
 
     assert recorder.calls == [], f"{door}: the action ran"
     # Refused at all: the reference written alone names no sensitive path or command, so the
-    # check judged the value it was filled with.
+    # check judged the value it was filled with (the piped rows aside: written under ~/.ssh, they
+    # would be refused as written; the other rows show the fill is judged).
     assert "blocked by the guardrails denylist: " in said, f"{door}: {said!r}"
-    assert written in said, f"{door}: the refusal does not quote it as it was written: {said!r}"
     kept = {
         "the refusal": [said],
         "the run's record": records,
@@ -336,8 +423,10 @@ def test_a_refusal_names_a_secret_by_its_reference_and_shows_its_value_nowhere(
         "the security log": [json.dumps(row) for row in _security_rows()],
         "the gateway log": [record.getMessage() for record in caplog.records],
     }
-    shown = sorted(where for where, texts in kept.items() if any(HELD in t for t in texts))
+    # Any piece a pipe could cut from the value's front still holds this.
+    shown = sorted(where for where, texts in kept.items() if any(HELD[1:] in t for t in texts))
     assert not shown, f"{door}: the secret's value is in {', '.join(shown)}"
+    assert written in said, f"{door}: the refusal does not quote it as it was written: {said!r}"
 
 
 @pytest.mark.parametrize("door", sorted(DOORS))
@@ -350,6 +439,26 @@ def test_a_refusal_still_quotes_what_was_written_out(door, recorder, state, work
     assert recorder.calls == [], f"{door}: the action ran"
     quoted = WRITTEN_OUT if out == WRITTEN_OUT else f"`{HELD}`"
     assert quoted in said, f"{door}: the refusal does not quote it: {said!r}"
+
+
+def test_a_refusal_with_no_reference_to_quote_is_masked_of_what_its_work_was_handed(caplog):
+    """A refusal handed nothing written to quote is masked of each value the work running it was
+    handed (``filled_secrets.masked_here``), in what it says, its security row and the log.
+    🔴 Red before: each quoted the path as filled."""
+    from personalclaw import filled_secrets
+    from personalclaw.guardrails.denylist import enforce_action
+
+    with caplog.at_level(logging.INFO), filled_secrets.handed([VALUE]):
+        decision = enforce_action("bash", {"command": "ls", "cwd": WRITTEN_OUT})
+
+    assert decision.blocked, "vacuity: the path was refused"
+    kept = [
+        decision.refusal(),
+        *(json.dumps(row) for row in _security_rows()),
+        *(record.getMessage() for record in caplog.records),
+    ]
+    assert _security_rows(), "vacuity: the refusal was audited"
+    assert [text for text in kept if HELD in text] == []
 
 
 # ── every rule that quotes what it refused ─────────────────────────────────────────────────────

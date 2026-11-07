@@ -25,6 +25,7 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
+from personalclaw import filled_secrets
 from personalclaw.guardrails.failure import use_case_binding
 from personalclaw.workflows.models import RETRYABLE_CLASSES, Failure, FailureClass
 
@@ -67,6 +68,13 @@ _CLASS_FIX: dict[FailureClass, str] = {
 }
 
 
+def _cut(text: str, limit: int = 500) -> str:
+    """*text* as a failure keeps it: masked of each value the work running here holds
+    (``filled_secrets.masked_here``), then cut to *limit*, so no piece of a value survives the
+    cut."""
+    return filled_secrets.masked_here(text)[:limit]
+
+
 def classify_exception(exc: BaseException, *, use_case: str = "") -> Failure:
     """Map an exception to the typed taxonomy. Only TRANSIENT/NETWORK are retryable, so
     this classification decides whether budget gets spent on a retry — and whether the run
@@ -83,7 +91,7 @@ def classify_exception(exc: BaseException, *, use_case: str = "") -> Failure:
             break
         typed = _typed(seen, use_case)
         if typed is not None:
-            typed.cause_plain = typed.cause_plain or f"{type(exc).__name__}: {exc}"[:500]
+            typed.cause_plain = typed.cause_plain or _cut(f"{type(exc).__name__}: {exc}")
             return typed
         seen = seen.__cause__
     return _by_text(type(exc).__name__, str(exc), timed_out=isinstance(exc, TimeoutError))
@@ -110,7 +118,7 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
         # never can. Its message already names the switch.
         return Failure(
             failure_class=FailureClass.USER,
-            cause_plain=str(exc)[:500],
+            cause_plain=_cut(str(exc)),
             remediation="turn on Generative UI, or drop this node",
         )
     if isinstance(exc, LastingWorkRefused):
@@ -119,7 +127,7 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
         # and the sentence says where it can be done.
         return Failure(
             failure_class=FailureClass.USER,
-            cause_plain=str(exc)[:500],
+            cause_plain=_cut(str(exc)),
             remediation=(
                 "ask the owner to do this, or they can do it themselves"
                 if exc.code == ASKED
@@ -130,7 +138,7 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
         # The shell denylist's rule, which no retry changes. Its message names the rule.
         return Failure(
             failure_class=FailureClass.USER,
-            cause_plain=str(exc)[:500],
+            cause_plain=_cut(str(exc)),
             remediation=(
                 "change the check command, or a pattern you added under Settings → Security → "
                 "Shell denylist, then re-run this node"
@@ -297,7 +305,7 @@ def _by_transport(exc: BaseException) -> Failure | None:
 def _by_text(name: str, text: str, *, timed_out: bool) -> Failure:
     """The substring rules, for a failure whose only signal is its message."""
     low = text.lower()
-    cause = f"{name}: {text}"[:500] if name else text[:500]
+    cause = _cut(f"{name}: {text}" if name else text)
     if timed_out:
         # A bare `TimeoutError` is a wall-clock budget the engine or a dispatcher set: the same
         # attempt hits the same cap, so it is not a retry's to fix.
@@ -395,9 +403,9 @@ def classify_action_result(result: Any, output: Any = None) -> Failure:
     """
     provider_said = str(getattr(result, "error", "") or "")
     own = "" if provider_said else _own_reason(output)
-    cause = (
+    cause = _cut(
         provider_said or own or str(getattr(result, "stderr", "") or "") or _exit_status(result)
-    )[:500]
+    )
     err = getattr(result, "agent_error", None)
     fix = str(getattr(err, "fix", "") or "") if err is not None else ""
     declared = str(getattr(result, "failure_class", "") or "")
@@ -458,7 +466,7 @@ def binding_failure(exc: Any, what: str = "binding failed") -> Failure:
     supplied = bool(getattr(exc, "caller_supplied", False))
     return Failure(
         failure_class=FailureClass.USER if supplied else FailureClass.INTERNAL,
-        cause_plain=f"{what}: {exc}"[:500],
+        cause_plain=_cut(f"{what}: {exc}"),
         remediation=getattr(exc, "remediation", "")
         or "check this binding against the workflow definition",
     )

@@ -19,6 +19,7 @@ from personalclaw.workflows import deliverable, input_secrets, store
 from personalclaw.workflows.bindings import BindingContext, BindingError, item_prefixes, resolve
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
+    GateKind,
     LoopMode,
     Node,
     NodeKind,
@@ -125,9 +126,17 @@ def item_output(ctl: RunController, path: str, node_id: str) -> Any:
 
 def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
     fields = _step_fields(ctl, item)
+    model_text = _gate_model_text(ctl, item, fields) or _action_model_text(ctl, item, fields)
     # Scoped to the step's own fan-out item: a sibling it binds is that item's instance, not
     # whichever item last wrote the node id.
-    return item_context(ctl, item.path, **fields, secret_resolver=_secrets_for(ctl, item, fields))
+    return item_context(
+        ctl,
+        item.path,
+        **fields,
+        secret_resolver=_secrets_for(ctl, item, fields),
+        kept_resolver=_model_text_resolver(ctl, item, fields) if model_text else None,
+        model_text=model_text,
+    )
 
 
 def _step_fields(ctl: RunController, item: ReadyNode) -> dict[str, Any]:
@@ -162,6 +171,83 @@ def _no_secret(key: str) -> str:
     from personalclaw.workflows.engine_support import no_secret
 
     return no_secret(key)
+
+
+def _gate_model_text(ctl: RunController, item: ReadyNode, fields: dict[str, Any]) -> frozenset[str]:
+    """The config keys of the gate *item* whose text a model is sent, by its ``kind`` resolved as
+    its dispatch resolves it, against the same run state (*fields*) and with no secret in it: a
+    judge's ``prompt`` and ``evidence`` (``engine_support.JUDGE_TEXT``). A kind that doesn't
+    resolve, or names no gate kind, keeps them too: what reads them can't be known. None for any
+    other step; a judge's ``verify`` block is a check it runs, and is filled."""
+    from personalclaw.workflows.engine_support import JUDGE_TEXT
+
+    if item.node.kind != NodeKind.GATE:
+        return frozenset()
+    raw = (item.node.config or {}).get("kind", "")
+    if not isinstance(raw, str) or "{{" in raw:
+        try:
+            raw = resolve(raw, item_context(ctl, item.path, **fields, secret_resolver=_no_secret))
+        except BindingError:
+            return JUDGE_TEXT
+    try:
+        kind = GateKind(str(raw or ""))
+    except ValueError:
+        return JUDGE_TEXT
+    return JUDGE_TEXT if kind == GateKind.JUDGE else frozenset()
+
+
+def _model_text_keys(provider: Any) -> frozenset[str]:
+    """The config keys *provider*'s model reads, where it names them (``model_text_keys``:
+    Browse's goal); none where its whole config is its model's or it hands none to one."""
+    return frozenset(getattr(provider, "model_text_keys", None) or ())
+
+
+def _action_model_text(
+    ctl: RunController, item: ReadyNode, fields: dict[str, Any]
+) -> frozenset[str]:
+    """The config keys of the action step *item* whose text a model is sent, where its provider
+    names them (:func:`_model_text_keys`): each one under the step's ``with`` or ``config``. The
+    rest of its config is what the provider runs, and is filled."""
+    if item.node.kind != NodeKind.ACTION:
+        return frozenset()
+    from personalclaw.workflows.step_arguments import HOLDERS
+
+    keys = _model_text_keys(_step_provider(ctl, item, fields))
+    # Under either holder: the dispatch picks one from the resolved config, which the written one
+    # may not show (`step_arguments.holder`).
+    return frozenset(f"{where}.{key}" for where in HOLDERS for key in keys)
+
+
+def _model_text_resolver(
+    ctl: RunController, item: ReadyNode, fields: dict[str, Any]
+) -> Callable[[str], str]:
+    """The resolver for the text the step *item*'s model is sent: each reference kept as its name
+    (:func:`_kept_for_a_model`), or, for a provider whose model may be handed none
+    (``model_text_refusal``: Browse's goal, since no tool of its fills one), refused in its words,
+    however the text reads the secret, piped or through an input."""
+    if item.node.kind != NodeKind.ACTION:
+        return _kept_for_a_model
+    refusal = getattr(_step_provider(ctl, item, fields), "model_text_refusal", None)
+    if not refusal:
+        return _kept_for_a_model
+    what, why, fix = refusal
+
+    def _refused(key: str) -> str:
+        raise BindingError(f"{what}: {why}", remediation=fix, caller_supplied=True)
+
+    return _refused
+
+
+def _kept_for_a_model(key: str) -> str:
+    """The resolver for the text a gate's model is sent (``BindingContext.kept_resolver``): each
+    reference kept as the name, and no read recorded, since that model works for no agent of the
+    run. A name nothing reads by name is refused as :func:`_secrets_for` refuses it."""
+    from personalclaw.llm.credentials import name_refusal
+
+    refused = name_refusal(key)
+    if refused is not None:
+        raise BindingError(refused.cause, remediation=refused.remedy, caller_supplied=True)
+    return "{{secret:" + key + "}}"
 
 
 def _step_provider(ctl: RunController, item: ReadyNode, fields: dict[str, Any]) -> Any:
@@ -271,7 +357,9 @@ def _secrets_for(
     if _hands_a_run_its_inputs(item.node, provider):
         return input_secrets.Handed()
     unknown = item.node.kind == NodeKind.ACTION and provider is None
-    handed_on = unknown or _config_reaches_a_model(item.node, provider)
+    # A provider that names the keys its model reads keeps only those (`_action_model_text`).
+    to_a_model = _config_reaches_a_model(item.node, provider) and not _model_text_keys(provider)
+    handed_on = unknown or to_a_model
     records_handed_on = handed_on and _agent_works_for_the_run(item.node, provider)
     recorded: set[str] = set()
 

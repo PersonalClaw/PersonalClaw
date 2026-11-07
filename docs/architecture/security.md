@@ -511,7 +511,8 @@ the call's own audit row; each with a warning in the gateway log. Each quotes th
 command as it was written. A dispatch that fills each `{{secret:NAME}}` in before asking (a
 trigger's fire, whoever asked for it, a workflow step, the bash tool) is judged on
 the value it filled in and quoted with the reference left a reference (`check_action`'s
-`written`), so a secret's value is in no refusal, record or log. A refusal the work makes itself as
+`written`), a secret a pipe reads by its reference and the pipe as written, so a secret's value,
+or a piece of it, is in no refusal, record or log. A refusal the work makes itself as
 it runs (a bash action whose sandbox cannot start, a workflow check the shell denylist refuses)
 quotes the command as it would have run, each value its dispatch filled in masked, as every record
 that work writes is (`filled_secrets.handed`). Wherever the work is recorded,
