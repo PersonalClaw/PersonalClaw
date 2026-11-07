@@ -35,6 +35,16 @@ def _mock_ctx_builder() -> MagicMock:
     return ctx
 
 
+async def _stop(mgr: SubagentManager) -> None:
+    """Stop what *mgr* started before its test's loop closes. A child still running at the close
+    is cancelled there, and its teardown starts a queued one in a task the close never cancels;
+    once collected, that task runs *mgr*'s teardown in whichever test's loop is running then, and
+    ends its fan-out's run on the one spend meter the process has: a fan-out with the same key in
+    that test loses its run's total."""
+    with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+        await mgr.cancel_all()
+
+
 def _completing_sessions(*, text: str = "result", cost: float = 0.0) -> MagicMock:
     """A SessionManager mock whose provider yields a text chunk + COMPLETE, so a
     spawned subagent runs to a real completion."""
@@ -163,6 +173,7 @@ class TestQueueCorrectness:
         assert queued.silent is True
         assert queued.dry_run is True
         assert queued.parent_run == "workflow:run-1"
+        await _stop(mgr)
 
     @pytest.mark.asyncio
     async def test_queued_spawn_cancellable_by_id_and_ids_never_collide(self) -> None:
@@ -190,6 +201,7 @@ class TestQueueCorrectness:
             # it is gone from the queue; the other queued spawn remains addressable
             assert all(qi.id != q1.id for qi in mgr._queue)
             assert mgr.get(q2.id) is q2
+        await _stop(mgr)
 
 
 # ── agent validation ─────────────────────────────────────────────────
@@ -260,6 +272,7 @@ class TestFanoutControl:
             # Run B still gets its own lane slots — not starved by A.
             b = mgr.spawn("b0", parent_session_key="dashboard:y", parent_run="workflow:B")
             assert b is not None and b.queued is False
+        await _stop(mgr)
 
     @pytest.mark.asyncio
     async def test_kill_fanout_cancels_all_children_of_one_run(self) -> None:
@@ -281,9 +294,10 @@ class TestFanoutControl:
             n = await mgr.cancel_fanout("workflow:A")
             assert n == 3
             assert all(i.done and i.cancelled for i in a)  # type: ignore[union-attr]
-            # B is untouched — cancel_fanout scopes to ONE run (B was never cancelled;
-            # it may have run to completion on its own).
+            # B is untouched — cancel_fanout scopes to ONE run (B, queued behind A's two
+            # running children, was never cancelled).
             assert b is not None and b.cancelled is False
+        await _stop(mgr)
 
     @pytest.mark.asyncio
     async def test_record_failure_breaker_trips_at_five(self) -> None:
@@ -379,7 +393,10 @@ class TestRunBudget:
             ),
         ):
             kids = [
-                mgr.spawn(f"c{i}", parent_session_key="dashboard:x", parent_run="workflow:A")
+                # A fan-out key of its own: no manager another test left behind reaches its total.
+                mgr.spawn(
+                    f"c{i}", parent_session_key="dashboard:x", parent_run="workflow:run-budget"
+                )
                 for i in (1, 2, 3)
             ]
             assert all(k is not None for k in kids)
