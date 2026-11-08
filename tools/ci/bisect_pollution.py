@@ -282,7 +282,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"bisect-pollution: {len(before)} tests ran before it in {path.name}; at most "
         f"{runs_at_most(len(before))} runs"
     )
-    with tempfile.TemporaryDirectory(prefix="bisect-pollution-") as scratch:
+    # Under /var/tmp, never the machine's temporary folder: a replay's --basetemp there holds no
+    # pytest-of-* folder, so a worktree a replayed test registers would read as another session's
+    # tests' own (tests/worktree_guard.py).
+    with tempfile.TemporaryDirectory(prefix="bisect-pollution-", dir="/var/tmp") as scratch:
         replay = pytest_replay(python=args.python, root=args.root, scratch=Path(scratch))
         finding = search(args.nodeid, before, replay, path=str(path))
     print(f"bisect-pollution: {finding.sentence()}")
