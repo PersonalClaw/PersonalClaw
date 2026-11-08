@@ -294,6 +294,7 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, fi
     };
     const bridge = await evaluate("typeof window.pclawDesktop");
     if (bridge !== "object") return fail(`the preload put no desktop bridge on the page (window.pclawDesktop is ${bridge})`);
+    if (!(await evaluate("Object.hasOwn(window, 'pclawDesktop')"))) return fail("the desktop bridge is not the window's own property");
     step("the preload's desktop bridge is on the page");
     if (firstRun) {
       step("a first run stops here: its chat draws no composer until a provider is set up");

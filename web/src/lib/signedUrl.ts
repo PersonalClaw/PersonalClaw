@@ -112,7 +112,8 @@ export function signable(url: unknown): url is string {
 export function signs(): boolean {
   if (mintAbsent) return false
   if (storedPair()) return true
-  return typeof window !== 'undefined' && 'pclawDesktop' in window
+  // The desktop app's bridge, read as the window's own property (`desktopBridge`).
+  return typeof window !== 'undefined' && Object.hasOwn(window, 'pclawDesktop')
 }
 
 function fresh(entry: Signed | undefined, now: number): entry is Signed {

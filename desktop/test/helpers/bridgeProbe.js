@@ -56,6 +56,7 @@ app.whenReady().then(async () => {
     const ns = JSON.stringify(NAMESPACE);
     out.namespace = NAMESPACE;
     out.bridge = await view.webContents.executeJavaScript(`typeof window[${ns}]`);
+    out.own = await view.webContents.executeJavaScript(`Object.hasOwn(window, ${ns})`);
     out.keys = await view.webContents.executeJavaScript(
       `window[${ns}] ? Object.keys(window[${ns}]).sort() : []`,
     );
