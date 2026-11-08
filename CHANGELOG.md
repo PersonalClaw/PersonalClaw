@@ -32,6 +32,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A task shows what its agent wrote, rendered: its title in the list, the cards, the board, the graph, its panel, the pickers, a project's work board and both cockpits, its steps and exit criteria, the prerequisites it waits on, its notes (with their line breaks), its instructions (rendered, with Raw to see the source) and the code cockpit's description. Each tooltip and name built from a title is the same line as plain text.**
 - **Home renders what agents and people wrote: an ask's title, a gate's prompt (without its widget), a question card's questions, a running or finished row's name and line, the line of each row in Your agents today (its ask, its work, or why it failed), a chat's title and last words, the conversation an ask came from, and Recent activity's reasons. A pinned markdown artifact renders as markdown. An approval's title, a tool's name, stays text.**
 - **A notification's title and first line render in the Notifications list, the bell and the note's toast, the Inbox row renders the start of its message inline, and a thread's context, a proposal's title and text preview, and a triage digest's titles and reasons render. The system banner on the desktop app carries plain text with no marks. The app's own toasts stay text.**
+- **A document's or an SVG's preview keeps no `class` attribute from its markup, and a document's HTML export and copied HTML keep none either.**
 
 ## [0.3.7] — 2026-11-07
 

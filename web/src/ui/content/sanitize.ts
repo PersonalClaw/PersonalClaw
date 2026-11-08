@@ -44,9 +44,11 @@ const SVG_TAGS = new Set([
   'feFlood', 'feMerge', 'feMergeNode', 'feMorphology', 'feDropShadow', 'image', 'switch',
 ])
 
-// Attributes allowed on any element. event handlers (on*) are NEVER allowed.
+// Attributes allowed on any element. Event handlers (on*) are NEVER allowed, and neither is
+// `class`, in either profile: the previews' wrappers carry their own classes, outside the
+// sanitized markup.
 const GLOBAL_ATTRS = new Set([
-  'class', 'id', 'title', 'lang', 'dir', 'role', 'colspan', 'rowspan', 'datetime',
+  'id', 'title', 'lang', 'dir', 'role', 'colspan', 'rowspan', 'datetime',
   'cite', 'alt', 'width', 'height', 'align', 'valign', 'aria-label', 'aria-hidden',
 ])
 // SVG presentation attrs (safe — pure visual). A broad but bounded set.
@@ -219,6 +221,7 @@ function allowedAttr(name: string): boolean {
   const n = name.toLowerCase()
   if (n.startsWith('on')) return false           // no event handlers, ever
   if (n === 'style') return false                // inline style dropped (CSS-injection vector)
+  if (n === 'class') return false                // no class of its own (see GLOBAL_ATTRS)
   if (GLOBAL_ATTRS.has(n) || GLOBAL_ATTRS.has(name)) return true
   if (SVG_ATTRS.has(name) || SVG_ATTRS.has(n)) return true
   if (URL_ATTRS.has(n) || URL_ATTRS.has(name)) return true
