@@ -471,7 +471,7 @@
       - option "Task Orchestrator Skill"
       - option "Task Prompt Optimizer"
       - option "Task Side Chat"
-    - text: "Subgoal judge Verifiable-goal sub-goal gate: after the automated check passes, confirm EVERY sub-goal is met from cycle evidence (PASS/FAIL out)."
+    - text: "Subgoal judge Verifiable-goal sub-goal gate: after the automated check passes, judge EACH sub-goal from cycle evidence (a pass, fail or can't-tell verdict with a reason for each, as JSON)."
     - combobox "Prompt for Subgoal judge":
       - option "Default (task-subgoal-judge)" [selected]
       - option "<theme> Background"

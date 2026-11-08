@@ -810,3 +810,153 @@ class TestTheEndpointsAreRegistered:
         }
         assert ("GET", "/api/workflows/runs/{run_id}/review") in mounted
         assert ("POST", "/api/workflows/runs/{run_id}/review/triage") in mounted
+
+
+class TestAVerdictNamesTheRowItJudged:
+    """A step judging one finding (a verify panel's verifier) names the row it judged by the
+    row's stamp: its key, and the instance and epoch that filed it (``review_triage.row_stamp``)."""
+
+    FINDING = {"severity": "high", "location": "app.py:9", "problem": "drops a file"}
+
+    def _file(self, run_id, *, path="root.children[0]#0", epoch=0, **over):
+        from personalclaw.workflows import journal as journal_mod
+
+        finding = rt.parse_findings({"findings": [{**self.FINDING, **over}]}, run_id=run_id)[0]
+        journal_mod.Journal(run_id).write(
+            journal_mod.REVIEW_FINDING,
+            instance_path=path,
+            node_id="find",
+            epoch=epoch,
+            **{**finding.to_dict(), **over},
+        )
+        return rt.row_stamp(finding.key, path, epoch)
+
+    def _judge(self, run_id, stamp, refuted, reason=""):
+        from personalclaw.workflows import journal as journal_mod
+
+        journal_mod.Journal(run_id).write(
+            journal_mod.REVIEW_FINDING,
+            instance_path="root.children[1]#0",
+            node_id="verify",
+            epoch=0,
+            judged=stamp,
+            refuted=refuted,
+            refute_reason=reason,
+        )
+
+    def _statuses(self, run_id):
+        from personalclaw.workflows import review_service
+
+        return [(f.location, f.status) for f in review_service.findings_for(run_id)]
+
+    def test_a_later_keep_verdict_clears_a_refutation(self, wf_home):
+        run = _seed_run([])
+        stamp = self._file(run.id)
+        self._judge(run.id, stamp, True, "already handled")
+        self._judge(run.id, stamp, False, "real after all")
+        assert self._statuses(run.id) == [("app.py:9", "Open")]
+
+    def test_the_same_words_another_round_filed_stay_open(self, wf_home):
+        run = _seed_run([])
+        first = self._file(run.id, path="root.body@0.children[0]")
+        self._file(run.id, path="root.body@1.children[0]")
+        self._judge(run.id, first, True, "already handled")
+        assert self._statuses(run.id) == [("app.py:9", "Refuted"), ("app.py:9", "Open")]
+
+    def test_a_refuted_status_a_finder_wrote_itself_reads_open(self, wf_home):
+        run = _seed_run([])
+        self._file(run.id, status="Refuted")
+        assert self._statuses(run.id) == [("app.py:9", "Open")]
+
+    def test_a_row_that_already_carries_a_stamp_keeps_it_and_is_not_filed_again(self):
+        """A step that relabels or joins findings this run filed hands them on stamped."""
+        stamped = {**self.FINDING, rt.REVIEW_KEY: "k|root.children[0]#0|0"}
+        fresh = {**self.FINDING, "location": "app.py:12"}
+        findings, out = rt.keyed_findings(
+            json.dumps({"findings": [stamped, fresh]}),
+            instance_path="root.children[2]",
+            epoch=1,
+            filed={"k|root.children[0]#0|0"},
+        )
+        assert [f.location for f in findings] == ["app.py:12"]
+        rows = json.loads(out)["findings"]
+        assert rows[0][rt.REVIEW_KEY] == "k|root.children[0]#0|0"
+        assert rows[1][rt.REVIEW_KEY] == rt.row_stamp(findings[0].key, "root.children[2]", 1)
+
+    def test_a_dict_output_comes_back_stamped_as_a_dict(self):
+        output = {"findings": [dict(self.FINDING)], "summary": "one"}
+        findings, out = rt.keyed_findings(output, instance_path="root.children[0]")
+        assert isinstance(out, dict) and out["summary"] == "one"
+        assert out["findings"][0][rt.REVIEW_KEY] == rt.row_stamp(
+            findings[0].key, "root.children[0]", 0
+        )
+        assert rt.REVIEW_KEY not in output["findings"][0], "the step's own value was edited"
+
+    def _recorded(self, run, output, *, path="root.children[2]"):
+        """`record_review` of a step at *path* that settled with *output*: what it handed on."""
+        from types import SimpleNamespace
+
+        from personalclaw.workflows import journal as journal_mod
+        from personalclaw.workflows import review_service
+        from personalclaw.workflows.models import InstanceState
+
+        ctl = SimpleNamespace(run=run, journal=journal_mod.Journal(run.id))
+        item = SimpleNamespace(node=SimpleNamespace(id="join"), path=path, has_item=False)
+        result = SimpleNamespace(output=output, state=InstanceState.DONE)
+        review_service.record_review(ctl, item, SimpleNamespace(epoch=0), result)
+        return result.output
+
+    def test_a_stamp_this_run_did_not_file_is_filed_and_restamped(self, wf_home):
+        """Findings another run stamped (handed to a subworkflow, say) are this run's to file: its
+        verifier's verdicts name rows its own list holds."""
+        run = _seed_run([])
+        foreign = {**self.FINDING, rt.REVIEW_KEY: "k-elsewhere|root.children[0]#0|0"}
+        out = self._recorded(run, {"findings": [foreign]})
+        assert self._statuses(run.id) == [("app.py:9", "Open")]
+        (finding,) = rt.parse_findings({"findings": [self.FINDING]}, run_id=run.id, node_id="join")
+        assert out["findings"][0][rt.REVIEW_KEY] == rt.row_stamp(finding.key, "root.children[2]", 0)
+
+    @pytest.mark.parametrize("as_text", [False, True], ids=["dict", "text"])
+    def test_a_stamp_that_is_not_text_is_filed_and_restamped(self, wf_home, as_text):
+        """A model can write any value under the key: one that is not a stamp is no stamp this
+        run filed, so the finding is filed and stamped anew, and nothing raises."""
+        run = _seed_run([])
+        weird: object = {"x": 1} if as_text else ["x"]
+        output: object = {"findings": [{**self.FINDING, rt.REVIEW_KEY: weird}]}
+        if as_text:
+            output = json.dumps(output)
+        out = self._recorded(run, output)
+        assert self._statuses(run.id) == [("app.py:9", "Open")]
+        rows = (json.loads(out) if as_text else out)["findings"]
+        (finding,) = rt.parse_findings({"findings": [self.FINDING]}, run_id=run.id, node_id="join")
+        assert rows[0][rt.REVIEW_KEY] == rt.row_stamp(finding.key, "root.children[2]", 0)
+
+    def test_a_stamp_this_run_filed_is_handed_on_and_not_filed_again(self, wf_home):
+        run = _seed_run([])
+        stamp = self._file(run.id)
+        out = self._recorded(run, {"findings": [{**self.FINDING, rt.REVIEW_KEY: stamp}]})
+        assert self._statuses(run.id) == [("app.py:9", "Open")]
+        assert out["findings"][0][rt.REVIEW_KEY] == stamp
+
+    def test_a_refutation_of_an_item_with_no_stamp_writes_a_note(self, wf_home):
+        from types import SimpleNamespace
+
+        from personalclaw.workflows import journal as journal_mod
+        from personalclaw.workflows import review_service
+        from personalclaw.workflows.models import InstanceState
+
+        run = _seed_run([])
+        ctl = SimpleNamespace(run=run, journal=journal_mod.Journal(run.id))
+        item = SimpleNamespace(
+            node=SimpleNamespace(id="verify"),
+            path="root.children[1]#0",
+            has_item=True,
+            item=dict(self.FINDING),
+        )
+        result = SimpleNamespace(
+            output=json.dumps({"refuted": True, "refute_reason": "no"}), state=InstanceState.DONE
+        )
+        review_service.record_review(ctl, item, SimpleNamespace(epoch=0), result)
+        (row,) = journal_mod.ledger(run.id, kinds={journal_mod.REVIEW_FINDING})
+        assert row["judged"] == "" and row["refuted"] is True and row["note"], row
+        assert self._statuses(run.id) == []

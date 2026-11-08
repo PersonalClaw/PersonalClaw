@@ -42,6 +42,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The desktop bridges are read only as the window's own properties.**
 - **A document's or an SVG's preview and a diagram's labels keep no `aria-modal` attribute from their markup, nor do a document's HTML export and copied HTML.**
 - **In the desktop app a switch between light and dark, from the Theme button, Settings → Appearance, or macOS while the theme is System, changes the sidebar, the strip above it and the window at once, with no need to leave the app and come back. With the theme on System the app follows macOS again, and the app opens in the theme you last used, from its second launch on this version.**
+- **Stopping or deleting a workflow run ends the agents and the runs its steps launched (an Invoke Agent or Run Prompt step's agent and what it started, a subworkflow's run, and a Run workflow step's run, queued or running), each saying why, and a run that fails, escalates or is declined ends the subworkflow runs it was still waiting on.**
+- **A workflow run's review list marks each finding its verify panel refuted, with the verifier's reason.**
+- **A workflow step's done-criterion check runs in the run's own folder, and a file check outside that folder, or a run with no folder of its own, reports the check as not run.**
+- **A verifiable goal loop's completion judge answers for each sub-goal, and the loop's record and its next cycle name the sub-goals not met yet.**
 
 ## [0.3.7] — 2026-11-07
 

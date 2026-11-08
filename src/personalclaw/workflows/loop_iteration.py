@@ -92,6 +92,8 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     # value whenever the leaf failed or was skipped here, and it feeds the breaker, the seen-set
     # and the handoff this cycle hands on.
     output = node_bindings.item_output(ctl, path, node_id)
+    from personalclaw import review_triage
+
     if declines.end_cycle(ctl, parent_path, node, iteration, output):
         # Her Deny ended this cycle: the next one would put the same call to her again, so the
         # loop waits for her instead, and neither its dry streak nor its breaker reads the cycle.
@@ -117,7 +119,9 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     breaker = ctl._breakers.setdefault(parent_path, BreakerState())
     breaker.record(
         signature=error_signature(inst.failure) if inst.failure else "",
-        output=output,
+        # Without the review list's per-instance stamp, so the same findings filed each cycle
+        # read as the same output.
+        output=review_triage.unstamped(output),
         tokens=inst.tokens,
     )
     verdict = check_breaker(node, breaker)

@@ -159,6 +159,11 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
               {f.recommended_fix && (
                 <div data-type="caption" className="mt-1 text-on-surface-var">Fix: {f.recommended_fix}</div>
               )}
+              {f.status === 'Refuted' && (
+                <div data-type="caption" className="mt-1 text-on-surface-low">
+                  Refuted by its verifier{f.refute_reason ? `: ${f.refute_reason}` : ''}
+                </div>
+              )}
 
               {anchored ? (
                 <div className="mt-1.5 flex justify-end gap-xs">

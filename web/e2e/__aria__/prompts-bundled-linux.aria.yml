@@ -119,7 +119,7 @@
   - button "task-side-chat"
   - text: task-side-chat bundled <theme> envelope for a side-chat turn — read-only Q&A against a frozen conversation snapshot. <theme> bundled
   - button "task-subgoal-judge"
-  - text: "task-subgoal-judge bundled # vars Verifiable-goal sub-goal gate: after the automated check passes, confirm EVERY sub-goal is met from cycle evidence (PASS/FAIL out). <theme> bundled"
+  - text: "task-subgoal-judge bundled # vars Verifiable-goal sub-goal gate: after the automated check passes, judge EACH sub-goal from cycle evidence (a pass, fail or can't-tell verdict with a reason for each, as JSON). <theme> bundled"
   - button "task-suggestions"
   - text: task-suggestions bundled # var Generate contextual dashboard prompt suggestions from the user's recent context. <theme> bundled
   - button "task-title"

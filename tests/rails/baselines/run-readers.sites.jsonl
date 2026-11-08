@@ -30,6 +30,7 @@
 {"site": "src/personalclaw/proactive/digest_state.py::find_schedule", "reason": "another store's: the trigger store's `get`, for the digest's schedule", "added": "2026-11-01"}
 {"site": "src/personalclaw/running_now.py::_finished_row", "reason": "names only: a finished run's title, for its row in the Running now list", "added": "2026-11-01"}
 {"site": "src/personalclaw/running_now.py::_runs", "reason": "the Running now list: every live run, as a row named the way it is named while it runs", "added": "2026-11-01"}
+{"site": "src/personalclaw/started_work.py::_launched_runs", "reason": "maintenance: ends the runs a stopped, failed, escalated or declined run's own steps launched (live, or queued behind their workflow), which name it as their parent", "added": "2026-11-08"}
 {"site": "src/personalclaw/started_work.py::end_started", "reason": "maintenance: ends what a stopped turn's own sessions started", "added": "2026-11-01"}
 {"site": "src/personalclaw/tasks/hierarchy_handlers.py::_run_rows", "reason": "a project's board: the runs bound to the project, as board rows", "added": "2026-11-01"}
 {"site": "src/personalclaw/tasks/hierarchy_handlers.py::api_projects_export", "reason": "a project's export: the runs bound to the project, in its archive", "added": "2026-11-01"}

@@ -19,6 +19,8 @@ distinguishable outcomes.
 """
 
 import asyncio
+import os
+from pathlib import Path
 
 import pytest
 
@@ -49,12 +51,30 @@ def _isolated(tmp_path, monkeypatch):
     yield
 
 
-def _run(spec: dict, run_id: str = "r-1"):
+def _folder_of(run) -> str:
+    """Give *run* the scratch folder its steps work in (``provisioning.run_workdir``), made."""
+    from personalclaw.workflows import provisioning
+
+    folder = provisioning.scratch_location(run.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    run.extra = {
+        **(run.extra or {}),
+        provisioning.WORKSPACE_KEY: {"path": str(folder), "isolated": True, "mode": "scratch"},
+    }
+    return str(folder)
+
+
+def _run(spec: dict, run_id: str = "r-1", *, folder: bool = True, files: dict | None = None):
+    """Run *spec* to its end, in a scratch folder of its own (*folder*) holding *files*."""
     from personalclaw.workflows import store as wstore
     from personalclaw.workflows.controller import EngineServices, RunController
     from personalclaw.workflows.models import WorkflowRun
 
     run = WorkflowRun(id=run_id, workflow_name="t")
+    if folder:
+        where = _folder_of(run)
+        for name, text in (files or {}).items():
+            (Path(where) / name).write_text(text, encoding="utf-8")
     wstore.create(run)
     controller = RunController(run, spec, services=EngineServices())
     asyncio.run(controller.run_to_completion())
@@ -142,15 +162,10 @@ def test_a_long_criterion_is_bounded_in_the_record():
 
 def test_an_unparseable_criterion_is_UNRUNNABLE_not_failed():
     """The author wrote something the engine could not read, which is a different problem from the
-    work being wrong — and a different fix."""
-    from personalclaw.workflows import store as wstore
-    from personalclaw.workflows.controller import EngineServices, RunController
-    from personalclaw.workflows.models import WorkflowRun
-
-    run = WorkflowRun(id="r-1", workflow_name="t")
-    wstore.create(run)
-    controller = RunController(run, _spec([]), services=EngineServices())
-    assert asyncio.run(task_projection._run_criterion(controller, 12345)) is None
+    work being wrong — and a different fix. It was checked nowhere, so it names no folder, though
+    the run has one."""
+    controller = _controller()
+    assert asyncio.run(task_projection._run_criterion(controller, 12345)) == (None, "")
 
 
 def test_a_criterion_of_None_is_unrunnable():
@@ -161,21 +176,95 @@ def test_a_criterion_of_None_is_unrunnable():
     run = WorkflowRun(id="r-1", workflow_name="t")
     wstore.create(run)
     controller = RunController(run, _spec([]), services=EngineServices())
-    assert asyncio.run(task_projection._run_criterion(controller, None)) is None
+    assert asyncio.run(task_projection._run_criterion(controller, None))[0] is None
 
 
-def test_an_UNREADABLE_file_check_is_unrunnable_not_a_missing_phrase():
+def test_an_UNREADABLE_file_check_is_unrunnable_not_a_missing_phrase(tmp_path):
     """`evaluate_file_phrase` treats an unreadable file as None: the phrase may well be there in a
     file this process cannot see, and reporting "the phrase is missing" would be a claim
     about content
     nobody read."""
-    assert task_projection._read_criterion_file("/nonexistent/path/xyz") is None
+    assert task_projection._read_criterion_file("nonexistent/path/xyz", str(tmp_path)) is None
 
 
 def test_a_readable_file_is_returned_as_text(tmp_path):
     target = tmp_path / "out.txt"
     target.write_text("all green")
-    assert task_projection._read_criterion_file(str(target)) == "all green"
+    assert task_projection._read_criterion_file(str(target), str(tmp_path)) == "all green"
+
+
+# ── where the check runs: the run's own folder ──
+
+
+def test_a_criterion_command_runs_in_the_runs_own_folder():
+    """The check looks at the run's work. Run where the gateway was started, `test -f
+    marker.txt` read some other tree, and failed for a file the run's folder holds."""
+    _run(_spec([_action("made", "test -f marker.txt")]), files={"marker.txt": "here"})
+    row = _verified()[0]
+    assert (row["passed"], row["unrunnable"]) == (True, False), row
+
+
+def _controller(*, files: dict | None = None):
+    """A controller over a run with a scratch folder of its own, holding *files*."""
+    from personalclaw.workflows import store as wstore
+    from personalclaw.workflows.controller import EngineServices, RunController
+    from personalclaw.workflows.models import WorkflowRun
+
+    run = WorkflowRun(id="r-files", workflow_name="t")
+    where = _folder_of(run)
+    for name, text in (files or {}).items():
+        (Path(where) / name).write_text(text, encoding="utf-8")
+    wstore.create(run)
+    return RunController(run, _spec([]), services=EngineServices())
+
+
+def test_a_file_check_reads_its_path_in_the_runs_own_folder():
+    controller = _controller(files={"notes.txt": "the suite is all green"})
+    check = {"kind": "file_phrase", "path": "notes.txt", "required_phrases": ["all green"]}
+    assert asyncio.run(task_projection._run_criterion(controller, check))[0] is True
+
+
+@pytest.mark.parametrize("how", ["climb", "absolute"])
+def test_a_file_check_whose_path_leaves_the_runs_folder_is_refused(tmp_path, how):
+    """A path that climbs out of the run's folder, or names a file elsewhere, is not read: the
+    check says it could not run, never what a file outside the run's work holds."""
+    controller = _controller()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("all green", encoding="utf-8")
+    from personalclaw.workflows import provisioning
+
+    climb = os.path.relpath(outside, provisioning.run_workdir(controller.run.id))
+    path = climb if how == "climb" else str(outside)
+    check = {"kind": "file_phrase", "path": path, "required_phrases": ["all green"]}
+    assert asyncio.run(task_projection._run_criterion(controller, check))[0] is None, path
+
+
+def test_a_file_check_through_a_link_that_leaves_the_runs_folder_is_refused(tmp_path):
+    """A link in the run's folder whose target is elsewhere is not read through."""
+    from personalclaw.workflows import provisioning
+
+    controller = _controller()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("all green", encoding="utf-8")
+    (Path(provisioning.run_workdir(controller.run.id)) / "notes.txt").symlink_to(outside)
+    check = {"kind": "file_phrase", "path": "notes.txt", "required_phrases": ["all green"]}
+    assert asyncio.run(task_projection._run_criterion(controller, check))[0] is None
+
+
+def test_a_run_with_no_folder_reports_its_check_as_not_run():
+    """Nowhere of its own to look: running `true` where the gateway was started would report a
+    pass for a check that never looked at the run's work."""
+    _run(_spec([_action("loose", "true")]), folder=False)
+    row = _verified()[0]
+    assert (row["passed"], row["unrunnable"]) == (False, True), row
+    assert "folder" not in row
+
+
+def test_the_check_says_the_folder_it_ran_in():
+    run, _ctl = _run(_spec([_action("good", "true")]))
+    from personalclaw.workflows import provisioning
+
+    assert _verified()[0]["folder"] == provisioning.run_workdir(run.id) != ""
 
 
 def test_the_projection_maps_the_tristate_to_DIFFERENT_blocked_kinds():

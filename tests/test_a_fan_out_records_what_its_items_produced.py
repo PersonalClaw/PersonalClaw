@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 
+from personalclaw.workflows import journal as J
 from personalclaw.workflows import store
 from personalclaw.workflows.blocks import resolve_spec
 from personalclaw.workflows.bundled_defs import bundled_root
@@ -325,6 +326,150 @@ async def test_audit_sweep_verifies_each_finding_against_the_target_and_fixes_on
         for title in ("F-KEEP", "F-BROKEN", "F-KEEP-2"):
             assert title in handed, f"{title} did not reach a step after the panel"
     assert '"lens": "safety"' in fix_task, "a finding lost the lens it came from"
+
+
+#: Findings a reviewer would file: each with a severity, a location and a problem, so each is a
+#: row on the run's review list.
+REVIEWED = [
+    {"title": "F-KEEP", "severity": "high", "location": "app.py:3", "problem": "keeps a lock"},
+    {"title": "F-REFUTE", "severity": "high", "location": "app.py:9", "problem": "drops a file"},
+    {"title": "F-BROKEN", "severity": "low", "location": "app.py:12", "problem": "slow loop"},
+]
+
+
+async def _swept(
+    refuter_says: dict[str, Any], reviewed: list[dict[str, Any]] = REVIEWED
+) -> tuple[str, list[str], list[str]]:
+    """audit-sweep, `fix` on, over *reviewed* from its correctness finder, whose verifier answers
+    F-REFUTE with *refuter_says*: the run's id, the prompts its critic was sent, and the tasks its
+    fix step spawned."""
+    spec = resolve_spec(
+        expand_spec(json.loads((bundled_root() / "audit-sweep" / "workflow.json").read_text()))
+    )
+    run = _run(spec, {"target": "TARGET-MARKER", "focus": "", "fix": True})
+    first = {"correctness": True}
+    critic: list[str] = []
+
+    async def fn(prompt, *, use_case="background", output_type=None, model=""):
+        if "Try to REFUTE" in prompt:
+            finding = prompt.split("Finding:", 1)[1]
+            if "F-REFUTE" in finding:
+                return json.dumps(refuter_says)
+            return json.dumps({"refuted": False, "refute_reason": "real"})
+        if "What did this round MISS" in prompt:
+            critic.append(prompt)
+        if "CORRECTNESS" in prompt and first["correctness"]:
+            first["correctness"] = False
+            return json.dumps({"findings": reviewed})
+        return json.dumps({"findings": [], "new_findings": [], "uncovered": []})
+
+    subagents = _Subagents()
+    ctl = RunController(
+        run, spec, services=EngineServices(completion=fn, subagents=subagents, lane_limits=LANES)
+    )
+    await ctl.run_to_completion(timeout=120)
+    return run.id, critic, [str(s.get("task", "")) for s in subagents.spawns]
+
+
+REFUTED = {"refuted": True, "refute_reason": "already handled"}
+#: A refuter that refutes the finding and says it in its own words: another location, another
+#: problem. Its verdict is on the finding it was given, whatever it calls it.
+REWORDED = {**REFUTED, "location": "elsewhere.py:1", "problem": "a different problem"}
+
+
+def _review_list(run_id: str) -> list[tuple[str, str]]:
+    from personalclaw.workflows.review_service import findings_for
+
+    return sorted((f.location, f.status) for f in findings_for(run_id))
+
+
+@pytest.mark.parametrize("refuter_says", [REFUTED, REWORDED], ids=["as given", "reworded"])
+async def test_the_review_list_says_which_findings_the_panel_refuted(refuter_says) -> None:
+    """audit-sweep's finder files three findings and the panel refutes one. 🔴 Red before: the
+    review list read three Open, the refuted one among them, with nothing saying it was refuted,
+    and a match on the finding's words left it Open once its refuter reworded it."""
+    from personalclaw.workflows.review_service import findings_for
+
+    run_id, critic, fixes = await _swept(refuter_says)
+    assert fixes, "the fix step spawned nothing"
+    assert critic, "the critic was not reached"
+    for prompt in [*critic, *fixes]:
+        assert "drops a file" not in prompt and "a different problem" not in prompt, prompt
+    rows = findings_for(run_id)
+    assert sorted((f.problem, f.status) for f in rows) == [
+        ("drops a file", "Refuted"),
+        ("keeps a lock", "Open"),
+        ("slow loop", "Open"),
+    ], [(f.problem, f.location, f.status) for f in rows]
+    refuted = next(f for f in rows if f.status == "Refuted")
+    assert (refuted.location, refuted.refute_reason) == ("app.py:9", "already handled")
+
+
+async def test_a_verifier_that_fails_its_schema_refutes_nothing() -> None:
+    """A verdict with no reason fails the verifier's schema: the step did not succeed, so its
+    answer is not bound. The finding goes on to the fix step, and its row reads Open."""
+    run_id, _critic, fixes = await _swept({"refuted": True})
+    assert fixes and any("drops a file" in task for task in fixes), fixes
+    assert ("app.py:9", "Open") in _review_list(run_id), _review_list(run_id)
+
+
+async def test_a_refuted_finding_that_quotes_a_credential_reads_refuted() -> None:
+    """The ledger masks a credential the finding quotes, so the row's words are not the words its
+    key was taken from: the verdict still names the row, by the key the row was written with."""
+    quoting = [
+        *(f for f in REVIEWED if f["title"] != "F-REFUTE"),
+        {
+            "title": "F-REFUTE",
+            "severity": "high",
+            "location": "app.py:9",
+            "problem": "drops a file and logs the key sk-notarealfixture0123456789abcdefghij",
+        },
+    ]
+    run_id, critic, fixes = await _swept(REFUTED, quoting)
+    assert fixes, "the fix step spawned nothing"
+    assert critic, "the critic was not reached"
+    for prompt in [*critic, *fixes]:
+        assert "drops a file" not in prompt, prompt
+    from personalclaw.workflows.review_service import findings_for
+
+    (row,) = [f for f in findings_for(run_id) if f.location == "app.py:9"]
+    assert "[REDACTED" in row.problem, "the ledger kept the key: this case tests nothing"
+    assert row.status == "Refuted", (row.problem, row.status)
+
+
+FILED = {"findings": [{"severity": "high", "location": "app.py:3", "problem": "keeps a lock"}]}
+
+
+@pytest.mark.parametrize("kind", ["transform", "infer", "carried"])
+async def test_a_loop_that_files_the_same_findings_each_cycle_is_a_stall(kind) -> None:
+    """Each cycle files them again under a stamp of its own (`review_key`), and the breaker reads
+    the findings, not the stamp: the same findings four times over trip `identical_output`, also
+    when a later step carries the stamped text on inside its own output."""
+    infer = {"kind": "infer", "id": "review", "config": {"prompt": "Review it."}}
+    if kind == "transform":
+        body: dict[str, Any] = {"kind": "transform", "id": "review", "config": {"expr": FILED}}
+    elif kind == "infer":
+        body = infer
+    else:
+        carry = {
+            "kind": "transform",
+            "id": "carry",
+            "config": {"expr": {"r": "{{nodes.review.output}}"}},
+        }
+        body = {"kind": "sequence", "id": "cyc", "children": [infer, carry]}
+
+    async def fn(prompt, *, use_case="background", output_type=None, model=""):
+        return json.dumps(FILED)
+
+    loop = {"kind": "loop", "id": "again", "config": {"mode": "counted", "n": 4}, "body": body}
+    spec = {"name": "reviews", "root": {"kind": "sequence", "id": "s", "children": [loop]}}
+    run = _run(spec)
+    ctl = RunController(run, spec, services=EngineServices(completion=fn, lane_limits=LANES))
+    await ctl.run_to_completion(timeout=60)
+    outcomes = [str(r.get("outcome", "")) for r in J.ledger(run.id) if r["kind"] == J.ITERATION]
+    assert "breaker:identical_output" in outcomes, outcomes
+    filed = {r["instance_path"] for r in J.ledger(run.id, kinds={J.REVIEW_FINDING})}
+    assert len(filed) > 1, "no two cycles filed the findings: this tests nothing"
 
 
 # ── a step that tolerates its failure does not fail its loop's cycle ─────────

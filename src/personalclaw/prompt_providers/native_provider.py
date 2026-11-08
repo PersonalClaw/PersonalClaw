@@ -330,13 +330,45 @@ class NativePromptProvider(PromptProvider):
             logger.debug("Could not migrate %s in place", name, exc_info=True)
 
 
+#: Earlier bundled texts of a bundled prompt whose reader changed with its text, by the sha-256 of
+#: the text (trailing newlines dropped). A stored copy that is exactly one of them was seeded and
+#: never edited, so the seeder replaces it with today's text; any other stored text is the
+#: owner's, and is left as it is.
+_SUPERSEDED: dict[str, frozenset[str]] = {
+    # The one-word judge (PASS or FAIL for the whole goal), before it judged each sub-goal.
+    "task-subgoal-judge": frozenset(
+        {
+            "126764d34824656de92b17b5d81e1ed4a75491a7821486e03e237ed0380eeaf4",
+            "e8e3a39fd93face222a2b9b0c292666f6bfe2b1bc842f23b52d001ba31f33103",
+        }
+    ),
+}
+
+
+def _superseded(name: str, path: Path) -> bool:
+    """Whether the copy of bundled prompt *name* stored at *path* is an earlier bundled text,
+    untouched (:data:`_SUPERSEDED`)."""
+    import hashlib
+
+    shas = _SUPERSEDED.get(name)
+    if not shas:
+        return False
+    try:
+        stored = _yaml_loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    content = str((stored or {}).get("content", "") or "").rstrip("\n")
+    return hashlib.sha256(content.encode("utf-8")).hexdigest() in shas
+
+
 def seed_bundled_system_prompts() -> None:
     """Seed every catalog-declared bundled prompt as an editable native prompt.
 
     Writes one prompt per :data:`catalog.BUNDLED_PROMPTS` row from
     ``config/prompts/<file>`` on first run so each shows up in the Prompts UI and
     is bound to its use-case by default. Idempotent and non-clobbering: an
-    existing file (possibly user-edited) is left untouched.
+    existing file (possibly user-edited) is left untouched, unless it is an earlier bundled text
+    whose reader has changed, never edited (:data:`_SUPERSEDED`).
     """
     import os
 
@@ -353,7 +385,7 @@ def seed_bundled_system_prompts() -> None:
             path = _prompt_path(entry.name)
         except ValueError:
             continue
-        if path.exists():
+        if path.exists() and not _superseded(entry.name, path):
             continue
         try:
             content = (src_dir / entry.filename).read_text(encoding="utf-8")

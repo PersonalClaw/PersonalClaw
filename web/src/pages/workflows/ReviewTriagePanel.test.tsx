@@ -46,7 +46,7 @@ function finding(over: Partial<ReviewFinding> = {}): ReviewFinding {
   return {
     key: 'k0', severity: 'Major', location: 'src/app.py:11', problem: 'a problem', why: '',
     recommended_fix: '', status: 'Open', auto_fixable: false, line_text: '',
-    origin_run_id: 'run-1', origin_node_id: 'review', origin_session_key: '',
+    origin_run_id: 'run-1', origin_node_id: 'review', origin_session_key: '', refute_reason: '',
     anchor_state: 'anchored', anchor_reason: '',
     resolved_path: 'src/app.py', resolved_line: 11, diff_line_text: 'if not token:',
     ...over,
@@ -93,6 +93,22 @@ describe('ReviewTriagePanel', () => {
     expect(screen.getByText('Critical')).toBeInTheDocument()
     // `auto_fixable` is shown as a property of the finding, never as an action taken.
     expect(screen.getByTitle(/mechanical edit/i)).toBeInTheDocument()
+  })
+
+  it('says which findings the verify panel refuted, and why', async () => {
+    const findings = [
+      finding({ key: 'k1', problem: 'keeps a lock' }),
+      finding({ key: 'k2', problem: 'drops a file', status: 'Refuted', refute_reason: 'already handled', resolved_line: 9, location: 'src/app.py:9' }),
+    ]
+    workflowReview.mockResolvedValue(payload({ findings, counts: { total: 2, anchored: 2, unanchored: 0 } }))
+    render(<ReviewTriagePanel runId="run-1" />)
+
+    expect(await screen.findByText('Refuted by its verifier: already handled')).toBeInTheDocument()
+    expect(screen.getAllByText(/Refuted by its verifier/)).toHaveLength(1)
+    // The verifier's refutation informs the choice; the owner still makes it, so the refuted row
+    // keeps its Accept and Reject.
+    expect(screen.getAllByTitle(/^Accept —/)).toHaveLength(2)
+    expect(screen.getAllByTitle(/^Reject —/)).toHaveLength(2)
   })
 
   it('offers no Accept for an unanchored finding and says why in plain words', async () => {

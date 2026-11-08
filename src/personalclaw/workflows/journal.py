@@ -799,6 +799,7 @@ class Journal(LedgerWriter):
         task_id: str,
         passed: bool | None,
         criterion: str = "",
+        folder: str = "",
     ) -> None:
         """A done-criterion ran and the engine flipped (or withheld) the task's done state.
 
@@ -810,7 +811,9 @@ class Journal(LedgerWriter):
         (`needs_input` vs `capability`) precisely because they need different fixes.
 
         `criterion` is recorded because "verification failed" without naming what was checked is a
-        finding a user cannot act on, and the criterion is the def author's text.
+        finding a user cannot act on, and the criterion is the def author's text. `folder` is where
+        it was checked, the run's own, recorded when the run has one: a check of the run's work says
+        which work it looked at.
         """
         self.write(
             TASK_VERIFIED,
@@ -820,6 +823,7 @@ class Journal(LedgerWriter):
             passed=passed is True,
             unrunnable=passed is None,
             criterion=criterion,
+            **({"folder": folder} if folder else {}),
         )
 
     def cascade_blocked(

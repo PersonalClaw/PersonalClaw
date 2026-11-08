@@ -187,6 +187,12 @@ timed out or answered outside its schema, so nobody ruled on it); `survived` and
 where it came from first: `[{{nodes.a.output.findings | tag('lens','a')}}, …]`, then
 `| flatten`.
 
+The run's review list follows the panel. Each finding a step files carries its row's
+`review_key` in the step's output, and a verifier that succeeded marks the row it was handed:
+Refuted, with its reason, when it refuted the finding, whatever words it used for it. A
+verifier that failed or answered outside its schema marks nothing, so the row stays Open.
+Refuted is the verifier's view: the row can still be accepted.
+
 `route` classifies at the `fast` tier by default: choosing between three paths is
 a cheap judgment, and paying reasoning-tier prices to route *into* a
 reasoning-tier branch doubles the cost of the decision for nothing.

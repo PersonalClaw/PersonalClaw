@@ -2672,6 +2672,8 @@ export interface ReviewFinding {
   key: string; severity: string; location: string; problem: string; why: string
   recommended_fix: string; status: string; auto_fixable: boolean; line_text: string
   origin_run_id: string; origin_node_id: string; origin_session_key: string
+  // Why a verify panel refuted it, with `status: 'Refuted'`; '' otherwise.
+  refute_reason: string
   anchor_state: 'anchored' | 'unanchored'; anchor_reason: string
   resolved_path: string; resolved_line: number; diff_line_text: string
 }

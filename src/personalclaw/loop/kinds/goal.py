@@ -360,6 +360,12 @@ class GoalKind(LoopKindStrategy):
                 "This is a verifiable goal: there is no document deliverable. Make real "
                 "progress toward the success criteria; the supervisor runs the check itself."
             )
+        unmet = _unmet_sub_goals(loop) if goal_type == "verifiable" else ""
+        if unmet:
+            lines.append(
+                "The last check passed, but the judge did not find these sub-goals met: "
+                f"{unmet}. Work on them this cycle."
+            )
         if loop.execution == "multi_agent" and loop.roster:
             lines.append(
                 "You are the ORCHESTRATOR (see brief.md): delegate this cycle's step to "
@@ -390,9 +396,25 @@ class GoalKind(LoopKindStrategy):
                 "deliverable": deliverable,
                 "is_verifiable": goal_type == "verifiable",
                 "is_multi_agent_with_roster": loop.execution == "multi_agent" and bool(loop.roster),
+                "unmet_sub_goals": unmet,
             },
         )
         return rendered or "\n".join(lines)
+
+
+def _unmet_sub_goals(loop: Loop) -> str:
+    """The sub-goals the last check's judge did not find met, each with its reason, for the next
+    cycle's worker (``supervisor.unmet_sub_goals``), or ``""``."""
+    from personalclaw.loop.gates import one_word_fail
+    from personalclaw.loop.supervisor import named_verdict, unmet_sub_goals
+
+    unmet = unmet_sub_goals(loop.id)
+    said = one_word_fail("goal", "sub-goal")
+    if unmet and all(v.get("reason") == said for v in unmet):
+        # A one-word FAIL named none of them: each is named, and why once.
+        names = "; ".join(named_verdict({**v, "reason": ""}) for v in unmet)
+        return f"{names} ({said})"
+    return "; ".join(named_verdict(v) for v in unmet)
 
 
 # Canonical deliverable doc name by goal type (ported from loops.store.deliverable_name):
