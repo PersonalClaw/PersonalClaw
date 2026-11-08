@@ -399,7 +399,8 @@ function Row({ row, view }: { row: DayRow; view: DayView }) {
 }
 
 /** A row's line: our words as the text they are, and what an agent wrote (an ask's title, the
- *  title of its work, why it failed) rendered as the line it is. */
+ *  title of its work, why it failed) rendered as the line it is. An approval's title, a tool's name
+ *  or the command itself, is drawn as text (`lead`). */
 function RowLineText({ line }: { line: RowLine }) {
   return <>{line.lead}{line.content && <MarkdownLine text={line.content} />}{line.tail}</>
 }

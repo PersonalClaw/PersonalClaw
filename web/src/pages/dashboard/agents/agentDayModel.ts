@@ -40,7 +40,8 @@ export interface DayRow {
   /** `say` in its parts: our words (`lead`, `tail`) around what an agent wrote (`content`), which is
    *  the one part that is markdown. An ask's title with " and 2 more", the title of the work it does
    *  now, or why it failed after "Failed at 16:12: ". A line the app builds (the Scheduled row's,
-   *  "Last ran 17:40") is all `lead`. */
+   *  "Last ran 17:40") is all `lead`, and so is an approval's title, a tool's name or the command
+   *  itself, which is drawn as text. */
   line: RowLine
   /** The Attention address that answers its ask, '' when it asks nothing. */
   attention: string
@@ -382,7 +383,12 @@ export function buildDay(input: DayInput): DayView {
         ? [...schedules.values()].map((s) => scheduleWords(s, now)).join(' · ')
         : [...inWindow, ...(nextAfter ? [nextAfter] : [])].map(run).join(' · '), content: '', tail: '' }
     } else if (ask) {
-      line = { lead: '', content: ask.title, tail: d.asks.length > 1 ? ` and ${d.asks.length - 1} more` : '' }
+      // An approval's title is a tool's name or the command itself (`Running: …`): what will run, as
+      // written. Every other ask's title is an agent's line.
+      const more = d.asks.length > 1 ? ` and ${d.asks.length - 1} more` : ''
+      line = ask.origin === 'waiting' && ask.item.kind === 'approval'
+        ? { lead: ask.title, content: '', tail: more }
+        : { lead: '', content: ask.title, tail: more }
     } else if (d.working) {
       line = { lead: '', content: d.working.title, tail: '' }
     } else if (d.failure) {
