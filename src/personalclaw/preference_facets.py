@@ -402,7 +402,8 @@ def detect_facet_candidate(user_message: str) -> tuple[str, str, str] | None:
 # ── Persistence over semantic memory (pref.facet.<class>.<slug>) ──
 
 
-def _facet_key(cls: str, text: str) -> str:
+def facet_key(cls: str, text: str) -> str:
+    """The key a facet of class *cls* with *text* is stored under."""
     import hashlib
 
     slug = hashlib.md5(text.lower().encode()).hexdigest()[:10]
@@ -419,7 +420,7 @@ def upsert_facet(
     """
     if cls == "veto" or cls not in FACET_CLASSES:
         return None
-    key = _facet_key(cls, text)
+    key = facet_key(cls, text)
     existing_row = vs.get_semantic(key) if hasattr(vs, "get_semantic") else None
     if existing_row:
         try:

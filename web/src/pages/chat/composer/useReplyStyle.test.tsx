@@ -30,8 +30,8 @@ const STYLES = [
 ]
 
 const PREVIEW: ReplyStylePreview = {
-  style: 'terse', source: 'conversation', persona: '', applies: 'style',
-  instruction: '[REPLY STYLE: Terse]', first_turn_only: false, refused: '',
+  style: 'terse', source: 'conversation', persona: '', explain: 'default', explain_source: 'platform',
+  applies: 'style', instruction: '[REPLY STYLE: Terse]', first_turn_only: false, refused: '',
 }
 
 function resolved(over: Partial<ReplyStyleState> = {}): { ok: boolean } & ReplyStyleState {

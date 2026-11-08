@@ -819,6 +819,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_patch(
         "/api/chat/sessions/{session}/reply-style", chat.api_chat_session_reply_style
     )
+    app.router.add_patch("/api/chat/sessions/{session}/explain", chat.api_chat_session_explain)
     # Context injection (App Kit — silent background context)
     app.router.add_post("/api/chat/sessions/{session}/context", chat.api_chat_session_context)
     app.router.add_post("/api/chat/sessions/{session}/fork", chat.api_chat_session_fork)

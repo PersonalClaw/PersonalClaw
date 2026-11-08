@@ -296,6 +296,9 @@ _SPECIAL = {
     # agent.reply_style is enum-constrained (reply_style.STYLE_IDS): a generated "default-x"
     # reads back as `default`. `terse` is a real non-default that proves the field round-trips.
     ("agent", "reply_style"): "terse",
+    # agent.explain is one of explanations.json's ids: a generated "default-x" names none and
+    # reads back as "default", which is the closed set doing its job.
+    ("agent", "explain"): "step_by_step",
     ("agent", "soft_stop_budget_secs"): 12.5,
     ("dashboard", "widget_density"): "less",
     # stream_reveal is enum-constrained (smooth|immediate) — a generated "smooth-x"

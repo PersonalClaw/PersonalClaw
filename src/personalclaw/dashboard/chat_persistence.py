@@ -682,6 +682,11 @@ def continue_kept_chat(
 
         session.reply_style = normalize_choice(meta.get("reply_style"))
         session._reply_style_noticed = normalize_choice(meta.get("reply_style_noticed"))
+    # This chat's own explanations choice, re-normalized on read as the style is.
+    if meta.get("explain"):
+        from personalclaw.explanations import normalize_choice as _explain_choice
+
+        session.explain = _explain_choice(meta.get("explain"))
     raw_tags = meta.get("tags")
     if isinstance(raw_tags, list):
         session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
@@ -1048,6 +1053,8 @@ def save_session_to_history(
         _noticed = getattr(session, "_reply_style_noticed", "")
         if _noticed:
             meta_line["reply_style_noticed"] = _noticed
+        if getattr(session, "explain", ""):
+            meta_line["explain"] = session.explain
         if session.tags:
             meta_line["tags"] = list(session.tags)
         if session.bookmarks:

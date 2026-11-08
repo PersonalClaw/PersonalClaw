@@ -20,6 +20,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow reads its secrets from Settings → Secrets alone, never from the gateway's own environment. A `{{secret:NAME}}` whose name only that environment holds (the shell or app that launched the gateway, a container's `env_file`) is a secret that is not set: run start says so, and so does the step, and an automation, a hook or a step that would start a run handed it is refused before the run starts. A name both hold is read from Settings → Secrets.**
 - **The first sign-in password a container sets with `PERSONALCLAW_LOGIN_PASSWORD` is taken out of the gateway's environment once it has been read, and out of the one its Restart or an applied update starts it with, so nothing the gateway starts inherits it.**
 
+### Added
+
+- **How replies explain things is a setting. Settings → Agent → Agent defaults → Explanations sets your default (No preference, Briefly, Step by step or With the background), and a chat's own choice (`PATCH /api/chat/sessions/{session}/explain`) wins over it. It is sent as its own section after the reply style's, with the platform's safety rules still last, and changes how things are explained, never a fact, a caveat or a refusal. The new chat's "How should I explain things?" card sets this default, setting it in Settings first answers the card, and `POST /api/onboarding/explain` takes only `skip` now.**
+
 ### Changed
 
 - **The Nix flake installs 0.3.7.**

@@ -1170,9 +1170,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/onboarding/state": OwnerOnly(
         "your first-run setup's progress — the step it resumes at, and what it counts as set up"
     ),
-    "POST /api/onboarding/explain": OwnerOnly(
-        "how you like things explained, which is written to your preferences"
-    ),
+    "POST /api/onboarding/explain": OwnerOnly("that you were asked how you like things explained"),
     "GET /api/onboarding/model-check": OwnerOnly(
         "checking that your chat model builds — it names the model your chats are bound to"
     ),
@@ -1604,6 +1602,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "PATCH /api/chat/sessions/{session}/color": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "PATCH /api/chat/sessions/{session}/reply-style": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
+    "PATCH /api/chat/sessions/{session}/explain": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "PATCH /api/chat/sessions/{session}/title": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "PATCH /api/chat/sessions/{session}/pin": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),
     "PATCH /api/chat/sessions/{session}/folder": AppMay(_SETS_OWN_CHAT, owns=_OWN_CHAT),

@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **959 registrations** over **778 distinct paths** — 952 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **960 registrations** over **779 distinct paths** — 953 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 133 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 90 | 77 |
+| `/api/chat` | 91 | 78 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
@@ -160,7 +160,7 @@ The 133 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 952 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 953 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -349,6 +349,7 @@ The 952 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/sessions/{session}/context` | inject silent background context. |
 | `POST` | `/api/chat/sessions/{session}/drop` | move a session into a column. |
 | `POST` | `/api/chat/sessions/{session}/edit-resend` | edit a user message and resend. |
+| `PATCH` | `/api/chat/sessions/{session}/explain` | set this chat's own explanations choice. |
 | `GET` | `/api/chat/sessions/{session}/export` | download a transcript. |
 | `PATCH` | `/api/chat/sessions/{session}/folder` | assign session to a folder. |
 | `POST` | `/api/chat/sessions/{session}/fork` | fork session into a new tab. |
@@ -807,7 +808,7 @@ The 952 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/notifications/trust` | the owner's Allow or Deny on an unknown-sender notification. |
 | `POST` | `/api/notifications/unack` | mark a single notification as unread. |
 | `GET` | `/api/onboarding` | First-run onboarding signal — model readiness plus persisted flow progress. |
-| `POST` | `/api/onboarding/explain` | Answer the one optional question, "How should I explain things?", once. |
+| `POST` | `/api/onboarding/explain` | Skip the one optional question, "How should I explain things?", once. |
 | `GET` | `/api/onboarding/import` | what each source holds, and what importing each item does. |
 | `POST` | `/api/onboarding/import` | start importing the picked items. |
 | `DELETE` | `/api/onboarding/import/job` | stop the running import after the item it is on. |

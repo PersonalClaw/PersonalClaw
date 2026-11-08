@@ -1102,6 +1102,20 @@ async def start_dashboard(
 
     state._stored_markup_task = asyncio.create_task(_convert_stored_markup())  # prevent GC
 
+    # An answer the old first-run card kept as a pinned preference becomes the Explanations
+    # default, once, off the loop and without holding up the start
+    # (`explanations.adopt_card_answer`, keyed on the data, so every later start finds nothing).
+    async def _adopt_card_answer() -> None:
+        from personalclaw import explanations
+        from personalclaw.dashboard.handlers.memory import _global_provider
+
+        try:
+            await asyncio.to_thread(lambda: explanations.adopt_card_answer(_global_provider(state)))
+        except Exception:
+            logger.warning("Moving the card's explanations answer failed", exc_info=True)
+
+    state._card_answer_task = asyncio.create_task(_adopt_card_answer())  # prevent GC
+
     # Start periodic flush loop for crash protection (saves dirty sessions every 5s)
     state.start_flush_loop()
 

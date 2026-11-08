@@ -261,6 +261,7 @@ class _ChatSession(ChatQueue):
         "color_theme",
         "reply_style",
         "_reply_style_noticed",
+        "explain",
         "memory_mode",
         "_ephemeral",
         "_pending_context",
@@ -474,6 +475,10 @@ class _ChatSession(ChatQueue):
         # notice is said once (chat_runner), across a restart too (kept in the session's meta
         # line as `reply_style_noticed`); "" while every chosen style is there.
         self._reply_style_noticed: str = ""
+        # How replies explain things, per-conversation scope: an explanations id, or "" when this
+        # conversation states nothing and follows the owner's default (`agent.explain`); the order
+        # is personalclaw/explanations.py's EXPLAIN_PRECEDENCE.
+        self.explain: str = ""
         if memory_mode not in VALID_MEMORY_MODES:
             raise ValueError(
                 f"invalid memory_mode {memory_mode!r}, must be one of {VALID_MEMORY_MODES}"
@@ -1092,6 +1097,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self._artifact_indexer: object | None = None
         # The one-time conversion of watched items stored as markup; held to prevent GC.
         self._stored_markup_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # The one-time move of the old card's explanations answer to the default; held against GC.
+        self._card_answer_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._engagement_store: "EngagementStore | None" = None  # lazily built (inbox ranking)
         # Update progress tracking (shared across all connected clients)
         self._update_progress: dict[str, str] | None = None  # {step, detail}

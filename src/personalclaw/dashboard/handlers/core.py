@@ -1142,6 +1142,17 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         if state is not None:
             state.push_refresh("voice")
 
+    # The owner's Explanations default answers the question the first-run card asks, so the card
+    # never asks it again. An app's write answers nothing for the owner. A store that cannot record
+    # it is logged; the setting is written either way.
+    if path_key == "agent.explain" and not app_name:
+        try:
+            from personalclaw import onboarding
+
+            await asyncio.to_thread(onboarding.merge_onboarding_state, {"explain_asked": True})
+        except Exception:
+            logger.warning("could not record the explanations question as asked", exc_info=True)
+
     # Every window reads the buddy's policy once and follows it (#3901), so a buddy knob's write
     # tells the owner's sockets it may have changed, and each reads it again.
     if path_key.startswith("buddy."):

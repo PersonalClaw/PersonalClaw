@@ -44,6 +44,7 @@ from personalclaw.config.loader import (
     PUSH_BACKENDS,
     _bot_name_disallowed,
 )
+from personalclaw.explanations import EXPLAIN_IDS
 
 
 # Allowed editable config paths and their validators
@@ -916,6 +917,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # hand-edited file, defense in depth.
     "agent.bot_name": {"type": "str", "max_len": 50, "sanitize": _bot_name_validator},
     "agent.reply_style": {"type": "str", "max_len": 80, "values_fn": _reply_style_values},
+    # How replies explain things, the owner's default (explanations.json's ids, one table).
+    "agent.explain": {"type": "enum", "values": list(EXPLAIN_IDS)},
     "agent.log_level": {"type": "enum", "values": ["DEBUG", "INFO", "WARNING", "ERROR"]},
     # Self-QA companion. All four fields are editable,
     # not just the two toggles: a companion you can enable but cannot point at a repo is

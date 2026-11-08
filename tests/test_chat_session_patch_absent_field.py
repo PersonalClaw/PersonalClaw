@@ -33,6 +33,7 @@ _ROUTES = {
     "pin": ("patch", {"pinned": True}, "pinned", True),
     "folder": ("patch", {"folder_id": ""}, "folder_id", ""),
     "reply-style": ("patch", {"reply_style": "terse"}, "reply_style", "terse"),
+    "explain": ("patch", {"explain": "briefly"}, "explain", "briefly"),
     "title": ("patch", {"title": "named"}, "title", "named"),
     "lifecycle": ("patch", {"never_archive": True}, "never_archive", True),
     # One tag out of the session's `["t1"]` — the route takes edits, never a whole list.
@@ -70,6 +71,7 @@ def _app(state: DashboardState) -> web.Application:
     app.router.add_patch(
         "/api/chat/sessions/{session}/reply-style", chat.api_chat_session_reply_style
     )
+    app.router.add_patch("/api/chat/sessions/{session}/explain", chat.api_chat_session_explain)
     app.router.add_patch("/api/chat/sessions/{session}/title", chat.api_chat_session_rename)
     app.router.add_patch("/api/chat/sessions/{session}/folder", chat.api_chat_session_folder)
     app.router.add_patch("/api/chat/sessions/{session}/pin", chat.api_chat_session_pin)
@@ -150,8 +152,9 @@ async def test_a_body_that_carries_the_field_still_applies(suffix):
         ("pin", {"pinned": False}, "pinned", False),
         ("folder", {"folder_id": ""}, "folder_id", ""),
         ("reply-style", {"reply_style": ""}, "reply_style", ""),
+        ("explain", {"explain": ""}, "explain", ""),
     ],
-    ids=["color", "pin", "folder", "reply-style"],
+    ids=["color", "pin", "folder", "reply-style", "explain"],
 )
 async def test_an_EXPLICIT_clear_still_clears(suffix, body, attr, cleared):
     """The refusal is about ABSENCE. Saying "clear this" out loud must still work."""

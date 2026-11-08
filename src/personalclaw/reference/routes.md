@@ -191,6 +191,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/context` — inject silent background context.
 - `POST /api/chat/sessions/{session}/drop` — move a session into a column.
 - `POST /api/chat/sessions/{session}/edit-resend` — edit a user message and resend.
+- `PATCH /api/chat/sessions/{session}/explain` — set this chat's own explanations choice.
 - `GET /api/chat/sessions/{session}/export` — download a transcript.
 - `PATCH /api/chat/sessions/{session}/folder` — assign session to a folder.
 - `POST /api/chat/sessions/{session}/fork` — fork session into a new tab.
@@ -649,7 +650,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/notifications/trust` — the owner's Allow or Deny on an unknown-sender notification.
 - `POST /api/notifications/unack` — mark a single notification as unread.
 - `GET /api/onboarding` — First-run onboarding signal — model readiness plus persisted flow progress.
-- `POST /api/onboarding/explain` — Answer the one optional question, "How should I explain things?", once.
+- `POST /api/onboarding/explain` — Skip the one optional question, "How should I explain things?", once.
 - `GET /api/onboarding/import` — what each source holds, and what importing each item does.
 - `POST /api/onboarding/import` — start importing the picked items.
 - `DELETE /api/onboarding/import/job` — stop the running import after the item it is on.

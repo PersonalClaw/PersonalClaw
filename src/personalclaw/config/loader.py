@@ -540,6 +540,14 @@ def _bot_name_disallowed(name: str) -> list[str]:
     return list(dict.fromkeys(ch for ch in name if not _bot_name_char_allowed(ch)))
 
 
+def _explain_choice(value: object) -> str:
+    """*value* as an explanations choice (``explanations.normalize_choice``), ``default`` when it
+    names none."""
+    from personalclaw.explanations import normalize_choice
+
+    return normalize_choice(value) or "default"
+
+
 def _reply_style_choice(value: object, empty: str) -> str:
     """A stored reply style as one of the bundled ids, or *empty* for anything else.
 
@@ -779,6 +787,15 @@ class AgentConfig:
             "of your own styles ('own:<name>') or one an app adds ('<app>:<name>'). A style that "
             "is not available is passed over. Changes style only, never facts, caveats or "
             "refusals.",
+        ),
+    )
+    explain: str = field(
+        default="default",
+        metadata=_meta(
+            "Explanations",
+            "How replies explain things to you unless a chat chooses its own: 'default' (no "
+            "preference), 'briefly', 'step_by_step' or 'with_background'. Changes how things are "
+            "explained, never a fact, a caveat or a refusal.",
         ),
     )
     orchestrator_skill: bool = field(
@@ -4420,6 +4437,7 @@ class AppConfig:
                 log_level=agent_data.get("log_level", "WARNING").upper(),
                 bot_name=_sanitize_bot_name(agent_data.get("bot_name", "")),
                 reply_style=_reply_style_choice(agent_data.get("reply_style"), "default"),
+                explain=_explain_choice(agent_data.get("explain")),
                 soft_stop_budget_secs=max(
                     0.5, min(60.0, float(agent_data.get("soft_stop_budget_secs", 10.0)))
                 ),

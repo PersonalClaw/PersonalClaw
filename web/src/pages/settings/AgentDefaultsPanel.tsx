@@ -17,6 +17,7 @@ import { setAgentYolo } from './agentYolo'
 import { APPROVAL_MODE_HINT, APPROVAL_MODES, approvalModeMeans } from './approvalModes'
 import { replyStyleName } from '../../ui/composer/controls'
 import { OwnReplyStyles } from './OwnReplyStyles'
+import explanationsTable from '../../../../src/personalclaw/explanations.json'
 
 // The editable agent.* fields mirror the backend _EDITABLE_CONFIG allowlist
 // (types + ranges are the server's truth; we surface the same bounds).
@@ -142,6 +143,7 @@ export function AgentDefaultsPanel() {
         <RowGroup>
           <ApprovalModeRow cfg={cfg} patch={patch} />
           <ReplyStyleRow cfg={cfg} patch={patch} />
+          <ExplanationsRow cfg={cfg} patch={patch} />
           <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patchYolo}
             hint="Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation." danger />
           {/* Was a fixed two hours, so an approval asked at night was denied before anyone woke.
@@ -545,6 +547,30 @@ function ReplyStyleRow({ cfg, patch }: {
           Couldn't read your reply styles, so only the bundled ones are offered until a retry succeeds.
         </InlineError>
       )}
+    </Row>
+  )
+}
+
+/** How replies explain things, the owner's default (`agent.explain`): the platform scope of
+ *  `explanations.EXPLAIN_PRECEDENCE`. The choices are explanations.json's, the one table the server
+ *  sends their texts from. A config with no stored choice, or one that names none, reads as No
+ *  preference, which is what the backend resolves it to. */
+const EXPLANATION_PILLS = (explanationsTable as { id: string; label: string }[]).map((e) => ({ key: e.id, label: e.label }))
+
+function ExplanationsRow({ cfg, patch }: {
+  cfg: AgentCfg; patch: (k: string, v: unknown, cb: () => void, label?: string) => void
+}) {
+  const [saved, flash] = useSavedFlash()
+  const stored = String(cfg.explain ?? 'default')
+  const value = EXPLANATION_PILLS.some((o) => o.key === stored) ? stored : 'default'
+  return (
+    <Row label="Explanations"
+      hint="How replies explain things to you. Changes how things are explained, never a fact, a caveat or a refusal.">
+      <div className="flex items-center gap-s">
+        <SavedToast show={saved} />
+        <SegPills ariaLabel="Explanations" value={value} onChange={(v) => patch('explain', v, flash, 'explanations')}
+          options={EXPLANATION_PILLS} />
+      </div>
     </Row>
   )
 }

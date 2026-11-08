@@ -68,6 +68,7 @@ from personalclaw.dashboard.chat_handlers import (  # noqa: F401
     api_chat_session_create,
     api_chat_session_delete,
     api_chat_session_detail,
+    api_chat_session_explain,
     api_chat_session_interrupt,
     api_chat_session_model,
     api_chat_session_model_reach,
