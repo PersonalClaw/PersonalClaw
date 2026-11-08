@@ -35,6 +35,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A document's or an SVG's preview keeps no `class` attribute from its markup, and a document's HTML export and copied HTML keep none either.**
 - **The status answer's summary line (`stats_summary` in `/api/status`) gives the gateway's uptime, the one its `uptime` field gives. It counted from the first time the gateway read or recorded a stat, not from its start, and on macOS not while the machine slept, so it could say 5h 37m beside a 35h 51m uptime. `slack-channel`'s `/status` reply, which has no gateway uptime to give, now says "counted for" that window instead of calling it the uptime.**
 - **The desktop bridges are read only as the window's own properties.**
+- **A document's or an SVG's preview and a diagram's labels keep no `aria-modal` attribute from their markup, nor do a document's HTML export and copied HTML.**
 
 ## [0.3.7] — 2026-11-07
 

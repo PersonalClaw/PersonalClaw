@@ -222,6 +222,7 @@ function allowedAttr(name: string): boolean {
   if (n.startsWith('on')) return false           // no event handlers, ever
   if (n === 'style') return false                // inline style dropped (CSS-injection vector)
   if (n === 'class') return false                // no class of its own (see GLOBAL_ATTRS)
+  if (n === 'aria-modal') return false           // a preview's markup keeps no aria-modal
   if (GLOBAL_ATTRS.has(n) || GLOBAL_ATTRS.has(name)) return true
   if (SVG_ATTRS.has(name) || SVG_ATTRS.has(n)) return true
   if (URL_ATTRS.has(n) || URL_ATTRS.has(name)) return true
