@@ -391,8 +391,10 @@ class _Gh:
         #: The REST listing's order is not set: newest first is one it may use.
         self.newest_first = False
         self.listings: list[tuple[str, ...]] = []
-        #: Per run: each job as its latest attempt left it, (attempt, conclusion, name); None
-        #: makes the jobs read fail.
+        #: Per run: each job, the attempt it last ran in and its conclusion there, (attempt,
+        #: conclusion, name); None makes the jobs read fail. The jobs are listed as the API
+        #: lists them (:func:`_listed`): a job a rerun did not repeat is listed again under each
+        #: later attempt, a copy with the same runner and start.
         self.jobs: dict[int, list[tuple[int, str, str]] | None] = {}
 
     def open_issue(self, title: str, body: str, user: dict = _BOT) -> int:
@@ -442,11 +444,15 @@ class _Gh:
                 )
             ]
             return "\n".join(reversed(listed) if self.newest_first else listed)
-        if "/jobs?filter=latest" in path:
+        if "/jobs?filter=" in path:
             jobs = self.jobs.get(int(path.split("/runs/")[1].split("/")[0]))
             if jobs is None:
                 raise subprocess.CalledProcessError(1, ["gh", *args])
-            return "\n".join(f"{a}\t{c}\t{n}" for a, c, n in jobs)
+            rows = _listed(jobs)
+            if "filter=latest" in path:
+                newest = max(row["run_attempt"] for row in rows)
+                rows = [row for row in rows if row["run_attempt"] == newest]
+            return _jq_lines(args[args.index("--jq") + 1], rows)
         if "/comments?" in path:
             number = int(path.split("/issues/")[1].split("/")[0])
             self.comment_reads.append(number)
@@ -456,6 +462,45 @@ class _Gh:
             self.branches.append(branch)
             return " ".join(str(r) for r in self.runs.get(branch, []))
         raise AssertionError(f"the commands asked gh for {args}")
+
+
+def _listed(jobs: list[tuple[int, str, str]]) -> list[dict]:
+    """The run's jobs as ``jobs?filter=all`` lists them, from each job's (attempt it last ran in,
+    conclusion, name). A job that last ran in attempt k failed each attempt before k, each on a
+    runner of its own, and is listed again under each attempt after k as a copy of attempt k's:
+    the same runner_name and started_at (read on release-rehearsal run 42367171391, where 7 of
+    its 9 jobs were copies under attempt 2). A job "cancelled" in attempt k never ran there: that
+    row has no runner. ``filter=latest`` lists the newest attempt's alone."""
+    newest = max((ran for ran, _, _ in jobs), default=1)
+    rows = []
+    for ran, conclusion, name in jobs:
+        for attempt in range(1, newest + 1):
+            own = min(attempt, ran)  # the attempt this row's job ran in: a copy's is k
+            never_ran = own == ran and conclusion == "cancelled"
+            rows.append(
+                {
+                    "run_attempt": attempt,
+                    "conclusion": conclusion if own == ran else be.RED,
+                    "runner_name": None if never_ran else f"GitHub Actions {own}-{name}",
+                    "started_at": f"2026-11-07T11:{10 + own:02d}:00Z",
+                    "name": name,
+                }
+            )
+    return rows
+
+
+def _jq_lines(expression: str, rows: list[dict]) -> str:
+    """``gh --jq`` for the one form the jobs reads use: ``.jobs[] | "..."``, each ``\\(.field)``
+    filled from the job, a missing value as jq writes it, ``null``."""
+    assert expression.startswith('.jobs[] | "') and expression.endswith('"'), expression
+    template = expression[len('.jobs[] | "') : -1].replace("\\t", "\t")
+
+    def field(row: dict, name: str) -> str:
+        return "null" if row[name] is None else str(row[name])
+
+    return "\n".join(
+        be.re.sub(r"\\\(\.(\w+)\)", lambda m: field(row, m.group(1)), template) for row in rows
+    )
 
 
 def _night(
@@ -822,8 +867,8 @@ def _at(attempt: int, record: dict) -> dict:
 
 
 def _latest(attempt: int, conclusion: str = be.GREEN, **overrides: tuple[int, str]) -> list:
-    """Every shard job as its latest attempt left it: ``attempt`` and ``conclusion``, but for
-    ``overrides`` (key to (attempt, conclusion))."""
+    """Every shard job as the attempt it last ran in left it: ``attempt`` and ``conclusion``, but
+    for ``overrides`` (key to (attempt, conclusion))."""
     jobs = {key: (attempt, conclusion) for key in be.expected_keys()}
     jobs.update({key.replace("__", "/"): v for key, v in overrides.items()})
     return [(a, c, be.job_name(key)) for key, (a, c) in sorted(jobs.items())]
@@ -947,6 +992,138 @@ def test_every_entry_and_record_names_the_attempt_that_wrote_it(tmp_path, monkey
     assert record["attempt"] == 2
 
 
+#: Release-rehearsal run 42367171391's ``jobs?filter=all``, as GitHub listed it after "Re-run
+#: failed jobs" (2026-11-07): attempt 2 lists all 9 of its jobs again. This holds 6 of them, 4
+#: listed under attempt 2 as copies of attempt 1's rows.
+_A_REAL_RERUN = [
+    ("artifacts / build", 1, "success", "GitHub Actions 1000174440", "2026-11-07T11:12:25Z"),
+    ("artifacts / build", 2, "success", "GitHub Actions 1000174440", "2026-11-07T11:12:25Z"),
+    (
+        "artifacts / desktop-linux",
+        1,
+        "success",
+        "GitHub Actions 1000174441",
+        "2026-11-07T11:12:25Z",
+    ),
+    (
+        "artifacts / desktop-linux",
+        2,
+        "success",
+        "GitHub Actions 1000174441",
+        "2026-11-07T11:12:25Z",
+    ),
+    (
+        "artifacts / desktop-mac (x64)",
+        1,
+        "failure",
+        "GitHub Actions 1000174439",
+        "2026-11-07T11:12:26Z",
+    ),
+    (
+        "artifacts / desktop-mac (x64)",
+        2,
+        "success",
+        "GitHub Actions 1000174593",
+        "2026-11-07T11:50:32Z",
+    ),
+    (
+        "artifacts / gateway-dashboard",
+        1,
+        "success",
+        "GitHub Actions 1000174577",
+        "2026-11-07T11:44:31Z",
+    ),
+    (
+        "artifacts / gateway-dashboard",
+        2,
+        "success",
+        "GitHub Actions 1000174577",
+        "2026-11-07T11:44:31Z",
+    ),
+    ("artifacts / manifest", 1, "skipped", None, "2026-11-07T11:43:28Z"),
+    ("artifacts / manifest", 2, "failure", "GitHub Actions 1000174637", "2026-11-07T12:06:48Z"),
+    ("version", 1, "success", "GitHub Actions 1000174436", "2026-11-07T11:12:08Z"),
+    ("version", 2, "success", "GitHub Actions 1000174436", "2026-11-07T11:12:08Z"),
+]
+
+
+def test_a_job_a_rerun_carried_over_is_held_to_the_attempt_it_ran_in() -> None:
+    """On a real rerun's listing: each copy reads as the attempt it copies, a job the rerun
+    repeated as the rerun, and one that never ran before (no runner) as its own attempt."""
+    rows = [
+        dict(zip(("name", "run_attempt", "conclusion", "runner_name", "started_at"), row))
+        for row in _A_REAL_RERUN
+    ]
+    assert be.ran_in(rows, 2) == {
+        "artifacts / build": (1, "success"),
+        "artifacts / desktop-linux": (1, "success"),
+        "artifacts / desktop-mac (x64)": (2, "success"),
+        "artifacts / gateway-dashboard": (1, "success"),
+        "artifacts / manifest": (2, "failure"),
+        "version": (1, "success"),
+    }
+
+
+def _rows(*listed: tuple) -> list[dict]:
+    return [
+        dict(zip(("name", "run_attempt", "conclusion", "runner_name", "started_at"), row))
+        for row in listed
+    ]
+
+
+def test_a_copy_is_a_row_with_the_same_runner_and_the_same_start() -> None:
+    """A rerun's row copies an earlier one only when both its runner_name and its started_at
+    match: a rerun on a recycled runner name, or one that started at the same second on another
+    runner, ran again, and reads as the rerun."""
+    rows = _rows(
+        ("a/1", 1, "failure", "GitHub Actions 2", "2026-11-07T11:12:25Z"),
+        ("a/1", 2, "success", "GitHub Actions 2", "2026-11-07T11:50:32Z"),
+        ("b/1", 1, "failure", "GitHub Actions 3", "2026-11-07T11:12:25Z"),
+        ("b/1", 2, "success", "GitHub Actions 4", "2026-11-07T11:12:25Z"),
+        ("c/1", 1, "failure", "GitHub Actions 5", "2026-11-07T11:12:25Z"),
+        ("c/1", 2, "failure", "GitHub Actions 5", "2026-11-07T11:12:25Z"),
+    )
+    assert be.ran_in(rows, 2) == {
+        "a/1": (2, "success"),
+        "b/1": (2, "success"),
+        "c/1": (1, "failure"),
+    }
+
+
+def test_a_leg_the_reported_attempt_does_not_list_is_red() -> None:
+    """🔴 Red with a reader that resolves each job from its own newest row: a leg listed under
+    attempt 1 alone read by attempt 1's green on a report of attempt 2. A job the reported
+    attempt does not list is left out, and its key is red; rows that never reach the attempt are
+    unread."""
+    rows = _rows(
+        (be.job_name("audit/1"), 1, "success", "GitHub Actions 1", "2026-11-07T11:12:25Z"),
+        (be.job_name("canary/1"), 1, "failure", "GitHub Actions 2", "2026-11-07T11:12:25Z"),
+        (be.job_name("canary/1"), 2, "success", "GitHub Actions 3", "2026-11-07T11:50:32Z"),
+    )
+    jobs = be.ran_in(rows, 2)
+    assert jobs == {be.job_name("canary/1"): (2, "success")}
+    checked = be.against_jobs({"audit/1": {**_leg(), "attempt": 1}}, jobs)
+    assert checked["audit/1"]["result"] == be.RED and checked["audit/1"]["shard_job"] is True
+    assert be.ran_in(rows[:1], 2) is None, "the rows end at attempt 1: nothing is read"
+    assert be.ran_in([], 1) is None
+    never_ran = _rows(
+        ("x", 1, "cancelled", None, "2026-11-07T11:12:00Z"),
+        ("x", 2, "cancelled", None, "2026-11-07T11:12:00Z"),
+    )
+    assert be.ran_in(never_ran, 2) == {"x": (2, "cancelled")}, "a row with no runner copies none"
+
+
+def test_a_job_that_never_ran_in_the_reported_attempt_is_red(tmp_path, monkeypatch) -> None:
+    """A job cancelled before it ran is listed with no runner, which jq writes as "null": it
+    copies nothing, reads as the attempt it is listed under, and its key is red."""
+    gh = _Gh()
+    gh.jobs = {7: _latest(1, **{_KEY: (2, "cancelled"), "canary/1": (2, be.GREEN)})}
+    entries = _at(1, _record(**_all_green()))["legs"]
+    legs = _report_off_main(tmp_path, monkeypatch, gh, entries, attempt=2, ref=be.MAIN)["legs"]
+    assert legs[_KEY]["result"] == be.RED and legs[_KEY]["shard_job"] is True
+    assert legs["ubuntu-24.04-3.13/1"]["result"] == be.GREEN, "not rerun: attempt 1 stands"
+
+
 def test_a_reruns_shard_that_wrote_no_entry_is_red_not_its_earlier_attempts_entry(
     tmp_path, monkeypatch
 ) -> None:
@@ -962,7 +1139,7 @@ def test_a_reruns_shard_that_wrote_no_entry_is_red_not_its_earlier_attempts_entr
     legs = _report_off_main(tmp_path, monkeypatch, gh, entries, attempt=2, ref=be.MAIN)["legs"]
     assert legs[_KEY]["result"] == be.RED and legs[_KEY]["shard_job"] is True
     assert legs["canary/1"]["result"] == be.RED and legs["canary/1"]["shard_job"] is True
-    assert legs["audit/1"]["result"] == be.GREEN, "its job's latest attempt wrote this entry"
+    assert legs["audit/1"]["result"] == be.GREEN, "the attempt its job last ran in wrote this entry"
     assert legs["ubuntu-24.04-3.13/1"]["result"] == be.GREEN, "not rerun: attempt 1 stands"
     gh.jobs = {7: None}
     tonight = _at(2, _record(**_all_green()))["legs"]

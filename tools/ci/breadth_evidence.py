@@ -25,8 +25,8 @@ Off main (a tag, a release branch) nothing is reused and no issue is read: no ea
 read or carried, and every leg executes on every dispatch, so a release's record is what that
 dispatch measured. Every entry and record names the run attempt that wrote it. Within one run a
 key red on any attempt stays red, whatever its inputs (:func:`within_run`); on a rerun, a key
-whose shard job did not succeed in its latest attempt, or whose entry is older than that
-attempt, is red (:func:`against_jobs`). A release accepts a run only when it holds a record of
+whose shard job did not succeed in the attempt it last ran in, or whose entry is older than
+that attempt, is red (:func:`against_jobs`). A release accepts a run only when it holds a record of
 every attempt up to the newest and no attempt recorded a red (:func:`satisfies_release`). A
 re-dispatch is a new run and a new measurement; whether an earlier dispatch of the same commit
 was red is the release gate's question (#3911).
@@ -480,14 +480,14 @@ def against_jobs(
     entries: Mapping[str, dict[str, Any]],
     jobs: Mapping[str, tuple[int, str]] | None,
 ) -> dict[str, dict[str, Any]]:
-    """On a rerun: each entry checked against its shard job's latest attempt.
+    """On a rerun: each entry checked against the attempt its shard job last ran in.
 
     A rerun's entries are the newest artifact of each name, across attempts, so a shard that
-    wrote no entry on its latest attempt is stood in for by an older one, and a red it measured
-    is lost. ``jobs`` maps a job name to the attempt it last ran in and its conclusion there. A
-    key is red, marked ``shard_job``, when its job is absent, did not succeed in its latest
-    attempt, or ran in a later attempt than its entry names. With ``jobs`` unreadable (None),
-    which entry stands for which attempt is not known, so every key is red.
+    wrote no entry in the attempt it last ran in is stood in for by an older one, and a red it
+    measured is lost. ``jobs`` maps a job name to the attempt it last ran in and its conclusion
+    there. A key is red, marked ``shard_job``, when its job is absent, did not succeed in the
+    attempt it last ran in, or ran in a later attempt than its entry names. With ``jobs``
+    unreadable (None), which entry stands for which attempt is not known, so every key is red.
     """
     checked = {key: dict(entry) for key, entry in entries.items()}
     for key, entry in checked.items():
@@ -885,25 +885,75 @@ def _own_records(repo: str, run_id: int) -> list[tuple[str, dict[str, Any]]] | N
         return None
 
 
-def _latest_jobs(repo: str, run_id: int) -> dict[str, tuple[int, str]] | None:
-    """Each of the run's jobs, as its latest attempt left it: name to (attempt, conclusion).
-    None when the jobs cannot be read."""
+def _run_attempt(row: Mapping[str, Any]) -> int:
+    return int(row.get("run_attempt") or 0)
+
+
+def ran_in(rows: Sequence[Mapping[str, Any]], attempt: int) -> dict[str, tuple[int, str]] | None:
+    """Each job of a run's *attempt*, from ``jobs?filter=all``'s rows: name to (the attempt it
+    last ran in, its conclusion there). None when the rows do not reach *attempt*, so every key
+    reads red (:func:`against_jobs`).
+
+    A rerun lists every job it did not repeat again under the new attempt, as a copy of the row
+    it ran as: the same ``runner_name`` and ``started_at`` (release-rehearsal run 42367171391
+    listed all 9 of its jobs under attempt 2, 7 of them copies of attempt 1's). So a job's newest
+    row is held to the earliest row it copies, and a leg a rerun left alone keeps the attempt
+    that wrote its entry. A row with no runner never ran, and copies nothing. A job *attempt*
+    does not list is left out, and its key reads red: an older attempt's row never stands for
+    it."""
+    if not rows or max(_run_attempt(row) for row in rows) != attempt:
+        return None
+    by_name: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        by_name.setdefault(str(row.get("name")), []).append(row)
+    jobs: dict[str, tuple[int, str]] = {}
+    for name, listed in by_name.items():
+        newest = max(listed, key=_run_attempt)
+        if _run_attempt(newest) != attempt:
+            continue
+        last = attempt
+        ran = (newest.get("runner_name"), newest.get("started_at"))
+        if ran[0] not in (None, "", "null"):
+            last = min(
+                _run_attempt(row)
+                for row in listed
+                if (row.get("runner_name"), row.get("started_at")) == ran
+            )
+        jobs[name] = (last, str(newest.get("conclusion")))
+    return jobs
+
+
+def _jobs_ran_in(repo: str, run_id: int, attempt: int) -> dict[str, tuple[int, str]] | None:
+    """Each of the run's jobs in *attempt*, as the attempt it last ran in left it: name to
+    (attempt, conclusion), by :func:`ran_in` over every attempt's rows. ``filter=latest`` lists a
+    job a rerun carried over under the newest attempt, so a leg that was not rerun read as rerun
+    and its entry as stale. None when the jobs cannot be read."""
     try:
         out = _gh(
             "api",
             "--paginate",
-            f"repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",
+            f"repos/{repo}/actions/runs/{run_id}/jobs?filter=all&per_page=100",
             "--jq",
-            '.jobs[] | "\\(.run_attempt)\\t\\(.conclusion)\\t\\(.name)"',
+            '.jobs[] | "\\(.run_attempt)\\t\\(.conclusion)\\t\\(.runner_name)\\t'
+            '\\(.started_at)\\t\\(.name)"',
         )
     except (subprocess.CalledProcessError, OSError):
         return None
-    jobs: dict[str, tuple[int, str]] = {}
+    rows: list[dict[str, Any]] = []
     for line in out.splitlines():
-        parts = line.split("\t", 2)
-        if len(parts) == 3 and parts[0].isdigit():
-            jobs[parts[2]] = (int(parts[0]), parts[1])
-    return jobs
+        parts = line.split("\t", 4)
+        if len(parts) == 5 and parts[0].isdigit():
+            listed_in, conclusion, runner, started, name = parts
+            rows.append(
+                {
+                    "run_attempt": int(listed_in),
+                    "conclusion": conclusion,
+                    "runner_name": runner,
+                    "started_at": started,
+                    "name": name,
+                }
+            )
+    return ran_in(rows, attempt)
 
 
 def _seeds(text: str) -> tuple[str, ...]:
@@ -1029,13 +1079,17 @@ def main(argv: list[str] | None = None) -> int:
         earlier_records: list[tuple[str, dict[str, Any]]] | None = []
         if args.attempt > 1:
             # A rerun's entries are the newest of each name, across attempts: a shard that
-            # wrote none on its latest attempt is stood in for by an older one. Each key is held
-            # to its shard job's latest attempt.
-            jobs = _latest_jobs(args.repo, args.run_id)
+            # wrote none in the attempt it last ran in is stood in for by an older one. Each key
+            # is held to the attempt its shard job last ran in.
+            jobs = _jobs_ran_in(args.repo, args.run_id, args.attempt)
             entries = against_jobs(entries, jobs)
             _summary(
                 f"Attempt {args.attempt}: "
-                + ("the run's jobs could not be read." if jobs is None else f"{len(jobs)} jobs.")
+                + (
+                    "the run's jobs could not be read, or do not reach this attempt."
+                    if jobs is None
+                    else f"{len(jobs)} jobs."
+                )
             )
         if not on_main and args.attempt > 1:
             # Off main no issue holds a red: a key red on any earlier attempt of this run stays
