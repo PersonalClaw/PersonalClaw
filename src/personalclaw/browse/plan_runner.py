@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
+from personalclaw.browse.credentials import known_sites
 from personalclaw.browse.extraction import extract_page
 from personalclaw.browse.plans import (
     KIND_WATCH_PAGE,
@@ -69,17 +70,8 @@ def make_content_tick_runner(
     session is always torn down (the closer runs in a ``finally``) even when the drive raises.
     """
 
-    async def _run(plan: BrowsePlan) -> TickOutcome:
-        # A runner is a policy: this one reads pages, it does not act on them. Refusing walk_flow
-        # here (rather than half-driving it) keeps the agentic path from shipping unexercised.
-        if plan.kind != KIND_WATCH_PAGE:
-            raise PlanError(
-                f"the content tick runner drives {KIND_WATCH_PAGE!r} only; {plan.kind!r} needs "
-                "an agentic decider — wire it with its own runner"
-            )
-        cdp_url = (resolve_url() or "").strip()
-        if not cdp_url:
-            return TickOutcome(note="no gateway browser is configured (cdp_url is empty)")
+    async def _tick(plan: BrowsePlan, cdp_url: str) -> TickOutcome:
+        """Render *plan*'s page through a session opened on *cdp_url* and read its text."""
         try:
             session, page, closer = await open_session(cdp_url)
             try:
@@ -114,6 +106,22 @@ def make_content_tick_runner(
             final_url=final_url,
             note="" if text else "browse tick rendered no extractable text",
         )
+
+    async def _run(plan: BrowsePlan) -> TickOutcome:
+        # A runner is a policy: this one reads pages, it does not act on them. Refusing walk_flow
+        # here (rather than half-driving it) keeps the agentic path from shipping unexercised.
+        if plan.kind != KIND_WATCH_PAGE:
+            raise PlanError(
+                f"the content tick runner drives {KIND_WATCH_PAGE!r} only; {plan.kind!r} needs "
+                "an agentic decider — wire it with its own runner"
+            )
+        cdp_url = (resolve_url() or "").strip()
+        if not cdp_url:
+            return TickOutcome(note="no gateway browser is configured (cdp_url is empty)")
+        # The plan's page is known before the session opens, so the tasks its transport starts
+        # know it too (``credentials.known_sites``).
+        with known_sites(plan.start_url):
+            return await _tick(plan, cdp_url)
 
     return _run
 

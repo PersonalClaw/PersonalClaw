@@ -13,19 +13,31 @@ work changed otherwise (cut short, split, or encoded another way).
 
 What the work writes itself while it runs is masked too: the dispatch holds the values it filled in
 for as long as the work runs (:func:`handed`), and the writers of such a record mask them out of
-what they are given (:func:`masked_here`).
+what they are given (:func:`masked_here`). An address, and what is said of one, is masked of each
+value in the letters an address carries it in too (:func:`in_address_forms`, which
+``browse.credentials.masked_in_addresses`` masks).
 """
 
 from __future__ import annotations
 
 import copy
 import dataclasses
+import functools
+import ipaddress
+import re
+import unicodedata
 from collections.abc import Collection, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
+from urllib.parse import unquote
 
-from personalclaw.security import redact_known_values
+import idna
+
+from personalclaw.security import _KNOWN_VALUE_MASK, redact_known_values
+
+#: What stands in for each value it masks.
+MASK = _KNOWN_VALUE_MASK
 
 #: The values each dispatch the work running in this context runs inside filled into it, one
 #: collection per dispatch (:func:`handed`).
@@ -107,11 +119,139 @@ def held_here() -> list[str]:
     return [value for filled in _HANDED.get() for value in filled]
 
 
-def masked_here(text: str) -> str:
-    """*text* masked of every value the work running here was handed (:func:`handed`); *text* as
-    it is where no work holds any."""
+def masked_here(text: str, mask: str | None = None, also: Iterable[str] = ()) -> str:
+    """*text* masked of every value the work running here was handed (:func:`handed`), and of
+    *also*, the forms a converter wrote them in, each as *mask* when it is given (a word a later
+    reading keeps whole, then masks); *text* as it is where no work holds any."""
     held = held_here()
-    return redact_known_values(text, held) if held else text
+    if not held:
+        return text
+    return redact_known_values(text, [*held, *also], MASK if mask is None else mask)
+
+
+def _as_a_host_maps(text: str) -> str:
+    """*text* as a browser maps a host's letters before it writes them: UTS46's mapping as the
+    WHATWG URL standard applies it (nontransitional, without the STD3 rules;
+    ``idna.uts46_remap``), each code point it refuses kept as it is."""
+    try:
+        return idna.uts46_remap(text, std3_rules=False, transitional=False)
+    except (idna.IDNAError, UnicodeError, ValueError):
+        return unicodedata.normalize("NFC", "".join(_as_a_host_maps_one(ch) for ch in text))
+
+
+def _as_a_host_maps_one(ch: str) -> str:
+    try:
+        return idna.uts46_remap(ch, std3_rules=False, transitional=False)
+    except (idna.IDNAError, UnicodeError, ValueError):
+        return ch
+
+
+def as_an_ipv4(text: str) -> str | None:
+    """*text* as the dotted IPv4 address a browser reads a host of numbers as (the WHATWG URL
+    standard: one to four parts, each decimal, octal on a leading 0 or hex on 0x, the last filling
+    the bytes left), or None when it reads no address."""
+    parts = text.split(".")
+    if len(parts) > 1 and parts[-1] == "":
+        parts.pop()
+    if not 1 <= len(parts) <= 4:
+        return None
+    numbers = []
+    for part in parts:
+        if part[:2].lower() == "0x":
+            base, digits = 16, part[2:] or "0"
+        elif len(part) > 1 and part.startswith("0"):
+            base, digits = 8, part[1:]
+        else:
+            base, digits = 10, part
+        if not digits or not digits.isascii() or not digits.isalnum():
+            return None
+        try:
+            numbers.append(int(digits, base))
+        except ValueError:
+            return None
+    if any(n > 255 for n in numbers[:-1]) or numbers[-1] >= 256 ** (5 - len(numbers)):
+        return None
+    address = numbers[-1] + sum(n << (8 * (3 - i)) for i, n in enumerate(numbers[:-1]))
+    return str(ipaddress.IPv4Address(address))
+
+
+def as_an_ipv6(text: str) -> str | None:
+    """*text*, bracketed or not, as the IPv6 address a browser writes (the WHATWG URL standard):
+    each piece in lower-case hex without its leading zeros, an IPv4 tail as two pieces, and the
+    first longest run of two or more zero pieces as ``::``; None when it reads no address."""
+    try:
+        packed = ipaddress.IPv6Address(text.removeprefix("[").removesuffix("]")).packed
+    except ValueError:
+        return None
+    pieces = [int.from_bytes(packed[i : i + 2], "big") for i in range(0, 16, 2)]
+    start, run = -1, 1
+    i = 0
+    while i < 8:
+        j = i
+        while j < 8 and pieces[j] == 0:
+            j += 1
+        if j - i > run:
+            start, run = i, j - i
+        i = max(j, i + 1)
+    if start < 0:
+        return ":".join(f"{p:x}" for p in pieces)
+    head = ":".join(f"{p:x}" for p in pieces[:start])
+    tail = ":".join(f"{p:x}" for p in pieces[start + run :])
+    return f"{head}::{tail}"
+
+
+def _as_numbers_read(text: str) -> set[str]:
+    """*text* as the address a browser reads a host of numbers as, whole and the parts of it a
+    shorter number fills (:func:`as_an_ipv4`), and as an IPv6 address, bracketed and not
+    (:func:`as_an_ipv6`); none when it reads no address."""
+    forms: set[str] = set()
+    dotted = as_an_ipv4(text)
+    if dotted and dotted != text:
+        octets = dotted.split(".")
+        number = int(ipaddress.IPv4Address(dotted))
+        forms.add(dotted)
+        for kept in (3, 2):
+            if number < 256**kept:
+                forms.add(".".join(octets[4 - kept :]))
+    v6 = as_an_ipv6(text) if ":" in text else None
+    if v6:
+        forms |= {v6, f"[{v6}]"}
+    return forms
+
+
+@functools.lru_cache(maxsize=256)
+def as_a_host_reads(value: str) -> frozenset[str]:
+    """*value* in each form a browser can write into a host: as written, NFKC-folded, as it maps a
+    host's letters (:func:`_as_a_host_maps`), percent-decoded first, and a number or an IPv6
+    address as the address it reads one as (:func:`_as_numbers_read`)."""
+    forms = {value, unicodedata.normalize("NFKC", value)}
+    for each in (value, unquote(value)):
+        forms |= {each, _as_a_host_maps(each)}
+    for each in list(forms):
+        forms |= _as_numbers_read(each)
+    return frozenset(form for form in forms if form)
+
+
+def in_address_forms(also: Iterable[str]) -> set[str]:
+    """Each value the work running here holds, and *also*, in the letters an address or a page's
+    words can carry it in: as written; each way a browser writes it into a host
+    (:func:`as_a_host_reads`), the value read as written and with its tabs and line breaks dropped;
+    as a browser reads an address, tabs and line breaks dropped and a backslash a slash, and as it
+    writes one back, a slash before a query or a fragment that follows the host; and with each run
+    of spaces or tabs, or of any white space, as one space, as a page's words fold them."""
+    forms = set(also)
+    for value in held_here():
+        read_forms = as_a_host_reads(value) | as_a_host_reads(re.sub(r"[\t\r\n]", "", value))
+        for each in read_forms:
+            read = re.sub(r"[\t\r\n]", "", each).strip().replace("\\", "/")
+            forms |= {
+                each,
+                read,
+                re.sub(r"^([^/?#]*)([?#])", r"\1/\2", read),
+                re.sub(r"[ \t]+", " ", each).strip(),
+                re.sub(r"\s+", " ", each).strip(),
+            }
+    return {form for form in forms if form}
 
 
 def _copied(obj: Any, changes: dict[str, Any]) -> Any:

@@ -8,9 +8,10 @@ import re
 
 #: What a browser percent-encodes of a value it writes into an address, beyond control characters
 #: and anything past ``~`` (the WHATWG URL standard's percent-encode sets): in an http(s) query,
-#: and in a path.
+#: in a path, and in a fragment.
 _BROWSER_QUERY_ENCODES = frozenset(" \"#<>'")
 _BROWSER_PATH_ENCODES = frozenset(' "#<>?^`{}')
+_BROWSER_FRAGMENT_ENCODES = frozenset(' "<>`')
 
 
 def _as_a_browser_writes(value: str, encodes: frozenset[str]) -> str:
@@ -28,9 +29,9 @@ def _as_a_browser_writes(value: str, encodes: frozenset[str]) -> str:
 
 def _encoded_forms(value: str) -> set[str]:
     """*value* as a URL carries it (percent-encoded as Python's ``quote`` and as a browser writes a
-    path or a query, a query's ``+`` for a space, ``/`` kept or not) and as HTML escapes it, so a
-    page or an address that echoes it is masked too. A form that can't be built (a value holding
-    an unpaired surrogate) is built from its escaped bytes, so this never raises."""
+    path, a query or a fragment, a query's ``+`` for a space, ``/`` kept or not) and as HTML escapes
+    it, so a page or an address that echoes it is masked too. A form that can't be built (a value
+    holding an unpaired surrogate) is built from its escaped bytes, so this never raises."""
     from html import escape
     from urllib.parse import quote, quote_plus
 
@@ -40,6 +41,7 @@ def _encoded_forms(value: str) -> set[str]:
         quote_plus(value, errors="surrogatepass"),
         _as_a_browser_writes(value, _BROWSER_QUERY_ENCODES),
         _as_a_browser_writes(value, _BROWSER_PATH_ENCODES),
+        _as_a_browser_writes(value, _BROWSER_FRAGMENT_ENCODES),
         escape(value),
         escape(value, False),
     }

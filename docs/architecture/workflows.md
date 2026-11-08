@@ -518,15 +518,18 @@ filled (`BindingContext.model_text`). Filled in there, the value would be in the
 judge handed a value anyway is refused before its model is asked
 (`engine_support.judge_handed_a_value`), as is a Browse goal that names a secret, since Browse never
 types a credential. Browse's start page is filled, to be opened, since only its goal is its model's
-(`BrowseActionProvider.model_text_keys`), and while the step holds a value every address Browse
-shows is its origin alone (an address with no host its scheme) and its vision grounding is off,
-since a screenshot could show the value: its pages' links show as their sites' origins, and each
-address in a link's or a control's words or in a page's text as its origin (a glued `name:value` is
-left as it is unless a slash follows its colon, or its name ends in a scheme and a backslash follows
-its colon, or its name ends in a scheme a browser opens or runs). A start page is refused at save as
-written, and at dispatch and at each fire as filled, a run input's included, when, read as a browser
-reads it, it names a secret in its scheme, host or port, pipes one, or would open another site, and
-when it names one and isn't an http or https address (`browse.credentials.start_page_refusal`,
+(`BrowseActionProvider.model_text_keys`), and while the step holds a value Browse names only the
+sites the step was set to reach: its start page's and each host its egress allow-list names exactly,
+not a subdomain of one (`browse.credentials.known_sites`). It shows each address of one as its
+origin alone (an address with no host by its scheme, when that is about, blob, data, file or
+javascript), and withholds every other address, host, port and scheme whole. A refusal is said in
+fixed words: to see which host a refusal was about, run the step once without its secret. Its vision
+grounding is off, since a screenshot could show the value. Its pages' links, and each address in a
+link's or a control's words or in a page's text, show so (a glued `name:value` is left as it is
+unless a browser could read an address in it). A start page is refused at save as written, and at
+dispatch and at each fire as filled, a run input's included, when, read as a browser reads it, it
+names a secret in its scheme, host or port, pipes one, or would open another site, and when it names
+one and isn't an http or https address (`browse.credentials.start_page_refusal`,
 `start_page_moved`). A step's arguments are one mapping however they are written, bound or as pairs,
 read from the holder its dispatch picks (`step_arguments.arguments`), and a goal that names or pipes
 a secret is refused there too. An argument written as a pair named by a binding is refused at save

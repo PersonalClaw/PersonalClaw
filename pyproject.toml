@@ -158,6 +158,11 @@ dependencies = [
     # imports it; it is listed for its floor: 2026.10.19 removes root certificates whose
     # intermediate keys were compromised, and only a floor moves an install pip made.
     "certifi>=2026.10.19",
+    # Browse reads a host as a browser maps it (`filled_secrets._as_a_host_maps`), with idna's
+    # UTS46 table: the mapping the WHATWG URL standard applies (nontransitional, no STD3 rules).
+    # httpx already pulls it in; it is listed for its floor, the release whose table (Unicode 17)
+    # that mapping is checked against, and its major, whose `uts46_remap` it calls.
+    "idna>=3.18,<4",
     "PyYAML>=6,<7",
     # cli.py loads .env (CWD + PERSONALCLAW_HOME) so credentials resolve via
     # os.environ without hand-copying .env — an unconditional import at startup.

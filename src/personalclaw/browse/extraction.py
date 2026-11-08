@@ -30,7 +30,9 @@ not this pure function.
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import html as html_mod
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -39,8 +41,10 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from personalclaw import filled_secrets
 from personalclaw.browse.credentials import (
     WITHHELD,
-    addresses_as_origins,
+    held_as_origins,
     is_credential_input,
+    masked_in_addresses,
+    read_as_a_browser_does,
     screen_text,
     screen_url,
 )
@@ -90,8 +94,10 @@ _KEEP_PARAMS = {"q", "s", "search", "page"}
 # Schemes that are not a navigable page (javascript no-ops, base64 blobs, contact links).
 _NON_NAV_SCHEMES = ("javascript:", "data:", "blob:", "mailto:", "tel:", "vbscript:")
 
-_IMG_RE = re.compile(r"<img\b[^>]*?>", re.IGNORECASE | re.DOTALL)
-_ALT_RE = re.compile(r'\balt=["\']([^"\']*)["\']', re.IGNORECASE)
+#: An ``<img>`` tag, each quoted attribute value read whole (one can hold a ``>``), and its
+#: ``alt``, quoted either way or not at all.
+_IMG_RE = re.compile(r"""<img\b(?:[^>"']|"[^"]*"|'[^']*')*>""", re.IGNORECASE | re.DOTALL)
+_ALT_RE = re.compile(r"""(?<![\w-])alt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.IGNORECASE)
 _WS_RE = re.compile(r"[ \t]+")
 _BLANKLINES_RE = re.compile(r"\n{3,}")
 
@@ -345,7 +351,9 @@ def _clean_link(href: str) -> str | None:
     ext = last_seg.rsplit(".", 1)[-1].lower() if "." in last_seg else ""
     if ext in _ASSET_EXT:
         return None
-    if parts.query:
+    # An address that holds a held value keeps its query as written: it is shown masked, as its
+    # origin (``render_links_dsl``).
+    if parts.query and masked_in_addresses(href) == href:
         kept = [
             (k, v)
             for k, v in parse_qsl(parts.query, keep_blank_values=True)
@@ -356,8 +364,10 @@ def _clean_link(href: str) -> str | None:
 
 
 def _image_alt(tag: str) -> str:
+    """*tag*'s ``alt`` as written in the page (its entities left for the text conversion to read),
+    whole whichever quote it holds."""
     m = _ALT_RE.search(tag)
-    return m.group(1).strip() if m else ""
+    return next((g for g in m.groups() if g is not None), "").strip() if m else ""
 
 
 def _strip_images(html: str) -> str:
@@ -368,22 +378,64 @@ def _strip_images(html: str) -> str:
     keeps base64 out of the extracted prose."""
 
     def repl(m: re.Match[str]) -> str:
-        alt = _image_alt(m.group(0))
+        alt = _image_alt(m.group(0)).replace("<", "&lt;")  # text, never a tag of its own
         return f"[IMAGE: {alt}]" if alt else "[IMAGE]"
 
     return _IMG_RE.sub(repl, html)
 
 
+#: The tags a page stresses a word with, each of which ``html_to_text`` writes with a mark of its
+#: own around the word (:func:`_marks_of`).
+_STRESS_TAGS = ("b", "strong", "em", "i", "u", "s", "del")
+
+
+@functools.cache
+def _marks_of(tag: str) -> tuple[str, str]:
+    """The marks ``html_to_text`` writes before and after a word *tag* stresses (``""`` for none),
+    read from it, not assumed."""
+    if not tag:
+        return "", ""
+    probe = _WS_RE.sub(" ", html_to_text(f"<{tag}>pclawstressed</{tag}>", links=False)).strip()
+    before, found, after = probe.partition("pclawstressed")
+    return (before, after) if found else ("", "")
+
+
+def _held_as_page_text() -> list[str]:
+    """Each value the work holds as a page's text shows it once ``html_to_text`` has read it: with
+    the marks it escapes, alone and inside a sentence, plain and inside each tag that stresses it
+    (:data:`_STRESS_TAGS`, its marks taken off), its spaces folded as the text's are."""
+    forms: set[str] = set()
+    for value in filled_secrets.held_here():
+        escaped = html_mod.escape(value)
+        for tag in ("", *_STRESS_TAGS):
+            before, after = _marks_of(tag)
+            inner = f"<{tag}>{escaped}</{tag}>" if tag else escaped
+            for around in ("", "x "):
+                page = around + inner + around[::-1]
+                text = _WS_RE.sub(" ", html_to_text(page, links=False)).strip()
+                if around:
+                    text = text[2:-2] if text.startswith("x ") and text.endswith(" x") else ""
+                if before or after:
+                    marked = text.startswith(before) and text.endswith(after)
+                    long_enough = len(text) >= len(before) + len(after)
+                    text = (
+                        text[len(before) : len(text) - len(after)] if marked and long_enough else ""
+                    )
+                if text and text != value:
+                    forms.add(text)
+    return sorted(forms)
+
+
 def _text_body(html: str) -> str:
     """The ≤4000-char main text, reusing the connector's chrome-stripping ``html_to_text``. While
     the work holds a stored secret's value, a link is its text alone, since the Links DSL shows
-    each one screened (:func:`render_links_dsl`), and each address left in the text is its origin
-    (``credentials.addresses_as_origins``)."""
+    each one screened (:func:`render_links_dsl`), and each address left in the text is its origin,
+    the value kept whole through that reading (``credentials.held_as_origins``)."""
     held = bool(filled_secrets.held_here())
     text = html_to_text(_strip_images(html), links=not held)
     text = _WS_RE.sub(" ", text)
     text = _BLANKLINES_RE.sub("\n\n", text).strip()
-    text = addresses_as_origins(text) if held else text
+    text = held_as_origins(text, _held_as_page_text()) if held else text
     # Masked before the cut, so no part of a held value survives it (`filled_secrets.masked_here`).
     return filled_secrets.masked_here(text)[:MAX_TEXT_CHARS]
 
@@ -426,11 +478,16 @@ def extract_page(html: str, *, url: str = "") -> PageExtraction:
     # happen to hash the same identity still get distinct refs.
     ordinals: dict[tuple[str, str, str], int] = {}
 
+    # While a stored secret's value is held, a ref is made from the label as it is shown, masked,
+    # so it says nothing of a value the label holds (``credentials.masked_in_addresses``).
+    held = bool(filled_secrets.held_here())
+
     def next_ref(role: str, name: str, form_id: str) -> str:
-        key = (role, name, form_id)
+        shown = masked_in_addresses(name) if held else name
+        key = (role, shown, form_id)
         n = ordinals.get(key, 0)
         ordinals[key] = n + 1
-        return _make_ref(role, name, form_id, n)
+        return _make_ref(role, shown, form_id, n)
 
     links: list[ElementRef] = []
     for label, cleaned, name in _build_links(parser.links):
@@ -505,8 +562,9 @@ def render_links_dsl(links: tuple[ElementRef, ...] | list[ElementRef], base: str
     ``/r#access_token=TOK123`` reached the rendered target verbatim. So this is one live screen over
     one real gap, not a second line of defence over a closed one.
 
-    While the work holds a stored secret's value each target is read against the page's address
-    *base* first, so a relative one shows its site's origin like any other (``screen_url``), a
+    While the work holds a stored secret's value each target is read as a browser reads it
+    (``credentials.read_as_a_browser_does``) and against the page's address *base* first, so a
+    relative one shows the origin of the site a browser opens like any other (``screen_url``), a
     label that is its link's own address is screened as its target is, and any other label, its
     text, its aria-label or its title, is shown as :func:`shown_words` shows it. The ref is kept as
     it is.
@@ -516,7 +574,9 @@ def render_links_dsl(links: tuple[ElementRef, ...] | list[ElementRef], base: str
     held = bool(filled_secrets.held_here())
     lines = ["## Links"]
     for e in links:
-        target = screen_url(urljoin(base, e.target) if held and base else e.target)
+        target = screen_url(
+            urljoin(base, read_as_a_browser_does(e.target)) if held and base else e.target
+        )
         label = target if e.label == e.target else shown_words(e.label)
         lines.append(f"[{e.ref}] {label} → {target}")
     return "\n".join(lines)
