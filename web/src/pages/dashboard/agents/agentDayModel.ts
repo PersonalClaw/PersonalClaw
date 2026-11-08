@@ -24,7 +24,8 @@ export type Occurrence = Pick<WeekOccurrence, 'trigger_id' | 'trigger_name' | 'a
 
 export type RowState = 'waiting' | 'failed' | 'working' | 'idle'
 export type MarkKind = 'done' | 'working' | 'waiting' | 'failed' | 'scheduled' | 'tail'
-/** A mark on a row's track, in epoch ms. A failure and a scheduled run are a moment (`end === start`). */
+/** A mark on a row's track, in epoch ms. A failure and a scheduled run are a moment (`end === start`);
+ *  a schedule whose runs come too close to name each one is a strip, from its first run to its last. */
 export interface Mark { kind: MarkKind; start: number; end: number; label: string }
 
 export interface DayRow {
@@ -88,6 +89,9 @@ export interface DayInput {
   helpers: SpawnedAgent[]
   loops: Loop[]
   scheduled: Occurrence[]
+  /** The schedules the week read cut short at its cap (`truncated`): past the last run it sent,
+   *  each has more it did not send. */
+  scheduledCut?: string[]
 }
 
 export const MAX_ROWS = 8
@@ -119,19 +123,66 @@ export function ago(ms: number): string {
   return days === 1 ? '1 day' : `${days} days`
 }
 
-/** The runs in the window, each trigger once at its first run, in that order, with its count and its
- *  last run when it runs more than once: '18:25 Check mail, 48 runs to 22:20 · 19:00 Water the plants'. */
-function byTrigger(runs: { o: Occurrence; at: number }[], now: number): string {
-  const seen = new Map<string, { name: string; first: number; last: number; count: number }>()
-  for (const { o, at } of runs) {
-    const t = seen.get(o.trigger_id)
-    if (t) { t.count += 1; t.last = Math.max(t.last, at); t.first = Math.min(t.first, at) } else {
-      seen.set(o.trigger_id, { name: o.trigger_name, first: at, last: at, count: 1 })
+/** Runs of one schedule closer together than this fold into one strip on the track, from its first
+ *  run to its last. Measured on the band's narrowest tracks: 288 px for six hours on a 360 px
+ *  phone (48 px an hour), and 424 px for eight at 700 px, where the window widens (53 px an hour).
+ *  A run's name gets at most its gap less 24 px (nameRoom's 0.5rem, the 12 px ring and the 4 px
+ *  beside it), so an hour leaves about 24 px, three letters and the ellipsis ("Sel…"), and 45
+ *  minutes leaves 12 px, the ellipsis alone. The model does not know the track's width, so it folds
+ *  for the narrowest one. Every run of an hourly schedule keeps its mark; two names that face each
+ *  other share their gap (nameRoom), so on the narrowest tracks (a phone, or a 700 px window) those
+ *  two can show their rings alone. */
+export const FOLD_MS = 60 * 60_000
+
+/** One schedule's runs in the window, in order. `open` when the week read stopped inside the window
+ *  (`scheduledCut`) on a run that fires: its runs go on past the last one the read sent. */
+interface Schedule { name: string; runs: number[]; open: boolean }
+
+/** How often a schedule runs, from its own runs: '1 min', '1 min 30 s', '30 s', or '' when their
+ *  gaps differ. */
+function cadence(runs: number[]): string {
+  if (runs.length < 2) return ''
+  const gap = runs[1] - runs[0]
+  if (runs.some((t, i) => i > 0 && Math.abs(t - runs[i - 1] - gap) >= 1000)) return ''
+  const secs = Math.round(gap / 1000)
+  if (secs < 60) return `${secs} s`
+  return secs % 60 === 0 ? `${secs / 60} min` : `${Math.floor(secs / 60)} min ${secs % 60} s`
+}
+
+/** A schedule's runs as the track draws them. A run with room for its name keeps its mark; runs
+ *  closer together than `FOLD_MS` are one strip with one name and how often it runs, which goes on
+ *  to the window's edge when the read stopped inside it. */
+function scheduleMarks(s: Schedule, until: number): Mark[] {
+  const marks: Mark[] = []
+  let from = 0
+  for (let i = 1; i <= s.runs.length; i++) {
+    if (i < s.runs.length && s.runs[i] - s.runs[i - 1] < FOLD_MS) continue
+    const runs = s.runs.slice(from, i)
+    if (runs.length === 1) {
+      marks.push({ kind: 'scheduled', start: runs[0], end: runs[0], label: s.name })
+    } else {
+      const every = cadence(runs)
+      const end = i === s.runs.length && s.open ? until : runs[runs.length - 1]
+      marks.push({ kind: 'scheduled', start: runs[0], end, label: every ? `${s.name} · every ${every}` : s.name })
     }
+    from = i
   }
-  return [...seen.values()].sort((a, b) => a.first - b.first)
-    .map((t) => `${whenNext(t.first, now)} ${t.name}${t.count > 1 ? `, ${t.count} runs to ${whenNext(t.last, now)}` : ''}`)
-    .join(' · ')
+  return marks
+}
+
+/** A schedule in words, at its first run in the window: once, '19:00 Water the plants'; drawn as one
+ *  strip, how often to its last, '18:25 Check mail, every 5 min to 22:20', or with no last when the
+ *  read stopped inside the window, '17:24 Heartbeat tasks, every 1 min'; otherwise how many runs to
+ *  its last, '18:23 Self-remediation, 3 runs to 20:23'. */
+function scheduleWords(s: Schedule, now: number): string {
+  const head = `${whenNext(s.runs[0], now)} ${s.name}`
+  if (s.runs.length === 1) return head
+  const last = whenNext(s.runs[s.runs.length - 1], now)
+  const every = cadence(s.runs)
+  if (every && s.runs.every((t, i) => i === 0 || t - s.runs[i - 1] < FOLD_MS)) {
+    return s.open ? `${head}, every ${every}` : `${head}, every ${every} to ${last}`
+  }
+  return `${head}, ${s.runs.length} runs to ${last}${s.open ? ' and more' : ''}`
 }
 
 /** When a run after the window is, as words: '23:15', 'tomorrow 07:30', 'Fri 09:00'. */
@@ -271,10 +322,32 @@ export function buildDay(input: DayInput): DayView {
     .filter(({ at }) => at > now)
     .sort((a, b) => a.at - b.at)
   const inWindow = due.filter(({ at }) => at <= until)
-  const nextAfter = due.find(({ at }) => at > until)
+  const cut = new Set(input.scheduledCut ?? [])
+  // Where the read stopped for each schedule it cut: the last run it sent, a quiet or skipped one
+  // too. Past that run the schedule goes on, so it runs on to the window's edge only when that run
+  // is in the window and fires: past a quiet one, when it fires again is not known.
+  const readEnd = new Map<string, { at: number; fires: boolean }>()
+  for (const o of input.scheduled) {
+    if (!cut.has(o.trigger_id)) continue
+    const r = readEnd.get(o.trigger_id)
+    if (!r || o.at * 1000 > r.at) readEnd.set(o.trigger_id, { at: o.at * 1000, fires: !o.suppressed_by })
+  }
+  const stopsInWindow = (id: string) => { const r = readEnd.get(id); return r !== undefined && r.at <= until && r.fires }
+  // Each schedule once, in the order of its first run in the window.
+  const schedules = new Map<string, Schedule>()
+  for (const { o, at } of inWindow) {
+    const s = schedules.get(o.trigger_id)
+    if (s) s.runs.push(at)
+    else schedules.set(o.trigger_id, { name: o.trigger_name, runs: [at], open: stopsInWindow(o.trigger_id) })
+  }
+  // The first run after the window is known only up to where the read stopped for every schedule
+  // it cut: past that, a run it did not send can come first.
+  const knownTo = Math.min(Infinity, ...[...readEnd.values()].map((r) => r.at))
+  const first = due.find(({ at }) => at > until)
+  const nextAfter = first && first.at <= knownTo ? first : undefined
   if (inWindow.length > 0 || (nextAfter && drafts.size > 0)) {
     const d = draft(SCHEDULED)
-    for (const { o, at } of inWindow) d.marks.push({ kind: 'scheduled', start: at, end: at, label: o.trigger_name })
+    for (const s of schedules.values()) d.marks.push(...scheduleMarks(s, until))
   }
 
   // The rows.
@@ -291,10 +364,12 @@ export function buildDay(input: DayInput): DayView {
     let saysBefore = false
     if (scheduled) {
       // The row names its next runs in order, so the track's marks can stay short and nothing sits
-      // at the track's edge: the first two in the window and how many more, or, when two or fewer
-      // fall in it, the one after the window too, which is then the next.
+      // at the track's edge. Past two in the window, it names each schedule once, with how often
+      // or how many runs and its last (`scheduleWords`), in its line and its sentence alike: a
+      // schedule every minute is 240 runs in four hours. Two or fewer, it names them and the one
+      // after the window too, which is then the next.
       say = inWindow.length > 2
-        ? `${inWindow.slice(0, 2).map(run).join(' · ')} and ${inWindow.length - 2} more`
+        ? [...schedules.values()].map((s) => scheduleWords(s, now)).join(' · ')
         : [...inWindow, ...(nextAfter ? [nextAfter] : [])].map(run).join(' · ')
     } else if (ask) {
       say = d.asks.length > 1 ? `${ask.title} and ${d.asks.length - 1} more` : ask.title
@@ -308,13 +383,9 @@ export function buildDay(input: DayInput): DayView {
       saysBefore = d.before !== null && last === d.before
     }
     const name = scheduled ? 'Scheduled' : d.key
-    // Spoken, the Scheduled row names every trigger in the window once, in the order of its first
-    // run, with how many runs and the last when it repeats: the track that draws them is hidden from
-    // a screen reader, and a trigger every 5 minutes is 48 runs in four hours.
-    const spoken = scheduled && inWindow.length > 2 ? byTrigger(inWindow, now) : say
     const askedAt = ask?.origin === 'waiting' ? ms(ask.item.asked_at) : null
     const asked = askedAt !== null ? ago(now - askedAt) : ''
-    const parts = [`${name}, ${scheduled ? AGENT_NOT_NAMED : STATE_WORD[state]}: ${spoken || 'nothing to say'}.`]
+    const parts = [`${name}, ${scheduled ? AGENT_NOT_NAMED : STATE_WORD[state]}: ${say || 'nothing to say'}.`]
     if (asked) parts.push(`Asked ${asked} ago.`)
     if (failed && say !== failed) parts.push(`${failed}.`)
     if (d.tail) parts.push(`${d.tail}.`)

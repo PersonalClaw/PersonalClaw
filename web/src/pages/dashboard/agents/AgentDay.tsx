@@ -46,6 +46,7 @@ interface DaySources {
   helpers: SpawnedAgent[]
   loops: Loop[]
   scheduled: Occurrence[]
+  scheduledCut: string[]
   defaultAgent: string
 }
 
@@ -58,7 +59,7 @@ async function readDay(): Promise<DaySources> {
     api.triggersWeek(new Date(now).toISOString(), 2),
     api.agents(),
   ])
-  return { day, helpers, loops, scheduled: week.occurrences, defaultAgent: agents.default_agent }
+  return { day, helpers, loops, scheduled: week.occurrences, scheduledCut: week.truncated ?? [], defaultAgent: agents.default_agent }
 }
 
 /** The spend meter is read on its own: a band whose meter cannot be read still says what ran, and
@@ -129,6 +130,7 @@ export function AgentDay() {
     helpers: data?.helpers ?? [],
     loops: data?.loops ?? [],
     scheduled: data?.scheduled ?? [],
+    scheduledCut: data?.scheduledCut ?? [],
   }), [now, narrow, data, feed.entities, needs.rows])
 
   const failed = error ?? feed.error ?? needs.error
@@ -261,30 +263,45 @@ function Axis({ view, lifted }: { view: DayView; lifted: boolean }) {
 const LATE = 0.75
 const isLate = (m: Mark, view: DayView) => (m.start - view.since) / (view.until - view.since) > LATE
 
+/** A run that falls on another schedule's strip: it keeps its ring, and its name yields to the
+ *  strip's, since the two would draw on the same line. The row's line still names it. */
+const onStrip = (m: Mark, marks: Mark[]) => m.kind === 'scheduled' && m.end === m.start
+  && marks.some((s) => s.kind === 'scheduled' && s.end > s.start && s.start <= m.start && m.start <= s.end)
+
+/** The room a run's name gets when it yields to a strip's: none. */
+export const YIELDS = '0px'
+
 /** How wide a scheduled run's name may be, so two names never draw over each other: up to its
  *  neighbour's mark, or half the gap when the two names face each other, and never back past now.
- *  The name is cut short there; the row's sentence says each name whole, and its line under the
- *  track the first two. */
+ *  A strip's one name is measured from its first run the same way. An early strip's one name ends
+ *  inside the strip; a late one's sits just before it. A run on a strip yields its name and takes
+ *  no room from the name before it, but a late name after it stops at its ring. A name is cut
+ *  short there; the row's line under the track and its sentence say each schedule whole. */
 export function nameRoom(marks: Mark[], i: number, view: DayView): string | undefined {
   const m = marks[i]
   if (m.kind !== 'scheduled') return undefined
-  const runs = marks.filter((x) => x.kind === 'scheduled')
+  if (onStrip(m, marks)) return YIELDS
+  const runs = marks.filter((x) => x.kind === 'scheduled' && !onStrip(x, marks))
   const j = runs.indexOf(m)
   let span: number
   if (isLate(m, view)) {
-    const prev = runs[j - 1]
+    // A late name reaches back toward the mark before it, a ring on a strip included.
+    const all = marks.filter((x) => x.kind === 'scheduled')
+    const prev = all[all.indexOf(m) - 1]
     const from = prev ? (isLate(prev, view) ? prev.start : (prev.start + m.start) / 2) : view.since
     span = m.start - Math.max(from, view.now)
   } else {
     const next = runs[j + 1]
     span = (next ? (isLate(next, view) ? (m.start + next.start) / 2 : next.start) : view.until) - m.start
+    // A strip's name ends inside its strip, as a loop's tail keeps its label inside its pill.
+    if (m.end > m.start) span = Math.min(span, m.end - m.start)
   }
   return `calc(${((span / (view.until - view.since)) * 100).toFixed(2)}% - 0.5rem)`
 }
 
 function markStyle(m: Mark, view: DayView): CSSProperties {
   const left = pct(m.start, view)
-  if (m.kind === 'failed' || m.kind === 'scheduled') return { left }
+  if (m.kind === 'failed' || (m.kind === 'scheduled' && m.end === m.start)) return { left }
   const width = `max(${(((m.end - m.start) / (view.until - view.since)) * 100).toFixed(2)}%, 4px)`
   return { left, width }
 }
@@ -337,7 +354,8 @@ function Row({ row, view }: { row: DayRow; view: DayView }) {
       <div className="relative min-w-0">
         <Track row={row} view={view} />
         <p data-type="body-s" className="flex min-w-0 overflow-hidden text-on-surface-var max-sm:flex-wrap">
-          <span className="min-w-0 truncate max-sm:whitespace-normal">{row.say}</span>
+          {/* The Scheduled row's line names each schedule whole, so it wraps at every width. */}
+          <span className={row.key === 'scheduled' ? 'min-w-0' : 'min-w-0 truncate max-sm:whitespace-normal'}>{row.say}</span>
           <FailedAt row={row} />
         </p>
       </div>
@@ -420,11 +438,26 @@ function MarkView({ mark, view, room }: { mark: Mark; view: DayView; room?: stri
     case 'scheduled': {
       // A run late in the window says its name before its mark, so the track's edge never cuts it.
       const late = isLate(mark, view)
+      if (mark.end > mark.start) {
+        // A schedule too frequent to name each run: one dashed strip, from its first run to its
+        // last, as a loop's open tail is drawn, with its name once at its start. The name sits on
+        // the row's ground, inside the strip's border; a run's ring that falls on it draws over it.
+        return (
+          <>
+            <span data-strip="" className={`${base} h-4 rounded-pill border border-dashed border-on-surface-var/60`} style={style} />
+            <span data-late={late || undefined} style={{ left: style.left, maxWidth: late ? room : `calc(${room} - 0.375rem)` }}
+              className={`${base} flex h-3.5 items-center overflow-hidden bg-surface-low ${late ? '-translate-x-full' : 'ml-1.5'}`}>
+              <span data-type="body-s" className="truncate whitespace-nowrap px-xs text-on-surface-var">{mark.label}</span>
+            </span>
+          </>
+        )
+      }
       return (
         <span data-late={late || undefined} style={{ ...style, maxWidth: room }}
           className={`${base} flex items-center gap-xs whitespace-nowrap ${late ? '-translate-x-full flex-row-reverse' : ''}`}>
-          <span className={`size-3 shrink-0 rounded-pill border border-dashed border-on-surface-var ${late ? 'translate-x-1/2' : '-translate-x-1/2'}`} />
-          <span data-type="body-s" className="min-w-0 truncate text-on-surface-var">{mark.label}</span>
+          {/* Filled with the row's ground, so a run reads over a strip it falls on. */}
+          <span className={`size-3 shrink-0 rounded-pill border border-dashed border-on-surface-var bg-surface-low ${late ? 'translate-x-1/2' : '-translate-x-1/2'}`} />
+          {room !== YIELDS && <span data-type="body-s" className="min-w-0 truncate text-on-surface-var">{mark.label}</span>}
         </span>
       )
     }

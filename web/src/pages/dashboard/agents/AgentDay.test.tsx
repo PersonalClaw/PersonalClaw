@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { needsYou } from '../../../lib/needsYou'
 import type { AgentActivityEntity } from '../../../lib/useAgentActivity'
 import { waitingItem, waitingList } from '../../../test/waiting'
-import { AgentDayView, nameRoom } from './AgentDay'
+import { AgentDayView, YIELDS, nameRoom } from './AgentDay'
 import { buildDay, type DayInput } from './agentDayModel'
 
 // ── Home's "Your agents today", as a person meets it ─────────────────────────────────────────────
@@ -266,6 +266,61 @@ describe('the scheduled names', () => {
     expect(nameRoom([run(22, 0, 'Evening summary')], 0, view)).toBe('calc(45.83% - 0.5rem)')
   })
 
+  it('end a strip’s name inside its strip', () => {
+    // 19:00 to 19:45 is 9.38% of the track, with nothing after it.
+    const strip = { kind: 'scheduled' as const, start: at(19, 0), end: at(19, 45), label: 'Sync notes · every 5 min' }
+
+    expect(nameRoom([strip], 0, view)).toBe('calc(9.38% - 0.5rem)')
+    // A run after the strip leaves the strip's own end as the bound.
+    expect(nameRoom([strip, run(20, 0, 'Digest')], 0, view)).toBe('calc(9.38% - 0.5rem)')
+  })
+
+  it('stop a late name at the ring before it, on a strip or not', () => {
+    // Digest, late at 21:00, faces the 20:00 ring on the strip: half that hour, 6.25% of the track.
+    const strip = { kind: 'scheduled' as const, start: at(18, 30), end: at(20, 10), label: 'Sync · every 5 min' }
+    const marks = [strip, run(19, 0, 'Hourly'), run(20, 0, 'Hourly'), run(21, 0, 'Digest')]
+
+    expect(nameRoom(marks, 3, view)).toBe('calc(6.25% - 0.5rem)')
+  })
+
+  it('give a strip its name’s room over the runs that fall on it, whose names yield', () => {
+    const minutes = Array.from({ length: 240 }, (_, i) => (
+      { trigger_id: 'heartbeat', trigger_name: 'Heartbeat tasks', at: (at(18, 21) + i * 60_000) / 1000 }))
+    const hourly = Array.from({ length: 4 }, (_, i) => (
+      { trigger_id: 'remedy', trigger_name: 'Self-remediation', at: (at(18, 23) + i * 3600_000) / 1000 }))
+    const day = buildDay(evening({ scheduled: [...minutes, ...hourly] }))
+    const { marks } = day.rows.find((r) => r.key === 'scheduled')!
+
+    // The strip runs 18:21 to 22:20, 239 of the track's 480 minutes; each hourly run on it yields.
+    expect(marks.map((_, i) => nameRoom(marks, i, day))).toEqual(['calc(49.79% - 0.5rem)', YIELDS, YIELDS, YIELDS, YIELDS])
+    show(evening({ scheduled: [...minutes, ...hourly] }))
+    const row = screen.getByRole('listitem', { name: /^Scheduled, agent not named: / })
+    expect(within(row).getByText('Heartbeat tasks · every 1 min')).toBeInTheDocument()
+    // Each run keeps its ring; its name is in the line under the track.
+    expect(row.querySelectorAll('[aria-hidden="true"] span.size-3')).toHaveLength(4)
+    // The name stays under the rings: it sets no stacking of its own and comes first, so each ring
+    // that falls on it draws over it.
+    const name = within(row).getByText('Heartbeat tasks · every 1 min').parentElement!
+    expect(name.className.split(/\s+/).some((c) => /^z-/.test(c))).toBe(false)
+    row.querySelectorAll('[aria-hidden="true"] span.size-3').forEach((r) =>
+      expect(name.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy())
+    expect(within(row).queryByText('Self-remediation')).toBeNull()
+  })
+
+  it('draw a schedule too frequent to name each run as one strip with a width, and its name once', () => {
+    const minutes = Array.from({ length: 240 }, (_, i) => (
+      { trigger_id: 'heartbeat', trigger_name: 'Heartbeat tasks', at: (at(18, 21) + i * 60_000) / 1000 }))
+    show(evening({ scheduled: minutes }))
+
+    const row = screen.getByRole('listitem', { name: /^Scheduled, agent not named: / })
+    const strips = row.querySelectorAll<HTMLElement>('[data-strip]')
+    expect(strips).toHaveLength(1)
+    // 18:21 to 22:20 is 239 of the track's 480 minutes.
+    expect(strips[0].getAttribute('style')).toMatch(/left: 50\.21%; width: max\(49\.79%, 4px\)/)
+    expect(within(row).getAllByText('Heartbeat tasks · every 1 min')).toHaveLength(1)
+    expect(within(row).queryByText('Heartbeat tasks')).toBeNull()
+  })
+
   it('leave the track without an edge label: the row\'s words name the run after the window', () => {
     show(evening({ scheduled: [
       { trigger_id: 't1', trigger_name: 'Evening summary', at: at(21, 30) / 1000 },
@@ -275,8 +330,8 @@ describe('the scheduled names', () => {
     const row = screen.getByRole('listitem', { name: /^Scheduled, agent not named: / })
     expect(row.textContent).not.toContain('→')
     const words = within(row).getByText(/Evening summary · tomorrow \d\d:\d\d Morning triage$/)
-    // On a phone the line wraps rather than cut off the run after the window.
-    expect(words.className).toContain('max-sm:whitespace-normal')
+    // The line wraps at every width rather than cut off a schedule or the run after the window.
+    expect(words.className).not.toContain('truncate')
   })
 })
 

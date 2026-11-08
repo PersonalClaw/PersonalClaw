@@ -191,7 +191,7 @@ describe('what comes next', () => {
     expect(row.after).toBe(`tomorrow ${clock(at(7, 30, 4))}`)
   })
 
-  it('names the first two runs in the window and how many more, and says the one after it comes then', () => {
+  it('names each schedule in the window once, and says the one after it comes then', () => {
     const view = buildDay(input({
       scheduled: [
         { trigger_id: 't0', trigger_name: 'Water the plants', at: at(19, 0) / 1000 },
@@ -202,19 +202,20 @@ describe('what comes next', () => {
     }))
 
     const row = view.rows.find((r) => r.key === 'scheduled')!
-    expect(row.say).toBe(`${clock(at(19, 0))} Water the plants · ${clock(at(19, 30))} Feed the cat and 1 more`)
-    // Spoken, it names every trigger once: the track that draws them is hidden from a screen reader.
-    expect(row.sentence).toMatch(new RegExp(`^Scheduled, agent not named: ${clock(at(19, 0))} Water the plants · ${clock(at(19, 30))} Feed the cat · ${clock(at(21, 30))} Evening summary\\. `))
+    // Its line and its sentence name every trigger once: the track that draws them is hidden from
+    // a screen reader.
+    expect(row.say).toBe(`${clock(at(19, 0))} Water the plants · ${clock(at(19, 30))} Feed the cat · ${clock(at(21, 30))} Evening summary`)
+    expect(row.sentence).toMatch(new RegExp(`^Scheduled, agent not named: ${row.say}\\. `))
     expect(row.sentence).toMatch(new RegExp(` Then tomorrow ${clock(at(7, 30, 4))} Morning triage\\.$`))
   })
 
-  it('names a trigger that runs every 5 minutes once, with its runs and its last, never 48 times', () => {
+  it('names a trigger that runs every 5 minutes once, with how often and its last, never 48 times', () => {
     const every5 = Array.from({ length: 200 }, (_, i) => ({ trigger_id: 'mail', trigger_name: 'Check mail', at: (at(18, 25) + i * 5 * 60_000) / 1000 }))
     const view = buildDay(input({ scheduled: [...every5, { trigger_id: 'plants', trigger_name: 'Water the plants', at: at(19, 0) / 1000 }] }))
 
     const row = view.rows.find((r) => r.key === 'scheduled')!
     expect(row.sentence.match(/Check mail/g)).toHaveLength(1)
-    expect(row.sentence).toMatch(new RegExp(`^Scheduled, agent not named: ${clock(at(18, 25))} Check mail, 48 runs to ${clock(at(22, 20))} · ${clock(at(19, 0))} Water the plants\\.$`))
+    expect(row.sentence).toMatch(new RegExp(`^Scheduled, agent not named: ${clock(at(18, 25))} Check mail, every 5 min to ${clock(at(22, 20))} · ${clock(at(19, 0))} Water the plants\\.$`))
     expect(row.sentence.length).toBeLessThan(200)
   })
 
@@ -308,6 +309,166 @@ describe('what comes next', () => {
     const times = words.match(/\d{1,2}:\d{2}/g) ?? []
     expect(times.length).toBeGreaterThan(0)
     expect(times.filter((t) => !known.has(t))).toEqual([])
+  })
+})
+
+describe('a schedule too frequent to name each run', () => {
+  // 14:20 to 22:20 around 18:20. A minute's schedule is 240 runs to the window's edge, an hourly one 4.
+  const minutes = (n = 240, id = 'heartbeat') => Array.from({ length: n }, (_, i) => (
+    { trigger_id: id, trigger_name: 'Heartbeat tasks', at: (at(18, 21) + i * 60_000) / 1000 }))
+  const hourly = Array.from({ length: 4 }, (_, i) => (
+    { trigger_id: 'remedy', trigger_name: 'Self-remediation', at: (at(18, 23) + i * 3600_000) / 1000 }))
+  const scheduledRow = (over: Partial<DayInput>) => buildDay(input(over)).rows.find((r) => r.key === 'scheduled')!
+  // As the week read sends a schedule with quiet hours from `quietFrom` to 07:00: each quiet run
+  // sent and marked, and the read cut at its 200th run, quiet ones counted.
+  const quietFrom = (id: string, name: string, every: number, first: number, from: number) =>
+    Array.from({ length: 200 }, (_, i) => {
+      const t = first + i * every
+      const h = new Date(t).getHours()
+      return { trigger_id: id, trigger_name: name, at: t / 1000, ...(h >= from || h < 7 ? { suppressed_by: 'quiet' } : {}) }
+    })
+  const triage = { trigger_id: 'triage', trigger_name: 'Morning triage', at: at(7, 30, 4) / 1000 }
+
+  it('is one strip from its first run to its last, with one name and how often it runs', () => {
+    const row = scheduledRow({ scheduled: minutes() })
+
+    expect(row.marks).toEqual([
+      { kind: 'scheduled', start: at(18, 21), end: at(22, 20), label: 'Heartbeat tasks · every 1 min' },
+    ])
+  })
+
+  it('leaves an hourly schedule a mark and a name for each run', () => {
+    const row = scheduledRow({ scheduled: hourly })
+
+    expect(row.marks.map((m) => [m.start, m.end, m.label])).toEqual(
+      [at(18, 23), at(19, 23), at(20, 23), at(21, 23)].map((t) => [t, t, 'Self-remediation']))
+    expect(row.say).toBe(`${clock(at(18, 23))} Self-remediation, 4 runs to ${clock(at(21, 23))}`)
+  })
+
+  it('draws the two together as one strip and a mark per hourly run, and says each once in its line', () => {
+    const row = scheduledRow({ scheduled: [...minutes(), ...hourly] })
+
+    expect(row.marks.map((m) => [m.start, m.end])).toEqual([
+      [at(18, 21), at(22, 20)], [at(18, 23), at(18, 23)], [at(19, 23), at(19, 23)], [at(20, 23), at(20, 23)], [at(21, 23), at(21, 23)],
+    ])
+    // The line under the track is the per-schedule summary, word for word as the sentence says it.
+    expect(row.say).toBe(`${clock(at(18, 21))} Heartbeat tasks, every 1 min to ${clock(at(22, 20))} · ${clock(at(18, 23))} Self-remediation, 4 runs to ${clock(at(21, 23))}`)
+    expect(row.sentence).toBe(`Scheduled, agent not named: ${row.say}.`)
+  })
+
+  it('runs on to the window’s edge when the week read cut it short, and writes no count or last the cut made', () => {
+    // The week read sends at most 200 runs a schedule: a minute's schedule stops at 21:40, and
+    // the read names it cut.
+    const row = scheduledRow({
+      scheduled: [...minutes(200), { trigger_id: 'triage', trigger_name: 'Morning triage', at: at(7, 30, 4) / 1000 }],
+      scheduledCut: ['heartbeat'],
+    })
+
+    expect(row.marks).toEqual([
+      { kind: 'scheduled', start: at(18, 21), end: at(22, 20), label: 'Heartbeat tasks · every 1 min' },
+    ])
+    expect(row.say).toBe(`${clock(at(18, 21))} Heartbeat tasks, every 1 min`)
+    // What comes first after the window is a heartbeat the read did not send, not tomorrow's triage.
+    expect(row.after).toBe('')
+    expect(row.sentence).toBe(`Scheduled, agent not named: ${row.say}.`)
+  })
+
+  it('ends at its last run that fires when the read was cut inside its quiet hours', () => {
+    // Quiet from 20:00: the read's 200 runs end at 21:40, quiet, so the strip ends at 19:59.
+    const row = scheduledRow({ scheduled: [...quietFrom('heartbeat', 'Heartbeat tasks', 60_000, at(18, 21), 20), triage], scheduledCut: ['heartbeat'] })
+
+    expect(row.marks).toEqual([
+      { kind: 'scheduled', start: at(18, 21), end: at(19, 59), label: 'Heartbeat tasks · every 1 min' },
+    ])
+    expect(row.say).toBe(`${clock(at(18, 21))} Heartbeat tasks, every 1 min to ${clock(at(19, 59))}`)
+    // The schedule fires again at 07:00, a run the read never sent: what comes first is not known.
+    expect(row.after).toBe('')
+  })
+
+  it('names no run after the window when the read was cut past it, in quiet hours', () => {
+    // Every 2 min, quiet from 20:00: the read ends at 01:00, so the 07:00 run it never sent can come
+    // before tomorrow's triage.
+    const row = scheduledRow({ scheduled: [...quietFrom('sync', 'Sync notes', 120_000, at(18, 22), 20), triage], scheduledCut: ['sync'] })
+
+    expect(row.marks).toEqual([
+      { kind: 'scheduled', start: at(18, 22), end: at(19, 58), label: 'Sync notes · every 2 min' },
+    ])
+    expect(row.say).toBe(`${clock(at(18, 22))} Sync notes, every 2 min to ${clock(at(19, 58))}`)
+    expect(row.after).toBe('')
+  })
+
+  it('names no run after the window when every run the read sent is quiet', () => {
+    const view = buildDay(input({
+      day: { since: iso(at(14, 20)), until: iso(NOW), cut: 0, agents: [{ agent: '', blocks: [block(at(17, 0), at(17, 10))], before: null }] },
+      scheduled: [...quietFrom('heartbeat', 'Heartbeat tasks', 60_000, at(18, 21), 18), triage],
+      scheduledCut: ['heartbeat'],
+    }))
+
+    expect(view.rows.map((r) => r.key)).toEqual(['PersonalClaw'])
+    expect(view.rows.flatMap((r) => [r.say, r.sentence]).join(' ')).not.toContain('Morning triage')
+  })
+
+  it('names no run after the window when any cut schedule’s read ends before it', () => {
+    // The heartbeat read ends at 21:40, the mail read tomorrow at 11:00: the digest at 22:22 may
+    // come after a heartbeat the read did not send.
+    const every5 = Array.from({ length: 200 }, (_, i) => ({ trigger_id: 'mail', trigger_name: 'Check mail', at: (at(18, 25) + i * 5 * 60_000) / 1000 }))
+    const digest = { trigger_id: 'digest', trigger_name: 'Evening digest', at: at(22, 22) / 1000 }
+    const row = scheduledRow({ scheduled: [...minutes(200), ...every5, digest, triage], scheduledCut: ['heartbeat', 'mail'] })
+
+    expect(row.after).toBe('')
+    expect(row.sentence).not.toContain('Then')
+  })
+
+  it('names no run after the window when a cut schedule’s read ended before now', () => {
+    // The read's 200 minute runs end at 17:19, all past: nothing after them is known.
+    const past = Array.from({ length: 200 }, (_, i) => ({ trigger_id: 'heartbeat', trigger_name: 'Heartbeat tasks', at: (at(14, 0) + i * 60_000) / 1000 }))
+    const view = buildDay(input({
+      day: { since: iso(at(14, 20)), until: iso(NOW), cut: 0, agents: [{ agent: '', blocks: [block(at(17, 0), at(17, 10))], before: null }] },
+      scheduled: [...past, triage],
+      scheduledCut: ['heartbeat'],
+    }))
+
+    expect(view.rows.map((r) => r.key)).toEqual(['PersonalClaw'])
+    expect(view.rows.flatMap((r) => [r.say, r.sentence]).join(' ')).not.toContain('Morning triage')
+  })
+
+  it('keeps the seconds in how often it runs', () => {
+    const every90s = Array.from({ length: 100 }, (_, i) => ({ trigger_id: 'sync', trigger_name: 'Sync', at: (at(18, 21) + i * 90_000) / 1000 }))
+
+    expect(scheduledRow({ scheduled: every90s }).marks.map((m) => m.label)).toEqual(['Sync · every 1 min 30 s'])
+  })
+
+  it('ends at its last run in the window when the read was cut past the window', () => {
+    const every5 = Array.from({ length: 200 }, (_, i) => ({ trigger_id: 'mail', trigger_name: 'Check mail', at: (at(18, 25) + i * 5 * 60_000) / 1000 }))
+    const row = scheduledRow({ scheduled: [...every5, { trigger_id: 'plants', trigger_name: 'Water the plants', at: at(19, 0) / 1000 }], scheduledCut: ['mail'] })
+
+    expect(row.say).toBe(`${clock(at(18, 25))} Check mail, every 5 min to ${clock(at(22, 20))} · ${clock(at(19, 0))} Water the plants`)
+    expect(row.after).toBe(clock(at(22, 25)))
+  })
+
+  it('ends at the narrow window’s edge when the read was cut past it', () => {
+    // On a phone the window ends at 21:20; the read's 200 minute runs go on to 21:40.
+    const row = scheduledRow({ narrow: true, scheduled: [...minutes(200), triage], scheduledCut: ['heartbeat'] })
+
+    expect(row.say).toBe(`${clock(at(18, 21))} Heartbeat tasks, every 1 min to ${clock(at(21, 20))}`)
+    expect(row.after).toBe(clock(at(21, 21)))
+  })
+
+  it('folds runs 59 minutes apart into one strip', () => {
+    const every59 = Array.from({ length: 4 }, (_, i) => ({ trigger_id: 'digest', trigger_name: 'Digest', at: (at(18, 30) + i * 59 * 60_000) / 1000 }))
+
+    expect(scheduledRow({ scheduled: every59 }).marks).toEqual([
+      { kind: 'scheduled', start: at(18, 30), end: at(21, 27), label: 'Digest · every 59 min' },
+    ])
+  })
+
+  it('folds uneven runs under an hour apart into one strip that names no cadence', () => {
+    const uneven = [[19, 0], [19, 5], [20, 0], [20, 5], [21, 0], [21, 5]].map(([h, m]) => (
+      { trigger_id: 'notes', trigger_name: 'Sync notes', at: at(h, m) / 1000 }))
+    const row = scheduledRow({ scheduled: uneven })
+
+    expect(row.marks).toEqual([{ kind: 'scheduled', start: at(19, 0), end: at(21, 5), label: 'Sync notes' }])
+    expect(row.say).toBe(`${clock(at(19, 0))} Sync notes, 6 runs to ${clock(at(21, 5))}`)
   })
 })
 

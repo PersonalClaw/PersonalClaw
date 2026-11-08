@@ -9,6 +9,8 @@ import type { WsMessage } from '../../../lib/useChatSocket'
 
 let reads = 0
 let needsLoading = false
+let week: { start: string; end: string; occurrences: { trigger_id: string; trigger_name: string; at: number }[]; truncated?: string[] } =
+  { start: '', end: '', occurrences: [] }
 const socket: { message?: (m: WsMessage) => void; reconnect?: (() => void) | null } = {}
 
 vi.mock('../../../lib/api', async (importOriginal) => {
@@ -20,7 +22,7 @@ vi.mock('../../../lib/api', async (importOriginal) => {
       agentsDay: (since: string, until: string) => { reads += 1; return Promise.resolve({ since, until, agents: [], cut: 0 }) },
       spawnedAgents: () => Promise.resolve([]),
       uLoops: () => Promise.resolve([]),
-      triggersWeek: () => Promise.resolve({ start: '', end: '', occurrences: [] }),
+      triggersWeek: () => Promise.resolve(week),
       agents: () => Promise.resolve({ agents: [], default_agent: 'PersonalClaw' }),
       usageBudget: () => Promise.resolve(null),
     },
@@ -42,11 +44,12 @@ vi.mock('../../../lib/useNeedsYou', async (importOriginal) => ({
 }))
 
 import { AgentDay, READ_GAP_MS } from './AgentDay'
+import { clock } from './agentDayModel'
 
 const pass = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
 const ring = (type: string) => act(() => { socket.message?.({ type } as WsMessage) })
 
-beforeEach(() => { vi.useFakeTimers(); reads = 0; needsLoading = false })
+beforeEach(() => { vi.useFakeTimers(); reads = 0; needsLoading = false; week = { start: '', end: '', occurrences: [] } })
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('the band says nothing', () => {
@@ -106,5 +109,26 @@ describe('the band reads', () => {
     await ring('chat_message')
     await pass(2 * READ_GAP_MS)
     expect(reads).toBe(1)
+  })
+})
+
+describe('the band reads the week', () => {
+  it('with the schedules it cut short, so a cut one runs on to the window’s edge', async () => {
+    // At 18:20, so the first run is never past midnight, which says 'tomorrow'.
+    vi.setSystemTime(new Date(2026, 10, 3, 18, 20))
+    // The week read sends 200 runs of a minute's schedule, 3 h 20 min of the 4 h ahead, and names it cut.
+    const first = Math.ceil(Date.now() / 60_000) * 60_000 + 60_000
+    week = {
+      start: '', end: '', truncated: ['schedule:hb'],
+      occurrences: [
+        ...Array.from({ length: 200 }, (_, i) => ({ trigger_id: 'schedule:hb', trigger_name: 'Heartbeat tasks', at: (first + i * 60_000) / 1000 })),
+        { trigger_id: 'schedule:triage', trigger_name: 'Morning triage', at: (first + 24 * 3600_000) / 1000 },
+      ],
+    }
+    const { container } = render(<AgentDay />)
+    await pass(0)
+
+    expect(container.querySelector('li[aria-label^="Scheduled"]')?.getAttribute('aria-label'))
+      .toBe(`Scheduled, agent not named: ${clock(first)} Heartbeat tasks, every 1 min.`)
   })
 })
