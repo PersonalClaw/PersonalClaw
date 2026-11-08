@@ -34,10 +34,10 @@ vi.mock('./useChatSocket', () => ({
 
 /** Records every `ne:toast` the hook raises. */
 function captureToasts() {
-  const seen: Array<{ level: string; message: string }> = []
+  const seen: Array<{ level: string; message: string; markdown?: unknown }> = []
   const onToast = (e: Event) => {
     const d = (e as CustomEvent).detail || {}
-    seen.push({ level: String(d.level), message: String(d.message) })
+    seen.push({ level: String(d.level), message: String(d.message), markdown: d.markdown })
   }
   window.addEventListener('ne:toast', onToast)
   return { seen, stop: () => window.removeEventListener('ne:toast', onToast) }
@@ -128,7 +128,8 @@ describe('useNotificationToasts', () => {
     renderHook(() => useNotificationToasts())
     deliver!({ type: 'notification', data: note() })
     stop()
-    expect(seen).toEqual([{ level: 'error', message: 'Loop failed — refactor-auth' }])
+    // A note is an agent's or a run's words: its toast asks the Toaster to render them as a line.
+    expect(seen).toEqual([{ level: 'error', message: 'Loop failed — refactor-auth', markdown: true }])
   })
 
   it('🪤 ignores every other frame type', () => {

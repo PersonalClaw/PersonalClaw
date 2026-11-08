@@ -123,13 +123,13 @@ describe('both composing surfaces use the one helper', () => {
 
   it("Home's Needs You composes through it", () => {
     const code = codeOf('pages/dashboard/Home.tsx')
-    expect(code).toMatch(/const subject = rowSubject\(\[row\.title, row\.raisedBy, row\.subtitle\]\)/)
+    expect(code).toMatch(/const subject = rowSubject\(\[needName\(row\), row\.raisedBy, previewLine\(row\.subtitle\)\]\)/)
     expect(code, 'no hand-rolled join').not.toMatch(/`\$\{row\.title\} — \$\{row\.subtitle\}`/)
   })
 
   it('the notification rows compose through it', () => {
     const code = codeOf('pages/notifications/NotificationsPage.tsx')
-    expect(code).toMatch(/rowSubject\(\[n\.title, firstLine\(n\.body \?\? ''\)\]\)/)
+    expect(code).toMatch(/rowSubject\(\[previewLine\(n\.title\), previewText\(firstLine\(n\.body \?\? ''\)\)\]\)/)
     expect(code, 'the local copy of the rule must be gone').not.toMatch(/function rowName/)
     expect(code, 'and its number with it').not.toMatch(/full\.length > 55/)
   })

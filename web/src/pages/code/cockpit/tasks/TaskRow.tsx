@@ -1,6 +1,8 @@
 import { ChevronRight } from 'lucide-react'
 import { type TaskItem } from '../../../../lib/api'
 import { type ExecState, STATE_ICON, STATE_COLOR, STATE_LABEL } from './taskState'
+import { MarkdownLine } from '../../../../ui/MarkdownLine'
+import { previewLine } from '../../../../lib/previewText'
 
 // ── A task in the cockpit's list ───────────────────────────────────────────────────────────────
 //
@@ -19,16 +21,16 @@ export function TaskRow({ task, state, preview, active, onSelect }: {
     return (
       <div data-type="body-s" className="flex items-start gap-1.5 px-2 py-1.5">
         <Icon size={14} className="mt-0.5 shrink-0" style={{ color: STATE_COLOR[state] }} />
-        <span className="min-w-0 flex-1 text-on-surface-var">{task.title}</span>
+        <span className="min-w-0 flex-1 text-on-surface-var"><MarkdownLine text={task.title} /></span>
       </div>
     )
   }
   // Raw: a full-row clickable list item, which no primitive draws.
   return (
-    <button type="button" onClick={onSelect} aria-label={`${task.title} — ${STATE_LABEL[state]}`}
+    <button type="button" onClick={onSelect} aria-label={`${previewLine(task.title)} — ${STATE_LABEL[state]}`}
       data-type="body-s" className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-surface-high/60">
       <Icon size={14} className={`shrink-0 ${state === 'running' ? 'animate-spin' : ''}`} style={{ color: STATE_COLOR[state] }} />
-      <span className={`min-w-0 flex-1 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>{task.title}</span>
+      <span className={`min-w-0 flex-1 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`} title={previewLine(task.title)}><MarkdownLine text={task.title} /></span>
       {/* a live pulse when THIS task's worker is actively emitting events right now */}
       {active && <span className="reveal-caret size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Active now" />}
       {state === 'cancelled' && <span data-type="caption" className="shrink-0 text-on-surface-low/70">cancelled</span>}

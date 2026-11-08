@@ -98,7 +98,7 @@ describe('every row-scoped RowAction names its row', () => {
 describe('the two list surfaces name their row controls too', () => {
   it("#/tasks' selection checkbox says WHICH task", () => {
     const code = read('pages/tasks/TasksListPage.tsx')
-    expect(code).toMatch(/aria-label=\{`\$\{selected \? 'Deselect' : 'Select'\}: \$\{t\.title\}`\}/)
+    expect(code).toMatch(/aria-label=\{`\$\{selected \? 'Deselect' : 'Select'\}: \$\{previewLine\(t\.title\)\}`\}/)
     expect(code, 'the old shared name must be gone').not.toMatch(/'Deselect task' : 'Select task'/)
   })
 

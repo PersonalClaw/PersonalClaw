@@ -79,7 +79,7 @@ describe('the non-drag path that makes the board legal', () => {
     // presses landed on one. Pinned because reaching the form is the whole alternative — a card you
     // cannot focus is a form you cannot open.
     const board = code('TaskBoard.tsx')
-    expect(board).toMatch(/role="button" tabIndex=\{0\} aria-label=\{t\.title\}/)
+    expect(board).toMatch(/role="button" tabIndex=\{0\} aria-label=\{previewLine\(t\.title\)\}/)
     expect(board, 'Space must not scroll the column instead of opening').toMatch(/e\.key === ' '[\s\S]{0,60}?preventDefault\(\)/)
   })
 })

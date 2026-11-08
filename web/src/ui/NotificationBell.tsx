@@ -15,6 +15,9 @@ import { notify } from '../app/appSdk'
 import { confirmDelete } from './dialog'
 import { reportingWrite } from '../app/reportingWrite'
 import { InlineError } from './InlineError'
+import { MarkdownLine } from './MarkdownLine'
+import { Markdown } from './Markdown'
+import { previewLine, previewText } from '../lib/previewText'
 
 const MAX_SHADE = 5
 
@@ -201,7 +204,8 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
   //
   // Bound once, like `#/notifications` does: the row and both of its actions must announce the same
   // subject, or "Dismiss: X" sits next to a row that calls itself Y.
-  const subject = rowSubject([n.title, firstLine(n.body ?? '')])
+  // The body's first line is drawn as an excerpt, so it is named as one (`previewText`).
+  const subject = rowSubject([previewLine(n.title), previewText(firstLine(n.body ?? ''))])
   return (
     <motion.div layout variants={fadeEnter}
       exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}
@@ -216,10 +220,10 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
       <span className="mt-0.5 shrink-0 inline-flex size-7 items-center justify-center rounded-md" style={{ background: toneChipBg(km.tone) }}><km.icon size={14} style={{ color: km.tone }} /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
-          <span data-type="label-s" className={`truncate ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)}>{n.title}</span>
+          <span data-type="label-s" className={`truncate ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)} title={previewLine(n.title)}><MarkdownLine text={n.title} /></span>
           <span data-type="caption" className="shrink-0 text-on-surface-low">{relTime(n.ts, now)}</span>
         </div>
-        <p data-type="caption" className="mt-0.5 truncate text-on-surface-low">{firstLine(n.body)}</p>
+        <p data-type="caption" className="mt-0.5 truncate text-on-surface-low"><Markdown inline>{firstLine(n.body)}</Markdown></p>
       </div>
       <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
         {!n.acked && (

@@ -24,6 +24,7 @@ const FIXTURES: string[] = [
   ...TITLES,
   'Fix the `__init__.py` import in **core**',
   'Read [the notes](https://example.com/notes) before *Friday*',
+  'Run mcp__github__create_issue for **triage**',
 ]
 
 /** What a reader sees of the row, one line as the truncate draws it. */

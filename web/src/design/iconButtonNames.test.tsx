@@ -66,6 +66,8 @@ function iconOnlyButtons(src: string): IconButton[] {
     // `\w*` not `\w+`: the icon is often a SINGLE letter (`<X size={12} />`), and `\w+` demands a
     // second word character — the other half of why the earlier scanner silently matched nothing.
     if (!/^<[A-Z]\w*[^>]*\/>$/.test(body)) continue
+    // A `MarkdownLine` is a line of text, rendered: it names the button as its words do.
+    if (/^<MarkdownLine\b/.test(body)) continue
     out.push({
       line: src.slice(0, m.index).split('\n').length,
       tag,

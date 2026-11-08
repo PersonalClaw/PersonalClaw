@@ -232,7 +232,10 @@ export function notificationsAddress(ts?: string): string {
   return `inbox?filter=${NOTIFICATIONS_FILTER}${ts ? `&open=${encodeURIComponent(ts)}` : ''}`
 }
 
-export function firstLine(body: string, max = 120): string {
-  const line = (body || '').split('\n').find((l) => l.trim()) ?? ''
+/** A note body's first line that says something: a blank line and a bare fence line (```lang) are
+ *  skipped. Uncut by default: a row renders it whole and its CSS cuts it; a caller that has to cut
+ *  a string itself passes `max`. */
+export function firstLine(body: string, max = Infinity): string {
+  const line = (body || '').split('\n').find((l) => l.trim() && !/^\s{0,3}(?:`{3,}|~{3,})[^`]*$/.test(l)) ?? ''
   return line.length > max ? line.slice(0, max) + '…' : line
 }

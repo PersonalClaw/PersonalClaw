@@ -1,6 +1,34 @@
-import { describe, it, expect } from 'vitest'
-import { artifactTiles } from './PinnedTiles'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import { PinnedTiles, artifactTiles } from './PinnedTiles'
 import type { DashboardView, DashboardTile } from '../../lib/api'
+import { invalidateKeys } from '../../lib/data'
+import { MD_BLOCK, rendersBlock } from '../../test/markdownSinks'
+import { registerBuiltinContentTypes } from '../../ui/content/registerBuiltins'
+
+// The tile a mounted band shows: its kind and body are each test's.
+const pinned = vi.hoisted(() => ({ kind: 'markdown', content: '' }))
+vi.mock('../../app/appSdk', () => ({ launchChat: () => {}, notify: () => {} }))
+vi.mock('../../lib/api', () => ({
+  api: {
+    dashboardViews: vi.fn(async () => [{ id: 'overview', tiles: [{ ref: 'artifact:notes', size: 'm', order: 0, added_by: 'user',
+      refresh: { mode: 'manual', ttl_secs: 0, skeleton: '', data: [] } }] }]),
+    artifact: vi.fn(async () => ({ slug: 'notes', name: 'Notes', kind: pinned.kind, content: pinned.content })),
+    artifactExists: vi.fn(async () => true),
+    createArtifact: vi.fn(async () => ({})),
+    deleteArtifact: vi.fn(async () => ({})),
+    pinTile: vi.fn(async () => ({})),
+    resolveTile: vi.fn(async () => ({})),
+    refreshTile: vi.fn(async () => ({ refreshed: false, reason: 'manual', ok: true, nodes: [], row: {} })),
+    tileLedgerHref: (viewId: string, ref: string) => `/api/dashboard/views/${viewId}/tiles/refresh?ref=${ref}`,
+  },
+}))
+// The app registers its content types at startup (`main.tsx`); the band reads them through that registry.
+registerBuiltinContentTypes()
+if (typeof URL.createObjectURL !== 'function') {
+  URL.createObjectURL = () => 'blob:pinned-tiles-test'
+  URL.revokeObjectURL = () => {}
+}
 
 // ── The byte-identical-safety property ───────────────────────────────────────
 // artifactTiles() is what PinnedTiles renders. An EMPTY registry (or a preset with
@@ -51,5 +79,34 @@ describe('the tile schema carries no coordinates (the retired grid stays retired
       expect(banned in t).toBe(false)
       expect(banned in t.refresh).toBe(false)
     }
+  })
+})
+
+/** The one tile's body: everything under its header row (the band's own "Pinned" heading is ours). */
+async function tileBody(): Promise<HTMLElement> {
+  const refresh = await screen.findByLabelText('Refresh tile')
+  return refresh.closest('div.rounded-lg')!.lastElementChild as HTMLElement
+}
+
+describe("a pinned artifact's body renders in the form its kind holds", () => {
+  beforeEach(() => {
+    invalidateKeys('dashboard:views')
+    invalidateKeys('dashboard:tile:notes')
+  })
+
+  it('a markdown artifact renders through the content registry, with no frame', async () => {
+    Object.assign(pinned, { kind: 'markdown', content: MD_BLOCK })
+    render(<PinnedTiles />)
+    await waitFor(async () => expect((await tileBody()).querySelector('h2')).not.toBeNull())
+    const body = await tileBody()
+    expect(rendersBlock(body)).toEqual([])
+    expect(body.querySelector('iframe')).toBeNull()
+  })
+
+  it('an HTML artifact stays in its sandboxed frame, and nothing in it is rendered as markdown', async () => {
+    Object.assign(pinned, { kind: 'html', content: MD_BLOCK })
+    render(<PinnedTiles />)
+    await waitFor(async () => expect((await tileBody()).querySelector('iframe')).not.toBeNull())
+    expect((await tileBody()).querySelector('h1, h2, h3, ul, strong')).toBeNull()
   })
 })

@@ -12,6 +12,9 @@ import { STATE_LABEL } from './taskState'
 import { STEERABLE, TERMINAL_STATUSES, type ActivityItem } from '../cockpitShared'
 import { FindingCard } from './FindingCard'
 import { useTaskDetail } from './useTaskDetail'
+import { MarkdownLine } from '../../../../ui/MarkdownLine'
+import { previewLine } from '../../../../lib/previewText'
+import { Markdown } from '../../../../ui/Markdown'
 
 // ── The cockpit's task detail ──────────────────────────────────────────────────────────────────
 //
@@ -28,10 +31,10 @@ function BlockerList({ blockers, onOpenTask }: { blockers: { id: string; title: 
     <div className="mt-1 flex flex-col gap-0.5">
       {blockers.map((b) => (
         // Raw: a link in the list's own ink that turns accent on hover; TextLink draws accent ink at rest.
-        <button key={b.id} type="button" onClick={() => onOpenTask(b.id)} title={`Open “${b.title}”`}
+        <button key={b.id} type="button" onClick={() => onOpenTask(b.id)} title={`Open “${previewLine(b.title)}”`}
           className="group/bl inline-flex max-w-full items-center gap-1 self-start rounded px-1 text-on-surface-var hover:text-primary">
           <Circle size={9} className="shrink-0 opacity-60" />
-          <span className="truncate">{b.title}</span>
+          <span className="truncate"><MarkdownLine text={b.title} /></span>
           <ChevronRight size={11} className="shrink-0 opacity-0 transition-opacity group-hover/bl:opacity-100 focus-within:opacity-100" />
         </button>
       ))}
@@ -65,8 +68,8 @@ export function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, fi
         </span>
       </div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
-        <h3 data-type="title-m" className="text-on-surface" style={fvs(600)}>{task.title}</h3>
-        {task.description && <p data-type="body-s" className="mt-1 text-on-surface-var">{task.description}</p>}
+        <h3 data-type="title-m" className="text-on-surface" style={fvs(600)}><MarkdownLine text={task.title} /></h3>
+        {task.description && <div data-type="body-s" className="mt-1 text-on-surface-var"><Markdown>{task.description}</Markdown></div>}
 
         {/* The build's finished work waits for you to merge it: its review is under Tasks. */}
         {project.status === 'needs_input' && project.pending_question?.merge && (
@@ -77,7 +80,7 @@ export function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, fi
         {/* A finished task's work conflicts with the workspace: what it is and the choices are under Tasks. */}
         {project.status === 'needs_input' && project.pending_question?.conflict && (
           <p role="status" data-type="body-s" className="mt-m rounded-lg bg-surface-container p-s text-on-surface-var">
-            The work of “{project.pending_question.conflict.title || project.pending_question.conflict.branch}” conflicts
+            The work of “{previewLine(project.pending_question.conflict.title || project.pending_question.conflict.branch)}” conflicts
             with {project.pending_question.conflict.into}, and is kept on its branch until you choose how to resolve it. Choose under Tasks.
           </p>
         )}
@@ -121,7 +124,7 @@ export function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, fi
             <ol className="mt-1 flex flex-col gap-0.5">
               {plan.map((a, i) => (
                 <li key={i} data-type="caption" className={`flex items-start gap-1.5 ${a.completed ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>
-                  <span className="mt-[1px] shrink-0 tabular-nums text-on-surface-low">{i + 1}.</span><span>{a.content}</span>
+                  <span className="mt-[1px] shrink-0 tabular-nums text-on-surface-low">{i + 1}.</span><MarkdownLine text={a.content} />
                 </li>
               ))}
             </ol>
@@ -133,7 +136,7 @@ export function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, fi
             <ul className="mt-1 flex flex-col gap-0.5">
               {crit.map((c, i) => (
                 <li key={i} data-type="caption" className="flex items-start gap-1.5 text-on-surface-low">
-                  <Target size={9} className="mt-[4px] shrink-0 opacity-60" /><span className={c.met ? 'line-through opacity-70' : ''}>{c.description}</span>
+                  <Target size={9} className="mt-[4px] shrink-0 opacity-60" /><span className={c.met ? 'line-through opacity-70' : ''}><MarkdownLine text={c.description} /></span>
                 </li>
               ))}
             </ul>

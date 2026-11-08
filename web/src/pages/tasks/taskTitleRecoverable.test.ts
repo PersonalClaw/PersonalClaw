@@ -33,45 +33,29 @@ const LIST = strip(read('pages/tasks/TasksListPage.tsx'))
 const DAG = strip(read('pages/tasks/TaskGraph.tsx'))
 
 describe('every place a task is listed hands over its full title', () => {
+  // A title is an agent's line and carries markdown, so the row draws it rendered (`MarkdownLine`)
+  // and its tooltip is the same line as plain text (`previewLine`): the two read one value, so the
+  // tooltip names the task the row shows, with no mark in it. One pattern per sink, so the cut, the
+  // tooltip and the rendered line are held on the same element.
   it('the list row', () => {
-    expect(LIST).toMatch(/block truncate text-\[0\.9375rem\][\s\S]{0,120}title=\{t\.title\}>\{t\.title\}<\/span>/)
+    expect(LIST).toMatch(/block truncate text-\[0\.9375rem\][^>]*title=\{previewLine\(t\.title\)\}><MarkdownLine text=\{t\.title\} \/><\/span>/)
   })
 
   it('the DAG node', () => {
-    expect(DAG).toMatch(/truncate text-\[0\.8125rem\] leading-tight[\s\S]{0,160}title=\{t\.title\}>\{t\.title\}<\/div>/)
+    expect(DAG).toMatch(/truncate text-\[0\.8125rem\] leading-tight[^>]*title=\{previewLine\(t\.title\)\}><MarkdownLine text=\{t\.title\} \/><\/div>/)
   })
 
-  it('each title attribute is the rendered value, not a paraphrase', () => {
-    // A title that could drift would name a different task than the row shows.
-    for (const [name, src] of [['list', LIST], ['dag', DAG]] as const) {
-      const m = /title=\{t\.title\}>\{t\.title\}</.exec(src)
-      expect(m, `${name}: title and text are one expression`).toBeTruthy()
-    }
-  })
-
-  it('both still truncate — the fix is recovery, not re-layout', () => {
-    // If one ever stops truncating, its `title` becomes noise and this rail should be revisited.
-    expect(LIST).toMatch(/block truncate/)
-    expect(DAG).toMatch(/truncate text-\[0\.8125rem\]/)
-  })
-
-  it('the row name still carries the title AND the status — the half that already worked', () => {
+  it('the row name still carries the title AND the status, as plain text', () => {
     // The earlier fix, which is why AT was the complete reader. It must survive this change.
-    expect(LIST).toMatch(/<RowHitTarget label=\{`\$\{t\.title\} — \$\{sm\.label\}`\} \/>/)
+    expect(LIST).toMatch(/<RowHitTarget label=\{`\$\{previewLine\(t\.title\)\} — \$\{sm\.label\}`\} \/>/)
   })
 
-  it('the shared SidePanel title has since been fixed on its own terms', () => {
-    // 🔑 THIS ASSERTION FIRED, AND THAT WAS THE POINT. It originally read "…is deliberately untouched",
-    // to keep the scope note above honest: this PR fixed three of four sites and left the fourth,
-    // `ui/SidePanel`'s shared <h2>, for a change of its own. The next cycle made that change — and this
-    // rail went red, exactly as designed, rather than letting the note rot into a lie.
-    //
-    // So it is re-pointed rather than relaxed: the fourth site is now fixed, and it is fixed the way a
-    // SHARED element has to be — conditionally, because the prop is a `ReactNode` and a JSX title would
-    // stringify to "[object Object]". If that guard is ever removed, this notices.
+  it('the task panel passes its rendered title a plain tooltip', () => {
+    // `ui/SidePanel`'s shared <h2> takes its tooltip from a string title, or, for a rendered one,
+    // from the `tooltip` its caller passes.
     const panel = strip(read('ui/SidePanel.tsx'))
     expect(panel, 'the shared panel title still exists').toMatch(/data-type="title-l" className="text-on-surface truncate/)
-    expect(panel, 'and now carries a type-guarded title of its own, after a plain tooltip its caller passes')
-      .toMatch(/title=\{tooltip \?\? \(typeof title === 'string' \? title : undefined\)\}/)
+    expect(panel).toMatch(/title=\{tooltip \?\? \(typeof title === 'string' \? title : undefined\)\}/)
+    expect(LIST).toMatch(/title=\{<MarkdownLine text=\{open\.title\} \/>\} tooltip=\{previewLine\(open\.title\)\}/)
   })
 })

@@ -145,6 +145,17 @@ describe('useNativeNotifications', () => {
     expect(bridge.shown).toEqual([{ title: 'Loop stalled', body: 'needs an answer', route: 'loops' }])
   })
 
+  it('a banner carries no marks: the OS shows a note as plain text', () => {
+    // 🔴 The whole body went out with its marks, and the system drew them as text.
+    const bridge = fakeBridge()
+    renderHook(() => useNativeNotifications(vi.fn()))
+    deliver!({ type: 'notification', data: note({
+      source: 'loop', title: 'Loop **stalled** on `export_digest()`', body: '## Why\n\n- the model did not **answer**',
+      native: { deliver: true, reason: '' },
+    }) })
+    expect(bridge.shown).toEqual([{ title: 'Loop stalled on export_digest()', body: 'Why the model did not answer', route: 'loops' }])
+  })
+
   it('🪤 VACUITY: raises nothing for a note the gateway did not mark', () => {
     // Same hook, same bridge, same frame type. Without this the test above proves only
     // that a banner appears — not that the RULE caused it.

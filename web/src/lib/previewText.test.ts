@@ -77,11 +77,11 @@ describe('both leak surfaces route through the strip point (source-level)', () =
   const inbox = readFileSync(resolve(__dirname, '../pages/inbox/InboxPage.tsx'), 'utf8')
   const card = readFileSync(resolve(__dirname, '../pages/artifacts/ArtifactCard.tsx'), 'utf8')
 
-  it('the inbox row preview and its label both strip the message', () => {
+  it('the inbox row preview renders its marks inline, and its label strips them', () => {
     expect(inbox).toContain("import { previewText } from '../../lib/previewText'")
-    // The visual one-liner renders the stripped text, not the raw body…
-    expect(inbox).toMatch(/<p[^>]*truncate[^>]*>\{previewText\(it\.message\)\}<\/p>/)
-    // …and the announced name's message part is the stripped text too.
+    // The visual one-liner is an excerpt: the marks render, inline, inside the row's truncate…
+    expect(inbox).toMatch(/<p[^>]*truncate[^>]*><Markdown inline>\{it\.message\}<\/Markdown><\/p>/)
+    // …and the announced name's message part is the stripped text.
     expect(inbox).toMatch(/rowSubject\(\[[^\]]*previewText\(it\.message\)\]/)
   })
 

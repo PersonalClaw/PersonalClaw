@@ -42,6 +42,8 @@ import { reportingWrite } from '../../app/reportingWrite'
 import { stopLoop } from '../loop/stopLoop'
 import { TextLink } from '../../ui/TextLink'
 import { TaskList } from '../tasks/TasksSection'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { previewLine } from '../../lib/previewText'
 
 /** All tasks is a 44 px target at the compact widths (320 to 768 px), where it is a phone's way to
  *  every project's tasks, and the header's own size above them (#3905). */
@@ -1236,7 +1238,7 @@ function WorkRowCard({ row, onResume, onOpen, onStop }: {
       <button type="button" onClick={() => setOpen(true)}
         className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-[0.75rem] text-on-surface-low hover:bg-surface-high">
         <ChevronRight size={12} className="shrink-0" />
-        <span className="min-w-0 truncate">{row.title}</span>
+        <span className="min-w-0 truncate" title={previewLine(row.title)}><MarkdownLine text={row.title} /></span>
       </button>
     )
   }
@@ -1251,8 +1253,8 @@ function WorkRowCard({ row, onResume, onOpen, onStop }: {
         ? <OutcomeIcon size={13} className="shrink-0" style={{ color: outcome.tone }} role="img" aria-label={outcome.label} />
         : <CircleDot size={13} className="shrink-0 text-primary" />}
       {/* Raw: the row's truncating title is its open target in row ink; TextLink would re-ink it coral. */}
-      <button type="button" onClick={onOpen} title={`Open ${row.title}`}
-        className="min-w-0 flex-1 truncate text-left hover:text-on-surface hover:underline">{row.title}</button>
+      <button type="button" onClick={onOpen} title={`Open ${previewLine(row.title)}`}
+        className="min-w-0 flex-1 truncate text-left hover:text-on-surface hover:underline"><MarkdownLine text={row.title} /></button>
       {outcome && (
         <span aria-hidden className="shrink-0 text-[0.75rem]" style={{ color: outcome.tone }}>{outcome.label}</span>
       )}
@@ -1329,7 +1331,7 @@ export function TaskListRow({ list, active, onOpen }: { list: TaskListItem; acti
 
 /** Side-panel body: the tasks under a list, grouped nothing-fancy, each opening the
  *  full task in the Tasks page. Lazy-fetched (panel only mounts when opened). */
-function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (taskId: string) => void }) {
+export function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (taskId: string) => void }) {
   const { data: tasks, loading } = useQuery<TaskItem[]>(`tasklist:tasks:${list.id}`,
     () => api.allTasks({ task_list: list.id }).then((c) => c.tasks))
   if (loading && !tasks) return <div className="flex justify-center py-l"><Loader2 size={16} className="animate-spin text-on-surface-low" /></div>
@@ -1365,7 +1367,7 @@ function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (
               const StatusIcon = sm.icon
               return <StatusIcon size={14} className="mt-0.5 shrink-0" style={{ color: sm.tone }} role="img" aria-label={sm.label} />
             })()}
-            <span className={`min-w-0 flex-1 ${TERMINAL.has(t.status) ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>{t.title}</span>
+            <span className={`min-w-0 flex-1 ${TERMINAL.has(t.status) ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}><MarkdownLine text={t.title} /></span>
             <ChevronRight size={14} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
           </button>
         </li>

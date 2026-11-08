@@ -10,6 +10,9 @@ import { TextInput } from '../../ui/forms'
 import type { TaskItem, TaskNote } from '../../lib/api'
 import { depMap, wouldCycle } from './dag'
 import { statusMeta } from './taskMeta'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { previewLine } from '../../lib/previewText'
+import { Markdown } from '../../ui/Markdown'
 
 // ── Task-specific form editors ──────────────────────────────────────────────
 // The generic form primitives (Field/TextInput/TextArea/DateInput/Select/
@@ -60,7 +63,7 @@ export function DependencyEditor({ selfId, allTasks, value, onChange }: {
             return (
               <div key={id} className="group flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5">
                 <sm.icon size={14} className="shrink-0" style={{ color: sm.tone }} />
-                <span data-type="body-s" className="flex-1 truncate text-on-surface">{t?.title ?? id}</span>
+                <span data-type="body-s" className="flex-1 truncate text-on-surface" title={t ? previewLine(t.title) : undefined}>{t ? <MarkdownLine text={t.title} /> : id}</span>
                 <SquareIconButton icon={X} tone="danger" label="Remove prerequisite" onClick={() => onChange(value.filter((x) => x !== id))} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
               </div>
             )
@@ -91,7 +94,7 @@ export function DependencyEditor({ selfId, allTasks, value, onChange }: {
                     title={cyclic ? 'That would create a dependency cycle' : undefined}
                     className="flex items-center gap-s rounded-md px-2 py-1.5 text-left transition-colors enabled:hover:bg-surface-high aria-disabled:hover:bg-transparent disabled:opacity-40 disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
                     <sm.icon size={14} className="shrink-0" style={{ color: sm.tone }} />
-                    <span data-type="body-s" className="flex-1 truncate text-on-surface">{task.title}</span>
+                    <span data-type="body-s" className="flex-1 truncate text-on-surface" title={previewLine(task.title)}><MarkdownLine text={task.title} /></span>
                     {cyclic && <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 text-warn" title="Would create a dependency cycle"><AlertTriangle size={11} /> cycle</span>}
                   </button>
                 )
@@ -284,7 +287,7 @@ export function NotesEditor({ items, onChange, placeholder }: {
           animate={{ opacity: 1, scaleY: 1, borderRadius: 'var(--radius-md)' }}
           exit={{ opacity: 0, scaleY: 0.4 }} transition={spring.spatialDefault} style={{ originY: 0 }}
           className="group flex items-start gap-s rounded-md bg-surface-container px-2 py-1.5">
-          <span data-type="body-s" className="flex-1 text-on-surface whitespace-pre-wrap">{n.content}</span>
+          <div data-type="body-s" className="min-w-0 flex-1"><Markdown breaks>{n.content}</Markdown></div>
           <SquareIconButton icon={X} tone="danger" label="Remove note" onClick={() => remove(i)} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
         </motion.div>
       ))}

@@ -11,6 +11,8 @@ import { fvs } from '../../design/fontWeight'
 import { TextLink } from '../../ui/TextLink'
 import { TOUCH_TARGET } from '../../ui/Toggle'
 import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { previewLine } from '../../lib/previewText'
 
 /** The triage digest card + the Morning-triage pack card.
  *
@@ -305,7 +307,7 @@ export function TriageDigestCard() {
               <div className="min-w-0 flex-1">
                 <p data-type="body-s" className="truncate text-on-surface">
                   <span style={fvs(600)}>{doneVerb(row.action_type)}</span>{' '}
-                  {row.title || `item ${row.ordinal}`}
+                  {row.title ? <MarkdownLine text={row.title} /> : `item ${row.ordinal}`}
                 </p>
                 <p data-type="caption" className="mt-0.5 text-on-surface-low">
                   because of <code className="font-mono">{row.rule}</code>
@@ -338,11 +340,11 @@ export function TriageDigestCard() {
         <ul aria-label="Runs that ended in this window" className="mt-s flex flex-col gap-s">
           {ran.map((row) => (
             <li key={row.ordinal} className="flex items-center gap-m rounded-lg bg-surface-high px-m py-s">
-              <p data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{row.title || `item ${row.ordinal}`}</p>
+              <p data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{row.title ? <MarkdownLine text={row.title} /> : `item ${row.ordinal}`}</p>
               {row.needs_you && <Badge tone="warn">needs you</Badge>}
               {row.item_permalink && (
                 <TextLink href={row.item_permalink} ink="emphasis" size="xs" className="shrink-0"
-                  aria-label={`Open the run ${row.title || `item ${row.ordinal}`}`}>
+                  aria-label={`Open the run ${row.title ? previewLine(row.title) : `item ${row.ordinal}`}`}>
                   open
                 </TextLink>
               )}
@@ -376,13 +378,13 @@ export function TriageDigestCard() {
               <li key={`${i}-${row.action_type}-${row.title}`} className="flex items-start gap-m rounded-lg bg-surface-high px-m py-s">
                 <div className="min-w-0 flex-1">
                   <p data-type="body-s" className="truncate text-on-surface">
-                    <span style={fvs(600)}>{proposedVerb(row.action_type)}</span> {row.title || 'an item'}
+                    <span style={fvs(600)}>{proposedVerb(row.action_type)}</span> {row.title ? <MarkdownLine text={row.title} /> : 'an item'}
                   </p>
                   <p data-type="caption" className="mt-xs text-on-surface-low">{row.note}</p>
                 </div>
                 {row.item_permalink && (
                   <TextLink href={row.item_permalink} ink="emphasis" size="xs" className="shrink-0"
-                    aria-label={`Open ${row.title || 'the item'}`}>
+                    aria-label={`Open ${row.title ? previewLine(row.title) : 'the item'}`}>
                     open
                   </TextLink>
                 )}
@@ -402,11 +404,11 @@ export function TriageDigestCard() {
           <ul aria-label="Also waiting" className="flex flex-col gap-s">
             {waiting.map((row) => (
               <li key={row.ordinal} className="flex items-center gap-m rounded-lg bg-surface-high px-m py-s">
-                <p data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{row.title || `item ${row.ordinal}`}</p>
+                <p data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{row.title ? <MarkdownLine text={row.title} /> : `item ${row.ordinal}`}</p>
                 {row.source && <span data-type="caption" className="shrink-0 text-on-surface-low">{row.source}</span>}
                 {row.item_permalink && (
                   <TextLink href={row.item_permalink} ink="emphasis" size="xs" className="shrink-0"
-                    aria-label={`Open ${row.title || `item ${row.ordinal}`}`}>
+                    aria-label={`Open ${row.title ? previewLine(row.title) : `item ${row.ordinal}`}`}>
                     open
                   </TextLink>
                 )}
@@ -436,7 +438,7 @@ export function TriageDigestCard() {
               <code className="shrink-0 font-mono text-on-surface-low">{row.kind}</code>
               <span className="min-w-0 flex-1 truncate text-on-surface-low">
                 {row.ordinal ? `#${row.ordinal} ` : ''}{row.action_type ? `${row.action_type} — ` : ''}
-                {row.reason || row.outcome || row.verb || row.detail || '—'}
+                {row.reason ? <MarkdownLine text={row.reason} /> : (row.outcome || row.verb || row.detail || '—')}
                 {row.rule ? <> · <code className="font-mono">{row.rule}</code></> : null}
               </span>
               {row.permalink && (
@@ -512,7 +514,7 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
   // differently from the row itself in exactly the case where the field is missing.
   // The task a Yes files, by the title its run recorded: what she approves is what she reads.
   const task = row.action_config?.title || ''
-  const label = `Proposal ${n}: ${proposedVerb(row.action_type)} ${row.title || `item ${n}`}${task ? `, as the task “${task}”` : ''}${row.source ? `, ${row.source}` : ''}${row.carried_over ? ', carried over from an earlier digest' : ''}`
+  const label = `Proposal ${n}: ${proposedVerb(row.action_type)} ${row.title ? previewLine(row.title) : `item ${n}`}${task ? `, as the task “${previewLine(task)}”` : ''}${row.source ? `, ${row.source}` : ''}${row.carried_over ? ', carried over from an earlier digest' : ''}`
   // An answered proposal keeps its row and says what was answered. Removing it would make a reply
   // look like it did nothing; re-offering the buttons would invite a second, duplicate answer.
   return (
@@ -520,10 +522,10 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
       <div className="min-w-0 flex-1">
         <p data-type="body-s" className="truncate text-on-surface">
           <span className="mr-1 text-on-surface-low">#{n}</span>
-          <span style={fvs(600)}>{proposedVerb(row.action_type)}</span> {row.title || `item ${n}`}
+          <span style={fvs(600)}>{proposedVerb(row.action_type)}</span> {row.title ? <MarkdownLine text={row.title} /> : `item ${n}`}
         </p>
         {task && (
-          <p data-type="caption" className="truncate text-on-surface">as the task “{task}”</p>
+          <p data-type="caption" className="truncate text-on-surface">as the task “<MarkdownLine text={task} />”</p>
         )}
         <p data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-s">
           <TierBadge tier={row.tier} clamped={row.clamped} />

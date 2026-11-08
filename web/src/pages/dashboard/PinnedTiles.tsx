@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, createElement, useCallback, useEffect, useMemo, useState } from 'react'
 import { reportActionFailure } from '../../app/reportingWrite'
 import { Check, X, RefreshCw, Sparkles } from 'lucide-react'
 import { api, type DashboardView, type DashboardTile, type Artifact, type TileRefreshRow } from '../../lib/api'
@@ -14,6 +14,8 @@ import { safeMode } from '../../ui/surfaces/layers'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { costLabel, isLive, lastRefreshFailed, sourceChips } from './tileFreshness'
 import { SignedAnchor } from '../../ui/SignedMedia'
+import { resolveContentType } from '../../ui/content/contentTypes'
+import { useMode } from '../../app/theme'
 
 // ── The Pinned tiles band ──────────────────────
 // The ADDITIVE half of the dashboard-as-views registry: the Overview preset's
@@ -228,6 +230,12 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
   // artifact kind: `genui` is an inline-embed content type with no saved-artifact kind, so
   // a kind check here would be a comparison that can never be true.
   const genuiBody = findGenUiBlock(body || '')
+  // A pinned or proposed artifact can be any saved kind (an agent pins any slug): a markdown body
+  // renders through the content registry's own markdown preview, and a widget or HTML body stays in
+  // the sandboxed frame. One dispatcher, the registry's.
+  const { mode } = useMode()
+  const bodyType = artifact ? resolveContentType({ kind: artifact.kind, name: artifact.name }) : null
+  const MarkdownBody = bodyType?.id === 'markdown' ? bodyType.preview?.render : undefined
 
   return (
     <div className="flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s">
@@ -305,7 +313,9 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
               <GenUiWidget content={genuiBody.html} title={artifact?.name || slug} slug={slug} />
             </GenUiHostCtx.Provider>
           )
-          : <WidgetFrame html={body} title={artifact?.name || slug} slug={slug} />)
+          : MarkdownBody
+            ? <Suspense fallback={null}>{createElement(MarkdownBody, { content: body, mode, title: artifact?.name || slug })}</Suspense>
+            : <WidgetFrame html={body} title={artifact?.name || slug} slug={slug} />)
         : <div data-type="body-s" className="px-s py-l text-center text-on-surface-low">Loading tile…</div>}
     </div>
   )
