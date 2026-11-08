@@ -369,6 +369,9 @@ def pytest_configure(config):
     # folder PERSONALCLAW_TEST_DOWNLOADS names (`tool_homes.downloads`).
     grammars = tool_homes.downloads(config, tool_homes.GRAMMARS)
     _PUT_THE_PROGRAMS_BACK.append(tool_homes.for_collection(tool_homes.BASE, grammars))
+    # A test never fetches them: the run does, before its first test, for each test that asks for
+    # `code_map_grammars` (`pytest_collection_finish`), and a test's fetch is refused.
+    _PUT_THE_PROGRAMS_BACK.append(tool_homes.refuse_grammar_fetches())
 
 
 def _within(path: str, root: str) -> bool:
@@ -429,6 +432,27 @@ def pytest_ignore_collect(collection_path, config):
 
 def pytest_collection_finish(session):
     shard_list.collection_finish(session)
+    # The code map's grammars, fetched once before the first test when a test this process will run
+    # asks for them: outside every test's timeout, trying again on a failure (tests/tool_homes.py).
+    if not session.config.option.collectonly and tool_homes.asks_for_grammars(session.items):
+        tool_homes.GrammarFetch.why_not = tool_homes.fetch_grammars(tool_homes.BASE)
+
+
+@pytest.fixture
+def code_map_grammars():
+    """The code map's grammars, on this machine before the test starts: the run fetched them before
+    its first test, since this test asks for them (``tool_homes.fetch_grammars``). A run that could
+    not fetch them fails the test, saying why, rather than letting it fetch them itself."""
+    why = tool_homes.GrammarFetch.why_not
+    if why is None:
+        pytest.fail(
+            "The run did not fetch the code map's grammars before its first test: ask for "
+            "`code_map_grammars` as a test's argument or with `usefixtures`, where collection "
+            "sees it.",
+            pytrace=False,
+        )
+    if why:
+        pytest.fail(why, pytrace=False)
 
 
 def pytest_sessionfinish(session):

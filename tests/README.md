@@ -40,9 +40,13 @@ PersonalClaw's own download path, and keeps it for the next run in pytest's cach
 folder in the checkout (`.pytest_cache/d/`):
 
 - `tree-sitter-grammars/`: the code map's grammars for this machine, about 25 MB,
-  fetched by the first test that parses code, through the egress guard and
-  checked against the language pack's manifest. The workers of a run share
-  them: one fetches while the others wait for it.
+  fetched through the egress guard and checked against the language pack's
+  manifest. A test that parses code asks for the `code_map_grammars` fixture,
+  and a run that collected one fetches them before its first test, outside
+  every test's timeout, trying three times (`tests/tool_homes.py`). A test never
+  fetches them itself: a test's fetch is refused, and a run that could not fetch
+  them fails each test that asked, saying why. The workers of a run share them:
+  one fetches while the others wait for it.
 - `bundled-chat-model/`: the default chat model's weight, 145 MB, fetched by the
   first test in `tests/test_bundled_model_gate.py` that drives a chat turn on it,
   with `scripts/fetch_bundled_model.py`, and checked against its sign-off record

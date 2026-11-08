@@ -36,13 +36,17 @@ from personalclaw.tool_providers.code_map import CodeMapToolProvider
 # wheels are declared in pyproject, so an unimportable `tree_sitter_language_pack` is a
 # packaging regression, and `test_the_parser_dependency_is_installed` fails for it.
 #
-# Probed inside each test, never as the module is imported: a grammar not yet on this machine
-# is fetched through the egress guard, and a fetch reads the network settings of the test's own
-# home and audits there, which nothing has while the module is collected.
+# Probed inside each test, never as the module is imported. The grammars themselves are never
+# this file's fetch: the run fetches them before its first test, in a home of its own, for each
+# test that asks for `code_map_grammars`, and fails a test that asks when it could not
+# (tests/tool_homes.py). A GitHub outage is a red that says so, never a quiet skip.
 
 
 @pytest.fixture
-def python_grammar():
+def python_grammar(code_map_grammars):
+    # The run fetched the grammars before its first test (`code_map_grammars`, tests/conftest.py),
+    # and failed this test if it could not: a fetch is never this test's own, and an outage is
+    # never a skip. What is left to skip on is a grammar the language pack does not have.
     status = parser_status("python")
     if not status.available:
         pytest.skip(
