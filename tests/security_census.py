@@ -137,6 +137,45 @@ NAMED_MODULES: dict[str, str] = {
         "a recorded pass is keyed on every tool the suite probes and every skip switch, and a "
         "probe list read short is refused"
     ),
+    "tests/test_a_step_whose_provider_comes_from_its_run_keeps_its_references.py": (
+        "a step whose provider a binding chooses is handed its references as a named one is"
+    ),
+    "tests/test_a_workflow_reads_its_secrets_from_the_store_alone.py": (
+        "a workflow reads its secrets from the store alone, never the gateway's environment"
+    ),
+    "tests/test_a_secret_a_run_is_handed_stays_its_reference.py": (
+        "a run is handed a secret's reference, never its value, and only one it can read"
+    ),
+    "tests/test_a_judge_gate_keeps_its_secrets_as_references.py": (
+        "a judge gate's model is sent a secret's reference, never its value"
+    ),
+    "tests/test_browse_is_never_handed_a_secrets_value.py": (
+        "browse's model never reads a secret's value, and its goal names none"
+    ),
+    "tests/test_a_triage_rule_and_a_knowledge_query_keep_their_references.py": (
+        "the text a triage digest's or a knowledge retrieval's model reads keeps its references"
+    ),
+    "tests/test_a_model_call_is_masked_of_what_its_work_was_handed.py": (
+        "a model call is masked of every secret's value the work making it was handed"
+    ),
+    "tests/test_every_action_provider_says_where_its_config_goes.py": (
+        "every action provider says whether its config goes to a model, to a run, or into itself"
+    ),
+    "tests/test_an_asks_choices_and_fields_are_masked_of_filled_values.py": (
+        "what a step's question shows, and what its form is, keeps no secret's value"
+    ),
+    "tests/test_an_engine_fault_is_masked_of_its_steps_values.py": (
+        "what an engine fault says of a step keeps no value its bindings filled in"
+    ),
+    "tests/test_every_step_kind_says_where_its_config_goes.py": (
+        "every step kind and gate kind says where its config goes, a judge's text a model's"
+    ),
+    "tests/test_browse_shows_a_held_steps_addresses_as_their_origins.py": (
+        "while a browse step holds a stored secret's value, every address it shows is its origin"
+    ),
+    "tests/test_a_browse_start_page_is_read_as_a_browser_reads_it.py": (
+        "a browse start page is read as a browser reads it, however its arguments are written"
+    ),
 }
 
 

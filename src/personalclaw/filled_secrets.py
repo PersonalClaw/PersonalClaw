@@ -8,7 +8,8 @@ workflow step's output, failure and ledger (``workflows.bindings.BindingContext.
 has no shape a mask could find, so the dispatch that filled it masks it out by value before any of
 those keep or show what came back, by the rule the agent's ``bash`` tool applies to the command it
 runs (``security.redact_known_values``): every value it filled in, wherever it appears, however
-short. A value the work changes on the way (encodes, cuts, splits) is not one this can recognise.
+short, as written, as a JSON string writes it, percent-encoded or HTML-escaped; not a value the
+work changed otherwise (cut short, split, or encoded another way).
 
 What the work writes itself while it runs is masked too: the dispatch holds the values it filled in
 for as long as the work runs (:func:`handed`), and the writers of such a record mask them out of
@@ -100,10 +101,16 @@ def handed(filled: Collection[str]) -> Iterator[None]:
         _HANDED.reset(token)
 
 
+def held_here() -> list[str]:
+    """Every value the work running here was handed (:func:`handed`); none where no work holds
+    any."""
+    return [value for filled in _HANDED.get() for value in filled]
+
+
 def masked_here(text: str) -> str:
     """*text* masked of every value the work running here was handed (:func:`handed`); *text* as
     it is where no work holds any."""
-    held = [value for filled in _HANDED.get() for value in filled]
+    held = held_here()
     return redact_known_values(text, held) if held else text
 
 

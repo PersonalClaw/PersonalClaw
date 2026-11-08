@@ -92,7 +92,10 @@ def _from_its_app(provider: str) -> str:
 def missing_secret(missing: Any) -> str:
     """Why a run whose action uses a secret that does not resolve did not run: the secret by its
     name (`triggers.secrets.UnresolvedSecret.key`), never a value, and for a key PersonalClaw keeps
-    for a setting of its own, why no action can read it."""
+    for a setting of its own, why no action can read it. An action refused for where its config
+    names a secret (``triggers.secrets.ActionRefused``) says so in its own words."""
+    if said := str(getattr(missing, "said", "") or ""):
+        return f"Its action can't run: {said}."
     key = str(getattr(missing, "key", "") or "")
     refused = getattr(missing, "refused", None)
     if refused is not None:

@@ -49,6 +49,7 @@ from personalclaw.workflows import (
     longrun,
     ownership,
     publish_seam,
+    step_arguments,
 )
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.compaction import complete_with_compaction
@@ -200,9 +201,9 @@ def _failed_with(cls: FailureClass, cause: str, remediation: str, output: Any) -
     )
 
 
-def _judge_pretier_screen(cfg: dict[str, Any]) -> NodeResult | None:
-    """Run the free rule tier on a judge gate's declared `evidence`. Returns a NodeResult to
-    SHORT-CIRCUIT the model call, or None to proceed to the judge.
+def _judge_pretier_screen(cfg: dict[str, Any], ctx: BindingContext) -> NodeResult | None:
+    """Refuse a judge handed a secret's value, then run the free rule tier on its `evidence`.
+    Returns a NodeResult to SHORT-CIRCUIT the model call, or None to proceed to the judge.
 
     🔴 Gated on the gate DECLARING `evidence`, and that guard is the whole reason this is additive.
     A judge that binds no evidence (every judge shipped before this) has nothing for the mechanical
@@ -215,6 +216,8 @@ def _judge_pretier_screen(cfg: dict[str, Any]) -> NodeResult | None:
     the escalation ladder can route on WHY it was rejected (empty vs stubbed vs a worker give-up)
     rather than re-deriving it — the routing distinction the ladder was built for.
     """
+    if (unfit := engine_support.judge_handed_a_value(cfg, ctx)) is not None:
+        return NodeResult(state=InstanceState.FAILED, failure=unfit)
     if "evidence" not in cfg:
         return None
     from personalclaw.workflows.judge_pretier import run_pretier
@@ -1198,6 +1201,13 @@ async def dispatch_subworkflow(
     )
 
 
+def _provider_lookup(get_provider: Any) -> Any:
+    """*get_provider*, or the registry's lookup, named in the dispatch that runs the step."""
+    from personalclaw.action_providers.registry import get_action_provider
+
+    return get_provider or get_action_provider
+
+
 @_commits_effects
 async def dispatch_action(
     node: Node,
@@ -1228,25 +1238,9 @@ async def dispatch_action(
     if failure or handoff_failure:
         return NodeResult(state=InstanceState.FAILED, failure=failure or handoff_failure)
     name = str(cfg.get("provider", "") or "")
-    if not name:
-        return _fail(
-            FailureClass.USER,
-            "action node has no `provider`",
-            "set `config.provider` to a registered action provider",
-        )
-
-    getter = get_provider
-    if getter is None:
-        from personalclaw.action_providers.registry import get_action_provider
-
-        getter = get_action_provider
-    provider = getter(name)
-    if provider is None:
-        return _fail(
-            FailureClass.USER,
-            f"unknown action provider {name!r}",
-            "install the app that provides it, or pick a registered provider",
-        )
+    provider, unfit = engine_support.action_provider(node, cfg, ctx, _provider_lookup(get_provider))
+    if unfit is not None:
+        return NodeResult(state=InstanceState.FAILED, failure=unfit)
     from personalclaw.apps.app_work import action_refusal
 
     if refused := action_refusal(run_id, name):
@@ -1259,8 +1253,8 @@ async def dispatch_action(
 
     from personalclaw.action_providers.base import WORKFLOW_STEP_EVENT, ActionContext
 
-    picked = "with" if cfg.get("with") else "config"
-    action_config = dict(cfg.get(picked) or {})
+    picked = step_arguments.holder(cfg)
+    action_config = step_arguments.arguments(cfg) or {}  # a mapping, refused otherwise
     # Whose work this is (`RUN_IDENTITY_KEYS`), from the run alone and set after the step's own
     # payload, so a key it carried by one of those names, written or bound, never reaches the
     # provider. The node id always; each other only when the run has one (no project, none named).
@@ -1295,7 +1289,7 @@ async def dispatch_action(
     from personalclaw.guardrails.policy import unattended_dispatch_key
 
     key = unattended_dispatch_key(f"workflow:{run_id}")
-    written = (node.config or {}).get(picked)  # quoted as written: a secret by its reference
+    written = engine_support.kept_arguments(node, picked, ctx)  # a secret by its reference
     denied = enforce_action(name, action_config, context, session_key=key, written=written)
     if denied.blocked:
         fix = "change what this step runs, then run the workflow again; until then it is refused"
@@ -1798,7 +1792,7 @@ async def dispatch_gate(
         # the gate, not a second judging path. The evidence a judge screens is whatever the template
         # binds into `evidence` (typically `{{nodes.deliverable.output.report}}`), because the gate
         # cannot otherwise see the worker output it is judging — it only has this resolved config.
-        pre = _judge_pretier_screen(cfg)
+        pre = _judge_pretier_screen(cfg, ctx)
         if pre is not None:
             return pre
 

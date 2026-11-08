@@ -391,6 +391,12 @@ class TriageDigestActionProvider(ActionProvider):
     def display_name(self) -> str:
         return "Run the Triage Digest"
 
+    @property
+    def hands_config_to_a_model(self) -> bool:
+        """The filter rules are what the triage model is sent, so a ``{{secret:KEY}}`` in them stays
+        a name."""
+        return True
+
     async def execute(
         self,
         action_config: dict[str, Any],

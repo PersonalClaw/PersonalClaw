@@ -29,6 +29,7 @@ from personalclaw.browse.extraction import (
     ElementRef,
     PageExtraction,
     render_links_dsl,
+    shown_words,
 )
 from personalclaw.learning.surfacing import count_tokens
 
@@ -66,7 +67,7 @@ class PageOutline:
         links = [e for e in self.elements if e.role == "link"]
         fields = [e for e in self.elements if e.role != "link"]
         if links:
-            parts.append(render_links_dsl(links))
+            parts.append(render_links_dsl(links, self.url))
         if fields:
             parts.append(_render_field_lines(fields))
         if self.screenshot_path:
@@ -77,11 +78,14 @@ class PageOutline:
 
 
 def _render_field_lines(fields: list[ElementRef]) -> str:
+    """The Elements block: each control a ref-addressable line, its words (its label, its state and
+    its note, a placeholder and a type among them) as a prompt shows them
+    (``extraction.shown_words``)."""
     lines = ["## Elements"]
     for e in fields:
-        note = f" {e.note}" if e.note else ""
-        state = f" ({e.state})" if e.state else ""
-        lines.append(f"[{e.ref}] {e.role}: {e.label}{state}{note}")
+        note = f" {shown_words(e.note)}" if e.note else ""
+        state = f" ({shown_words(e.state)})" if e.state else ""
+        lines.append(f"[{e.ref}] {e.role}: {shown_words(e.label)}{state}{note}")
     return "\n".join(lines)
 
 
@@ -139,14 +143,18 @@ def compress_page(
     # Add links greedily until the next one would push the element scaffold over budget.
     kept_links: list[ElementRef] = []
     for link in extraction.links:
-        trial = render_links_dsl(kept_links + [link])
+        trial = render_links_dsl(kept_links + [link], extraction.url)
         cost = count_tokens("\n\n".join(p for p in (header, trial, field_lines, tail) if p))
         if cost > max_tokens:
             break
         kept_links.append(link)
 
     scaffold_tokens = count_tokens(
-        "\n\n".join(p for p in (header, render_links_dsl(kept_links), field_lines, tail) if p)
+        "\n\n".join(
+            p
+            for p in (header, render_links_dsl(kept_links, extraction.url), field_lines, tail)
+            if p
+        )
     )
     text = _trim_text_to_budget(extraction.text, scaffold_tokens, max_tokens)
     return PageOutline(

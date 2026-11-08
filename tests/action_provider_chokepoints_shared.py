@@ -50,8 +50,9 @@ EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     ("personalclaw.proactive.autoexec", "the triage auto-execution path"),
     # Every action step of a workflow run, whatever started the run and whatever lookup the
     # engine was handed: a run is unattended work, so it is a denylist seam below. It resolves
-    # through a name it is handed (`getter = get_action_provider`), which the census finds by the
-    # name, not by a literal call (`test_the_census_sees_a_lookup_under_another_name`).
+    # through a name it hands on (`_provider_lookup`: `get_provider or get_action_provider`), which
+    # the census finds by the name, not by a literal call
+    # (`test_the_census_sees_a_lookup_under_another_name`).
     ("personalclaw.workflows.engine", "a workflow run's action step"),
 )
 
@@ -130,8 +131,9 @@ def _reaches_the_registry(source: str | object) -> bool:
     an alias is a site and a mention in a comment or a docstring is not.
 
     A literal-call search misses a module that looks its provider up through a name it is handed,
-    as the workflow engine does (`getter = get_action_provider`): `get_action_provider(` never
-    appears in it, so such a site would run providers with nothing here asking it for a check.
+    as the workflow engine does (`_provider_lookup`: `get_provider or get_action_provider`):
+    `get_action_provider(` never appears in it, so such a site would run providers with nothing
+    here asking it for a check.
     """
     import ast
 

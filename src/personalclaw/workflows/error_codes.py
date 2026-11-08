@@ -166,6 +166,29 @@ WF_ERROR_CODES: dict[str, str] = {
         "to, the session an agent it starts answers to, or the session and folders of a handoff, "
         "each of which a workflow step takes from its own run; the message names the keys."
     ),
+    "WF_ARGUMENT_NAME_BOUND": (
+        "An action node's arguments, written as pairs under `config.with` or `config`, name one "
+        "with a binding (`{{…}}`): each check reads an argument by its name as written, so what a "
+        "binding makes of it would pass them all unread; the message says to write each name as "
+        "text."
+    ),
+    "WF_ASK_FIELD_SECRET": (
+        "An approval, event or judge gate's field names a {{secret:…}}, piped or not, in its "
+        "`name` or `type`: those are what the form is, so they would hold the filled value where "
+        "the run keeps and shows its question; the message says to take the reference out."
+    ),
+    "WF_ASK_PIPED_SECRET": (
+        "An approval, event or judge gate pipes a {{secret:…}} in what its ask shows (its `prompt` "
+        "or `message`, its `choices`, a field's `label`, `choices` or `default`), and no mask "
+        "follows what the pipe makes of a value; the message says to take the reference out of the "
+        "pipe."
+    ),
+    "WF_BROWSE_START_PAGE_SECRET": (
+        "A browse action node's start page (`start_url`, under `config.with` or `config`) names a "
+        "{{secret:…}} in its scheme, host or port, which the address browse shows keeps, or pipes "
+        "one, which no mask follows; the message says which, and to take the reference out of the "
+        "host or the pipe."
+    ),
     "WF_BAD_SEAL": (
         "A wait node's `seal` is not an object, or a buffer seal has neither a positive "
         "`threshold` (items) nor `tokens`."

@@ -567,8 +567,9 @@ A secret still appears in plaintext in these places:
   however short, before its run history, its step's output and ledger, the note that reports it
   or Run now's answer keeps or shows it, and so is what the work writes itself as it runs: the
   `command_refused` row of a command refused before it ran, the `egress_fetch` row of a request,
-  and the gateway log (`filled_secrets`). A value the work changed on the way (encoded, cut short,
-  split across lines) is not recognised, and what the work does with a value is its own: a file it
+  and the gateway log (`filled_secrets`). A value is masked as written, as a JSON string writes it,
+  percent-encoded or HTML-escaped; not a value the work changed otherwise (cut short, split, or
+  encoded another way). What the work does with a value is its own: a file it
   writes, a message it sends or a request it makes carries what it put there. Records written
   before this was masked are rewritten when the gateway starts, for a value of eight characters
   or more: a run's when its definition names a secret, and every automation's history and last
@@ -762,27 +763,42 @@ views show, and it has these edges:
   in, however short, and the credentials the gateway's environment holds, one you stored in
   Settings → Secrets whatever its length and one only its variable's name calls a credential from
   eight characters, since a value that short there (`none`, `1`) is a setting more often than a
-  secret. It masks a value as written and as a JSON string writes it, not one the command changed
-  (encoded, cut short, split), and a short value masks every place its text appears, ordinary
-  words included.
+  secret. It masks a value as written, as a JSON string writes it, percent-encoded or
+  HTML-escaped; not a value the work changed otherwise (cut short, split, or encoded another way).
+  A short value masks every place its text appears, ordinary words included.
 - **An ACP agent CLI's own tools are outside it.** Claude Code's `Read` or `Bash`, and any other
   CLI's own file and shell tools, read inside the CLI and send what they read to that CLI's
   provider without passing PersonalClaw. Only PersonalClaw's own tools, which the CLI reaches over
   MCP, are masked for it. Such a CLI also has no way to fill in a `{{secret:NAME}}` itself.
-- **A one-shot model call is scanned, not masked.** A workflow's infer, judge and visualize
-  steps, a knowledge item's digest and a sync-conflict merge you review have no tools to read
-  with. They pass the outbound scan at the model-call guard instead: at `guardrails.scan_mode`'s
-  default, `redact`, a credential in the prompt is replaced before it leaves; `block` refuses the
-  call and `warn` sends it. A model that runs on this machine keeps `warn` whatever the setting
-  says, so its prompt is scanned and then sent as written. The guard asks that of the model each
-  call is for (`llm.registry.served_on_this_machine`): a model runs here when it runs inside the
-  gateway (the bundled offline model), or when a model server that runs its models where it is
-  (Ollama, vLLM) is at `localhost`, a loopback address or `0.0.0.0` and does not pass that model on.
-  A model your Ollama answers from Ollama's cloud (its tag says `cloud`, or the server names the
-  host it answers it from) is passed on, so its prompt is scanned like a hosted provider's, as is
-  every model of a server on another machine and of an OpenAI-compatible endpoint, which can pass
-  a prompt on to a cloud service from any address.
-  Masking these would put a marker
+- **A one-shot model call is scanned, and masked only of the values its work was handed.** A
+  workflow's infer, judge and visualize steps, a knowledge item's digest and a sync-conflict merge
+  you review have no tools to read with. They pass the outbound scan at the model-call guard
+  instead: at `guardrails.scan_mode`'s default, `redact`, a credential in the prompt is replaced
+  before it leaves; `block` refuses the call and `warn` sends it. Before the scan, the guard masks
+  every value a workflow step's or an automation's bindings filled in for the work making the call,
+  as written or encoded, not a value the work or a site changed (`filled_secrets.masked_here`); a
+  short value masks every place its text appears. A page that shows a held value back in a form the
+  mask doesn't know (encoded twice, or as `encodeURIComponent` writes it) reaches the model, so a
+  Browse start page should not name a secret unless the site needs it in its address. While a step
+  holds a value, Browse shows a page's links by their sites' origins, and each address in a link's
+  or a control's words, in its text and in its notes as its origin; an address a note splits with a
+  tab is left as it is. A word and a value joined by a colon read as an address too when the word
+  starts its word, or when it is glued to a word and ends in a scheme a browser opens or runs
+  (`user_profile:abc` shows as `user_profile:`), and a glued scheme no browser opens or runs, with
+  no slash or backslash after its colon, is left as written. After such a run Browse leaves its tab
+  blank with the tab's back/forward list reset, on any end but a hand-over: a sign-in, a challenge
+  or a take-over leaves its page for the person, and on the gateway's own browser the tab is blanked
+  when the run after it ends. On your own browser (`user_browser`) a tab handed over is yours and
+  keeps its back/forward list, and a park that is cancelled leaves its tab as it is. The browser's
+  own history keeps each address it opened. A model that runs on this machine keeps `warn` whatever
+  the setting says, so its prompt is scanned and then sent as written. The guard asks that of the
+  model each call is for (`llm.registry.served_on_this_machine`): a model runs here when it runs
+  inside the gateway (the bundled offline model), or when a model server that runs its models where
+  it is (Ollama, vLLM) is at `localhost`, a loopback address or `0.0.0.0` and does not pass that
+  model on. A model your Ollama answers from Ollama's cloud (its tag says `cloud`, or the server
+  names the host it answers it from) is passed on, so its prompt is scanned like a hosted
+  provider's, as is every model of a server on another machine and of an OpenAI-compatible endpoint,
+  which can pass a prompt on to a cloud service from any address. Masking these would put a marker
   into answers that are written back, such as a merge you accept. PersonalClaw's own chores (a
   title, follow-ups, memory consolidation) are one-shot calls too, and they are masked as well as
   scanned: each prompt is composed from stored text that no person typed this turn

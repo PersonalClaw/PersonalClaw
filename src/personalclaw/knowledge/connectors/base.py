@@ -89,7 +89,7 @@ def strip_html_chrome(html: str) -> str:
     return _strip_tags(html, _CHROME_TAGS + _FRAME_TAGS)
 
 
-def html_to_text(html: str) -> str:
+def html_to_text(html: str, *, links: bool = True) -> str:
     """Convert HTML to plain text / markdown.
 
     Strips site-chrome (nav/header/footer/…) first so the scraped text is the page's
@@ -100,12 +100,15 @@ def html_to_text(html: str) -> str:
     A ``<pre>`` comes out as a FENCED block, not html2text's default indented one: a fence is
     what :func:`without_raw_html` recognises as code, so a tag inside it stays the code it is
     instead of being escaped into a literal ``&lt;`` on the page.
+
+    With *links* off, a link is its text alone, with no destination.
     """
     html = strip_html_chrome(html)
     if _html2text is not None:
         h = _html2text.HTML2Text()
         h.body_width = 0
         h.backquote_code_style = True
+        h.ignore_links = not links
         return h.handle(html)
     text = re.sub(r"<br\s*/?>", "\n", html)
     text = re.sub(r"<[^>]+>", "", text)

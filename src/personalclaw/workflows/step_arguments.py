@@ -18,6 +18,7 @@ another step's output is first seen.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 #: By provider: the arguments only an automation may give it, and why a workflow step's are its own
@@ -37,6 +38,55 @@ RUN_SCOPED_ARGUMENTS: dict[str, tuple[tuple[str, ...], str]] = {
         "folder, and is recorded as the run's",
     ),
 }
+
+
+#: Where an action step's arguments may be written: ``with``, else ``config``.
+HOLDERS = ("with", "config")
+
+
+def holder(config: dict[str, Any]) -> str:
+    """Where *config*'s arguments are, as the dispatch reads them: ``with``, else ``config``."""
+    return "with" if config.get("with") else "config"
+
+
+def arguments(
+    config: dict[str, Any], kept: Callable[[Any], Any] | None = None, where: str | None = None
+) -> dict[str, Any] | None:
+    """The mapping an action step's arguments are, under its holder (*where*, else
+    :func:`holder`), as its dispatch hands them to the provider: a mapping as it is, a list of pairs
+    as one, nothing as an empty one; for a config as written, what is written there read by *kept*
+    first, whatever its shape (each reference kept as its name). None for anything else, which the
+    dispatch refuses as no mapping."""
+    held = config.get(where or holder(config))
+    if kept is not None:
+        held = kept(held)
+    if not held:
+        return {}
+    if isinstance(held, dict):
+        return dict(held)
+    pairs = isinstance(held, (list, tuple)) and all(
+        isinstance(pair, (list, tuple)) and len(pair) == 2 and isinstance(pair[0], str)
+        for pair in held
+    )
+    return dict(held) if pairs else None
+
+
+#: The words a step whose argument is named by a binding is refused in, at save and at dispatch.
+BOUND_NAME = (
+    "a step's argument can't be named by a binding, since each check reads an argument by its name "
+    "as written",
+    "write each argument's name as text",
+)
+
+
+def bound_name(config: dict[str, Any], where: str | None = None) -> str | None:
+    """The first name, under *config*'s holder (*where*, else :func:`holder`) written as pairs, that
+    holds a binding (``{{…}}``) as written; None when none does. What a binding makes of a name no
+    check reads: each reads an argument by its name as written."""
+    held = config.get(where or holder(config))
+    pairs = held if isinstance(held, (list, tuple)) else ()
+    names = (pair[0] for pair in pairs if isinstance(pair, (list, tuple)) and pair)
+    return next((name for name in names if isinstance(name, str) and "{{" in name), None)
 
 
 def _names(arguments: Any, key: str) -> bool:
@@ -65,7 +115,7 @@ def authored_refusal(config: dict[str, Any]) -> str:
     handed at the step (``dispatch_refusal``)."""
     provider = str(config.get("provider") or "")
     keys, _why = RUN_SCOPED_ARGUMENTS.get(provider, ((), ""))
-    where = "with" if config.get("with") else "config"
+    where = holder(config)
     named = [key for key in keys if _names(config.get(where), key)]
     return _sentence(provider, named, where) if named else ""
 

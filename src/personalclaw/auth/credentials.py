@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from personalclaw import env
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 
@@ -282,10 +283,13 @@ def bootstrap_from_env() -> bool:
 
     The variables are read from the process environment, so they inherit whatever secrecy the
     deployment gives them (Docker secret, systemd ``EnvironmentFile`` with 0600, etc.). They
-    are consumed and never echoed, and the values are never written anywhere but the hash.
+    are never echoed, the values are never written anywhere but the hash, and the password is
+    taken out of the environment as it is read, whether or not it is enrolled.
     """
     user = str(os.environ.get("PERSONALCLAW_LOGIN_USER", "") or "").strip()
-    password = str(os.environ.get("PERSONALCLAW_LOGIN_PASSWORD", "") or "")
+    # Read once, and taken out as it is read, whether or not it is enrolled: out of this process's
+    # environment, which every program it starts inherits, and the one a restart starts with.
+    password = str(env.forget_launch_variable("PERSONALCLAW_LOGIN_PASSWORD") or "")
     if not user or not password:
         return False
     if has_credentials():

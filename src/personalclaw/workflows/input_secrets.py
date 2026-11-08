@@ -38,7 +38,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from personalclaw import record_files
+from personalclaw import filled_secrets, record_files
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.models import REFUSED_TO_START, Failure, FailureClass
 from personalclaw.workflows.secrets import SECRET_BINDING_RE
@@ -168,6 +168,61 @@ def handed_on(resolver: Any, value: Any) -> tuple[tuple[str, ...], Failure | Non
                 terminal_reason=REFUSED_TO_START,
             )
     return tuple(sorted(name for name in resolver.kept if present[name])), None
+
+
+def _handed_a_value(provider: Any, cfg: Any, filled: list[str]) -> bool:
+    """Whether a value *filled* is in what *provider* hands on: in the keys its model reads, where
+    it names them (``model_text_keys``: Browse's goal, its start page being filled to be opened),
+    in the arguments its dispatch hands it (``step_arguments.arguments``); anywhere in its config
+    otherwise."""
+    from personalclaw.workflows.step_arguments import arguments
+
+    keys = getattr(provider, "model_text_keys", None)
+    if not keys:
+        return bool(filled)
+    args = (arguments(cfg) if isinstance(cfg, dict) else None) or {}
+    return any(filled_secrets.masked(args.get(key), filled) != args.get(key) for key in keys)
+
+
+def not_kept_for(provider: Any, cfg: Any, ctx: BindingContext) -> Failure | None:
+    """🔴 The refusal for a step whose provider hands its config on, to a model
+    (``hands_config_to_a_model``) or to a run it starts (``hands_config_to_a_run``), when its
+    bindings, resolved to *cfg*, weren't resolved for that provider: a secret's value was filled
+    into them, or a run's inputs keep references that nothing counted (:class:`Handed`). ``None``
+    otherwise, a run handed no reference among them.
+
+    ``node_bindings._secrets_for`` chooses the step's resolver from the provider it resolves the
+    step's ``provider`` to, as the dispatch resolves it (``engine_support.action_provider``). This
+    is the dispatch's own check that the two agree, whatever chose the resolver, so a provider that
+    hands its config on is never handed a value, nor references a run it starts would not fill."""
+    to_a_model = bool(getattr(provider, "hands_config_to_a_model", False))
+    to_a_run = bool(getattr(provider, "hands_config_to_a_run", False))
+    if not (to_a_model or to_a_run):
+        return None
+    if ctx.filled and _handed_a_value(provider, cfg, ctx.filled):
+        where = "a model" if to_a_model else "the run it starts"
+        cause = (
+            f"this step hands what it's given to {where}, and a secret's value was filled into it "
+            "instead of its reference, so the step was not run"
+        )
+    elif (
+        to_a_run
+        and ctx.secret_resolver is not None
+        and not isinstance(ctx.secret_resolver, Handed)
+        and references_in(cfg)
+    ):
+        cause = (
+            "this step starts a run with what it's given, and the secret references it hands on "
+            "weren't counted for that run, so the run was not started"
+        )
+    else:
+        return None
+    return Failure(
+        failure_class=FailureClass.PERMISSION,
+        cause_plain=cause,
+        remediation="run the workflow again; if its provider is a binding, write it by name",
+        terminal_reason=REFUSED_TO_START,
+    )
 
 
 def hand_to_child(

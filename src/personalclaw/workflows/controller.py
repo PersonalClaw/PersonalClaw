@@ -231,6 +231,9 @@ class _InFlight:
     #: Every guarded model call the node's dispatch made (`guardrails.calls`) — what an action
     #: provider's calls used, and, at a cancel, how many were cut off mid-generation.
     calls: CallLog = field(default_factory=CallLog)
+    #: The values the node's bindings filled in (its context's `filled`, as it grows), so what an
+    #: engine fault says of the node is masked of them too.
+    filled: list[str] = field(default_factory=list)
 
 
 class RunController:
@@ -1581,7 +1584,13 @@ class RunController:
         with capture_model_calls() as calls, filled_secrets.handed(ctx.filled):
             task = asyncio.create_task(step_dispatch.execute(self, item, ctx))
         self._inflight[item.path] = _InFlight(
-            task=task, ready=item, started=now, last_progress=now, cache_key=key, calls=calls
+            task=task,
+            ready=item,
+            started=now,
+            last_progress=now,
+            cache_key=key,
+            calls=calls,
+            filled=ctx.filled,
         )
 
     async def _await_progress(self) -> None:
@@ -1636,7 +1645,12 @@ class RunController:
             except Exception as exc:
                 from personalclaw.workflows.failure_taxonomy import classify_exception
 
-                result = NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
+                with filled_secrets.handed(entry.filled):  # masked before any cut
+                    classified = classify_exception(exc)
+                told = filled_secrets.masked_fields(
+                    classified, ("cause_plain", "remediation", "suggestion"), entry.filled
+                )
+                result = NodeResult(state=InstanceState.FAILED, failure=told)
             self._apply(entry, result)
 
     def note_progress(self, path: str) -> None:

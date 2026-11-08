@@ -53,6 +53,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from personalclaw import filled_secrets
 from personalclaw.providers.image_input import IMAGE_USE_CASE
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,8 @@ REASON_NO_VISION_MODEL = "no vision model available"
 #: * ``refused_challenge`` → the ``denied`` family, **danger** tone, via the ``refused`` token. This
 #:   one matters most: it is the CAPTCHA/2FA refusal, a security-relevant event, and an operator
 #:   scanning for refusals has to find it. It is NOT a benign no-op and must never read as one.
+#: * ``refused_holds_a_secret`` → the ``denied`` family too, via ``refused``: a rule said no, since
+#:   the step holds a stored secret's value a screenshot could show.
 #: * ``not_found`` and ``failed`` → the ``failed`` family, **danger**. The operation did not do what
 #:   was asked, which is what that family is for.
 #: * ``grounded``, ``no_model`` and ``no_screenshot`` → deliberately UNCLASSIFIED, **neutral**, on
@@ -89,6 +92,14 @@ REASON_NO_VISION_MODEL = "no vision model available"
 #:   policy that does not exist. The honest park reason is what tells the user; the pill should not
 #:   also accuse.
 OUTCOME_GROUNDED = "grounded"
+#: Refused before any image is sent: the step holds a stored secret's value
+#: (``filled_secrets.held_here``), which a screenshot of its page could show, and no mask reaches
+#: an image. Parks as ``vision_unavailable``, saying why.
+OUTCOME_HOLDS_A_SECRET = "refused_holds_a_secret"
+REASON_HOLDS_A_SECRET = (
+    "vision grounding is off while this step holds a stored secret's value, since a screenshot "
+    "could show it"
+)
 OUTCOME_NO_MODEL = "no_model"
 OUTCOME_NOT_FOUND = "not_found"
 OUTCOME_NO_SCREENSHOT = "no_screenshot"
@@ -317,6 +328,8 @@ async def ground(
 
     1. **The human-only challenge** — before a provider is resolved, so a CAPTCHA never reaches a
        model at all. Resolving first and refusing after would send the image anyway.
+    1b. **The work holds no stored secret's value** (:data:`OUTCOME_HOLDS_A_SECRET`), since a
+       screenshot of the page could show it and no mask reaches an image.
     2. **A screenshot exists.** ``PageDriver.screenshot`` returns ``""`` when capture is
        unavailable, and grounding on an absent image is the silent no-op this function forbids.
     3. **A vision model is bound** — :data:`REASON_NO_VISION_MODEL`, the honest refusal.
@@ -334,6 +347,8 @@ async def ground(
                 "a CAPTCHA or a one-time code. Sign in or solve it yourself, then resume."
             ),
         )
+    if filled_secrets.held_here():
+        return GroundingResult(outcome=OUTCOME_HOLDS_A_SECRET, reason=REASON_HOLDS_A_SECRET)
     if not (screenshot_path or "").strip():
         return GroundingResult(
             outcome=OUTCOME_NO_SCREENSHOT,

@@ -33,8 +33,8 @@ _AS_A_COMMAND_STARTS: dict[str, str] = {
     ),
     "gateway_base.py::publish": "the port the gateway bound, once, right after it binds",
     "env.py::forget_launch_variable": (
-        "a one-time instruction the command was started with (a rollback meant), taken out as the "
-        "claim reads it: no child and no restart may carry it on"
+        "a one-time instruction the command was started with (a rollback meant), or the first "
+        "sign-in password, taken out as it is read: no child and no restart may carry it on"
     ),
     "run_processes.py::end_what_no_run_holds": (
         "a run marker of this home the gateway was started with, dropped as it starts: it is no "

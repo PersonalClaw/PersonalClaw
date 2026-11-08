@@ -994,7 +994,8 @@ async def _action_problem(action: Any) -> str:
     (`run_workflow_provider.config_problem`), and so did a `send-message` naming a chat channel not
     set up here, or an id no channel, or more than one, takes
     (`send_message_provider.config_problem`). So did the working folder an agent it starts works in
-    (`invoke-agent`, `run-prompt`), when the owner did not allow it.
+    (`invoke-agent`, `run-prompt`), when the owner did not allow it. And a `browse` start page
+    each fire refuses (`browse_provider.config_problem`).
     """
     if not isinstance(action, dict):
         return ""
@@ -1015,14 +1016,11 @@ async def _action_problem(action: Any) -> str:
         from personalclaw.action_providers.run_workflow_provider import config_problem
 
         return await config_problem(config if isinstance(config, dict) else {})
-    if provider == "send-message":
-        from personalclaw.action_providers import send_message_provider
+    from personalclaw.action_providers import bash_provider, browse_provider, send_message_provider
 
-        return send_message_provider.config_problem(config if isinstance(config, dict) else {})
-    if provider == "bash":
-        from personalclaw.action_providers import bash_provider
-
-        return bash_provider.config_problem(config if isinstance(config, dict) else {})
+    own = {"send-message": send_message_provider, "bash": bash_provider, "browse": browse_provider}
+    if provider in own:  # a provider that judges its own config
+        return own[provider].config_problem(config if isinstance(config, dict) else {})
     return ""
 
 

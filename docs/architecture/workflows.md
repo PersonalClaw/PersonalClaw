@@ -401,7 +401,9 @@ unattended action refused: it would stop the PersonalClaw gateway that is execut
 whatever the step declares), the audit log has its `guardrails.denylist` row and the
 gateway log a warning. Each quotes the step as it was written: a path or a command a
 `{{secret:NAME}}` filled in is judged on the value and named by the reference, never the
-value. You can still stop or update PersonalClaw yourself, from your own
+value, and one a pipe reads a secret into, as written or through a run input, is named by
+the reference and the pipe as written (`{{secret:NAME | slice(1,99)}}`), never a piece of
+it. You can still stop or update PersonalClaw yourself, from your own
 shell or Settings → Updates. `tests/test_action_provider_chokepoints.py` fails an
 execution site that reaches a provider, under any name, without asking. What the step then
 reaches is held to the egress tier of that same identity (`net.policy.egress_held_to`), so
@@ -485,7 +487,11 @@ and is `internal`, since whoever pressed Run did not write it. Neither is retrya
 secret the credential store does not hold is refused, never substituted: the store
 answers "" for a missing key, and a request carrying it fails at its receiver with
 nothing naming the key. The store is the one Settings → Secrets writes, read through one
-resolver (`llm/credentials.py` `resolve_secret`, reading `config/credentials.py`). **A run
+resolver (`llm/credentials.py` `resolve_secret`, reading `config/credentials.py`). **A workflow
+reads a secret from that store alone, never from the gateway's own environment** (its steps, and
+run start's check of them, pass `environment=False`, as the agent's shell does): a name only the
+environment holds, from the shell or app that launched the gateway or a container's `env_file`, is
+a secret that is not set. **A run
 that belongs to a project reads that project's secret first** (Settings → Secrets keeps it in
 the same store under the project's own key) **and the global secret of the same name
 second; a run with no project reads only the global one** (`secrets_vault.reading_order`).
@@ -495,34 +501,78 @@ name with the reason, so a step cannot read another record's key or another proj
 secret. A project's secret is never copied into the gateway's environment, which every child
 the gateway starts inherits.
 
-A `{{secret:KEY}}` is filled in only where the step runs its config itself. A step whose
-config is text for a model (a `stage`, `infer` or `visualize` step, and an `action` whose
-provider's action is a model turn, `ActionProvider.hands_config_to_a_model`) keeps the
-reference as the name (`node_bindings._secrets_for`): filled in there, the value would be
-in the model's context. A stage's agent uses the name in a command, and PersonalClaw's `bash`
-tool fills it in as the command runs, with the run's project: the stage's lineage carries it
-(`engine.leaf_spawn_env`, from the run's record). The agent an Invoke Agent or Run Prompt step
-starts works for the run's project the same way: the engine sets `ActionContext.project_id`
-from the run's record, never from the step's config, and the provider starts its agent with it
-(`SubagentManager.spawn(project_id=…)`), so that agent's session is the project's.
+A `{{secret:KEY}}` is filled in only where the step runs its config itself. Which kind of step an
+`action` is, is its provider's: the one its `provider` resolves to, as written or bound to an input
+or another step's output, resolved against the run as its dispatch resolves it and with no secret in
+it (`node_bindings._step_provider`). An `action` whose provider resolves to none keeps its
+references and reads no secret, and fails at its dispatch: an unknown provider, a binding that
+doesn't resolve, or a provider that names a secret, refused in its own words. The dispatch checks
+the two agree: a provider that hands its config to a model or to a run it starts is refused when a
+secret's value was filled into its config, or when a run's inputs kept references nothing counted
+(`input_secrets.not_kept_for`). A step whose config is text for a model keeps the reference as the
+name: a `stage`, `infer` or `visualize` step, an `action` whose provider's config a model reads
+(`ActionProvider.hands_config_to_a_model`: a model turn, Browse, the triage digest, knowledge
+retrieval) (`node_bindings._secrets_for`), and a `judge` gate's `prompt` and `evidence` when its
+kind, as its dispatch resolves it, is judge, unknown or unresolved, while its `verify` check is
+filled (`BindingContext.model_text`). Filled in there, the value would be in the model's context. A
+judge handed a value anyway is refused before its model is asked
+(`engine_support.judge_handed_a_value`), as is a Browse goal that names a secret, since Browse never
+types a credential. Browse's start page is filled, to be opened, since only its goal is its model's
+(`BrowseActionProvider.model_text_keys`), and while the step holds a value every address Browse
+shows is its origin alone (an address with no host its scheme) and its vision grounding is off,
+since a screenshot could show the value: its pages' links show as their sites' origins, and each
+address in a link's or a control's words or in a page's text as its origin (a glued `name:value` is
+left as it is unless a slash follows its colon, or its name ends in a scheme and a backslash follows
+its colon, or its name ends in a scheme a browser opens or runs). A start page is refused at save as
+written, and at dispatch and at each fire as filled, a run input's included, when, read as a browser
+reads it, it names a secret in its scheme, host or port, pipes one, or would open another site, and
+when it names one and isn't an http or https address (`browse.credentials.start_page_refusal`,
+`start_page_moved`). A step's arguments are one mapping however they are written, bound or as pairs,
+read from the holder its dispatch picks (`step_arguments.arguments`), and a goal that names or pipes
+a secret is refused there too. An argument written as a pair named by a binding is refused at save
+and at dispatch, since each check reads an argument by its name as written
+(`step_arguments.bound_name`). A start page or a goal that doesn't resolve on its own with each
+reference kept is refused at dispatch, since nothing could check it. And a prompt sent through the
+model-call guard is masked of each secret value the step or automation sending it was handed, as
+written or encoded (`filled_secrets.masked_here`). An SDK app's action whose config a model reads
+must declare `hands_config_to_a_model`, which also turns off held credential settings for that
+action (`triggers.held_secrets`), and an app route that sends its arguments to a model must not be
+handed a secret's reference: `call-app-route` runs its config, so it fills each one. A stage's agent
+uses the name in a command, and PersonalClaw's `bash` tool fills it in as the command runs, with the
+run's project: the stage's lineage carries it (`engine.leaf_spawn_env`, from the run's record). The
+agent an Invoke Agent or Run Prompt step starts works for the run's project the same way: the engine
+sets `ActionContext.project_id` from the run's record, never from the step's config, and the
+provider starts its agent with it (`SubagentManager.spawn(project_id=…)`), so that agent's session
+is the project's.
 
-**What a step returns is masked of every value its bindings filled in.** A command, a script or
-any action a step ran with a filled value can print it, return it or fail with it, and a
-transform's text can hold it; the bindings keep each value they fill on the step's context
+**What a step returns is masked of every value its bindings filled in.** A command, a script or any
+action a step ran with a filled value can print it, return it or fail with it, and a transform's
+text can hold it; the bindings keep each value they fill on the step's context
 (`BindingContext.filled`), and the dispatch masks every one of them as `[REDACTED: credential]` in
-the step's output, its failure, its reason and the question it asks (`engine_support.masked`)
-before the run keeps, publishes or shows any of it. An action's answer is masked as text before
-the step reads it as JSON or cuts it (`filled_secrets.masked_answer`), so a printed number or a
-value at the cut is masked too. The rule is the one PersonalClaw's `bash` tool applies to what its
-commands print (`security.redact_known_values`): every value however short, as written and as a
-JSON string writes it, never one the command changed on the way. What the step's work writes
-itself as it runs is masked of the same values: the controller holds them in the context of the
-step's task (`filled_secrets.handed`), so the audit row of a command refused before it ran or of a
-request, and a log line such as a check's that could not run, are masked by the writers those
-records pass (`security.mask_child_output`, `security.MaskingFormatter`, `net.client.audit`). A
-later step reads the mask, so a step that sends a secret names it itself rather than reading it
-from a step before. A run recorded before this rule whose definition names a secret has the values
-its steps printed rewritten to the reference when the gateway starts (`input_secrets.redact_home`).
+the step's output, its failure, its reason and what the question it asks shows: its prompt, its
+choices and each field's label, choices and default, so a default or choice that held a filled value
+resumes as the mask (`engine_support.masked`) before the run keeps, publishes or shows any of it. A
+field whose name or type names a secret, as written or piped, and a secret piped in what the ask
+shows, are refused at save and at dispatch, for an approval, an event and a judge gate alike
+(`engine_support.ask_refused`): a field's name and type are what the form is, and no mask follows
+what a pipe makes of a value. At dispatch each field's name and type are read on their own with each
+reference kept, so a run input that holds one counts, fields bound whole to it included; one that
+reads a secret and doesn't resolve so is refused too, since nothing could check it, and one that
+reads none is filed as the binding failure it is. What an ask shows is masked on the resolved config
+before the ask is built from it, whatever its shape, and `choices` written as one string is one
+choice. An action's answer is masked as text before the step reads it as JSON or cuts it
+(`filled_secrets.masked_answer`), so a printed number or a value at the cut is masked too. The rule
+is the one PersonalClaw's `bash` tool applies to what its commands print
+(`security.redact_known_values`): every value however short, as written, as a JSON string writes it,
+percent-encoded or HTML-escaped; not a value the work changed otherwise (cut short, split, or
+encoded another way). What the step's work writes itself as it runs is masked of the same values:
+the controller holds them in the context of the step's task (`filled_secrets.handed`), so the audit
+row of a command refused before it ran or of a request, and a log line such as a check's that could
+not run, are masked by the writers those records pass (`security.mask_child_output`,
+`security.MaskingFormatter`, `net.client.audit`). A later step reads the mask, so a step that sends
+a secret names it itself rather than reading it from a step before. A run recorded before this rule
+whose definition names a secret has the values its steps printed rewritten to the reference when the
+gateway starts (`input_secrets.redact_home`).
 
 **A run is handed a secret's reference, never its value** (`workflows/input_secrets.py`). An
 automation's Run workflow action (a fire or Run now), a step that starts a run with that action

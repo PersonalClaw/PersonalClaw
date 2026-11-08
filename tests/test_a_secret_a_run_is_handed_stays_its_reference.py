@@ -50,6 +50,14 @@ ALL_VALUES = (VALUE, PROJECT_VALUE, OTHER_VALUE)
 REFERENCE = "{{secret:" + NAME + "}}"
 OTHER_REFERENCE = "{{secret:" + OTHER + "}}"
 
+#: A name only the gateway's environment holds: no run reads it, so nothing that hands one on
+#: starts.
+HOST = "ORCHARD_HOST_TOKEN"
+HOST_VALUE = "hv-3c9e1a77-ORCHARD-HOST-VALUE"
+HOST_REFERENCE = "{{secret:" + HOST + "}}"
+
+pytestmark = pytest.mark.security
+
 
 def _project_key(project_id: str, name: str = NAME) -> str:
     from personalclaw.secrets_vault import project_secret_key
@@ -71,7 +79,7 @@ def home(monkeypatch: pytest.MonkeyPatch) -> Path:
     assert loader.env_path() == cfg / ".env", "the .env redirect must hold"
     assert cfg != Path.home() / ".personalclaw"
     monkeypatch.delenv(cred.CREDENTIAL_BACKEND_ENV, raising=False)
-    for key in (NAME, OTHER, _project_key(PROJECT)):
+    for key in (NAME, OTHER, HOST, _project_key(PROJECT)):
         # Registered first, so monkeypatch removes whatever a save mirrors in.
         monkeypatch.setenv(key, "x")
         monkeypatch.delenv(key)
@@ -147,6 +155,20 @@ STARTER = {
         },
     },
 }
+#: STARTER with its provider written as a binding that the run's input `which` fills.
+BOUND_STARTER = {
+    "name": "orchard-bound-starter",
+    "version": 1,
+    "inputs": _inputs("which"),
+    "root": {
+        "kind": "action",
+        "id": "start",
+        "config": {
+            "provider": "{{inputs.which}}",
+            "with": {"workflow": "orchard-sync", "inputs": {"token": REFERENCE}},
+        },
+    },
+}
 #: The same workflow as SYNC, with a second input a step's output fills.
 SYNC_WITH_NOTE = {
     "name": "orchard-sync-noted",
@@ -202,7 +224,49 @@ NOTE_ONLY = {
 #: SYNC as it reads after its input was declared a number.
 COUNT = {**SYNC, "name": "orchard-count", "inputs": {"token": {"type": "number"}}}
 
+#: A workflow whose first step leaves a mark, before the step that reads its input.
+FIRST_STEP = {
+    "name": "orchard-first-step",
+    "version": 1,
+    "inputs": _inputs("token"),
+    "root": {
+        "kind": "sequence",
+        "id": "s",
+        "children": [
+            {"kind": "action", "id": "mark", "config": {"provider": "recorder", "with": {"m": 1}}},
+            {
+                "kind": "action",
+                "id": "send",
+                "config": {"provider": "recorder", "with": {"auth": "Bearer {{inputs.token}}"}},
+            },
+        ],
+    },
+}
+#: The two steps that start FIRST_STEP, handing it the name only the environment holds.
+HOST_STARTER = {
+    "name": "orchard-host-starter",
+    "version": 1,
+    "root": {
+        "kind": "action",
+        "id": "start",
+        "config": {
+            "provider": "run-workflow",
+            "with": {"workflow": "orchard-first-step", "inputs": {"token": HOST_REFERENCE}},
+        },
+    },
+}
+HOST_PARENT = {
+    "name": "orchard-host-parent",
+    "version": 1,
+    "root": {
+        "kind": "subworkflow",
+        "id": "child",
+        "config": {"ref": "orchard-first-step", "inputs": {"token": HOST_REFERENCE}},
+    },
+}
+
 SPECS = (
+    FIRST_STEP,
     SYNC,
     COUNT,
     NOTE,
@@ -333,11 +397,12 @@ async def _fire(trigger: Any) -> None:
     )
 
 
-async def _run_now(trigger: Any) -> None:
-    """Run now on the Triggers page, through the dispatch every run by hand takes."""
+async def _run_now(trigger: Any) -> tuple[bool, str]:
+    """Run now on the Triggers page, through the dispatch every run by hand takes: whether it ran,
+    and what the page tells the owner."""
     from personalclaw.dashboard.handlers.trigger_runs import _dispatch_store_action
 
-    await _dispatch_store_action(trigger, {}, state=None)
+    return await _dispatch_store_action(trigger, {}, state=None)
 
 
 DISPATCHES = {"its-fire": _fire, "run-now": _run_now}
@@ -541,6 +606,107 @@ async def test_a_step_hands_the_run_it_starts_the_reference(home, runs, spec):
     assert child.inputs == {"token": REFERENCE}
     assert _secret_rows(child.id) == [(NAME, "global")]
     assert _holders(home) == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_workflow_step_named_by_an_input_hands_the_run_it_starts_the_reference(
+    home, runs
+):
+    """A step whose provider comes from its run's input is the step it names: the run it starts is
+    handed the reference, counted on its record, and fills it where its own step uses it.
+    🔴 Red before: the child run's inputs held the value, with nothing on its record."""
+    _store()
+
+    await _start(BOUND_STARTER, runs, which="run-workflow")
+
+    assert runs.recorder.sent == [{"auth": f"Bearer {VALUE}"}], runs.recorder.sent
+    child = _only_run_of("orchard-sync")
+    assert child.inputs == {"token": REFERENCE}
+    assert _secret_rows(child.id) == [(NAME, "global")]
+    assert _holders(home) == []
+
+
+_HANDS_ON = {"workflow": "orchard-first-step", "inputs": {"token": HOST_REFERENCE}}
+
+
+async def _by_a_fire(home: Path, runs: _Supervisor) -> str:
+    """An automation's fire, refused: what its history shows the owner."""
+    trigger = _automation(_HANDS_ON, "clock:orchard-host")
+    await _fire(trigger)
+    rows = [json.loads(line) for line in _history(home, trigger.id).splitlines() if line.strip()]
+    refused = [row for row in rows if row.get("status") == "refused"]
+    assert refused, rows
+    return json.dumps(refused)
+
+
+async def _by_run_now(home: Path, runs: _Supervisor) -> str:
+    """Run now, refused: what the page tells the owner."""
+    ran, why = await _run_now(_automation(_HANDS_ON, "clock:orchard-host"))
+    assert ran is False, why
+    return why
+
+
+def _by_a_step(spec: dict[str, Any]) -> Any:
+    """A step that would start the run, refused: what its parent run's failure tells the owner."""
+
+    async def _door(home: Path, runs: _Supervisor) -> str:
+        from personalclaw.workflows.models import RunStatus
+
+        parent = await _start(spec, runs)
+        assert parent.status == RunStatus.FAILED, parent.status
+        return str(parent.error_message)
+
+    return _door
+
+
+async def _by_a_hook(home: Path, runs: _Supervisor) -> str:
+    """A lifecycle trigger whose action is Run workflow, as it runs when its event comes: what its
+    result tells the owner."""
+    from personalclaw.hooks import ScriptHookStore, run_script_hook
+
+    store = ScriptHookStore(home)
+    store.create(
+        {
+            "id": "orchard-hook",
+            "name": "Orchard on stop",
+            "event": "Stop",
+            "provider": "run-workflow",
+            "provider_config": _HANDS_ON,
+            "capabilities": {"providers": ["run-workflow"]},
+        }
+    )
+    result = await run_script_hook(store.get("orchard-hook"), "", {"hook_event_name": "Stop"})
+    return result.error
+
+
+#: Each door that would hand a run the reference, and what it tells the owner when it refuses.
+HOST_DOORS = {
+    "an-automations-fire": _by_a_fire,
+    "run-now": _by_run_now,
+    "a-run-workflow-step": _by_a_step(HOST_STARTER),
+    "a-subworkflow-step": _by_a_step(HOST_PARENT),
+    "a-lifecycle-trigger": _by_a_hook,
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", sorted(HOST_DOORS))
+async def test_a_secret_only_the_gateways_environment_holds_starts_no_run(
+    home, runs, monkeypatch, door
+):
+    """What hands a run a reference checks it as the run will read it, from Settings → Secrets
+    alone: a name only the gateway's environment holds is one the run doesn't have, so no run is
+    started, nothing of it runs, and the refusal the owner is shown names it. 🔴 Red before: the
+    run started, and its first step ran."""
+    monkeypatch.setenv(HOST, HOST_VALUE)
+
+    said = await HOST_DOORS[door](home, runs)
+    await runs.settle()
+
+    assert _runs_of("orchard-first-step") == [], "a run was started"
+    assert runs.recorder.sent == [], "a step of the run ran"
+    assert HOST in said, said
+    assert HOST_VALUE not in said
 
 
 @pytest.mark.asyncio

@@ -174,7 +174,9 @@ export function SecretsPanel() {
               // looks credential-bearing is shown, because the runtime already treats it as one.
               hint={`${v.counts.host} credential-shaped variables the gateway inherited from its own `
                 + 'environment. The vault holds no copy of these values and cannot change or remove '
-                + 'them — edit them where the gateway is launched. Store one above to take ownership.'}
+                + 'them — edit them where the gateway is launched. A workflow’s {{secret:NAME}} '
+                + 'reads none of them. Store one above to take ownership of it: a stored secret is '
+                + 'one a workflow, an automation and the agent’s commands can use by name.'}
             >
               <RowGroup>
                 {host.map((s) => <SecretRow key={s.name} s={s} onChanged={refresh} removeBody="" />)}
@@ -257,13 +259,16 @@ function SecretRow({ s, onChanged, removeTitle, removeBody }: {
             <div data-type="caption" className="mt-xs flex flex-wrap items-center gap-x-s gap-y-xs text-on-surface-low">
               {/* A project row's consumers are the workflows that name it: they read it when they
                   run in this project, and the global one anywhere else. */}
-              <span>{projectRow ? 'Read in this project by' : 'Used by'}</span>
+              <span>{projectRow ? 'Read in this project by' : hostRow ? 'Named by' : 'Used by'}</span>
               {s.consumers.map((c) => (
                 <span key={`${c.kind}:${c.id}`} className="inline-flex items-center gap-xs">
                   {c.kind === 'workflow' ? <Workflow size={12} aria-hidden /> : <Zap size={12} aria-hidden />}
                   <span className="truncate">{c.label || c.id}</span>
                 </span>
               ))}
+              {/* A host value is named, not read: a workflow reads only what is stored. The list is
+                  the workflows the owner has to move it for. */}
+              {hostRow && <span>A workflow reads it once it is stored above.</span>}
             </div>
           ) : (
             // Said explicitly rather than left blank. A blank "used by" line is ambiguous

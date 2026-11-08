@@ -34,9 +34,16 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
-from personalclaw.browse.credentials import WITHHELD, is_credential_input, screen_url
+from personalclaw import filled_secrets
+from personalclaw.browse.credentials import (
+    WITHHELD,
+    addresses_as_origins,
+    is_credential_input,
+    screen_text,
+    screen_url,
+)
 from personalclaw.knowledge.connectors.base import html_to_text
 
 #: Hard cap — ~800-1000 tokens of prose. The compression layer (compress.py) tightens
@@ -368,11 +375,17 @@ def _strip_images(html: str) -> str:
 
 
 def _text_body(html: str) -> str:
-    """The ≤4000-char main text, reusing the connector's chrome-stripping ``html_to_text``."""
-    text = html_to_text(_strip_images(html))
+    """The ≤4000-char main text, reusing the connector's chrome-stripping ``html_to_text``. While
+    the work holds a stored secret's value, a link is its text alone, since the Links DSL shows
+    each one screened (:func:`render_links_dsl`), and each address left in the text is its origin
+    (``credentials.addresses_as_origins``)."""
+    held = bool(filled_secrets.held_here())
+    text = html_to_text(_strip_images(html), links=not held)
     text = _WS_RE.sub(" ", text)
     text = _BLANKLINES_RE.sub("\n\n", text).strip()
-    return text[:MAX_TEXT_CHARS]
+    text = addresses_as_origins(text) if held else text
+    # Masked before the cut, so no part of a held value survives it (`filled_secrets.masked_here`).
+    return filled_secrets.masked_here(text)[:MAX_TEXT_CHARS]
 
 
 def _build_links(recs: list[_LinkRec]) -> list[tuple[str, str, str]]:
@@ -469,10 +482,10 @@ def extract_page(html: str, *, url: str = "") -> PageExtraction:
 def _field_state_repr(e: ElementRef) -> str:
     if e.role == ROLE_CHECKBOX:
         return f"({e.state or 'unchecked'})"
-    return f'("{e.state}")'
+    return f'("{shown_words(e.state)}")'
 
 
-def render_links_dsl(links: tuple[ElementRef, ...] | list[ElementRef]) -> str:
+def render_links_dsl(links: tuple[ElementRef, ...] | list[ElementRef], base: str = "") -> str:
     """The Links DSL — each link a ref-addressable line ``[ref] label → target``.
 
     The target is SCREENED here rather than on the :class:`ElementRef`, and the split is
@@ -491,23 +504,42 @@ def render_links_dsl(links: tuple[ElementRef, ...] | list[ElementRef]) -> str:
     where the OAuth *implicit* flow returns ``#access_token=…``. Driven before keeping the call:
     ``/r#access_token=TOK123`` reached the rendered target verbatim. So this is one live screen over
     one real gap, not a second line of defence over a closed one.
+
+    While the work holds a stored secret's value each target is read against the page's address
+    *base* first, so a relative one shows its site's origin like any other (``screen_url``), a
+    label that is its link's own address is screened as its target is, and any other label, its
+    text, its aria-label or its title, is shown as :func:`shown_words` shows it. The ref is kept as
+    it is.
     """
     if not links:
         return ""
+    held = bool(filled_secrets.held_here())
     lines = ["## Links"]
     for e in links:
-        lines.append(f"[{e.ref}] {e.label} → {screen_url(e.target)}")
+        target = screen_url(urljoin(base, e.target) if held and base else e.target)
+        label = target if e.label == e.target else shown_words(e.label)
+        lines.append(f"[{e.ref}] {label} → {target}")
     return "\n".join(lines)
 
 
+def shown_words(text: str) -> str:
+    """*text*, words a page wrote for a link or a control, or a line a browse step records, as a
+    prompt and the step's record show it: while the work holds a stored secret's value, each
+    address in it as its origin and the rest masked of that value (``credentials.screen_text``); as
+    written otherwise."""
+    return screen_text(text) if text and filled_secrets.held_here() else text
+
+
 def render_forms_dsl(forms: tuple[FormRepr, ...] | list[FormRepr]) -> str:
-    """The Forms DSL — one block per form, each field a ref-addressable line."""
+    """The Forms DSL — one block per form, each field a ref-addressable line, the words a page
+    wrote for them (a form's name, a field's label, state and note) as a prompt shows them
+    (:func:`shown_words`)."""
     if not forms:
         return ""
     lines = ["## Forms"]
     for form in forms:
-        lines.append(f'[form: "{form.name}"]')
+        lines.append(f'[form: "{shown_words(form.name)}"]')
         for e in form.fields:
-            note = f" {e.note}" if e.note else ""
-            lines.append(f"  [{e.ref}] {e.label} {_field_state_repr(e)}{note}")
+            note = f" {shown_words(e.note)}" if e.note else ""
+            lines.append(f"  [{e.ref}] {shown_words(e.label)} {_field_state_repr(e)}{note}")
     return "\n".join(lines)

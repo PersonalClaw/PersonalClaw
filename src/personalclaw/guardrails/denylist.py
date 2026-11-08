@@ -80,7 +80,8 @@ class DenyDecision:
         """What a refused action's run records: the rule that refused it (``matched``, its code)
         and why (``reason``, its sentence). One composition, so a workflow step and a trigger's fire
         refused by the same rule say the same thing. The sentence quotes what was refused as it was
-        written (:func:`check_action`'s ``written``), a secret by its reference, never its value."""
+        written (:func:`check_action`'s ``written``), a secret by its reference, and one a pipe
+        reads by its reference and the pipe, never its value or a piece of it."""
         reason = self.reason or "blocked by a guardrail rule"
         if self.matched:
             return f"blocked by the guardrails denylist: {self.matched} — {reason}"
@@ -449,11 +450,18 @@ def enforce_action(
 
     ``session_key`` is threaded to ``check_action`` so the run's SafetyProfile can
     layer extra deny globs (``denylist_extra``), and ``written`` (the config as it was written,
-    its secrets' references unfilled) so the refusal and its row quote it as written.
+    its secrets' references unfilled) so the refusal and its row quote it as written. What it says
+    and records is masked of each value the work running here was handed
+    (``filled_secrets.masked_here``), for a quote the writing couldn't keep a reference in.
     """
+    from personalclaw.filled_secrets import masked_here
+
     decision = check_action(provider_name, action_config, ctx, session_key, written=written)
     if not decision.blocked:
         return decision
+    decision = replace(
+        decision, reason=masked_here(decision.reason), matched=masked_here(decision.matched)
+    )
     try:
         from personalclaw.audit_subject import audit_text
         from personalclaw.sel import sel
@@ -461,7 +469,7 @@ def enforce_action(
         # The command it would have run, as a refused command's row keeps it (`command_audit`): as
         # it was written, a secret by its reference.
         commands = (
-            [said for _cmd, said in _config_commands(action_config, written)]
+            [masked_here(said) for _cmd, said in _config_commands(action_config, written)]
             if isinstance(action_config, dict)
             else []
         )
