@@ -20,6 +20,7 @@ import unicodedata
 from personalclaw import self_update
 from personalclaw.auth.lifetimes import MAX_LIFETIME_SECS
 from personalclaw.config.edit_spec import (
+    UPDATE_SETTING,
     ConfigValueError,
     NotASecurityControl,
     SecurityControl,
@@ -960,12 +961,25 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # `updates.auto` (off | staged) is the opt-in unattended-apply gate that RETIRED the
     # legacy top-level `auto_update` bool: "off" = notify-only, "staged" = apply at
     # the next safe point (holds while work is in flight, lands on the resolved tag).
-    "updates.channel": {"type": "enum", "values": ["stable", "beta", "nightly"]},
-    "updates.pin": {"type": "str", "max_len": 64, "sanitize": _version_pin_sanitizer},
-    "updates.auto": {"type": "enum", "values": ["off", "staged"]},
-    "updates.check_enabled": {"type": "bool"},
+    # Which release, whether to look, whether to apply it and which release Roll back offers are
+    # the owner's alone, as starting an update is (`OwnerOnlySetting`): no app writes one or lists
+    # one at install, and the owner writes each as any setting, with nothing to confirm (a
+    # rollback writes the pin the same way).
+    "updates.channel": {
+        "type": "enum",
+        "values": ["stable", "beta", "nightly"],
+        "owner_only": UPDATE_SETTING,
+    },
+    "updates.pin": {
+        "type": "str",
+        "max_len": 64,
+        "sanitize": _version_pin_sanitizer,
+        "owner_only": UPDATE_SETTING,
+    },
+    "updates.auto": {"type": "enum", "values": ["off", "staged"], "owner_only": UPDATE_SETTING},
+    "updates.check_enabled": {"type": "bool", "owner_only": UPDATE_SETTING},
     "updates.check_interval_hours": {"type": "int", "min": 1, "max": 168},
-    "updates.last_version": {"type": "str", "max_len": 64},
+    "updates.last_version": {"type": "str", "max_len": 64, "owner_only": UPDATE_SETTING},
     "dashboard.mcp_probe_timeout_secs": {"type": "int", "min": 5, "max": 120},
     # The screen-context master switch (default OFF). Runtime-editable because
     # it is the consent knob: a user turns it on for one working session and off again,

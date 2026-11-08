@@ -141,6 +141,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The field is a security setting only the owner can change; an app cannot, in either "
         "direction."
     ),
+    # An app-scoped caller wrote an update setting (`config/edit_spec.UPDATE_SETTING`): the
+    # owner's alone, as starting an update is. The message names the field and says so.
+    "update_setting_owner_only": (
+        "Apps can't change the update settings, as they can't start an update."
+    ),
     # An app-scoped caller read or wrote a setting its manifest does not name in
     # `permissions.config` — the list install consent showed the owner.
     "config_field_not_declared": (

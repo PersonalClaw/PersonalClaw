@@ -224,6 +224,7 @@ app-scoped `PATCH` of a field that is a security setting (YOLO, the approval mod
 sign-in and 2FA, egress, the keychain, sandbox ceilings, guardrail budgets, external
 access, sync) answers `403`, in either direction, as does an app answering a pending
 approval with a standing grant such as `yolo`.
+The update settings answer an app 403 update_setting_owner_only too, whatever its manifest names.
 Every other setting is the app's only if its manifest names it in `permissions.config`,
 the list install consent shows: `GET /api/config/personalclaw` hands an app those fields
 and nothing else, and a write to any other answers `403 config_field_not_declared`.

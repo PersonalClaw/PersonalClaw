@@ -590,3 +590,158 @@ def test_the_route_table_declares_both_families(subtests) -> None:
                 assert authz is None, f"{method} {template} is the allowlist's, as it was"
             else:
                 assert isinstance(authz, AppMay) and authz.reason.strip(), f"{method} {template}"
+
+
+# ── The update settings: the owner's to write, as the update routes are ─────────────────────────
+
+#: The five update settings, each with a value an app would write and one the field refuses: the
+#: refusal comes before the value is read, so the second is refused as the first is.
+UPDATE_SETTINGS: list[tuple[str, Any, Any]] = [
+    ("updates.channel", "nightly", "x"),
+    ("updates.pin", "0.3.7", "not-a-version"),
+    ("updates.auto", "staged", "x"),
+    ("updates.check_enabled", False, "maybe"),
+    ("updates.last_version", "0.3.6", "9" * 65),
+]
+SETTINGS_APP = "probe-update-settings"
+#: The ordinary setting the app declares, as install consent shows it.
+ORDINARY = "voice.echo_filter_enabled"
+#: The config handler's refusal of an app's write of an update setting, and the one sentence it
+#: says why in.
+UPDATE_SETTING = "update_setting_owner_only"
+UPDATE_SETTINGS_SENTENCE = "Apps can't change the update settings, as they can't start an update."
+
+
+def _settings_bundle(root: Path) -> Path:
+    """A fixture app that declares your settings and one ordinary setting, and ships nothing."""
+    d = root / "bundles" / SETTINGS_APP
+    d.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "name": SETTINGS_APP,
+        "version": "1.0.0",
+        "displayName": "Probe Update Settings",
+        "description": "A fixture app that declares the settings route and one ordinary setting.",
+        "permissions": {"api": ["/api/config"], "config": [ORDINARY]},
+    }
+    (d / "app.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    return d
+
+
+async def _listed_before(_gw: Any, _home: Path) -> None:
+    """The installed manifest as an app installed before the update settings were the owner's
+    left it: all five listed in ``permissions.config`` beside its ordinary setting."""
+    path = manager.app_dir(SETTINGS_APP) / "app.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["permissions"]["config"] = [ORDINARY, *(field for field, *_ in UPDATE_SETTINGS)]
+    path.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+
+
+def _config_routes() -> list[tuple[str, str, Any]]:
+    from personalclaw.dashboard.handlers import api_personalclaw_config_patch
+
+    return [("PATCH", "/api/config/personalclaw", api_personalclaw_config_patch)]
+
+
+def _settings_shared() -> SharedApp:
+    from test_apps_cannot_relax_security import _gateway as config_gateway
+
+    return SharedApp(SETTINGS_APP, _settings_bundle, config_gateway, prepare=_listed_before)
+
+
+#: The settings app, installed once for the module.
+SETTINGS = _settings_shared()
+
+
+def _the_app_is_refused_an_update_setting(field: str, value: Any, refused: Any) -> RowBody:
+    """The app's writes of *field*, sent both ways, of a value the field takes and of one it
+    refuses: each refused in the class's own words, before the value is read, with an SEL row
+    naming the app and the field, and your home as it was. Yours is then written as any setting
+    is, with nothing to confirm, and the value the field refuses is refused you."""
+    from test_apps_cannot_post_into_your_chats import WAYS
+    from test_apps_cannot_relax_security import _code, _stored, _write
+
+    async def check(r: Row) -> None:
+        before = home_files(r.home)
+        theirs = [
+            await _write(r.gw, field, sent, token=r.token, as_backend=alone)
+            for sent in (value, refused)
+            for alone in WAYS.values()
+        ]
+        written = written_since(r.home, before)
+        for status, text in theirs:
+            assert status == 403, text
+            assert _code(text) == UPDATE_SETTING, text
+            assert UPDATE_SETTINGS_SENTENCE in json.loads(text)["error"]["message"], text
+        assert not written, f"a refusal changed your home: {written}"
+        assert len(r.denials(field)) == len(theirs), "each refusal leaves an SEL row naming the app"
+        status, text = await _write(r.gw, field, refused)
+        assert status == 400, f"{refused!r} is a value {field} takes: {text}"
+        status, text = await _write(r.gw, field, value)
+        assert status == 200, text
+        assert _stored(r.home, field) == value
+
+    return check
+
+
+def _settings_rows() -> list[tuple[str, RowBody]]:
+    return [
+        (field, _the_app_is_refused_an_update_setting(field, value, refused))
+        for field, value, refused in UPDATE_SETTINGS
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_app_is_refused_every_update_setting_and_you_are_not(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    await SETTINGS.home(tmp_path_factory, monkeypatch)
+    await SETTINGS.run(subtests, _settings_rows(), _config_routes(), label="setting")
+
+
+@pytest.mark.asyncio
+async def test_each_update_settings_row_fails_while_its_setting_is_the_apps_to_write(
+    subtests, tmp_path_factory, monkeypatch
+) -> None:
+    """Each row's refusal, shown rather than assumed: with one setting made the app's to write
+    again, that setting's row fails, and only it."""
+    from personalclaw.config.editable import _EDITABLE_CONFIG
+
+    await SETTINGS.home(tmp_path_factory, monkeypatch)
+    for field, *_ in UPDATE_SETTINGS:
+        with row(subtests, planted=field):
+            with monkeypatch.context() as mp:
+                spec = {k: v for k, v in _EDITABLE_CONFIG[field].items() if k != "owner_only"}
+                mp.setitem(_EDITABLE_CONFIG, field, spec)
+                recorded = RecordedRows()
+                await SETTINGS.run(recorded, _settings_rows(), _config_routes(), label="setting")
+            assert list(recorded.failed) == [field], recorded.failed
+
+
+@pytest.mark.asyncio
+async def test_an_app_that_lists_an_update_setting_is_refused_at_install(home, subtests) -> None:
+    from personalclaw.apps.manifest import _config_permission_errors
+    from personalclaw.config.editable import _EDITABLE_CONFIG
+
+    for field, *_ in UPDATE_SETTINGS:
+        with row(subtests, setting=field):
+            errors = _config_permission_errors([ORDINARY, field])
+            assert len(errors) == 1, errors
+            assert field in errors[0] and UPDATE_SETTINGS_SENTENCE in errors[0], errors
+    with row(subtests, check="an ordinary setting still installs"):
+        assert _config_permission_errors([ORDINARY]) == []
+    with row(subtests, check="the owner's alone are exactly these, and one update setting is not"):
+        from personalclaw.config.edit_spec import owner_only_setting
+
+        owned = {f for f, spec in _EDITABLE_CONFIG.items() if owner_only_setting(spec)}
+        assert owned == {f for f, *_ in UPDATE_SETTINGS}, owned
+        left = {f for f in _EDITABLE_CONFIG if f.startswith("updates.")} - owned
+        assert left == {"updates.check_interval_hours"}, left
+    with row(subtests, check="your install's review refuses it"):
+        bundle = _settings_bundle(home.pc)
+        manifest = json.loads((bundle / "app.json").read_text(encoding="utf-8"))
+        manifest["permissions"]["config"] = [ORDINARY, "updates.pin"]
+        (bundle / "app.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+        async with _gateway([]) as gw:
+            status, text = await gw.call("POST", "/api/apps/preview", {"source": str(bundle)})
+        assert status >= 400, text
+        assert UPDATE_SETTINGS_SENTENCE in text, text

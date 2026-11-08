@@ -549,18 +549,31 @@ def test_updates_defaults_are_release_tracking_and_notify_only():
 
 
 def test_updates_fields_in_editable_allowlist():
-    """Every field is PATCH-editable (the write path of the round-trip)."""
+    """Every field is PATCH-editable (the write path of the round-trip), and which release, whether
+    to look, whether to apply it and which release Roll back offers are the owner's alone
+    (``edit_spec.UPDATE_SETTING``)."""
+    from personalclaw.config.edit_spec import UPDATE_SETTING
     from personalclaw.config.editable import _EDITABLE_CONFIG
 
     assert _EDITABLE_CONFIG["updates.channel"] == {
         "type": "enum",
         "values": ["stable", "beta", "nightly"],
+        "owner_only": UPDATE_SETTING,
     }
-    assert _EDITABLE_CONFIG["updates.auto"] == {"type": "enum", "values": ["off", "staged"]}
-    assert _EDITABLE_CONFIG["updates.check_enabled"] == {"type": "bool"}
+    assert _EDITABLE_CONFIG["updates.auto"] == {
+        "type": "enum",
+        "values": ["off", "staged"],
+        "owner_only": UPDATE_SETTING,
+    }
+    assert _EDITABLE_CONFIG["updates.check_enabled"] == {
+        "type": "bool",
+        "owner_only": UPDATE_SETTING,
+    }
     assert _EDITABLE_CONFIG["updates.check_interval_hours"] == {"type": "int", "min": 1, "max": 168}
     assert _EDITABLE_CONFIG["updates.pin"]["type"] == "str"
+    assert _EDITABLE_CONFIG["updates.pin"]["owner_only"] is UPDATE_SETTING
     assert _EDITABLE_CONFIG["updates.last_version"]["type"] == "str"
+    assert _EDITABLE_CONFIG["updates.last_version"]["owner_only"] is UPDATE_SETTING
 
 
 def test_legacy_auto_update_true_maps_to_staged_on_stable(cfg_file):

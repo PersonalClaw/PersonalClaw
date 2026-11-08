@@ -126,9 +126,9 @@ class PermissionChecker:
         """Whether the app may read and write the config field *field* (``voice.echo_filter_
         enabled``) through ``/api/config``. EXACT match, deny-by-default: the path grant
         ``/api/config`` reaches the route, and this list says which settings it reaches —
-        the ones install consent named. A security setting can never be on it
-        (``AppManifest.validate`` refuses the declaration), and the PATCH refuses one first
-        anyway (``config/edit_spec.app_write_refusal``)."""
+        the ones install consent named. A security setting or an update setting can never be
+        on it (``AppManifest.validate`` refuses the declaration), and the PATCH refuses one
+        first anyway (``config/edit_spec.app_write_refusal``)."""
         return bool(field) and field in self.permissions.config
 
     # -- app-to-app messaging --------------------------------------------
@@ -818,7 +818,7 @@ _WRITES_SNIPPET = (
 _RENDERS = "renders it with the values it is sent; it writes nothing"
 _SCREENED_CONFIG = (
     "screened: an app reads and writes only the settings its manifest declares in "
-    "`permissions.config`, and never a security setting"
+    "`permissions.config`, and never a security setting or an update setting"
 )
 #: The app a ``/api/providers/{name}/…`` or ``/api/apps/{name}/config`` route addresses: a provider
 #: is registered under its app's name, and the settings an app may reach are its own.

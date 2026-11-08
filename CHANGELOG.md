@@ -31,6 +31,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The page's theme colour follows your theme, so a browser that tints its title bar by it, and the dashboard installed as a web app, follow it too, and a stored light theme opens light from the first frame.**
 - **The desktop app can update an older gateway it found, from the Gateways window, and then use it.**
 - **Hands-free voice explains itself: its button beside the microphone has a waveform icon and says what it does when you point at it or tab to it, and while it listens the chat names the phrase that sends and the one that clears.**
+- **Apps can't change the update settings, as they can't start an update. `updates.channel`, `updates.pin`, `updates.auto`, `updates.check_enabled` and `updates.last_version` are yours alone to change, with nothing new to confirm, and an app that lists one in `permissions.config` fails its next validation, and gets 403 for it until then.**
 
 ### Fixed
 

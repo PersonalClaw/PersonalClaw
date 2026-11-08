@@ -19,6 +19,7 @@ from personalclaw.config.edit_spec import (
     ConfigValueError,
     app_write_refusal,
     coerce_edit_value,
+    owner_only_setting,
     unconsented_loosening,
 )
 from personalclaw.config.editable import _EDITABLE_CONFIG
@@ -982,8 +983,11 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     # can send the flag. Decided on WHO asks and WHICH field only (`edit_spec.app_write_refusal`),
     # before the value is validated, so a refused app learns nothing about either.
     app_name = request.get("app", "")
+    # A setting that is the owner's alone (`edit_spec.OwnerOnlySetting`: the update settings) is
+    # refused the same way, in its class's own code and sentence.
     refused = app_write_refusal(path_key, spec, app_name)
     if refused:
+        owned = owner_only_setting(spec)
         await sel_log_async(
             _sel().log_api_access,
             caller=f"app:{app_name}",
@@ -991,8 +995,10 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
             outcome="denied",
             source="app_permissions",
             resources=path_key,
-            error="security setting is owner-only",
+            error=f"{owned.kind} is owner-only" if owned else "security setting is owner-only",
         )
+        if owned is not None:
+            return json_error("update_setting_owner_only", message=refused, status=403)
         return json_error("security_setting_owner_only", message=refused, status=403)
     # An ordinary setting is still the app's only if its manifest names it — the list install
     # consent showed. Checked after the security refusal so a security setting is refused as
