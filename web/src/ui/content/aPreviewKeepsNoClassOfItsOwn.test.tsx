@@ -23,23 +23,19 @@ const SVG = `<svg xmlns="http://www.w3.org/2000/svg" class="${NAMES}" viewBox="0
   + `<g class="${NAMES}"><rect class="flex" width="10" height="10" fill="#123456"/></g></svg>`
 
 describe('a document preview keeps no class attribute', () => {
-  it('renders the markup without its classes, and the rest of it as written', () => {
+  it('renders the markup’s elements without their classes', () => {
     const { container } = render(<DocumentPreview content={DOC} mode="light" title="Notes" />)
     const els = content(container)
+    expect(container.firstElementChild, 'the preview’s own wrapper keeps its classes').toHaveClass('doc')
     // Control: the markup itself survived, so an empty preview cannot pass.
     expect(els.map((e) => e.tagName.toLowerCase())).toEqual(['div', 'h2', 'p', 'svg', 'rect'])
     expect(container.textContent).toContain('Body text')
     for (const el of els) expect(el.hasAttribute('class'), `<${el.tagName.toLowerCase()}>`).toBe(false)
   })
-
-  it('the preview’s own wrapper keeps its classes', () => {
-    const { container } = render(<DocumentPreview content={DOC} mode="light" title="Notes" />)
-    expect(container.firstElementChild?.classList.contains('doc')).toBe(true)
-  })
 })
 
 describe('an SVG preview keeps no class attribute', () => {
-  it('renders the SVG without its classes, and the rest of it as written', () => {
+  it('renders the SVG’s elements without their classes', () => {
     const { container } = render(<SvgPreview content={SVG} mode="light" title="A drawing" />)
     const els = content(container)
     expect(els.map((e) => e.tagName.toLowerCase())).toEqual(['svg', 'g', 'rect'])
@@ -60,7 +56,9 @@ describe('a document’s exports keep no class attribute', () => {
       URL.createObjectURL = prev[0]
       URL.revokeObjectURL = prev[1]
     }
+    expect(blobs, 'exportDocumentHtml produced one download').toHaveLength(1)
     const html = await blobs[0].text()
+    expect(html).toContain('<main>')
     const main = html.slice(html.indexOf('<main>'), html.indexOf('</main>'))
     expect(main).toContain('Body text')
     expect(main).not.toMatch(/\sclass=/)

@@ -44,9 +44,9 @@ const SVG_TAGS = new Set([
   'feFlood', 'feMerge', 'feMergeNode', 'feMorphology', 'feDropShadow', 'image', 'switch',
 ])
 
-// Attributes allowed on any element. event handlers (on*) are NEVER allowed. Nor is `class`:
-// the markup renders in the app's own page, so it keeps no class of its own, in either profile.
-// The previews' wrappers carry their classes outside the sanitized markup.
+// Attributes allowed on any element. Event handlers (on*) are NEVER allowed, and neither is
+// `class`, in either profile: the previews' wrappers carry their own classes, outside the
+// sanitized markup.
 const GLOBAL_ATTRS = new Set([
   'id', 'title', 'lang', 'dir', 'role', 'colspan', 'rowspan', 'datetime',
   'cite', 'alt', 'width', 'height', 'align', 'valign', 'aria-label', 'aria-hidden',

@@ -36,10 +36,10 @@ untrusted material (e.g. crawled pages). Author accordingly:
   `figure`/`figcaption`, `img`, `a`, `strong`/`em`, `hr`, `section`/`article`,
   inline `svg` for simple diagrams.
 - **Dropped (don't bother emitting):** `<script>`, `<style>`, `<iframe>`, `<object>`,
-  `<form>`, inline event handlers (`onclick=…`), inline `style=` attributes, and
+  `<form>`, inline event handlers (`onclick=…`), `style=` and `class=` attributes, and
   `javascript:`/`data:text/html` URLs. Links must be `http(s)`, `mailto:`, `tel:`,
   relative, or `#anchors`; `data:image/*` is allowed for inline images.
-- Don't fight the sanitizer with inline styles — the editorial stylesheet handles
+- Don't fight the sanitizer with inline styles or classes — the editorial stylesheet handles
   typography. Write clean structure and let it style.
 
 ## House style
@@ -96,7 +96,7 @@ change that closes both.</p>
 
 ## Pitfalls
 
-- Don't emit `<script>`/`<style>`/inline `style=`/`onclick=` — they're stripped.
+- Don't emit `<script>`/`<style>`/inline `style=`/`class=`/`onclick=` — they're stripped.
 - Don't wrap the body in `<widget>` — `kind=document` is its own type.
 - Don't hand-style — semantics + the reader stylesheet, not inline CSS.
 - Keep links to safe schemes (http(s)/mailto/tel/relative/#).

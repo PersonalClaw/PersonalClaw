@@ -521,7 +521,6 @@ describe('sanitizeInlineHtml — an image from another site keeps no source', ()
   })
 })
 
-
 describe('sanitizeInlineHtml — document and SVG previews drop class attributes', () => {
   const NAMES = 'doc p-l flex'
 
@@ -531,7 +530,7 @@ describe('sanitizeInlineHtml — document and SVG previews drop class attributes
         + `<svg class="${NAMES}" viewBox="0 0 2 2"><rect class="x" width="2" height="2"/></svg></section>`,
       'document',
     )
-    expect(out).not.toMatch(/\sclass=/)
+    expect(out).not.toMatch(/\sclass=/i)
     // Control: everything else came through, so a sanitizer that strips all of it cannot pass.
     expect(out).toContain('<section><p>Words <em>here</em></p>')
     expect(out).toContain('<rect width="2" height="2"></rect>')
@@ -543,19 +542,26 @@ describe('sanitizeInlineHtml — document and SVG previews drop class attributes
         + `<g class="${NAMES}"><circle class="x" cx="1" cy="1" r="1" fill="#abcdef"/></g></svg>`,
       'svg',
     )
-    expect(out).not.toMatch(/\sclass=/)
+    expect(out).not.toMatch(/\sclass=/i)
     expect(out).toContain('viewBox="0 0 2 2"')
     expect(out).toContain('fill="#abcdef"')
+  })
+
+  it('an SVG keeps no class written in another case', () => {
+    const out = sanitizeInlineHtml('<svg xmlns="http://www.w3.org/2000/svg" CLASS="flex" viewBox="0 0 2 2"><g Class="x"/></svg>', 'svg')
+    expect(out).not.toMatch(/\sclass=/i)
+    expect(out).toContain('viewBox="0 0 2 2"')
   })
 
   it('an SVG the HTML-parse fallback recovers keeps no class either', () => {
     // Unescaped `&` makes the XML parse fail, so this is the fallback branch.
     const out = sanitizeInlineHtml('<svg class="flex" viewBox="0 0 2 2"><g class="x"><text>a & b</text></g></svg>', 'svg')
-    expect(out).toContain('<svg')
-    expect(out).not.toMatch(/\sclass=/)
+    expect(out).toContain('viewBox="0 0 2 2"')
+    expect(out).toContain('<g><text>a &amp; b</text></g>')
+    expect(out).not.toMatch(/\sclass=/i)
   })
 
-  it('every attribute the class rule does not name is untouched', () => {
+  it('the other attributes on an element keep their values', () => {
     const out = sanitizeInlineHtml('<p class="x" id="n" title="t" lang="en" data-k="v" aria-label="l">w</p>', 'document')
     expect(out).toBe('<p id="n" title="t" lang="en" data-k="v" aria-label="l">w</p>')
   })
