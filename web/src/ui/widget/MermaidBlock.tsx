@@ -7,7 +7,14 @@ let mermaidPromise: Promise<typeof import('mermaid').default> | null = null
 function loadMermaid(dark: boolean) {
   if (!mermaidPromise) {
     mermaidPromise = import('mermaid').then(({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'default', securityLevel: 'strict' })
+      // A diagram's labels keep no aria-modal. A set dompurifyConfig replaces mermaid's own, so
+      // its FORBID_TAGS is restated.
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: dark ? 'dark' : 'default',
+        securityLevel: 'strict',
+        dompurifyConfig: { FORBID_TAGS: ['style'], FORBID_ATTR: ['aria-modal'] },
+      })
       return mermaid
     })
   }
@@ -34,7 +41,10 @@ export function MermaidBlock({ code }: { code: string }) {
       .then(({ svg }) => {
         if (!alive || !ref.current) return
         ref.current.innerHTML = ''
-        ref.current.appendChild(document.createRange().createContextualFragment(svg))
+        // The rendered SVG keeps no aria-modal, on its root or in any label.
+        const frag = document.createRange().createContextualFragment(svg)
+        for (const el of frag.querySelectorAll('[aria-modal]')) el.removeAttribute('aria-modal')
+        ref.current.appendChild(frag)
         setErr(false)
       })
       .catch(() => { if (alive) setErr(true) })
