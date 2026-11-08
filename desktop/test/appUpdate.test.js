@@ -512,7 +512,7 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
       removeItem: (k) => { delete data[k]; },
     };
   };
-  function updater({ list = [release("v0.3.8")], policy = { channel: "stable", pin: "", checkEnabled: true }, tools, current = "0.3.7", at = installed(), store = memoryStore(), ownsGateway, isMountPoint, listHold = () => null, listStatus = () => 200, getuid, runSync, onState: alsoOnState = () => {} } = {}) {
+  function updater({ list = [release("v0.3.8")], policy = { channel: "stable", pin: "", checkEnabled: true }, tools, current = "0.3.7", at = installed(), store = memoryStore(), ownsGateway, isMountPoint, listHold = () => null, listStatus = () => 200, getuid, runSync, isPackaged = true, onState: alsoOnState = () => {} } = {}) {
     const timers = [];
     const states = [];
     const relaunched = [];
@@ -550,6 +550,7 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
       isPackaged: true,
       execPath: at.execPath,
       policy: () => policy,
+      ...(isPackaged ? {} : { isPackaged: false }),
       workDir: at.work,
       run: mac.run,
       quit: () => quits.push(Date.now()),
@@ -616,6 +617,123 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     await u.check({ asked: true });
     assert.equal(u.seen.length, 1);
     assert.equal(u.status().phase, "available");
+  });
+
+  /** Wait a few event-loop turns: long enough for a check that was going to start to read the list. */
+  const aWhile = () => new Promise((r) => setTimeout(r, 30));
+
+  it("checks at once when it finds its gateway on a newer version, comparing versions, not their spelling", async () => {
+    const u = updater();
+    u.start();
+    u.noteGateway({ kind: "adopted", version: "0.3.8" });
+    await until(() => u.status().phase === "available");
+    assert.equal(u.seen.length, 1, "the gateway's newer version started no check");
+    assert.deepEqual(u.status().gateway, { kind: "adopted", version: "0.3.8", order: "ahead", plan: null });
+    // A release candidate is one release however it is spelled: the app's npm spelling and the
+    // gateway's Python one are the same version, and nothing is checked.
+    const rc = updater({ current: "0.3.8-rc.1", list: [release("v0.3.8")] });
+    rc.start();
+    rc.noteGateway({ kind: "adopted", version: "0.3.8rc1" });
+    await aWhile();
+    assert.equal(rc.seen.length, 0);
+    assert.equal(rc.status().gateway.order, "same");
+  });
+
+  it("checks once a gateway version in a run, however often it is found on it", async () => {
+    const u = updater();
+    u.start();
+    u.noteGateway({ kind: "adopted", version: "0.3.8" });
+    await until(() => u.seen.length === 1);
+    // Lost, then found again on the same version (a restart in place, a move): nothing more.
+    u.noteGateway({ kind: "none" });
+    u.noteGateway({ kind: "adopted", version: "v0.3.8" });
+    u.noteGateway({ kind: "adopted", version: "0.3.8" });
+    await aWhile();
+    assert.equal(u.seen.length, 1, "the same version was checked for again");
+    // Updated again, to a version not checked for yet: once more.
+    u.noteGateway({ kind: "adopted", version: "0.3.9" });
+    await until(() => u.seen.length === 2);
+  });
+
+  it("makes the start's first check at once when it found a newer gateway before it started", async () => {
+    const u = updater();
+    u.noteGateway({ kind: "adopted", version: "0.3.8" });
+    await aWhile();
+    assert.equal(u.seen.length, 0, "a check before the updater started");
+    u.start();
+    assert.deepEqual(u.timers.map((t) => t.ms), [0]);
+    u.timers[0].fn();
+    await until(() => u.status().phase === "available");
+    assert.equal(u.seen.length, 1);
+    assert.deepEqual(u.timers.map((t) => t.ms), [0, CHECK_EVERY_MS]);
+  });
+
+  it("checks nothing for a newer gateway with automatic checks off, and Check now still checks", async () => {
+    const u = updater({ policy: { channel: "stable", pin: "", checkEnabled: false } });
+    u.start();
+    u.noteGateway({ kind: "adopted", version: "0.3.8" });
+    await aWhile();
+    assert.equal(u.seen.length, 0);
+    await u.check({ asked: true });
+    assert.equal(u.seen.length, 1);
+    assert.equal(u.status().phase, "available");
+  });
+
+  it("checks for nothing on a gateway at its own version, an older one, one it can't compare, its own or none, nor in a development run", async () => {
+    const cases = [
+      [{ kind: "adopted", version: "0.3.7" }, "same"],
+      [{ kind: "adopted", version: "0.3.6" }, "behind"],
+      [{ kind: "adopted", version: "0.3.9+local" }, "unknown"],
+      [{ kind: "adopted", version: "" }, "unknown"],
+      [{ kind: "own" }, "same"],
+      [{ kind: "none" }, ""],
+    ];
+    for (const [told, order] of cases) {
+      const u = updater();
+      u.start();
+      u.noteGateway(told);
+      await aWhile();
+      assert.equal(u.seen.length, 0, `${JSON.stringify(told)} started a check`);
+      assert.equal(u.status().gateway.order, order, JSON.stringify(told));
+    }
+    assert.equal(updater().status().gateway, null, "a gateway before main said one");
+    const dev = updater({ isPackaged: false });
+    dev.start();
+    dev.noteGateway({ kind: "adopted", version: "0.3.8" });
+    await aWhile();
+    assert.equal(dev.seen.length, 0, "a development run checked");
+  });
+
+  it("reads the release list once for two checks at once", async () => {
+    let open;
+    const held = new Promise((r) => (open = r));
+    const u = updater({ listHold: (n) => (n === 0 ? held : null) });
+    const first = u.check({ asked: true });
+    const second = u.check({ asked: false });
+    assert.equal(first, second, "the second check did not join the first");
+    open();
+    await first;
+    assert.equal(u.seen.length, 1);
+    assert.equal(u.status().phase, "available");
+  });
+
+  it("tries the check for a newer gateway once more a minute later when the list can't be read, once a version", async () => {
+    const u = updater({ listStatus: () => 503 });
+    u.start();
+    const before = u.timers.length;
+    u.noteGateway({ kind: "adopted", version: "0.3.8" });
+    await until(() => u.status().phase === "failed");
+    assert.equal(u.status().why, "unreachable");
+    assert.equal(u.status().sentence, "The release list couldn't be read. Check now tries again.");
+    assert.doesNotMatch(u.status().sentence, /releases page/);
+    assert.deepEqual(u.timers.slice(before).map((t) => t.ms), [FIRST_CHECK_AFTER_MS], "no second try was set");
+    u.timers[before].fn();
+    await until(() => u.seen.length === 2);
+    await aWhile();
+    // Failed again: no third try for that version, and none for a check that was asked for.
+    assert.equal(u.timers.length, before + 1);
+    await u.check({ asked: true });
+    assert.equal(u.timers.length, before + 1, "an asked check set a second try");
   });
 
   it("asks GitHub nothing while the home's settings cannot be read, and says so", async () => {
@@ -1314,9 +1432,14 @@ describe("main.js: the update is asked for in the app menu, and the swap is the 
 
   it("follows the pin only while the home's gateway is not one the app found running, and trashes the old copy once the new one has its gateway", () => {
     // The kind of gateway, never what the row says: a signed-out row is still one kind or the other.
-    assert.match(body("makeThisAppsUpdater"), /readUpdatePolicy\(\{ home: PERSONALCLAW_HOME, ownGateway: !adoptedGateway && localState\.state !== "served" \}\)/);
+    assert.match(body("makeThisAppsUpdater"), /readUpdatePolicy\(\{ home: PERSONALCLAW_HOME, ownGateway: !adoptedGateway && !\["served", "behind", "unusable"\]\.includes\(localState\.state\) \}\)/);
     assert.match(body("makeThisAppsUpdater"), /ownsGateway: \(\) => gatewayWatch\.kind === "own",/);
-    assert.match(body("startAppUpdater"), /if \(gatewayWatch\.kind && !gatewayGone\) appUpdater\.trashPrevious\(\);/);
+    // At the start, once a gateway is up; or later, once the first one is in use (a start that
+    // landed on the chooser, then Use It or a gateway started here), once a run.
+    assert.match(body("startAppUpdater"), /appUpdaterStarted = true;[\s\S]*if \(gatewayWatch\.kind && !gatewayGone\) trashPreviousOnce\(\);/);
+    assert.match(body("sawGateway"), /if \(kind !== "none"\) trashPreviousOnce\(\);/);
+    assert.match(body("trashPreviousOnce"), /if \(previousTrashed \|\| !appUpdaterStarted \|\| !appUpdater\) return;\s*previousTrashed = true;\s*appUpdater\.trashPrevious\(\);/);
+    assert.equal([...MAIN.matchAll(/appUpdater\.trashPrevious\(\)/g)].length, 1, "the old copy is trashed from a second place");
     const ready = MAIN.slice(MAIN.indexOf("app.whenReady().then("));
     assert.ok(ready.indexOf("await bringUpLocalGateway();") < ready.indexOf("startAppUpdater();"), "the updater starts before the gateway is up");
   });

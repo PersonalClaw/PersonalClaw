@@ -248,7 +248,8 @@ describe("the app starts its own gateway first, uses this home's running one onl
     const up = fnBody("bringUpLocalGateway");
     // The look after a failed start proves and sends no credential; the sign-in is the press's.
     assert.doesNotMatch(up, /reachHomeGateway|homeGateway\.signIn|adoptHomeGateway/, "the start signs in to a gateway nobody chose");
-    assert.match(up, /if \(found\.ok\) \{\s*\/\/[^\n]*\n\s*if \(autoUseRunning\(\)\) return \(await useRunningGateway\(\)\)\.ok;\s*startFailure = \{ \.\.\.exit, found: true \};\s*setLocalState\("found", foundSentence\(found\.gateway\)\);\s*return false;/);
+    // A gateway this app may not use is said on the row, and neither offered nor used.
+    assert.match(up, /if \(found\.ok\) \{\s*\/\/[^\n]*\n\s*const verdict = mayUseFoundGateway\(found\.gateway\);\s*if \(!verdict\.ok\) \{\s*setBehind\(found\.gateway, verdict, \{ show: false \}\);\s*return false;\s*\}\s*\/\/[^\n]*\n\s*if \(autoUseRunning\(\)\) return \(await useRunningGateway\(\)\)\.ok;\s*startFailure = \{ \.\.\.exit, found: true \};\s*setLocalState\("found", foundSentence\(found\.gateway\)\);\s*return false;/);
     assert.match(fnBody("autoUseRunning"), /shellStore\.getItem\(AUTO_USE_KEY\) === "1"/, "the standing yes is on unless the owner ticked it");
     // Signing in happens in five places, each after a proof: reachHomeGateway (a press, the standing
     // yes), the watch's follow of a gateway in use that moved, its take-back of a gateway that
@@ -410,6 +411,13 @@ describe("a start that timed out is the app's own gateway, never another one (ma
       reachHomeGateway: async () => (did.push("sign-in"), { ok: true, gateway: found && found.gateway, ready: {} }),
       adoptHomeGateway: async () => {
         did.push("adopt");
+        return true;
+      },
+      // Whether a gateway it found may be used: a test's own verdict, else yes.
+      mayUseFoundGateway: (gateway) => gateway.verdict || { ok: true },
+      setBehind: (_gateway, verdict) => {
+        box.localState = { state: verdict.state, sentence: verdict.sentence };
+        did.push(verdict.state);
       },
     };
     vm.createContext(box);
@@ -441,6 +449,16 @@ describe("a start that timed out is the app's own gateway, never another one (ma
       const used = run({ child, start: refused, found: serving, autoUse: true });
       assert.equal(await used.box.bringUpLocalGateway(), true);
       assert.deepEqual(used.did, ["starting", "look", "starting", "sign-in", "adopt"], used.did.join(", "));
+    }
+  });
+
+  it("neither offers nor uses a gateway it found that it may not use, on the standing yes either", async () => {
+    const older = { ok: true, gateway: { pid: 4242, port: 50715, verdict: { ok: false, state: "behind", sentence: "older than this app" } } };
+    for (const autoUse of [false, true]) {
+      const { box, did } = run({ start: refused, found: older, autoUse });
+      assert.equal(await box.bringUpLocalGateway(), false);
+      assert.deepEqual(did, ["starting", "look", "behind"], `with the box ${autoUse ? "ticked" : "clear"}: ${did.join(", ")}`);
+      assert.equal(box.localState.sentence, "older than this app");
     }
   });
 

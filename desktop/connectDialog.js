@@ -56,7 +56,7 @@ const CONNECT_CHANNELS = Object.freeze({
 });
 
 /** The "This computer" row's states, as `main.js` keeps them (`localState`). */
-const LOCAL_STATES = Object.freeze(["starting", "own", "found", "adopted", "stopped", "served", "older", "signed_out", "cant_sign_in"]);
+const LOCAL_STATES = Object.freeze(["starting", "own", "found", "adopted", "stopped", "served", "older", "behind", "unusable", "signed_out", "cant_sign_in"]);
 
 /** Where a newer app comes from: the one page the "This computer" row's Open the Releases Page
  *  opens, in the browser. Fixed here, so the dialog names no address of its own. */
@@ -106,6 +106,13 @@ function describeLocal(local = {}) {
     // offers the newer app instead.
     case "older":
       return { state, badge: "", statusText: "Older than this home", statusTone: "bad", detail: sentence, action: { id: "releases", label: "Open the Releases Page" } };
+    // This home's gateway runs, and this app doesn't use it: it is older than this app (`behind`), or
+    // a build this app can't use (`unusable`). Nothing is signed in to it; Try Again looks again,
+    // once it is updated or installed again.
+    case "behind":
+      return { state, badge: "already running", statusText: "Older than this app", statusTone: "bad", detail: sentence, action: { id: "start", label: "Try Again" } };
+    case "unusable":
+      return { state, badge: "already running", statusText: "Can't be used", statusTone: "bad", detail: sentence, action: { id: "start", label: "Try Again" } };
     // The gateway runs and ended this app's sign-in: nothing signs it in again but the owner's press.
     case "signed_out":
       return { state, badge: "", statusText: "Signed out", statusTone: "act", detail: sentence, action: { id: "sign-in", label: "Sign In Again" } };

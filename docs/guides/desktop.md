@@ -151,6 +151,10 @@ start is refused, it uses that gateway without asking; that box is off until you
   goes on only once that gateway proves it holds the home's local secret. Another home's gateway,
   a program that is not one, or an older gateway that cannot prove it, gets nothing more: the
   **Gateway → Gateways…** window says which it was.
+- **It uses one at its own version or newer.** A gateway it found that runs an older version than
+  the app, or a build the app can't use, is not signed in to: the Gateways window's **This
+  computer** row says which, and offers **Try Again** once you have updated the gateway or
+  installed it again.
 - **It signs in as the CLI does**, with the home's local secret, for 30 days, as long as the app's
   own sign-in lasts by default. The sign-in is held exactly as that one is: in memory, as the
   windows' session cookie, never on disk or in an address. Quitting ends it.
@@ -834,7 +838,8 @@ tested backend paths today: [WSL2 or Docker Desktop](platforms.md#windows-via-ws
 ## Updating
 
 **The app updates itself when you ask it to.** It looks for a new release a minute after it
-starts and then once a day, and says so in two places: **Settings › Updates › This app**, and a
+starts and then once a day, and at once when it finds the gateway it uses on a newer version than
+itself (one you updated from a browser tab, say), and says so in two places: **Settings › Updates › This app**, and a
 row in the System status card while a new version is on offer. **PersonalClaw › Check for
 Updates…** (on Linux, **Help › Check for Updates…**) looks now and opens This app. It takes two
 presses. **Update** downloads and checks the new version in the background, and changes nothing
@@ -887,7 +892,7 @@ An AppImage replaces itself the same way, the old file kept beside it until the 
 Your data lives in `~/.personalclaw` and is untouched by any of it.
 
 **Where it can't update itself, it says why and points at the
-[releases page](https://github.com/PersonalClaw/PersonalClaw/releases)**, as every failure does:
+[releases page](https://github.com/PersonalClaw/PersonalClaw/releases)**, as every failure to install does:
 
 - a copy run from its disk image, or one macOS runs from a temporary copy because it was opened
   where it was downloaded: move it to Applications first;
@@ -946,7 +951,8 @@ drop, so This app says the file couldn't be read instead.
   the same switch as everywhere else. Off, neither the gateway nor the app asks GitHub on its
   own: the panel's **Check now** and **Check for Updates…** each look once, when you press them.
   On, the gateway asks when it starts and then once every `check_interval_hours` (default 12),
-  and the app a minute after it starts and then once a day.
+  and the app a minute after it starts, once a day, and when it finds its gateway on a newer
+  version.
 
 ## Related
 

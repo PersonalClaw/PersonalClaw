@@ -153,14 +153,31 @@ function olderSentence(newest = "") {
   );
 }
 
+/** The This computer row's sentence for a gateway this app found on a version older than its own:
+ *  the app needs its gateway at its own version or newer. */
+function behindSentence({ port, version, app }) {
+  return `This home's gateway on port ${port} runs ${version}, older than this app (${app}), and the app needs its gateway at ${app} or newer. Update the gateway, then press Try Again.`;
+}
+
+/** The row's sentence for a gateway this app found and can't use that isn't older than it: one whose
+ *  version it can't compare with its own (*comparable* false; *version* "" for one it can't read), or
+ *  a build it can't use whatever its version says. */
+function unusableSentence({ port, version, app, comparable }) {
+  if (comparable) return `This home's gateway on port ${port} reports ${version}, but this app can't use that build. Install the gateway again, then press Try Again.`;
+  const reports = version ? `version ${version}, which this app can't compare with its own (${app})` : `a version this app can't read, which it can't compare with its own (${app})`;
+  return `This home's gateway on port ${port} reports ${reports}: the app needs its gateway at ${app} or newer. Update the gateway, then press Try Again.`;
+}
+
 module.exports = {
   HOME_NEWER_EXIT,
   HOME_SERVED_EXIT,
   LAST_LINE_MAX,
   adoptedGoneSentence,
+  behindSentence,
   isUnasked,
   makeLastLine,
   notStartedSentence,
   olderSentence,
   stoppedSentence,
+  unusableSentence,
 };

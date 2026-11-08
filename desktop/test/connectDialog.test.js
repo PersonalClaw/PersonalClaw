@@ -191,6 +191,26 @@ describe("the \"This computer\" row, by how this computer's gateway stands", () 
     assert.match(older.statusDetail, /last used by PersonalClaw 0\.3\.7/);
   });
 
+  it("says a gateway it found and doesn't use is older than this app, or a build it can't use, with Try Again and nothing to switch to", () => {
+    const behind = at({ state: "behind", sentence: "This home's gateway on port 8765 runs 0.3.7, older than this app (0.3.8) …" });
+    assert.equal(behind.statusText, "Older than this app");
+    assert.equal(behind.statusTone, "bad");
+    assert.equal(behind.localBadge, "already running");
+    assert.deepEqual(behind.localAction, { id: "start", label: "Try Again" });
+    assert.equal(behind.switchable, false);
+    assert.match(behind.statusDetail, /runs 0\.3\.7, older than this app/);
+    const unusable = at({ state: "unusable", sentence: "This home's gateway on port 8765 reports 0.3.9, but this app can't use that build …" });
+    assert.equal(unusable.statusText, "Can't be used");
+    assert.equal(unusable.statusTone, "bad");
+    assert.deepEqual(unusable.localAction, { id: "start", label: "Try Again" });
+    assert.equal(unusable.switchable, false);
+    for (const state of ["behind", "unusable"]) {
+      const chooser = describeChooser({ state, sentence: "why" });
+      assert.deepEqual([chooser.retry, chooser.use, chooser.releases, chooser.settled], [true, false, false, false], state);
+      assert.equal(chooser.sentence, "why");
+    }
+  });
+
   it("offers nothing while it starts", () => {
     const starting = at({ state: "starting" });
     assert.equal(starting.statusText, "Starting…");

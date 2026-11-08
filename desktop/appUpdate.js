@@ -120,6 +120,16 @@ function compareVersions(a, b) {
 }
 
 const isNewer = (candidate, current) => compareVersions(candidate, current) === 1;
+
+/** What a gateway's version is to this app's (`compareVersions`, the gateway's first). */
+const ORDER_WORD = Object.freeze({ 1: "ahead", 0: "same", "-1": "behind" });
+
+/** One key for every spelling of a version (`0.3.8-rc.1` and `0.3.8rc1` alike), or the text itself
+ *  for one this file can't read. */
+function versionKey(text) {
+  const v = parseVersion(text);
+  return v ? JSON.stringify(orderKey(v)) : `text:${String(text)}`;
+}
 const sameVersion = (a, b) => compareVersions(a, b) === 0;
 
 /** Whether *text* is a release candidate, an alpha or beta, or a development build. */
@@ -235,7 +245,7 @@ function sentenceFor(why, detail = {}) {
     case "pin_missing":
       return `No release matches updates.pin (${detail.pin}).`;
     case "unreachable":
-      return "The release list couldn't be read. Check again later, or look at the releases page.";
+      return "The release list couldn't be read. Check now tries again.";
     case "no_asset":
       return "This release has no copy for this computer. Install it from the releases page.";
     case "unchecked":
@@ -694,6 +704,11 @@ function makeAppUpdater({
     /** A ready copy the home's settings no longer allowed, and why: `{version, sentence}`, until the
      *  next Update. */
     dropped: null,
+    /** Why the last check failed (`sentenceFor`'s key), or "" when it didn't. */
+    why: "",
+    /** The gateway the app uses, as main last proved it (`noteGateway`): `{kind, version, order,
+     *  plan}`, or null until main has said. */
+    gateway: null,
     releasesPage: RELEASES_PAGE_URL,
   };
   /** The ready copy in the update's private folder, and what it is held to at Restart to finish:
@@ -709,6 +724,15 @@ function makeAppUpdater({
   const uid = getuid();
   /** What is said while nothing failed: why this copy updates from the releases page, if it does. */
   const standing = where.how === "page" || where.how === "dev" ? sentenceFor(where.why, where) : "";
+  /** The check under way, which a second asks for joins. */
+  let checking = null;
+  /** Whether `start()` has run, and whether a gateway on a newer version was found before it. */
+  let started = false;
+  let checkAtStart = "";
+  /** The gateway versions this run checked for once found on them, and those tried once more. */
+  const checkedFor = new Set();
+  const retriedFor = new Set();
+  let retryTimer = null;
 
   const view = () => ({ ...state, restartsGateway: Boolean(ownsGateway()) });
   const set = (patch) => {
@@ -833,7 +857,16 @@ function makeAppUpdater({
     }
   }
 
-  async function check({ asked = false } = {}) {
+  /** Check for a release on offer now. A second call while one is under way joins it. */
+  function check(options) {
+    if (checking) return checking;
+    checking = checkNow(options).finally(() => {
+      checking = null;
+    });
+    return checking;
+  }
+
+  async function checkNow({ asked = false } = {}) {
     if (busy) return view();
     if (readyCopy) {
       // A ready update keeps its offer while the home's settings still allow it, read again now
@@ -845,10 +878,10 @@ function makeAppUpdater({
     const rules = policy();
     // Nothing is asked of GitHub while the home's settings are unknown: the check says why instead.
     if (rules.unreadable) {
-      return set({ phase: "failed", available: null, checkedAt: now(), sentence: sentenceFor("unreadable_config", { file: rules.unreadable }) });
+      return set({ phase: "failed", available: null, checkedAt: now(), why: "unreadable_config", sentence: sentenceFor("unreadable_config", { file: rules.unreadable }) });
     }
     if (!asked && !rules.checkEnabled) return view();
-    set({ phase: "checking", sentence: "" });
+    set({ phase: "checking", sentence: "", why: "" });
     try {
       const releases = await fetchReleases({ request, userAgent });
       // An update that started while the list was read keeps its own state.
@@ -860,6 +893,7 @@ function makeAppUpdater({
           phase: quiet ? "current" : "failed",
           available: null,
           checkedAt: now(),
+          why: quiet ? "" : chosen.why,
           sentence: quiet ? "" : sentenceFor(chosen.why, { pin: rules.pin, current }),
         });
       }
@@ -874,7 +908,8 @@ function makeAppUpdater({
       });
     } catch (err) {
       if (busy || readyCopy) return view();
-      return set({ phase: "failed", checkedAt: now(), sentence: err instanceof UpdateFailure ? err.message : sentenceFor("unreachable") });
+      const why = err instanceof UpdateFailure ? err.why : "unreachable";
+      return set({ phase: "failed", checkedAt: now(), why, sentence: sentenceFor(why, err instanceof UpdateFailure ? err.detail : {}) });
     }
   }
 
@@ -1136,21 +1171,58 @@ function makeAppUpdater({
     return left;
   }
 
+  /** A check for the gateway version *key*, found newer than this app: tried once more a minute
+   *  later when the release list couldn't be read, once a version. */
+  const checkFor = (key) =>
+    check({ asked: false }).then((shown) => {
+      if (shown.why === "unreachable" && !retriedFor.has(key) && !stopping) {
+        retriedFor.add(key);
+        retryTimer = setTimer(() => {
+          retryTimer = null;
+          if (!stopping) check({ asked: false });
+        }, FIRST_CHECK_AFTER_MS);
+      }
+      return shown;
+    });
+
   const schedule = (ms) => {
     timer = setTimer(() => {
       timer = null;
-      check({ asked: false }).finally(() => schedule(CHECK_EVERY_MS));
+      const forKey = checkAtStart;
+      checkAtStart = "";
+      (forKey ? checkFor(forKey) : check({ asked: false })).finally(() => schedule(CHECK_EVERY_MS));
     }, ms);
   };
+
+  /**
+   * What main proved of the gateway the app uses: *kind* `own` (the app's own, on this app's
+   * version), `adopted` (one it found running, reporting *version*) or `none`. On a gateway it found
+   * on a newer version than itself, the app checks for its own update at once, once a version in a
+   * run, as an automatic check: with automatic checks off it doesn't. Found before `start()`, that
+   * check is the start's first.
+   */
+  function noteGateway({ kind = "none", version = "" } = {}) {
+    const known = kind === "own" || kind === "adopted";
+    const order = kind === "own" ? "same" : kind === "adopted" ? ORDER_WORD[String(compareVersions(version, current))] || "unknown" : "";
+    set({ gateway: known ? { kind, version: kind === "own" ? current : String(version), order, plan: null } : { kind: "none", version: "", order: "", plan: null } });
+    if (kind !== "adopted" || order !== "ahead" || where.how === "dev") return;
+    const key = versionKey(version);
+    if (checkedFor.has(key)) return;
+    checkedFor.add(key);
+    if (started) checkFor(key);
+    else checkAtStart = key;
+  }
 
   return {
     /** Say how the update the last copy started ended, then check after the start and once a day.
      *  Resolves that ending, or null. */
     start() {
+      started = true;
       const last = readAttempt();
       if (last) set({ last });
       sweepStale().catch((err) => log(`the folders an update left could not be swept: ${err && err.message}`));
-      if (where.how !== "dev") schedule(FIRST_CHECK_AFTER_MS);
+      // A gateway found on a newer version before the start is checked for at once.
+      if (where.how !== "dev") schedule(checkAtStart ? 0 : FIRST_CHECK_AFTER_MS);
       return last;
     },
     /** The quit's first step: no more checks, a ready copy nobody restarted on is removed, and a
@@ -1159,9 +1231,12 @@ function makeAppUpdater({
       stopping = true;
       if (timer) clearTimer(timer);
       timer = null;
+      if (retryTimer) clearTimer(retryTimer);
+      retryTimer = null;
       discardReady();
     },
     check,
+    noteGateway,
     download,
     finish,
     swapIfStaged,
