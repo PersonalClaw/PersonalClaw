@@ -48,6 +48,9 @@ HOLDS_LIMITED = {
     (_PROBE, "test_under_a_tracer_a_scan_on_the_loop_still_fails"): (
         "the scanning test's plant: that regression, read under a tracer, fails the limited bound"
     ),
+    (_PROBE, "test_under_a_tracer_a_limited_tests_reading_is_measured_again_only_over_its_bound"): (
+        "pins the bound _judged hands a limited test's re-measure, on readings made by hand"
+    ),
 }
 
 #: The upload probe's tests that keep its 0.1 s bound under a tracer, each with why: for the
@@ -69,6 +72,9 @@ HOLDS_KEPT = {
     ),
     (_PROBE, "test_a_reading_under_the_bound_holds_and_an_answer_counts_when_judged"): (
         "pins _holds itself, on readings made by hand"
+    ),
+    (_PROBE, "test_on_a_mac_that_reads_instructions_a_worker_credited_reading_is_judged_again"): (
+        "pins the second measurement _judged takes, on readings made by hand"
     ),
 }
 
