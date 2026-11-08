@@ -269,6 +269,22 @@ def test_pids_running_empty_for_unknown_path(tmp_path):
     assert BackendSupervisor._pids_running(tmp_path / "nope" / "server.py") == []
 
 
+def test_the_lookup_waits_for_its_ps_before_it_returns(tmp_path, monkeypatch):
+    # An unclosed pipe left the ``ps`` child running past the lookup, which the state-leak guard
+    # names (tests/state_leak_guard.py).
+    opened = []
+    real = os.popen
+
+    def popen(*args, **kwargs):
+        opened.append(real(*args, **kwargs))
+        return opened[-1]
+
+    monkeypatch.setattr(os, "popen", popen)
+    BackendSupervisor._pids_running(tmp_path / "nope" / "server.py")
+    [ps] = opened
+    assert ps._proc.returncode is not None, "ps was still running after the lookup"
+
+
 def test_stop_with_no_tracked_proc_is_safe(tmp_path):
     sup = BackendSupervisor()
     # stop with nothing tracked is a no-op (returns False), never raises

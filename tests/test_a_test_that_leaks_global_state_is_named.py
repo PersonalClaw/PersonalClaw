@@ -3,7 +3,8 @@
 The guard is ``tests/state_leak_guard.py``.
 
 Planted tests each leave one thing behind: a live thread, a changed working directory, a signal
-handler, a child process still running, a socket still listening, or an entry in a fenced registry.
+handler, a child process still running, a socket still listening, an entry in a fenced registry,
+or a file written outside the run's temporary folders.
 They run through this suite's own ``conftest`` in a fresh pytest, so what is read is what the real
 guard writes: ``reports/state-leaks.json`` in report mode, and a failure of the leaking test under
 ``--strict-state``. The tests after each leaker show the working directory and the handler given
@@ -13,11 +14,13 @@ back, and the fenced entry restored by its fence after the guard saw it. The gua
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import textwrap
 import threading
 import time
@@ -90,6 +93,12 @@ _LEAKS = """
         assert ("planted", "kind") not in notification_kinds._REGISTRY
 
 
+    def test_writes_outside_its_temporary_folders(tmp_path):
+        (tmp_path / "inside.txt").write_text("a test's own folder")
+        with open(os.path.join(START, "written-outside.txt"), "w") as handle:
+            handle.write("left in the run's root")
+
+
     def test_leaves_an_event_router_attached():
         from personalclaw import event_triggers
 
@@ -102,15 +111,17 @@ _LEAKS = """
         assert not event_triggers.router_attached()
 """
 
-#: The kind each leaker's record carries, and whether strict mode fails it.
+#: The kind each leaker's record carries, whether strict mode fails it, and whether a fence
+#: restores it.
 _EXPECTED = {
-    "test_leaves_a_thread": ("thread", True),
-    "test_changes_directory": ("working directory", True),
-    "test_installs_a_signal_handler": ("signal handler", True),
-    "test_leaves_a_child": ("child process", True),
-    "test_leaves_a_port_listening": ("listening socket", True),
-    "test_registers_into_a_fenced_registry": ("fenced registry", False),
-    "test_leaves_an_event_router_attached": ("fenced registry", False),
+    "test_leaves_a_thread": ("thread", True, False),
+    "test_changes_directory": ("working directory", True, False),
+    "test_installs_a_signal_handler": ("signal handler", True, False),
+    "test_leaves_a_child": ("child process", True, False),
+    "test_leaves_a_port_listening": ("listening socket", True, False),
+    "test_registers_into_a_fenced_registry": ("fenced registry", False, True),
+    "test_writes_outside_its_temporary_folders": ("file written", False, False),
+    "test_leaves_an_event_router_attached": ("fenced registry", False, True),
 }
 
 
@@ -120,9 +131,13 @@ def _pytest(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env["PYTHONPATH"] = os.pathsep.join([str(_TESTS_DIR), env.get("PYTHONPATH", "")]).rstrip(
         os.pathsep
     )
+    # A temporary folder of the run's own inside the planted root, so the root itself is outside
+    # every temporary folder and a file written there is one the guard names.
+    (tmp_path / "tmp").mkdir(exist_ok=True)
+    env["TMPDIR"] = str(tmp_path / "tmp")
     return subprocess.run(
         [
-            *nested_pytest.argv(tmp_path),
+            *nested_pytest.argv(tmp_path / "tmp"),
             "-o",
             "addopts=",
             "-p",
@@ -157,27 +172,30 @@ def test_report_mode_names_each_leaker_and_fails_none(tmp_path: Path) -> None:
     proc = _pytest(tmp_path, "-p", "no:xdist", "test_leaks.py")
     out = proc.stdout[-4000:] + proc.stderr[-2000:]
     assert proc.returncode == 0, out
-    assert "12 passed" in proc.stdout and "error" not in proc.stdout.lower(), out
+    assert "13 passed" in proc.stdout and "error" not in proc.stdout.lower(), out
     report = _report(tmp_path)
     assert report["strict"] is False
     found = _by_test(report)
     assert set(found) == set(_EXPECTED), sorted(found)
-    for name, (kind, strict) in _EXPECTED.items():
+    for name, (kind, strict, fenced) in _EXPECTED.items():
         [leak] = found[name]
         assert leak["kind"] == kind, leak
         assert leak["strict"] is strict, leak
-        assert leak["fenced"] is (not strict), leak
+        assert leak["fenced"] is fenced, leak
         assert leak["worker"] == "main"
         assert leak["detail"], leak
     # The fenced entry shows, though its fence restored it before the next test (which passed).
     assert "notification_kinds" in found["test_registers_into_a_fenced_registry"][0]["detail"]
     assert "event_router" in found["test_leaves_an_event_router_attached"][0]["detail"]
+    # The file in the run's root is named; the one in the test's own folder is not.
+    [written] = found["test_writes_outside_its_temporary_folders"]
+    assert "written-outside.txt" in written["detail"] and "inside.txt" not in written["detail"]
     # Each test's position in its process's order: 1 for the first, as the file lists them.
     order = list(dict.fromkeys(name for name in _names_in(_LEAKS)))
     for name, leaks in found.items():
         assert leaks[0]["position"] == order.index(name) + 1, (name, leaks[0])
-    assert report["tests"] == 12 and report["guard_seconds"] >= 0
-    assert "state leaks: 7 recorded" in proc.stdout, out
+    assert report["tests"] == 13 and report["guard_seconds"] >= 0
+    assert "state leaks: 8 recorded over 13 tests, 5 strict (5 kinds)," in proc.stdout, out
 
 
 def _names_in(source: str) -> list[str]:
@@ -206,7 +224,7 @@ def test_strict_mode_fails_each_unfenced_leaker_but_an_allowlisted_one(tmp_path:
     )
     out = proc.stdout[-6000:] + proc.stderr[-2000:]
     assert proc.returncode == 1, out
-    assert "12 passed" in proc.stdout and "4 errors" in proc.stdout, out
+    assert "13 passed" in proc.stdout and "4 errors" in proc.stdout, out
     for name in (
         "test_leaves_a_thread",
         "test_changes_directory",
@@ -218,6 +236,7 @@ def test_strict_mode_fails_each_unfenced_leaker_but_an_allowlisted_one(tmp_path:
         "test_installs_a_signal_handler",
         "test_registers_into_a_fenced_registry",
         "test_leaves_an_event_router_attached",
+        "test_writes_outside_its_temporary_folders",
         "test_clean",
     ):
         assert f"ERROR test_leaks.py::{name}" not in proc.stdout, (name, out)
@@ -225,6 +244,23 @@ def test_strict_mode_fails_each_unfenced_leaker_but_an_allowlisted_one(tmp_path:
     assert report["strict"] is True
     [allowed] = _by_test(report)["test_installs_a_signal_handler"]
     assert allowed["allowlisted"] == 4242
+    # The allowlisted handler is not counted: the line counts what strict mode fails.
+    assert "state leaks: 8 recorded over 13 tests, 4 strict (4 kinds)," in proc.stdout, out
+
+
+def test_the_summary_line_counts_what_strict_mode_fails_and_its_kinds() -> None:
+    def leak(kind: str, strict: bool = True, allowlisted: int | None = None) -> dict:
+        return {"kind": kind, "strict": strict, "allowlisted": allowlisted}
+
+    line = slg.summary_line(
+        [leak("thread"), leak("thread"), leak("fenced registry", False), leak("thread", True, 7)],
+        20,
+        0.5,
+    )
+    assert line.startswith("state leaks: 4 recorded over 20 tests, 2 strict (1 kind), 0.50 ms")
+    assert slg.summary_line([], 3, 0.0).startswith(
+        "state leaks: 0 recorded over 3 tests, 0 strict (0 kinds)"
+    )
 
 
 def test_each_record_names_its_real_xdist_worker_and_place_in_its_order(tmp_path: Path) -> None:
@@ -271,15 +307,34 @@ def test_a_thread_pool_is_recorded_but_never_fails() -> None:
     guard.start("t::pool", 1)
     before = guard.before()
     done = threading.Event()
-    pool = threading.Thread(target=done.wait, name="ThreadPoolExecutor-9_0")
-    pool.start()
+    pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="notification-verify")
+    pool.submit(done.wait)
     try:
         assert guard.after(before, strict=True, allowlist={}) == ""
         [leak] = _leaks(guard)
         assert leak.kind == "thread pool" and leak.strict is False
+        assert leak.detail.startswith("notification-verify_0")
     finally:
         done.set()
-        pool.join()
+        pool.shutdown()
+
+
+def test_a_thread_named_as_a_pool_names_its_workers_is_still_a_thread() -> None:
+    guard = _guard()
+    guard.start("t::named", 1)
+    before = guard.before()
+    done = threading.Event()
+    thread = threading.Thread(target=done.wait, name="ThreadPoolExecutor-9_0")
+    thread.start()
+    try:
+        assert "ThreadPoolExecutor-9_0 is still running" in guard.after(
+            before, strict=True, allowlist={}
+        )
+        [leak] = _leaks(guard)
+        assert leak.kind == "thread" and leak.strict is True
+    finally:
+        done.set()
+        thread.join()
 
 
 def test_a_changed_directory_is_given_back(tmp_path: Path) -> None:
@@ -364,6 +419,100 @@ def test_a_child_started_outside_a_test_is_not_held() -> None:
     assert inside in children._started
     inside.wait()
     assert children.close() == []
+
+
+# ── the files a test writes ──────────────────────────────────────────────────────────────────
+
+
+def _writes(tmp_path: Path) -> tuple[slg.Writes, Path, Path]:
+    inside, outside = tmp_path / "temporary", tmp_path / "elsewhere"
+    inside.mkdir()
+    outside.mkdir()
+    writes = slg.Writes([str(inside)])
+    writes.install()
+    return writes, inside, outside
+
+
+def test_each_write_outside_the_roots_is_named_once_and_none_inside(tmp_path: Path) -> None:
+    writes, inside, outside = _writes(tmp_path)
+    (outside / "kept.txt").write_text("before the window")
+    writes.open()
+    (inside / "mine.txt").write_text("a test's own")
+    (outside / "a.txt").write_text("one")
+    (outside / "a.txt").write_text("again")
+    with open(outside / "b.log", "a") as handle:
+        handle.write("appended")
+    fd = os.open(outside / "c.bin", os.O_WRONLY | os.O_CREAT)
+    os.close(fd)
+    (outside / "made").mkdir()
+    os.replace(outside / "kept.txt", outside / "moved.txt")
+    (outside / "moved.txt").unlink()
+    (outside / "kept.txt").exists()
+    (inside / "mine.txt").read_text()
+    names = [Path(p).name for p in writes.close()]
+    assert names == ["a.txt", "b.log", "c.bin", "made", "kept.txt", "moved.txt"], names
+
+
+def test_nothing_is_kept_while_no_window_is_open(tmp_path: Path) -> None:
+    writes, _inside, outside = _writes(tmp_path)
+    (outside / "a.txt").write_text("no window")
+    writes.open()
+    assert writes.close() == []
+    (outside / "b.txt").write_text("closed again")
+    writes.open()
+    assert writes.close() == []
+
+
+def test_a_childs_writes_are_the_childs_and_a_threads_are_its_process(tmp_path: Path) -> None:
+    """The hook is the process's own: a child it starts writes unseen, and so no xdist worker's
+    write is charged to another worker's test. A thread of the process is the process's."""
+    writes, _inside, outside = _writes(tmp_path)
+    writes.open()
+    code = f"open({str(outside / 'child.txt')!r}, 'w').write('x')"
+    subprocess.run([sys.executable, "-c", code], check=True)
+    thread = threading.Thread(target=(outside / "thread.txt").write_text, args=("x",))
+    thread.start()
+    thread.join()
+    assert [Path(p).name for p in writes.close()] == ["thread.txt"]
+
+
+def test_a_root_reached_through_a_link_is_still_the_root(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "linked").symlink_to(real)
+    writes = slg.Writes([str(tmp_path / "linked")])
+    writes.install()
+    writes.open()
+    (real / "a.txt").write_text("through the real path")
+    (tmp_path / "linked" / "b.txt").write_text("through the link")
+    assert writes.close() == []
+
+
+def test_a_guard_records_the_writes_but_never_fails_them(tmp_path: Path) -> None:
+    writes, _inside, outside = _writes(tmp_path)
+    guard = _guard(writes=writes)
+    guard.start("t::writes", 1)
+    before = guard.settled(guard.before())
+    for n in range(slg.SHOWN_PATHS + 2):
+        (outside / f"f{n}.txt").write_text("x")
+    assert guard.after(before, strict=True, allowlist={}) == ""
+    [leak] = _leaks(guard)
+    assert (leak.kind, leak.strict, leak.fenced) == ("file written", False, False)
+    assert f"wrote {slg.SHOWN_PATHS + 2} path(s)" in leak.detail and "and 2 more" in leak.detail
+
+
+def test_the_run_may_write_its_reports_its_cache_and_its_temporary_folders(tmp_path: Path) -> None:
+    class _Config:
+        rootpath = tmp_path
+
+        @staticmethod
+        def getoption(name, default=None):
+            return str(tmp_path / "named-basetemp") if name == "basetemp" else default
+
+    roots = slg.temporary_roots(_Config())
+    for want in ("reports", ".pytest_cache", "named-basetemp"):
+        assert str(tmp_path / want) in roots, roots
+    assert os.path.dirname(os.devnull) in roots and roots[0] == tempfile.gettempdir()
 
 
 # ── the allowlist ────────────────────────────────────────────────────────────────────────────

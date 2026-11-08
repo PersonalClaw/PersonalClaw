@@ -74,3 +74,34 @@ def test_each_install_word_the_catalogue_names_is_one_run_job_runs() -> None:
     from tools.ci import jobs
 
     assert {tool for _, tool in catalogue.INSTALLS} == set(jobs.INSTALL_ARGV)
+
+
+#: The jobs whose suite runs ``--strict-state`` (tests/state_leak_guard.py, #3949). None yet:
+#: the merge tier's Ubuntu suite joins once 5 consecutive merge runs show ``0 strict`` in each of
+#: its shards' logs, and the macOS suite once 7 days of its merge runs do.
+STRICT_STATE_JOBS: frozenset[str] = frozenset()
+
+
+def _strict_state_jobs(cat: catalogue.Catalogue) -> set[str]:
+    return {
+        job.id
+        for job in cat.jobs
+        for step in job.command
+        if "--strict-state" in (catalogue.pytest_args(step.argv) or [])
+    }
+
+
+def test_strict_state_runs_in_the_jobs_named_for_it() -> None:
+    assert _strict_state_jobs(catalogue.read()) == STRICT_STATE_JOBS
+
+
+_UBUNTU_STEP_END = '"--junitxml=reports/junit-test-shard-{shard}.xml"] }'
+
+
+def test_a_suite_that_gains_strict_state_is_seen() -> None:
+    text = (catalogue.REPO / catalogue.CATALOGUE).read_text(encoding="utf-8")
+    assert text.count(_UBUNTU_STEP_END) == 1, _UBUNTU_STEP_END
+    planted = text.replace(
+        _UBUNTU_STEP_END, _UBUNTU_STEP_END.replace("] }", ', "--strict-state"] }')
+    )
+    assert _strict_state_jobs(catalogue.load(planted)) == {"python-suite"}
