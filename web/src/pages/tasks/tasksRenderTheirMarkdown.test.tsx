@@ -96,7 +96,7 @@ describe('a task title renders as one line everywhere a task is listed or headed
     await waitFor(() => expect(linesOf(document.body).length).toBeGreaterThan(0))
     for (const line of linesOf(document.body)) expect(rendersLine(line), line.outerHTML).toEqual([])
     // The row's hit target is named by the plain line (and, in the list, its status).
-    expect(screen.getAllByRole('button', { name: new RegExp(`^${SEEN.replace(/[().]/g, '\\$&')}`) }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: (name: string) => name.startsWith(SEEN) }).length).toBeGreaterThan(0)
     for (const named of document.querySelectorAll('[title], [aria-label]')) {
       const name = `${named.getAttribute('title') ?? ''} ${named.getAttribute('aria-label') ?? ''}`
       expect(name, 'a name carries a mark').not.toMatch(/`|\*\*/)
@@ -145,7 +145,7 @@ describe('a task title renders as one line everywhere a task is listed or headed
     expect(rendersLine(container.firstElementChild!)).toEqual([])
     unmount()
     render(<TaskRow task={task({})} state="ready" preview={false} onSelect={noop} />)
-    const row = screen.getByRole('button', { name: new RegExp(`^${SEEN.replace(/[().]/g, '\\$&')} — `) })
+    const row = screen.getByRole('button', { name: (name: string) => name.startsWith(`${SEEN} — `) })
     expect(rendersLine(row)).toEqual([])
   })
 
@@ -167,7 +167,7 @@ describe('a task title renders as one line everywhere a task is listed or headed
 
   it("a project's task list", async () => {
     render(<TaskListPanel list={{ id: 'tl-1', name: 'General', project_id: 'p-1' }} onOpenTask={noop} />)
-    const row = await screen.findByRole('button', { name: new RegExp(`${SEEN.replace(/[().]/g, '\\$&')}`) })
+    const row = await screen.findByRole('button', { name: (name: string) => name.includes(SEEN) })
     const [line] = linesOf(row)
     expect(rendersLine(line)).toEqual([])
   })

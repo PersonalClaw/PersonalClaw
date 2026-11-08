@@ -86,7 +86,8 @@ describe("a row's line renders what its agent wrote", () => {
 
   it("each row's sentence reads the content as plain text, and its own words exactly", () => {
     show(day(MD_LINE))
-    expect(row('PersonalClaw').li.getAttribute('aria-label')).toMatch(new RegExp(`^PersonalClaw, waiting on you: ${SEEN.replace(/[().]/g, '\\$&')} and 1 more\\.`))
+    const asks = `PersonalClaw, waiting on you: ${SEEN} and 1 more.`
+    expect(row('PersonalClaw').li.getAttribute('aria-label')?.slice(0, asks.length)).toBe(asks)
     expect(row('Code reviewer').li.getAttribute('aria-label')).toBe(`Code reviewer, failed: Failed at ${clock(at(18, 10))}: ${SEEN}.`)
     // A row that works now and failed earlier says so in a part of its own, read as plain text too.
     expect(row('Researcher').li.getAttribute('aria-label')).toContain(`Failed at ${clock(at(16, 5))}: ${SEEN}.`)
