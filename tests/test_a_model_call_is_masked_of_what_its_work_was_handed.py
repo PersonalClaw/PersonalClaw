@@ -275,8 +275,7 @@ async def test_a_lifecycle_triggers_model_call_is_masked(tmp_path, monkeypatch):
             return ActionResult(success=True, stdout="{}")
 
     registry._ensure_default_providers_registered()
-    registry.register_action_provider(_Asks())
-    monkeypatch.setitem(registry._providers, "orchard-asks", registry._providers["orchard-asks"])
+    monkeypatch.setitem(registry._providers, "orchard-asks", _Asks())
     store = ScriptHookStore(home)
     store.create(
         {
@@ -288,12 +287,7 @@ async def test_a_lifecycle_triggers_model_call_is_masked(tmp_path, monkeypatch):
             "capabilities": {"providers": ["orchard-asks"]},
         }
     )
-    try:
-        result = await run_script_hook(
-            store.get("orchard-asks-hook"), "", {"hook_event_name": "Stop"}
-        )
-    finally:
-        registry._providers.pop("orchard-asks", None)
+    result = await run_script_hook(store.get("orchard-asks-hook"), "", {"hook_event_name": "Stop"})
 
     assert model.sent, f"the action ran and asked its model: {result.error}"
     assert all(VALUE not in sent for sent in model.sent), model.sent
