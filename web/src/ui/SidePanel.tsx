@@ -35,8 +35,11 @@ const EDGE_PEEK = 32
  *     speed scales with the global expressiveness knob.
  *   • close — dismiss entirely.
  *  Header (title + expand/collapse + close) is non-scrolling; body scrolls. */
-export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-w', fillHeight = false, onExpand, children }: {
+export function SidePanel({ title, tooltip, icon, onClose, urlKey, storeKey = 'sidepanel-w', fillHeight = false, onExpand, children }: {
   title: ReactNode
+  /** The title's tooltip, as plain text: the whole title where the header cuts it. A string title
+   *  is its own; a rendered one (a `MarkdownLine`) passes its text here (`previewLine`). */
+  tooltip?: string
   icon?: ReactNode
   onClose: () => void
   /** Optional URL-sync: `{ key, setQuery }` drops `?key` from the URL when the
@@ -161,9 +164,9 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
           that mount a SidePanel.
           `title` is conditional because the prop is a `ReactNode` — a JSX title cannot become a DOM
           tooltip, and passing one would stringify to "[object Object]". Every call site today passes a
-          string (`open.title`, `open.name`, `selectedEntity`, …), so all of them gain it; a future JSX
-          title simply gets nothing rather than something wrong. */}
-      <div className="flex items-center gap-s min-w-0">{icon}<h2 id={titleId} data-type="title-l" className="text-on-surface truncate" title={typeof title === 'string' ? title : undefined}>{title}</h2></div>
+          string (`open.title`, `open.name`, `selectedEntity`, …), so all of them gain it; a JSX title (a
+          MarkdownLine) passes its plain text as tooltip. */}
+      <div className="flex items-center gap-s min-w-0">{icon}<h2 id={titleId} data-type="title-l" className="text-on-surface truncate" title={tooltip ?? (typeof title === 'string' ? title : undefined)}>{title}</h2></div>
       <div className="flex items-center gap-xs shrink-0">
         <IconButton icon={expanded ? Minimize2 : Maximize2}
           label={expanded ? 'Collapse to panel' : (onExpand ? 'Open full page' : 'Expand to full width')}

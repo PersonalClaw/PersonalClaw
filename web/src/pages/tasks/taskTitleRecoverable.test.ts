@@ -71,7 +71,7 @@ describe('every place a task is listed hands over its full title', () => {
     // stringify to "[object Object]". If that guard is ever removed, this notices.
     const panel = strip(read('ui/SidePanel.tsx'))
     expect(panel, 'the shared panel title still exists').toMatch(/data-type="title-l" className="text-on-surface truncate/)
-    expect(panel, 'and now carries a type-guarded title of its own')
-      .toMatch(/title=\{typeof title === 'string' \? title : undefined\}/)
+    expect(panel, 'and now carries a type-guarded title of its own, after a plain tooltip its caller passes')
+      .toMatch(/title=\{tooltip \?\? \(typeof title === 'string' \? title : undefined\)\}/)
   })
 })

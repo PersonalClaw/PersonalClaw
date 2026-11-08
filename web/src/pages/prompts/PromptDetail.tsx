@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toneChipSkin } from '../../design/accent'
-import { Pencil, Trash2, Check, X, Play, Lock, Code2, Eye, Puzzle, Rocket } from 'lucide-react'
+import { Pencil, Trash2, Check, X, Play, Lock, Puzzle, Rocket } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { Toggle } from '../../ui/Toggle'
 import { Markdown } from '../../ui/Markdown'
+import { RenderedSource } from '../../ui/RenderedSource'
 import { LoadError, Skeleton } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
 import { useQuery, invalidateKeys } from '../../lib/data'
@@ -185,6 +186,7 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
   // of every included snippet, host wins) when present; else the prompt's own.
   const ownVars = promptVars(full)
   const vars = full.merged_variables?.length ? full.merged_variables : ownVars
+  const fillTemplate = (source: string) => fillDefaults(source, vars)
   const includes = full.includes ?? []
   return (
     <div className="flex flex-col gap-l">
@@ -240,7 +242,8 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
         </Section>
       )}
 
-      <TemplateSection content={full.content || ''} vars={vars} />
+      {/* The template body: rendered with each variable's default filled in, or its raw source. */}
+      <RenderedSource source={full.content || ''} transform={fillTemplate} />
 
       <RenderPanel name={prompt.name} vars={vars} onNavigate={onNavigate}
         launchable={!!full.launch_spec && Object.keys(full.launch_spec).length > 0}
@@ -340,36 +343,6 @@ function RenderInput({ v, value, onChange }: { v: PromptVariable; value: unknown
     return <input id={fid} name={v.name} aria-label={label} type="number" value={value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))} placeholder={v.description} data-type="body-s" className={base} />
   }
   return <input id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={v.description} data-type="body-s" className={base} />
-}
-
-/** The template body — rendered (defaults substituted, Markdown) by default,
- *  with a toggle to the raw source. */
-function TemplateSection({ content, vars }: { content: string; vars: PromptVariable[] }) {
-  const [raw, setRaw] = useState(false)
-  const rendered = useMemo(() => fillDefaults(content, vars), [content, vars])
-  return (
-    <div>
-      <div className="mb-1.5 flex items-center gap-s">
-        <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Template</div>
-        <button
-          type="button"
-          onClick={() => setRaw((r) => !r)}
-          data-type="caption"
-          className="ml-auto inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-6 text-on-surface-low hover:text-on-surface transition-colors"
-          title={raw ? 'Show rendered' : 'Show raw template'}
-        >
-          {raw ? <><Eye size={12} /> Rendered</> : <><Code2 size={12} /> Raw</>}
-        </button>
-      </div>
-      {raw ? (
-        <pre data-type="body-s" className="rounded-md bg-surface-container px-m py-2 text-on-surface-var font-mono overflow-x-auto whitespace-pre-wrap break-words">{content || '—'}</pre>
-      ) : (
-        <div data-type="body-s" className="rounded-md bg-surface-container px-m py-2 text-on-surface leading-relaxed">
-          <Markdown>{rendered || '—'}</Markdown>
-        </div>
-      )}
-    </div>
-  )
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {

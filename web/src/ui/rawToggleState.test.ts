@@ -16,7 +16,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //        ModelsPanel + SearchPanel accordions · ToolOutput's JSON expander
 //    1  MODE → `aria-pressed={autoscroll}`  (`DiagnosticsPanel`)
 //    2  LEAVE — the accessible NAME already flips:
-//        `DiagnosticsPanel`'s pause ("Resume" ⇄ "Pause") and `PromptDetail`'s raw/rendered switch
+//        `DiagnosticsPanel`'s pause ("Resume" ⇄ "Pause") and `RenderedSource`'s raw/rendered switch
 //        ("Raw" ⇄ "Rendered", title "Show raw template" ⇄ "Show rendered"). A second channel adds
 //        nothing when the name itself carries the state — the established rule, applied twice more.
 //
@@ -132,8 +132,8 @@ describe('a mode toggle gets pressed — unless its name already says so', () =>
     expect(src.slice(at, at + 200)).toMatch(/title=\{paused \? 'Resume' : 'Pause'\}/)
   })
 
-  it("PromptDetail's raw/rendered switch stays silent for the same reason", () => {
-    const src = read('pages/prompts/PromptDetail.tsx')
+  it("the rendered/raw switch (RenderedSource, the prompt inspector's Template) stays silent for the same reason", () => {
+    const src = read('ui/RenderedSource.tsx')
     const at = src.indexOf('setRaw((r) => !r)')
     expect(at).toBeGreaterThan(-1)
     expect(src.slice(at, at + 260)).not.toMatch(/aria-pressed|aria-expanded/)
@@ -195,7 +195,7 @@ describe('the census ceiling falls', () => {
     //  does. `on`/`active`/`ariaExpanded` are the props those primitives expose for exactly this.
     const ANNOUNCES = /aria-expanded|aria-pressed|ariaExpanded|ariaPressed|\bon=\{|\bactive=\{/
     //: …and a control whose NAME flips needs no second channel — the rule this file already applies
-    //  to `title={paused ? 'Resume' : 'Pause'}` and `PromptDetail`'s raw/rendered switch.
+    //  to `title={paused ? 'Resume' : 'Pause'}` and `RenderedSource`'s raw/rendered switch.
     //
     //  🪤 THE FLIP MUST KEY ON THE STATE THIS TOGGLE SETS, or the exemption is a hole rather than a
     //  rule. A bare "any ternary in `label`" would exempt `label={compact ? 'Export' : 'Export as…'}`

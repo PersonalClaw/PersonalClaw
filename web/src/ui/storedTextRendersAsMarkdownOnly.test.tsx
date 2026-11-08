@@ -6,6 +6,7 @@ import { ReadingView } from '../pages/knowledge/ReadingView'
 import { InboxMessageBody } from '../pages/inbox/ForeignContent'
 import { ToolOutput } from '../pages/tools/ToolOutput'
 import type { InboxItem, KnowledgeItem } from '../lib/api'
+import { EMBEDDED_HTML as EMBEDDED, REFUSED_HREFS } from '../test/markdownSinks'
 
 // ── Stored and remote text is shown as Markdown, never as the page's own markup ────────────
 //
@@ -31,36 +32,22 @@ function handlerAttributes(root: HTMLElement): string[] {
   )
 }
 
-function renderBody(body: string) {
-  return render(<Markdown>{`Before the markup.\n\n${body}\n\nAfter the markup.`}</Markdown>)
-}
-
-/** [what it is, the body's markup, what must not exist, the text a reader sees (the markup
- *  itself unless stated)]. A bare formatting CLOSER after an attribute-bearing opener is the one
- *  asymmetry: the opener is text, and the HTML parser drops the closer as the stray end tag it
- *  now is — so the reader sees the opener and the words, and nothing was created either way. */
-const EMBEDDED: Array<[string, string, string, string?]> = [
-  [
-    'a form that posts what is typed elsewhere',
-    '<form action="https://collect.example.com/login"><input name="password" type="password"><button>Sign in</button></form>',
-    'form, input, button',
-  ],
-  ['a frame with a document of its own', '<iframe srcdoc="<script>parent.document.title=1</script>"></iframe>', 'iframe'],
-  ['a style block', '<style>body { display: none }</style>', 'style'],
-  ['an image tag with an inline handler', '<img src="https://images.example.com/p.png" onerror="alert(1)">', 'img'],
-  ['a link with a script scheme', '<a href="javascript:alert(1)">open the report</a>', 'a'],
-  ['a script', '<script>alert(1)</script>', 'script'],
-  ['a refresh directive', '<meta http-equiv="refresh" content="0;url=https://phish.example.com/">', 'meta'],
-  ['an embedded object', '<object data="https://plugins.example.com/x.swf"></object>', 'object'],
-  ['an svg with a load handler', '<svg onload="alert(1)"><circle r="4"></circle></svg>', 'svg'],
-  ['a formatting tag carrying a handler', '<details open ontoggle="alert(1)"><summary>More</summary></details>', 'details, summary'],
-  ['a formatting tag carrying a style', '<b style="position:fixed;inset:0">covered</b>', 'b', '<b style="position:fixed;inset:0">covered'],
-  ['a widget block', '<widget title="Chart"><script>parent.postMessage("go", "*")</script></widget>', 'iframe'],
+/** The two ways a body renders: as a document, and as text written in lines (`breaks`). */
+const BODY_MODES: Array<[string, (text: string) => React.ReactElement]> = [
+  ['a body', (text) => <Markdown>{text}</Markdown>],
+  ['a body with breaks', (text) => <Markdown breaks>{text}</Markdown>],
 ]
 
-describe('embedded HTML in a stored body is shown as text', () => {
+function renderBody(body: string, sink: (text: string) => React.ReactElement = BODY_MODES[0][1]) {
+  return render(sink(`Before the markup.\n\n${body}\n\nAfter the markup.`))
+}
+
+// The rows (`EMBEDDED_HTML`, `REFUSED_HREFS`) live in `test/markdownSinks`, where the renderer's
+// tests and each surface's test read them.
+
+describe.each(BODY_MODES)('embedded HTML in %s is shown as text', (_mode, sink) => {
   it.each(EMBEDDED)('%s becomes no element, and its markup is readable text', async (_name, markup, selector, shown) => {
-    const { container } = renderBody(markup)
+    const { container } = renderBody(markup, sink)
     await act(async () => {})
     expect(container.querySelector(selector), `${selector} was created from the body`).toBeNull()
     expect(handlerAttributes(container)).toEqual([])
@@ -71,16 +58,59 @@ describe('embedded HTML in a stored body is shown as text', () => {
   })
 
   it('an HTML comment is dropped rather than printed', () => {
-    const { container } = renderBody('<!-- reviewer: tighten this paragraph -->')
+    const { container } = renderBody('<!-- reviewer: tighten this paragraph -->', sink)
     expect(container.textContent).not.toContain('reviewer')
     expect(container.textContent).toContain('After the markup.')
   })
 
   it('a comment beside real markup is not a way to smuggle the markup in', () => {
     const markup = '<!-- x --><iframe src="https://frames.example.com/"></iframe>'
-    const { container } = renderBody(markup)
+    const { container } = renderBody(markup, sink)
     expect(container.querySelector('iframe')).toBeNull()
     expect(container.textContent).toContain('<iframe src="https://frames.example.com/"></iframe>')
+  })
+})
+
+/** The one-line modes, each as a row's sink renders it: an excerpt, a line, and a search result's line. */
+const ONE_LINE_MODES: Array<[string, (text: string) => React.ReactElement]> = [
+  ['inline', (text) => <Markdown inline>{text}</Markdown>],
+  ['line', (text) => <Markdown line>{text}</Markdown>],
+  ['line hits', (text) => <Markdown line hits>{text}</Markdown>],
+]
+
+/** In a line each tag is its own piece of HTML, where a body's block of HTML is one: a `<summary>`
+ *  is a formatting tag, so its words stay (as words, a line unwraps it), and the `<details>` opener
+ *  that carries a handler is its text. */
+const SHOWN_IN_A_LINE: Record<string, string> = {
+  'a formatting tag carrying a handler': '<details open ontoggle="alert(1)">More',
+}
+
+describe.each(ONE_LINE_MODES)('in %s mode, the same policy holds', (_mode, sink) => {
+  it.each(EMBEDDED)('%s becomes no element, and its markup is readable text', async (name, markup, selector, shown) => {
+    const { container } = render(sink(`Before the markup. ${markup} After the markup.`))
+    await act(async () => {})
+    expect(container.querySelector(selector), `${selector} was created from the line`).toBeNull()
+    expect(container.querySelector('a, img, iframe, input')).toBeNull()
+    expect(handlerAttributes(container)).toEqual([])
+    expect(container.textContent, 'the markup is shown as what it is').toContain(SHOWN_IN_A_LINE[name] ?? shown ?? markup)
+    expect(container.textContent).toContain('After the markup.')
+  })
+
+  it.each([...REFUSED_HREFS, ['a web address', 'https://example.com/notes']])('a link to %s is styled words, never an anchor', (_name, href) => {
+    const { container } = render(sink(`Read [the release notes](${href}) first.`))
+    expect(container.querySelector('a')).toBeNull()
+    expect(container.textContent).toContain('Read the release notes first.')
+  })
+
+  it.each([
+    ['an https image', 'https://images.example.com/chart.png'],
+    ['an artifact image', '/api/artifacts/sales-chart/raw?version=2'],
+    ['a script scheme', 'javascript:alert(1)'],
+  ])('%s loads nothing in a line', (_name, src) => {
+    const { container } = render(sink(`See ![Quarterly diagram](${src}) here.`))
+    expect(container.querySelector('img')).toBeNull()
+    expect(handlerAttributes(container)).toEqual([])
+    expect(container.textContent).toContain('here.')
   })
 })
 
@@ -119,18 +149,6 @@ describe('the attribute-free formatting tags still format', () => {
     expect(container.textContent).toContain('<img src=x onerror=alert(1)>')
   })
 })
-
-const REFUSED_HREFS: Array<[string, string]> = [
-  ['a script scheme', 'javascript:alert(1)'],
-  ['a script scheme split by a tab', 'java&#9;script:alert(1)'],
-  ['a document in a data URL', 'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=='],
-  ['a telephone link', 'tel:+15550100'],
-  ['a local file', 'file:///etc/hosts'],
-  ['a path on this gateway', '/api/knowledge/items'],
-  ['a route inside the app', '#/settings/security'],
-  ['a host with no scheme', 'accounts.example.com/login'],
-  ['a protocol-relative host', '//accounts.example.com/login'],
-]
 
 describe('a link opens only for http, https and mailto', () => {
   it.each(REFUSED_HREFS)('%s is not a link, and its words stay', (_name, href) => {

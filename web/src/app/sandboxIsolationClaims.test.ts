@@ -1,6 +1,6 @@
 // @module-tag tree-scan
 import { describe, it, expect } from 'vitest'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── #492, second clause: no frame may CLAIM isolation it does not have ────────────────
@@ -26,9 +26,24 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 const ROOT = join(process.cwd(), 'src')
 
+/** The tests' own helpers and fixtures. They hold hostile markup as data a test renders to prove
+ *  it inert (`test/markdownSinks.ts`), never a frame the dashboard draws, so they are not scanned. */
+const TEST_HELPERS = join(ROOT, 'test') + sep
+
+const scannable = (name: string) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)
+
 function sources(dir: string): string[] {
-  return filesUnder(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name))
+  return filesUnder(dir, (name, path) => scannable(name) && !path.startsWith(TEST_HELPERS))
 }
+
+describe('the scan reads every source but the tests’ own helpers', () => {
+  it('skips nothing outside src/test/', () => {
+    const scanned = new Set(sources(ROOT))
+    const skipped = filesUnder(ROOT, scannable).filter((path) => !scanned.has(path))
+    expect(skipped.length, 'src/test/ holds no helper: the skip is no longer needed').toBeGreaterThan(0)
+    expect(skipped.filter((path) => !path.startsWith(TEST_HELPERS))).toEqual([])
+  })
+})
 
 /** Files declaring an iframe sandbox that keeps the frame in the PARENT's origin. */
 function sameOriginFrames(): { file: string; text: string }[] {

@@ -54,9 +54,21 @@ describe('a panel title is recoverable when it clips', () => {
     expect(h.getAttribute('title')).toBeNull()
   })
 
+  it('a NODE title takes its tooltip from the plain-text prop', () => {
+    // A rendered title (a `MarkdownLine`) cannot become a DOM tooltip, so its caller passes the plain
+    // line beside it (`previewLine`), and the clipped heading is recoverable again.
+    render(
+      <SidePanel title={<span>Skip <code>model_calls</code></span>} tooltip="Skip model_calls" onClose={() => {}}>
+        <p>body</p>
+      </SidePanel>,
+    )
+    expect(screen.getByRole('heading', { level: 2 }).getAttribute('title')).toBe('Skip model_calls')
+  })
+
   it('the guard is the type check, not a truthiness test', () => {
-    // `title && ...` would pass a ReactNode straight through; only `typeof` distinguishes them.
-    expect(CODE).toMatch(/title=\{typeof title === 'string' \? title : undefined\}/)
+    // `title && ...` would pass a ReactNode straight through; only `typeof` distinguishes them. A
+    // `tooltip` the caller passes comes first.
+    expect(CODE).toMatch(/title=\{tooltip \?\? \(typeof title === 'string' \? title : undefined\)\}/)
   })
 
   it('the heading still truncates, and still names the region', () => {
