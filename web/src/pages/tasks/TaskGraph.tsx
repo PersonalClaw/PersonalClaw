@@ -6,6 +6,8 @@ import { statusMeta, signalPriority, TERMINAL } from './taskMeta'
 import { depMap, layeredLayout, cyclicNodes } from './dag'
 import { DagView, type DagNode, type DagEdge, type DagNodeState } from './DagView'
 import { EmptyState } from '../../ui/ListScaffold'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { previewLine } from '../../lib/previewText'
 
 /** Task status → DAG node state. A cycle node is an error; otherwise a blocked task
  *  is gated (pulsing ring), in_progress is active, terminal is done, else todo. */
@@ -50,7 +52,7 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
     [criticalSet, drawnIds],
   )
   const titleById = useMemo(
-    () => new Map([...libraryTasks, ...tasks].map((t) => [t.id, t.title])),
+    () => new Map([...libraryTasks, ...tasks].map((t) => [t.id, previewLine(t.title)])),
     [libraryTasks, tasks],
   )
   const isWholeLibrary = useMemo(
@@ -172,7 +174,7 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
               // default ("medium") stays silent here too rather than naming an
               // intent the task may never have expressed.
               label: [
-                t.title,
+                previewLine(t.title),
                 ` — ${sm.label}`,
                 pm ? `, ${pm.label}` : '',
                 criticalSet.has(t.id) ? ', on the critical path' : '',
@@ -182,7 +184,7 @@ export function TaskGraph({ tasks, onOpen }: { tasks: TaskItem[]; onOpen: (id: s
                 <div className="flex h-full flex-col justify-center">
                   {/* 182px of 386 at 390px — 2.1x, the worst of the four. A DAG node is the smallest slot a
                       task title gets, so it clips first and hardest. */}
-                  <div className={`truncate text-[0.8125rem] leading-tight ${done ? 'line-through opacity-60' : ''}`} style={withWeight({ color: 'var(--color-on-surface)' }, 500)} title={t.title}>{t.title}</div>
+                  <div className={`truncate text-[0.8125rem] leading-tight ${done ? 'line-through opacity-60' : ''}`} style={withWeight({ color: 'var(--color-on-surface)' }, 500)} title={previewLine(t.title)}><MarkdownLine text={t.title} /></div>
                   <div data-type="caption" className="mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--color-on-surface-low)' }}>
                     <span style={{ color: sm.tone }}>{sm.label}</span>
                     {pm && <span style={{ color: pm.tone }}>· {pm.label}</span>}

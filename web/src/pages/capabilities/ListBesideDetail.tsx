@@ -17,8 +17,11 @@ export const LIST_WIDTH = '22.5rem'
 export interface CapabilityDetail {
   /** The selection; a new id is a new detail, mounted afresh. */
   id: string
-  /** What the detail is, which names its pane. */
+  /** What the detail is, as plain text: the pane's name and its heading's tooltip. */
   title: string
+  /** The heading as drawn, where the title carries markdown (a `MarkdownLine` of it); `title` by
+   *  default. */
+  heading?: ReactNode
   icon?: ReactNode
   /** Clears the selection. Close, Escape and the narrow layout's Back all call it. */
   onClose: () => void
@@ -115,7 +118,7 @@ function DetailPane({ detail, compact, noun }: { detail: CapabilityDetail; compa
       <div className="flex shrink-0 items-center gap-s border-b border-outline-variant/40 px-l py-m">
         {compact && <IconButton icon={ArrowLeft} label={`Back to ${noun}`} size={34} iconSize={18} onClick={detail.onClose} />}
         {detail.icon}
-        <h2 ref={headingRef} id={titleId} tabIndex={-1} data-type="title-l" className="min-w-0 flex-1 truncate text-on-surface" title={detail.title}>{detail.title}</h2>
+        <h2 ref={headingRef} id={titleId} tabIndex={-1} data-type="title-l" className="min-w-0 flex-1 truncate text-on-surface" title={detail.title}>{detail.heading ?? detail.title}</h2>
         {!compact && <IconButton icon={X} label="Close" size={34} iconSize={18} onClick={detail.onClose} />}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">

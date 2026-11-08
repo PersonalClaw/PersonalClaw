@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { rowSubject } from '../../lib/rowSubject'
 import { FieldError, TextArea } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
@@ -22,6 +22,9 @@ import { failureSentence, reportingWrite } from '../../app/reportingWrite'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { HELD_CHANGE_REASON, isStaleWrite, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { RenderedSource } from '../../ui/RenderedSource'
+import { previewLine } from '../../lib/previewText'
 
 /** What the edit form saves: every field, the lists whole (`draftToPayload`). */
 type TaskSave = Record<string, unknown>
@@ -122,7 +125,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
       ? ` Its ${comments} comment${comments === 1 ? '' : 's'} ${comments === 1 ? 'goes' : 'go'} with it.`
       : ''
     if (!(await confirm({
-      title: `Delete "${task.title}"?`,
+      title: `Delete "${previewLine(task.title)}"?`,
       body: `This cannot be undone.${unblocks}${withComments}`,
       danger: true,
       confirmLabel: 'Delete',
@@ -254,11 +257,15 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
           {/* Prerequisite titles when there are any; otherwise the kind's hint, which is the only
               thing that can explain a manual block. Never the old bare "Waiting on " with an empty
               list after it. */}
+          {/* The prerequisites' titles are an agent's lines, so each renders as one ("Waiting on " is
+              ours); without them, the server's own sentence, or the kind's hint, is plain text. The
+              server's sentence names the titles too, so their marks are read off it (`previewLine`). */}
           <div className="text-on-surface">
-            {task.block_reason?.message
-              || (task.block_reason?.blocking_task_titles?.length
-                ? `Waiting on ${task.block_reason.blocking_task_titles.join(', ')}`
-                : blockKind?.hint)}
+            {task.block_reason?.blocking_task_titles?.length
+              ? <>Waiting on {task.block_reason.blocking_task_titles.map((title, i) => (
+                  <Fragment key={i}>{i > 0 && ', '}<MarkdownLine text={title} /></Fragment>
+                ))}</>
+              : (previewLine(task.block_reason?.message) || blockKind?.hint)}
           </div>
         </div>
       )}
@@ -306,7 +313,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                     keeps the read-only case ringless, which is what `enabled:` did before. */}
                 <span className="inline-flex size-4 items-center justify-center rounded-sm transition-shadow group-hover:ring-2 group-hover:ring-ok/40 group-disabled:ring-0" style={{ background: m ? 'var(--color-ok)' : 'var(--color-surface-high)' }}>{m && <Check size={11} className="text-white" />}</span>
               </button>
-              <span className={m ? 'text-on-surface-low line-through' : 'text-on-surface'}>{e.description}</span></li> })}
+              <span className={m ? 'text-on-surface-low line-through' : 'text-on-surface'}><MarkdownLine text={e.description} /></span></li> })}
           </ul>
         </SectionLabel>
       )}
@@ -326,7 +333,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                 <span className="inline-flex size-5 items-center justify-center rounded-pill tabular-nums transition-shadow group-hover:ring-2 group-hover:ring-primary group-disabled:ring-0" data-type="caption"
                   style={{ background: a.completed ? 'var(--color-ok)' : 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{a.completed ? <Check size={11} className="text-white" /> : i + 1}</span>
               </button>
-              <span className={a.completed ? 'text-on-surface-low line-through' : 'text-on-surface'}>{a.content ?? a.description}</span></li>)}
+              <span className={a.completed ? 'text-on-surface-low line-through' : 'text-on-surface'}><MarkdownLine text={a.content ?? a.description} /></span></li>)}
           </ol>
         </SectionLabel>
       )}
@@ -345,13 +352,13 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                 <button key={d} type="button" disabled={!dep || !onOpenTask} onClick={() => dep && onOpenTask?.(d)}
                   className="flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5 text-left enabled:hover:bg-surface-high transition-colors disabled:cursor-default">
                   <dsm.icon size={14} className="shrink-0" style={{ color: dsm.tone }} />
-                  <span data-type="body-s" className={`flex-1 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep?.title ?? d}</span>
+                  <span data-type="body-s" className={`flex-1 min-w-0 ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep ? <MarkdownLine className="block truncate" text={dep.title} /> : <span className="block truncate">{d}</span>}</span>
                   {dep && !done && <span data-type="caption" className="shrink-0 text-on-surface-low">{dsm.label}</span>}
                 </button>
               )
             })}
             {task.block_reason?.is_blocked && (
-              <div data-type="caption" className="flex items-center gap-1.5 text-warn mt-0.5"><AlertTriangle size={12} /> {task.block_reason.message || 'Has unfinished prerequisites'}</div>
+              <div data-type="caption" className="flex items-center gap-1.5 text-warn mt-0.5"><AlertTriangle size={12} /> {previewLine(task.block_reason.message) || 'Has unfinished prerequisites'}</div>
             )}
           </div>
         </SectionLabel>
@@ -374,7 +381,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                   <button key={dep.id} type="button" disabled={!onOpenTask} onClick={() => onOpenTask?.(dep.id)}
                     className="flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5 text-left enabled:hover:bg-surface-high transition-colors disabled:cursor-default">
                     <dsm.icon size={14} className="shrink-0" style={{ color: dsm.tone }} />
-                    <span data-type="body-s" className={`flex-1 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep.title}</span>
+                    <span data-type="body-s" className={`flex-1 min-w-0 ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}><MarkdownLine className="block truncate" text={dep.title} /></span>
                     {!done && <span data-type="caption" className="shrink-0 text-on-surface-low">{dsm.label}</span>}
                   </button>
                 )
@@ -388,10 +395,10 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
       <NoteChannel label="Research notes" notes={task.research_notes} />
       <NoteChannel label="Execution notes" notes={task.execution_notes} />
 
+      {/* Prompt prose an agent runs: rendered to read, its raw source a press away. */}
       {task.agent_instructions_template && (
-        <SectionLabel label="Agent instructions">
-          <pre data-type="body-s" className="rounded-md bg-surface-container px-m py-2 text-on-surface-var font-mono whitespace-pre-wrap">{task.agent_instructions_template}</pre>
-        </SectionLabel>
+        <RenderedSource source={task.agent_instructions_template} label="Agent instructions"
+          rawTitle="Show the raw instructions" />
       )}
 
       <Comments taskId={task.id} provider={task.provider} />
@@ -413,7 +420,8 @@ function NoteChannel({ label, notes }: { label: string; notes?: TaskNote[] }) {
       <ul className="flex flex-col gap-1.5">
         {items.map((n, i) => (
           <li key={i} className="rounded-md bg-surface-container px-m py-2">
-            <p data-type="body-s" className="text-on-surface whitespace-pre-wrap">{n.content}</p>
+            {/* Written as lines by an agent or a person: each line keeps its break (`breaks`). */}
+            <div data-type="body-s"><Markdown breaks>{n.content}</Markdown></div>
             {(n.timestamp || n.created_at) && (
               <div data-type="caption" className="mt-0.5 text-on-surface-low">{relTime(n.timestamp || n.created_at)}</div>
             )}

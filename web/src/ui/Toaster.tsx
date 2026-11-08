@@ -5,6 +5,8 @@ import { dragElastic, spring, swipeDismiss } from '../design/motion'
 import { playCue } from '../design/soundCues'
 import { TextLink } from './TextLink'
 import { useHold } from './useHold'
+import { MarkdownLine } from './MarkdownLine'
+import { previewLine } from '../lib/previewText'
 
 interface Toast {
   id: number
@@ -25,6 +27,10 @@ interface Toast {
   href?: string
   /** The link's text. It must say where it goes; "Open" alone is what a toast is replacing. */
   hrefLabel?: string
+  /** The message is someone else's words (a notification's), so it renders as a line, and its
+   *  announcement is the line as plain text. The app's own `notify()` sentences are not markdown
+   *  and stay the text they are. */
+  markdown?: boolean
 }
 
 const ICONS = { info: Info, success: CheckCircle2, error: AlertCircle }
@@ -122,7 +128,7 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
       const href = String(d.href ?? '')
       const linked = href.startsWith('#/') ? href : ''
       const hrefLabel = String(d.hrefLabel ?? '').trim() || 'Open'
-      setToasts((prev) => [...prev, { id, message, level, href: linked || undefined, hrefLabel }])
+      setToasts((prev) => [...prev, { id, message, level, href: linked || undefined, hrefLabel, markdown: d.markdown === true }])
       clocks.current.set(id, { left: TOAST_MS, endsAt: 0 })
       if (!heldNow.current) run(id)
     }
@@ -152,10 +158,10 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
     // content appears is not reliably observed.
     <div {...hold} className="pointer-events-none fixed bottom-4 right-4 z-[var(--z-toast)] flex max-w-sm flex-col items-stretch gap-2">
       <div role="status" aria-live="polite" aria-relevant="additions" aria-atomic="false" className="sr-only">
-        {visible.filter((t) => t.level !== 'error').map((t) => <div key={t.id}>{t.message}</div>)}
+        {visible.filter((t) => t.level !== 'error').map((t) => <div key={t.id}>{t.markdown ? previewLine(t.message) : t.message}</div>)}
       </div>
       <div role="alert" aria-live="assertive" aria-relevant="additions" aria-atomic="false" className="sr-only">
-        {visible.filter((t) => t.level === 'error').map((t) => <div key={t.id}>{t.message}</div>)}
+        {visible.filter((t) => t.level === 'error').map((t) => <div key={t.id}>{t.markdown ? previewLine(t.message) : t.message}</div>)}
       </div>
       <AnimatePresence initial={false} mode="popLayout">
         {visible.map((t) => {
@@ -192,7 +198,7 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
                   button, and hiding an ancestor of a focusable control is `aria-hidden-focus`
                   (serious). Doing that produced exactly that violation. */}
               <div className="min-w-0 flex-1">
-                <span aria-hidden data-type="body-m" className="text-on-surface">{t.message}</span>
+                <span aria-hidden data-type="body-m" className="text-on-surface">{t.markdown ? <MarkdownLine text={t.message} /> : t.message}</span>
                 {/* The DESTINATION, when the dispatcher named one. `ink="emphasis"` because the
                     card's ground is `.glass`, not `--color-surface` (see TextLink's contrast
                     table). Not aria-hidden: the live regions own the message, but a link is a

@@ -32,6 +32,8 @@ import { PageTitle } from '../../ui/PageTitle'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { MetaChip } from '../../ui/MetaChip'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { previewLine } from '../../lib/previewText'
 
 type ViewMode = 'list' | 'cards' | 'board' | 'dag'
 // views that ignore the status filter (they present all statuses themselves)
@@ -565,7 +567,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     catch (e) {
       setTasks(prev ?? null)
       const msg = e instanceof Error ? e.message : 'Could not update the task.'
-      setMoveError(`“${cur.title}” → ${status.replace('_', ' ')}: ${msg}`)
+      setMoveError(`“${previewLine(cur.title)}” → ${status.replace('_', ' ')}: ${msg}`)
       window.setTimeout(() => setMoveError(''), 6000)
     }
   }
@@ -630,7 +632,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         />
       }
       panel={open && (
-        <SidePanel key={open.id} fillHeight storeKey="task-panel-w" icon={(() => { const I = statusMeta(open.status).icon; return <I size={18} style={{ color: statusMeta(open.status).tone }} /> })()} title={open.title} onClose={() => setOpenId(null)}>
+        <SidePanel key={open.id} fillHeight storeKey="task-panel-w" icon={(() => { const I = statusMeta(open.status).icon; return <I size={18} style={{ color: statusMeta(open.status).tone }} /> })()} title={<MarkdownLine text={open.title} />} tooltip={previewLine(open.title)} onClose={() => setOpenId(null)}>
           <TaskDetail task={open} editing={editing} onEditingChange={setEditing} allTasks={tasks ?? []} onOpenTask={(id) => setOpenId(id)} onSaved={(u) => { patchLocal(u); }} onDeleted={() => { setOpenId(null); load() }} />
         </SidePanel>
       )}
@@ -864,14 +866,14 @@ function TaskRow({ t, onOpen, onProject, onTag, selected, selecting, onToggleSel
           10 titles are already longer — it would have silently truncated away the very word being
           added. Its own docstring draws that line ("capping data is not the same as bounding a name
           you assembled"). Title first, status appended, uncapped — the `AppsSection` idiom. */}
-      <RowHitTarget label={`${t.title} — ${sm.label}`} />
+      <RowHitTarget label={`${previewLine(t.title)} — ${sm.label}`} />
       {/* Selection checkbox — visible on hover, or always once a selection is active. */}
       {/* 20x20 painted, 24x24 CLICKED. Measured 30 of these on `#/tasks`, and SC 2.5.8's spacing
           exception cannot rescue them: each sits INSIDE this row's own 1212x47 clickable surface, so
           the 24px circle is inside another target by construction (the trap the
           `sm` Toggle hit). The button is now a transparent 24px box with the painted 20px control inside
           it, and `-m-0.5` returns the 4px so no row reflows — the fix is the hit box, not the design. */}
-      <button type="button" aria-label={`${selected ? 'Deselect' : 'Select'}: ${t.title}`}
+      <button type="button" aria-label={`${selected ? 'Deselect' : 'Select'}: ${previewLine(t.title)}`}
         onClick={(e) => { e.stopPropagation(); onToggleSelect?.() }}
         className="shrink-0 grid size-6 -m-0.5 place-items-center">
         <span className={`grid size-5 place-items-center rounded-md border transition-all ${selected ? 'border-primary bg-primary text-on-primary' : `border-outline-variant text-transparent ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}`}>
@@ -886,7 +888,7 @@ function TaskRow({ t, onOpen, onProject, onTag, selected, selecting, onToggleSel
             too), so assistive tech was the only reader getting all of it. Same shape as tag names,
             intent goals and conflict sources; a task title is simply the one that appears in four
             places, so all three task-owned ones move together. */}
-        <span className={`block truncate text-[0.9375rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)} title={t.title}>{t.title}</span>
+        <span className={`block truncate text-[0.9375rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)} title={previewLine(t.title)}><MarkdownLine text={t.title} /></span>
         <MetaLine t={t} onProject={onProject} />
       </div>
       {(t.labels?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{t.labels!.slice(0, 2).map((l) => <MetaChip key={l} label={l} title={`Filter by tag “${l}”`} onClick={onTag} />)}</div>}
@@ -911,10 +913,10 @@ function TaskCard({ t, onOpen, onProject, onTag }: { t: TaskItem; onOpen: () => 
       // Same defect, same fix, in the Cards view: 30 cards, each openable by pointer only.
       tabIndex={-1}
       className="group relative flex flex-col gap-m rounded-xl bg-surface-container p-l cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary">
-      <RowHitTarget label={t.title} />
+      <RowHitTarget label={previewLine(t.title)} />
       <div className="flex items-start gap-s">
         <sm.icon size={18} className="shrink-0 mt-0.5" style={{ color: sm.tone }} />
-        <span data-type="label-m" className={`flex-1 leading-snug ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)}>{t.title}</span>
+        <span data-type="label-m" className={`flex-1 leading-snug ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)}><MarkdownLine text={t.title} /></span>
         {t.assignee && <span data-type="caption" className="shrink-0 inline-flex items-center rounded-pill px-2 h-6 bg-surface-high text-on-surface-var" title={`Assigned to ${t.assignee}`}>@{t.assignee}</span>}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">

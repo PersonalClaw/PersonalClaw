@@ -59,7 +59,7 @@ describe('the task list row announces its status', () => {
 
   it("the row's accessible name carries the status label, not just the title", () => {
     // The row's name is owned by the shared hit target; `sm` is `statusMeta(t.status)`.
-    expect(src).toMatch(/<RowHitTarget label=\{`\$\{t\.title\} — \$\{sm\.label\}`\} \/>/)
+    expect(src).toMatch(/<RowHitTarget label=\{`\$\{previewLine\(t\.title\)\} — \$\{sm\.label\}`\} \/>/)
   })
 
   it('the status glyph stays hidden, because the name now carries it', () => {

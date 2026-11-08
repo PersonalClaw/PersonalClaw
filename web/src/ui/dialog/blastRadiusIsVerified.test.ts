@@ -63,7 +63,8 @@ describe('the task delete states what the backend really does', () => {
 
   it('names the task — it was the one dialog naming its subject nowhere', () => {
     const ui = web('pages/tasks/TaskDetail.tsx')
-    expect(ui).toMatch(/title: `Delete "\$\{task\.title\}"\?`/)
+    // Its title is the task's line as plain text: a dialog's title is no place for marks.
+    expect(ui).toMatch(/title: `Delete "\$\{previewLine\(task\.title\)\}"\?`/)
     expect(ui, 'the anonymous form must not come back').not.toMatch(/title: 'Delete this task\?'/)
   })
 

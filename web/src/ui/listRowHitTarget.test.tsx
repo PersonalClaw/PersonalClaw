@@ -176,7 +176,7 @@ describe('the tasks list row and card carry the same overlay', () => {
   it('the select checkbox still names itself per row, so the two stops are distinguishable', () => {
     // Two tab stops per row only helps if they announce differently: "triage" opens, "Select: triage"
     // selects.
-    expect(src).toMatch(/aria-label=\{`\$\{selected \? 'Deselect' : 'Select'\}: \$\{t\.title\}`\}/)
+    expect(src).toMatch(/aria-label=\{`\$\{selected \? 'Deselect' : 'Select'\}: \$\{previewLine\(t\.title\)\}`\}/)
   })
 })
 

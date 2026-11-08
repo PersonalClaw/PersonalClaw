@@ -11,7 +11,7 @@ import { TextArea, Segmented, Field, FieldError, useSyncedDraft } from '../../ui
 import { api, ApiError, type InboxItem, type InboxClassification, type InboxDrafting, type SkillProposalDetail } from '../../lib/api'
 import { acceptedLabel } from '../skills/skillMeta'
 import { verdictMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, isSettled, isOpen, CLASSIFICATIONS, isChannelItem, refTarget, refLabel, verifyNote } from './inboxMeta'
-import { InboxMessageBody } from './ForeignContent'
+import { ForeignContent, InboxMessageBody } from './ForeignContent'
 import { InboxAttachments } from './InboxAttachments'
 import { WorkflowGateActions } from './WorkflowGateActions'
 import { DraftNotices, WordCount, OpenAnswers, openAnswers, openAnswersReason } from './DraftNotices'
@@ -206,14 +206,18 @@ export function InboxDetail({ item, owner = '', sortingHeld = '', onChanged, nav
       {/* thread context */}
       {(item.thread_context?.length ?? 0) > 0 && (
         <Section label={`Thread context · ${item.thread_context!.length}`}>
-          <div className="flex flex-col gap-2">
-            {item.thread_context!.map((t, i) => (
-              <div key={i} className="rounded-md bg-surface-container/60 px-m py-1.5">
-                <div data-type="caption" className="text-on-surface-var mb-0.5" style={fvs(600)}>{t.sender_name || 'Unknown'}</div>
-                <div data-type="body-s" className="text-on-surface-low leading-relaxed">{t.text}</div>
-              </div>
-            ))}
-          </div>
+          {/* The thread's messages are the same sender's words as the message: rendered, and inside the
+              same fence when it is another owner's (`ForeignContent`). */}
+          <ForeignContent item={item} owner={owner}>
+            <div className="flex flex-col gap-2">
+              {item.thread_context!.map((t, i) => (
+                <div key={i} className="rounded-md bg-surface-container/60 px-m py-1.5">
+                  <div data-type="caption" className="text-on-surface-var mb-0.5" style={fvs(600)}>{t.sender_name || 'Unknown'}</div>
+                  <div data-type="body-s" className="text-on-surface-low leading-relaxed"><Markdown breaks>{t.text}</Markdown></div>
+                </div>
+              ))}
+            </div>
+          </ForeignContent>
         </Section>
       )}
 

@@ -8,6 +8,8 @@ import { Button } from '../../ui/Button'
 import { StatusPill } from '../../ui/StatusPill'
 import { TextLink } from '../../ui/TextLink'
 import { RowHitTarget } from '../../ui/RowHitTarget'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { previewLine } from '../../lib/previewText'
 
 // ── Home's Running Now: the running list ─────────────────────────────────────────────────────────
 //
@@ -125,17 +127,17 @@ function RunningCard({ row, onOpen, selected }: { row: RunningRow; onOpen?: (row
   const look = phaseOf(row)
   const updated = clockTime(row.since)
   const waiting = Array.isArray(row.waiting) ? row.waiting.length : 0
-  const open = openable(row.name, onOpen ? () => onOpen(row) : undefined, selected)
+  const open = openable(previewLine(row.name), onOpen ? () => onOpen(row) : undefined, selected)
   return (
     <li aria-labelledby={nameId} {...open.props}
       className={`flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s ${open.className}`}>
       {open.target}
-      <p id={nameId} data-type="label-m" className="min-w-0 truncate text-on-surface-var">{row.name}</p>
+      <p id={nameId} data-type="label-m" className="min-w-0 truncate text-on-surface-var" title={previewLine(row.name)}><MarkdownLine text={row.name} /></p>
       <div className="flex min-w-0 flex-wrap items-center gap-xs">
         {row.blocked ? <StatusPill tone="neutral">Blocked</StatusPill> : null}
         <StatusPill tone={look.tone}>{look.label}</StatusPill>
         {row.line && row.line !== look.label ? (
-          <span data-type="body-s" className="min-w-0 text-on-surface">{row.line}</span>
+          <span data-type="body-s" className="min-w-0 text-on-surface"><MarkdownLine text={row.line} /></span>
         ) : null}
       </div>
       <div data-type="body-s" className="flex min-w-0 flex-wrap items-center gap-xs text-on-surface-low">
@@ -144,7 +146,7 @@ function RunningCard({ row, onOpen, selected }: { row: RunningRow; onOpen?: (row
         {waiting > 0 ? <span className="text-on-surface">{`${waiting} waiting on you`}</span> : null}
       </div>
       {row.route ? (
-        <TextLink href={row.route} ink="emphasis" size="sm" aria-label={`Open ${rowSubject([row.name, KIND_WORD[row.kind] ?? row.kind])}`}>Open</TextLink>
+        <TextLink href={row.route} ink="emphasis" size="sm" aria-label={`Open ${rowSubject([previewLine(row.name), KIND_WORD[row.kind] ?? row.kind])}`}>Open</TextLink>
       ) : null}
     </li>
   )
@@ -165,19 +167,19 @@ function EndedCard({ row, pill, tone, line, onOpen, selected }: {
   const at = pill ? '' : clockTime(row.since)
   const said = line ?? row.line
   const word = pill ?? look.label
-  const open = openable(row.name, onOpen ? () => onOpen(row) : undefined, selected)
+  const open = openable(previewLine(row.name), onOpen ? () => onOpen(row) : undefined, selected)
   return (
     <li aria-labelledby={nameId} {...open.props}
       className={`flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/30 p-s ${open.className}`}>
       {open.target}
-      <p id={nameId} data-type="label-m" className="min-w-0 truncate text-on-surface-var">{row.name}</p>
+      <p id={nameId} data-type="label-m" className="min-w-0 truncate text-on-surface-var" title={previewLine(row.name)}><MarkdownLine text={row.name} /></p>
       <div className="flex min-w-0 flex-wrap items-center gap-xs">
         <StatusPill tone={tone ?? look.tone}>{word}</StatusPill>
-        {said && said !== word ? <span data-type="body-s" className="min-w-0 text-on-surface">{said}</span> : null}
+        {said && said !== word ? <span data-type="body-s" className="min-w-0 text-on-surface"><MarkdownLine text={said} /></span> : null}
         {at ? <span data-type="body-s" className="text-on-surface-low">{`Ended ${at}`}</span> : null}
       </div>
       {row.route ? (
-        <TextLink href={row.route} ink="emphasis" size="sm" aria-label={`Open ${rowSubject([row.name, word])}`}>Open</TextLink>
+        <TextLink href={row.route} ink="emphasis" size="sm" aria-label={`Open ${rowSubject([previewLine(row.name), word])}`}>Open</TextLink>
       ) : null}
     </li>
   )

@@ -34,6 +34,8 @@ import { reportingWrite } from '../../app/reportingWrite'
 import { ConsentDeclined } from '../../lib/securityConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { ApprovalDecision } from '../../app/ApprovalDecision'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { previewLine } from '../../lib/previewText'
 
 /** The Inbox's Notifications filter (#3818): the triage feed of agent/schedule/trigger/task events,
  *  drawn by `InboxPage` at `#/inbox?filter=notifications`. It was the page at `#/notifications`,
@@ -207,7 +209,7 @@ export function NotificationsPage({ query, setQuery, navigate, inboxFilters }: P
         />
       }
       panel={open && (
-        <SidePanel key={open.ts} fillHeight storeKey="notif-panel-w" icon={(() => { const km = noteMeta(open); return <km.icon size={18} style={{ color: km.tone }} /> })()} title={open.title} onClose={() => setOpenTs("")}>
+        <SidePanel key={open.ts} fillHeight storeKey="notif-panel-w" icon={(() => { const km = noteMeta(open); return <km.icon size={18} style={{ color: km.tone }} /> })()} title={<MarkdownLine text={open.title} />} tooltip={previewLine(open.title)} onClose={() => setOpenTs("")}>
           <div className="flex flex-col gap-l">
             <div className="flex flex-wrap items-center gap-s text-[0.8125rem]">
               {(() => { const km = noteMeta(open); return <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {km.label}</span> })()}
@@ -336,7 +338,7 @@ function Row({ n, now, onOpen, onAck, onUnack, onDelete }: { n: NotificationItem
   const km = noteMeta(n)
   // What this row IS, bound once: the row's own hit target and all three actions must
   // announce the same subject, and it was being recomputed per control.
-  const subject = rowSubject([n.title, firstLine(n.body ?? '')])
+  const subject = rowSubject([previewLine(n.title), previewLine(firstLine(n.body ?? ''))])
   // Right-click / long-press → the same actions the row's click + hover buttons
   // already wire (open, ack/unack by read-state, delete) — the shared ContextMenu
   // primitive, no duplicated logic.
@@ -366,10 +368,10 @@ function Row({ n, now, onOpen, onAck, onUnack, onDelete }: { n: NotificationItem
       <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: toneChipBg(km.tone) }}><km.icon size={19} style={{ color: km.tone }} /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
-          <span className={`truncate text-[0.9375rem] ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)}>{n.title}</span>
+          <span className={`truncate text-[0.9375rem] ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)} title={previewLine(n.title)}><MarkdownLine text={n.title} /></span>
           <span className="shrink-0 text-on-surface-low text-[0.75rem]">{relTime(n.ts, now)}</span>
         </div>
-        <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{firstLine(n.body)}</p>
+        <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]"><Markdown inline>{firstLine(n.body)}</Markdown></p>
       </div>
       <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
         {/* Investigate: a failure notification carries the link to what

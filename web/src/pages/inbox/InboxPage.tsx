@@ -32,6 +32,7 @@ import { TriageDigestCard } from './TriageDigestCard'
 import { ContextMenu, EntranceGroup, EntranceRegion, type ContextMenuItem } from '../../ui/motion'
 import { PageTitle } from '../../ui/PageTitle'
 import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
+import { Markdown } from '../../ui/Markdown'
 
 // 'open' means unresolved — pending OR seen. It replaces the old 'pending' key, which
 // compared status === 'pending' exactly: once viewing an item marks it SEEN, that filter
@@ -689,10 +690,11 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
                           owner's own rows. */}
                       <ForeignBadge item={it} owner={me} />
                     </div>
-                    {/* The panel renders this content as real markup; the ROW is a one-line
-                        plain-text preview, so the marks must go — a digest body's `**` and `##`
-                        rendered literally here for every digest row (issue 618). */}
-                    <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{previewText(it.message)}</p>
+                    {/* The ROW is a one-line excerpt of what the panel renders: its marks render
+                        inline (a heading, a list or a fence flattens to its words, `Markdown
+                        inline`), so a digest body's `**` and `##` neither show (issue 618) nor go
+                        missing. The row's NAME stays plain text (`previewText`). */}
+                    <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low"><Markdown inline>{it.message}</Markdown></p>
                   </div>
                   <div className="hidden sm:flex shrink-0 items-center gap-s">
                     {/* Confidence is a TRIAGE judgment; a needs_input row was never triaged, and a

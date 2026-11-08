@@ -8,6 +8,8 @@ import { ListSkeleton } from '../../../ui/ListScaffold'
 import { partitionRuns } from './scheduleFold'
 import type { RouteProps } from '../../../app/useQueryState'
 import { rowSubject } from '../../../lib/rowSubject'
+import { MarkdownLine } from '../../../ui/MarkdownLine'
+import { previewLine } from '../../../lib/previewText'
 
 /** Compact "time ago / from now" for a timestamp in EITHER wire shape.
  *
@@ -96,13 +98,13 @@ export function ScheduleWidget({ navigate }: RouteProps) {
     const name = r.trigger_name || r.trigger_id || 'Schedule'
     return (
       <WidgetRow key={r.id ?? r.run_id ?? `run-${i}`} onClick={() => navigate('triggers')}
-        label={rowSubject([name, o.label, r.reason])}>
+        label={rowSubject([name, o.label, previewLine(r.reason)])}>
         <div className="flex items-center gap-s">
           <StatusDot color={o.tone} />
           <div className="min-w-0 flex-1">
             <p data-type="title-m" className="truncate text-on-surface">{name}</p>
             <p data-type="body-m" className="truncate text-on-surface-low">
-              <span style={{ color: o.tone }}>{o.label}</span>{r.reason ? ` · ${r.reason}` : ''}
+              <span style={{ color: o.tone }}>{o.label}</span>{r.reason ? <>{' · '}<MarkdownLine text={r.reason} /></> : null}
             </p>
           </div>
           <span data-type="body-m" className="shrink-0 text-on-surface-low">{rel(when)}</span>

@@ -8,6 +8,8 @@ import { MetaChip } from '../../ui/MetaChip'
 import { prereqIds } from './dag'
 import { spring, physics, expr } from '../../design/motion'
 import { CollapseColumnButton, CollapsedBoardColumn, boardGridTemplate, useBoardCollapse } from '../../ui/BoardCollapse'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { previewLine } from '../../lib/previewText'
 
 /** Kanban board, designed as a fixed SHELL: every status column is always on
  *  screen. The board fills the available height. Empty columns AUTO-collapse
@@ -146,7 +148,7 @@ function BoardCard({ t, tone, onOpen, onDragStart, onDragEnd, dragging }: {
     // The name is the task title, matching what the list row's hit target announces, rather than the
     // card's whole subtree (title + pills + dates).
     <div draggable={!readOnly} onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={onOpen}
-      role="button" tabIndex={0} aria-label={t.title}
+      role="button" tabIndex={0} aria-label={previewLine(t.title)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
       className={`shrink-0 select-none rounded-lg ${readOnly ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'}`}>
     <motion.div
@@ -171,7 +173,7 @@ function BoardCard({ t, tone, onOpen, onDragStart, onDragEnd, dragging }: {
           initiating the drag. */}
       {!readOnly && <GripVertical size={13} className="pointer-events-none absolute right-1.5 top-2 text-on-surface-low opacity-0 group-hover:opacity-100 transition-opacity" />}
       <div className="pl-1.5">
-        <div data-type="label-s" className="text-on-surface leading-snug line-clamp-2 pr-4" style={fvs(500)}>{t.title}</div>
+        <div data-type="label-s" className="text-on-surface leading-snug line-clamp-2 pr-4" style={fvs(500)} title={previewLine(t.title)}><MarkdownLine text={t.title} /></div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {pm && <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-5" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>}
           {due && <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-5" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}

@@ -27,6 +27,7 @@ import { api, type WaitingItem, type WaitingList } from './api'
 import { desktopBridge, type DesktopBridge } from './desktopBridge'
 import { useChatSocket, type WsMessage } from './useChatSocket'
 import { stillOrbPng } from '../ui/buddy/paintOrb'
+import { previewLine, previewText } from './previewText'
 
 /** Where a tap should land, by notification SOURCE.
  *
@@ -154,9 +155,10 @@ export function useNativeNotifications(navigate: (route: string) => void): void 
     // A refused banner is not an error worth surfacing here either: the bell has the note.
     if (alert) return void raiseAlert(bridge.notifications, note, alert).catch(() => {})
     bridge.notifications
+      // The OS shows plain text: a note's marks are read off, never shown (`previewText`).
       .show({
-        title: String(note.title ?? ''),
-        body: String(note.body ?? ''),
+        title: previewLine(String(note.title ?? '')),
+        body: previewText(String(note.body ?? '')),
         route: routeForNote(note),
       })
       // A refused banner is not an error worth surfacing: the note is already in the feed

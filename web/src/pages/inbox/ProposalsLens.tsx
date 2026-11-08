@@ -14,6 +14,9 @@ import {
   proposalOf,
 } from './proposalLens'
 import { verifyNote } from './inboxMeta'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { Markdown } from '../../ui/Markdown'
+import { previewLine } from '../../lib/previewText'
 
 /** Per-item apply outcome, kept so a BATCH shows N individual results — one failure must
  *  not read as "the batch failed", and a success next to it must stay visible. */
@@ -172,11 +175,11 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                 <Checkbox
                   checked={selected.has(it.id)}
                   onChange={() => toggle(it.id)}
-                  ariaLabel={`Select proposal: ${p?.title || it.message}`}
+                  ariaLabel={`Select proposal: ${previewLine(p?.title || it.message)}`}
                 />
                 <div className="min-w-0 flex-1">
-                  <div data-type="label-m" className="truncate text-on-surface" style={fvs(500)}>
-                    {p?.title || it.message}
+                  <div data-type="label-m" className="truncate text-on-surface" style={fvs(500)} title={previewLine(p?.title || it.message)}>
+                    <MarkdownLine text={p?.title || it.message} />
                   </div>
                   <div data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-s text-on-surface-low">
                     <span>{groupLabel(it)}</span>
@@ -191,7 +194,11 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                   {verifyNote(it) && (
                     <div data-type="caption" className="mt-0.5 text-on-surface-low">{verifyNote(it)}</div>
                   )}
-                  {p?.preview && (
+                  {/* A text preview is prose an agent wrote; a diff stays a diff. */}
+                  {p?.preview && p.preview_kind !== 'diff' && (
+                    <div data-type="body-s" className="mt-s max-h-40 overflow-auto text-on-surface-var"><Markdown>{p.preview}</Markdown></div>
+                  )}
+                  {p?.preview && p.preview_kind === 'diff' && (
                     <pre
                       data-type="body-s"
                       className={`mt-s max-h-40 overflow-auto whitespace-pre-wrap text-on-surface-var ${p.preview_kind === 'diff' ? 'font-mono' : ''}`}

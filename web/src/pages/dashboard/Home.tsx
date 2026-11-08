@@ -40,6 +40,11 @@ import { PinnedTiles } from './PinnedTiles'
 import { FinishedRows, LARGE_LIST, RunningLane, openable } from './RunningLane'
 import { readShown, writeShown } from './homeShown'
 import { Suggestions } from './widgets/Suggestions'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { previewLine } from '../../lib/previewText'
+import { cutMarkdown, cutMarkdownLine } from '../../lib/cutMarkdown'
+import { widgetlessText } from '../../ui/widget/blocks'
+import { Markdown } from '../../ui/Markdown'
 
 // ── Home: the attention stack ───────────────────────────────────────────────────────────────────
 //
@@ -364,12 +369,12 @@ function AttentionStack({ header, ...route }: RouteProps & { header: (filter?: R
   const selectedThread = open.startsWith('thread:') && Array.isArray(sessionsData)
     ? sessionsData.find((s) => `thread:${s.key}` === open) : undefined
   const detail: CapabilityDetail | null = selectedNeed ? {
-    id: open, title: selectedNeed.title, onClose: close,
+    id: open, title: previewLine(selectedNeed.title), heading: <MarkdownLine text={selectedNeed.title} />, onClose: close,
     body: <NeedDetail row={selectedNeed} outcome={outcomes[selectedNeed.key]} actions={actions} now={now} />,
   } : selectedRun ? {
-    id: open, title: selectedRun.name, onClose: close, body: <RunDetail row={selectedRun} />,
+    id: open, title: previewLine(selectedRun.name), heading: <MarkdownLine text={selectedRun.name} />, onClose: close, body: <RunDetail row={selectedRun} />,
   } : selectedThread ? {
-    id: open, title: sessionTitle(selectedThread), onClose: close, body: <ThreadDetail s={selectedThread} />,
+    id: open, title: previewLine(sessionTitle(selectedThread)), heading: <MarkdownLine text={cutMarkdownLine(sessionTitle(selectedThread), Infinity)} />, onClose: close, body: <ThreadDetail s={selectedThread} />,
   } : null
 
   const needsFailed = !!needs.error && !needs.data
@@ -526,7 +531,7 @@ function NeedCard({ row, outcome, actions, now, selected, onOpen }: {
   selected: boolean
   onOpen: () => void
 }) {
-  const open = openable(row.title, onOpen, selected)
+  const open = openable(previewLine(row.title), onOpen, selected)
   return (
     <div {...open.props}
       className={`flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s ${open.className}`}>
@@ -557,7 +562,7 @@ function NeedDetail({ row, outcome, actions, now }: {
         <ol className="flex min-w-0 list-decimal flex-col gap-xs pl-l">
           {questions.map((q, i) => (
             <li key={i} data-type="body-s" className="text-on-surface">
-              {typeof (q as { question?: unknown }).question === 'string' ? (q as { question: string }).question : ''}
+              {typeof (q as { question?: unknown }).question === 'string' ? <MarkdownLine text={(q as { question: string }).question} /> : ''}
             </li>
           ))}
         </ol>
@@ -588,7 +593,7 @@ function NeedBody({ row, outcome, actions, now }: {
 }) {
   const settled = outcome?.state === 'done' || outcome?.state === 'ended'
   const busy = outcome?.state === 'busy'
-  const subject = rowSubject([row.title, row.raisedBy, row.subtitle])
+  const subject = rowSubject([previewLine(row.title), row.raisedBy, previewLine(row.subtitle)])
   const item = row.origin === 'waiting' ? row.item : null
   const expired = item ? isStale(item, now) : false
 
@@ -612,10 +617,13 @@ function NeedBody({ row, outcome, actions, now }: {
   return (
     <div className="flex min-w-0 flex-col gap-xs">
       {row.raisedBy ? <p data-type="label-s" className="min-w-0 truncate text-on-surface-low">{row.raisedBy}</p> : null}
-      <p data-type="label-m" className="min-w-0 text-on-surface-var">{row.title}</p>
-      {row.subtitle ? <p data-type="body-s" className="min-w-0 text-on-surface-low">{row.subtitle}</p> : null}
+      {/* What an agent, a loop or a person wrote renders as its line; an approval's title is a tool's
+          name, and a browse grant's second line is ours, so both stay text. */}
+      <p data-type="label-m" className="min-w-0 text-on-surface-var">{item?.kind === 'approval' ? row.title : <MarkdownLine text={row.title} />}</p>
+      {row.subtitle ? <p data-type="body-s" className="min-w-0 text-on-surface-low">{item?.kind === 'browse_grant' ? row.subtitle : <MarkdownLine text={row.subtitle} />}</p> : null}
+      {/* A gate's or a trigger's prompt is a body, with any widget block left out. */}
       {question?.prompt && question.prompt !== row.title ? (
-        <p data-type="body-s" className="min-w-0 text-on-surface">{question.prompt}</p>
+        <div data-type="body-s" className="min-w-0 text-on-surface"><Markdown>{widgetlessText(question.prompt)}</Markdown></div>
       ) : null}
       {expired && !settled ? (
         <p role="status" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface-var">
@@ -762,7 +770,7 @@ function RunDetail({ row }: { row: RunningRow }) {
         {row.blocked ? <StatusPill tone="neutral">Blocked</StatusPill> : null}
         <StatusPill tone={look.tone}>{look.label}</StatusPill>
       </div>
-      {row.line ? <p data-type="body-m" className="min-w-0 text-on-surface">{row.line}</p> : null}
+      {row.line ? <p data-type="body-m" className="min-w-0 text-on-surface"><MarkdownLine text={row.line} /></p> : null}
       <dl data-type="body-s" className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs text-on-surface-var">
         {row.agent ? <><dt className="text-on-surface-low">Agent</dt><dd>{row.agent}</dd></> : null}
         {row.started_at ? <><dt className="text-on-surface-low">Started</dt><dd>{clockTime(row.started_at)}</dd></> : null}
@@ -783,13 +791,14 @@ function ThreadRow({ s, selected, onOpen }: { s: ChatSessionSummary; selected: b
   // a chat channel.
   const app = startedByName(s)
   const channel = channelOf(s)
-  const named = rowSubject([title, app ? startedByLabel(app) : '', channel ? `From ${channel}` : ''], 120)
+  const named = rowSubject([previewLine(title), app ? startedByLabel(app) : '', channel ? `From ${channel}` : ''], 120)
   return (
     <li className={`flex min-w-0 items-center gap-s rounded-lg border border-outline-variant/30 p-s ${selected ? 'ring-1 ring-primary' : ''} relative cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary`}
       tabIndex={-1} onClick={onOpen}>
       <RowHitTarget label={`Show the details of ${named}`} selected={selected} />
       <MessageSquare size={14} className="shrink-0 text-on-surface-low" aria-hidden="true" />
-      <span data-type="label-m" className="min-w-0 flex-1 truncate text-on-surface-var">{title}</span>
+      {/* A title can be the first words of the chat, cut with "…": repaired, so no mark is left open. */}
+      <span data-type="label-m" className="min-w-0 flex-1 truncate text-on-surface-var" title={previewLine(title)}><MarkdownLine text={cutMarkdownLine(title, Infinity)} /></span>
       <StartedByApp s={s} />
       <FromChannel s={s} />
       {at ? <span data-type="body-s" className="shrink-0 text-on-surface-low">{at}</span> : null}
@@ -801,7 +810,8 @@ function ThreadRow({ s, selected, onOpen }: { s: ChatSessionSummary; selected: b
 function ThreadDetail({ s }: { s: ChatSessionSummary }) {
   return (
     <div className="flex min-w-0 flex-col gap-m">
-      {s.last_message ? <p data-type="body-m" className="min-w-0 whitespace-pre-line text-on-surface">{s.last_message}</p> : null}
+      {/* The gateway cut the last words at 80 characters and "…": repaired, so no mark is left open. */}
+      {s.last_message ? <p data-type="body-m" className="min-w-0 text-on-surface"><Markdown inline>{cutMarkdownLine(s.last_message, 240)}</Markdown></p> : null}
       <TextLink href={`#/chat/${encodeURIComponent(s.key)}`} ink="emphasis" size="sm">Open the chat</TextLink>
     </div>
   )
@@ -838,11 +848,15 @@ function ConversationTail({ session }: { session: string }) {
   if (lines.length === 0) return null
   return (
     <section role="region" aria-label="The conversation it came from" className="flex min-w-0 flex-col gap-xs border-l-2 border-outline-variant/40 pl-m">
+      {/* Each line renders as the transcript does: the agent's as its reply (any widget block left
+          out), yours as text written in lines; each cut at a block boundary, never in a fence. */}
       {lines.map((m, i) => (
-        <p key={i} data-type="body-s" className={`min-w-0 whitespace-pre-line ${m.role === 'user' ? 'text-on-surface-var' : 'text-on-surface'}`}>
-          <span className="text-on-surface-low">{m.role === 'user' ? 'You: ' : 'Agent: '}</span>
-          {String(m.content ?? '').slice(0, 400)}
-        </p>
+        <div key={i} data-type="body-s" className={`flex min-w-0 items-baseline gap-xs ${m.role === 'user' ? 'text-on-surface-var' : 'text-on-surface'}`}>
+          <span className="shrink-0 text-on-surface-low">{m.role === 'user' ? 'You: ' : 'Agent: '}</span>
+          <div className="min-w-0 flex-1">
+            <Markdown breaks={m.role === 'user'}>{cutMarkdown(m.role === 'user' ? String(m.content ?? '') : widgetlessText(String(m.content ?? '')), 400)}</Markdown>
+          </div>
+        </div>
       ))}
     </section>
   )

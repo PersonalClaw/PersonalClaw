@@ -56,6 +56,8 @@ import { notify } from '../../app/appSdk'
 import { copyText } from '../../app/clipboard'
 import { LoopRunsOn } from '../loop/LoopRuntimePill'
 import { runtimeFields, type LoopRuntime } from '../loop/loopRuntime'
+import { MarkdownLine } from '../../ui/MarkdownLine'
+import { previewLine } from '../../lib/previewText'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
 /** A cycle's detail reads as a column of prose and checks, so its pane starts narrower than a plan's. */
@@ -1236,7 +1238,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, ta
               const box = (
                 <span className="shrink-0 inline-flex size-4 items-center justify-center rounded-sm border" style={{ borderColor: done ? 'var(--color-ok)' : 'var(--color-outline-variant)', background: done ? 'var(--color-ok)' : 'transparent' }}>{done && <Check size={11} className="text-on-primary" />}</span>
               )
-              const label = <span className={`flex-1 min-w-0 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{t.title}</span>
+              const label = <span className={`flex-1 min-w-0 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} title={previewLine(t.title)}><MarkdownLine text={t.title} /></span>
               const status = <span data-type="caption" className="shrink-0 text-on-surface-low">{t.status}</span>
               // When a task-open handler is wired, each row is a button that
               // deep-links to that task on the Tasks page (read its detail, edit,

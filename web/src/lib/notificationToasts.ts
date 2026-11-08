@@ -21,6 +21,7 @@
  */
 import { useChatSocket, type WsMessage } from './useChatSocket'
 import { kindMeta, firstLine } from '../pages/notifications/notificationMeta'
+import { cutMarkdownLine } from './cutMarkdown'
 
 /** The three levels `Toaster` renders. */
 export type ToastLevel = 'info' | 'success' | 'error'
@@ -49,7 +50,7 @@ export function toastLevelForKind(kind: string): ToastLevel {
  */
 export function toastMessageForNote(note: Record<string, unknown>): string {
   const title = String(note.title ?? '').trim()
-  const detail = firstLine(String(note.body ?? ''), 80).trim()
+  const detail = cutMarkdownLine(firstLine(String(note.body ?? '')), 80).trim()
   if (!title) return detail
   if (!detail || detail === title) return title
   return `${title} — ${detail}`
@@ -84,6 +85,8 @@ export function useNotificationToasts(): void {
       detail: {
         level: toastLevelForKind(String(note.kind ?? '')),
         message: toastMessageForNote(note),
+        // A note is an agent's or a run's words: its toast renders them as a line (`Toaster`).
+        markdown: true,
       },
     }))
   }, null)  // a toast is an announcement: the bell is the record, and it re-reads on a reconnect
