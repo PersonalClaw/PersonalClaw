@@ -1,6 +1,7 @@
 import type { AgentDayBlock, AgentDayRead, Loop, SpawnedAgent, WeekOccurrence } from '../../../lib/api'
 import type { NeedsYouRow } from '../../../lib/needsYou'
 import type { AgentActivityEntity } from '../../../lib/useAgentActivity'
+import { previewLine } from '../../../lib/previewText'
 
 // ── Home's "Your agents today": the band's model ─────────────────────────────────────────────────
 //
@@ -34,8 +35,13 @@ export interface DayRow {
   name: string
   state: RowState
   marks: Mark[]
-  /** What the row says beside the now line, in a few words. */
+  /** What the row says beside the now line, in a few words, as written. */
   say: string
+  /** `say` in its parts: our words (`lead`, `tail`) around what an agent wrote (`content`), which is
+   *  the one part that is markdown. An ask's title with " and 2 more", the title of the work it does
+   *  now, or why it failed after "Failed at 16:12: ". A line the app builds (the Scheduled row's,
+   *  "Last ran 17:40") is all `lead`. */
+  line: RowLine
   /** The Attention address that answers its ask, '' when it asks nothing. */
   attention: string
   asks: number
@@ -60,6 +66,9 @@ export interface DayRow {
   /** Its first ask's place in Attention's order, so waiting rows read in the order Attention does. */
   rank: number
 }
+
+/** A row's line: our words around the one part an agent wrote. */
+export interface RowLine { lead: string; content: string; tail: string }
 
 export interface DayView {
   now: number
@@ -358,9 +367,10 @@ export function buildDay(input: DayInput): DayView {
     const after = scheduled && nextAfter ? whenNext(nextAfter.at, now) : ''
     const before = d.before !== null ? clock(d.before) : ''
     const ask = d.asks[0]
-    const failed = d.failure ? `Failed at ${clock(d.failure.at)}: ${d.failure.why}` : ''
+    const failedLead = d.failure ? `Failed at ${clock(d.failure.at)}: ` : ''
+    const failed = d.failure ? `${failedLead}${d.failure.why}` : ''
     const run = ({ o, at }: { o: Occurrence; at: number }) => `${whenNext(at, now)} ${o.trigger_name}`
-    let say: string
+    let line: RowLine
     let saysBefore = false
     if (scheduled) {
       // The row names its next runs in order, so the track's marks can stay short and nothing sits
@@ -368,26 +378,29 @@ export function buildDay(input: DayInput): DayView {
       // or how many runs and its last (`scheduleWords`), in its line and its sentence alike: a
       // schedule every minute is 240 runs in four hours. Two or fewer, it names them and the one
       // after the window too, which is then the next.
-      say = inWindow.length > 2
+      line = { lead: inWindow.length > 2
         ? [...schedules.values()].map((s) => scheduleWords(s, now)).join(' · ')
-        : [...inWindow, ...(nextAfter ? [nextAfter] : [])].map(run).join(' · ')
+        : [...inWindow, ...(nextAfter ? [nextAfter] : [])].map(run).join(' · '), content: '', tail: '' }
     } else if (ask) {
-      say = d.asks.length > 1 ? `${ask.title} and ${d.asks.length - 1} more` : ask.title
+      line = { lead: '', content: ask.title, tail: d.asks.length > 1 ? ` and ${d.asks.length - 1} more` : '' }
     } else if (d.working) {
-      say = d.working.title
-    } else if (failed) {
-      say = failed
+      line = { lead: '', content: d.working.title, tail: '' }
+    } else if (d.failure) {
+      line = { lead: failedLead, content: d.failure.why, tail: '' }
     } else {
       const last = d.marks.filter((m) => m.kind === 'done').reduce((t, m) => Math.max(t, m.end), d.before ?? 0)
-      say = last ? `Last ran ${clock(last)}` : ''
+      line = { lead: last ? `Last ran ${clock(last)}` : '', content: '', tail: '' }
       saysBefore = d.before !== null && last === d.before
     }
+    const say = `${line.lead}${line.content}${line.tail}`
+    // The sentence reads what an agent wrote as plain text, and our own words as they are.
+    const plainSay = `${line.lead}${previewLine(line.content)}${line.tail}`
     const name = scheduled ? 'Scheduled' : d.key
     const askedAt = ask?.origin === 'waiting' ? ms(ask.item.asked_at) : null
     const asked = askedAt !== null ? ago(now - askedAt) : ''
-    const parts = [`${name}, ${scheduled ? AGENT_NOT_NAMED : STATE_WORD[state]}: ${say || 'nothing to say'}.`]
+    const parts = [`${name}, ${scheduled ? AGENT_NOT_NAMED : STATE_WORD[state]}: ${plainSay || 'nothing to say'}.`]
     if (asked) parts.push(`Asked ${asked} ago.`)
-    if (failed && say !== failed) parts.push(`${failed}.`)
+    if (failed && say !== failed) parts.push(`${failedLead}${previewLine(d.failure?.why ?? '')}.`)
     if (d.tail) parts.push(`${d.tail}.`)
     if (before && !saysBefore) parts.push(`Earlier today ${before}.`)
     // The run after the window is in the line when two or fewer fall in it, and said after them when
@@ -401,6 +414,7 @@ export function buildDay(input: DayInput): DayView {
       state: scheduled ? 'idle' : state,
       marks: d.marks.sort((a, b) => a.start - b.start),
       say,
+      line,
       attention: ask ? `#/dashboard?view=attention&open=${encodeURIComponent(ask.key)}` : '',
       asks: d.asks.length,
       failed,

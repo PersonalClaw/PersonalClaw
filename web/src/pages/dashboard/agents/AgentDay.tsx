@@ -6,6 +6,7 @@ import { useNeedsYou } from '../../../lib/useNeedsYou'
 import { useAgentActivity } from '../../../lib/useAgentActivity'
 import { useChatSocket, type WsMessage } from '../../../lib/useChatSocket'
 import { Button } from '../../../ui/Button'
+import { MarkdownLine } from '../../../ui/MarkdownLine'
 import { ButtonLink } from '../../../ui/ButtonLink'
 import { FilterMenu } from '../../../ui/FilterMenu'
 import { TextLink } from '../../../ui/TextLink'
@@ -15,7 +16,7 @@ import { fvs } from '../../../design/fontWeight'
 import type { PhaseFamily } from '../../../lib/workPhase'
 import { SlotEmptyState } from '../widgets/kit'
 import { Section } from '../Section'
-import { FOLD_MS, buildDay, clock, type DayRow, type DayView, type Mark, type Occurrence, type RowState } from './agentDayModel'
+import { FOLD_MS, buildDay, clock, type DayRow, type DayView, type Mark, type Occurrence, type RowLine, type RowState } from './agentDayModel'
 
 // ── Home › Overview: "Your agents today" ─────────────────────────────────────────────────────────
 //
@@ -389,12 +390,18 @@ function Row({ row, view }: { row: DayRow; view: DayView }) {
         <Track row={row} view={view} />
         <p data-type="body-s" className="flex min-w-0 overflow-hidden text-on-surface-var max-sm:flex-wrap">
           {/* The Scheduled row's line names each schedule whole, so it wraps at every width. */}
-          <span className={row.key === 'scheduled' ? 'min-w-0' : 'min-w-0 truncate max-sm:whitespace-normal'}>{row.say}</span>
+          <span className={row.key === 'scheduled' ? 'min-w-0' : 'min-w-0 truncate max-sm:whitespace-normal'}><RowLineText line={row.line} /></span>
           <FailedAt row={row} />
         </p>
       </div>
     </li>
   )
+}
+
+/** A row's line: our words as the text they are, and what an agent wrote (an ask's title, the
+ *  title of its work, why it failed) rendered as the line it is. */
+function RowLineText({ line }: { line: RowLine }) {
+  return <>{line.lead}{line.content && <MarkdownLine text={line.content} />}{line.tail}</>
 }
 
 /** When a row that waits or works now failed today, after its line, in the age's style: the count
@@ -440,7 +447,7 @@ function LiftedRow({ row, view }: { row: DayRow; view: DayView }) {
         <div className="flex min-w-0 items-center justify-between gap-s max-sm:flex-col max-sm:items-start">
           {/* The ask's words give way before its age does: the age is what says how long it waited. */}
           <p data-type="body-s" className="flex min-w-0 overflow-hidden text-on-surface max-sm:flex-wrap">
-            <span className="min-w-0 truncate max-sm:whitespace-normal">{row.say}</span>
+            <span className="min-w-0 truncate max-sm:whitespace-normal"><RowLineText line={row.line} /></span>
             {row.asked && <span className="shrink-0 whitespace-pre text-on-surface-var">{` · asked ${row.asked} ago`}</span>}
             <FailedAt row={row} />
           </p>
