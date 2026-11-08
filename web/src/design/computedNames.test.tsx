@@ -135,7 +135,7 @@ describe("the notification row actions name their row, and stay bounded", () => 
     // recomputing an identical expression is how two of them drift. So the shape asserted here moved
     // from the inline call to the binding plus its uses, which also pins that they cannot diverge.
     expect(code, 'the row subject is computed once')
-      .toMatch(/const subject = rowSubject\(\[previewLine\(n\.title\), previewLine\(firstLine\(n\.body \?\? ''\)\)\]\)/)
+      .toMatch(/const subject = rowSubject\(\[previewLine\(n\.title\), previewText\(firstLine\(n\.body \?\? ''\)\)\]\)/)
     for (const verb of ['Investigate in chat', 'Mark unread', 'Mark read', 'Delete']) {
       expect(code, `${verb} must name its row`).toMatch(new RegExp(`\`${verb}: \\$\\{subject\\}\``))
     }
@@ -155,7 +155,7 @@ describe("the notification row actions name their row, and stay bounded", () => 
     // 12 named controls in the shade, **0 bare verbs, 0 duplicate names**, both themes.
     const bell = codeOf('ui/NotificationBell.tsx')
     expect(bell, 'the subject is computed once for the row and both actions')
-      .toMatch(/const subject = rowSubject\(\[previewLine\(n\.title\), previewLine\(firstLine\(n\.body \?\? ''\)\)\]\)/)
+      .toMatch(/const subject = rowSubject\(\[previewLine\(n\.title\), previewText\(firstLine\(n\.body \?\? ''\)\)\]\)/)
     // 🔁 RE-POINTED "Dismiss" → "Delete", and the two rails now CONVERGE on the invariant this block
     // already states above: *"they are ONE row shown on two surfaces: a notification must not announce
     // itself differently depending on which surface renders it."* The assertion was pinning a violation
@@ -177,7 +177,7 @@ describe("the notification row actions name their row, and stay bounded", () => 
   })
 
   it('the composition and its cap live in the shared helper, not here', () => {
-    expect(code).toMatch(/rowSubject\(\[previewLine\(n\.title\), previewLine\(firstLine\(n\.body \?\? ''\)\)\]\)/)
+    expect(code).toMatch(/rowSubject\(\[previewLine\(n\.title\), previewText\(firstLine\(n\.body \?\? ''\)\)\]\)/)
     expect(code, 'a local re-implementation is the drift this closed').not.toMatch(/function rowName/)
     expect(code, 'and its number with it').not.toMatch(/full\.length > 55/)
   })

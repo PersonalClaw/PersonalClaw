@@ -514,7 +514,7 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
   // differently from the row itself in exactly the case where the field is missing.
   // The task a Yes files, by the title its run recorded: what she approves is what she reads.
   const task = row.action_config?.title || ''
-  const label = `Proposal ${n}: ${proposedVerb(row.action_type)} ${row.title ? previewLine(row.title) : `item ${n}`}${task ? `, as the task “${task}”` : ''}${row.source ? `, ${row.source}` : ''}${row.carried_over ? ', carried over from an earlier digest' : ''}`
+  const label = `Proposal ${n}: ${proposedVerb(row.action_type)} ${row.title ? previewLine(row.title) : `item ${n}`}${task ? `, as the task “${previewLine(task)}”` : ''}${row.source ? `, ${row.source}` : ''}${row.carried_over ? ', carried over from an earlier digest' : ''}`
   // An answered proposal keeps its row and says what was answered. Removing it would make a reply
   // look like it did nothing; re-offering the buttons would invite a second, duplicate answer.
   return (
@@ -525,7 +525,7 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
           <span style={fvs(600)}>{proposedVerb(row.action_type)}</span> {row.title ? <MarkdownLine text={row.title} /> : `item ${n}`}
         </p>
         {task && (
-          <p data-type="caption" className="truncate text-on-surface">as the task “{task}”</p>
+          <p data-type="caption" className="truncate text-on-surface">as the task “<MarkdownLine text={task} />”</p>
         )}
         <p data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-s">
           <TierBadge tier={row.tier} clamped={row.clamped} />

@@ -26,7 +26,15 @@ const DIGEST = {
   title: 'Morning triage', collected: 3, dropped: 0, auto_stage_ran: true, ledger_complete: true, ledger_rows: 1,
   auto_done: [{ ordinal: '2', source_id: 'gh_2', action_type: 'archive', provider: 'inbox-op', rule: 'policy:trivial-tier',
     reversal: '', undoable: false, permalink: '#/workflows/runs/run-abc', title: MD_LINE, source: 'inbox', item_permalink: '', materiality: 'none' }],
-  pending: [], ran: [], journal: [{ kind: 'skip', seq: 1, ordinal: '3', reason: MD_LINE }],
+  // A proposal waiting on you, with the task a Yes would file; a run that ended; an item kept and
+  // waiting; and a proposal no longer offered. Each title is an agent's line.
+  pending: [{ ordinal: '1', action_type: 'create_task', tier: 'ask', pattern_key: 'p', clamped: false, action_config: { title: MD_LINE },
+    reason: MD_LINE, rule: '', answered: false, answer: '', not_done: '', answer_not_done: '', permalink: '', title: MD_LINE, source: 'inbox',
+    item_permalink: '', materiality: 'none' }],
+  ran: [{ ordinal: '4', title: MD_LINE, source: 'inbox', item_permalink: '', materiality: 'none', needs_you: false }],
+  waiting: [{ ordinal: '5', title: MD_LINE, source: 'inbox', item_permalink: '', materiality: 'none' }],
+  no_longer_offered: [{ action_type: 'archive', title: MD_LINE, source: 'inbox', item_permalink: '', first_proposed_at: '', note: 'It waited a week.' }],
+  journal: [{ kind: 'skip', seq: 1, ordinal: '3', reason: MD_LINE }],
 }
 
 const applyInboxProposal = vi.fn(async () => ({ ok: true }))

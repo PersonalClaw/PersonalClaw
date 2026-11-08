@@ -17,7 +17,7 @@ import { reportingWrite } from '../app/reportingWrite'
 import { InlineError } from './InlineError'
 import { MarkdownLine } from './MarkdownLine'
 import { Markdown } from './Markdown'
-import { previewLine } from '../lib/previewText'
+import { previewLine, previewText } from '../lib/previewText'
 
 const MAX_SHADE = 5
 
@@ -204,7 +204,8 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
   //
   // Bound once, like `#/notifications` does: the row and both of its actions must announce the same
   // subject, or "Dismiss: X" sits next to a row that calls itself Y.
-  const subject = rowSubject([previewLine(n.title), previewLine(firstLine(n.body ?? ''))])
+  // The body's first line is drawn as an excerpt, so it is named as one (`previewText`).
+  const subject = rowSubject([previewLine(n.title), previewText(firstLine(n.body ?? ''))])
   return (
     <motion.div layout variants={fadeEnter}
       exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}

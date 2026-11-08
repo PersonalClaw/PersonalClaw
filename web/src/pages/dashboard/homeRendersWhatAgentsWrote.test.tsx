@@ -130,3 +130,49 @@ describe('Attention renders what agents wrote', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
   })
 })
+
+describe("an approval's title is a tool's name: text in its card, its pane and its names", () => {
+  const tool = (id: string, name: string) => waitingItem({ kind: 'approval', id: `approval:${id}`, work: 'chat:chat-9', session: 'chat-9',
+    brief: { tool: name, tool_purpose: 'List the folder', source_label: 'chat', confirms: [] } })
+
+  it('a tool name with double underscores is named as written', async () => {
+    waiting.mockResolvedValue(waitingList([tool('mcp', 'mcp__github__create_issue')]))
+    render(<HomeHarness />)
+    expect(await screen.findByRole('button', { name: /^Show the details of mcp__github__create_issue/ })).toBeInTheDocument()
+  })
+
+  it("the pane heads with the tool's name as text, and its names say it as written", async () => {
+    waiting.mockResolvedValue(waitingList([tool('run', 'shell.run_**now**')]))
+    render(<HomeHarness query={{ open: 'waiting:approval:run' }} />)
+    const heading = await screen.findByRole('heading', { level: 2, name: 'shell.run_**now**' })
+    expect(heading.querySelector('strong, code')).toBeNull()
+    expect(heading.getAttribute('title')).toBe('shell.run_**now**')
+    expect(screen.getByRole('button', { name: /^Show the details of shell\.run_\*\*now\*\*/ })).toBeInTheDocument()
+  })
+})
+
+describe("a chat named by its first words, cut with '…', is named with the cut repaired", () => {
+  // Its title is its own key, a raw id, so the chat is named by its first words.
+  const untitled = { key: 'chat-raw', title: 'chat-raw', prompt_preview: 'Explain **why the build fails on the arm64 runner after the upgrade** today',
+    last_ts: '2026-11-07T10:00:00Z' } as unknown as ChatSessionSummary
+
+  const namedFor = () => Array.from(document.querySelectorAll('[aria-label], [title]'))
+    .map((el) => `${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''}`)
+    .filter((n) => n.includes('Explain'))
+
+  it("the row's tooltip and its name hold no open mark", async () => {
+    chatSessions.mockResolvedValue([untitled])
+    render(<HomeHarness />)
+    await waitFor(() => expect(namedFor().length, 'the row is named for it, and has its tooltip').toBeGreaterThanOrEqual(2))
+    for (const n of namedFor()) expect(n, 'a name keeps an open mark').not.toContain('**')
+  })
+
+  it("the pane's heading, its name and its tooltip hold no open mark", async () => {
+    chatSessions.mockResolvedValue([untitled])
+    render(<HomeHarness query={{ open: 'thread:chat-raw' }} />)
+    const heading = await screen.findByRole('heading', { level: 2, name: /^Explain why the build fails/ })
+    expect(heading.getAttribute('title')).not.toContain('**')
+    expect(heading.querySelector('strong')?.textContent).toMatch(/^why the build fails/)
+    for (const n of namedFor()) expect(n, 'a name keeps an open mark').not.toContain('**')
+  })
+})

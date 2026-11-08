@@ -49,6 +49,15 @@ describe('a notification row', () => {
     }
   })
 
+  it("a body's first line is named as its excerpt draws it: no block mark in any name", async () => {
+    API.notifications.mockResolvedValue({ notifications: [{ ...NOTE, ts: '2026-11-07T10:40:00+00:00', title: 'Build', body: '## Failed on main\nmore' }] })
+    render(<NotificationsPage query={{}} setQuery={vi.fn()} navigate={vi.fn()} />)
+    await screen.findByText('Failed on main')
+    const names = Array.from(document.querySelectorAll('[aria-label]')).map((el) => el.getAttribute('aria-label') ?? '')
+    expect(names.some((n) => n.includes('Failed on main')), 'the row is named for its body').toBe(true)
+    for (const name of names) expect(name, 'a name carries a block mark').not.toContain('## ')
+  })
+
   it('the panel heads with the rendered title, its tooltip the plain line', async () => {
     render(<NotificationsPage query={{ open: NOTE.ts }} setQuery={vi.fn()} navigate={vi.fn()} />)
     const heading = await screen.findByRole('heading', { level: 2, name: SEEN })

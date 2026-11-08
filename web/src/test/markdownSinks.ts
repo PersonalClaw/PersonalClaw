@@ -89,6 +89,7 @@ export const INLINE_CONSTRUCTS: Array<[string, string, string]> = [
   ['bold, both ways', 'A **firm** and __fixed__ date', 'A firm and fixed date'],
   ['italic, both ways', 'An *open* and _loose_ end', 'An open and loose end'],
   ['an underscore inside a word', 'Skip model_calls here', 'Skip model_calls here'],
+  ['a double underscore inside a word', 'Call mcp__github__create_issue now', 'Call mcp__github__create_issue now'],
   ['strikethrough, double and single', '~~old~~ and ~gone~ plans', 'old and gone plans'],
   ['a link', 'Read [the notes](https://example.com/notes) first', 'Read the notes first'],
   ['a link whose address holds parentheses', 'Reply to [the thread](javascript:alert(1)) today', 'Reply to the thread today'],

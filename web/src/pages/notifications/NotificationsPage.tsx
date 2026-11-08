@@ -35,7 +35,7 @@ import { ConsentDeclined } from '../../lib/securityConsent'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { ApprovalDecision } from '../../app/ApprovalDecision'
 import { MarkdownLine } from '../../ui/MarkdownLine'
-import { previewLine } from '../../lib/previewText'
+import { previewLine, previewText } from '../../lib/previewText'
 
 /** The Inbox's Notifications filter (#3818): the triage feed of agent/schedule/trigger/task events,
  *  drawn by `InboxPage` at `#/inbox?filter=notifications`. It was the page at `#/notifications`,
@@ -338,7 +338,8 @@ function Row({ n, now, onOpen, onAck, onUnack, onDelete }: { n: NotificationItem
   const km = noteMeta(n)
   // What this row IS, bound once: the row's own hit target and all three actions must
   // announce the same subject, and it was being recomputed per control.
-  const subject = rowSubject([previewLine(n.title), previewLine(firstLine(n.body ?? ''))])
+  // The body's first line is drawn as an excerpt, so it is named as one (`previewText`).
+  const subject = rowSubject([previewLine(n.title), previewText(firstLine(n.body ?? ''))])
   // Right-click / long-press → the same actions the row's click + hover buttons
   // already wire (open, ack/unack by read-state, delete) — the shared ContextMenu
   // primitive, no duplicated logic.

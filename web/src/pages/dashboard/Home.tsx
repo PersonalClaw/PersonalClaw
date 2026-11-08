@@ -196,6 +196,14 @@ function asRunningList(v: unknown): RunningList | undefined {
 }
 
 /** The key a row is selected by, in `?open=`. */
+/** An approval's title is a tool's name or the command itself: it stays as written wherever it is
+ *  drawn or named, as its card draws it. Any other ask's title is an agent's line. */
+const isApproval = (row: NeedsYouRow) => row.origin === 'waiting' && row.item.kind === 'approval'
+/** An ask's title as a name or a tooltip: as written for an approval, its plain line for any other. */
+const needName = (row: NeedsYouRow) => (isApproval(row) ? row.title : previewLine(row.title))
+/** An ask's title as a heading: text for an approval, rendered for any other. */
+const needHeading = (row: NeedsYouRow) => (isApproval(row) ? row.title : <MarkdownLine text={row.title} />)
+
 function rowKey(row: NeedsYouRow): string {
   return row.key
 }
@@ -368,13 +376,16 @@ function AttentionStack({ header, ...route }: RouteProps & { header: (filter?: R
     ?? cut.interrupted.map((i) => i.row).find((r) => `run:${r.work}` === open) : undefined
   const selectedThread = open.startsWith('thread:') && Array.isArray(sessionsData)
     ? sessionsData.find((s) => `thread:${s.key}` === open) : undefined
+  // A chat named by its first words is cut with "…": read once with the cut repaired, so its heading,
+  // its name and its tooltip are one value with no mark left open.
+  const threadTitle = selectedThread ? cutMarkdownLine(sessionTitle(selectedThread), Infinity) : ''
   const detail: CapabilityDetail | null = selectedNeed ? {
-    id: open, title: previewLine(selectedNeed.title), heading: <MarkdownLine text={selectedNeed.title} />, onClose: close,
+    id: open, title: needName(selectedNeed), heading: needHeading(selectedNeed), onClose: close,
     body: <NeedDetail row={selectedNeed} outcome={outcomes[selectedNeed.key]} actions={actions} now={now} />,
   } : selectedRun ? {
     id: open, title: previewLine(selectedRun.name), heading: <MarkdownLine text={selectedRun.name} />, onClose: close, body: <RunDetail row={selectedRun} />,
   } : selectedThread ? {
-    id: open, title: previewLine(sessionTitle(selectedThread)), heading: <MarkdownLine text={cutMarkdownLine(sessionTitle(selectedThread), Infinity)} />, onClose: close, body: <ThreadDetail s={selectedThread} />,
+    id: open, title: previewLine(threadTitle), heading: <MarkdownLine text={threadTitle} />, onClose: close, body: <ThreadDetail s={selectedThread} />,
   } : null
 
   const needsFailed = !!needs.error && !needs.data
@@ -531,7 +542,7 @@ function NeedCard({ row, outcome, actions, now, selected, onOpen }: {
   selected: boolean
   onOpen: () => void
 }) {
-  const open = openable(previewLine(row.title), onOpen, selected)
+  const open = openable(needName(row), onOpen, selected)
   return (
     <div {...open.props}
       className={`flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s ${open.className}`}>
@@ -593,7 +604,7 @@ function NeedBody({ row, outcome, actions, now }: {
 }) {
   const settled = outcome?.state === 'done' || outcome?.state === 'ended'
   const busy = outcome?.state === 'busy'
-  const subject = rowSubject([previewLine(row.title), row.raisedBy, previewLine(row.subtitle)])
+  const subject = rowSubject([needName(row), row.raisedBy, previewLine(row.subtitle)])
   const item = row.origin === 'waiting' ? row.item : null
   const expired = item ? isStale(item, now) : false
 
@@ -784,7 +795,9 @@ function RunDetail({ row }: { row: RunningRow }) {
 
 /** One of your chats under Recent and completed: its title and when it last moved. */
 function ThreadRow({ s, selected, onOpen }: { s: ChatSessionSummary; selected: boolean; onOpen: () => void }) {
-  const title = sessionTitle(s)
+  // A title can be the first words of the chat, cut with "…": repaired once, so no mark is left open in
+  // the row, its tooltip or its name.
+  const title = cutMarkdownLine(sessionTitle(s), Infinity)
   const at = clockTime(s.last_ts || null)
   // An app's conversation says so in the row's name too: opening it means speaking under the APP's
   // permissions, and a screen reader hears the name before choosing. So does a chat that came in on
@@ -797,8 +810,7 @@ function ThreadRow({ s, selected, onOpen }: { s: ChatSessionSummary; selected: b
       tabIndex={-1} onClick={onOpen}>
       <RowHitTarget label={`Show the details of ${named}`} selected={selected} />
       <MessageSquare size={14} className="shrink-0 text-on-surface-low" aria-hidden="true" />
-      {/* A title can be the first words of the chat, cut with "…": repaired, so no mark is left open. */}
-      <span data-type="label-m" className="min-w-0 flex-1 truncate text-on-surface-var" title={previewLine(title)}><MarkdownLine text={cutMarkdownLine(title, Infinity)} /></span>
+      <span data-type="label-m" className="min-w-0 flex-1 truncate text-on-surface-var" title={previewLine(title)}><MarkdownLine text={title} /></span>
       <StartedByApp s={s} />
       <FromChannel s={s} />
       {at ? <span data-type="body-s" className="shrink-0 text-on-surface-low">{at}</span> : null}

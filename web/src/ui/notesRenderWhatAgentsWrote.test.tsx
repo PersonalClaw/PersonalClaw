@@ -11,6 +11,8 @@ import { MD_LINE, rendersLine } from '../test/markdownSinks'
 
 const SEEN = 'Skip model_calls in export_digest() in published.py'
 const NOTE = { ts: 1785890207, kind: 'error', title: MD_LINE, body: '```sh\n**Key point**: run `make test`\n```', acked: false, mode: '', targets: [] }
+/** A short title, so the row's name keeps its body's first line, which opens with a heading mark. */
+const BUILD = { ...NOTE, ts: 1785890307, title: 'Build', body: '## Failed on main\nmore' }
 
 vi.mock('../lib/api', async (orig) => {
   const mod = await orig<typeof import('../lib/api')>()
@@ -18,7 +20,7 @@ vi.mock('../lib/api', async (orig) => {
     ...mod,
     api: {
       ...mod.api,
-      notifications: vi.fn(async () => ({ notifications: [NOTE] })),
+      notifications: vi.fn(async () => ({ notifications: [NOTE, BUILD] })),
       deleteNotification: vi.fn(async () => ({})),
       ackNotification: vi.fn(async () => ({})),
       ackAllNotifications: vi.fn(async () => ({})),
@@ -43,8 +45,10 @@ describe("the bell's row", () => {
     // The body's first line that says something: the fence line is skipped, the marks render.
     expect((await screen.findByText('Key point')).tagName).toBe('STRONG')
     for (const el of document.querySelectorAll('[aria-label]')) {
-      expect(el.getAttribute('aria-label'), 'a name carries a mark').not.toMatch(/`|\*\*/)
+      expect(el.getAttribute('aria-label'), 'a name carries a mark').not.toMatch(/`|\*\*|## /)
     }
+    // A body's first line is named as its excerpt draws it.
+    expect(Array.from(document.querySelectorAll('[aria-label]')).some((el) => (el.getAttribute('aria-label') ?? '').includes('Failed on main'))).toBe(true)
   })
 })
 
