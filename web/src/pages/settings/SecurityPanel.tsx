@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { FieldError, FieldErrorProvider, FieldHintProvider, Select, TextInput } from '../../ui/forms'
+import { FieldError, FieldErrorProvider, Select, TextInput } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
 import { BUSY_REASON } from '../../ui/unavailable'
 import {
@@ -1078,20 +1078,13 @@ export function OutsideHomeEditor() {
 function OutsidePlaceRow({ place, busy, onChange }: {
   place: OutsideHomePlace; busy: boolean; onChange: (on: boolean) => void
 }) {
-  const hintId = useId()
   return (
-    <FieldHintProvider value={hintId}>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-l border-b border-outline-variant/30 py-3 last:border-0">
-        <div data-type="body-s" className="text-on-surface">{place.label}</div>
-        <div id={hintId} data-type="body-s" className="mt-0.5 text-on-surface-low">
-          {place.detail}{' '}
-          <span className="break-all font-mono text-on-surface-var">{place.paths.join(', ')}</span>
-        </div>
-        <div className="col-start-2 row-start-1 flex items-center">
-          <Toggle on={place.allowed} label={place.label} disabled={busy} onChange={onChange} />
-        </div>
-      </div>
-    </FieldHintProvider>
+    <Row label={place.label} hint={<>
+      {place.detail}{' '}
+      <span className="break-all font-mono text-on-surface-var">{place.paths.join(', ')}</span>
+    </>}>
+      <Toggle on={place.allowed} label={place.label} disabled={busy} onChange={onChange} />
+    </Row>
   )
 }
 

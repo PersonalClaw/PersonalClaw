@@ -129,12 +129,16 @@ describe('a settings Row puts its control on the label\'s row', () => {
     return { row, kids: [...row.children] as HTMLElement[] }
   }
 
-  it('is a two-column grid whose first column can shrink', () => {
+  it('is a two-column grid whose first column can shrink, from the phone breakpoint up', () => {
     const { row } = renderRow('a hint')
     const cls = row.className
     // `minmax(0,1fr)` is what carries the old left wrapper's `min-w-0`: without it the label column
     // takes its min-content width and a long hint pushes the control off the row instead of wrapping.
-    expect(cls, 'two columns: shrinkable label, auto control').toContain('grid-cols-[minmax(0,1fr)_auto]')
+    expect(cls, 'two columns from `sm` up: shrinkable label, auto control').toContain('sm:grid-cols-[minmax(0,1fr)_auto]')
+    // Below `sm` the row is one column, stacked (`e2e/settingsRowsFitAPhone.spec.ts` measures it at
+    // 390): two columns there left the label a few characters once the control took its width.
+    expect(cls.split(/\s+/), 'one column on a phone').toContain('grid-cols-1')
+    expect(cls, 'the two columns are never unprefixed').not.toMatch(/(^|\s)grid-cols-\[/)
     expect(cls, 'each grid ROW centres its own items').toContain('items-center')
     expect(cls, 'a flex row is the shape this replaced').not.toMatch(/(^|\s)flex(\s|$)/)
     expect(cls, 'justify-between belongs to the flex shape').not.toContain('justify-between')
@@ -144,7 +148,7 @@ describe('a settings Row puts its control on the label\'s row', () => {
     expect(cls, 'items-start is not the fix — it top-aligns instead of centring on the label').not.toContain('items-start')
   })
 
-  it('places the control in column 2 of the LABEL\'s row, and the hint below it', () => {
+  it('places the control in column 2 of the LABEL\'s row from `sm` up, and the hint below it', () => {
     const { kids } = renderRow('a hint that would wrap on a phone')
     expect(kids, 'label, hint, control — DOM order unchanged').toHaveLength(3)
     const [label, hintEl, slot] = kids
@@ -158,7 +162,11 @@ describe('a settings Row puts its control on the label\'s row', () => {
     // also where the auto-placed label lands. Explicitly-placed items are positioned BEFORE
     // auto-placed ones, so pinning the control to r1c2 is what pushes the hint to row 2 — drop
     // either half and the hint and the control collide or swap rows.
-    expect(slot.className, 'control pinned to row 1, column 2').toContain('col-start-2 row-start-1')
+    expect(slot.className, 'control pinned to row 1, column 2, from `sm` up').toContain('sm:col-start-2 sm:row-start-1')
+    // On a phone the control is not pinned: it auto-places under the label and the hint, a step
+    // below them, and the step goes away from `sm` up, where it sits beside the label.
+    expect(slot.className, 'unpinned on a phone, so it stacks').not.toMatch(/(^|\s)(col|row)-start-/)
+    expect(slot.className.split(/\s+/), 'a step below the hint on a phone, none from `sm` up').toEqual(expect.arrayContaining(['mt-s', 'sm:mt-0']))
     expect(label.className, 'the label must AUTO-place, so it shares row 1 with the control').not.toMatch(/row-start-/)
     expect(hintEl.className, 'the hint must AUTO-place, so it falls to row 2').not.toMatch(/row-start-|col-start-/)
     // A block slot builds a line box around an inline-level control and leaves the strut's descender
@@ -170,7 +178,7 @@ describe('a settings Row puts its control on the label\'s row', () => {
   it('still works with no hint at all', () => {
     const { kids } = renderRow(undefined)
     expect(kids, 'label, control').toHaveLength(2)
-    expect(kids[1].className).toContain('col-start-2 row-start-1')
+    expect(kids[1].className).toContain('sm:col-start-2 sm:row-start-1')
   })
 })
 

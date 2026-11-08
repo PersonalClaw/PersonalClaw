@@ -181,7 +181,12 @@ export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, 
  *  cannot appear quietly.
  *
  *  `hint` is a ReactNode, as `Section`'s is: a hint that names a command shows it as `<code>`. A
- *  string sink printed markdown's backticks around it literally. */
+ *  string sink printed markdown's backticks around it literally.
+ *
+ *  Below the settings page's phone breakpoint (`sm`, as `SettingsPage`'s header uses it) the row
+ *  stacks: its label and hint full width on top, its control under them. Two columns at 390 left
+ *  the label a few characters once a control took its own width, and pushed a wide control past
+ *  the screen (`e2e/settingsRowsFitAPhone.spec.ts`). From `sm` up it is the two columns it was. */
 export function Row({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   const hintId = useId()
   // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (98 hinted rows, and
@@ -190,7 +195,7 @@ export function Row({ label, hint, children }: { label: string; hint?: ReactNode
   // so this provides the hint id without claiming to name anything.
   return (
     <FieldHintProvider value={hint ? hintId : undefined}>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-l border-b border-outline-variant/30 py-3 last:border-0">
+      <div className="grid grid-cols-1 items-center gap-x-l border-b border-outline-variant/30 py-3 last:border-0 sm:grid-cols-[minmax(0,1fr)_auto]">
         <div data-type="body-s" className="text-on-surface">{label}</div>
         {hint && <div id={hintId} data-type="body-s" className="mt-0.5 text-on-surface-low">{hint}</div>}
         {/* `flex items-center`, not a plain block: a block slot builds a LINE BOX around an
@@ -198,7 +203,7 @@ export function Row({ label, hint, children }: { label: string; hint?: ReactNode
             descender space below it and ends up low of centre even inside a correctly centred
             grid track. A flex slot has no inline formatting context, so its height IS the
             control's height and the grid centres the real thing. */}
-        <div className="col-start-2 row-start-1 flex items-center">{children}</div>
+        <div className="mt-s flex items-center sm:col-start-2 sm:row-start-1 sm:mt-0">{children}</div>
       </div>
     </FieldHintProvider>
   )
@@ -250,7 +255,11 @@ export { Toggle } from '../../ui/Toggle'
  *
  *  This is the form `SegToggle`, `TokenControls` and `HeaderModePill` already ship —
  *  `<dimension>: <value>` plus `aria-pressed` — and it is required for the same reason SegToggle's is:
- *  typecheck stops an unnamed new call site before a rail has to. The VISIBLE label is untouched. */
+ *  typecheck stops an unnamed new call site before a rail has to. The VISIBLE label is untouched.
+ *
+ *  Below `sm` the options wrap onto more lines when the row is too narrow for them, with the gap
+ *  they have, and the track's corners are `rounded-lg`, which draws a one-line track as the pill it
+ *  is from `sm` up and keeps a wrapped one from rounding into a capsule. */
 export function SegPills<T extends string>({ value, onChange, options, ariaLabel }: {
   /** `disabled` keeps an option shown (a stored value that is no longer offered) without letting it
    *  be picked; `title` says why. */
@@ -258,7 +267,7 @@ export function SegPills<T extends string>({ value, onChange, options, ariaLabel
 }) {
   // Per-instance layoutId so the sliding pill in one SegPills can't fly to another.
   return (
-    <div className="inline-flex rounded-pill bg-surface-container p-0.5">
+    <div className="inline-flex flex-wrap rounded-lg bg-surface-container p-0.5 sm:flex-nowrap sm:rounded-pill">
       {options.map((o) => {
         const on = o.key === value
         return (
