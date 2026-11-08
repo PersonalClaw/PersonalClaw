@@ -166,6 +166,8 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
       <AnimatePresence initial={false} mode="popLayout">
         {visible.map((t) => {
           const Icon = ICONS[t.level]
+          // What the toast is named by: the plain line its live regions read, for a toast drawn as a line.
+          const spoken = t.markdown ? previewLine(t.message) : t.message
           return (
             <motion.div
               key={t.id}
@@ -206,7 +208,7 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
                     learns where it goes, since the sentence around it is hidden. */}
                 {t.href && (
                   <div className="mt-1">
-                    <TextLink href={t.href} size="xs" ink="emphasis" aria-label={`${t.hrefLabel}: ${t.message}`}>
+                    <TextLink href={t.href} size="xs" ink="emphasis" aria-label={`${t.hrefLabel}: ${spoken}`}>
                       {t.hrefLabel}
                     </TextLink>
                   </div>
@@ -220,7 +222,7 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
               <button
                 className="ml-1 shrink-0 text-on-surface-low transition-colors hover:text-on-surface"
                 onClick={() => dismiss(t.id)}
-                aria-label={`Dismiss: ${t.message}`}
+                aria-label={`Dismiss: ${spoken}`}
               >
                 <X size={14} />
               </button>

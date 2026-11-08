@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { render, screen, waitFor } from '@testing-library/react'
 import type { NotificationItem } from '../../lib/api'
-import { HOSTILE, LEADING, MD_LINE, inert, rawSinks, rendersLine } from '../../test/markdownSinks'
+import { BLOCKS, HOSTILE, LEADING, MD_LINE, inert, rawSinks, rendersLine } from '../../test/markdownSinks'
 
 // ── The Notifications list renders what its notes say ──────────────────────────────────────────
 //
@@ -38,7 +38,7 @@ describe('a notification row', () => {
     expect(rendersLine(title)).toEqual([])
     const strong = (await screen.findAllByText('Key point'))[0]
     expect(strong.tagName).toBe('STRONG')
-    expect(strong.closest('p.truncate')!.querySelector('div, p, h1, h2, h3, h4, ul, ol, li, pre, blockquote, table'), 'an excerpt is a line').toBeNull()
+    expect(strong.closest('p.truncate')!.querySelector(BLOCKS), 'an excerpt is a line').toBeNull()
     expect(document.body.textContent).not.toContain('```')
     for (const el of document.querySelectorAll('[aria-label], [title]')) {
       const name = `${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''}`

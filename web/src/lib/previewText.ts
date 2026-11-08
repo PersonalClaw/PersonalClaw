@@ -96,8 +96,10 @@ function inlinePlain(s: string): string {
     .replace(FORMATTING_TAG, '')
     // Order matters: ** before *.
     .replace(/\*\*([^*]+)\*\*/g, '$1')
-    // Inside a word (`mcp__github__create_issue`) a double underscore is no emphasis, as a single one
-    // is not: both need a non-word on each side.
+    // Inside a word (`mcp__github__create_issue`) a run of underscores is no emphasis: bold italic,
+    // bold and italic each need a non-word on each side. Bold italic goes first, so its three marks
+    // are read as one.
+    .replace(/(^|\W)___([^_]+)___(?=\W|$)/g, '$1$2')
     .replace(/(^|\W)__([^_]+)__(?=\W|$)/g, '$1$2')
     .replace(/\*([^*\n]+)\*/g, '$1')
     .replace(/(^|\W)_([^_\n]+)_(?=\W|$)/g, '$1$2')

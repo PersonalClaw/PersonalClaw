@@ -195,7 +195,6 @@ function asRunningList(v: unknown): RunningList | undefined {
   return list && Array.isArray(list.running) && Array.isArray(list.finished) ? list : undefined
 }
 
-/** The key a row is selected by, in `?open=`. */
 /** An approval's title is a tool's name or the command itself: it stays as written wherever it is
  *  drawn or named, as its card draws it. Any other ask's title is an agent's line. */
 const isApproval = (row: NeedsYouRow) => row.origin === 'waiting' && row.item.kind === 'approval'
@@ -204,6 +203,7 @@ const needName = (row: NeedsYouRow) => (isApproval(row) ? row.title : previewLin
 /** An ask's title as a heading: text for an approval, rendered for any other. */
 const needHeading = (row: NeedsYouRow) => (isApproval(row) ? row.title : <MarkdownLine text={row.title} />)
 
+/** The key a row is selected by, in `?open=`. */
 function rowKey(row: NeedsYouRow): string {
   return row.key
 }
@@ -580,7 +580,7 @@ function NeedDetail({ row, outcome, actions, now }: {
       ) : null}
       {item?.session ? <ConversationTail session={item.session} /> : null}
       {reply && item && !settled && !isStale(item, now) ? (
-        <ReplyField subject={row.title} busy={outcome?.state === 'busy'}
+        <ReplyField subject={needName(row)} busy={outcome?.state === 'busy'}
           onSend={(text) => actions.reply(row.key, reply, text)} />
       ) : null}
       <dl data-type="body-s" className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs text-on-surface-var">

@@ -206,7 +206,7 @@ describe("a task's detail renders what its agent wrote", () => {
   })
 
   it('a hostile note is inert in its body', () => {
-    render(<TaskDetail task={{ ...DETAILED, notes: [{ content: HOSTILE_BODY }] } as TaskItem} allTasks={[DEP, DETAILED]}
+    render(<TaskDetail task={{ ...DETAILED, notes: [{ content: `${HOSTILE}\n\n${HOSTILE_BODY}` }] } as TaskItem} allTasks={[DEP, DETAILED]}
       onOpenTask={noop} onSaved={noop} onDeleted={noop} editing={false} onEditingChange={noop} />)
     const sink = screen.getAllByText(/open the report/)[0].closest('div[data-type="body-s"]')!
     expect(sink, "the note's body").not.toBeNull()

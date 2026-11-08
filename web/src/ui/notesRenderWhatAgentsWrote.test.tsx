@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MD_LINE, rendersLine } from '../test/markdownSinks'
+import { BLOCKS, MD_LINE, rendersLine } from '../test/markdownSinks'
 
 // ── A notification shows what its agent or run wrote, rendered ─────────────────────────────────
 //
@@ -45,7 +45,7 @@ describe("the bell's row", () => {
     // The body's first line that says something: the fence line is skipped, the marks render.
     const strong = await screen.findByText('Key point')
     expect(strong.tagName).toBe('STRONG')
-    expect(strong.closest('p.truncate')!.querySelector('div, p, h1, h2, h3, h4, ul, ol, li, pre, blockquote, table'), 'an excerpt is a line').toBeNull()
+    expect(strong.closest('p.truncate')!.querySelector(BLOCKS), 'an excerpt is a line').toBeNull()
     for (const el of document.querySelectorAll('[aria-label]')) {
       expect(el.getAttribute('aria-label'), 'a name carries a mark').not.toMatch(/`|\*\*|## /)
     }
@@ -76,6 +76,8 @@ describe('a note toast renders its line; the app’s own toast stays text', () =
     const regions = Array.from(document.querySelectorAll('[role="status"], [role="alert"]')).map((r) => r.textContent).join(' ')
     expect(regions).toContain(SEEN)
     expect(regions).not.toMatch(/`|\*\*/)
+    // Its Dismiss button is the toast's own name, and reads the same plain line.
+    expect(screen.getByRole('button', { name: `Dismiss: ${SEEN}` })).toBeInTheDocument()
   })
 
   it("a notify() toast's underscores stay literal", () => {

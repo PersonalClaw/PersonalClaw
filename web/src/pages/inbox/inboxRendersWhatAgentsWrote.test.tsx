@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import type { InboxItem, InboxProposal } from '../../lib/api'
 import { HOSTILE, HOSTILE_BODY, MD_BLOCK, MD_LINE, inert, rendersBlock, rendersLine } from '../../test/markdownSinks'
+import { registerBuiltinContentTypes } from '../../ui/content/registerBuiltins'
 
 // ── The Inbox renders what senders and agents wrote ────────────────────────────────────────────
 //
@@ -49,8 +50,18 @@ vi.mock('../../lib/api', async (orig) => ({
     openInboxItem: () => Promise.resolve({ ok: true }),
     markInboxSeen: () => Promise.resolve({ ok: true, seen: 0 }),
     applyInboxProposal: () => applyInboxProposal(),
+    // A widget's frame asks whether its artifact exists.
+    artifactExists: () => Promise.resolve(false),
   },
 }))
+
+// The app registers its content types at startup (`main.tsx`), so a body that ran its widget blocks
+// would draw them here as it does in the app.
+registerBuiltinContentTypes()
+if (typeof URL.createObjectURL !== 'function') {
+  URL.createObjectURL = () => 'blob:inbox-renders-test'
+  URL.revokeObjectURL = () => {}
+}
 
 const { InboxPage } = await import('./InboxPage')
 const { ProposalsLens } = await import('./ProposalsLens')
@@ -91,7 +102,7 @@ describe("another owner's thread context stays inside the fence", () => {
   it('each message of the thread renders, inside the quoted group, and stays inert', async () => {
     ITEMS = [message({ owner_username: 'someone-else', thread_context: [
       { sender_name: 'Ana', text: MD_BLOCK, ts: '1700000001' },
-      { sender_name: 'Bo', text: HOSTILE_BODY, ts: '1700000002' },
+      { sender_name: 'Bo', text: `${HOSTILE}\n\n${HOSTILE_BODY}`, ts: '1700000002' },
     ] })]
     render(<InboxPage query={{ open: 'C1_1' }} setQuery={() => {}} navigate={vi.fn()} />)
     const thread = await screen.findByText('Thread context · 2', { exact: false })

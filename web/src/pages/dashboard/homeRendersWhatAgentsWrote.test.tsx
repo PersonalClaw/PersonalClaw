@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ChatSessionSummary } from '../../lib/api'
 import { HomeHarness, gateItem, runningRow, waitingItem, waitingList } from '../../test/homeHarness'
-import { HOSTILE, HOSTILE_BODY, LEADING, MD_BLOCK, MD_LINE, inert, plain, rawSinks, rendersBlock, rendersLine } from '../../test/markdownSinks'
+import { BLOCKS, HOSTILE, HOSTILE_BODY, LEADING, MD_BLOCK, MD_LINE, inert, plain, rawSinks, rendersBlock, rendersLine } from '../../test/markdownSinks'
 import { findGenUiBlock } from '../../ui/widget/blocks'
 import { firstLine } from '../../lib/attentionLanes'
 import { registerBuiltinContentTypes } from '../../ui/content/registerBuiltins'
@@ -31,6 +31,8 @@ vi.mock('../../lib/api', async (orig) => ({
     running: () => running(),
     chatSessions: () => chatSessions(),
     chatSessionDetail: (key: string) => chatSessionDetail(key),
+    // A widget's frame asks whether its artifact exists.
+    artifactExists: () => Promise.resolve(false),
   },
 }))
 vi.mock('../../lib/useChatSocket', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useChatSocket: () => {} }))
@@ -115,8 +117,14 @@ describe('Attention renders what agents wrote', () => {
     expect(document.querySelector('iframe')).toBeNull()
   })
 
+  it("the reply field is named for the ask in plain text", async () => {
+    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: MD_LINE }, { id: 'gate:run-9:g:3' })]))
+    render(<HomeHarness query={{ open: 'waiting:gate:run-9:g:3' }} />)
+    expect(await screen.findByRole('textbox', { name: `Reply to ${SEEN}` })).toBeInTheDocument()
+  })
+
   it("a hostile gate prompt is inert in its body", async () => {
-    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: `Notes\n\n${HOSTILE_BODY}` }, { id: 'gate:run-9:g:2' })]))
+    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: `Notes\n\n${HOSTILE}\n\n${HOSTILE_BODY}` }, { id: 'gate:run-9:g:2' })]))
     render(<HomeHarness query={{ open: 'waiting:gate:run-9:g:2' }} />)
     const sink = (await screen.findAllByText(/open the report/))[0].closest('div[data-type="body-s"]')!
     expect(sink, "the prompt's body").not.toBeNull()
@@ -143,7 +151,7 @@ describe('Attention renders what agents wrote', () => {
     const strong = await screen.findByText('Key poin')
     expect(strong.tagName).toBe('STRONG')
     expect(document.body.textContent).not.toContain('**Key')
-    expect(strong.closest('p.min-w-0')!.querySelector('div, p, h1, h2, h3, h4, ul, ol, li, pre, blockquote, table'), 'an excerpt is a line').toBeNull()
+    expect(strong.closest('p.min-w-0')!.querySelector(BLOCKS), 'an excerpt is a line').toBeNull()
   })
 
   it('the detail pane heads with the rendered title, and its name and tooltip are plain', async () => {

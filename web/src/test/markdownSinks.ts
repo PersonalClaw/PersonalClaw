@@ -61,9 +61,9 @@ export const HOSTILE_ROWS: string[] = [
  *  paragraph: a line that opens with `<form` is an HTML block, and nothing in it is parsed. */
 export const HOSTILE = ['Notes', ...HOSTILE_ROWS].join(' ')
 
-/** The same rows as a body, each its own block: what a body's sink is planted with. A body reads a
- *  row that opens its line as the block it would be (an HTML block, a widget block), which one line
- *  never reaches. Rendered, it must leave nothing live but the body's own controls. */
+/** The same rows as a body, each its own block: what a body's sink is planted with, beside
+ *  `HOSTILE`. An HTML block needs its row to open the line, so only this form reaches one. Rendered,
+ *  it must leave nothing live but the body's own controls. */
 export const HOSTILE_BODY = ['Notes', ...HOSTILE_ROWS].join('\n\n')
 
 /** A line that CommonMark reads as a block, one per construct `line` mode turns off:
@@ -95,6 +95,7 @@ export const INLINE_CONSTRUCTS: Array<[string, string, string]> = [
   ['italic, both ways', 'An *open* and _loose_ end', 'An open and loose end'],
   ['an underscore inside a word', 'Skip model_calls here', 'Skip model_calls here'],
   ['a double underscore inside a word', 'Call mcp__github__create_issue now', 'Call mcp__github__create_issue now'],
+  ['bold italic with underscores', 'A ___bold italic___ word', 'A bold italic word'],
   ['strikethrough, double and single', '~~old~~ and ~gone~ plans', 'old and gone plans'],
   ['a link', 'Read [the notes](https://example.com/notes) first', 'Read the notes first'],
   ['a link whose address holds parentheses', 'Reply to [the thread](javascript:alert(1)) today', 'Reply to the thread today'],
@@ -112,7 +113,8 @@ export const INLINE_CONSTRUCTS: Array<[string, string, string]> = [
 ]
 
 /** Elements that make a row a block, or a control inside a control. */
-const BLOCKS = 'p, div, pre, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, table, section, hr, details'
+/** Every element a line or an excerpt must not hold: a block of any kind. */
+export const BLOCKS = 'p, div, pre, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, table, section, hr, details'
 
 /** `el` shows a line's marks rendered: a `code` and a `strong`, no literal backtick or `**`, and
  *  no block inside it. */
