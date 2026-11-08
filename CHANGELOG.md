@@ -28,6 +28,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **Home's "Your agents today" draws a schedule that runs more often than hourly as one strip, with its name once and how often it runs, and its line names each schedule once. It drew a mark and a name for each of up to 200 runs, which read as a row of broken glyphs, and a schedule that runs every minute seemed to stop after its 200th run.**
+- **A description drawn in a row, on the Store card, in the Tools list, in a tool's parameters and in an app's setting hints, no longer draws a task-list checkbox or a footnote block inside the row, and shows an image as its alt text (it showed nothing, and still loads nothing). The Inbox's and the session map's previews keep a code span's underscores ("`__init__.py`" read "init.py") and no longer leave a stray ")" after a link whose address holds parentheses, such as a wiki page named Foo_(bar), and they drop the marks of an entity, an escape, an autolink, a formatting tag, a strikethrough and inline math. A prompt's Template Raw/Rendered switch matches the app's other buttons.**
 
 ## [0.3.7] — 2026-11-07
 

@@ -67,7 +67,7 @@
 {"file":"pages/loops/LoopPlanReview.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/projects/ProjectThreads.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/projects/ProjectsSection.tsx","raw-button":9,"raw-input":1,"raw-dialog":0}
-{"file":"pages/prompts/PromptDetail.tsx","raw-button":1,"raw-input":4,"raw-dialog":0}
+{"file":"pages/prompts/PromptDetail.tsx","raw-button":0,"raw-input":4,"raw-dialog":0}
 {"file":"pages/prompts/PromptEditFields.tsx","raw-button":1,"raw-input":3,"raw-dialog":0}
 {"file":"pages/prompts/PromptForm.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
 {"file":"pages/prompts/PromptPreviewPane.tsx","raw-button":1,"raw-input":3,"raw-dialog":0}
@@ -117,3 +117,4 @@
 {"file":"pages/workflows/OutboxPanel.tsx","raw-button":0,"raw-input":1,"raw-dialog":0}
 {"file":"pages/workflows/WorkflowDefEditor.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/workflows/WorkflowRunDetail.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
+{"file":"test/markdownSinks.ts","raw-button":1,"raw-input":1,"raw-dialog":0}

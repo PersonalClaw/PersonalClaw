@@ -10,6 +10,7 @@ const doc: UiDoc = {
     'The one right-docked side panel used across pages for detail/inspector views. Three modes from two controls: docked (in-flow, pushes the main content narrower, left edge drags to resize), expanded (one button unfurls it to a full-viewport overlay via a right-anchored clip wipe, or delegates to a dedicated full page via onExpand), and close. The header (title + expand + close) is pinned; only the body scrolls.',
   props: [
     { name: 'title', description: 'Panel heading, shown in the pinned header.' },
+    { name: 'tooltip', description: "The title's tooltip as plain text, where the header cuts the title. A string title is its own tooltip; a rendered title (a MarkdownLine) passes its text here through previewLine, since a node cannot become a DOM tooltip." },
     { name: 'icon', description: 'Optional leading icon beside the title.' },
     { name: 'onClose', description: 'Called when the panel dismisses (X, Escape, or parent). Required.' },
     { name: 'urlKey', description: "Optional { key, setQuery } URL-sync: closing the panel drops `?key` from the URL, so a page that opens via `?open=<id>` gets the close-clears-the-key half for free." },

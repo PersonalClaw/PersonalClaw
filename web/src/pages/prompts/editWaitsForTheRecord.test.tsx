@@ -96,3 +96,23 @@ describe('editing a snippet', () => {
     expect(save.mock.calls[0][2], 'the save names the revision of the record it was seeded from').toBe('s1')
   })
 })
+
+// ── Reading a prompt: its template renders with its defaults, and Raw shows the source ───────────
+//
+// The Template section is `RenderedSource`, handed the prompt's defaults through `transform`. Dropping
+// the transform, or bringing back a section of its own, would leave every RenderedSource test green.
+
+describe('reading a prompt', () => {
+  it("renders its template with each variable's default filled in, and Raw shows {{name}}", async () => {
+    const withDefault: PromptItem = {
+      ...fullPrompt,
+      content: 'Hello, **{{name}}**. Sort {{items}}.',
+      variables: [{ name: 'name', default: 'Ada' }, { name: 'items' }] as PromptItem['variables'],
+    }
+    vi.spyOn(api, 'prompt').mockResolvedValue(withDefault)
+    render(<PromptDetail prompt={listRow} editing={false} onEditingChange={() => {}} onSaved={() => {}} onDeleted={() => {}} onNavigate={() => {}} />)
+    expect(await screen.findByText('Ada', { selector: 'strong' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Raw' }))
+    expect(screen.getByText('Hello, **{{name}}**. Sort {{items}}.', { selector: 'pre' })).toBeInTheDocument()
+  })
+})

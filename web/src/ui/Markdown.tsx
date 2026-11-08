@@ -427,7 +427,7 @@ const COMPONENTS: Record<string, React.ComponentType<any>> = {
 /** The embedded HTML that may still format a body: tags that carry nothing but their name.
  *  Written with ANY attribute — a class, a style, a handler, an `open` — a tag is not one of
  *  these, and is shown as text like the rest. */
-const EMBEDDED_FORMATTING = [
+export const EMBEDDED_FORMATTING = [
   'b', 'strong', 'i', 'em', 'u', 's', 'del', 'ins', 'mark', 'small', 'sub', 'sup', 'kbd', 'code',
   'br', 'details', 'summary',
 ] as const
@@ -464,10 +464,100 @@ function embeddedHtmlAsText() {
   return walk
 }
 
+/** The mdast node shape the two remark passes below read and write. */
+type MdastLike = { type: string; value?: string; children?: MdastLike[] }
+
+/** ── `line` mode's parse: no block construct at all ─────────────────────────────────────────
+ *
+ *  🔴 INLINE MODE STILL PARSED BLOCKS, THEN FLATTENED THEM, so a field written as one line lost
+ *  its leading characters. CommonMark reads "# of retries" as a heading (the "#" goes), "2024. Year
+ *  review" and "1) Fix" as list items (the number goes), "> 5 files" as a quote (the ">" goes), and
+ *  "[Bug]: crash" and "[^1]: see the note" as a link reference and a footnote definition, which
+ *  render NOTHING. A title, a reason or a question is one line its author typed, so in `line` mode
+ *  the parser never starts a block: each construct below is turned off by its micromark name, and
+ *  the text stays one paragraph of inline marks.
+ *
+ *  This is micromark's own `disable` extension, pushed where remark-gfm pushes its own, so it
+ *  needs no package of its own (the rendering census counts imports of the parser packages). */
+const LINE_ONLY_OFF = [
+  'headingAtx', 'setextUnderline', 'thematicBreak', 'list', 'blockQuote', 'codeIndented', 'codeFenced',
+  'definition', 'table', 'gfmFootnoteDefinition', 'mathFlow',
+  // A line that opens with a block tag or a comment ("<div> ships **now**") would be one HTML block,
+  // shown as its text with its marks unparsed, where its tooltip reads them.
+  'htmlFlow',
+]
+function remarkLineOnly(this: unknown) {
+  const data = (this as { data(): { micromarkExtensions?: unknown[] } }).data()
+  ;(data.micromarkExtensions ??= []).push({ disable: { null: LINE_ONLY_OFF } })
+}
+
+/** `breaks`: a soft line ending is a line break, for text written as lines (a message, a note, a
+ *  question, a reason), whose sink showed its line breaks while it was raw. A markdown document
+ *  (a memory file, a skill, a knowledge body) reads without it, as the transcript does. */
+function remarkSoftBreaks() {
+  const walk = (node: MdastLike): void => {
+    if (!node.children) return
+    node.children = node.children.flatMap((kid): MdastLike[] => {
+      if (kid.type !== 'text' || !kid.value?.includes('\n')) { walk(kid); return [kid] }
+      return kid.value.split(/\r?\n/).flatMap((part, i): MdastLike[] => [
+        ...(i ? [{ type: 'break' }] : []),
+        ...(part ? [{ type: 'text', value: part }] : []),
+      ])
+    })
+  }
+  return walk
+}
+
+/** ── `hits`: the search index's `<<…>>` marks, kept through the parse ─────────────────────────
+ *
+ *  A snippet marks each hit with `<<` and `>>`. Read as markdown those are text the HTML pass has
+ *  to see (a snippet's own `<` stays text), and a hit can sit inside a code span or run across a
+ *  bold one. So each PAIRED mark becomes a private-use sentinel before the parse, the parse and the
+ *  HTML pass run as for any text, and after them every run of text between the sentinels becomes a
+ *  `<mark>`, wherever it landed. An unpaired `<<` is never a sentinel, so it stays the text it is. */
+const HIT_OPEN = '\uE000'
+const HIT_CLOSE = '\uE001'
+/** A hit: a `<<`, the nearest `>>` after it, and no `<<` between, so a literal `<<` before a hit
+ *  ("std::cout << x; <<printf>>", a heredoc's "<<EOF") stays text. `MarkdownLine` reads it too. */
+export const HIT_PAIR = /<<((?:(?!<<)[\s\S])*?)>>/g
+const HIT_SENTINELS = /[\uE000\uE001]/g
+const markHits = (text: string): string => text.replace(HIT_SENTINELS, '').replace(HIT_PAIR, `${HIT_OPEN}$1${HIT_CLOSE}`)
+/** The hit's ink: Chat history's, where the marks were drawn as parts before. */
+const HIT_CLASS = ['rounded-sm', 'bg-primary/25', 'text-on-surface']
+
+type HastNode = { type: string; tagName?: string; value?: string; properties?: Record<string, unknown>; children?: HastNode[] }
+function rehypeHits() {
+  return (tree: HastNode) => {
+    let open = false
+    const walk = (node: HastNode): void => {
+      if (!node.children) return
+      node.children = node.children.flatMap((kid): HastNode[] => {
+        if (kid.type !== 'text') { walk(kid); return [kid] }
+        const value = kid.value ?? ''
+        if (!open && !value.includes(HIT_OPEN) && !value.includes(HIT_CLOSE)) return [kid]
+        const out: HastNode[] = []
+        for (const piece of value.split(/([\uE000\uE001])/)) {
+          if (piece === HIT_OPEN) { open = true; continue }
+          if (piece === HIT_CLOSE) { open = false; continue }
+          if (!piece) continue
+          out.push(open
+            ? { type: 'element', tagName: 'mark', properties: { className: HIT_CLASS }, children: [{ type: 'text', value: piece }] }
+            : { type: 'text', value: piece })
+        }
+        return out
+      })
+    }
+    walk(tree)
+  }
+}
+
 const REMARK: PluggableList = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]]
+const REMARK_BREAKS: PluggableList = [...REMARK, remarkSoftBreaks]
+const REMARK_LINE: PluggableList = [...REMARK, remarkLineOnly]
 const REHYPE: PluggableList = [embeddedHtmlAsText, [rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]
 /** Inline sinks take the same HTML policy, and no LaTeX (see `inline` mode below). */
 const REHYPE_INLINE: PluggableList = [embeddedHtmlAsText, rehypeRaw]
+const REHYPE_INLINE_HITS: PluggableList = [...REHYPE_INLINE, rehypeHits]
 
 /** ── `inline` mode: the SAME renderer, for a sink that cannot hold a block ──────────────
  *
@@ -498,8 +588,11 @@ const REHYPE_INLINE: PluggableList = [embeddedHtmlAsText, rehypeRaw]
  *     visually unchanged apart from the formatting they were missing.
  */
 const INLINE_UNWRAP = [
-  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'br', 'img', 'pre',
+  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'pre',
   'ul', 'ol', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'details', 'summary',
+  // A footnote's `section` is a block that escapes a clamp, and a task item's checkbox is a form
+  // control, which inside a row's button is a control in a control.
+  'section', 'input',
 ]
 
 const INLINE_COMPONENTS: Record<string, React.ComponentType<any>> = {
@@ -517,8 +610,14 @@ const INLINE_COMPONENTS: Record<string, React.ComponentType<any>> = {
   // The list wrapper is unwrapped, so the items land directly in the flow — a trailing
   // space keeps "onetwothree" from happening.
   li({ children }: any) { return <span>{children}{' '}</span> },
+  // A line break in a row is the space between its words: unwrapped, it ran them together
+  // ("Done<br>Next" read "DoneNext"), where the row's plain text reads a space.
+  br() { return <>{' '}</> },
   // Inert by design: three of the four inline sinks sit inside a click target.
   a({ children }: any) { return <span className="underline underline-offset-2 decoration-current/40">{children}</span> },
+  // No image in a row: an image is its words (its alt text), as a refused image is in a body, and
+  // as the row's plain text (`previewText`, `previewLine`) reads it. Nothing is fetched.
+  img({ alt }: any) { return typeof alt === 'string' && alt ? <span>{alt}</span> : null },
 }
 
 // Bare file paths inside prose (not just inline-code): /a/b.ext, ~/a/b.ext, ~/b.ext, or
@@ -703,24 +802,59 @@ function stringifyChildren(v: unknown): string {
 }
 
 /** Plain markdown (no widget split) — the inner renderer. */
-function MarkdownText({ children, onFileClick, chatSessionKey, citations, beside = false, sourceOf }: {
+function MarkdownText({ children, onFileClick, chatSessionKey, citations, beside = false, sourceOf, breaks = false }: {
   children: string; onFileClick?: (path: string) => void; chatSessionKey?: string; citations?: MemoryCitation[]; beside?: boolean; sourceOf?: SourceOf
+  breaks?: boolean
 }) {
   // One set of components for as long as what they close over holds: a new set is a new type for
   // every block, which remounts it (losing the focus on its controls and highlighting it again).
   const components = useMemo(() => componentsWith(onFileClick, chatSessionKey, citations, beside, sourceOf), [onFileClick, chatSessionKey, citations, beside, sourceOf])
-  return <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} urlTransform={markdownUrl} components={components}>{children}</ReactMarkdown>
+  return <ReactMarkdown remarkPlugins={breaks ? REMARK_BREAKS : REMARK} rehypePlugins={REHYPE} urlTransform={markdownUrl} components={components}>{children}</ReactMarkdown>
+}
+
+/** ── The fast path: a line markdown has nothing to do with renders as itself ────────────────
+ *
+ *  Inline and line modes sit in long lists (the task list, the rail, the palette), and most of what
+ *  they show is plain words. A string holding none of the characters markdown acts on (a mark, a
+ *  bracket, a tag, an entity, an escape, an address, a line ending) and starting no block renders
+ *  as the same text node a parse would give it, without the parse. A parse trims a paragraph, so a
+ *  string with space at either end takes the parse too. */
+const MARKDOWN_ACTS_ON = /[\\`*_~[\]!<>&$@|#=^\n\r\t]|:\/\/|mailto:|xmpp:|www\./i
+const STARTS_A_BLOCK = /^(?:[-+]|\d{1,9}[.)])/
+export function plainLine(text: string): boolean {
+  return text === text.trim() && !MARKDOWN_ACTS_ON.test(text) && !STARTS_A_BLOCK.test(text)
+}
+
+/** Inline and line mode's parse, with no fast path: what `Markdown inline` renders inside its span.
+ *  Exported for the fast path's test, which holds the two to the same DOM. */
+export function parseInline(text: string, { line = false, hits = false }: { line?: boolean; hits?: boolean } = {}) {
+  return (
+    <ReactMarkdown remarkPlugins={line ? REMARK_LINE : REMARK} rehypePlugins={hits ? REHYPE_INLINE_HITS : REHYPE_INLINE}
+      urlTransform={markdownUrl} disallowedElements={INLINE_UNWRAP} unwrapDisallowed components={INLINE_COMPONENTS}>
+      {hits ? markHits(text) : text}
+    </ReactMarkdown>
+  )
 }
 
 /** The number of the source a link's address is, or undefined for a link that is no source. */
 export type SourceOf = (href: string) => number | undefined
 
-export const Markdown = memo(function Markdown({ children, className, inline, widgets, onFileClick, chatSessionKey, messageTs, streaming, citations, beside, sourceOf }: {
+export const Markdown = memo(function Markdown({ children, className, inline, line, breaks, hits, widgets, onFileClick, chatSessionKey, messageTs, streaming, citations, beside, sourceOf }: {
   children: unknown; className?: string; onFileClick?: (path: string) => void
   /** Render into a `<span>` with block containers flattened, for a sink that cannot hold a
    *  block — a `line-clamp`-ed card description, a `<p>`-typed field hint, or prose inside a
    *  click target. See `INLINE_UNWRAP` above for what it costs and why. */
   inline?: boolean
+  /** A field written as one line (a title, a name, a reason, a question, a step): inline mode
+   *  whose parse starts no block, so a leading "#", "2024.", "1)", "-" or ">" and a "[Bug]: crash"
+   *  are the text they are (`LINE_ONLY_OFF`). Implies `inline`. Most callers want `MarkdownLine`. */
+  line?: boolean
+  /** Block mode: a soft line ending is a line break, for text written as lines (a message, a
+   *  note, a question, a reason) rather than a markdown document. */
+  breaks?: boolean
+  /** Inline and line modes: the search index's `<<…>>` marks become `<mark>`s, inside a code
+   *  span or across a bold run too; an unpaired mark stays text. */
+  hits?: boolean
   /** Run `<widget>` blocks in their sandboxed frames. For the agent's own chat replies only —
    *  the dashboard chat is where the model is given the widget contract. Without it a widget
    *  tag is embedded HTML like any other, and is shown as text. */
@@ -750,19 +884,15 @@ export const Markdown = memo(function Markdown({ children, className, inline, wi
   if (!text.trim()) return null
   // An inline sink is a clamp/hint/click-target, never a widget host, so it takes the
   // flattening pass and no `<div>` and no colour of its own (the sink owns its ink).
-  if (inline) {
-    return (
-      <span className={className}>
-        <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE_INLINE} urlTransform={markdownUrl} disallowedElements={INLINE_UNWRAP} unwrapDisallowed components={INLINE_COMPONENTS}>{text}</ReactMarkdown>
-      </span>
-    )
+  if (inline || line) {
+    return <span className={className}>{plainLine(text) ? text : parseInline(text, { line, hits })}</span>
   }
   // Split out `<widget>` blocks where the caller runs them; render each as a sandboxed
   // iframe, prose as MD.
   const segments = widgets ? parseWidgetBlocks(text, streaming) : null
   const offerBeside = !!beside && !streaming
   if (!segments || (segments.length === 1 && segments[0].type === 'md')) {
-    return <div className={`text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside} sourceOf={sourceOf}>{text}</MarkdownText></div>
+    return <div className={`text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside} sourceOf={sourceOf} breaks={breaks}>{text}</MarkdownText></div>
   }
   let wi = 0
   return (
@@ -771,7 +901,7 @@ export const Markdown = memo(function Markdown({ children, className, inline, wi
     // keeps the float contained inside THIS turn.
     <div className={`flow-root text-on-surface ${className ?? ''}`}>
       {segments.map((seg, i) => {
-        if (seg.type !== 'widget') return <MarkdownText key={i} onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside} sourceOf={sourceOf}>{seg.content}</MarkdownText>
+        if (seg.type !== 'widget') return <MarkdownText key={i} onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside} sourceOf={sourceOf} breaks={breaks}>{seg.content}</MarkdownText>
         // Resolve the block's renderer through the ONE content registry (was a
         // hardcoded react/widget fork): adding an inline-embeddable type is now a
         // registry entry, not an edit here.
