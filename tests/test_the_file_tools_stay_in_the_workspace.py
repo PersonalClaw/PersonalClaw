@@ -183,13 +183,13 @@ async def test_code_map_indexes_no_folder_outside_the_session(place):
     assert "is not a folder code_map indexes" in (result.error or "")
 
 
-async def test_code_map_answers_for_the_sessions_folder(place):
+async def test_code_map_answers_for_the_sessions_folder(place, code_map_grammars):
     """Its default is the session's workspace, not the global one."""
     found = await _code_map(place["ws"], symbol="serve")
     assert found.success and "src/app.py" in found.output, found
 
 
-async def test_code_map_indexes_no_file_a_link_leads_out_to(place):
+async def test_code_map_indexes_no_file_a_link_leads_out_to(place, code_map_grammars):
     leaked = await _code_map(place["ws"], symbol="exfiltrate", workspace=str(place["ws"]))
     assert "linked.py" not in (leaked.output or ""), leaked.output
     control = await _code_map(place["ws"], symbol="serve", workspace=str(place["ws"]))
