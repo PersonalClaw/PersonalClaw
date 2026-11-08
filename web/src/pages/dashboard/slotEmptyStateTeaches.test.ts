@@ -124,13 +124,13 @@ describe('dashboard slot-empty states teach a mechanism or offer a step', () => 
   const empties = all.filter((s) => !isReadError(s.text))
 
   it('the scan actually found the family (vacuity floor)', () => {
-    // 9 element sites measured (the branches are mutually exclusive). A floor rather than an
+    // 8 element sites measured (the branches are mutually exclusive). A floor rather than an
     // equality so a sibling PR adding a slot does not red this; the ratchet below is what holds the
     // line. The live views' slots went when they came to show only while something is live: a band
     // drawn only then has nothing empty to say. The Agent world's two went with it, for your agents'
-    // day's one.
-    expect(all.length).toBeGreaterThanOrEqual(9)
-    expect(empties.length).toBeGreaterThanOrEqual(6)
+    // day's one. Tasks' empty state went with Home's Tasks band: tasks keep their own page.
+    expect(all.length).toBeGreaterThanOrEqual(8)
+    expect(empties.length).toBeGreaterThanOrEqual(5)
     expect(errors.length).toBeGreaterThanOrEqual(3)
     // Every slot must be classifiable, or the split above is hiding one.
     expect(all.every((s) => s.text.length > 0)).toBe(true)
@@ -168,13 +168,13 @@ describe('dashboard slot-empty states teach a mechanism or offer a step', () => 
     // 🪤 A SECOND COPY DOES NOT HAVE TO BE HAND-ROLLED. Discover's off-branch reached the third
     // action position with `<Button variant="ghost" size="xs" className="text-on-surface-var">` —
     // a shared primitive, so no lint or reviewer would call it duplication, yet it painted a
-    // different ink at a different radius in the same slot position Tasks and Schedule occupy, and
-    // all three can render on `#/dashboard` at once. It also stacked two colour utilities on one
+    // different ink at a different radius in the same slot position Tasks and Schedule occupied, and
+    // all three could render on `#/dashboard` at once. It also stacked two colour utilities on one
     // element (`ghost` already sets `text-on-surface`), the order-dependent ink `ui/Button`'s
     // `ghost-accent` note documents. So the assertion is on the POSITION, not on the markup's
     // origin: whatever sits in a slot's `action` is a slot action and takes the slot's ink.
     const withAction = slots().filter((s) => s.hasAction)
-    expect(withAction.length).toBeGreaterThanOrEqual(3)   // Tasks + Schedule + Discover; vacuity floor
+    expect(withAction.length).toBeGreaterThanOrEqual(2)   // Schedule + Discover; vacuity floor
     for (const s of withAction) {
       expect(s.usesSlotAction, `${s.file} does not route its slot on-ramp through SlotAction`).toBe(true)
     }

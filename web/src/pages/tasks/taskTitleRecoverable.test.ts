@@ -9,7 +9,7 @@ import { join } from 'node:path'
 //
 //   list row      `TasksListPage`              254px of 434  — 1.7x
 //   DAG node      `TaskGraph`                  182px of 386  — 2.1x  (smallest slot, clips hardest)
-//   dashboard     `widgets/TasksWidget`        266px of 434  — 1.6x
+//   dashboard     `widgets/TasksWidget`        266px of 434  — 1.6x  (gone since, with Home's Tasks band)
 //
 // All three with `title: null`, so the second half of what the user wrote was unreachable to a sighted
 // phone user — while the row's accessible NAME already carried the whole thing (the status is
@@ -31,7 +31,6 @@ const strip = (s: string) => s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\
 
 const LIST = strip(read('pages/tasks/TasksListPage.tsx'))
 const DAG = strip(read('pages/tasks/TaskGraph.tsx'))
-const WIDGET = strip(read('pages/dashboard/widgets/TasksWidget.tsx'))
 
 describe('every place a task is listed hands over its full title', () => {
   it('the list row', () => {
@@ -42,23 +41,18 @@ describe('every place a task is listed hands over its full title', () => {
     expect(DAG).toMatch(/truncate text-\[0\.8125rem\] leading-tight[\s\S]{0,160}title=\{t\.title\}>\{t\.title\}<\/div>/)
   })
 
-  it('the dashboard widget row', () => {
-    expect(WIDGET).toMatch(/truncate text-on-surface" title=\{t\.title\}>\{t\.title\}<\/span>/)
-  })
-
   it('each title attribute is the rendered value, not a paraphrase', () => {
     // A title that could drift would name a different task than the row shows.
-    for (const [name, src] of [['list', LIST], ['dag', DAG], ['widget', WIDGET]] as const) {
+    for (const [name, src] of [['list', LIST], ['dag', DAG]] as const) {
       const m = /title=\{t\.title\}>\{t\.title\}</.exec(src)
       expect(m, `${name}: title and text are one expression`).toBeTruthy()
     }
   })
 
-  it('all three still truncate — the fix is recovery, not re-layout', () => {
+  it('both still truncate — the fix is recovery, not re-layout', () => {
     // If one ever stops truncating, its `title` becomes noise and this rail should be revisited.
     expect(LIST).toMatch(/block truncate/)
     expect(DAG).toMatch(/truncate text-\[0\.8125rem\]/)
-    expect(WIDGET).toMatch(/truncate text-on-surface/)
   })
 
   it('the row name still carries the title AND the status — the half that already worked', () => {

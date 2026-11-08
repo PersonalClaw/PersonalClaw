@@ -186,6 +186,20 @@ describe('All tasks', () => {
     expect(shown('Order the soil') && shown('Book the movers')).toBe(true)
   })
 
+  it("🔴 Home's Overview shows no tasks, and ⌘K's All tasks still opens them on their own page", async () => {
+    // Tasks are what agents keep their goals in; Home shows the agents, not their tasks
+    // (`DashboardPage`). The Tasks page, its route and every way to it stay.
+    await open('dashboard?view=overview')
+    expect(screen.queryByRole('heading', { name: 'Tasks' }), "Home's Overview has no Tasks band").toBeNull()
+    expect(shown('Order the soil') || shown('Book the movers'), 'no task of any project on Home').toBe(false)
+    const row = rows.find((r) => r.id === 'go:tasks')
+    act(() => row!.run())
+    await settle()
+    expect(location.hash).toBe('#/tasks')
+    expect(heading()).toBe('All tasks')
+    expect(shown('Order the soil') && shown('Book the movers')).toBe(true)
+  })
+
   it('#/tasks keeps every query it read: the board, held to one project', async () => {
     await open('tasks?view=board&scope=Garden')
     expect(location.hash).toBe('#/tasks?view=board&scope=Garden')

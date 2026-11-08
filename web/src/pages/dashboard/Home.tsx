@@ -65,8 +65,8 @@ import { Suggestions } from './widgets/Suggestions'
 // selection is in the address (`?open=`), so Back, a reload and a copied link open the same one.
 //
 // The header's View switches to Overview, the bands that have no place in the three groups (your
-// agents' day, the desktop and browser live views, tasks, Discover, pinned artifacts and recent
-// activity), `?view=overview`.
+// agents' day, pinned artifacts, the desktop and browser live views, Discover and recent activity),
+// `?view=overview`.
 
 /** ── THE ONE RECONCILIATION POINT with `dashboard/views_store.py` ──────────────────────────
  *

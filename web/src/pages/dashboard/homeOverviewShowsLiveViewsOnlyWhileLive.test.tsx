@@ -46,7 +46,6 @@ vi.mock('../../lib/useVisiblePoll', async () => {
 
 vi.mock('./DashboardLive', () => ({ DashboardLiveProvider: ({ children }: { children: ReactNode }) => <>{children}</> }))
 vi.mock('./agents/AgentDay', () => ({ AgentDay: () => null }))
-vi.mock('./widgets/TasksWidget', () => ({ TasksWidget: () => null }))
 vi.mock('./widgets/Discover', () => ({ Discover: () => null }))
 vi.mock('./widgets/PinnedArtifacts', () => ({ PinnedArtifacts: () => null }))
 vi.mock('./widgets/ScheduleWidget', () => ({ ScheduleWidget: () => null }))

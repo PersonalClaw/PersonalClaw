@@ -60,7 +60,6 @@ describe('RowAction carries an explicit accessible name', () => {
 describe('every row-scoped RowAction names its row', () => {
   /** [file, how many call sites must pass ariaLabel, how many singletons may not] */
   const WIDGETS: [string, number, number][] = [
-    ['pages/dashboard/widgets/TasksWidget.tsx', 1, 0],
     ['pages/dashboard/widgets/PinnedArtifacts.tsx', 1, 0],
     // doctor + update + health-unknown + doctor-off: one each, no rows. The third is the
     // "Health unknown" row and the fourth says the Doctor is switched off — singletons like their

@@ -12,7 +12,7 @@ import { filesUnder, readSource } from '../../../test/sourceTree'
 // icon it happened to import). Lifting it into `kit.tsx` was straightforward and HTML-identical.
 //
 // Then the live check refused to render either widget, and the reason was not a data gap:
-// **nothing imports them.** `DashboardPage` mounts `TasksWidget` and `ScheduleWidget`; these two
+// **nothing imports them.** `DashboardPage` mounted `TasksWidget` and `ScheduleWidget`; these two
 // have no importer, no lazy loader, no registry entry, and no test. Their strings ("Memory Pulse",
 // "Knowledge Pulse") do not appear in the built bundle at all — Rollup had been tree-shaking them
 // out of every release. `git log` shows they arrived unreferenced in the initial public commit and
@@ -74,7 +74,7 @@ describe('dashboard widget modules', () => {
     // The counterpart direction: this rail must not pass because the directory went empty or the
     // dashboard stopped mounting anything. Naming two known-live widgets keeps it anchored.
     const page = readSource(join(SRC, 'pages/dashboard/DashboardPage.tsx'))
-    for (const w of ['TasksWidget', 'ScheduleWidget']) {
+    for (const w of ['PinnedArtifacts', 'ScheduleWidget']) {
       expect(page, `DashboardPage should still mount ${w}`).toMatch(new RegExp(`\\b${w}\\b`))
       expect(readdirSync(WIDGETS)).toContain(`${w}.tsx`)
     }

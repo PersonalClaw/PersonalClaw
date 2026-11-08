@@ -21,8 +21,7 @@ import { NeedsModelNote } from '../../chat/NoModelSetupState'
  *    · `suggestions.py`'s parser caps the model's reply at `[:6]`
  *    · `_FALLBACK_SUGGESTIONS` is exactly six, so on a brand-new install the sixth was ALWAYS lost
  *    · `ChatPage`'s `SuggestionChips` — the other consumer of this same endpoint — renders `slice(0, 6)`
- *    · every sibling dashboard widget preview caps at six (`TasksWidget`, `ScheduleWidget`,
- *      `PinnedArtifacts`)
+ *    · every sibling dashboard widget preview caps at six (`ScheduleWidget`, `PinnedArtifacts`)
  *
  *  So `#/dashboard` and `#/chat` showed different amounts of one list. If this ever needs to be five
  *  again, change the producer too — a consumer cap below the producer's is discarded work by

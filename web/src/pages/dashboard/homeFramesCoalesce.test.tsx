@@ -91,16 +91,13 @@ describe('Home and its frames', () => {
     expect(triggersHistory.mock.calls.length - onMount).toBe(1)
   })
 
-  it('reads the ready tasks when the task store says a task changed, not on another list', async () => {
-    // A task finished by a loop, the agent or another device used to reach Home only on its
-    // 20-second poll; the store now says so (`refresh: tasks`).
+  it('🔴 reads no tasks, on opening or when the task store says a task changed', async () => {
+    // Tasks are what agents keep their goals in, and have their own page; Home shows the agents.
+    // Its Overview read the ready tasks on opening, on every poll and on each `refresh: tasks` for a
+    // Tasks band it no longer has.
     await mountHome()
-    const onMount = readyTasks.mock.calls.length
-    say({ type: 'refresh', data: { kinds: ['loops', 'crons'] } } as WsMessage)
-    act(() => { vi.advanceTimersByTime(200) })
-    expect(readyTasks.mock.calls.length - onMount).toBe(0)
     say({ type: 'refresh', data: { kinds: ['tasks'] } } as WsMessage)
     act(() => { vi.advanceTimersByTime(200) })
-    expect(readyTasks.mock.calls.length - onMount).toBe(1)
+    expect(readyTasks).not.toHaveBeenCalled()
   })
 })

@@ -20,8 +20,8 @@ import { RowAction } from './widgets/kit'
 // the enclosing full-card nav button was accounted for.)
 //
 // 🔑 ONE OF THE TWO IS A PRIMITIVE, so one edit reaches every adopter: `RowAction` is the dashboard's
-// row-action button, used by TasksWidget, SystemHealth (×2), ActiveWork (×3), PinnedArtifacts and
-// ActionCenter. The chips are a one-off in `DashboardPage`.
+// row-action button, used by SystemHealth (×2), ActiveWork (×3), PinnedArtifacts and ActionCenter
+// (and by the dashboard's Tasks band, until Home left tasks to their page). The chips are a one-off in `DashboardPage`.
 //
 // 🔑 THE FIX IS THE HIT BOX, NOT THE DESIGN — the shape already established for the `sm` Toggle:
 // grow the box to 24px and hand the extra height back with a negative margin, so nothing reflows.
@@ -61,7 +61,7 @@ describe('the fix reaches the widgets, and the chips too', () => {
     const count = readdirSync(join(DIR, 'widgets'))
       .filter((n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
       .reduce((sum, n) => sum + (readFileSync(join(DIR, 'widgets', n), 'utf8').match(/<RowAction\b/g) ?? []).length, 0)
-    expect(count, 'the primitive must actually be in use across the widgets').toBeGreaterThanOrEqual(6)
+    expect(count, 'the primitive must actually be in use across the widgets').toBeGreaterThanOrEqual(5)
   })
 
 })

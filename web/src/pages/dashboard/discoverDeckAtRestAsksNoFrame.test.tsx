@@ -39,7 +39,6 @@ vi.mock('../../lib/api', async (orig) => {
       inboxOpen: () => Promise.resolve([]),
       skillProposals: () => Promise.resolve({ proposals: [] }),
       uLoops: () => Promise.resolve([]),
-      readyTasks: () => Promise.resolve([]),
       triggersHistory: () => Promise.resolve({ runs: [], did_ids: [] }),
       status: () => Promise.resolve({ uptime: `${(deck.uptime += 20)}s` }),
       discover: () => Promise.resolve(discover()),
