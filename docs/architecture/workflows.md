@@ -549,10 +549,20 @@ is the project's.
 action a step ran with a filled value can print it, return it or fail with it, and a transform's
 text can hold it; the bindings keep each value they fill on the step's context
 (`BindingContext.filled`), and the dispatch masks every one of them as `[REDACTED: credential]` in
-the step's output, its failure, its reason and the question it asks (`engine_support.masked`) before
-the run keeps, publishes or shows any of it. An action's answer is masked as text before the step
-reads it as JSON or cuts it (`filled_secrets.masked_answer`), so a printed number or a value at the
-cut is masked too. The rule is the one PersonalClaw's `bash` tool applies to what its commands print
+the step's output, its failure, its reason and what the question it asks shows: its prompt, its
+choices and each field's label, choices and default, so a default or choice that held a filled value
+resumes as the mask (`engine_support.masked`) before the run keeps, publishes or shows any of it. A
+field whose name or type names a secret, as written or piped, and a secret piped in what the ask
+shows, are refused at save and at dispatch, for an approval, an event and a judge gate alike
+(`engine_support.ask_refused`): a field's name and type are what the form is, and no mask follows
+what a pipe makes of a value. At dispatch each field's name and type are read on their own with each
+reference kept, so a run input that holds one counts, fields bound whole to it included; one that
+reads a secret and doesn't resolve so is refused too, since nothing could check it, and one that
+reads none is filed as the binding failure it is. What an ask shows is masked on the resolved config
+before the ask is built from it, whatever its shape, and `choices` written as one string is one
+choice. An action's answer is masked as text before the step reads it as JSON or cuts it
+(`filled_secrets.masked_answer`), so a printed number or a value at the cut is masked too. The rule
+is the one PersonalClaw's `bash` tool applies to what its commands print
 (`security.redact_known_values`): every value however short, as written, as a JSON string writes it,
 percent-encoded or HTML-escaped; not a value the work changed otherwise (cut short, split, or
 encoded another way). What the step's work writes itself as it runs is masked of the same values:

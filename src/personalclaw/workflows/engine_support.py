@@ -318,6 +318,97 @@ def piped_secret(written: Any, ctx: BindingContext) -> str | None:
     return None
 
 
+#: What a gate's ask shows: its question and its choices; and of each field, its label, its
+#: choices and its default. A field's name and type are what the form is. The one set the
+#: dispatch's refusal, the save's (``validator._add_ask_refusals``) and the mask read.
+ASK_SHOWS = ("prompt", "message", "choices")
+FIELD_SHOWS = ("label", "choices", "default")
+FIELD_IS = ("name", "type")
+#: The gate kinds whose park asks (``engine._ask_payload``).
+ASKING_GATES = ("approval", "event", "judge")
+
+#: The words a field's name or type that names a secret is refused in, at save and at dispatch.
+FIELD_NAMES_A_SECRET = (
+    "a field's name and type are what the form is",
+    "take the {{secret:…}} out of it",
+)
+#: The words a secret read under a pipe in what an ask shows is refused in.
+ASK_PIPES_A_SECRET = (
+    "an ask can't pipe a secret, since no mask follows what the pipe makes of it",
+    "take the {{secret:…}} out of the pipe",
+)
+
+
+def pipes_a_secret(text: Any) -> bool:
+    """Whether *text*, as written, pipes a ``{{secret:…}}`` (what a save can see of
+    :func:`piped_secret`, which a run's inputs reach too)."""
+    return any(
+        bar and head.strip().lower().startswith("secret:")
+        for head, bar, _ in (expr.partition("|") for expr in refs_in(text))
+    )
+
+
+def ask_refused(node: Node, ctx: BindingContext) -> Failure | None:
+    """🔴 Why the gate *node*'s ask is refused before it is asked: a field whose name or type
+    names a secret, as written or through a run input that holds one (masked, a ``choice`` would
+    turn into an approval), read on its own (:func:`_what_the_form_is`), fields bound whole to a
+    run input included; one that reads a secret and doesn't resolve with each reference kept,
+    which nothing could check, so it fails closed; or a secret read under a pipe in what the ask
+    shows (:func:`piped_secret`). A field that doesn't resolve and reads no secret is filed as the
+    binding failure it is, by who can fix it (``failure_taxonomy.binding_failure``). None
+    otherwise, and for a gate that asks nothing."""
+    cfg = node.config or {}
+    if str(cfg.get("kind", "") or "") not in ASKING_GATES and "{{" not in str(cfg.get("kind", "")):
+        return None
+    written = cfg.get("fields") or []
+    written_fields = (
+        [i for i in written if isinstance(i, dict)] if isinstance(written, list) else []
+    )
+    try:
+        kept, unread = _what_the_form_is(written, _keeping(ctx)), False
+    except BindingError as exc:
+        failed = "{{" + exc.expr + "}}" if exc.expr else ""
+        if failed and not names_a_secret(failed) and piped_secret(failed, ctx) is None:
+            return binding_failure(exc)
+        kept, unread = [], True  # it reads a secret, and nothing could check it: fail closed
+    if (
+        unread
+        or (isinstance(written, str) and piped_secret(written, ctx))
+        or any(names_a_secret(text) for text in kept)
+        or any(piped_secret(item.get(key), ctx) for item in written_fields for key in FIELD_IS)
+    ):
+        what, fix = FIELD_NAMES_A_SECRET
+        return Failure(failure_class=FailureClass.USER, cause_plain=what, remediation=fix)
+    shown = [cfg.get(key) for key in ASK_SHOWS] + [
+        item.get(key) for item in written_fields for key in FIELD_SHOWS
+    ]
+    if any(piped_secret(text, ctx) for text in shown):
+        what, fix = ASK_PIPES_A_SECRET
+        return Failure(failure_class=FailureClass.USER, cause_plain=what, remediation=fix)
+    return None
+
+
+def _what_the_form_is(written: Any, keeping: BindingContext) -> list[Any]:
+    """The name and type of each field *written*, as its dispatch reads them with each reference
+    kept (*keeping*, :func:`_keeping`): of a field written as a mapping, each on its own, so no
+    other key's reading hides them; of fields, or of a field, bound whole, read whole. Raises
+    ``BindingError`` when one doesn't resolve so, as when a pipe needs what a secret's value is."""
+
+    def _of(items: Any) -> list[Any]:
+        fields = items if isinstance(items, list) else []
+        return [item.get(key) for item in fields if isinstance(item, dict) for key in FIELD_IS]
+
+    if not isinstance(written, list):
+        return _of(resolve(written, keeping))
+    read: list[Any] = []
+    for item in written:
+        if isinstance(item, dict):
+            read += [resolve(item.get(key), keeping) for key in FIELD_IS]
+        else:
+            read += _of([resolve(item, keeping)])
+    return read
+
+
 def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Failure | None]:
     """Resolve every binding in a node's config, except its conditions.
 
@@ -341,6 +432,8 @@ def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Fai
     pipe can rescue. Only the raise site knows which mode it is, so that is where the specific
     advice comes from.
     """
+    if node.kind == NodeKind.GATE and (refused := ask_refused(node, ctx)) is not None:
+        return {}, refused
     raw = dict(node.config or {})
     held = {key: raw.pop(key) for key in _condition_keys(node) if key in raw}
     kept = _taken(raw, ctx.model_text) if ctx.kept_resolver is not None else {}
@@ -355,9 +448,40 @@ def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Fai
                 holder = holder.setdefault(key, {})
             holder[leaf] = resolve(value, keeping)
         resolved.update(held)
-        return resolved, None
+        return _shown_as_asked(node, resolved, ctx.filled), None
     except BindingError as exc:
         return {}, binding_failure(exc)
+
+
+def _shown_as_asked(node: Node, cfg: dict[str, Any], filled: list[str]) -> dict[str, Any]:
+    """*cfg*, a gate's resolved config, with what its ask shows (:data:`ASK_SHOWS`,
+    :data:`FIELD_SHOWS`) masked of each value *filled* before the ask is built from it
+    (``engine._ask_payload``, whose ``Ask.from_dict`` makes text of any shape), and a ``choices``
+    written as one string taken as one choice. A judge's prompt is left as resolved, since a value
+    there refuses the judge (:func:`judge_handed_a_value`). Any other node's config as it is."""
+    if node.kind != NodeKind.GATE:
+        return cfg
+    judged = JUDGE_TEXT if str(cfg.get("kind", "") or "") == "judge" else frozenset()
+
+    def _shown(key: str, value: Any) -> Any:
+        return filled_secrets.masked(
+            [value] if key == "choices" and isinstance(value, str) else value, filled
+        )
+
+    shown = {
+        key: _shown(key, value) if key in ASK_SHOWS and key not in judged else value
+        for key, value in cfg.items()
+    }
+    if isinstance(shown.get("fields"), list):
+        shown["fields"] = [
+            (
+                {k: _shown(k, v) if k in FIELD_SHOWS else v for k, v in item.items()}
+                if isinstance(item, dict)
+                else item
+            )
+            for item in shown["fields"]
+        ]
+    return shown
 
 
 def _taken(raw: dict[str, Any], paths: frozenset[str]) -> dict[str, Any]:
@@ -423,9 +547,33 @@ def masked(result: Any, ctx: BindingContext) -> Any:
         told = filled_secrets.masked_fields(failure, _FAILURE_TEXT, filled)
         shown = shown if told is failure else replace(shown, failure=told)
     ask = getattr(shown, "ask", None)
-    if isinstance(ask, dict) and "prompt" in ask:
-        shown = replace(shown, ask={**ask, "prompt": filled_secrets.masked(ask["prompt"], filled)})
+    if isinstance(ask, dict) and (told := _masked_ask(ask, filled)) != ask:
+        shown = replace(shown, ask=told)
     return shown
+
+
+def _masked_ask(ask: dict[str, Any], filled: list[str]) -> dict[str, Any]:
+    """*ask* with every value in *filled* masked out of what it shows: its prompt, its choices,
+    and each field's label, choices and default. Its kind, its node and each field's name and type
+    are kept as they are, since a short value masks every place its text appears, and those are
+    what the ask is (a ``choice`` must stay a choice)."""
+    told: dict[str, Any] = {
+        key: filled_secrets.masked(ask[key], filled) for key in ASK_SHOWS if key in ask
+    }
+    fields = ask.get("fields")
+    if isinstance(fields, list):
+        told["fields"] = [
+            (
+                {
+                    **item,
+                    **{k: filled_secrets.masked(item[k], filled) for k in FIELD_SHOWS if k in item},
+                }
+                if isinstance(item, dict)
+                else item
+            )
+            for item in fields
+        ]
+    return {**ask, **told}
 
 
 def journalled_prompt(wire: Any, composed: str) -> dict[str, Any]:

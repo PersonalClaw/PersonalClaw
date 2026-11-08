@@ -161,6 +161,9 @@ NAMED_MODULES: dict[str, str] = {
     "tests/test_every_action_provider_says_where_its_config_goes.py": (
         "every action provider says whether its config goes to a model, to a run, or into itself"
     ),
+    "tests/test_an_asks_choices_and_fields_are_masked_of_filled_values.py": (
+        "what a step's question shows, and what its form is, keeps no secret's value"
+    ),
     "tests/test_an_engine_fault_is_masked_of_its_steps_values.py": (
         "what an engine fault says of a step keeps no value its bindings filled in"
     ),

@@ -231,6 +231,37 @@ def _add_authored_refusals(res: ValidationResult, cfg: dict[str, Any], path: str
         _add(res, "WF_BROWSE_START_PAGE_SECRET", f"{page[0]}: {page[1]}", path)
 
 
+def _add_ask_refusals(res: ValidationResult, cfg: dict[str, Any], path: str) -> None:
+    """What a gate's ask, as authored, is refused at its save, as its dispatch refuses it
+    (``engine_support.ask_refused``, which a run's inputs reach too): a field whose name or type
+    names a secret, and a secret piped in what the ask shows."""
+    from personalclaw.workflows.engine_support import (
+        ASK_PIPES_A_SECRET,
+        ASK_SHOWS,
+        ASKING_GATES,
+        FIELD_IS,
+        FIELD_NAMES_A_SECRET,
+        FIELD_SHOWS,
+        names_a_secret,
+        pipes_a_secret,
+    )
+
+    if str(cfg.get("kind", "") or "") not in ASKING_GATES:
+        return
+    written = cfg.get("fields")
+    fields = (
+        [item for item in written if isinstance(item, dict)] if isinstance(written, list) else []
+    )
+    if (isinstance(written, str) and pipes_a_secret(written)) or any(
+        names_a_secret(item.get(key)) for item in fields for key in FIELD_IS
+    ):
+        _add(res, "WF_ASK_FIELD_SECRET", "{}, so {}".format(*FIELD_NAMES_A_SECRET), path)
+    shown = [cfg.get(key) for key in ASK_SHOWS]
+    shown += [item.get(key) for item in fields for key in FIELD_SHOWS]
+    if any(pipes_a_secret(text) for text in shown):
+        _add(res, "WF_ASK_PIPED_SECRET", "{}: {}".format(*ASK_PIPES_A_SECRET), path)
+
+
 def _browse_start_page_refusal(cfg: dict[str, Any]) -> tuple[str, str] | None:
     """Why a browse step's start page, as written under either holder, a mapping or pairs
     (``step_arguments.arguments``), is refused at its save
@@ -594,6 +625,7 @@ def _validate_shape(
                 _add(res, "WF_MISSING_PROMPT", "judge gate needs a non-empty `prompt`", path)
         if gate == GateKind.EXPRESSION and not cfg.get("expr"):
             _add(res, "WF_MISSING_EXPR", "expression gate needs an `expr`", path)
+        _add_ask_refusals(res, cfg, path)
         for key, why in _unshown_gate_text(gate, cfg) if gate is not None else ():
             _add(
                 res,
