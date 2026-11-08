@@ -96,6 +96,9 @@ export const INLINE_CONSTRUCTS: Array<[string, string, string]> = [
   ['an underscore inside a word', 'Skip model_calls here', 'Skip model_calls here'],
   ['a double underscore inside a word', 'Call mcp__github__create_issue now', 'Call mcp__github__create_issue now'],
   ['bold italic with underscores', 'A ___bold italic___ word', 'A bold italic word'],
+  ['three underscores inside words', 'Call x___y___z now', 'Call x___y___z now'],
+  ['three underscores closing at a word', 'Call x___y___ now', 'Call x___y___ now'],
+  ['three underscores opening at a word', 'Call ___y___z now', 'Call ___y___z now'],
   ['strikethrough, double and single', '~~old~~ and ~gone~ plans', 'old and gone plans'],
   ['a link', 'Read [the notes](https://example.com/notes) first', 'Read the notes first'],
   ['a link whose address holds parentheses', 'Reply to [the thread](javascript:alert(1)) today', 'Reply to the thread today'],
@@ -112,7 +115,6 @@ export const INLINE_CONSTRUCTS: Array<[string, string, string]> = [
   ['an HTML comment', 'Ship <!-- note --> it', 'Ship it'],
 ]
 
-/** Elements that make a row a block, or a control inside a control. */
 /** Every element a line or an excerpt must not hold: a block of any kind. */
 export const BLOCKS = 'p, div, pre, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, table, section, hr, details'
 

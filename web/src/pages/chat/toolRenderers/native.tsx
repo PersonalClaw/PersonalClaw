@@ -155,7 +155,7 @@ function webFetchOutput(seg: ToolSegment): ReactNode {
   return (
     <RawBlock label="Fetched page">
       {url && <div data-type="caption" className="mb-1 truncate text-primary">{url}</div>}
-      <div className="max-h-72 overflow-auto"><Markdown>{text.slice(0, 8000)}</Markdown></div>
+      <div className="-mx-[4px] max-h-72 overflow-auto p-[4px]"><Markdown>{text.slice(0, 8000)}</Markdown></div>
     </RawBlock>
   )
 }

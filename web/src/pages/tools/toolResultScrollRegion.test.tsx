@@ -64,7 +64,7 @@ describe('the inspector result shell is a named region', () => {
   const code = readFileSync(join(process.cwd(), 'src/pages/tools/ToolInspector.tsx'), 'utf8')
 
   it('the capped output box carries the trio', () => {
-    expect(code).toMatch(/<div tabIndex=\{0\} role="group" aria-label="Tool result" className="max-h-96 overflow-y-auto">/)
+    expect(code).toMatch(/<div tabIndex=\{0\} role="group" aria-label="Tool result" className="-mx-\[4px\] max-h-96 overflow-y-auto p-\[4px\]">/)
   })
 
   it('its name is the surface\'s own word, not the output', () => {

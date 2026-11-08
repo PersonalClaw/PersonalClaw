@@ -19,7 +19,7 @@ export function CockpitPromptBar({ prompt }: { prompt: string }) {
         {!open && <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface-var">{firstLine}</span>}
       </button>
       {open && (
-        <div data-type="body-m" className="mt-2 max-h-[40vh] overflow-y-auto text-on-surface">
+        <div data-type="body-m" className="-mx-[4px] mt-2 max-h-[40vh] overflow-y-auto p-[4px] text-on-surface">
           <Markdown>{text}</Markdown>
         </div>
       )}

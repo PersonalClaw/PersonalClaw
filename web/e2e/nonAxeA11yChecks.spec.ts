@@ -53,7 +53,16 @@ test('the non-axe detectors still recognise the defects they exist for', async (
     acrossHidden.textContent = 'probe-hidden-axis'
     // 24 + 8 + 32: the button's bottom is the scroller's, and the 40 below it make the scroller scroll
     scroller.append(acrossHidden, above, atEdge, below)
-    host.append(mouseOnly, clip, scroller)
+    // 5. a button filling a box that clips on both axes with a clip margin as wide as its ring: the
+    //    ring paints in that margin, so it is not clipped
+    const margined = document.createElement('div')
+    margined.id = 'non-axe-probe-margin'
+    margined.style.cssText = 'overflow:clip;overflow-clip-margin:4px;width:120px;height:32px;margin:8px'
+    const roomy = document.createElement('button')
+    roomy.style.cssText = 'width:120px;height:32px;outline:2px solid red;outline-offset:0'
+    roomy.textContent = 'probe-clip-margin-room'
+    margined.appendChild(roomy)
+    host.append(mouseOnly, clip, scroller, margined)
     document.body.appendChild(host)
   })()`)
 
@@ -76,6 +85,20 @@ test('the non-axe detectors still recognise the defects they exist for', async (
     clipped.join('\n'),
     "a ring at a scroll edge is a scrollport's edge, not a clip, when the container hides the other axis",
   ).not.toContain('probe-scroll-edge')
+  expect(
+    clipped.join('\n'),
+    "a ring inside a box's clip margin is painted, so it is not a clip",
+  ).not.toContain('probe-clip-margin-room')
+  // …and a clip margin narrower than the ring does clip it.
+  await page.evaluate(`(() => {
+    const m = document.getElementById('non-axe-probe-margin')
+    if (m) m.style.overflowClipMargin = '1px'
+  })()`)
+  const narrowMargin = await page.evaluate<string[]>(`(${CLIPPED_RING})()`)
+  expect(
+    narrowMargin.join('\n'),
+    "a ring wider than its box's clip margin is clipped",
+  ).toContain('probe-clip-margin-room')
 
   // And the negative half: the FIX must not register as a defect, or the rail would punish the
   // correct shape. A negative outline-offset draws the ring inside the clip.

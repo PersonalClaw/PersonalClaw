@@ -1584,7 +1584,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
               string with a `|| 'local'` fallback — that fallback CLAIMED "local" for an app
               whose origin the record did not carry, which is the same false-provenance defect
               as issue 2514 one surface over. No origin ⇒ the version stands alone. */}
-          <div data-type="label-s" className="mt-1 text-on-surface-low">
+          <div data-type="label-s" className="mt-1.5 text-on-surface-low">
             v{app.version}{installedOrigin ? ` · ${installedOrigin.label}` : ''}
           </div>
           {/* Same badge row, same component, as the Store card and the pre-install
@@ -1773,7 +1773,7 @@ export function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onIns
         {/* Same renderer as the installed panel above: the pre-install and post-install
             descriptions are the same authored field, so they cannot read differently. */}
         <div data-type="body-s"><Markdown>{item.description || item.name}</Markdown></div>
-        <div data-type="label-s" className="mt-1 text-on-surface-low">
+        <div data-type="label-s" className="mt-1.5 text-on-surface-low">
           v{item.version || '—'}{item.author ? ` · by ${item.author}` : ''}
         </div>
         {providerLabel && (

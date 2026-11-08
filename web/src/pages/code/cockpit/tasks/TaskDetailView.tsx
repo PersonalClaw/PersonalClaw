@@ -69,7 +69,7 @@ export function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, fi
       </div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
         <h3 data-type="title-m" className="text-on-surface" style={fvs(600)}><MarkdownLine text={task.title} /></h3>
-        {task.description && <div data-type="body-s" className="mt-1 text-on-surface-var"><Markdown>{task.description}</Markdown></div>}
+        {task.description && <div data-type="body-s" className="mt-1.5 text-on-surface-var"><Markdown>{task.description}</Markdown></div>}
 
         {/* The build's finished work waits for you to merge it: its review is under Tasks. */}
         {project.status === 'needs_input' && project.pending_question?.merge && (

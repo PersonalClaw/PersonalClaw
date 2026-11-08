@@ -318,7 +318,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
                   {ec.backend && <span data-type="caption" className="text-on-surface-low">· {ec.backend}</span>}
                   <span data-type="caption" className="ml-auto text-on-surface-low">{(ec.text || '').length} chars</span>
                 </summary>
-                {ec.text && <div data-type="body-s" className="mt-1.5 max-h-72 overflow-y-auto text-on-surface-var leading-relaxed"><Markdown>{ec.text}</Markdown></div>}
+                {ec.text && <div data-type="body-s" className="-mx-[4px] mt-1.5 max-h-72 overflow-y-auto p-[4px] text-on-surface-var leading-relaxed"><Markdown>{ec.text}</Markdown></div>}
               </details>
             ))}
           </div>

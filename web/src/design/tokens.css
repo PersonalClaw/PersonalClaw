@@ -878,6 +878,43 @@
   .hljs-strong { font-weight: 600; }
 }
 
+/* A rendered body keeps what it draws inside its own box. Math can ask to move what follows by a
+   negative space or raise a box, by more than the renderer caps (ui/Markdown's MATH_MAX_SIZE caps
+   only sizes above zero), so a body clips to its box and nothing it holds draws outside it. The clip
+   margin leaves a focus ring room past the edge. Where the clip margin is not read (Safari), a 4px
+   padding inside a -4px margin is that room instead; there the padding also stops a body's first and
+   last margins collapsing through it. Text that has no break of its own wraps at the edge
+   (`overflow-wrap: break-word`, so a table keeps its width and scrolls), and a diagram's labels keep
+   the wrapping its renderer measured. An inline formula wider than its column is cut at the column.
+   Unlayered, like the prose scale below, so no utility a caller passes takes the clip away. */
+.md-clip {
+  overflow: clip;
+  overflow-clip-margin: 4px;
+  overflow-wrap: break-word;
+}
+@supports not (overflow-clip-margin: 4px) {
+  .md-clip {
+    padding: 4px;
+    margin: -4px;
+  }
+}
+.md-clip svg {
+  overflow-wrap: normal;
+}
+
+/* A math display scrolls a formula wider than its column inside its own box, where it overflowed
+   the column before, and clips what it draws to that box. A limit above or below a sum stands a few
+   pixels past the formula's own lines, so the box keeps that much room inside it, taken from its
+   margin. The space around it stays 1em where its neighbour's own margin is 0.625em or less. It is a
+   tab stop (ui/Markdown), and its ring is the app's own, outside it, in the body's clip margin (Safari:
+   its padding). Scoped to a body, so it outranks KaTeX's own sheet whichever loads last. */
+.md-clip .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.375em;
+  margin-block: 0.625em;
+}
+
 /* THE editorial type scale — one house style, two hosts:
      `.doc`      the `document` content type (sanitized LLM-authored HTML rendered
                  in-DOM — see content/renderers.tsx DocumentPreview).

@@ -634,7 +634,7 @@ function NeedBody({ row, outcome, actions, now }: {
       {row.subtitle ? <p data-type="body-s" className="min-w-0 text-on-surface-low">{item?.kind === 'browse_grant' ? row.subtitle : <MarkdownLine text={row.subtitle} />}</p> : null}
       {/* A gate's or a trigger's prompt is a body, with any widget block left out. */}
       {question?.prompt && question.prompt !== row.title ? (
-        <div data-type="body-s" className="min-w-0 text-on-surface"><Markdown>{widgetlessText(question.prompt)}</Markdown></div>
+        <div data-type="body-s" className="my-1 min-w-0 text-on-surface"><Markdown>{widgetlessText(question.prompt)}</Markdown></div>
       ) : null}
       {expired && !settled ? (
         <p role="status" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface-var">
@@ -863,7 +863,7 @@ function ConversationTail({ session }: { session: string }) {
       {/* Each line renders as the transcript does: the agent's as its reply (any widget block left
           out), yours as text written in lines; each cut at a block boundary, never in a fence. */}
       {lines.map((m, i) => (
-        <div key={i} data-type="body-s" className={`flex min-w-0 items-baseline gap-xs ${m.role === 'user' ? 'text-on-surface-var' : 'text-on-surface'}`}>
+        <div key={i} data-type="body-s" className={`flex min-w-0 items-baseline gap-1.5 ${m.role === 'user' ? 'text-on-surface-var' : 'text-on-surface'}`}>
           <span className="shrink-0 text-on-surface-low">{m.role === 'user' ? 'You: ' : 'Agent: '}</span>
           <div className="min-w-0 flex-1">
             <Markdown breaks={m.role === 'user'}>{cutMarkdown(m.role === 'user' ? String(m.content ?? '') : widgetlessText(String(m.content ?? '')), 400)}</Markdown>

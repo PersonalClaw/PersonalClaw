@@ -557,7 +557,7 @@ function PlanArtifacts({ steps }: { steps: PlanStep[] }) {
               return Object.keys(rest).length ? JSON.stringify(rest, null, 2) : ''
             })()
             return (
-              <div key={s.id} className="flex flex-col gap-1">
+              <div key={s.id} className="flex flex-col gap-1.5">
                 <div data-type="body-s" className="flex items-center gap-1.5 text-on-surface">
                   {s.title}
                   <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-on-surface-low">{s.kind.replace(/_/g, ' ')}</span>

@@ -196,7 +196,7 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                   )}
                   {/* A text preview is prose an agent wrote; a diff stays a diff. */}
                   {p?.preview && p.preview_kind !== 'diff' && (
-                    <div data-type="body-s" className="mt-s max-h-40 overflow-auto text-on-surface-var"><Markdown>{p.preview}</Markdown></div>
+                    <div data-type="body-s" className="-mx-[4px] mt-s max-h-40 overflow-auto p-[4px] text-on-surface-var"><Markdown>{p.preview}</Markdown></div>
                   )}
                   {p?.preview && p.preview_kind === 'diff' && (
                     <pre
