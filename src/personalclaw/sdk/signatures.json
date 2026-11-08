@@ -3441,7 +3441,9 @@
    },
    "summary": {
     "kind": "method",
-    "params": [],
+    "params": [
+     {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "uptime"}
+    ],
     "returns": "str"
    },
    "uptime_str": {
