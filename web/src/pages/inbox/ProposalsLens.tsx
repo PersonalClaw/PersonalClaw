@@ -201,7 +201,7 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                   {p?.preview && p.preview_kind === 'diff' && (
                     <pre
                       data-type="body-s"
-                      className={`mt-s max-h-40 overflow-auto whitespace-pre-wrap text-on-surface-var ${p.preview_kind === 'diff' ? 'font-mono' : ''}`}
+                      className="mt-s max-h-40 overflow-auto whitespace-pre-wrap font-mono text-on-surface-var"
                     >
                       {p.preview}
                     </pre>

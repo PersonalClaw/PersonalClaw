@@ -35,18 +35,14 @@ const DAG = strip(read('pages/tasks/TaskGraph.tsx'))
 describe('every place a task is listed hands over its full title', () => {
   // A title is an agent's line and carries markdown, so the row draws it rendered (`MarkdownLine`)
   // and its tooltip is the same line as plain text (`previewLine`): the two read one value, so the
-  // tooltip names the task the row shows, with no mark in it.
-  const RECOVERED = (close: string) =>
-    new RegExp(String.raw`title=\{previewLine\(t\.title\)\}><MarkdownLine text=\{t\.title\} /></${close}>`)
-
+  // tooltip names the task the row shows, with no mark in it. One pattern per sink, so the cut, the
+  // tooltip and the rendered line are held on the same element.
   it('the list row', () => {
-    expect(LIST).toMatch(/block truncate text-\[0\.9375rem\]/)
-    expect(LIST).toMatch(RECOVERED('span'))
+    expect(LIST).toMatch(/block truncate text-\[0\.9375rem\][^>]*title=\{previewLine\(t\.title\)\}><MarkdownLine text=\{t\.title\} \/><\/span>/)
   })
 
   it('the DAG node', () => {
-    expect(DAG).toMatch(/truncate text-\[0\.8125rem\] leading-tight/)
-    expect(DAG).toMatch(RECOVERED('div'))
+    expect(DAG).toMatch(/truncate text-\[0\.8125rem\] leading-tight[^>]*title=\{previewLine\(t\.title\)\}><MarkdownLine text=\{t\.title\} \/><\/div>/)
   })
 
   it('the row name still carries the title AND the status, as plain text', () => {

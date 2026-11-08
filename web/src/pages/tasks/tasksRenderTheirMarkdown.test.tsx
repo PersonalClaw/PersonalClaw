@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { TaskItem } from '../../lib/api'
-import { HOSTILE, LEADING, MD_LINE, inert, rawSinks, rendersLine } from '../../test/markdownSinks'
+import type { CodeProject, TaskItem } from '../../lib/api'
+import { HOSTILE, HOSTILE_BODY, LEADING, MD_BLOCK, MD_LINE, inert, plain, rawSinks, rendersBlock, rendersLine } from '../../test/markdownSinks'
 
 // ── A task shows what its agent wrote, rendered ────────────────────────────────────────────────
 //
@@ -45,17 +45,30 @@ const { TaskGraph } = await import('./TaskGraph')
 const { TaskDetail } = await import('./TaskDetail')
 const { DependencyEditor, NotesEditor } = await import('./formControls')
 const { TaskRow } = await import('../code/cockpit/tasks/TaskRow')
+const { TaskDetailView } = await import('../code/cockpit/tasks/TaskDetailView')
+const { TaskListPanel } = await import('../projects/ProjectsSection')
 const { resetDataStore } = await import('../../lib/data')
+const { registerBuiltinContentTypes } = await import('../../ui/content/registerBuiltins')
+
+// The app registers its content types at startup (`main.tsx`), so a body that ran its widget blocks
+// would draw them here as it does in the app.
+registerBuiltinContentTypes()
+if (typeof URL.createObjectURL !== 'function') {
+  URL.createObjectURL = () => 'blob:tasks-render-test'
+  URL.revokeObjectURL = () => {}
+}
 
 /** The words a reader sees of MD_LINE: the marks rendered, none of them shown. */
 const SEEN = 'Skip model_calls in export_digest() in published.py'
 
 const task = (over: Partial<TaskItem>): TaskItem => ({ id: 't-1', title: MD_LINE, status: 'open', priority: 'medium', ...over } as TaskItem)
-const TASKS: TaskItem[] = [
+const LISTED: TaskItem[] = [
   task({}),
   task({ id: 't-2', title: LEADING[0][1] }),
   task({ id: 't-3', title: HOSTILE }),
 ]
+/** The tasks the api lists: these three, unless a test lists its own. */
+let TASKS: TaskItem[] = LISTED
 
 /** Every element under `root` that shows MD_LINE's words. */
 const linesOf = (root: ParentNode) =>
@@ -74,7 +87,7 @@ function List({ view, openId = '' }: { view: string; openId?: string }) {
   )
 }
 
-beforeEach(() => { resetDataStore(); localStorage.clear(); sessionStorage.clear() })
+beforeEach(() => { TASKS = LISTED; resetDataStore(); localStorage.clear(); sessionStorage.clear() })
 afterEach(cleanup)
 
 describe('a task title renders as one line everywhere a task is listed or headed', () => {
@@ -97,6 +110,13 @@ describe('a task title renders as one line everywhere a task is listed or headed
       const sink = sinkOf(line)!
       expect(inert(sink), sink.outerHTML).toEqual([])
     }
+  })
+
+  it.each(LEADING)("%s: a list row's title that reads as a block elsewhere is the text it is", async (_construct, text) => {
+    TASKS = [task({ id: 't-L', title: text })]
+    render(<List view="list" />)
+    await waitFor(() => expect(document.querySelector('span.text-\\[0\\.9375rem\\]')).not.toBeNull())
+    expect(document.querySelector('span.text-\\[0\\.9375rem\\]')!.textContent).toBe(text)
   })
 
   it('the task panel heads with the rendered title, and its tooltip is the plain line', async () => {
@@ -135,6 +155,22 @@ describe('a task title renders as one line everywhere a task is listed or headed
     expect(rendersLine(picked)).toEqual([])
     expect(sinkOf(picked)?.getAttribute('title')).toBe(SEEN)
   })
+
+  it("the picker's result rows", async () => {
+    render(<DependencyEditor selfId="t-9" allTasks={[task({})]} value={[]} onChange={noop} />)
+    fireEvent.click(screen.getByRole('button', { name: /Add prerequisite/ }))
+    const row = await screen.findByRole('button', { name: SEEN })
+    const [line] = linesOf(row)
+    expect(rendersLine(line)).toEqual([])
+    expect(sinkOf(line)?.getAttribute('title')).toBe(SEEN)
+  })
+
+  it("a project's task list", async () => {
+    render(<TaskListPanel list={{ id: 'tl-1', name: 'General', project_id: 'p-1' }} onOpenTask={noop} />)
+    const row = await screen.findByRole('button', { name: new RegExp(`${SEEN.replace(/[().]/g, '\\$&')}`) })
+    const [line] = linesOf(row)
+    expect(rendersLine(line)).toEqual([])
+  })
 })
 
 describe("a task's detail renders what its agent wrote", () => {
@@ -161,9 +197,20 @@ describe("a task's detail renders what its agent wrote", () => {
   })
 
   it('the exit criterion, the plan step and the prerequisite row render as lines', () => {
-    const lines = linesOf(mount().container)
+    const { container } = mount()
+    const lines = linesOf(container)
     expect(lines.length, 'blocked notice, criterion, step, prerequisite').toBeGreaterThanOrEqual(4)
     for (const line of lines) expect(rendersLine(line), line.outerHTML).toEqual([])
+    // The prerequisite row cuts its line, and its tooltip is the line's own, the plain line.
+    expect(container.querySelector('span.block.truncate[title]')?.getAttribute('title')).toBe(SEEN)
+  })
+
+  it('a hostile note is inert in its body', () => {
+    render(<TaskDetail task={{ ...DETAILED, notes: [{ content: HOSTILE_BODY }] } as TaskItem} allTasks={[DEP, DETAILED]}
+      onOpenTask={noop} onSaved={noop} onDeleted={noop} editing={false} onEditingChange={noop} />)
+    const sink = screen.getAllByText(/open the report/)[0].closest('div[data-type="body-s"]')!
+    expect(sink, "the note's body").not.toBeNull()
+    expect(inert(sink, { body: true })).toEqual([])
   })
 
   it('a note written as a list is a list, and one written in lines keeps its breaks', () => {
@@ -186,6 +233,35 @@ describe("a task's detail renders what its agent wrote", () => {
   })
 })
 
+describe("the code cockpit's task detail renders what its agent wrote", () => {
+  const project = { id: 'p-1', status: 'running', autopilot: false, queued_task_ids: [] } as unknown as CodeProject
+  const OPENED = task({
+    id: 't-main', description: MD_BLOCK, dependencies: [{ depends_on_task_id: 't-dep', dependency_type: 'BLOCKS' }],
+    exit_criteria: [{ description: MD_LINE }], action_plan: [{ content: MD_LINE }],
+  } as Partial<TaskItem>)
+  const mount = () => render(
+    <TaskDetailView project={project} task={OPENED} doneIds={new Set()} stageOpen knownIds={new Set(['t-dep', 't-main'])}
+      findings={[]} liveActivity={[]} blockers={[{ id: 't-dep', title: MD_LINE }]} onOpenTask={noop} onBack={noop} onChanged={noop} />,
+  )
+
+  it('its title, plan step, exit criterion and blocker render as lines, and its description as a body', () => {
+    const { container } = mount()
+    const heading = container.querySelector('h3')!
+    expect(rendersLine(heading)).toEqual([])
+    const lines = linesOf(container)
+    expect(lines.length, 'title, step, criterion, blocker').toBeGreaterThanOrEqual(4)
+    for (const line of lines) expect(rendersLine(line), line.outerHTML).toEqual([])
+    expect(rendersBlock(heading.nextElementSibling!)).toEqual([])
+  })
+
+  it("the blocker's button is named in plain text", () => {
+    mount()
+    const blocker = screen.getByRole('button', { name: SEEN })
+    expect(blocker.getAttribute('title')).toBe(`Open “${SEEN}”`)
+    expect(plain(blocker.getAttribute('title')!)).toEqual([])
+  })
+})
+
 describe('no file that draws a task draws its title raw', () => {
   const FILES = [
     'pages/tasks/TasksListPage.tsx', 'pages/tasks/TaskBoard.tsx', 'pages/tasks/TaskGraph.tsx', 'pages/tasks/TaskDetail.tsx',
@@ -200,20 +276,24 @@ describe('no file that draws a task draws its title raw', () => {
     'pages/projects/ProjectsSection.tsx': ['{c.title || c.key}', '{k.title || k.kind || k.id}'],
   }
 
+  const FIELDS = ['title', 'description', 'content']
+  const raw = (rel: string, source = read(rel)) =>
+    rawSinks(source, FIELDS).filter((sink) => !(NOT_A_TASK[rel] ?? []).some((o) => sink.endsWith(`: ${o}`)))
+
   it.each(FILES)('%s', (rel) => {
-    const others = NOT_A_TASK[rel] ?? []
-    expect(rawSinks(read(rel), ['title']).filter((sink) => !others.some((o) => sink.endsWith(`: ${o}`)))).toEqual([])
+    expect(raw(rel)).toEqual([])
   })
 
   it("the titles that are not a task's are still drawn where they were", () => {
     // So the list above names real sinks, and goes when they render.
     for (const [rel, sinks] of Object.entries(NOT_A_TASK)) {
-      const found = rawSinks(read(rel), ['title'])
+      const found = rawSinks(read(rel), FIELDS)
       for (const sink of sinks) expect(found.some((f) => f.endsWith(`: ${sink}`)), `${rel}: ${sink}`).toBe(true)
     }
   })
 
-  it('plant: a title drawn raw is caught', () => {
-    expect(rawSinks('<span className="truncate">{t.title}</span>', ['title'])).toEqual(['1: {t.title}'])
+  it.each(FILES)('plant: a title drawn raw in %s is caught', (rel) => {
+    const planted = `${read(rel)}\n<p>{x.title}</p>`
+    expect(raw(rel, planted)).toEqual([`${planted.split('\n').length}: {x.title}`])
   })
 })

@@ -155,7 +155,8 @@ export function useNativeNotifications(navigate: (route: string) => void): void 
     // A refused banner is not an error worth surfacing here either: the bell has the note.
     if (alert) return void raiseAlert(bridge.notifications, note, alert).catch(() => {})
     bridge.notifications
-      // The OS shows plain text: a note's marks are read off, never shown (`previewText`).
+      // The OS shows plain text: a note's marks are read off, never shown (its title by `previewLine`,
+      // its body by `previewText`).
       .show({
         title: previewLine(String(note.title ?? '')),
         body: previewText(String(note.body ?? '')),

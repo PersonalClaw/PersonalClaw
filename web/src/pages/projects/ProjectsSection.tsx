@@ -1331,7 +1331,7 @@ export function TaskListRow({ list, active, onOpen }: { list: TaskListItem; acti
 
 /** Side-panel body: the tasks under a list, grouped nothing-fancy, each opening the
  *  full task in the Tasks page. Lazy-fetched (panel only mounts when opened). */
-function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (taskId: string) => void }) {
+export function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (taskId: string) => void }) {
   const { data: tasks, loading } = useQuery<TaskItem[]>(`tasklist:tasks:${list.id}`,
     () => api.allTasks({ task_list: list.id }).then((c) => c.tasks))
   if (loading && !tasks) return <div className="flex justify-center py-l"><Loader2 size={16} className="animate-spin text-on-surface-low" /></div>

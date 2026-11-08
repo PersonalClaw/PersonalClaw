@@ -43,7 +43,9 @@ describe("the bell's row", () => {
     const title = await screen.findByTitle(SEEN)
     expect(rendersLine(title)).toEqual([])
     // The body's first line that says something: the fence line is skipped, the marks render.
-    expect((await screen.findByText('Key point')).tagName).toBe('STRONG')
+    const strong = await screen.findByText('Key point')
+    expect(strong.tagName).toBe('STRONG')
+    expect(strong.closest('p.truncate')!.querySelector('div, p, h1, h2, h3, h4, ul, ol, li, pre, blockquote, table'), 'an excerpt is a line').toBeNull()
     for (const el of document.querySelectorAll('[aria-label]')) {
       expect(el.getAttribute('aria-label'), 'a name carries a mark').not.toMatch(/`|\*\*|## /)
     }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import type { InboxItem, InboxProposal } from '../../lib/api'
-import { HOSTILE, MD_BLOCK, MD_LINE, inert, rendersBlock, rendersLine } from '../../test/markdownSinks'
+import { HOSTILE, HOSTILE_BODY, MD_BLOCK, MD_LINE, inert, rendersBlock, rendersLine } from '../../test/markdownSinks'
 
 // ── The Inbox renders what senders and agents wrote ────────────────────────────────────────────
 //
@@ -38,10 +38,12 @@ const DIGEST = {
 }
 
 const applyInboxProposal = vi.fn(async () => ({ ok: true }))
+/** What the Inbox lists: one message of the owner's own, unless a test says otherwise. */
+let ITEMS: unknown[] = []
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   api: {
-    inbox: () => Promise.resolve([message()]),
+    inbox: () => Promise.resolve(ITEMS),
     inboxStatus: () => Promise.resolve({ enabled: true, health: {}, open_count: 1, total_count: 1, owner: OWNER, my_open_count: 1, my_total_count: 1 }),
     proactiveDigest: () => Promise.resolve(DIGEST),
     openInboxItem: () => Promise.resolve({ ok: true }),
@@ -54,7 +56,7 @@ const { InboxPage } = await import('./InboxPage')
 const { ProposalsLens } = await import('./ProposalsLens')
 const { TriageDigestCard } = await import('./TriageDigestCard')
 
-beforeEach(() => { sessionStorage.clear(); localStorage.clear() })
+beforeEach(() => { sessionStorage.clear(); localStorage.clear(); ITEMS = [message()] })
 
 const proposal = (id: string, p: Partial<InboxProposal>): InboxItem => ({
   id, channel: '', channel_name: '', message: String(p.title ?? ''), sender_id: '', sender_name: '', item_kind: 'proposal', status: 'pending',
@@ -72,6 +74,34 @@ describe('the Inbox row', () => {
     for (const el of document.querySelectorAll('[aria-label]')) {
       expect(el.getAttribute('aria-label'), 'a name carries a mark').not.toMatch(/`|\*\*/)
     }
+  })
+})
+
+describe('a hostile message is inert in its row', () => {
+  it("the row's excerpt", async () => {
+    ITEMS = [message({ message: HOSTILE })]
+    render(<InboxPage query={{}} setQuery={() => {}} navigate={vi.fn()} />)
+    const excerpt = () => Array.from(document.querySelectorAll('p.truncate')).find((el) => (el.textContent ?? '').includes('open the report'))
+    await waitFor(() => expect(excerpt()).toBeDefined())
+    expect(inert(excerpt()!)).toEqual([])
+  })
+})
+
+describe("another owner's thread context stays inside the fence", () => {
+  it('each message of the thread renders, inside the quoted group, and stays inert', async () => {
+    ITEMS = [message({ owner_username: 'someone-else', thread_context: [
+      { sender_name: 'Ana', text: MD_BLOCK, ts: '1700000001' },
+      { sender_name: 'Bo', text: HOSTILE_BODY, ts: '1700000002' },
+    ] })]
+    render(<InboxPage query={{ open: 'C1_1' }} setQuery={() => {}} navigate={vi.fn()} />)
+    const thread = await screen.findByText('Thread context · 2', { exact: false })
+    const section = thread.closest('section, div')!.parentElement!
+    const fence = within(section).getByRole('group', { name: /^Content from .* — quoted, not your own$/ })
+    expect(within(fence).getByText('Ana')).toBeInTheDocument()
+    expect(within(fence).getByText('Bo')).toBeInTheDocument()
+    const ana = within(fence).getByText('Ana').parentElement!
+    expect(rendersBlock(ana)).toEqual([])
+    expect(inert(fence, { body: true })).toEqual([])
   })
 })
 

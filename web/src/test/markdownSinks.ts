@@ -61,6 +61,11 @@ export const HOSTILE_ROWS: string[] = [
  *  paragraph: a line that opens with `<form` is an HTML block, and nothing in it is parsed. */
 export const HOSTILE = ['Notes', ...HOSTILE_ROWS].join(' ')
 
+/** The same rows as a body, each its own block: what a body's sink is planted with. A body reads a
+ *  row that opens its line as the block it would be (an HTML block, a widget block), which one line
+ *  never reaches. Rendered, it must leave nothing live but the body's own controls. */
+export const HOSTILE_BODY = ['Notes', ...HOSTILE_ROWS].join('\n\n')
+
 /** A line that CommonMark reads as a block, one per construct `line` mode turns off:
  *  [the construct's micromark name, the line]. Each renders as itself in `line` mode, and an
  *  excerpt (inline mode) flattens it to something else, so each plant proves its construct's name.

@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { render, screen, waitFor } from '@testing-library/react'
 import type { NotificationItem } from '../../lib/api'
-import { HOSTILE, MD_LINE, inert, rendersLine } from '../../test/markdownSinks'
+import { HOSTILE, LEADING, MD_LINE, inert, rawSinks, rendersLine } from '../../test/markdownSinks'
 
 // ── The Notifications list renders what its notes say ──────────────────────────────────────────
 //
@@ -34,7 +36,9 @@ describe('a notification row', () => {
     render(<NotificationsPage query={{}} setQuery={vi.fn()} navigate={vi.fn()} />)
     const title = await screen.findByTitle(SEEN)
     expect(rendersLine(title)).toEqual([])
-    expect((await screen.findAllByText('Key point'))[0].tagName).toBe('STRONG')
+    const strong = (await screen.findAllByText('Key point'))[0]
+    expect(strong.tagName).toBe('STRONG')
+    expect(strong.closest('p.truncate')!.querySelector('div, p, h1, h2, h3, h4, ul, ol, li, pre, blockquote, table'), 'an excerpt is a line').toBeNull()
     expect(document.body.textContent).not.toContain('```')
     for (const el of document.querySelectorAll('[aria-label], [title]')) {
       const name = `${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''}`
@@ -47,6 +51,21 @@ describe('a notification row', () => {
     for (const line of await screen.findAllByText(/open the report/)) {
       expect(inert(line.closest('[title]') ?? line)).toEqual([])
     }
+  })
+
+  it('a hostile body is inert in its excerpt', async () => {
+    API.notifications.mockResolvedValue({ notifications: [{ ...NOTE, ts: '2026-11-07T10:41:00+00:00', title: 'Build', body: HOSTILE }] })
+    render(<NotificationsPage query={{}} setQuery={vi.fn()} navigate={vi.fn()} />)
+    const sink = (await screen.findAllByText(/open the report/))[0].closest('p.truncate')!
+    expect(sink, 'the excerpt').not.toBeNull()
+    expect(inert(sink)).toEqual([])
+  })
+
+  it.each(LEADING)("%s: a title that reads as a block elsewhere is the text it is", async (_construct, text) => {
+    API.notifications.mockResolvedValue({ notifications: [{ ...NOTE, ts: '2026-11-07T10:42:00+00:00', title: text, body: '' }] })
+    render(<NotificationsPage query={{}} setQuery={vi.fn()} navigate={vi.fn()} />)
+    await waitFor(() => expect(document.querySelector('span.text-\\[0\\.9375rem\\]')).not.toBeNull())
+    expect(document.querySelector('span.text-\\[0\\.9375rem\\]')!.textContent).toBe(text)
   })
 
   it("a body's first line is named as its excerpt draws it: no block mark in any name", async () => {
@@ -63,5 +82,37 @@ describe('a notification row', () => {
     const heading = await screen.findByRole('heading', { level: 2, name: SEEN })
     expect(rendersLine(heading)).toEqual([])
     await waitFor(() => expect(heading.getAttribute('title')).toBe(SEEN))
+  })
+})
+
+describe("no file that draws a note or an Inbox row draws what an agent wrote raw", () => {
+  const FIELDS = ['title', 'body', 'message', 'text', 'preview', 'reason']
+  const FILES = [
+    'pages/notifications/NotificationsPage.tsx', 'ui/NotificationBell.tsx', 'ui/Toaster.tsx', 'pages/inbox/InboxPage.tsx',
+    'pages/inbox/InboxDetail.tsx', 'pages/inbox/ProposalsLens.tsx', 'pages/inbox/TriageDigestCard.tsx',
+  ]
+  /** Sinks in these files that draw no agent's words as text: a proposal's diff preview, which stays
+   *  a diff. */
+  const NOT_WRITTEN: Record<string, string[]> = {
+    'pages/inbox/ProposalsLens.tsx': ['{p.preview}'],
+  }
+  const read = (rel: string) => readFileSync(join(process.cwd(), 'src', rel), 'utf8')
+  const raw = (rel: string, source = read(rel)) =>
+    rawSinks(source, FIELDS).filter((sink) => !(NOT_WRITTEN[rel] ?? []).some((o) => sink.endsWith(`: ${o}`)))
+
+  it.each(FILES)('%s', (rel) => {
+    expect(raw(rel)).toEqual([])
+  })
+
+  it('the sinks that draw no agent\'s words are still drawn where they were', () => {
+    for (const [rel, sinks] of Object.entries(NOT_WRITTEN)) {
+      const found = rawSinks(read(rel), FIELDS)
+      for (const sink of sinks) expect(found.some((f) => f.endsWith(`: ${sink}`)), `${rel}: ${sink}`).toBe(true)
+    }
+  })
+
+  it.each(FILES)('plant: a title drawn raw in %s is caught', (rel) => {
+    const planted = `${read(rel)}\n<p>{x.title}</p>`
+    expect(raw(rel, planted)).toEqual([`${planted.split('\n').length}: {x.title}`])
   })
 })

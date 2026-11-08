@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ChatSessionSummary } from '../../lib/api'
 import { HomeHarness, gateItem, runningRow, waitingItem, waitingList } from '../../test/homeHarness'
-import { HOSTILE, LEADING, MD_BLOCK, MD_LINE, inert, rendersBlock, rendersLine } from '../../test/markdownSinks'
+import { HOSTILE, HOSTILE_BODY, LEADING, MD_BLOCK, MD_LINE, inert, plain, rawSinks, rendersBlock, rendersLine } from '../../test/markdownSinks'
+import { findGenUiBlock } from '../../ui/widget/blocks'
+import { firstLine } from '../../lib/attentionLanes'
+import { registerBuiltinContentTypes } from '../../ui/content/registerBuiltins'
 
 // ── Home shows what agents wrote, rendered ─────────────────────────────────────────────────────
 //
@@ -33,6 +38,14 @@ vi.mock('../../app/identity', () => ({ useIdentity: () => ({ name: 'Sam Rivera' 
 vi.mock('./PinnedTiles', () => ({ PinnedTiles: () => null }))
 vi.mock('../../ui/surfaces/SurfaceOverlay', () => ({ SurfaceOverlay: () => null }))
 vi.mock('./widgets/Suggestions', () => ({ Suggestions: () => null }))
+
+// The app registers its content types at startup (`main.tsx`), so a body that ran its widget blocks
+// would draw them here as it does in the app.
+registerBuiltinContentTypes()
+if (typeof URL.createObjectURL !== 'function') {
+  URL.createObjectURL = () => 'blob:home-renders-test'
+  URL.revokeObjectURL = () => {}
+}
 vi.mock('./DashboardPage', () => ({ HomeOverview: () => null }))
 
 const SEEN = 'Skip model_calls in export_digest() in published.py'
@@ -48,7 +61,10 @@ const question = waitingItem({
   brief: { asked_by: 'Researcher', questions: [{ question: MD_LINE }, { question: LEADING[0][1] }] },
   answer: { method: 'POST', path: '/api/questions/q-1', takes: ['answer'], body: {} },
 })
-const gate = gateItem({ kind: 'text', prompt: `${MD_BLOCK}\n\n<widget title="Chart"><div>chart</div></widget>` }, { id: 'gate:run-9:g:1' })
+// A gate's prompt may carry a genui block, as `findGenUiBlock` reads one: Home leaves it out.
+const GENUI = '<widget kind="genui" title="Expense">\nf = Form(fields: ["amount"], action: "log_expense", submit: "Log expense")\n</widget>'
+const GATE_PROMPT = `${MD_BLOCK}\n\n${GENUI}`
+const gate = gateItem({ kind: 'text', prompt: GATE_PROMPT }, { id: 'gate:run-9:g:1' })
 // (An approval's purpose line and its card's names are the approval card's, rendered with the
 // chat's approval prompt in their own change; here the purpose is plain.)
 const approval = waitingItem({ brief: { tool: 'shell.run_**now**', tool_purpose: 'List the folder', source_label: 'chat', confirms: [] } })
@@ -57,7 +73,11 @@ const thread = { key: 'chat-9', title: MD_LINE, last_message: `**Key poin…`, l
 beforeEach(() => {
   sessionStorage.clear()
   waiting.mockResolvedValue(waitingList([question, gate, approval]))
-  running.mockResolvedValue({ running: [runningRow({ name: MD_LINE, line: `Asks: ${MD_LINE}` })], finished: [] })
+  running.mockResolvedValue({
+    running: [runningRow({ name: MD_LINE, line: `Asks: ${MD_LINE}` })],
+    finished: [runningRow({ work: 'workflow:r9', kind: 'workflow', session: '', name: MD_LINE, phase: 'done', line: MD_LINE,
+      since: '2026-11-07T10:06:00Z', route: '#/workflows/runs/r9' })],
+  })
   chatSessions.mockResolvedValue([thread])
   chatSessionDetail.mockResolvedValue({ messages: [
     { role: 'assistant', content: `${MD_BLOCK}\n\n<widget title="Chart"><div>chart</div></widget>` },
@@ -87,10 +107,20 @@ describe('Attention renders what agents wrote', () => {
   it("a gate's prompt renders as a body, without its widget block", async () => {
     render(<HomeHarness query={{ open: 'waiting:gate:run-9:g:1' }} />)
     await waitFor(() => expect(document.querySelector('pre')).not.toBeNull())
+    expect(findGenUiBlock(GATE_PROMPT), 'the fixture holds a block Home would find').not.toBeNull()
     const prompt = document.querySelector('pre')!.closest('div[data-type="body-s"]')!
     expect(rendersBlock(prompt)).toEqual([])
     expect(document.body.textContent).not.toContain('<widget')
+    expect(document.body.textContent, "the widget's source is left out").not.toContain('log_expense')
     expect(document.querySelector('iframe')).toBeNull()
+  })
+
+  it("a hostile gate prompt is inert in its body", async () => {
+    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: `Notes\n\n${HOSTILE_BODY}` }, { id: 'gate:run-9:g:2' })]))
+    render(<HomeHarness query={{ open: 'waiting:gate:run-9:g:2' }} />)
+    const sink = (await screen.findAllByText(/open the report/))[0].closest('div[data-type="body-s"]')!
+    expect(sink, "the prompt's body").not.toBeNull()
+    expect(inert(sink, { body: true })).toEqual([])
   })
 
   it("a question card's list renders each question as a line, a leading mark kept", async () => {
@@ -113,6 +143,7 @@ describe('Attention renders what agents wrote', () => {
     const strong = await screen.findByText('Key poin')
     expect(strong.tagName).toBe('STRONG')
     expect(document.body.textContent).not.toContain('**Key')
+    expect(strong.closest('p.min-w-0')!.querySelector('div, p, h1, h2, h3, h4, ul, ol, li, pre, blockquote, table'), 'an excerpt is a line').toBeNull()
   })
 
   it('the detail pane heads with the rendered title, and its name and tooltip are plain', async () => {
@@ -126,8 +157,38 @@ describe('Attention renders what agents wrote', () => {
     waiting.mockResolvedValue(waitingList([waitingItem({ id: 'question:q-2', kind: 'question', brief: { questions: [{ question: HOSTILE }] } })]))
     render(<HomeHarness />)
     const lines = await screen.findAllByText(/open the report/)
-    for (const line of lines) expect(inert(line.closest('p, span') ?? line)).toEqual([])
+    // The sink is the card's title line, not the link's own span inside it.
+    const sinks = [...new Set(lines.map((line) => line.closest('p[data-type="label-m"]')))]
+    expect(sinks).toHaveLength(1)
+    expect(sinks[0], "the card's title").not.toBeNull()
+    expect(inert(sinks[0]!)).toEqual([])
     fireEvent.keyDown(window, { key: 'Escape' })
+  })
+
+  it("a title naming a tool keeps the tool's double underscores in its names", async () => {
+    waiting.mockResolvedValue(waitingList([waitingItem({ id: 'question:q-4', kind: 'question', brief: { questions: [{ question: 'Run mcp__github__create_issue for **triage**?' }] } })]))
+    render(<HomeHarness />)
+    expect(await screen.findByRole('button', { name: /^Show the details of Run mcp__github__create_issue for triage\?/ })).toBeInTheDocument()
+  })
+
+  it.each(LEADING)("%s: an ask's title that reads as a block elsewhere is the text it is", async (_construct, text) => {
+    waiting.mockResolvedValue(waitingList([waitingItem({ id: 'question:q-3', kind: 'question', brief: { questions: [{ question: text }] } })]))
+    running.mockResolvedValue({ running: [], finished: [] })
+    chatSessions.mockResolvedValue([])
+    render(<HomeHarness />)
+    const card = (await screen.findByRole('button', { name: /^Show the details of / })).parentElement!
+    expect(card.querySelector('p[data-type="label-m"]')!.textContent).toBe(firstLine(text))
+  })
+
+  it("a finished row's name and line render as lines, and its names are plain", async () => {
+    render(<HomeHarness />)
+    const tail = await screen.findByRole('list', { name: 'Just finished' })
+    const ended = within(tail).getByRole('listitem')
+    expect(linesOf(ended)).toHaveLength(2)
+    for (const line of linesOf(ended)) expect(rendersLine(line), line.outerHTML).toEqual([])
+    const named = Array.from(ended.querySelectorAll('[aria-label], [title]')).map((el) => el.getAttribute('aria-label') ?? el.getAttribute('title') ?? '')
+    expect(named.length, 'its hit target, its tooltip and its Open link').toBeGreaterThanOrEqual(3)
+    for (const name of named) expect(plain(name), name).toEqual([])
   })
 })
 
@@ -174,5 +235,38 @@ describe("a chat named by its first words, cut with '…', is named with the cut
     expect(heading.getAttribute('title')).not.toContain('**')
     expect(heading.querySelector('strong')?.textContent).toMatch(/^why the build fails/)
     for (const n of namedFor()) expect(n, 'a name keeps an open mark').not.toContain('**')
+  })
+})
+
+describe("no file on Home draws what an agent wrote raw", () => {
+  const FIELDS = ['title', 'name', 'line', 'reason', 'prompt', 'question', 'subtitle', 'last_message', 'content']
+  const FILES = [
+    'pages/dashboard/Home.tsx', 'pages/dashboard/RunningLane.tsx', 'pages/dashboard/widgets/ScheduleWidget.tsx',
+    'pages/dashboard/PinnedTiles.tsx', 'pages/capabilities/ListBesideDetail.tsx',
+  ]
+  /** Sinks in these files that draw no agent's words: an artifact's name, and the pane's plain title
+   *  where its caller gave no rendered heading. */
+  const NOT_WRITTEN: Record<string, string[]> = {
+    'pages/dashboard/PinnedTiles.tsx': ['{artifact?.name || slug}'],
+    'pages/capabilities/ListBesideDetail.tsx': ['{detail.heading ?? detail.title}'],
+  }
+  const read = (rel: string) => readFileSync(join(process.cwd(), 'src', rel), 'utf8')
+  const raw = (rel: string, source = read(rel)) =>
+    rawSinks(source, FIELDS).filter((sink) => !(NOT_WRITTEN[rel] ?? []).some((o) => sink.endsWith(`: ${o}`)))
+
+  it.each(FILES)('%s', (rel) => {
+    expect(raw(rel)).toEqual([])
+  })
+
+  it('the sinks that draw no agent\'s words are still drawn where they were', () => {
+    for (const [rel, sinks] of Object.entries(NOT_WRITTEN)) {
+      const found = rawSinks(read(rel), FIELDS)
+      for (const sink of sinks) expect(found.some((f) => f.endsWith(`: ${sink}`)), `${rel}: ${sink}`).toBe(true)
+    }
+  })
+
+  it.each(FILES)('plant: a title drawn raw in %s is caught', (rel) => {
+    const planted = `${read(rel)}\n<p>{x.title}</p>`
+    expect(raw(rel, planted)).toEqual([`${planted.split('\n').length}: {x.title}`])
   })
 })
