@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **The Nix flake installs 0.3.7.**
+
 ## [0.3.7] — 2026-11-07
 
 A browser's sign-in needs more than its cookie now, so every browser and paired device signs in once after this update, and the desktop app needs 0.3.7 or newer to open this gateway. A widget's action waits for you to send it, a project's secret file opens only for a chat you allow, computer use refuses a click that moves the real pointer until it can be held to the app it names, and an image from another site loads only when you press Load. The desktop app starts its own gateway when it opens, can use the one already serving its home, and updates itself when you press for it, and a gateway refuses a home a newer PersonalClaw has used. Home's Overview shows your agents' day, its Desktop and Browse live views show only while an agent drives this computer or a browse runs, and a page's controls sit in its header, in one order. Stop stops only the turn you pressed it for, renaming or pinning a chat no longer rewrites its transcript, a gateway on Linux no longer stops answering when the loop list and a background read meet, an MCP server's paged tool list is read to its end, and quiet hours keep the configured timezone.
