@@ -3,7 +3,6 @@
     "targets": {
       "320": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
@@ -12,7 +11,6 @@
       ],
       "390": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
@@ -21,7 +19,6 @@
       ],
       "412": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
@@ -30,7 +27,6 @@
       ],
       "768": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
@@ -49,7 +45,6 @@
     "targets": {
       "320": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
@@ -58,7 +53,6 @@
       ],
       "390": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
@@ -67,7 +61,6 @@
       ],
       "412": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
@@ -76,7 +69,6 @@
       ],
       "768": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",

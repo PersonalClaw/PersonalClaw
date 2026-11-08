@@ -1,8 +1,7 @@
-import { History, ListTodo, Compass, Package, Monitor, Globe } from 'lucide-react'
+import { History, Compass, Package, Monitor, Globe } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
 import { AgentDay } from './agents/AgentDay'
 import { Section } from './Section'
-import { TasksWidget } from './widgets/TasksWidget'
 import { Discover } from './widgets/Discover'
 import { PinnedArtifacts } from './widgets/PinnedArtifacts'
 import { DesktopLiveView, useDesktopLive } from './widgets/DesktopLiveView'
@@ -15,9 +14,10 @@ import type { RouteProps } from '../../app/useQueryState'
  *  attention stack, the view Home opens on (`Home.tsx`). Needs You, Running Now and Recent and
  *  completed took what this page's To triage, Active work and launcher held, the toolbar's needs-you
  *  badge took its count pills, and its suggestions belong to the stack's empty state. What is left
- *  here is what a person comes to look at rather than to answer: your agents' day, the desktop and
- *  browser live views (while the agent drives the desktop, or a browse runs, and only then), tasks,
- *  Discover, pinned artifacts and recent activity.
+ *  here is what a person comes to look at rather than to answer: your agents' day, pinned artifacts,
+ *  the desktop and browser live views (while the agent drives the desktop, or a browse runs, and
+ *  only then), Discover, and recent activity last. Tasks are what agents keep their goals in, and
+ *  have their own page (All tasks, and each project's): Home shows the agents, not their tasks.
  *
  *  Boundary-less bands under hairline section labels: content owns the space, chrome doesn't. */
 export function HomeOverview(route: RouteProps) {
@@ -32,12 +32,6 @@ export function HomeOverview(route: RouteProps) {
       <EntranceGroup className="mx-auto flex w-full flex-col gap-2xl px-l py-xl">
         {/* Every band renders inside a boundary (in `Section`), so a widget that throws shows
             "Couldn't show …" with Retry in its place and the other bands keep working. */}
-        <EntranceRegion className="min-w-0">
-          <Section label="Tasks" icon={ListTodo}>
-            <TasksWidget {...route} />
-          </Section>
-        </EntranceRegion>
-
         {/* `min-w-0` on each region: the region is the column's flex item, and a flex item
             defaults to `min-width: auto`, which would let a long widget line push the column wider
             than the content width instead of truncating. */}
@@ -46,14 +40,6 @@ export function HomeOverview(route: RouteProps) {
             and runs next. It holds its own heading, which carries its filter. */}
         <EntranceRegion className="min-w-0">
           <AgentDay />
-        </EntranceRegion>
-
-        {/* Discover: a curated spotlight of the parts of PersonalClaw you haven't tried yet, each a
-            deep link. The full grouped list is the Discover hub (the widget's "See all"). */}
-        <EntranceRegion className="min-w-0">
-          <Section label="Discover" icon={Compass}>
-            <Discover {...route} />
-          </Section>
         </EntranceRegion>
 
         {/* Pinned artifacts: a pin is a slug in a list that THIS component renders. */}
@@ -84,6 +70,14 @@ export function HomeOverview(route: RouteProps) {
             </Section>
           </EntranceRegion>
         )}
+
+        {/* Discover: a curated spotlight of the parts of PersonalClaw you haven't tried yet, each a
+            deep link. The full grouped list is the Discover hub (the widget's "See all"). */}
+        <EntranceRegion className="min-w-0">
+          <Section label="Discover" icon={Compass}>
+            <Discover {...route} />
+          </Section>
+        </EntranceRegion>
 
         <EntranceRegion className="min-w-0">
           <Section label="Recent activity" icon={History}>

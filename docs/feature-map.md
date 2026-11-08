@@ -17,7 +17,7 @@ file and the app differ.
 | `#/library` | Library | Library | Library | none |
 | `#/knowledge` | Knowledge | Library, its Knowledge tab | Knowledge | `lib/rowSubject.ts`, `pages/discover/DiscoverPage.tsx`, `pages/loop/LoopComposer.tsx`, `pages/schedule/ScheduleDetail.tsx` and 5 more |
 | `#/memory` | Memory | Library, its Memory tab | Memory | `pages/chat/chatTypes.ts`, `pages/chat/composer/ChatComposer.tsx`, `pages/chat/inspector/sections.tsx`, `pages/chat/transcript/RecallLine.tsx` and 5 more |
-| `#/tasks` | All tasks | not in the sidebar | All tasks | `design/tokenRegistry.ts`, `pages/agents/AgentCreatePage.tsx`, `pages/companion/CompanionSections.tsx`, `pages/dashboard/widgets/TasksWidget.tsx` and 8 more |
+| `#/tasks` | All tasks | not in the sidebar | All tasks | `design/tokenRegistry.ts`, `pages/agents/AgentCreatePage.tsx`, `pages/companion/CompanionSections.tsx`, `pages/loops/LoopsSection.tsx` and 7 more |
 | `#/inbox` | Inbox | Platform › Inbox | Inbox; Notifications | `app/approvalDestination.ts`, `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/Home.tsx` and 6 more |
 | `#/automations` | Automations | Platform › Automations | Automations | `pages/schedule/ScheduleDetail.tsx`, `pages/triggers/TriggersSection.tsx` |
 | `#/triggers` | Automations | Automations, its Automations tab | none | `lib/api.ts`, `pages/automations/automationTabs.ts`, `pages/chat/ManualAutomationCard.tsx`, `pages/dashboard/widgets/ScheduleWidget.tsx` and 5 more |

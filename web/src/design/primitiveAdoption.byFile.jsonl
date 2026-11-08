@@ -47,7 +47,6 @@
 {"file":"pages/code/cockpit/tasks/TaskRow.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/dashboard/widgets/Suggestions.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/dashboard/widgets/SystemHealth.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
-{"file":"pages/dashboard/widgets/TasksWidget.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/dashboard/widgets/kit.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/files/FilesSection.tsx","raw-button":4,"raw-input":2,"raw-dialog":0}
 {"file":"pages/files/browse/FilePreviews.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}

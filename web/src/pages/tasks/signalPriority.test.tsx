@@ -80,14 +80,14 @@ describe('every BROWSING view is signal-only; the detail view is not', () => {
   // stop) and dropped `trivial` entirely. An enumerated population cannot catch a member outside the
   // directory it enumerates, so the tree-wide check below derives the population instead.
   //
-  // The four views of #/tasks — List, Cards, Kanban, Dependency graph — plus the two browsing views
-  // of tasks that live OUTSIDE this directory and were therefore invisible to the original list.
+  // The four views of #/tasks — List, Cards, Kanban, Dependency graph — plus the browsing view of
+  // tasks that lives OUTSIDE this directory and was therefore invisible to the original list (the
+  // home dashboard's task preview was the other, and went with Home's Tasks band).
   // Paths are relative to `src/`, so a member anywhere in the tree can be named.
   it.each([
     ['pages/tasks/TasksListPage.tsx', 2],                 // MetaLine (list rows) + TaskCard (cards)
     ['pages/tasks/TaskBoard.tsx', 1],                     // kanban card
     ['pages/tasks/TaskGraph.tsx', 1],                     // dependency-graph node
-    ['pages/dashboard/widgets/TasksWidget.tsx', 1],       // the home dashboard's task preview
     ['pages/companion/CompanionSections.tsx', 1],         // the companion's open-task list
   ])('%s calls signalPriority (%i site(s))', (rel, n) => {
     const src = readSource(join(SRC_ROOT, rel))

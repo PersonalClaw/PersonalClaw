@@ -3,7 +3,7 @@ import { reportingWrite } from '../../app/reportingWrite'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { api } from '../../lib/api'
-import type { TaskItem, ScheduleRun, DiscoverResponse } from '../../lib/api'
+import type { ScheduleRun, DiscoverResponse } from '../../lib/api'
 
 // ── Home's Overview live feed ──────────────────────────────────────────────
 // ONE source of truth for the Overview's bands (`HomeOverview`): a single WebSocket subscription
@@ -11,21 +11,18 @@ import type { TaskItem, ScheduleRun, DiscoverResponse } from '../../lib/api'
 // poll, so they share one connection and one refresh cadence.
 //
 // The socket doesn't carry the bands' payloads; it is a SIGNAL to refetch the slice a frame names
-// immediately, while the poll keeps the slower-moving data (tasks, recent activity, Discover)
+// immediately, while the poll keeps the slower-moving data (recent activity, Discover)
 // fresh. What waits on you and what runs are the attention stack's (`Home.tsx`), which reads them
-// itself.
+// itself. Tasks are not Home's: they have their own page, which reads them.
 
 /** The slices whose "have we read this yet" answer a consumer actually uses. Deliberately not every
  *  slice: an unread flag nobody reads is the dead-guard shape the `*Err` note below rejects for the
  *  same reason. */
-export type ReadSlice = 'tasks' | 'schedule'
+export type ReadSlice = 'schedule'
 
-const NOTHING_READ: Record<ReadSlice, boolean> = { tasks: false, schedule: false }
+const NOTHING_READ: Record<ReadSlice, boolean> = { schedule: false }
 
 export interface DashboardLiveData {
-  tasks: TaskItem[]
-  /** The tasks read's own failure, distinct from a list that is genuinely empty. */
-  tasksErr: unknown
   schedule: ScheduleRun[]
   /** The archive split, straight from the server. `didIds` are the fires that DID
    *  something; everything else was held by a gate. Kept beside the rows rather than re-derived in
@@ -75,8 +72,6 @@ export function useDashboardLive(): DashboardLiveData {
 const SLOW_POLL = 20000
 
 export function DashboardLiveProvider({ children }: { children: ReactNode }) {
-  const [tasks, setTasks] = useState<TaskItem[]>([])
-  const [tasksErr, setTasksErr] = useState<unknown>(null)
   const [schedule, setSchedule] = useState<ScheduleRun[]>([])
   const [scheduleDidIds, setScheduleDidIds] = useState<string[]>([])
   const [scheduleSuppressed, setScheduleSuppressed] = useState(0)
@@ -100,7 +95,6 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     setRead((r) => (r[s] ? r : { ...r, [s]: true }))
   }, [])
 
-  const loadTasks = useCallback(() => { api.readyTasks().then((d) => { guard(setTasks)(d); guard(setTasksErr)(null) }).catch((e) => guard(setTasksErr)(e)).finally(() => markRead('tasks')) }, [markRead])
   const loadSchedule = useCallback(() => {
     api.triggersHistory(12).then((d) => {
       guard(setSchedule)(d.runs ?? [])
@@ -118,8 +112,8 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   }, [loadDiscover])
 
   const refreshAll = useCallback(() => {
-    loadTasks(); loadSchedule(); loadDiscover()
-  }, [loadTasks, loadSchedule, loadDiscover])
+    loadSchedule(); loadDiscover()
+  }, [loadSchedule, loadDiscover])
 
   // A burst of frames for one slice reads it once: each slice waits 150 ms for the rest of its burst.
   const soonTimers = useRef<Map<string, number>>(new Map())
@@ -132,9 +126,8 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const onMessage = useCallback((m: WsMessage) => {
     if (m.type !== 'refresh') return
     const kinds = refreshKinds(m)
-    if (kinds.includes('tasks')) soon('tasks', loadTasks)
     if (kinds.includes('crons') || kinds.includes('cron_history')) soon('schedule', loadSchedule)
-  }, [soon, loadTasks, loadSchedule])
+  }, [soon, loadSchedule])
 
   useChatSocket(
     onMessage,
@@ -145,7 +138,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   useVisiblePoll(refreshAll, SLOW_POLL, { immediate: false })
 
   const value: DashboardLiveData = {
-    tasks, tasksErr, read, schedule, scheduleDidIds, scheduleSuppressed,
+    read, schedule, scheduleDidIds, scheduleSuppressed,
     discover, discoverErr,
     dismissDiscoverTip, refreshAll,
   }

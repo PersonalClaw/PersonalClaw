@@ -15,8 +15,8 @@ one gateway and one dashboard you own.
 
 ## 🏠 Home
 
-Your day at a glance. Home opens on Overview: your open tasks, what your agents are doing,
-ideas to start from and what you've pinned. Attention, beside it, is what needs you, what is
+Your day at a glance. Home opens on Overview: what your agents are doing, what you've pinned,
+ideas to start from and what ran lately. Attention, beside it, is what needs you, what is
 running and what finished lately. The sidebar keeps its shortcuts fixed at the top and the
 bottom, with your chat history between them, grouped by your folders or your tags, and the
 PersonalClaw icon and name open Home. All of it is live over one WebSocket.

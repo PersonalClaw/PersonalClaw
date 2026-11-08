@@ -17,7 +17,8 @@ import { join } from 'node:path'
 //   MemoryPanel   StudioDocEditor   `/* leave dirty */`    success flashes `Saved ✓`
 //   AgentDetail   routing notes     `/* leave dirty */`    success flashes `Saved ✓`
 //   Diagnostics   changeLevel       `/* leave prior */`    success MOVES the level pill
-//   TasksWidget   complete          `/* leave in place */` success REMOVES the row
+//   TasksWidget   complete          `/* leave in place */` success REMOVES the row (gone since, with
+//                                                         Home's Tasks band)
 //
 // Every one of those state decisions is correct and is kept — reverting a draft would destroy text the
 // user is still editing, and moving a pill the backend refused would be a lie. The defect was that the
@@ -53,10 +54,10 @@ const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
  *  a rail that reads its explanation as a program is how one of these goes false-green here. */
 const code = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-/** The two sites outside `settingsWriteReported`'s declared `pages/settings` scope. */
+/** The sites outside `settingsWriteReported`'s declared `pages/settings` scope. The dashboard's task
+ *  tick was the other, and went with Home's Tasks band: a task is completed on its own page. */
 const OUTSIDE_THE_SETTINGS_SWEEP = [
   { file: 'pages/agents/AgentDetail.tsx', write: 'saveAgentMetadata', form: 'inline' as const },
-  { file: 'pages/dashboard/widgets/TasksWidget.tsx', write: 'updateTask', form: 'toast' as const },
 ]
 
 describe('a refused write is visible, not merely non-confirmed', () => {
@@ -150,19 +151,6 @@ describe('a refused write is visible, not merely non-confirmed', () => {
     expect(src).toMatch(/\.catch\(reportActionFailure\(`set the log level to \$\{l\}`\)\)/)
     expect(src, 'setLevel must not run outside that success handler').not.toMatch(
       /await api\.setLogLevel\(l\);\s*setLevel/,
-    )
-  })
-
-  it('the dashboard tick names WHICH task, and gates both of its success signals', () => {
-    const src = code('pages/dashboard/widgets/TasksWidget.tsx')
-    expect(src, 'the row threads its own title in — the widget is a list').toMatch(
-      /complete\(t\.id,\s*t\.title\)/,
-    )
-    expect(src).toMatch(/reportingWrite\(`complete [^`]*\$\{title\}/)
-    // Both consequences of success are gated: the row removal AND the dashboard refresh.
-    expect(src).toMatch(/if \(!ok\) return\s*\n\s*setDone\(/)
-    expect(src, 'refreshAll must sit after the gate, not before it').toMatch(
-      /setDone\([\s\S]{0,80}?refreshAll\(\)/,
     )
   })
 })

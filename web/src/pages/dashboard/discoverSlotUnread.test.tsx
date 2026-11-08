@@ -54,7 +54,6 @@ function mockApi(over: Record<string, unknown>) {
       inboxOpen: () => Promise.resolve([]),
       skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
       uLoops: () => Promise.resolve([]),
-      readyTasks: () => Promise.resolve([]),
       triggersHistory: () => Promise.resolve({ runs: [], did_ids: [], suppressed: 0 }),
       ...over,
     },

@@ -562,11 +562,6 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
-    "pages/dashboard/widgets/TasksWidget.tsx": {
-      "raw-button": 1,
-      "raw-input": 0,
-      "raw-dialog": 0
-    },
     "pages/dashboard/widgets/kit.tsx": {
       "raw-button": 1,
       "raw-input": 0,

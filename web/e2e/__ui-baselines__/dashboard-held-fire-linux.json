@@ -3,7 +3,6 @@
     "targets": {
       "320": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
         "button[role=radio] \"Attention\"",
@@ -11,7 +10,6 @@
       ],
       "390": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
         "button[role=radio] \"Attention\"",
@@ -19,7 +17,6 @@
       ],
       "412": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
         "button[role=radio] \"Attention\"",
@@ -27,7 +24,6 @@
       ],
       "768": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
         "button[role=radio] \"Attention\"",
@@ -45,7 +41,6 @@
     "targets": {
       "320": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
         "button[role=radio] \"Attention\"",
@@ -53,7 +48,6 @@
       ],
       "390": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
         "button[role=radio] \"Attention\"",
@@ -61,7 +55,6 @@
       ],
       "412": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
         "button[role=radio] \"Attention\"",
@@ -69,7 +62,6 @@
       ],
       "768": [
         "button \"Dismiss — don't suggest this again\"",
-        "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
         "button[role=radio] \"Attention\"",

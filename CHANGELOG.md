@@ -23,6 +23,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 
 - **The Nix flake installs 0.3.7.**
+- **Home's Overview shows your agents, not their tasks. Its Tasks band is gone, since tasks are what agents keep their goals in, and they stay on their own page, All tasks, and in each project. The Overview's bands run Your agents today, Pinned artifacts, Discover, then Recent activity.**
 
 ### Fixed
 
