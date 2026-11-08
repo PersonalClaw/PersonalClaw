@@ -561,6 +561,29 @@ def _move_stored_settings() -> None:
         logger.warning("moving capability settings failed", exc_info=True)
 
 
+async def _adopt_card_answer(state: DashboardState) -> None:
+    """Move an answer the old first-run card kept as a pinned preference to the Explanations
+    default, once, off the loop and without holding up the start (`explanations.adopt_card_answer`,
+    keyed on the data, so every later start finds nothing). It reads the store the card wrote to,
+    the global memory's (`handlers.memory._global_provider`). A failure is logged, never raised."""
+    from personalclaw import explanations
+    from personalclaw.dashboard.handlers.memory import _global_provider
+
+    try:
+        await asyncio.to_thread(lambda: explanations.adopt_card_answer(_global_provider(state)))
+    except Exception:
+        logger.warning("Moving the card's explanations answer failed", exc_info=True)
+
+
+def _start_card_answer_move(state: DashboardState) -> None:
+    """Schedule :func:`_adopt_card_answer` on *state*, the task held on it against GC.
+
+    Held here rather than declared on the state, whose module sits at its size watch band."""
+    state._card_answer_task = asyncio.create_task(  # type: ignore[attr-defined]
+        _adopt_card_answer(state)
+    )
+
+
 async def start_dashboard(
     sessions: "SessionManager",
     port: int = _DEFAULT_PORT,
@@ -1102,19 +1125,7 @@ async def start_dashboard(
 
     state._stored_markup_task = asyncio.create_task(_convert_stored_markup())  # prevent GC
 
-    # An answer the old first-run card kept as a pinned preference becomes the Explanations
-    # default, once, off the loop and without holding up the start
-    # (`explanations.adopt_card_answer`, keyed on the data, so every later start finds nothing).
-    async def _adopt_card_answer() -> None:
-        from personalclaw import explanations
-        from personalclaw.dashboard.handlers.memory import _global_provider
-
-        try:
-            await asyncio.to_thread(lambda: explanations.adopt_card_answer(_global_provider(state)))
-        except Exception:
-            logger.warning("Moving the card's explanations answer failed", exc_info=True)
-
-    state._card_answer_task = asyncio.create_task(_adopt_card_answer())  # prevent GC
+    _start_card_answer_move(state)
 
     # Start periodic flush loop for crash protection (saves dirty sessions every 5s)
     state.start_flush_loop()

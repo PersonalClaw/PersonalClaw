@@ -520,8 +520,9 @@ def instruction(style: str) -> str:
     ``""`` for ``default`` and for a style that is not available.
 
     Read on every call rather than cached, so an edit reaches the next turn. Raises
-    :class:`StyleRefused` when a bundled snippet's text opens or closes a style fence (your own and
-    an app's are refused at load instead, and so are not available).
+    :class:`StyleRefused` when a bundled snippet's text opens or closes a style fence or the
+    explanations section's, which follows it (your own and an app's are refused at load instead,
+    and so are not available).
     """
     if style == DEFAULT:
         return ""
@@ -529,11 +530,15 @@ def instruction(style: str) -> str:
         found = _lookup(style)
         return found.text if found else ""
     text = _render(f"reply-style-{style}").strip()
-    if _FENCE.search(text):
-        raise StyleRefused(
-            f"The {_TITLES[style]} reply style's text opens or closes the style section "
-            f"(reply-style-{style} in Settings → Agent → Prompts), so it is not sent."
-        )
+    for fence, what in (
+        (_FENCE, "the style section"),
+        (_EXPLAIN_FENCE, "the explanations section"),
+    ):
+        if fence.search(text):
+            raise StyleRefused(
+                f"The {_TITLES[style]} reply style's text opens or closes {what} "
+                f"(reply-style-{style} in Settings → Agent → Prompts), so it is not sent."
+            )
     return text
 
 
@@ -544,12 +549,21 @@ def section(style: str) -> str:
     The same one fence for every style, bundled, yours or an app's, and the rules always after it.
     Raises :class:`StyleRefused` as :func:`instruction` does.
     """
-    text = instruction(style)
-    if not text:
+    fenced = _fenced(style)
+    if not fenced:
         return ""
     from personalclaw.prompt_providers.runtime import safety_rules
 
-    return f"[REPLY STYLE: {_title(style)}]\n{text}\n{_CLOSE}\n\n{safety_rules()}"
+    return f"{fenced}\n\n{safety_rules()}"
+
+
+def _fenced(style: str) -> str:
+    """*style*'s text in its fence, without the safety rules: ``""`` for ``default`` or a style
+    with no text. Raises :class:`StyleRefused` as :func:`instruction` does."""
+    text = instruction(style)
+    if not text:
+        return ""
+    return f"[REPLY STYLE: {_title(style)}]\n{text}\n{_CLOSE}"
 
 
 def notice_for(resolved: Resolved) -> str:
@@ -591,19 +605,15 @@ def appended(message: str, style: str, explain: str = "default") -> str:
     """
     blocks: list[str] = []
     try:
-        styled = section(style)
+        styled = _fenced(style)
     except StyleRefused as refused:
         logger.warning("%s", refused)
         styled = ""
     except Exception:
         logger.warning("Reply style %r could not be rendered", style, exc_info=True)
         styled = ""
-    rules = ""
     if styled:
-        from personalclaw.prompt_providers.runtime import safety_rules
-
-        rules = safety_rules()
-        blocks.append(styled[: -len("\n\n" + rules)] if styled.endswith("\n\n" + rules) else styled)
+        blocks.append(styled)
     try:
         from personalclaw import explanations
 
@@ -615,11 +625,9 @@ def appended(message: str, style: str, explain: str = "default") -> str:
         blocks.append(explained)
     if not blocks:
         return message
-    if not rules:
-        from personalclaw.prompt_providers.runtime import safety_rules
+    from personalclaw.prompt_providers.runtime import safety_rules
 
-        rules = safety_rules()
-    return f"{message}\n\n" + "\n".join(blocks) + f"\n\n{rules}\n"
+    return f"{message}\n\n" + "\n".join(blocks) + f"\n\n{safety_rules()}\n"
 
 
 # ─────────────────────────────── the preview ────────────────────────────────

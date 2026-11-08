@@ -14,6 +14,7 @@ from pathlib import Path
 from aiohttp import web
 
 import personalclaw
+from personalclaw import explanations as _explanations
 from personalclaw import home_gateway, record_files
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.sign_in_pair import WINDOW_DOOR
@@ -989,9 +990,10 @@ async def api_onboarding(request: web.Request) -> web.Response:
     )
 
 
-#: The answers the card once saved here. They are the owner's Explanations default now
-#: (``agent.explain``), saved through the config PATCH, so this route refuses them by name.
-_FORMER_ANSWERS = ("briefly", "step_by_step", "with_background")
+#: The answers the card once saved here: every Explanations choice but No preference. They are the
+#: owner's Explanations default now (``agent.explain``), saved through the config PATCH, so this
+#: route refuses them by name. Read from the one table (``explanations.json``).
+_FORMER_ANSWERS = tuple(i for i in _explanations.EXPLAIN_IDS if i != _explanations.DEFAULT)
 
 
 async def api_onboarding_explain(request: web.Request) -> web.Response:

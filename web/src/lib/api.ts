@@ -9297,11 +9297,9 @@ export const api = {
 
   // onboarding readiness + the in-flow fix (bind a chat model)
   onboarding: () => get<OnboardingState>('/api/onboarding'),
-  /** Answer "How should I explain things?" once: an answer pins a `style` preference, `skip` writes
-   *  nothing, and either way the question is recorded as asked. A second answer is a 409. */
-  /** Skip "How should I explain things?": records the question as asked and writes nothing. An
-   *  answer is the Explanations default instead (`patchConfig('agent.explain', …)`), whose write
-   *  records the question as asked. */
+  /** Skip "How should I explain things?": records the question as asked and writes nothing; a
+   *  second claim is a 409. An answer is the Explanations default instead
+   *  (`patchConfig('agent.explain', …)`), whose write records the question as asked. */
   answerExplain: (answer: 'skip') =>
     post<{ ok: boolean; state: OnboardingState }>('/api/onboarding/explain', { answer }),
   /** Record first-run progress — a PARTIAL merge at both levels, so each step sends

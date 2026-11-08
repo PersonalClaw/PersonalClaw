@@ -600,6 +600,36 @@ def kept_mode(transcript: Path) -> str:
     return held if held in RESTRICTED_MODES else UNREADABLE
 
 
+def _restore_voice(session: _ChatSession, meta: dict) -> None:
+    """The meta line's voice onto *session*: its reply style, the chosen style that went away that
+    this chat has already said so about (``reply_style.notice_once``, so a restart does not say it
+    again), and its own explanations choice. Each is re-normalized on read, so a hand-edited meta
+    line can only ever yield a well-formed choice."""
+    if meta.get("reply_style") or meta.get("reply_style_noticed"):
+        from personalclaw.reply_style import normalize_choice
+
+        session.reply_style = normalize_choice(meta.get("reply_style"))
+        session._reply_style_noticed = normalize_choice(meta.get("reply_style_noticed"))
+    if meta.get("explain"):
+        from personalclaw import explanations
+
+        session.explain = explanations.normalize_choice(meta.get("explain"))
+
+
+def _voice_meta(session: _ChatSession) -> dict[str, str]:
+    """What *session*'s meta line holds of its voice, each written only when the conversation
+    states it, matching every other field: an inheriting session adds no key."""
+    out: dict[str, str] = {}
+    if session.reply_style:
+        out["reply_style"] = session.reply_style
+    noticed = getattr(session, "_reply_style_noticed", "")
+    if noticed:
+        out["reply_style_noticed"] = noticed
+    if getattr(session, "explain", ""):
+        out["explain"] = session.explain
+    return out
+
+
 def continue_kept_chat(
     state: DashboardState, session: _ChatSession, history_key: str, meta: dict
 ) -> None:
@@ -674,19 +704,7 @@ def continue_kept_chat(
         session.color_index = meta["color_index"]
     if meta.get("color_theme"):
         session.color_theme = meta["color_theme"]
-    # Reply style, per-conversation scope, and the chosen style that went away that this chat has
-    # already said so about (``reply_style.notice_once``), so a restart does not say it again.
-    # Re-normalized on read so a hand-edited meta line can only ever yield a well-formed style id.
-    if meta.get("reply_style") or meta.get("reply_style_noticed"):
-        from personalclaw.reply_style import normalize_choice
-
-        session.reply_style = normalize_choice(meta.get("reply_style"))
-        session._reply_style_noticed = normalize_choice(meta.get("reply_style_noticed"))
-    # This chat's own explanations choice, re-normalized on read as the style is.
-    if meta.get("explain"):
-        from personalclaw.explanations import normalize_choice as _explain_choice
-
-        session.explain = _explain_choice(meta.get("explain"))
+    _restore_voice(session, meta)
     raw_tags = meta.get("tags")
     if isinstance(raw_tags, list):
         session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
@@ -1046,15 +1064,7 @@ def save_session_to_history(
             meta_line["color_index"] = session.color_index
         if session.color_theme:
             meta_line["color_theme"] = session.color_theme
-        # Written only when the conversation states a style, matching every field above: an
-        # inheriting session adds no key.
-        if session.reply_style:
-            meta_line["reply_style"] = session.reply_style
-        _noticed = getattr(session, "_reply_style_noticed", "")
-        if _noticed:
-            meta_line["reply_style_noticed"] = _noticed
-        if getattr(session, "explain", ""):
-            meta_line["explain"] = session.explain
+        meta_line.update(_voice_meta(session))
         if session.tags:
             meta_line["tags"] = list(session.tags)
         if session.bookmarks:

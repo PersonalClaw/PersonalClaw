@@ -37,6 +37,7 @@ from personalclaw.config.edit_spec import (
     named,
     shown,
 )
+from personalclaw.config.explanation_choices import EXPLAIN_IDS
 from personalclaw.config.loader import (
     APPROVAL_TIMEOUT_MINUTES_MAX,
     APPROVAL_TIMEOUT_MINUTES_MIN,
@@ -44,7 +45,6 @@ from personalclaw.config.loader import (
     PUSH_BACKENDS,
     _bot_name_disallowed,
 )
-from personalclaw.explanations import EXPLAIN_IDS
 
 
 # Allowed editable config paths and their validators

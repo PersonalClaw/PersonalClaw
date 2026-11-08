@@ -1,7 +1,7 @@
 """The one optional question: "How should I explain things?", and the claim that it was asked.
 
 The answer is a setting now: the owner's Explanations default, ``agent.explain``, which the card
-or the window saves through the config PATCH. ``POST /api/onboarding/explain`` keeps one job, the
+saves through the config PATCH. ``POST /api/onboarding/explain`` keeps one job, the
 claim: ``{"answer": "skip"}`` records the question as asked and writes nothing, so it does not come
 back, and a second claim is a 409. The three answers it once took are a 400 naming
 ``agent.explain``, and nothing writes a preference facet for them any more.
@@ -39,13 +39,20 @@ async def _json(resp):
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
+    """The global memory's record store, where the route once wrote an answer as a preference:
+    every store the dashboard hands out (`handlers.memory._global_provider`) is this one, so a
+    row that says nothing is written reads where such a write would land."""
     vs = VectorMemoryStore(db_path=tmp_path / "m.db")
     vs.init()
     vs.embed_fn = lambda t: [1.0, 0.0, 0.0]
-    # The store the route wrote its answers to before it only claimed (`_explain_store`, gone
-    # now), so the rows that say nothing is written read where a write would land.
-    monkeypatch.setattr(hs, "_explain_store", lambda request: vs, raising=False)
+    monkeypatch.setattr("personalclaw.dashboard.handlers.memory._global_provider", lambda state: vs)
     return vs
+
+
+def _wrote_nothing(home, store) -> None:
+    """No preference was written, and no setting either."""
+    assert load_facets(store) == []
+    assert not (home / "config.json").exists(), "the route wrote the config"
 
 
 class TestTheAskedFlag:
@@ -76,14 +83,14 @@ class TestTheAnswer:
         resp = await hs.api_onboarding_explain(_req({"answer": answer}))
         assert resp.status == 400, resp.body
         assert "agent.explain" in (await _json(resp))["error"]["message"]
-        assert load_facets(store) == []
+        _wrote_nothing(_isolate_home, store)
         assert ob.load_onboarding_state()["explain_asked"] is False
 
     @pytest.mark.asyncio
     async def test_skip_claims_the_question_and_writes_nothing(self, _isolate_home, store):
         resp = await hs.api_onboarding_explain(_req({"answer": "skip"}))
         assert resp.status == 200
-        assert load_facets(store) == []
+        _wrote_nothing(_isolate_home, store)
         assert ob.load_onboarding_state()["explain_asked"] is True
 
     @pytest.mark.asyncio
@@ -93,7 +100,7 @@ class TestTheAnswer:
         assert (await hs.api_onboarding_explain(_req({"answer": "skip"}))).status == 200
         resp = await hs.api_onboarding_explain(_req({"answer": "skip"}))
         assert resp.status == 409
-        assert load_facets(store) == []
+        _wrote_nothing(_isolate_home, store)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -111,12 +118,12 @@ class TestTheAnswer:
     async def test_an_unknown_answer_is_a_400_and_writes_nothing(self, _isolate_home, store, bad):
         resp = await hs.api_onboarding_explain(_req(bad))
         assert resp.status == 400
-        assert load_facets(store) == []
+        _wrote_nothing(_isolate_home, store)
         assert ob.load_onboarding_state()["explain_asked"] is False
 
     @pytest.mark.asyncio
     async def test_two_claims_at_once_keep_one(self, _isolate_home, store):
-        """Two windows opening together: the check and the claim are one step on the loop, with
+        """Two tabs claiming together: the check and the claim are one step on the loop, with
         nothing awaited between them, so the second is the 409."""
         a, b = await asyncio.gather(
             hs.api_onboarding_explain(_req({"answer": "skip"})),

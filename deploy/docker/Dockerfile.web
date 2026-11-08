@@ -43,8 +43,9 @@ COPY scripts/install_git_hooks.sh scripts/
 RUN npm ci --workspace=web --prefer-offline
 
 # THE SPA IMPORTS FILES FROM OUTSIDE `web/`: data the backend reads too, kept in one file both
-# sides import. `web/src/lib/scanFindings.ts` imports `src/personalclaw/scan_rule_gloss.json`
-# and `web/src/ui/composer/duplex.ts` imports `src/personalclaw/voice/phrases.json`, each by a
+# sides import. `web/src/lib/scanFindings.ts` imports `src/personalclaw/scan_rule_gloss.json`,
+# `web/src/ui/composer/duplex.ts` imports `src/personalclaw/voice/phrases.json`, and the Settings
+# Explanations row and the first-run card import `src/personalclaw/explanations.json`, each by a
 # relative path that resolves to /app/src/personalclaw/… from WORKDIR /app. Without them the
 # build cannot resolve those imports and fails. Each lands where its import resolves, and before
 # the build. (The build is `vite build` alone: the image is typechecked by the job that gates it,
@@ -57,6 +58,7 @@ RUN npm ci --workspace=web --prefer-offline
 # every pull-request check is green: `release.yml` and the catalogue's `image` entry are the
 # only builders of these stages.
 COPY src/personalclaw/scan_rule_gloss.json src/personalclaw/
+COPY src/personalclaw/explanations.json src/personalclaw/
 COPY src/personalclaw/voice/phrases.json src/personalclaw/voice/
 
 # Copy full web source and build

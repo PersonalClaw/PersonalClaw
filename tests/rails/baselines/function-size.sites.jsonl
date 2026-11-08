@@ -34,7 +34,6 @@
 {"site": "src/personalclaw/dashboard/chat_handlers.py::api_chat", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 366, "complexity": 69}
 {"site": "src/personalclaw/dashboard/chat_handlers.py::api_chat_session_detail", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 178, "complexity": 37}
 {"site": "src/personalclaw/dashboard/chat_handlers.py::api_chat_sessions", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 197, "complexity": 39}
-{"site": "src/personalclaw/dashboard/chat_persistence.py::continue_kept_chat", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 107, "complexity": 32}
 {"site": "src/personalclaw/dashboard/chat_persistence.py::save_session_to_history", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 331, "complexity": 67}
 {"site": "src/personalclaw/dashboard/chat_regenerate.py::api_chat_session_edit_resend", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 187, "complexity": 38}
 {"site": "src/personalclaw/dashboard/chat_runner.py::run_chat", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 3665, "complexity": 593}

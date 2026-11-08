@@ -34,7 +34,8 @@ async def test_the_homes_default_reaches_every_turn_of_a_chat_that_states_none(t
 @pytest.mark.asyncio
 async def test_a_temporary_chat_carries_the_homes_default(tmp_path):
     chat = await Conversation(tmp_path, config={"agent": {"explain": "briefly"}}).start()
-    chat.session.memory_mode = "ephemeral"
+    chat.session.memory_mode = "temporary"
+    assert chat.session.blocks_reads, "a temporary chat reads no memory"
     for part in await chat.both_turns():
         assert _part("Explain things briefly.") in part
 

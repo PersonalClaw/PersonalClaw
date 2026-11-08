@@ -9,6 +9,7 @@ their text. A turn with neither a style nor an explanation is unchanged.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -121,6 +122,23 @@ def test_a_style_whose_text_opens_or_closes_the_explanations_section_is_refused_
         why = reply_style._refusal("mine.md", text, "Mine", "Short replies.", len(text))
         assert why and "explanations section" in why, (text, why)
     assert reply_style._refusal("mine.md", "Be short.", "Mine", "Short replies.", 9) == ""
+
+
+@pytest.mark.parametrize("marker", ["[END EXPLANATIONS]", "[ explanations: Briefly ]"])
+def test_a_bundled_style_whose_text_holds_the_explanations_markers_is_not_sent(marker) -> None:
+    """An edit of a bundled style's prompt in Settings is read at each turn, not at load, so it is
+    refused there: the turn carries the explanation and the rules, and no style section."""
+    from unittest.mock import patch
+
+    from personalclaw import reply_style
+
+    with patch.object(reply_style, "_render", return_value=f"Be short.\n{marker}"):
+        with pytest.raises(reply_style.StyleRefused, match="explanations section"):
+            reply_style.instruction("terse")
+        sent = reply_style.appended("Plan the garden.", "terse", explain="briefly")
+    assert "[REPLY STYLE" not in sent
+    assert "Be short." not in sent
+    assert sent.count("[EXPLANATIONS: Briefly]") == 1
 
 
 def test_the_homes_default_is_editable_as_one_of_the_choices() -> None:
@@ -258,3 +276,93 @@ def test_of_two_pinned_answers_the_newest_is_taken_and_both_are_forgotten(card_h
     assert adopt_card_answer(card_home) == "briefly"
     assert AppConfig.load().agent.explain == "briefly"
     assert _facet(card_home, older).forgotten and _facet(card_home, newer).forgotten
+
+
+def test_of_two_pinned_answers_the_newest_is_taken_whichever_it_is(card_home, tmp_path):
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.explanations import adopt_card_answer
+
+    older = _card_answer(card_home, "briefly", at="2026-10-01T09:00:00+00:00")
+    newer = _card_answer(card_home, "with_background", at="2026-11-01T09:00:00+00:00")
+    assert adopt_card_answer(card_home) == "with_background"
+    assert AppConfig.load().agent.explain == "with_background"
+    assert _facet(card_home, older).forgotten and _facet(card_home, newer).forgotten
+
+
+def test_a_config_that_states_no_preference_takes_the_answer(card_home, tmp_path):
+    """No preference (``default``, the pill's value) states nothing, so the answer moves in."""
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.explanations import adopt_card_answer
+
+    _home_explain(tmp_path, "default")
+    _card_answer(card_home, "step_by_step")
+    assert adopt_card_answer(card_home) == "step_by_step"
+    assert AppConfig.load().agent.explain == "step_by_step"
+
+
+def test_a_malformed_row_is_passed_over_and_the_answer_still_moves(card_home, tmp_path):
+    from personalclaw import preference_facets as pf
+    from personalclaw.explanations import adopt_card_answer
+
+    _card_answer(card_home, "briefly")
+    bad = pf.facet_key("style", CARD["with_background"])
+    card_home.set_semantic(bad, ["not", "a", "facet"], 0.9, "facet")
+    assert adopt_card_answer(card_home) == "briefly"
+
+
+def test_a_config_whose_agent_is_not_an_object_leaves_everything(card_home, tmp_path):
+    from personalclaw.explanations import adopt_card_answer
+
+    (tmp_path / "config.json").write_text(json.dumps({"agent": "sideways"}), encoding="utf-8")
+    key = _card_answer(card_home, "briefly")
+    before = (tmp_path / "config.json").read_bytes()
+    assert adopt_card_answer(card_home) == ""
+    assert (tmp_path / "config.json").read_bytes() == before
+    assert _facet(card_home, key).forgotten is False
+
+
+# ── The move runs at start, on the card's store, and never stops the start ──────────────────────
+
+
+def _a_state_whose_memory_holds(store):
+    """A dashboard state whose global memory (`handlers.memory._global_provider`) is *store*."""
+    return SimpleNamespace(
+        context_builder=SimpleNamespace(memory=SimpleNamespace(vector_store=store))
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_start_up_move_reads_the_cards_store_and_sets_the_default(card_home):
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.dashboard import server
+
+    key = _card_answer(card_home, "with_background")
+    await server._adopt_card_answer(_a_state_whose_memory_holds(card_home))
+    assert AppConfig.load().agent.explain == "with_background"
+    assert _facet(card_home, key).forgotten is True
+
+
+@pytest.mark.asyncio
+async def test_a_start_up_move_that_fails_is_logged_and_never_raised(card_home, caplog):
+    from personalclaw.dashboard import server
+
+    class Broken:
+        def get_semantic(self, key):
+            raise OSError("the store is unreadable")
+
+    with caplog.at_level("WARNING", logger="personalclaw.dashboard.server"):
+        await server._adopt_card_answer(_a_state_whose_memory_holds(Broken()))
+    assert "Moving the card's explanations answer failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_scheduled_move_is_held_on_the_state_and_runs(card_home):
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.dashboard import server
+
+    _card_answer(card_home, "briefly")
+    state = _a_state_whose_memory_holds(card_home)
+    server._start_card_answer_move(state)
+    assert isinstance(state._card_answer_task, asyncio.Task), "the task is not held against GC"
+    await state._card_answer_task
+    assert AppConfig.load().agent.explain == "briefly"

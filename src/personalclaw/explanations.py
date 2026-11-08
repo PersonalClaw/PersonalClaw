@@ -16,39 +16,19 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any, NamedTuple
+
+# The table's rows, its ids and the reading of a value as one, from the config layer, which names
+# the same choices for `agent.explain`; re-exported here.
+from personalclaw.config.explanation_choices import (  # noqa: F401 - re-exported
+    DEFAULT,
+    EXPLAIN_IDS,
+    ROWS,
+    normalize_choice,
+)
 
 logger = logging.getLogger(__name__)
 
-_TABLE = Path(__file__).with_name("explanations.json")
-
-
-def _a_row(row: object) -> bool:
-    return isinstance(row, dict) and all(
-        isinstance(row.get(k), str) for k in ("id", "label", "hint", "sent")
-    )
-
-
-def _shipped(rows: object) -> tuple[dict[str, str], ...]:
-    if (
-        isinstance(rows, list)
-        and rows
-        and all(_a_row(r) for r in rows)
-        and rows[0]["id"] == DEFAULT
-        and not rows[0]["sent"]
-    ):
-        return tuple(rows)
-    raise RuntimeError(
-        f"{_TABLE} is not a table of explanations, 'default' first and sending nothing"
-    )
-
-
-#: The choice that sends nothing: the agent explains things its usual way.
-DEFAULT = "default"
-
-ROWS: tuple[dict[str, str], ...] = _shipped(json.loads(_TABLE.read_text(encoding="utf-8")))
-EXPLAIN_IDS: tuple[str, ...] = tuple(r["id"] for r in ROWS)
 _BY_ID = {r["id"]: r for r in ROWS}
 
 #: Most specific first. No agent scope.
@@ -64,14 +44,6 @@ class Resolved(NamedTuple):
 
     explain: str
     source: str
-
-
-def normalize_choice(value: object) -> str:
-    """*value* as a choice's id, or ``""`` when it names none."""
-    if not isinstance(value, str):
-        return ""
-    word = value.strip().lower()
-    return word if word in _BY_ID else ""
 
 
 def resolve(conversation: object = "", platform: object = "") -> Resolved:
@@ -129,8 +101,9 @@ def adopt_card_answer(store: Any) -> str:
     forgotten, so it is not sent beside the default, and the newest one's choice becomes
     ``agent.explain`` when the config states none (no value, ``default`` or one that names no
     choice); a choice the config already states is kept. Every other facet is left, a card answer
-    the owner unpinned or forgot included. Keyed on the data, so a second run finds nothing and
-    writes nothing. Returns the choice it set, or ``""``.
+    the owner unpinned or forgot included, and a malformed row is passed over. A config whose
+    ``agent`` is not an object is left as it is, and so are the facets. Keyed on the data, so a
+    second run finds nothing and writes nothing. Returns the choice it set, or ``""``.
     """
     from personalclaw.config.transactions import mutate_config
     from personalclaw.preference_facets import Facet, facet_key, forget_facet
@@ -145,26 +118,29 @@ def adopt_card_answer(store: Any) -> str:
             continue
         try:
             facet = Facet.from_payload(json.loads(stored["value_json"]))
-        except (json.JSONDecodeError, TypeError, KeyError):
-            continue
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue  # a malformed row is not the card's answer, and stops nothing
         if facet.pinned and not facet.forgotten:
-            held.append((facet.updated_at, key, row["id"]))
+            held.append((str(facet.updated_at), key, row["id"]))
     if not held:
         return ""
     choice = max(held)[2]
 
-    def change(document: dict[str, Any]) -> str:
+    def change(document: dict[str, Any]) -> str | None:
         agent = document.setdefault("agent", {})
         if not isinstance(agent, dict):
-            return ""
+            return None
         if normalize_choice(agent.get("explain")) not in ("", DEFAULT):
             return ""  # the config states a choice of its own, which is kept
         agent["explain"] = choice
         return choice
 
     adopted = mutate_config(change)
+    if adopted is None:
+        logger.warning("Explanations: the config's agent section is not an object; nothing moved")
+        return ""
     for _at, key, _choice in held:
         forget_facet(store, key)
     if adopted:
-        logger.info("Explanations: the card's answer %r is the default now", adopted)
+        logger.info("Explanations: the old card's answer is the default now")
     return adopted

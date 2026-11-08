@@ -543,9 +543,14 @@ def _bot_name_disallowed(name: str) -> list[str]:
 def _explain_choice(value: object) -> str:
     """*value* as an explanations choice (``explanations.normalize_choice``), ``default`` when it
     names none."""
-    from personalclaw.explanations import normalize_choice
+    from personalclaw.config.explanation_choices import normalize_choice
 
     return normalize_choice(value) or "default"
+
+
+def _soft_stop_budget(agent_data: dict[str, Any]) -> float:
+    """``agent.soft_stop_budget_secs`` as read: 10 s when absent, clamped to [0.5, 60]."""
+    return max(0.5, min(60.0, float(agent_data.get("soft_stop_budget_secs", 10.0))))
 
 
 def _reply_style_choice(value: object, empty: str) -> str:
@@ -4438,9 +4443,7 @@ class AppConfig:
                 bot_name=_sanitize_bot_name(agent_data.get("bot_name", "")),
                 reply_style=_reply_style_choice(agent_data.get("reply_style"), "default"),
                 explain=_explain_choice(agent_data.get("explain")),
-                soft_stop_budget_secs=max(
-                    0.5, min(60.0, float(agent_data.get("soft_stop_budget_secs", 10.0)))
-                ),
+                soft_stop_budget_secs=_soft_stop_budget(agent_data),
                 # Read plainly, defaulting OFF: this
                 # gate REFUSES work, so a `_guard_flag`-style fail-ON read would start
                 # blocking every existing install's unattended ACP runs on upgrade.

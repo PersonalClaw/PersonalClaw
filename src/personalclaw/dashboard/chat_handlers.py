@@ -1161,8 +1161,7 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # Reply style — the RESOLVED style and its preview, for the same reason as
             # memory_mode: the composer must restore to what actually takes effect, and it must
             # not re-derive the resolution order to work that out.
-            **_reply_style_payload(session),
-            **_explain_payload(session),
+            **_voice_payload(session),
             # Branch lineage — see the resolution block above the return.
             "forked_from": forked_from,
             "forked_from_title": forked_from_title,
@@ -1262,9 +1261,7 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
         session.workspace_dir = default_workspace_dir()
     # Reply style: the list-row `to_dict()` carries only the conversation's own choice, so the
     # composer gets the RESOLVED style here: one config read for the one session open.
-    return web.json_response(
-        {**session.to_dict(), **_reply_style_payload(session), **_explain_payload(session)}
-    )
+    return web.json_response({**session.to_dict(), **_voice_payload(session)})
 
 
 def _stop_reach_report(session: _ChatSession) -> dict:
@@ -3138,13 +3135,20 @@ def _explain_payload(session: _ChatSession) -> dict[str, object]:
     once, in ``explanations.EXPLAIN_PRECEDENCE``."""
     from personalclaw import explanations
 
-    resolved = explanations.resolve_for(session)
+    default = explanations.platform_default()
+    resolved = explanations.resolve(session.explain, default)
     return {
         "explain": session.explain,
         "explain_effective": resolved.explain,
         "explain_source": resolved.source,
-        "explain_default": explanations.platform_default(),
+        "explain_default": default,
     }
+
+
+def _voice_payload(session: _ChatSession) -> dict[str, object]:
+    """*session*'s reply style and explanations state together, as the detail and a new chat's
+    answer carry them."""
+    return {**_reply_style_payload(session), **_explain_payload(session)}
 
 
 def _reply_style_payload(session: _ChatSession) -> dict[str, object]:
@@ -3292,19 +3296,14 @@ async def api_chat_session_explain(request: web.Request) -> web.Response:
 
     Body ``{"explain": "" | <an explanations id>}``: one of the choices in ``explanations.json``,
     or ``""`` to follow the owner's default (``agent.explain``) again. Responds with the
-    re-resolved state, so Chat preferences shows what actually takes effect. Absent or unknown is
+    re-resolved state, so the caller shows what actually takes effect. Absent or unknown is
     refused and keeps the choice already made.
     """
     state: DashboardState = request.app["state"]
     session = resolve_session(state, request.match_info["session"])
     if not session:
         return json_error("not_found", status=404)
-    try:
-        body = await request.json()
-    except Exception:
-        return json_error("invalid_json", status=400)
-    if not isinstance(body, dict):
-        return json_error("invalid_body", status=400)
+    body = await json_object_body(request)
     from personalclaw.explanations import EXPLAIN_IDS, normalize_choice
 
     if "explain" not in body:

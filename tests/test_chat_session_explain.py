@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from chat_test_helpers import _make_app, _make_state
+from chat_test_helpers import _make_app, _make_app_with_agent_routes, _make_state
 
 from personalclaw.config.loader import AppConfig
+
+pytestmark = pytest.mark.security
 
 
 @pytest.fixture()
@@ -76,6 +78,37 @@ async def test_an_empty_choice_follows_the_homes_default_again(chat_app):
         "platform",
         "with_background",
     )
+
+
+def _four(body: dict) -> tuple:
+    return (
+        body["explain"],
+        body["explain_effective"],
+        body["explain_source"],
+        body["explain_default"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_detail_carries_this_chats_choice_its_effect_scope_and_the_default(chat_app):
+    _home_default("with_background")
+    chat_app.get_or_create_session("ex").explain = "briefly"
+    chat_app.get_or_create_session("plain")
+    async with TestClient(TestServer(_make_app(chat_app))) as client:
+        own = await (await client.get("/api/chat/sessions/ex")).json()
+        none = await (await client.get("/api/chat/sessions/plain")).json()
+    assert _four(own) == ("briefly", "briefly", "conversation", "with_background")
+    assert _four(none) == ("", "with_background", "platform", "with_background")
+
+
+@pytest.mark.asyncio
+async def test_a_new_chat_answers_with_the_homes_default_in_effect(chat_app):
+    _home_default("step_by_step")
+    async with TestClient(TestServer(_make_app_with_agent_routes(chat_app))) as client:
+        resp = await client.post("/api/chat/sessions", json={"name": "fresh"})
+        assert resp.status == 200, await resp.text()
+        body = await resp.json()
+    assert _four(body) == ("", "step_by_step", "platform", "step_by_step")
 
 
 @pytest.mark.asyncio
