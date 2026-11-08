@@ -300,13 +300,20 @@ def test_a_config_that_states_no_preference_takes_the_answer(card_home, tmp_path
     assert AppConfig.load().agent.explain == "step_by_step"
 
 
-def test_a_malformed_row_is_passed_over_and_the_answer_still_moves(card_home, tmp_path):
+@pytest.mark.parametrize(
+    "stored",
+    [["not", "a", "facet"], {"stability": "high", "pinned": True}],
+    ids=["not an object", "a stability that is no number"],
+)
+def test_a_malformed_row_is_passed_over_and_the_answer_still_moves(card_home, tmp_path, stored):
+    """A row the facet reader cannot read (an AttributeError, a ValueError) is not the card's
+    answer, and stops nothing."""
     from personalclaw import preference_facets as pf
     from personalclaw.explanations import adopt_card_answer
 
     _card_answer(card_home, "briefly")
     bad = pf.facet_key("style", CARD["with_background"])
-    card_home.set_semantic(bad, ["not", "a", "facet"], 0.9, "facet")
+    card_home.set_semantic(bad, stored, 0.9, "facet")
     assert adopt_card_answer(card_home) == "briefly"
 
 

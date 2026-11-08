@@ -1158,9 +1158,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             # fork temporary/incognito). The session-list endpoint already returns
             # this; the detail endpoint must too, or a reopened chat looks persistent.
             "memory_mode": getattr(session, "memory_mode", "persistent") or "persistent",
-            # Reply style — the RESOLVED style and its preview, for the same reason as
+            # Reply style and explanations, each RESOLVED (the style with its preview), as for
             # memory_mode: the composer must restore to what actually takes effect, and it must
-            # not re-derive the resolution order to work that out.
+            # not re-derive either resolution order to work that out.
             **_voice_payload(session),
             # Branch lineage — see the resolution block above the return.
             "forked_from": forked_from,
@@ -1259,8 +1259,8 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     # out of the box.
     if not session.workspace_dir:
         session.workspace_dir = default_workspace_dir()
-    # Reply style: the list-row `to_dict()` carries only the conversation's own choice, so the
-    # composer gets the RESOLVED style here: one config read for the one session open.
+    # Reply style and explanations: the list-row `to_dict()` carries only the conversation's own
+    # choices, so the composer gets the RESOLVED style and explanation here.
     return web.json_response({**session.to_dict(), **_voice_payload(session)})
 
 
