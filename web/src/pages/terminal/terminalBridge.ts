@@ -1,6 +1,6 @@
-/** Bridge between "run in terminal" affordances (e.g. a chat code block / tool
- *  card) and live PTY sockets. A module-level singleton because the sender lives
- *  deep in the chat tree while the terminal lives on another page — they can't
+/** Bridge between "run in terminal" affordances (a shell block in a chat reply, a
+ *  provider's login command) and live PTY sockets. A module-level singleton because the
+ *  sender lives deep in the chat tree while the terminal lives on another page — they can't
  *  pass props. Each mounted TerminalView registers a send(text) for its session;
  *  the most-recently-registered live one is the "active" target. */
 

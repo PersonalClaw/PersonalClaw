@@ -41,14 +41,17 @@ import { isArtifactImage } from '../lib/artifactImage'
  *     another host;
  *   · a `<widget>` block runs in its sandboxed frame only where the caller opts in
  *     (`widgets`): the agent's own chat replies, the one place the model is given that
- *     contract. Anywhere else a widget tag is embedded HTML like any other.
+ *     contract, never a row the gateway took in from outside. Anywhere else a widget tag is
+ *     embedded HTML like any other;
+ *   · a shell block offers Run only under `RunnableCode`, the agent's own chat reply; anywhere
+ *     else, a row the gateway took in from outside included, it offers Copy.
  *
  *  react-markdown + remark-gfm (tables, task lists, strikethrough) + remark-math +
  *  rehype-katex (LaTeX) + highlight.js (code), with ```mermaid diagrams and ```diff
  *  highlighting. Component overrides are NE-tokenized. The project's own copy — a label, a
  *  hint, an error sentence — is JSX text and never comes through here. */
 
-// shell-ish languages where "Run in terminal" makes sense.
+// Shell-ish languages: a block in one offers Run under `RunnableCode`.
 const SHELL_LANGS = new Set(['shell', 'bash', 'sh', 'zsh', 'console', 'shellsession', 'fish'])
 
 /** A block's Open beside: it puts the block in the split beside the reading (`OpenBesideProvider`). Shown
@@ -214,6 +217,11 @@ function InlineArtifactImage({ src, alt, chatSessionKey }: {
   )
 }
 
+/** True under the agent's own reply in a chat (`pages/chat/transcript/AssistantSegments`), the one
+ *  place a shell block offers Run. A row the gateway took in from outside, such as a scheduled
+ *  run's result, is drawn with false, and so is anything else: its code can be copied, not run. */
+export const RunnableCode = createContext(false)
+
 function CodeBlock({ code, lang, onBeside }: { code: string; lang?: string; onBeside?: () => void }) {
   let html = ''
   try {
@@ -222,7 +230,7 @@ function CodeBlock({ code, lang, onBeside }: { code: string; lang?: string; onBe
       : hljs.highlightAuto(code).value
   } catch { html = code.replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]!)) }
   const [copied, setCopied] = useState(false)
-  const runnable = !!lang && SHELL_LANGS.has(lang.toLowerCase())
+  const runnable = useContext(RunnableCode) && !!lang && SHELL_LANGS.has(lang.toLowerCase())
   const copy = async () => { if (await copyText(code, 'the code')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
   const run = () => requestRunInTerminal(code.trim())
   return (
@@ -359,13 +367,15 @@ function renderCode({ className, children, inPre, onBeside }: any) {
 
 /** A code block or diff as a block that can open beside the reading, named by its language and
  *  text (`OpenBeside`), or null for an inline span or a diagram. */
-function besideCode(shape: ReturnType<typeof codeShape>): BesideBlock | null {
+function besideCode(shape: ReturnType<typeof codeShape>, runnable: boolean): BesideBlock | null {
   const { kind, str, lang } = shape
   if (kind !== 'code' && kind !== 'diff') return null
   return {
     address: `${kind}-${fingerprint(`${lang ?? ''}\n${str}`)}`, kind,
     title: kind === 'diff' ? 'Diff' : lang ? `${lang} code` : 'Code', label: kind,
-    render: () => (kind === 'diff' ? <DiffBlock code={str} /> : <CodeBlock code={str} lang={lang} />),
+    // Drawn beside the reading, outside the body it came from, so it takes that body's
+    // RunnableCode with it: a reply's block keeps Run, any other offers Copy.
+    render: () => (kind === 'diff' ? <DiffBlock code={str} /> : <RunnableCode.Provider value={runnable}><CodeBlock code={str} lang={lang} /></RunnableCode.Provider>),
   }
 }
 
@@ -763,12 +773,14 @@ function componentsWith(
       // This is the SECOND `renderCode` call site; a fix that only threads the signal into
       // COMPONENTS would leave chat, the highest-traffic consumer, on the old predicate.
       const inPre = useContext(InPre)
+      // Whether this is the agent's own reply, which its block takes beside the reading too.
+      const runnable = useContext(RunnableCode)
       const place = useOpenBeside()
       const str = codeText(children)
       const fileLink = !!onFileClick && !className && looksLikeFile(str)
       // A block registers under its address while it is mounted, so the place beside the reading
       // can show it (`OpenBeside`); its Open beside opens that address.
-      const block = beside && place && !fileLink ? besideCode(codeShape({ className, children, inPre })) : null
+      const block = beside && place && !fileLink ? besideCode(codeShape({ className, children, inPre }), runnable) : null
       useBesideRegistration(place, block)
       if (fileLink) {
         return (

@@ -122,7 +122,9 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
             <p key={i} data-type="body-s" className="mr-2 whitespace-pre-wrap break-words text-error">{String(m.content || '').slice(0, 800)}</p>
           ) : (
             <div key={i} className="mr-2 min-w-0 text-[0.8125rem]">
-              <Markdown widgets className="[&_p]:text-[0.8125rem]">{parseSwitchToAgent(parseOptions(String(m.content || '').slice(0, 2000)).body).body}</Markdown>
+              {/* The agent's own reply runs its widgets; a row the gateway took in from outside
+                  (`meta.from_outside`, such as a scheduled run's result) is drawn as written. */}
+              <Markdown widgets={!m.meta?.from_outside} className="[&_p]:text-[0.8125rem]">{parseSwitchToAgent(parseOptions(String(m.content || '').slice(0, 2000)).body).body}</Markdown>
             </div>
           )
         ))}

@@ -197,6 +197,7 @@ from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.turn_source import (
     ASKED_FOR_BY,
+    FROM_OUTSIDE,
     asked_by,
     by_turn,
     named,
@@ -2019,6 +2020,26 @@ async def _record_breaker_stop(
         logger.warning("SEL audit failed for ACP breaker trip", exc_info=True)
 
 
+def _the_prompt_list() -> dict[str, dict[str, str]]:
+    """The record on the row `/prompts` lists the saved prompts in, a new one for each row. Each
+    description is its prompt file's own text, a pack's included: no answer of the chat's
+    (turn_source.FROM_OUTSIDE)."""
+    return {
+        FROM_OUTSIDE: {
+            "what": "The saved prompts installed here, as their files describe them",
+            "source": "prompts",
+            "source_type": "prompt_listing",
+            "source_id": "",
+        }
+    }
+
+
+def _as_quoted(name: str) -> str:
+    """*name* as a reply quotes it in a code span: on one line and with no backtick, so the whole of
+    it stays inside the span."""
+    return " ".join(name.split()).replace("`", "'")[:80]
+
+
 @memory_writes.runs_as_its_session
 @_says_its_phases
 async def run_chat(
@@ -2389,6 +2410,7 @@ async def run_chat(
         if sub == "get" and len(args) > 2:
             # /prompts get <name> — invoke the prompt in this chat
             name = args[2]
+            shown = _as_quoted(name)
             expanded, status = _expand_prompt_mention(
                 f"@{name}", state, session, turn_row=_turn_row, invocation_words=3
             )
@@ -2417,7 +2439,7 @@ async def run_chat(
                     metadata={"mention": f"@{name}", "session": session.key, "via": "/prompts get"},
                 )
                 session.append(
-                    "assistant", f"Prompt `{name}` blocked — sensitive path.", "msg msg-a"
+                    "assistant", f"Prompt `{shown}` blocked — sensitive path.", "msg msg-a"
                 )
                 _answered_locally()
             elif status == "too_large":
@@ -2433,7 +2455,7 @@ async def run_chat(
                 )
                 session.append(
                     "assistant",
-                    f"Prompt `{name}` exceeds size limit ({MAX_PROMPT_BYTES // 1000}KB).",
+                    f"Prompt `{shown}` exceeds size limit ({MAX_PROMPT_BYTES // 1000}KB).",
                     "msg msg-a",
                 )
                 _answered_locally()
@@ -2448,7 +2470,7 @@ async def run_chat(
                     outcome="not_found",
                     metadata={"mention": f"@{name}", "session": session.key, "via": "/prompts get"},
                 )
-                session.append("assistant", f"Prompt `{name}` not found.", "msg msg-a")
+                session.append("assistant", f"Prompt `{shown}` not found.", "msg msg-a")
                 _answered_locally()
             return
 
@@ -2472,7 +2494,7 @@ async def run_chat(
         text = "\n".join(lines)
         text, _ = redact_credentials(text)
         text, _ = redact_exfiltration_urls(text)
-        session.append("assistant", text, "msg msg-a")
+        session.append("assistant", text, "msg msg-a", meta=_the_prompt_list())
         await sel_log_async(
             sel().log_tool_invocation,
             session_key="",

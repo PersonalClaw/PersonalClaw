@@ -7,7 +7,7 @@ import { api } from '../../../lib/api'
 import { reportActionFailure } from '../../../app/reportingWrite'
 import { Button } from '../../../ui/Button'
 import { InlineError } from '../../../ui/InlineError'
-import { Markdown } from '../../../ui/Markdown'
+import { Markdown, RunnableCode } from '../../../ui/Markdown'
 import { TextLink } from '../../../ui/TextLink'
 import { NoModelSetupState, isNoModelSetupError } from '../NoModelSetupState'
 import { ToolCard } from '../ToolCard'
@@ -27,7 +27,7 @@ import { sourceKey, turnSources } from '../turnSources'
 import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
 import { workedFor } from '../turnRuns'
 import { waitsPastItsTurn } from '../approvalSegment'
-import { type SubagentCard, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, type MemoryCitation, type SkillUsed, type ReplyCut, type ServedModel, failedStepCount, unaskedStepCount, LEDGER_ACTIVITY_KINDS, isRecall, skillsUsedLabel, skillsUsedTitle } from '../chatTypes'
+import { type SubagentCard, type Segment, type TextSegment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, type MemoryCitation, type SkillUsed, type ReplyCut, type ServedModel, failedStepCount, unaskedStepCount, LEDGER_ACTIVITY_KINDS, isRecall, skillsUsedLabel, skillsUsedTitle } from '../chatTypes'
 
 // ── An assistant turn, as the transcript draws it ────────────────────────────────────────────────
 //
@@ -88,7 +88,9 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
    *  absent when nothing timed it. */
   workedMs?: number
 }) {
-  const fullText = segments.filter((s) => s.kind === 'text').map((s) => (s as { text: string }).text).join('\n')
+  // The agent's own words only: a row the gateway took in from outside (`TextSegment.outside`)
+  // offers no switch to Agent.
+  const fullText = segments.filter((s): s is TextSegment => s.kind === 'text' && !(s as TextSegment).outside).map((s) => s.text).join('\n')
   // The links its prose cites that the turn itself retrieved (#3820): the row under the answer, and
   // each one's number beside it in the text. One function per set of sources, so the prose keeps its
   // components while the turn re-renders.
@@ -201,7 +203,14 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
       if (!body) return null
       // `beside`: the answer's code, diffs and tables open beside the reading, where the chat gives
       // them a place.
-      const prose = <Markdown key={i} widgets beside={answer} onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations} sourceOf={sourceOf}>{body}</Markdown>
+      // The agent's own reply is the one place a shell block offers Run (`RunnableCode`) and a
+      // widget draws: never a tool's card, never the whole turn, and never a row the gateway took in
+      // from outside (`TextSegment.outside`), which no model of this chat wrote.
+      const prose = (
+        <RunnableCode.Provider key={i} value={!seg.outside}>
+          <Markdown widgets={!seg.outside} beside={answer} onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations} sourceOf={sourceOf}>{body}</Markdown>
+        </RunnableCode.Provider>
+      )
       return seg === cutHere ? <Fragment key={i}>{prose}<ReplyCutNote cut="incomplete" /></Fragment> : prose
     }
     return null

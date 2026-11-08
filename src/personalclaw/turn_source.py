@@ -62,9 +62,11 @@ MERGED = "merged"
 
 #: The ``meta`` key of a row whose words PersonalClaw took in from outside as they came, which no
 #: model of the conversation wrote: a scheduled run's result opened as a chat
-#: (``dashboard.schedule_inject``). It holds what a model is told they are and where they came
-#: from (``what``, and the fence's ``source``, ``source_type`` and ``source_id``), and every model
-#: is handed them through the door every text from outside takes into a prompt
+#: (``dashboard.schedule_inject``), a heartbeat task's result or a check-in written into a chat
+#: (``gateway``'s ``_deliver_result``), and the list of saved prompts, as their files describe them
+#: (``dashboard.chat_runner``'s ``/prompts``). It holds what a model is told they are and where they
+#: came from (``what``, and the fence's ``source``, ``source_type`` and ``source_id``), and the
+#: chat's own model is handed them through the door every text from outside takes into a prompt
 #: (:func:`model_text`). The row keeps its words as a person reads them.
 FROM_OUTSIDE = "from_outside"
 

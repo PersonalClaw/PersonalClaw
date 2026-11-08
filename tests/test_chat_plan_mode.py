@@ -98,6 +98,37 @@ class TestEditableMarkdownArtifact:
         assert chat_plan.awaiting_review("c1") == "chat-plan-1"
 
     @pytest.mark.asyncio
+    async def test_a_row_taken_in_from_outside_during_the_plan_turn_is_no_draft(self, tmp_path):
+        """🔴 Red before: a background result written into the chat during the plan turn became the
+        step's draft, and approving it carried that text out as the plan."""
+        from personalclaw.turn_source import FROM_OUTSIDE
+
+        state = _make_state(tmp_path)
+        chat = _seed(state)
+        async with TestClient(TestServer(_app(state))) as client:
+            await client.post("/api/chat/sessions/c1/plan/activate")
+        chat.append(
+            "assistant", "# Plan\n1. read\n2. write", "msg msg-a", meta={"finish_reason": "length"}
+        )
+        chat.append(
+            "assistant",
+            "# Heartbeat\n\nTheirs.",
+            "msg msg-a",
+            meta={
+                FROM_OUTSIDE: {
+                    "what": "Heartbeat",
+                    "source": "heartbeat",
+                    "source_type": "heartbeat_result",
+                    "source_id": "",
+                }
+            },
+        )
+        chat.drain()
+        assert chat_plan.maybe_submit_plan_draft(state, chat) is True
+        sess, _ = chat_plan.read("c1")
+        assert sess.steps[0].artifact["markdown"] == "# Plan\n1. read\n2. write"
+
+    @pytest.mark.asyncio
     async def test_editing_preserves_non_markdown_artifact_fields(self, tmp_path):
         """``PS.edit_artifact`` merges ONLY ``markdown`` (the structured fields are the
         projection source). A hand-rolled replace would drop the sibling key — so this

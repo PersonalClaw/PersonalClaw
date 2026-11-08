@@ -46,6 +46,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow run's review list marks each finding its verify panel refuted, with the verifier's reason.**
 - **A workflow step's done-criterion check runs in the run's own folder, and a file check outside that folder, or a run with no folder of its own, reports the check as not run.**
 - **A verifiable goal loop's completion judge answers for each sub-goal, and the loop's record and its next cycle name the sub-goals not met yet.**
+- **A code block offers Run in a chat's replies only. Anywhere else, a message in the Inbox and its thread, a notification, a tool's result, a scheduled run's result in its chat (after Regenerate too), a heartbeat's result in a chat, the list of saved prompts, a knowledge item, a skill or an app's text included, it offers Copy, and a scheduled run's result, a heartbeat's result and the list of saved prompts are drawn as what they are, not as the agent's reply.**
 
 ## [0.3.7] — 2026-11-07
 

@@ -38,7 +38,7 @@ from chat_test_helpers import _api_app, _make_app, _make_state
 
 from personalclaw import channel_inbound as ci
 from personalclaw import channel_trust as ct
-from personalclaw import chat_recall
+from personalclaw import chat_recall, session_keys
 from personalclaw.channel_transports.base import ChannelMessage
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.chat_persistence import (
@@ -47,13 +47,16 @@ from personalclaw.dashboard.chat_persistence import (
     save_session_to_history,
 )
 from personalclaw.dashboard.chat_utils import persisted_history_key
+from personalclaw.dashboard.schedule_inject import inject_schedule_result_to_session
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
 from personalclaw.hooks import ToolHookResult
 from personalclaw.inbox_providers import native_source
 from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
 from personalclaw.llm_helpers import save_conversation_turn
+from personalclaw.schedule import ScheduleJob
 from personalclaw.session import SessionManager
+from personalclaw.turn_source import FROM_OUTSIDE
 
 PROVIDER = "discord"
 #: A direct message: the DM channel is the conversation, and its sender is someone else's id.
@@ -446,6 +449,138 @@ async def test_a_fork_of_a_channel_chat_keeps_the_source_of_each_turn_it_copies(
     assert _on_disk(gateway.state, fork) == [
         ("user", "Book the 9:10 to the coast", FROM_ADA),
         ("assistant", "Noted: Book the 9:10 to the coast", DASHBOARD),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_fork_of_a_schedule_chat_keeps_its_result_as_words_taken_in_from_outside(tmp_path):
+    """🔴 Red before: the fork copied a scheduled run's result as the agent's own reply, with no
+    record that the run's result came from outside the chat."""
+    gateway = _Gateway(tmp_path)
+    job = ScheduleJob(id="nightly", name="Nightly digest")
+    inject_schedule_result_to_session(gateway.state, job, "Run 1 found nothing new.", history=[])
+    chat = session_keys.SCHEDULE_CHAT.key(job.id)
+
+    async with TestClient(TestServer(_make_app(gateway.state))) as client:
+        resp = await client.post(f"/api/chat/sessions/{chat}/fork", json={})
+        assert resp.status == 200, await resp.text()
+        fork = (await resp.json())["key"]
+
+    log = gateway.state.conversation_log
+    assert log is not None
+    copied = [m for m in log.read_messages(persisted_history_key(log, fork)) if m]
+    assert [m["content"] for m in copied] == [
+        "# Cron Job Result: Nightly digest\n\nRun 1 found nothing new."
+    ]
+    outside = (copied[0].get("meta") or {}).get(FROM_OUTSIDE) or {}
+    assert outside.get("source_type") == "schedule_result"
+
+
+#: A schedule's chat whose result arrives after a turn of its own, as Open as chat threads it in.
+_NIGHTLY = ScheduleJob(id="nightly", name="Nightly digest")
+_ITS_TURN = [
+    {"role": "user", "content": "Summarize the night."},
+    {"role": "assistant", "content": "Nothing new tonight."},
+]
+
+
+@pytest.mark.asyncio
+async def test_a_schedule_chat_reads_back_its_result_as_words_taken_in_from_outside(tmp_path):
+    """The history a chat page reads carries the record on the result's row."""
+    gateway = _Gateway(tmp_path)
+    inject_schedule_result_to_session(
+        gateway.state, _NIGHTLY, "Run 1 found nothing new.", history=_ITS_TURN
+    )
+    chat = session_keys.SCHEDULE_CHAT.key(_NIGHTLY.id)
+
+    async with TestClient(TestServer(_make_app(gateway.state))) as client:
+        resp = await client.get(f"/api/chat/sessions/{chat}")
+        assert resp.status == 200, await resp.text()
+        messages = (await resp.json())["messages"]
+
+    assert messages[-1]["meta"][FROM_OUTSIDE]["source_type"] == "schedule_result"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_in_a_schedule_chat_keeps_the_turns_own_answer_never_its_result(tmp_path):
+    """🔴 Red before: Regenerate kept the run's result as the turn's earlier answer, with no record
+    that it came from outside the chat, so switching back to it drew it as the agent's reply."""
+    gateway = _Gateway(tmp_path)
+    # Two answers of its own, then the result: the turn's LAST answer of its own is the one kept.
+    history = [_ITS_TURN[0], {"role": "assistant", "content": "Looking."}, _ITS_TURN[1]]
+    inject_schedule_result_to_session(
+        gateway.state, _NIGHTLY, "```sh\necho theirs\n```", history=history
+    )
+    chat = session_keys.SCHEDULE_CHAT.key(_NIGHTLY.id)
+    stashed: list[dict] = []
+
+    async def _capture(_state, session, _message, **_kw):
+        stashed.extend(session._pending_variants)
+
+    with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=_capture):
+        async with TestClient(TestServer(_make_app(gateway.state))) as client:
+            resp = await client.post(f"/api/chat/sessions/{chat}/regenerate", json={})
+            assert resp.status == 200, await resp.text()
+            await asyncio.sleep(0)
+
+    assert [v["content"] for v in stashed] == ["Nothing new tonight."]
+
+
+@pytest.mark.asyncio
+async def test_regenerate_of_a_turn_with_no_answer_of_its_own_keeps_none(tmp_path):
+    """A turn whose only answer is the run's result keeps no earlier answer: the result is none."""
+    gateway = _Gateway(tmp_path)
+    inject_schedule_result_to_session(
+        gateway.state, _NIGHTLY, "```sh\necho theirs\n```", history=[_ITS_TURN[0]]
+    )
+    chat = session_keys.SCHEDULE_CHAT.key(_NIGHTLY.id)
+    ran: list[bool] = []
+    stashed: list[dict] = []
+
+    async def _capture(_state, session, _message, **_kw):
+        ran.append(True)
+        stashed.extend(session._pending_variants)
+
+    with patch("personalclaw.dashboard.chat_regenerate.run_chat", new=_capture):
+        async with TestClient(TestServer(_make_app(gateway.state))) as client:
+            resp = await client.post(f"/api/chat/sessions/{chat}/regenerate", json={})
+            assert resp.status == 200, await resp.text()
+            await asyncio.sleep(0)
+
+    assert ran == [True] and stashed == []
+
+
+@pytest.mark.asyncio
+async def test_a_rewound_tail_of_a_schedule_chat_restored_as_a_fork_keeps_its_result_taken_in(
+    tmp_path,
+):
+    """A tail an edit replaced, holding the run's result, keeps the result's record when it is
+    restored as a fork, as a fork of the chat does."""
+    from personalclaw.dashboard.chat import api_chat_session_fork_rewound
+
+    gateway = _Gateway(tmp_path)
+    inject_schedule_result_to_session(
+        gateway.state, _NIGHTLY, "Run 1 found nothing new.", history=_ITS_TURN
+    )
+    chat = session_keys.SCHEDULE_CHAT.key(_NIGHTLY.id)
+    session = gateway.state._sessions[chat]
+    # The owner edited her question: the turn it started, the result included, is kept as its tail.
+    first = session.messages[0]
+    first["rewound"] = [{"messages": [dict(m) for m in session.messages], "ts": ""}]
+    app = _make_app(gateway.state)
+    app.router.add_post("/api/chat/sessions/{session}/fork-rewound", api_chat_session_fork_rewound)
+
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.post(f"/api/chat/sessions/{chat}/fork-rewound", json={"index": 0})
+        assert resp.status == 200, await resp.text()
+        fork = (await resp.json())["key"]
+
+    log = gateway.state.conversation_log
+    assert log is not None
+    copied = [m for m in log.read_messages(persisted_history_key(log, fork)) if m]
+    result = [m for m in copied if m["content"].startswith("# Cron Job Result")]
+    assert [((m.get("meta") or {}).get(FROM_OUTSIDE) or {}).get("source_type") for m in result] == [
+        "schedule_result"
     ]
 
 

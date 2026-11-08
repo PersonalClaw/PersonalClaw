@@ -35,6 +35,7 @@ from personalclaw.given_details import keep_given
 from personalclaw.llm_helpers import parse_llm_json_list
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.turn_source import FROM_OUTSIDE, provenance
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -151,6 +152,10 @@ def _build_exchange(session: "_ChatSession") -> str:
         role = m.get("role", "")
         content = (m.get("content") or "").strip()
         if not content:
+            continue
+        # A row taken in from outside answers nothing in the chat, and a follow-up is sent as her
+        # own words.
+        if role == "assistant" and (provenance(m).get("meta") or {}).get(FROM_OUTSIDE) is not None:
             continue
         if role == "assistant" and not last_assistant:
             last_assistant = content[-_REPLY_CAP:]

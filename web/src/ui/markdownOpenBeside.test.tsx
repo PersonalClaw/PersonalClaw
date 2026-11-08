@@ -7,8 +7,8 @@
  * and the surface draws the registered block.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { Markdown } from './Markdown'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { Markdown, RunnableCode } from './Markdown'
 import { BesideRegistry, OpenBesideProvider } from './OpenBeside'
 
 afterEach(cleanup)
@@ -116,5 +116,32 @@ describe('Open beside is offered only where it can open', () => {
   it('not on a diagram', () => {
     show([MERMAID])
     expect(offers()).toEqual([])
+  })
+})
+
+describe("a shell block opened beside keeps its reply's Run, and only that", () => {
+  const SHELL = '```sh\necho ready\n```'
+  /** The Run buttons the block registered for `md` draws in the place beside the reading. */
+  const runsBeside = (md: React.ReactNode) => {
+    const open = vi.fn()
+    const registry = new BesideRegistry()
+    render(<OpenBesideProvider open={open} registry={registry}>{md}</OpenBesideProvider>)
+    fireEvent.click(screen.getByRole('button', { name: 'Open sh code beside' }))
+    const block = registry.get(handed(open))!
+    const { container, unmount } = render(<div>{block.render()}</div>)
+    // The block is drawn there, so a count of no Run is a count of a drawn block's buttons.
+    expect(within(container).getByRole('button', { name: 'Copy code' })).toBeInTheDocument()
+    const runs = within(container).queryAllByRole('button', { name: /Run/ }).length
+    unmount()
+    cleanup()
+    return runs
+  }
+
+  it("a block from the agent's reply offers Run beside the reading", () => {
+    expect(runsBeside(<RunnableCode.Provider value><Markdown beside>{SHELL}</Markdown></RunnableCode.Provider>)).toBe(1)
+  })
+
+  it('a block from any other body offers none there either', () => {
+    expect(runsBeside(<Markdown beside>{SHELL}</Markdown>)).toBe(0)
   })
 })

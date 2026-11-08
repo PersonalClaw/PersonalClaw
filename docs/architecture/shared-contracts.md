@@ -944,7 +944,7 @@ Status: planned
 | `goal` | user | `{loop, cycle}` | on a goal cycle's message |
 | `review`, `ways`, `comments`, `fix` | user | `{scope, focus}`; `{group}`; `{count, kinds}`; `{review, findings}` | a review's scope; a ways group; a message composed from the owner's comments; a message asking to fix findings (§17.7) |
 | `call`, `heard` | user | message id; str (at most 1,000 characters) | on a call request: the call message; what the owner said, transcribed |
-| `from_outside` | user | `{source, source_type, source_id, what}` | words taken in from outside (the record `turn_source.FROM_OUTSIDE` keeps on a row today), and an imported conversation's messages, so a restore passes them through the outside-text door again |
+| `from_outside` | user, assistant | `{source, source_type, source_id, what}` | words taken in from outside (the record `turn_source.FROM_OUTSIDE` keeps on a row today: on an assistant row, a scheduled run's result, a heartbeat's result or check-in written into a chat, and the list of saved prompts), and an imported conversation's messages, so a restore passes them through the outside-text door again; the chat's own model reads them through it too |
 | `asked_for_by` | user | `{source_thread, source_user, source_channel}` | on a helper's report: whoever asked for the work it carries on, when it was not the owner (`turn_source.ASKED_FOR_BY`, which `turn_source.asked_by` reads) |
 | `input_flagged` | user | bool | the door's screen flagged the words that started the turn (`outside_text.Admitted.flagged`): no setting answers its calls |
 | `memory_citations` | assistant | as today's | `chat_runner.py:1113` |

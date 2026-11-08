@@ -62,6 +62,34 @@ class TestBuildExchange:
         assert "user: How do I read a file" in ex
         assert "assistant: Use open()" in ex
 
+    def test_a_row_taken_in_from_outside_is_no_reply_to_follow_up(self, tmp_path, monkeypatch):
+        """🔴 Red before: the chore was handed a background result written into the chat as the
+        reply its follow-ups go on from, and a follow-up is sent as her own words."""
+        from personalclaw.turn_source import FROM_OUTSIDE
+
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        session = _seeded_session(state)
+        session.append(
+            "assistant", "Mine.", "msg msg-a", broadcast=False, meta={"finish_reason": "length"}
+        )
+        session.append(
+            "assistant",
+            "# Heartbeat\n\nTheirs.",
+            "msg msg-a",
+            broadcast=False,
+            meta={
+                FROM_OUTSIDE: {
+                    "what": "Heartbeat",
+                    "source": "heartbeat",
+                    "source_type": "heartbeat_result",
+                    "source_id": "",
+                }
+            },
+        )
+        ex = _build_exchange(session)
+        assert "Theirs" not in ex and "assistant: Mine." in ex
+
 
 class TestMaybeFollowups:
     @pytest.mark.asyncio

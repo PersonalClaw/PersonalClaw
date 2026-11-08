@@ -20,7 +20,7 @@
 // from the same three numbers, so a well-formed composer context is never cut at all.
 // If the two drift apart, the handler quietly starts cutting again.
 
-import { turnText, type ChatTurn } from './chatTypes'
+import { type ChatTurn, type TextSegment } from './chatTypes'
 
 /** How many of the newest turns the optimizer gets to see. */
 export const CTX_MAX_TURNS = 10
@@ -53,7 +53,9 @@ export function buildOptimizerContext(turns: ChatTurn[]): string {
   // the OLDEST turn, and always a whole one.
   for (let i = turns.length - 1; i >= 0 && lines.length < CTX_MAX_TURNS; i--) {
     const t = turns[i]
-    const body = turnText(t)
+    // The chat's own words only: a row the gateway took in from outside (`TextSegment.outside`)
+    // answers nothing in the chat, and under the assistant's label it would read as the agent's.
+    const body = t.segments.filter((s): s is TextSegment => s.kind === 'text' && !s.outside).map((s) => s.text).join('\n').trim()
     if (!body) continue // tool-only or still-empty turn: a bare role label is noise
     const clipped = body.length > CTX_TURN_CHARS ? body.slice(0, CTX_TURN_CHARS) + CLIP : body
     // One turn per line, so a line boundary always means a turn boundary. The handler

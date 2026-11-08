@@ -121,7 +121,7 @@ from personalclaw.triggers.nudge import (
     NudgeLoop,
 )
 from personalclaw.triggers.nudge import enabled as autonudge_enabled
-from personalclaw.turn_source import ASKED_FOR_BY
+from personalclaw.turn_source import ASKED_FOR_BY, FROM_OUTSIDE
 
 
 def config_dir() -> Path:
@@ -3679,6 +3679,17 @@ class GatewayOrchestrator:
         title, _ = redact_exfiltration_urls(title)
         title, _ = redact_credentials(title)
         body = f"{task_summary}\n\n{result_text}"
+        # A background result written into a chat is no answer of that chat's: the chat draws it
+        # as that result and hands it to a model through the outside-text door, as it does a
+        # scheduled run's result (turn_source.FROM_OUTSIDE).
+        taken_in = {
+            FROM_OUTSIDE: {
+                "what": f"{title}: {task_summary}" if task_summary else title,
+                "source": "heartbeat",
+                "source_type": "heartbeat_result",
+                "source_id": "",
+            }
+        }
 
         # ── silent: log only ──
         if deliver == "silent":
@@ -3779,7 +3790,9 @@ class GatewayOrchestrator:
                     )
                     if session is None:
                         return
-                    session.append("assistant", f"{title}\n\n{result_text}", "msg msg-a")
+                    session.append(
+                        "assistant", f"{title}\n\n{result_text}", "msg msg-a", meta=taken_in
+                    )
                     self.dashboard_state.push_sessions_update()
                     self.dashboard_state.notify(
                         notification_kinds.HEARTBEAT, title, body, meta={"session": session.key}
@@ -3802,7 +3815,7 @@ class GatewayOrchestrator:
         if deliver == "dashboard":
             if self.dashboard_state:
                 session = self.dashboard_state.get_or_create_session()
-                session.append("assistant", f"{title}\n\n{result_text}", "msg msg-a")
+                session.append("assistant", f"{title}\n\n{result_text}", "msg msg-a", meta=taken_in)
                 self.dashboard_state.push_sessions_update()
                 self.dashboard_state.notify(
                     notification_kinds.HEARTBEAT, title, body, meta={"session": session.key}

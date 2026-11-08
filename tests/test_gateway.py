@@ -530,6 +530,29 @@ class TestDeliverResult:
         session.append.assert_called_once()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("deliver", ["dashboard", "dashboard:my-session"])
+    async def test_a_result_written_into_a_chat_is_words_taken_in_from_outside(self, deliver):
+        """🔴 Red before: a background result written into a chat was a bare row, drawn and handed
+        to a model as the chat's own answer."""
+        from personalclaw.turn_source import FROM_OUTSIDE
+
+        orch = _make_orchestrator()
+        ds = _mock_dashboard_state()
+        session = MagicMock()
+        session.append = MagicMock()
+        session.key = "my-session"
+        ds.get_or_create_session = MagicMock(return_value=session)
+        ds.resolve_session = MagicMock(return_value=session)
+        orch.dashboard_state = ds
+        with patch("personalclaw.gateway.sel") as mock_sel:
+            mock_sel.return_value.log_api_access = MagicMock()
+            await orch._deliver_result(
+                "Heartbeat", "Check the feed", "```sh\necho theirs\n```", deliver
+            )
+        meta = session.append.call_args.kwargs["meta"]
+        assert meta[FROM_OUTSIDE]["source_type"] == "heartbeat_result"
+
+    @pytest.mark.asyncio
     async def test_dashboard_session_not_found(self):
         orch = _make_orchestrator()
         ds = _mock_dashboard_state()

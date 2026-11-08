@@ -13,7 +13,7 @@ from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.own_words import WIDGET_ACTION, came_from_a_widget
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw.turn_source import source_of
+from personalclaw.turn_source import FROM_OUTSIDE, provenance, source_of
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +35,22 @@ def _widget_mark(m: dict) -> dict | None:
     return out
 
 
+def _copy_meta(m: dict) -> dict | None:
+    """The meta a copy of *m* keeps: a widget's mark (`_widget_mark`), and the record of words
+    taken in from outside (``turn_source.FROM_OUTSIDE``), which the branch shows and hands to a
+    model as the chat it came from does."""
+    kept = dict(_widget_mark(m) or {})
+    outside = (provenance(m).get("meta") or {}).get(FROM_OUTSIDE)
+    if outside is not None:
+        kept[FROM_OUTSIDE] = outside
+    return kept or None
+
+
 def _copy_rows(new_session: _ChatSession, rows: list[dict]) -> None:
     """Copy *rows* into the branch *new_session*, unbroadcast, each with the role, ts and source it
-    has here; a copied turn is still the turn it was, so a widget's message stays a widget's
-    (`_widget_mark`). The assistant's words are redacted as they are copied."""
+    has here; a copied turn is still the turn it was, so a widget's message stays a widget's and
+    words taken in from outside stay theirs (`_copy_meta`). The assistant's words are redacted as
+    they are copied."""
     for m in rows:
         role = m.get("role", "assistant")
         content = m.get("content", "")
@@ -52,7 +64,7 @@ def _copy_rows(new_session: _ChatSession, rows: list[dict]) -> None:
             cls,
             ts=m.get("ts", ""),
             broadcast=False,
-            meta=_widget_mark(m),
+            meta=_copy_meta(m),
             source=source_of(m),
         )
 
