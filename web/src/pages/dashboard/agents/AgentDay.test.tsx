@@ -283,7 +283,7 @@ describe('the scheduled names', () => {
     expect(nameRoom(marks, 3, view)).toBe('calc(6.25% - 0.5rem)')
   })
 
-  it('give a strip its name’s room over the runs that fall on it, whose names yield', () => {
+  it('start a strip’s name past a run that falls just after the strip starts, whose name yields', () => {
     const minutes = Array.from({ length: 240 }, (_, i) => (
       { trigger_id: 'heartbeat', trigger_name: 'Heartbeat tasks', at: (at(18, 21) + i * 60_000) / 1000 }))
     const hourly = Array.from({ length: 4 }, (_, i) => (
@@ -291,20 +291,46 @@ describe('the scheduled names', () => {
     const day = buildDay(evening({ scheduled: [...minutes, ...hourly] }))
     const { marks } = day.rows.find((r) => r.key === 'scheduled')!
 
-    // The strip runs 18:21 to 22:20, 239 of the track's 480 minutes; each hourly run on it yields.
-    expect(marks.map((_, i) => nameRoom(marks, i, day))).toEqual(['calc(49.79% - 0.5rem)', YIELDS, YIELDS, YIELDS, YIELDS])
+    // The strip runs 18:21 to 22:20. Its first hourly run falls two minutes in, too soon to hold the
+    // name, so the name starts at that run and ends before the next, an hour on.
+    expect(marks.map((_, i) => nameRoom(marks, i, day))).toEqual(['calc(12.50% - 0.5rem)', YIELDS, YIELDS, YIELDS, YIELDS])
     show(evening({ scheduled: [...minutes, ...hourly] }))
     const row = screen.getByRole('listitem', { name: /^Scheduled, agent not named: / })
     expect(within(row).getByText('Heartbeat tasks · every 1 min')).toBeInTheDocument()
     // Each run keeps its ring; its name is in the line under the track.
     expect(row.querySelectorAll('[aria-hidden="true"] span.size-3')).toHaveLength(4)
-    // The name stays under the rings: it sets no stacking of its own and comes first, so each ring
-    // that falls on it draws over it.
+    // A ring is never under the name: the name sets no stacking of its own and comes first, so a
+    // ring draws over it should the two meet.
     const name = within(row).getByText('Heartbeat tasks · every 1 min').parentElement!
+    expect(name.style.left).toBe('50.63%')
     expect(name.className.split(/\s+/).some((c) => /^z-/.test(c))).toBe(false)
     row.querySelectorAll('[aria-hidden="true"] span.size-3').forEach((r) =>
       expect(name.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy())
     expect(within(row).queryByText('Self-remediation')).toBeNull()
+  })
+
+  it('end a strip’s name before the first run that falls on it', () => {
+    // As on a home whose heartbeat runs every minute: its strip starts a minute after now, and an
+    // hourly run falls on it 59 minutes later, which leaves room for the name before it.
+    const minutes = Array.from({ length: 240 }, (_, i) => (
+      { trigger_id: 'heartbeat', trigger_name: 'Heartbeat tasks', at: (at(18, 21) + i * 60_000) / 1000 }))
+    const hourly = Array.from({ length: 4 }, (_, i) => (
+      { trigger_id: 'remedy', trigger_name: 'Self-remediation', at: (at(19, 20) + i * 3600_000) / 1000 }))
+    const day = buildDay(evening({ scheduled: [...minutes, ...hourly] }))
+    const { marks } = day.rows.find((r) => r.key === 'scheduled')!
+
+    // 18:21 to 19:20 is 59 of the track's 480 minutes.
+    expect(marks.map((_, i) => nameRoom(marks, i, day))).toEqual(['calc(12.29% - 0.5rem)', YIELDS, YIELDS, YIELDS, YIELDS])
+    show(evening({ scheduled: [...minutes, ...hourly] }))
+    const row = screen.getByRole('listitem', { name: /^Scheduled, agent not named: / })
+    expect(within(row).getByText('Heartbeat tasks · every 1 min').parentElement!.style.left).toBe('50.21%')
+  })
+
+  it('give a strip’s name the longest stretch between the runs on it when none is half an hour long', () => {
+    // 18:21 to 18:50, with a run at 18:45: the 24 minutes before it, 5% of the track.
+    const burst = { kind: 'scheduled' as const, start: at(18, 21), end: at(18, 50), label: 'Burst · every 1 min' }
+
+    expect(nameRoom([burst, run(18, 45, 'Hourly')], 0, view)).toBe('calc(5.00% - 0.5rem)')
   })
 
   it('draw a schedule too frequent to name each run as one strip with a width, and its name once', () => {

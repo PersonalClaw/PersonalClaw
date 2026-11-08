@@ -15,7 +15,7 @@ import { fvs } from '../../../design/fontWeight'
 import type { PhaseFamily } from '../../../lib/workPhase'
 import { SlotEmptyState } from '../widgets/kit'
 import { Section } from '../Section'
-import { buildDay, clock, type DayRow, type DayView, type Mark, type Occurrence, type RowState } from './agentDayModel'
+import { FOLD_MS, buildDay, clock, type DayRow, type DayView, type Mark, type Occurrence, type RowState } from './agentDayModel'
 
 // ── Home › Overview: "Your agents today" ─────────────────────────────────────────────────────────
 //
@@ -274,15 +274,14 @@ export const YIELDS = '0px'
 /** How wide a scheduled run's name may be, so two names never draw over each other: up to its
  *  neighbour's mark, or half the gap when the two names face each other, and never back past now.
  *  A strip's one name is measured from its first run the same way. An early strip's one name ends
- *  inside the strip; a late one's sits just before it. A run on a strip yields its name and takes
- *  no room from the name before it, but a late name after it stops at its ring. A name is cut
- *  short there; the row's line under the track and its sentence say each schedule whole. */
+ *  inside the strip; a late one's sits just before it. A run on a strip yields its name but keeps
+ *  its ring, and an early strip's name keeps clear of those rings (`stripStretch`); a late name
+ *  after such a run stops at its ring. A name is cut short there; the row's line under the track
+ *  and its sentence say each schedule whole. */
 export function nameRoom(marks: Mark[], i: number, view: DayView): string | undefined {
   const m = marks[i]
   if (m.kind !== 'scheduled') return undefined
   if (onStrip(m, marks)) return YIELDS
-  const runs = marks.filter((x) => x.kind === 'scheduled' && !onStrip(x, marks))
-  const j = runs.indexOf(m)
   let span: number
   if (isLate(m, view)) {
     // A late name reaches back toward the mark before it, a ring on a strip included.
@@ -291,12 +290,47 @@ export function nameRoom(marks: Mark[], i: number, view: DayView): string | unde
     const from = prev ? (isLate(prev, view) ? prev.start : (prev.start + m.start) / 2) : view.since
     span = m.start - Math.max(from, view.now)
   } else {
-    const next = runs[j + 1]
-    span = (next ? (isLate(next, view) ? (m.start + next.start) / 2 : next.start) : view.until) - m.start
-    // A strip's name ends inside its strip, as a loop's tail keeps its label inside its pill.
-    if (m.end > m.start) span = Math.min(span, m.end - m.start)
+    const end = earlyEnd(marks, i, view)
+    const s = m.end > m.start ? stripStretch(marks, i, end) : { from: m.start, to: end }
+    span = s.to - s.from
   }
   return `calc(${((span / (view.until - view.since)) * 100).toFixed(2)}% - 0.5rem)`
+}
+
+/** Where an early run's name must end: at the next mark that is not a run on a strip, half way to
+ *  it when it is late, or at the window's edge. */
+function earlyEnd(marks: Mark[], i: number, view: DayView): number {
+  const m = marks[i]
+  const runs = marks.filter((x) => x.kind === 'scheduled' && !onStrip(x, marks))
+  const next = runs[runs.indexOf(m) + 1]
+  const end = next ? (isLate(next, view) ? (m.start + next.start) / 2 : next.start) : view.until
+  // A strip's name ends inside its strip, as a loop's tail keeps its label inside its pill.
+  return m.end > m.start ? Math.min(end, m.end) : end
+}
+
+/** Shorter than this, a stretch of a strip between runs on it holds no letter of the strip's name
+ *  on the narrowest track: 24 px at 48 px an hour, less the name's 22 px of insets. */
+const NAME_MIN_MS = FOLD_MS / 2
+
+/** The stretch of an early strip its name takes, since a run's ring draws over whatever it falls
+ *  on: the first, between the strip's start, the runs that fall on it and `end`, that is at least
+ *  `NAME_MIN_MS` long, or the longest when none is. */
+function stripStretch(marks: Mark[], i: number, end: number): { from: number; to: number } {
+  const m = marks[i]
+  const edges = [m.start, ...marks.filter((r) => onStrip(r, marks) && r.start > m.start && r.start < end).map((r) => r.start), end]
+  let k = 0
+  for (let n = 0; n + 1 < edges.length; n++) {
+    if (edges[n + 1] - edges[n] >= NAME_MIN_MS) return { from: edges[n], to: edges[n + 1] }
+    if (edges[n + 1] - edges[n] > edges[k + 1] - edges[k]) k = n
+  }
+  return { from: edges[k], to: edges[k + 1] }
+}
+
+/** Where a scheduled run's name starts: at its mark, or where an early strip's stretch does. */
+function nameFrom(marks: Mark[], i: number, view: DayView): number {
+  const m = marks[i]
+  if (m.kind !== 'scheduled' || m.end === m.start || isLate(m, view)) return m.start
+  return stripStretch(marks, i, earlyEnd(marks, i, view)).from
 }
 
 function markStyle(m: Mark, view: DayView): CSSProperties {
@@ -340,7 +374,7 @@ function Track({ row, view, line = 'bg-outline-variant/35', ground = 'var(--colo
     <div aria-hidden="true" className="relative h-7">
       <span className={`absolute inset-x-0 top-1/2 h-px ${line}`} />
       {row.before && <span data-type="body-s" className="absolute left-0 top-1/2 -translate-y-1/2 pr-xs text-on-surface-low" style={{ background: ground }}>&larr; {row.before}</span>}
-      {row.marks.map((m, i) => <MarkView key={i} mark={m} view={view} room={nameRoom(row.marks, i, view)} />)}
+      {row.marks.map((m, i) => <MarkView key={i} mark={m} view={view} room={nameRoom(row.marks, i, view)} nameAt={nameFrom(row.marks, i, view)} />)}
       <span className="absolute -inset-y-1 left-1/2 w-px bg-on-surface-var" />
     </div>
   )
@@ -423,7 +457,7 @@ function LiftedRow({ row, view }: { row: DayRow; view: DayView }) {
   )
 }
 
-function MarkView({ mark, view, room }: { mark: Mark; view: DayView; room?: string }) {
+function MarkView({ mark, view, room, nameAt }: { mark: Mark; view: DayView; room?: string; nameAt: number }) {
   const base = 'absolute top-1/2 -translate-y-1/2'
   const style = markStyle(mark, view)
   switch (mark.kind) {
@@ -440,12 +474,13 @@ function MarkView({ mark, view, room }: { mark: Mark; view: DayView; room?: stri
       const late = isLate(mark, view)
       if (mark.end > mark.start) {
         // A schedule too frequent to name each run: one dashed strip, from its first run to its
-        // last, as a loop's open tail is drawn, with its name once at its start. The name sits on
-        // the row's ground, inside the strip's border; a run's ring that falls on it draws over it.
+        // last, as a loop's open tail is drawn, with its name once, near its start. The name sits on
+        // the row's ground, inside the strip's border, in a stretch between the rings of the runs
+        // that fall on the strip (`nameRoom`); a ring still draws over it should the two meet.
         return (
           <>
             <span data-strip="" className={`${base} h-4 rounded-pill border border-dashed border-on-surface-var/60`} style={style} />
-            <span data-late={late || undefined} style={{ left: style.left, maxWidth: late ? room : `calc(${room} - 0.375rem)` }}
+            <span data-late={late || undefined} style={{ left: pct(nameAt, view), maxWidth: late ? room : `calc(${room} - 0.375rem)` }}
               className={`${base} flex h-3.5 items-center overflow-hidden bg-surface-low ${late ? '-translate-x-full' : 'ml-1.5'}`}>
               <span data-type="body-s" className="truncate whitespace-nowrap px-xs text-on-surface-var">{mark.label}</span>
             </span>
