@@ -368,7 +368,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
           contextParts={contextParts}
           contextActions={sessionId ? { tools: () => navigate('tools'), memory: () => navigate('memory?tab=recall'), compact: () => { void send('/compact') } } : undefined} servedModel={lastServedModel(turns)} autoChain={autoChain} askBeforeModelSwitch={sessionId ? askBeforeSwitch(sessionId) : undefined}
           handsFree={{ confirmationPhrases: voiceCfg.confirmation_phrases, exitPhrases: voiceCfg.exit_phrases, speaking: speakingTurn !== null, muteWhileSpeaking: voiceCfg.duplex_mute_enabled }}
-          onReplace={(v) => { replaceDraft(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length) setFollowups([]) }} draftHoldsWidgetMessage={!!widgetDraft} onHandsFreeSubmit={(t) => { void send(t, { inputOrigin: 'voice' }) }}
+          onReplace={(v) => { replaceDraft(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length) setFollowups([]) }} draftHoldsWidgetMessage={!!widgetDraft} onHandsFreeStart={() => notice.clear('voice-input')} onHandsFreeSubmit={(t) => { void send(t, { inputOrigin: 'voice' }) }}
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }}
           hostPills={(
             <>

@@ -166,6 +166,9 @@ export interface ComposerProps {
   /** Put words in the draft that are the owner's alone (hands-free's dictation): the host
    *  replaces the draft with them, so they carry nothing of a widget's. Defaults to onChange. */
   onReplace?: (value: string) => void
+  /** Hands-free is turning on: the host clears what its notice said when the mode last stopped,
+   *  which the mode working again answers. */
+  onHandsFreeStart?: () => void
   /** True while the draft holds a widget's message. Hands-free keeps the owner's own draft in
    *  front of what they say; a widget's message it replaces, so a spoken turn never carries a
    *  widget's words as the owner's. */

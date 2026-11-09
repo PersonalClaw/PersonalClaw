@@ -722,6 +722,9 @@ describe('a widget action waits for your Send', () => {
     const chat = readFileSync(join(process.cwd(), 'src/pages/chat/composer/ChatComposer.tsx'), 'utf8')
     // A widget's message is not the owner's draft, so the composer is told which it holds.
     expect(chat).toContain('draftHoldsWidgetMessage={!!widgetDraft}')
+    // Hands-free turning on clears the notice from when it last stopped, and nothing else does
+    // for a hands-free piece, so a refusal's notice is not cleared by a piece still in flight.
+    expect(chat).toContain("onHandsFreeStart={() => notice.clear('voice-input')}")
     // Its replace also takes down what an edit would: Revert's saved draft and the follow-ups.
     expect(chat).toContain('onReplace={(v) => { replaceDraft(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length) setFollowups([]) }}')
     expect(chat).toMatch(/onHandsFreeSubmit=\{\(t\) => \{ void send\(t, \{ inputOrigin: 'voice' \}\) \}\}/)
