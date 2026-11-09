@@ -26,7 +26,6 @@ import { useHashRoute } from './useHashRoute'
 import { BuddyRoutePage } from '../pages/buddy/buddyRoute'
 import { linkStatePatch, showsNewThread, withLinkState } from './linkState'
 import { useIsMobile } from './useIsMobile'
-import { useWindowMaterial } from './windowMaterial'
 import type { RouteProps } from './useQueryState'
 import { ErrorBoundary, WidgetBoundary } from './ErrorBoundary'
 import { syncAppGenUiComponents } from './appGenUiLayer'
@@ -298,9 +297,6 @@ function AppInner() {
   // drawer; picking a nav target closes it again. `mobileNavOpen` is the drawer state
   // (never persisted — always starts closed on a fresh mobile load).
   const isMobile = useIsMobile()
-  // The desktop window's sidebar material: the shell root and the rail go clear over it, and the
-  // work surface (`<main>`) keeps the canvas, so only the sidebar is translucent.
-  const material = useWindowMaterial()
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   // Effective collapse: on mobile the rail is collapsed unless the drawer is open;
   // on desktop it follows the persisted user preference.
@@ -889,14 +885,14 @@ function AppInner() {
     // One reading of the gateway connection for the status line, its banner and the System status
     // card under it.
     <GatewayConnectionProvider>
-      <div className="flex h-full flex-col" style={{ background: material ? 'transparent' : 'var(--color-canvas)' }}>
+      <div className="flex h-full flex-col" style={{ background: 'var(--color-canvas)' }}>
         <div className="flex min-h-0 flex-1">
           {/* The rail sits in a boundary, as each corner control does in ShellCorners: one that throws
               leaves a notice in its place, and the page beside it and ⌘K keep working. */}
           {!railHidden && (
             <WidgetBoundary what="the navigation" compact className="m-s self-start">
               <NavRail items={railItems} home={HOME} activeId={threadLit ? '' : active} onSelect={onNavSelect} collapsed={railCollapsed}
-                overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)} material={material}
+                overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)}
                 threads={(
                   // Its own boundary: a chat history that throws leaves a notice in its place, and
                   // the destinations around it keep working.
@@ -906,7 +902,7 @@ function AppInner() {
                 )} />
             </WidgetBoundary>
           )}
-          <main className="relative flex-1 min-w-0" style={material ? { background: 'var(--color-canvas)' } : undefined}>
+          <main className="relative flex-1 min-w-0">
             {/* App-shell corner regions — float above page content, not a header row */}
             <ShellCornerLeft collapsed={railCollapsed} onToggle={toggleNav} focusMode={railHidden} />
             <ShellCornerRight terminalOpen={termDrawer} onToggleTerminal={() => setTermDrawer((v) => !v)} navigate={navigate} />

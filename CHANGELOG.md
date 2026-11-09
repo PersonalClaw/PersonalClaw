@@ -25,6 +25,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The Nix flake installs 0.3.7.**
 - **Home's Overview shows your agents, not their tasks. Its Tasks band is gone, since tasks are what agents keep their goals in, and they stay on their own page, All tasks, and in each project. The Overview's bands run Your agents today, Pinned artifacts, Discover, then Recent activity.**
 - **The desktop app checks for its own update as soon as it finds its gateway on a newer version, and uses a gateway it found only at its own version or newer.**
+- **The desktop app's sidebar paints the web UI's own colours in light and in dark instead of the system's translucent material, so the square box behind New chat and the search is gone and its text keeps its contrast. Reduce transparency no longer changes it.**
+- **The page's theme colour follows your theme, so a browser that tints its title bar by it, and the dashboard installed as a web app, follow it too, and a stored light theme opens light from the first frame.**
 
 ### Fixed
 
@@ -37,6 +39,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The status answer's summary line (`stats_summary` in `/api/status`) gives the gateway's uptime, the one its `uptime` field gives. It counted from the first time the gateway read or recorded a stat, not from its start, and on macOS not while the machine slept, so it could say 5h 37m beside a 35h 51m uptime. `slack-channel`'s `/status` reply, which has no gateway uptime to give, now says "counted for" that window instead of calling it the uptime.**
 - **The desktop bridges are read only as the window's own properties.**
 - **A document's or an SVG's preview and a diagram's labels keep no `aria-modal` attribute from their markup, nor do a document's HTML export and copied HTML.**
+- **In the desktop app a switch between light and dark, from the Theme button, Settings → Appearance, or macOS while the theme is System, changes the sidebar, the strip above it and the window at once, with no need to leave the app and come back. With the theme on System the app follows macOS again, and the app opens in the theme you last used, from its second launch on this version.**
 
 ## [0.3.7] — 2026-11-07
 

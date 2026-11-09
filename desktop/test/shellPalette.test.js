@@ -122,12 +122,30 @@ describe("the shell pages use the shared tokens' values", () => {
     assert.deepStrictEqual(nonHexColours(pageCSS('<p style="color: teal">x</p>')), ["color: teal"]);
   });
 
-  for (const file of ["loading.html", "connectDialog.html", "gatewayChooser.html"]) {
+  // The loading page follows the app's theme: its light block (`prefers-color-scheme: light`, which
+  // follows `themeSource`) holds the light tokens, and the rest the dark ones. The Gateways window
+  // and the chooser stay dark-only, separate dialogs with their own palette.
+  it("loading.html's dark styles are the dark tokens and its light block the light tokens", () => {
+    const text = withoutMark(fs.readFileSync(path.join(ROOT, "loading.html"), "utf8"));
+    const light = /@media \(prefers-color-scheme: light\) \{([\s\S]*?)\n {4}\}/.exec(text);
+    assert.ok(light, "loading.html has a light block");
+    const dark = text.replace(light[0], "");
+    assert.ok(hexes(dark).length >= 3 && hexes(light[1]).length >= 3, "found almost no colours");
+    assert.deepStrictEqual(notTokens(dark, DARK), [], "a dark style that is no dark token's value");
+    assert.deepStrictEqual(notTokens(light[1], LIGHT), [], "a light style that is no light token's value");
+    assert.match(light[1], new RegExp(`background: ${LIGHT.get("canvas")};`, "i"), "it opens on the light canvas");
+  });
+
+  for (const file of ["connectDialog.html", "gatewayChooser.html"]) {
     it(`${file} uses only dark token values`, () => {
       const text = withoutMark(fs.readFileSync(path.join(ROOT, file), "utf8"));
       assert.ok(hexes(text).length >= 3, `${file}: found almost no colours`);
       assert.deepStrictEqual(notTokens(text, DARK), [], `${file} carries colours that are no token's value`);
+      assert.doesNotMatch(text, /prefers-color-scheme/, `${file} stays dark-only`);
     });
+  }
+
+  for (const file of ["loading.html", "connectDialog.html", "gatewayChooser.html"]) {
 
     it(`${file} writes every colour as a token's hex, never as rgb(), hsl() or a name`, () => {
       const css = pageCSS(withoutMark(fs.readFileSync(path.join(ROOT, file), "utf8")));
@@ -136,11 +154,12 @@ describe("the shell pages use the shared tokens' values", () => {
     });
   }
 
-  it("the window and the gateway switcher open on the canvas colour", () => {
-    // The window's colour is windowChrome.js's opaque fallback, which makeWindow spreads in
-    // (windowChrome.test.js holds that it sets no colour of its own).
-    const chrome = fs.readFileSync(path.join(ROOT, "windowChrome.js"), "utf8");
-    assert.match(chrome, new RegExp(`const OPAQUE_BACKGROUND = "${DARK.get("canvas")}";`, "i"));
+  it("the window opens on its mode's canvas, and the gateway switcher on the dark one", () => {
+    // The window's colour is the appearance's canvas (windowAppearance.js), which makeWindow spreads
+    // in through windowChrome.js (windowChrome.test.js holds that it sets no colour of its own).
+    const { DARK_CANVAS, LIGHT_CANVAS } = require("../windowAppearance");
+    assert.equal(DARK_CANVAS, DARK.get("canvas"));
+    assert.equal(LIGHT_CANVAS, LIGHT.get("canvas"));
     const dialog = fs.readFileSync(path.join(ROOT, "connectDialog.js"), "utf8");
     assert.match(dialog, new RegExp(`backgroundColor: "${DARK.get("canvas")}"`, "i"));
   });

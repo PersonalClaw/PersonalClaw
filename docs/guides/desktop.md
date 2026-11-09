@@ -202,17 +202,19 @@ be updated.
 ## The window
 
 On macOS the window has no title bar of its own: the window controls (close, minimize, zoom) sit
-in the strip above the sidebar, and the sidebar takes the system's translucent material, so the
-desktop shows through it softly. Everything you read and type in, the page beside the sidebar,
-stays opaque.
+in the strip above the sidebar. The sidebar and the page beside it paint the same colours as the
+web UI, in light and in dark, with no translucent material, so their text keeps its contrast.
 
-The window is opaque all over, with the controls in the same place, when:
+A switch between light and dark, from the Theme button at the top right, Settings → Appearance, or
+macOS while the theme is System, changes the sidebar, the strip above it, the window and its tabs
+and menus at once, with no need to leave the app and come back. From its second launch on 0.3.8 the
+app opens in the theme you last used; at the first, the window opens in macOS's mode and then takes
+the theme of the dashboard, which opens in the theme it opened in before. When this computer's
+gateway is from before 0.3.8, the strip and the window's tabs and menus change at its next load or
+when you come back to the app; another gateway from before 0.3.8 changes them just after the click
+or key.
 
-- **macOS asks for reduced transparency** (System Settings → Accessibility → Display → Reduce
-  transparency). Turning it on or off changes every open window at once, with no restart.
-- **The page asks for it**, through the browser's reduced-transparency preference.
-
-On Linux the window keeps its plain frameless look, with no material.
+On Linux the window keeps its plain frameless look, in the same colours.
 
 ## Links that open the app
 

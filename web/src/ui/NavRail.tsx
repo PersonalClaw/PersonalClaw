@@ -67,7 +67,7 @@ const DEFAULT_W = 196
  *  is the status line's, at the window's bottom left. No operator/identity footer (single-user;
  *  Settings is in nav). */
 export function NavRail({
-  items, home, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, material = false, threads,
+  items, home, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, threads,
 }: {
   items: NavItem[]
   /** The destination the rail's icon and name open, Home (#5880): its header is then that
@@ -79,10 +79,6 @@ export function NavRail({
    *  and the phone's drawer: the one part of the rail that scrolls. The collapsed rail is icons only
    *  and shows none: a chat is reached there from Home, the palette or a key. */
   threads?: ReactNode
-  /** The desktop window's translucent material shows behind the rail (`app/windowMaterial.ts`):
-   *  the in-flow column is then clear so the material shows through it. The phone drawer floats
-   *  over the page, so it keeps its own surface either way. */
-  material?: boolean
   activeId: string
   onSelect: (id: string) => void
   collapsed: boolean
@@ -222,7 +218,7 @@ export function NavRail({
     // A window too short for both blocks and the chat history's floor (`HISTORY_FLOOR`) scrolls the
     // rail as one column, so every shortcut stays reachable; it never squeezes one.
     <nav data-tour="rail" className="flex h-full flex-col overflow-y-auto overflow-x-hidden"
-      style={{ width: overlay ? OVERLAY_W : w, background: material && !overlay ? 'transparent' : 'var(--color-rail)' }}>
+      style={{ width: overlay ? OVERLAY_W : w, background: 'var(--color-rail)' }}>
       <div data-rail-top className="flex shrink-0 flex-col gap-1 px-m pt-l pb-xs">
         {/* header — the icon and name, in the centre of the rail at every width it is dragged to,
             and the icon alone, centred, when it is collapsed. The collapse toggle lives in the main

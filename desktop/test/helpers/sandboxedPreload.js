@@ -100,7 +100,7 @@ function preloadOf(block) {
  * so a bridge call can be driven from the page's side to the handler that answers it. A test that
  * wants what a fire-and-forget call sent passes `send(channel, ...args)` the same way.
  */
-function loadPreloadSandboxed(file, { invoke = () => Promise.resolve(undefined), send = () => {} } = {}) {
+function loadPreloadSandboxed(file, { invoke = () => Promise.resolve(undefined), send = () => {}, argv } = {}) {
   const src = fs.readFileSync(file, "utf8");
   const exposed = Object.create(null);
   const channels = [];
@@ -143,8 +143,10 @@ function loadPreloadSandboxed(file, { invoke = () => Promise.resolve(undefined),
 
   const mod = { exports: {} };
   // eslint-disable-next-line no-new-func -- executing the preload IS the assertion.
-  const run = new Function("require", "module", "exports", "__filename", "__dirname", src);
-  run(shimRequire, mod, mod.exports, file, require("node:path").dirname(file));
+  const run = new Function("require", "module", "exports", "__filename", "__dirname", "process", src);
+  // The renderer's own arguments (`webPreferences.additionalArguments`), when a test gives them.
+  const proc = argv ? Object.assign(Object.create(process), { argv: ["electron", ...argv] }) : process;
+  run(shimRequire, mod, mod.exports, file, require("node:path").dirname(file), proc);
   const emit = (channel, ...args) => { for (const fn of listeners.get(channel) || []) fn({}, ...args); };
   return { exposed, channels, emit };
 }

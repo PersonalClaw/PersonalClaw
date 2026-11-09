@@ -156,6 +156,16 @@ export interface DesktopBridge {
   systemBrowser?: {
     open: (url: string) => Promise<SystemBrowserResult>
   }
+  /** The page's theme, said to the shell at once (`app/windowAppearance.ts`), so the window, the
+   *  strip above the page and the native chrome follow a switch with no focus change. Fire and
+   *  forget; the shell takes it only from its own window, well formed. Absent in a shell from
+   *  before it, which reads the page on a load or a focus instead. */
+  appearance?: {
+    /** The theme the shell kept, for a page whose origin keeps none (the app's own gateway opens on
+     *  a new port at each launch); read once, before the first paint (`index.html`). */
+    kept?: 'dark' | 'light' | 'auto' | null
+    changed: (a: { preference: 'dark' | 'light' | 'auto'; mode: 'dark' | 'light'; canvas: string }) => void
+  }
   /** The app's own update: Settings › Updates › This app and the System popover's row. Absent in
    *  a browser tab, on a paired gateway's page (which carries no bridge), and in a shell from
    *  before it. `download` takes the version Update named, and `finish` the version the confirm
