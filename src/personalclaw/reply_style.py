@@ -230,6 +230,9 @@ class StyleRefused(ValueError):
 
 #: A style fence, opening or closing, however it is spaced or cased.
 _FENCE = re.compile(r"\[\s*(?:end\s+)?reply\s+style\b", re.IGNORECASE)
+
+#: The explanations section's fence (``explanations.section``), which follows a style's.
+_EXPLAIN_FENCE = re.compile(r"\[\s*(?:end\s+)?explanations\b", re.IGNORECASE)
 _CLOSE = "[END REPLY STYLE]"
 
 
@@ -296,6 +299,11 @@ def _refusal(file: str, text: str, title: str, description: str, size: int, *, b
             )
     if _FENCE.search(text):
         return f"{file} opens or closes the style section (a style fence), so it is not loaded."
+    if _EXPLAIN_FENCE.search(text):
+        return (
+            f"{file} opens or closes the explanations section, which follows it, so it is not "
+            "loaded."
+        )
     for label, value in [("text", text), *named]:
         found = _BEHAVIOUR.search(value)
         if found:
@@ -512,8 +520,9 @@ def instruction(style: str) -> str:
     ``""`` for ``default`` and for a style that is not available.
 
     Read on every call rather than cached, so an edit reaches the next turn. Raises
-    :class:`StyleRefused` when a bundled snippet's text opens or closes a style fence (your own and
-    an app's are refused at load instead, and so are not available).
+    :class:`StyleRefused` when a bundled snippet's text opens or closes a style fence or the
+    explanations section's, which follows it (your own and an app's are refused at load instead,
+    and so are not available).
     """
     if style == DEFAULT:
         return ""
@@ -521,11 +530,15 @@ def instruction(style: str) -> str:
         found = _lookup(style)
         return found.text if found else ""
     text = _render(f"reply-style-{style}").strip()
-    if _FENCE.search(text):
-        raise StyleRefused(
-            f"The {_TITLES[style]} reply style's text opens or closes the style section "
-            f"(reply-style-{style} in Settings → Agent → Prompts), so it is not sent."
-        )
+    for fence, what in (
+        (_FENCE, "the style section"),
+        (_EXPLAIN_FENCE, "the explanations section"),
+    ):
+        if fence.search(text):
+            raise StyleRefused(
+                f"The {_TITLES[style]} reply style's text opens or closes {what} "
+                f"(reply-style-{style} in Settings → Agent → Prompts), so it is not sent."
+            )
     return text
 
 
@@ -536,12 +549,21 @@ def section(style: str) -> str:
     The same one fence for every style, bundled, yours or an app's, and the rules always after it.
     Raises :class:`StyleRefused` as :func:`instruction` does.
     """
-    text = instruction(style)
-    if not text:
+    fenced = _fenced(style)
+    if not fenced:
         return ""
     from personalclaw.prompt_providers.runtime import safety_rules
 
-    return f"[REPLY STYLE: {_title(style)}]\n{text}\n{_CLOSE}\n\n{safety_rules()}"
+    return f"{fenced}\n\n{safety_rules()}"
+
+
+def _fenced(style: str) -> str:
+    """*style*'s text in its fence, without the safety rules: ``""`` for ``default`` or a style
+    with no text. Raises :class:`StyleRefused` as :func:`instruction` does."""
+    text = instruction(style)
+    if not text:
+        return ""
+    return f"[REPLY STYLE: {_title(style)}]\n{text}\n{_CLOSE}"
 
 
 def notice_for(resolved: Resolved) -> str:
@@ -572,23 +594,40 @@ def notice_once(session: Any, resolved: Resolved) -> str:
     return said
 
 
-def appended(message: str, style: str) -> str:
-    """*message* with *style*'s section after it, on every turn the style resolves to.
+def appended(message: str, style: str, explain: str = "default") -> str:
+    """*message* with *style*'s section and *explain*'s after it (``explanations.section``), on
+    every turn they resolve to, and the platform's safety rules once, last.
 
-    Every turn, not only the first (which is what a persona does): the choice can change
-    mid-conversation, and a style is the first thing a long conversation forgets. *message* is
-    returned unchanged for ``default``, for a refused style and on any rendering failure: a style
-    never blocks a turn.
+    Every turn, not only the first (which is what a persona does): a choice can change
+    mid-conversation, and a style is the first thing a long conversation forgets. Each section is
+    left out for ``default``, for a refused style and on any rendering failure, and *message* is
+    returned unchanged when neither applies: neither ever blocks a turn.
     """
+    blocks: list[str] = []
     try:
-        text = section(style)
+        styled = _fenced(style)
     except StyleRefused as refused:
         logger.warning("%s", refused)
-        return message
+        styled = ""
     except Exception:
         logger.warning("Reply style %r could not be rendered", style, exc_info=True)
+        styled = ""
+    if styled:
+        blocks.append(styled)
+    try:
+        from personalclaw import explanations
+
+        explained = explanations.section(explain)
+    except Exception:
+        logger.warning("Explanation %r could not be rendered", explain, exc_info=True)
+        explained = ""
+    if explained:
+        blocks.append(explained)
+    if not blocks:
         return message
-    return f"{message}\n\n{text}\n" if text else message
+    from personalclaw.prompt_providers.runtime import safety_rules
+
+    return f"{message}\n\n" + "\n".join(blocks) + f"\n\n{safety_rules()}\n"
 
 
 # ─────────────────────────────── the preview ────────────────────────────────
@@ -601,13 +640,21 @@ def preview(session: Any, persona_block: Callable[[str], str]) -> dict[str, Any]
     with none). The caller hands it in because the personas belong to the chat surface, which
     this module sits below.
 
-    ``applies`` is ``"style"``, ``"persona"`` or ``"none"``. For a style, ``instruction`` is the
-    section every turn appends while the chat resolves to it. For a persona (no style is
-    chosen), it is the block a new chat's first turn appends, and ``first_turn_only`` says so: a
-    turn after that appends nothing for it, and the preview does not know which turn is next.
-    ``refused`` says why a style's text is not sent, when it is not.
+    ``applies`` is ``"style"``, ``"persona"`` or ``"none"``. ``instruction`` is the whole text a
+    turn appends after its message, as :func:`appended` writes it: for a style, its section, the
+    explanation's when one applies, and the safety rules, on every turn while the chat resolves to
+    them. For a persona (no style is chosen), it is the block a new chat's first turn appends,
+    then the explanation's section and the rules when one applies, and ``first_turn_only`` says the
+    persona is that turn's only: a turn after it appends the explanation alone, and the preview
+    does not know which turn is next. With neither a style nor a persona it is the explanation's
+    section and the rules, or ``""``. ``explain`` and ``explain_source`` are the explanation the
+    turn resolves to and the scope that decided it (``explanations.resolve_for``). ``refused``
+    says why a style's text is not sent, when it is not.
     """
+    from personalclaw import explanations
+
     resolved = resolve_for(session)
+    explained = explanations.resolve_for(session)
     theme = getattr(session, "color_theme", "") or ""
     block = persona_block(theme) if theme else ""
     persona = theme if block else ""
@@ -615,6 +662,8 @@ def preview(session: Any, persona_block: Callable[[str], str]) -> dict[str, Any]
         "style": resolved.style,
         "source": resolved.source,
         "persona": persona,
+        "explain": explained.explain,
+        "explain_source": explained.source,
         "applies": "none",
         "instruction": "",
         "first_turn_only": False,
@@ -622,15 +671,22 @@ def preview(session: Any, persona_block: Callable[[str], str]) -> dict[str, Any]
     }
     if resolved.style != DEFAULT:
         out["applies"] = "style"
+        sent = resolved.style
         try:
-            out["instruction"] = section(resolved.style)
+            section(resolved.style)
         except StyleRefused as refused:
             out["refused"] = str(refused)
+            sent = DEFAULT
         except Exception:
             logger.debug("reply style preview render failed", exc_info=True)
+            sent = DEFAULT
+        out["instruction"] = appended("", sent, explained.explain).strip("\n")
         return out
+    tail = appended("", DEFAULT, explained.explain)
     if block:
-        out.update(applies="persona", instruction=block, first_turn_only=True)
+        out.update(applies="persona", instruction=block + tail, first_turn_only=True)
+    else:
+        out["instruction"] = tail.strip("\n")
     return out
 
 

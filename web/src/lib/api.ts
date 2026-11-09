@@ -6909,13 +6909,14 @@ export interface RefusedReplyStyle { id: string; file: string; reason: string; a
 export interface ReplyStyleList {
   styles: ReplyStyle[]; refused?: RefusedReplyStyle[]; precedence: string[]; size_cap?: number
 }
-/** The answers to "How should I explain things?" (`POST /api/onboarding/explain`). */
-export type ExplainAnswer = 'briefly' | 'step_by_step' | 'with_background' | 'skip'
 
 /** What the next turn of a chat carries for its voice, read from the backend's resolution:
- *  the style's section, or the identity's persona when no style is chosen, or nothing. */
+ *  the style's section, or the identity's persona when no style is chosen, or nothing, then the
+ *  explanation the turn resolves to (`explain`, decided by `explain_source`). `instruction` is
+ *  the whole text the turn appends, both sections and the safety rules. */
 export interface ReplyStylePreview {
   style: string; source: string; persona: string
+  explain: string; explain_source: string
   applies: 'style' | 'persona' | 'none'
   instruction: string; first_turn_only: boolean; refused: string
 }
@@ -9296,10 +9297,11 @@ export const api = {
 
   // onboarding readiness + the in-flow fix (bind a chat model)
   onboarding: () => get<OnboardingState>('/api/onboarding'),
-  /** Answer "How should I explain things?" once: an answer pins a `style` preference, `skip` writes
-   *  nothing, and either way the question is recorded as asked. A second answer is a 409. */
-  answerExplain: (answer: ExplainAnswer) =>
-    post<{ ok: boolean; facet: string | null }>('/api/onboarding/explain', { answer }),
+  /** Skip "How should I explain things?": records the question as asked and writes nothing; a
+   *  second claim is a 409. An answer is the Explanations default instead
+   *  (`patchConfig('agent.explain', …)`), whose write records the question as asked. */
+  answerExplain: (answer: 'skip') =>
+    post<{ ok: boolean; state: OnboardingState }>('/api/onboarding/explain', { answer }),
   /** Record first-run progress — a PARTIAL merge at both levels, so each step sends
    *  only what it learned. Never read-modify-write the whole document. */
   saveOnboardingState: (patch: OnboardingStatePatch) =>

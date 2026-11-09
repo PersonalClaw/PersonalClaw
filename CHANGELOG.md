@@ -22,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **"How should I explain things?" is a setting now, in Settings → Agent → Agent defaults → Explanations, and it reaches every chat, temporary and folder chats included. An answer you gave the old card moves there.**
 - **The Nix flake installs 0.3.7.**
 - **Home's Overview shows your agents, not their tasks. Its Tasks band is gone, since tasks are what agents keep their goals in, and they stay on their own page, All tasks, and in each project. The Overview's bands run Your agents today, Pinned artifacts, Discover, then Recent activity.**
 - **The desktop app checks for its own update as soon as it finds its gateway on a newer version, and uses a gateway it found only at its own version or newer.**

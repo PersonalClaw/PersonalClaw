@@ -3056,9 +3056,13 @@ async def run_chat(
             # chosen, the identity's persona on a new chat's first turn. A chosen style wins over
             # the persona. Appended here so build_message counts it in the context budget; an
             # instruction to the model, never a second call over the reply (reply_style.py).
+            from personalclaw import explanations as _ex
             from personalclaw import reply_style as _rs
 
             _resolved = _rs.resolve_for(session)
+            # How things are explained (this chat's choice, else the owner's default), sent after
+            # the style's section, with the safety rules once, last (reply_style.appended).
+            _explain = _ex.resolve_for(session).explain
             _style = _resolved.style
             if _said := _rs.notice_once(session, _resolved):  # a chosen style that is gone
                 session.append("notice", _said, "msg msg-notice")
@@ -3068,8 +3072,9 @@ async def run_chat(
                 message = _maybe_inject_persona(
                     message, getattr(session, "color_theme", ""), is_new
                 )
+                message = _rs.appended(message, _rs.DEFAULT, _explain)
             else:
-                message = _rs.appended(message, _style)
+                message = _rs.appended(message, _style, _explain)
             # Project-bound chat: on the first turn, prepend the project's
             # context — workspace, loop history, context-dir — so the session operates
             # with the project's cohesive shared context. First turn only (is_new); the

@@ -36,6 +36,12 @@
     "type": "bool"
   },
   {
+    "default": "default",
+    "path": "agent.explain",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": "WARNING",
     "path": "agent.log_level",
     "sensitive": false,

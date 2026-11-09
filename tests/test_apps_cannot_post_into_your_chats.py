@@ -338,6 +338,7 @@ SESSION_WRITES: list[tuple[str, str, dict]] = [
     ("POST", "/api/chat/sessions/{session}/workspace-dir", {"workspace_dir": "/"}),
     ("PATCH", "/api/chat/sessions/{session}/color", {"color_index": 1}),
     ("PATCH", "/api/chat/sessions/{session}/reply-style", {"reply_style": "terse"}),
+    ("PATCH", "/api/chat/sessions/{session}/explain", {"explain": "briefly"}),
     ("PATCH", "/api/chat/sessions/{session}/title", {"title": "pwned"}),
     ("PATCH", "/api/chat/sessions/{session}/pin", {"pinned": True}),
     ("POST", "/api/chat/sessions/{session}/seen", {}),

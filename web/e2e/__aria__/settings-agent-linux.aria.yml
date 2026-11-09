@@ -63,6 +63,12 @@
     - 'button "Reply style: Plain"': Plain
     - 'button "Reply style: Terse"': Terse
     - 'button "Reply style: Conversational"': Conversational
+    - text: Explanations How replies explain things to you. Changes how things are explained, never a fact, a caveat or a refusal.
+    - status
+    - 'button "Explanations: No preference" [pressed]': No preference
+    - 'button "Explanations: Briefly"': Briefly
+    - 'button "Explanations: Step by step"': Step by step
+    - 'button "Explanations: With the background"': With the background
     - text: YOLO mode Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation.
     - status
     - switch "YOLO mode"

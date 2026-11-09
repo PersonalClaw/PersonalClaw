@@ -105,6 +105,8 @@ tests/rails/test_record_id_containment_tree.py
 tests/rails/test_rendering_registry_parity_tree.py
 tests/rails/test_replay_harness_tree.py
 tests/rails/test_reply_style_texts_name_only_controls_that_exist_tree.py
+tests/rails/test_explanation_texts_name_only_controls_that_exist_tree.py
+tests/rails/test_the_start_moves_the_old_cards_answer_tree.py
 tests/rails/test_resilience_degraded_lint_tree.py
 tests/rails/test_rooms_store_tree.py
 tests/rails/test_run_facts_imports_nothing_from_tools.py

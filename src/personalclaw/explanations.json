@@ -1,0 +1,26 @@
+[
+  {
+    "id": "default",
+    "label": "No preference",
+    "hint": "The agent explains things its usual way.",
+    "sent": ""
+  },
+  {
+    "id": "briefly",
+    "label": "Briefly",
+    "hint": "The short answer first. Details when you ask.",
+    "sent": "Explain things briefly."
+  },
+  {
+    "id": "step_by_step",
+    "label": "Step by step",
+    "hint": "Numbered steps you can follow.",
+    "sent": "Explain things step by step."
+  },
+  {
+    "id": "with_background",
+    "label": "With the background",
+    "hint": "The why and the context, then the answer.",
+    "sent": "Explain things with the background."
+  }
+]

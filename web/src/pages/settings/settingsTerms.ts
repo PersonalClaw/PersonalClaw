@@ -35,7 +35,7 @@ export const SETTINGS_TERMS: Readonly<Record<string, readonly string[]>> = {
     'Advanced', 'Orchestrator skill', 'Concurrent ACP sessions', 'Unattended runs need a verified adapter',
     'Soft-stop budget', 'Runner health check interval', 'Runner idle release', 'Durable worker sessions',
     'Self-QA companion', 'Enable the companion', 'Watched repository', 'Max scenarios per run',
-    'Propose fix branches', 'Runners', 'Approval mode', 'Reply style'],
+    'Propose fix branches', 'Runners', 'Approval mode', 'Reply style', 'Explanations'],
   voice: ['Speak replies aloud', 'Speaking speed', 'Voice persona', 'Hands-free voice',
     'Mute while speaking', 'Echo filter', 'Clean text before speaking', 'Voice-origin disclaimer',
     'Session Map reacts to audio', 'Push-to-talk shortcut', 'Model', 'ffmpeg', 'Vocabulary & corrections'],

@@ -79,6 +79,7 @@ describe('Agent defaults › Reply style', () => {
     await mountPanel()
     await screen.findByRole('button', { name: 'Reply style: Terse' })
     expect(screen.getByText(/chat or the agent chooses its own/)).toBeTruthy()
-    expect(screen.getByText(/never a fact, a caveat or a refusal/)).toBeTruthy()
+    // The Explanations row beside it says "never a fact" too, so this reads the style's own words.
+    expect(screen.getByText(/Changes style only, never a fact, a caveat or a refusal/)).toBeTruthy()
   })
 })

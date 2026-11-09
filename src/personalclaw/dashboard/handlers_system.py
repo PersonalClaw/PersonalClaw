@@ -14,6 +14,7 @@ from pathlib import Path
 from aiohttp import web
 
 import personalclaw
+from personalclaw import explanations as _explanations
 from personalclaw import home_gateway, record_files
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.sign_in_pair import WINDOW_DOOR
@@ -989,72 +990,44 @@ async def api_onboarding(request: web.Request) -> web.Response:
     )
 
 
-#: The answers to "How should I explain things?", each the ``style`` preference it pins.
-EXPLAIN_ANSWERS: dict[str, str] = {
-    "briefly": "Explain things briefly.",
-    "step_by_step": "Explain things step by step.",
-    "with_background": "Explain things with the background.",
-}
-
-
-def _explain_store(request: web.Request):
-    """The global memory's record store, where preference facets live (the Memory page's)."""
-    from personalclaw.dashboard.handlers.memory import _global_provider
-
-    return _global_provider(request.app["state"])
+#: The answers the card once saved here: every Explanations choice but No preference. They are the
+#: owner's Explanations default now (``agent.explain``), saved through the config PATCH, so this
+#: route refuses them by name. Read from the one table (``explanations.json``).
+_FORMER_ANSWERS = tuple(i for i in _explanations.EXPLAIN_IDS if i != _explanations.DEFAULT)
 
 
 async def api_onboarding_explain(request: web.Request) -> web.Response:
-    """Answer the one optional question, "How should I explain things?", once.
+    """Skip the one optional question, "How should I explain things?", once.
 
-    ``POST /api/onboarding/explain`` with ``{"answer": "briefly" | "step_by_step" |
-    "with_background" | "skip"}``. An answer writes a pinned ``style`` preference facet, so it shows
-    wherever preferences are listed and can be changed or forgotten there; ``skip`` writes nothing.
-    Either way the onboarding state records that the question was asked (``explain_asked``), so
-    the card does not come back. A second answer is refused (409) and changes nothing.
-
-    The question is claimed before anything is written: the check and the claim are one step on
-    the loop, with nothing awaited between them, so of two answers in flight (two tabs, a retry)
-    the second is the 409 and one preference is kept. A write that fails gives the claim back,
-    so the question can be answered again.
+    ``POST /api/onboarding/explain`` with ``{"answer": "skip"}``, which the card's Skip sends: it
+    records ``explain_asked`` in the onboarding state and writes nothing else. An answer is the
+    owner's Explanations default, ``agent.explain``, saved through the config PATCH, whose write
+    records the question as asked. A second claim is refused (409), and the check and the claim
+    are one step on the loop, with nothing awaited between them, so of two in flight (two tabs, a
+    retry) the second is the 409. The three answers this route once took are a 400 naming
+    ``agent.explain``.
     """
     from personalclaw.http_errors import json_error
     from personalclaw.onboarding import load_onboarding_state, merge_onboarding_state
-    from personalclaw.preference_facets import pin_facet, upsert_facet
 
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
         return json_error("invalid_json", status=400)
     answer = body.get("answer") if isinstance(body, dict) else None
-    if not isinstance(answer, str) or (answer != "skip" and answer not in EXPLAIN_ANSWERS):
+    if answer in _FORMER_ANSWERS:
         return json_error(
             "bad_request",
-            message="'answer' must be one of: " + ", ".join([*EXPLAIN_ANSWERS, "skip"]),
+            message="an answer is your Explanations default now: set 'agent.explain' through "
+            "the config, and send 'skip' here to record the question as asked",
             status=400,
         )
-    vs = _explain_store(request) if answer != "skip" else None
+    if answer != "skip":
+        return json_error("bad_request", message="'answer' must be 'skip'", status=400)
     if load_onboarding_state()["explain_asked"]:
         return json_error("question_answered", status=409)
     state = merge_onboarding_state({"explain_asked": True})
-    key = None
-    if vs is not None:
-        text = EXPLAIN_ANSWERS[answer]
-
-        def write() -> str | None:
-            written = upsert_facet(vs, "style", text, cue="explicit")
-            if written:
-                pin_facet(vs, written, True)
-            return written
-
-        try:
-            key = await asyncio.get_running_loop().run_in_executor(None, write)
-        except Exception:
-            # The write failed, so nothing is kept: give the question back. Not on a cancel, whose
-            # write may still finish in its thread.
-            merge_onboarding_state({"explain_asked": False})
-            raise
-    return web.json_response({"ok": True, "facet": key, "state": state})
+    return web.json_response({"ok": True, "state": state})
 
 
 async def api_onboarding_state(request: web.Request) -> web.Response:

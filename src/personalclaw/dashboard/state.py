@@ -261,6 +261,7 @@ class _ChatSession(ChatQueue):
         "color_theme",
         "reply_style",
         "_reply_style_noticed",
+        "explain",
         "memory_mode",
         "_ephemeral",
         "_pending_context",
@@ -474,6 +475,7 @@ class _ChatSession(ChatQueue):
         # notice is said once (chat_runner), across a restart too (kept in the session's meta
         # line as `reply_style_noticed`); "" while every chosen style is there.
         self._reply_style_noticed: str = ""
+        self.explain: str = ""  # this chat's explanations choice; "" follows `agent.explain`
         if memory_mode not in VALID_MEMORY_MODES:
             raise ValueError(
                 f"invalid memory_mode {memory_mode!r}, must be one of {VALID_MEMORY_MODES}"

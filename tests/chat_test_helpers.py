@@ -113,6 +113,7 @@ def _make_app(state: DashboardState) -> web.Application:
         api_chat_session_color,
         api_chat_session_delete,
         api_chat_session_detail,
+        api_chat_session_explain,
         api_chat_session_fork,
         api_chat_session_map,
         api_chat_session_regenerate,
@@ -143,6 +144,7 @@ def _make_app(state: DashboardState) -> web.Application:
     app.router.add_patch("/api/chat/sessions/{session}/title", api_chat_session_rename)
     app.router.add_patch("/api/chat/sessions/{session}/color", api_chat_session_color)
     app.router.add_patch("/api/chat/sessions/{session}/reply-style", api_chat_session_reply_style)
+    app.router.add_patch("/api/chat/sessions/{session}/explain", api_chat_session_explain)
     app.router.add_post("/api/chat/sessions/{session}/regenerate", api_chat_session_regenerate)
     app.router.add_post("/api/chat/sessions/{session}/fork", api_chat_session_fork)
     app.router.add_post("/api/chat/sessions/{session}/undo", api_chat_session_undo)

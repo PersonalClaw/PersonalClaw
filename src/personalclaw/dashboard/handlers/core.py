@@ -884,6 +884,23 @@ async def _apply_yolo_live(state: DashboardState | None, value: object) -> None:
             logger.warning("SEL audit failed for YOLO disable via config patch", exc_info=True)
 
 
+def _mark_explain_asked(path_key: str, app_name: str) -> None:
+    """After a write of *path_key*: the owner's Explanations default answers the question the
+    first-run card asks, so the card never asks it again. An app's write answers nothing for the
+    owner. A store that cannot record it is logged; the setting is written either way.
+
+    On the loop, as the onboarding routes merge, since the merge reads and writes the state with no
+    lock of its own."""
+    if path_key != "agent.explain" or app_name:
+        return
+    try:
+        from personalclaw import onboarding
+
+        onboarding.merge_onboarding_state({"explain_asked": True})
+    except Exception:
+        logger.warning("could not record the explanations question as asked", exc_info=True)
+
+
 async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     """PATCH /api/config/personalclaw — update a single config field.
 
@@ -1141,6 +1158,8 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         state = request.app.get("state")
         if state is not None:
             state.push_refresh("voice")
+
+    _mark_explain_asked(path_key, app_name)
 
     # Every window reads the buddy's policy once and follows it (#3901), so a buddy knob's write
     # tells the owner's sockets it may have changed, and each reads it again.

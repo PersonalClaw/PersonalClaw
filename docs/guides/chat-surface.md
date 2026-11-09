@@ -525,17 +525,24 @@ form and Agent defaults show the kept choice as no longer available; it can't be
 and the agent's other fields still save. The style comes back on its own when the file or the
 app does.
 
+**Explanations.** How replies explain things to you: **No preference**, **Briefly**, **Step by
+step** or **With the background**. Your default is in Settings → Agent → Agent defaults →
+Explanations, and a chat's own choice wins over it. It changes how things are explained, never a
+fact, a caveat or a refusal. It's sent as its own section after the reply style's, and the
+platform's safety rules still come last.
+
 **How should I explain things?** After setup, a new chat offers this once, as a card that never
 blocks the composer, and not while the quick tour is showing you around: **Briefly**, **Step by
-step**, **With the background** or **Skip**. An
-answer is kept as a pinned preference, which you can change or forget under Memory; Skip is
-remembered, so the card doesn't return.
+step**, **With the background** or **Skip**. Your answer becomes your Explanations default, and
+setting the default in Settings first answers the card too. Skip is remembered, so the card
+doesn't return.
 
 **Editing a style.** Each bundled style's wording is a prompt in Settings → Agent → Prompts
 (`reply-style-plain`, `reply-style-terse`, `reply-style-conversational`). Its text is sent as
 one bounded section, yours and an app's included, and the platform's safety rules are sent
-right after it on every styled turn, so no style can have the last word. A style whose text opens or closes a style section
-of its own is not sent, and the turn goes without it.
+after it (and after the explanations section, when there is one) on every styled turn, so no
+style can have the last word. A style whose text opens or closes a style section of its own, or
+the explanations section, is not sent, and the turn goes without it.
 
 ---
 
