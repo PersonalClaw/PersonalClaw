@@ -79,6 +79,9 @@ describe('a settings Row labels exactly one control', () => {
     const next = ui.indexOf('\nexport ', start + 1)
     const row = ui.slice(start, next > start ? next : undefined)
     expect(row).toMatch(/\{label\}/)
-    expect(row).toMatch(/col-start-2 row-start-1 flex items-center">\{children\}/)
+    // All children in ONE slot, the flex slot, whichever column it sits in (beside the label from
+    // `sm` up, under it on a phone).
+    expect(row).toMatch(/className="[^"]*\bflex items-center\b[^"]*">\{children\}/)
+    expect(row.match(/\{children\}/g), 'children are rendered once').toHaveLength(1)
   })
 })
