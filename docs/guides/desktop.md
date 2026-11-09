@@ -154,7 +154,12 @@ start is refused, it uses that gateway without asking; that box is off until you
 - **It uses one at its own version or newer.** A gateway it found that runs an older version than
   the app, or a build the app can't use, is not signed in to: the Gateways window's **This
   computer** row says which, and offers **Try Again** once you have updated the gateway or
-  installed it again.
+  installed it again. For an older one the row and the chooser offer **Update the Gateway** first:
+  the app asks the gateway to update itself to the release it resolves, this app's version or
+  newer, after a confirm that says what its restart interrupts, waits until it is back on this
+  app's version or newer, and then uses it. A gateway that
+  can't update that way (a container, another app's built-in gateway, a checkout on the Developer
+  channel, or one pinned to another release) says why on the row instead.
 - **It signs in as the CLI does**, with the home's local secret, for 30 days, as long as the app's
   own sign-in lasts by default. The sign-in is held exactly as that one is: in memory, as the
   windows' session cookie, never on disk or in an address. Quitting ends it.

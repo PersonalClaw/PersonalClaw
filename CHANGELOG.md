@@ -27,6 +27,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The desktop app checks for its own update as soon as it finds its gateway on a newer version, and uses a gateway it found only at its own version or newer.**
 - **The desktop app's sidebar paints the web UI's own colours in light and in dark instead of the system's translucent material, so the square box behind New chat and the search is gone and its text keeps its contrast. Reduce transparency no longer changes it.**
 - **The page's theme colour follows your theme, so a browser that tints its title bar by it, and the dashboard installed as a web app, follow it too, and a stored light theme opens light from the first frame.**
+- **The desktop app can update an older gateway it found, from the Gateways window, and then use it.**
 
 ### Fixed
 

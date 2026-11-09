@@ -39,7 +39,7 @@ const {
 const homeGateway = require("./homeGateway");
 const { makeGatewayWatch } = require("./gatewayWatch");
 const { makeLocalSignIn, movedUrl, movesOnRestart, parseReadyLine, signOutRequest } = require("./localSignIn");
-const { PAGE_OWN_PAIR_HEADERS, PAIR_CHANGED, originKey, registerWindowTraffic } = require("./windowTraffic");
+const { PAGE_OWN_PAIR_HEADERS, PAIR_CHANGED, PAIR_HEADER, originKey, registerWindowTraffic } = require("./windowTraffic");
 const { classify: classifyRefusal } = require("./shellRefusal");
 const { openShellStore } = require("./shellStore");
 const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, pushToBuddy, registerBuddyIpc, registerBuddySettingsIpc } = require("./buddyWindow");
@@ -495,6 +495,9 @@ async function findHomeGateway({ waitMs = 0 } = {}) {
  * reason, sentence}` (`homeGateway.reach`'s reasons, or `sign_in`).
  */
 async function reachHomeGateway({ waitMs = 0 } = {}) {
+  // What an Update the Gateway press kept is tried first: nothing comes between this look's proof
+  // and the sign-in it carries the home's secret to.
+  await signOutUpdateSessions();
   const found = await findHomeGateway({ waitMs });
   if (!found.ok) return found;
   const verdict = mayUseFoundGateway(found.gateway);
@@ -534,7 +537,11 @@ function foundSentence(gateway) {
  * that one. Resolves `{ok: true}` once it serves the windows, or `{ok: false, code, message}`.
  */
 async function useRunningGateway() {
-  if (ownGatewayLives()) return { ok: false, code: "own", message: "This app's own gateway is running, so there is no other one to use." };
+  if (ownGatewayLives()) {
+    // The row says the gateway that serves the home: the app's own, up or starting.
+    setLocalState(localGatewayUrl && !adoptedGateway ? "own" : "starting");
+    return { ok: false, code: "own", message: "This app's own gateway is running, so there is no other one to use." };
+  }
   setLocalState("starting");
   const found = await reachHomeGateway();
   if (found.ok) {
@@ -557,9 +564,9 @@ async function useRunningGateway() {
  * capability bridge attaches to it, as to the gateway the app starts. A gateway the app used before
  * (one that stopped, or the app's own start) is followed there, the way a restart is.
  */
-async function adoptHomeGateway(found) {
+async function adoptHomeGateway(found, { fromWatch = false } = {}) {
   // A gateway this app found is used only with its window's door, whose session comes with a pair.
-  if (!found.pair) return refusePairless(found.gateway, found.ready);
+  if (!found.pair) return refusePairless(found.gateway, found.ready, { fromWatch });
   const followed = Boolean(localGatewayUrl);
   adoptedGateway = { pid: found.gateway.pid, port: found.gateway.port };
   sawGateway("adopted", found.gateway);
@@ -618,6 +625,7 @@ async function bringUpLocalGateway() {
     if (!served) console.error("Gateway did not start:", err.message);
     const found = await findHomeGateway({ waitMs: served ? 20_000 : 0 });
     if (found.ok) {
+      await signOutUpdateSessions();
       // One this app may not use is said on the row, and neither offered nor used.
       const verdict = mayUseFoundGateway(found.gateway);
       if (!verdict.ok) {
@@ -681,11 +689,14 @@ const gatewayWatch = makeGatewayWatch({
  * use now.
  */
 async function followMovedGateway() {
+  // As at Use It: what a press kept is tried before this follow's own proof, never between it and
+  // the sign-in.
+  await signOutUpdateSessions();
   const found = await findHomeGateway();
   if (!found.ok) return false;
   const verdict = mayUseFoundGateway(found.gateway);
   if (!verdict.ok) {
-    setBehind(found.gateway, verdict);
+    setBehind(found.gateway, verdict, { fromWatch: true });
     return false;
   }
   const start = startOf(found.gateway);
@@ -704,10 +715,11 @@ async function followMovedGateway() {
     }
     return false;
   }
-  // A refusal said meanwhile ends once the gateway is in use at its new port: the adopt clears the
-  // start's failure, so whether one was in force is read before it.
-  const refused = Boolean(startFailure && startFailure.behind);
-  const used = await adoptHomeGateway({ ok: true, gateway: found.gateway, ready: signed.ready, pair: signed.pair });
+  // A refusal said meanwhile, or a press's gone hold (`holdUpdate`), ends once the gateway is in
+  // use at its new port: the adopt clears the start's failure, so whether one was in force is read
+  // before it.
+  const refused = Boolean(startFailure && (startFailure.behind || startFailure.gone));
+  const used = await adoptHomeGateway({ ok: true, gateway: found.gateway, ready: signed.ready, pair: signed.pair }, { fromWatch: true });
   if (used && refused) refusalEnded();
   return used;
 }
@@ -763,74 +775,84 @@ function loseGateway() {
  * back (`resumeGateway`), at that start's own door. Resolves whether the windows' sign-in is back.
  */
 async function takeBackAdoptedGateway(was, gateway) {
-  const start = startOf(gateway);
-  const sameStart =
-    gateway.pid === was.pid &&
-    Boolean(gateway.secretDigest) &&
-    gateway.secretDigest === was.secretDigest &&
-    Boolean(gateway.windowDoor) === windowDoorInUse;
-  if (sameStart) {
-    // One read with the held session at the proven port first: an ended sign-in is not lifted.
-    const read = await readHeldSessionAt(gateway.port);
-    if (read && read.verdict === "end") {
-      // With a pair, the sign-in ends (`noteShellRefusal`). Without one, the doorbell stops for this
-      // start, which ends it in the watch (`stopDoorbellForStart`): no later look reads it again.
-      if (localSignIn.held && localSignIn.held.pair) noteShellRefusal(read.stamp, read.status, read.body, { retiredToo: true });
-      else stopDoorbellForStart();
+  // A start proven here ends what an Update the Gateway press kept for it (`signOutUpdateSessions`),
+  // once the take-back's own step is done: nothing comes between this proof and its own read or
+  // sign-in. Within the press's own 2 s, so a kept session at a silent gateway holds the hand-over
+  // back no longer.
+  try {
+    const start = startOf(gateway);
+    const sameStart =
+      gateway.pid === was.pid &&
+      Boolean(gateway.secretDigest) &&
+      gateway.secretDigest === was.secretDigest &&
+      Boolean(gateway.windowDoor) === windowDoorInUse;
+    if (sameStart) {
+      // One read with the held session at the proven port first: an ended sign-in is not lifted.
+      const read = await readHeldSessionAt(gateway.port);
+      if (read && read.verdict === "end") {
+        // With a pair, the sign-in ends (`noteShellRefusal`). Without one, the doorbell stops for this
+        // start, which ends it in the watch (`stopDoorbellForStart`): no later look reads it again.
+        if (localSignIn.held && localSignIn.held.pair) noteShellRefusal(read.stamp, read.status, read.body, { retiredToo: true });
+        else stopDoorbellForStart();
+        return false;
+      }
+      const lifted = await localSignIn.lift(lostAt, { unretire: true, start });
+      // A refusal said meanwhile (`setBehind`), or a press's gone hold (`holdUpdate`), told the
+      // updater no gateway is in use: this one is again.
+      if (lifted && startFailure && (startFailure.behind || startFailure.gone)) {
+        sawGateway("adopted", gateway);
+        endRefusal();
+      }
+      return lifted;
+    }
+    // A new start, one this app may use: asked at its door WINDOW_DOOR_ATTEMPTS times in all, across
+    // looks and losses.
+    const verdict = mayUseFoundGateway(gateway);
+    if (!verdict.ok) {
+      setBehind(gateway, verdict, { fromWatch: true });
       return false;
     }
-    const lifted = await localSignIn.lift(lostAt, { unretire: true, start });
-    // A refusal said meanwhile (`setBehind`) told the updater no gateway is in use: this one is again.
-    if (lifted && startFailure && startFailure.behind) {
-      sawGateway("adopted", gateway);
-      endRefusal();
+    if (!spendDoorAsk(start)) return false;
+    const gen = localSignIn.gen;
+    const signed = await homeGateway.signIn(gateway, PERSONALCLAW_HOME);
+    if (localSignIn.gen !== gen) {
+      if (signed.ok) keepToSignOut(signed.ready);
+      return false;
     }
-    return lifted;
+    if (!signed.ok) {
+      if (signed.status === 400 || signed.status === 403) spendDoorAsks(start);
+      if (!doorAsksLeft(start)) doorGaveUp(start, Boolean(gateway.windowDoor));
+      return false;
+    }
+    if (!signed.pair) return refusePairless(gateway, signed.ready, { fromWatch: true });
+    windowDoorInUse = Boolean(signed.ready.windowDoor);
+    // Pages that latched an End stay latched until Sign In Again's reloads run, whichever take-back
+    // brings the sign-in back (`latchedSinceEnd`).
+    const wasSignedOut = localSignIn.signedOut || latchedSinceEnd;
+    // The adopt's generation is taken in the tick it starts: a loss during its cookie write moves it.
+    const adopting = localSignIn.adopt(signed.ready, { pair: signed.pair, start });
+    const mine = localSignIn.gen;
+    keepToSignOut(await adopting);
+    if (localSignIn.gen !== mine) {
+      if (localSignIn.stamp().token !== signed.ready.token) keepToSignOut(signed.ready);
+      return false;
+    }
+    signedInAfresh = { wasSignedOut, gen: mine };
+    sawGateway("adopted", gateway);
+    endRefusal();
+    return true;
+  } finally {
+    await signOutUpdateSessions(2000);
   }
-  // A new start, one this app may use: asked at its door WINDOW_DOOR_ATTEMPTS times in all, across
-  // looks and losses.
-  const verdict = mayUseFoundGateway(gateway);
-  if (!verdict.ok) {
-    setBehind(gateway, verdict);
-    return false;
-  }
-  if (!spendDoorAsk(start)) return false;
-  const gen = localSignIn.gen;
-  const signed = await homeGateway.signIn(gateway, PERSONALCLAW_HOME);
-  if (localSignIn.gen !== gen) {
-    if (signed.ok) keepToSignOut(signed.ready);
-    return false;
-  }
-  if (!signed.ok) {
-    if (signed.status === 400 || signed.status === 403) spendDoorAsks(start);
-    if (!doorAsksLeft(start)) doorGaveUp(start, Boolean(gateway.windowDoor));
-    return false;
-  }
-  if (!signed.pair) return refusePairless(gateway, signed.ready);
-  windowDoorInUse = Boolean(signed.ready.windowDoor);
-  // Pages that latched an End stay latched until Sign In Again's reloads run, whichever take-back
-  // brings the sign-in back (`latchedSinceEnd`).
-  const wasSignedOut = localSignIn.signedOut || latchedSinceEnd;
-  // The adopt's generation is taken in the tick it starts: a loss during its cookie write moves it.
-  const adopting = localSignIn.adopt(signed.ready, { pair: signed.pair, start });
-  const mine = localSignIn.gen;
-  keepToSignOut(await adopting);
-  if (localSignIn.gen !== mine) {
-    if (localSignIn.stamp().token !== signed.ready.token) keepToSignOut(signed.ready);
-    return false;
-  }
-  signedInAfresh = { wasSignedOut, gen: mine };
-  sawGateway("adopted", gateway);
-  endRefusal();
-  return true;
 }
 
 /**
- * The watch took back a start this app may use while the row said why it refused one (`setBehind`):
- * that refusal ends (`refusalEnded`). Only while one is in force.
+ * The watch took back a start this app may use while the row said why it refused one (`setBehind`),
+ * or that the gateway stopped during a press (`holdUpdate`'s gone hold): that refusal ends
+ * (`refusalEnded`). Only while one is in force.
  */
 function endRefusal() {
-  if (!(startFailure && startFailure.behind)) return;
+  if (!(startFailure && (startFailure.behind || startFailure.gone))) return;
   startFailure = null;
   refusalEnded();
 }
@@ -2856,6 +2878,17 @@ function connectHandlers() {
       openConnectDialog();
       return { ok: true };
     },
+    // The behind row's and the chooser's Update the Gateway: the gateway this app found, older than
+    // itself, updated on the press and then used (`updateFoundGateway`).
+    updateGateway: async () => {
+      const updated = await updateFoundGateway();
+      // The watch took the new start back first: it already loaded the main window (`endRefusal`).
+      if (updated.ok && updated.inUse) return { ok: true };
+      if (updated.ok) return handlers.switchTo(LOCAL_ENDPOINT_ID);
+      // Cancel is an answer, not a failure: nothing to say.
+      if (updated.cancelled) return { ok: false, cancelled: true };
+      return { ok: false, code: localState.state, message: updated.message };
+    },
     // "This computer" row's Open the Releases Page, for a home a newer PersonalClaw served: its one
     // fixed address, in the system browser, through the one door to it.
     releases: () => systemBrowser.open(RELEASES_PAGE_URL),
@@ -3216,6 +3249,7 @@ let previousTrashed = false;
 // ── A gateway this app found: whether it is used, and what the updater hears of it ──
 
 const { behindSentence, unusableSentence } = require("./gatewayLost");
+const { holdSentence } = require("./gatewayFirst");
 
 /** *version*, a gateway's reported version, as a sentence, the updater's state or a log may carry
  *  it: trimmed, as the compare reads it (`compareVersions`), when it then has a version's shape
@@ -3257,14 +3291,18 @@ let refusedStart = "";
  * says why, with Try Again, and the chooser opens the first time for that start, unless the app's
  * start says it itself (*show* false).
  */
-function setBehind(gateway, verdict, { show = true } = {}) {
+function setBehind(gateway, verdict, { show = true, fromWatch = false } = {}) {
   const key = startKey(startOf(gateway));
   const first = key !== refusedStart;
   refusedStart = key;
   startFailure = { behind: true };
   sawGateway("none", null);
-  setLocalState(verdict.state, verdict.sentence);
   if (first) console.log(`desktop: this home's gateway on port ${gateway.port} (pid ${gateway.pid}) isn't used: ${verdict.state}`);
+  // While Update the Gateway runs, its row (`updating`, then its hold) is the press's to say: the
+  // watch's looks at the start it updates leave the row and the chooser alone. A later look at a
+  // start already refused leaves the row as it stands, a press's hold included.
+  if (fromWatch && (gatewayUpdate || (!first && localState.state === verdict.state))) return;
+  setLocalState(verdict.state, verdict.sentence);
   if (first && show) showNotConnected();
 }
 
@@ -3273,7 +3311,7 @@ function setBehind(gateway, verdict, { show = true } = {}) {
  * out there with its own credential and goes in no cookie store, and the row says the build can't be
  * used. Resolves false, for the caller's own answer.
  */
-async function refusePairless(gateway, session) {
+async function refusePairless(gateway, session, { fromWatch = false } = {}) {
   const ended = await signOutAtPort(session, gateway.port, { windowDoor: Boolean(gateway.windowDoor) });
   // One that the sign-out doesn't end there is signed out at the next gateway this app uses
   // (`signOutKept`).
@@ -3282,28 +3320,53 @@ async function refusePairless(gateway, session) {
     `desktop: the gateway on port ${gateway.port} signed this app in without a pair; that session ${ended ? "was ended" : "is kept to be signed out later"} and the gateway isn't used`
   );
   const comparable = compareVersions(gateway.version, app.getVersion()) !== null;
-  setBehind(gateway, { state: "unusable", sentence: unusableSentence({ port: gateway.port, version: shapedVersion(gateway.version), app: app.getVersion(), comparable }) });
+  setBehind(gateway, { state: "unusable", sentence: unusableSentence({ port: gateway.port, version: shapedVersion(gateway.version), app: app.getVersion(), comparable }) }, { fromWatch });
   return false;
 }
 
 /** End *session* at the gateway on *port*, 127.0.0.1, with that session's own credential
- *  (`signOutRequest`): the session ends itself. Logs the status only. Resolves whether it answered 200. */
-function signOutAtPort(session, port, { windowDoor }) {
+ *  (`signOutRequest`): the session ends itself, in a Cookie header on this one request at a gateway
+ *  without the window's door, never in a cookie store. Logs the status only. Resolves whether it
+ *  ended: an answer that says it was revoked, or a 401 for a session that is already gone. */
+function signOutAtPort(session, port, { windowDoor, timeoutMs = 5000 }) {
   return new Promise((resolve) => {
     if (!session || !session.token) return resolve(false);
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     const { path: route, headers } = signOutRequest(session, port, { windowDoor });
     const req = http.request(
-      { host: "127.0.0.1", port, path: route, method: "POST", agent: false, timeout: 5000, headers: { "Content-Length": "0", ...headers } },
+      { host: "127.0.0.1", port, path: route, method: "POST", agent: false, timeout: timeoutMs, headers: { "Content-Length": "0", ...headers } },
       (res) => {
-        res.on("data", () => {});
-        res.on("end", () => {
-          if (res.statusCode !== 200) console.warn(`desktop: a sign-out at port ${port} → HTTP ${res.statusCode}`);
-          resolve(res.statusCode === 200);
+        let buf = "";
+        res.on("data", (chunk) => {
+          if (buf.length < 4096) buf += chunk;
         });
+        // Settled on its end, and on a close or an error that comes instead.
+        const finish = () => {
+          if (settled) return;
+          if (res.statusCode !== 200) console.warn(`desktop: a sign-out at port ${port} → HTTP ${res.statusCode}`);
+          let revoked = false;
+          try {
+            revoked = res.statusCode === 200 && JSON.parse(buf).revoked === true;
+          } catch {
+            revoked = false;
+          }
+          done(revoked || res.statusCode === 401);
+        };
+        res.on("end", finish);
+        res.on("close", finish);
+        res.on("error", finish);
       }
     );
-    req.on("timeout", () => req.destroy());
-    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      done(false);
+    });
+    req.on("error", () => done(false));
     req.end();
   });
 }
@@ -3315,6 +3378,281 @@ function sawGateway(kind, gateway) {
   if (!appUpdater) return;
   appUpdater.noteGateway({ kind, version: gateway ? shapedVersion(gateway.version) : "" });
   if (kind !== "none") trashPreviousOnce();
+}
+
+// ── Update the Gateway: a gateway this app found, older than itself, brought to its release ──
+
+const { ALLOWED_REQUESTS, plan: planGatewayUpdate, run: runGatewayUpdate, shownVersion } = require("./gatewayFirst");
+
+/** The press of Update the Gateway under way, which a second press joins. */
+let gatewayUpdate = null;
+/**
+ * The press's sessions not yet ended, each `{session, port, start, until, inUse, afterRestart}`.
+ * Each is signed out with its own credential and goes to the start proven on its port right after
+ * its use, or, once the gateway gave a sign it restarts (*afterRestart*, set as the sign comes),
+ * only to a start proven after that. One that isn't ended then is tried again around the proofs of
+ * that port (before Use It's and the follow's own, after the take-back's own step, at a look of the
+ * app's start), at the next press and at quit, until it lapses (*until*). A session the press still
+ * uses (*inUse*) waits for it, but at quit.
+ */
+let updateSessions = [];
+/** How long the press's two sessions last: the plan and the restart's count, then the update. */
+const PLAN_SESSION_TTL = "5m";
+const UPDATE_SESSION_TTL = "30m";
+const TTL_MS = { [PLAN_SESSION_TTL]: 5 * 60_000, [UPDATE_SESSION_TTL]: 30 * 60_000 };
+
+/**
+ * Update the Gateway, the first offer of a `behind` row: the gateway this app found, older than
+ * itself, updated on the owner's press and then used. Resolves `{ok}` once it serves the windows
+ * (*inUse* when the watch took it back first), `{ok: false, cancelled: true}` at Cancel, or `{ok:
+ * false, message}` with the row saying why. One press runs at a time; a second joins it.
+ */
+function updateFoundGateway() {
+  if (!gatewayUpdate) {
+    gatewayUpdate = updateFoundGatewayNow().finally(() => {
+      gatewayUpdate = null;
+    });
+  }
+  return gatewayUpdate;
+}
+
+/** The press, with an error path: a throw ends the press's live sessions and says a hold. */
+async function updateFoundGatewayNow() {
+  const press = { gateway: null, sessions: [] };
+  try {
+    return await pressUpdateTheGateway(press);
+  } catch (err) {
+    console.warn(`desktop: Update the Gateway stopped on an error: ${err && err.message}`);
+    for (const held of press.sessions) {
+      held.inUse = false;
+      if (updateSessions.includes(held)) await endUpdateSession(held).catch(() => false);
+    }
+    if (press.gateway) return holdUpdate(press.gateway, "error", {});
+    return { ok: false, message: "The gateway could not be updated." };
+  }
+}
+
+async function pressUpdateTheGateway(press) {
+  // Only a row that says the gateway is older offers the press: a stale one changes nothing.
+  if (localState.state !== "behind") return { ok: false, code: localState.state, message: localState.sentence };
+  await signOutUpdateSessions(2000);
+  // Proven, and compared with this app's version, before anything is sent to it.
+  const found = await findHomeGateway();
+  if (!found.ok) return { ok: false, message: found.sentence };
+  const gateway = found.gateway;
+  press.gateway = gateway;
+  const target = app.getVersion();
+  const verdict = mayUseFoundGateway(gateway);
+  if (verdict.ok) {
+    // At this app's version or newer now, or a version it can't compare at a gateway with the
+    // window's door: offered as a gateway it found, with Use It, and nothing sent.
+    setLocalState("found", foundSentence(gateway));
+    return { ok: false, message: foundSentence(gateway) };
+  }
+  if (verdict.state !== "behind") {
+    setBehind(gateway, verdict, { show: false });
+    return { ok: false, message: verdict.sentence };
+  }
+  const start = startOf(gateway);
+  // Compared as reported; said as shaped.
+  const from = gateway.version;
+  // The plan and the restart's count, over a short session ended before the box opens.
+  const first = await updateSession(gateway, PLAN_SESSION_TTL, press);
+  if (!first) return holdUpdate(gateway, "signed_out", { to: target });
+  const ask = askOver(first, start);
+  const planned = await planGatewayUpdate({ G: from, T: target, ask, press: true, pid: gateway.pid, port: gateway.port });
+  const probe = planned.step === "update" ? await ask("POST", "/api/system/restart?probe=1") : null;
+  first.inUse = false;
+  await endUpdateSession(first);
+  if (planned.step === "none") {
+    setLocalState("found", foundSentence(gateway));
+    return { ok: false, message: foundSentence(gateway) };
+  }
+  if (planned.step !== "update") return holdUpdate(gateway, planned.why, {}, planned.sentence);
+  // The restart's count refused as the plan's reads are: the press's session isn't taken there.
+  if (probe && (probe.status === 401 || probe.status === 403)) return holdUpdate(gateway, "signed_out", { to: target });
+  // The box opens only once the plan's session is ended: tried once more, else the press holds.
+  if (updateSessions.includes(first) && !(await endUpdateSession(first))) return holdUpdate(gateway, "not_ended", {});
+  const to = shownVersion(planned.latest);
+  const go = await confirmGatewayUpdate({ port: gateway.port, from: shownVersion(from), to, probe, kind: planned.kind });
+  if (!go) return { ok: false, cancelled: true };
+  // The update itself, over a session of its own, on the start the plan was made on.
+  const again = await findHomeGateway();
+  if (!again.ok || startKey(startOf(again.gateway)) !== startKey(start)) return holdUpdate(gateway, "plan_changed", {});
+  const second = await updateSession(again.gateway, UPDATE_SESSION_TTL, press);
+  if (!second) return holdUpdate(gateway, "signed_out", { to: target });
+  setLocalState("updating", `Updating the gateway on port ${gateway.port} to ${to}…`);
+  const out = await runGatewayUpdate({
+    G: from,
+    T: target,
+    start,
+    planned,
+    ask: askOver(second, start),
+    prove: () => homeGateway.reach(PERSONALCLAW_HOME),
+    pidIsAlive: (pid) => homeGateway.pidIsAlive(pid),
+    stopping: () => isQuitting,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    log: (line) => console.log(`desktop: ${line}`),
+    // As the sign comes: from then on a quit or an error ends this session only at a new start.
+    onRestart: () => {
+      second.afterRestart = true;
+    },
+  });
+  // Ended now at the start proven there; after a sign the gateway restarts, only at a new start.
+  second.inUse = false;
+  second.afterRestart = second.afterRestart || Boolean(out.restarted);
+  if (updateSessions.includes(second)) await endUpdateSession(second);
+  if (!out.ok) {
+    if (out.why === "stopping") return { ok: false, message: "" };
+    return holdUpdate(gateway, out.why, {}, out.sentence);
+  }
+  console.log(`desktop: the gateway on port ${gateway.port} is updated; this app uses it now`);
+  // The watch may have taken the new start back already (`endRefusal`): it is the gateway in use.
+  if (gatewayWatch.kind === "adopted" && !gatewayWatch.withheld && startKey(gatewayWatch.start) === startKey(out.start)) return { ok: true, inUse: true };
+  return useRunningHere();
+}
+
+/** A hold of Update the Gateway, said on the row with Update the Gateway still offered while the
+ *  refusal it answers stands. A row the watch has settled since (the gateway in use again, or
+ *  stopped) stays as it is; a gateway that stopped during the update is said on a stopped row,
+ *  unless the watch has put a gateway back in use since (no start's failure stands then). A later
+ *  take-back or follow ends that row as it ends a refusal (`endRefusal`). */
+function holdUpdate(gateway, why, detail, sentence) {
+  const said = sentence || holdSentence(why, { to: app.getVersion(), port: gateway.port, pid: gateway.pid, ...detail });
+  console.log(`desktop: Update the Gateway held: ${why}`);
+  if (why === "gone") {
+    if (startFailure) {
+      startFailure = { gone: true };
+      setLocalState("stopped", said);
+    }
+  } else if (startFailure && startFailure.behind) {
+    setLocalState("behind", said);
+  }
+  return { ok: false, message: said };
+}
+
+/** A session at *gateway* for the press alone, minted at its door for *ttl* and held in this object
+ *  only: never in a cookie store, a window, IPC, the state or a log. Null when the door refused.
+ *  Kept in *press* too, for the press's error path. */
+async function updateSession(gateway, ttl, press) {
+  const signed = await homeGateway.signIn(gateway, PERSONALCLAW_HOME, { ttl });
+  if (!signed.ok) {
+    console.warn(`desktop: the gateway on port ${gateway.port} didn't sign this app in to update it (HTTP ${signed.status})`);
+    return null;
+  }
+  const held = {
+    session: { token: signed.ready.token, pair: signed.pair || null },
+    port: gateway.port,
+    start: startOf(gateway),
+    until: Date.now() + (TTL_MS[ttl] || 0),
+    inUse: true,
+    afterRestart: false,
+  };
+  updateSessions.push(held);
+  if (press) press.sessions.push(held);
+  return held;
+}
+
+/** End *held*, a press's session, at the start proven on its port now, with that start's door's
+ *  carrier; after a sign the gateway restarts, only at a start other than the one it was made at.
+ *  Within *timeoutMs* when given. Resolves whether it is ended; one that isn't stays kept. */
+async function endUpdateSession(held, { timeoutMs } = {}) {
+  const deadline = timeoutMs ? Date.now() + timeoutMs : 0;
+  const proof = await homeGateway.reach(PERSONALCLAW_HOME, timeoutMs ? { timeoutMs, attempts: 1 } : undefined);
+  if (!proof.ok || proof.gateway.port !== held.port) return false;
+  if (held.afterRestart && startKey(startOf(proof.gateway)) === startKey(held.start)) return false;
+  // The sign-out gets what the proof left of the budget.
+  const left = deadline ? deadline - Date.now() : undefined;
+  if (deadline && left <= 0) return false;
+  const ended = await signOutAtPort(held.session, held.port, { windowDoor: Boolean(proof.gateway.windowDoor), timeoutMs: left });
+  if (ended) updateSessions = updateSessions.filter((h) => h !== held);
+  return ended;
+}
+
+/** Every press session not yet ended and not lapsed, tried at the start proven on its port now:
+ *  wherever a start is proven there and at the next press, leaving a running press's own, and at
+ *  quit, every one (*all*). All within *timeoutMs* when given, as the quit step's budget. */
+async function signOutUpdateSessions(timeoutMs, { all = false } = {}) {
+  updateSessions = updateSessions.filter((h) => h.until > Date.now());
+  const deadline = timeoutMs ? Date.now() + timeoutMs : 0;
+  for (const held of updateSessions.filter((h) => all || !h.inUse)) {
+    const left = deadline ? deadline - Date.now() : undefined;
+    if (deadline && left <= 0) break;
+    await endUpdateSession(held, { timeoutMs: left });
+  }
+}
+
+/**
+ * The press's transport: one of `ALLOWED_REQUESTS` (method, path and query together) to *held*'s
+ * gateway, sent only right after a proof of the start it was made for, as a Bearer with its pair
+ * where the door gave one. Node http to 127.0.0.1, headers only, no body and no User-Agent.
+ * Anything else is refused before a socket opens. Resolves `{status, body}`, or null when nothing
+ * was sent or it didn't answer. Logs the status only.
+ */
+function askOver(held, start) {
+  return async (method, route, { timeoutMs = 10_000 } = {}) => {
+    if (!ALLOWED_REQUESTS.includes(`${method} ${route}`)) {
+      console.warn(`desktop: Update the Gateway refused a request it doesn't send: ${method} ${route.split("?")[0]}`);
+      return null;
+    }
+    const proof = await homeGateway.reach(PERSONALCLAW_HOME);
+    if (!proof.ok || startKey(startOf(proof.gateway)) !== startKey(start)) return null;
+    return sendToFoundGateway(held, method, route, timeoutMs);
+  };
+}
+
+function sendToFoundGateway(held, method, route, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const headers = { Accept: "application/json", Authorization: `Bearer ${held.session.token}` };
+    if (held.session.pair) headers[PAIR_HEADER] = held.session.pair;
+    if (method !== "GET") headers["Content-Length"] = "0";
+    const req = http.request({ host: "127.0.0.1", port: held.port, path: route, method, agent: false, timeout: timeoutMs, headers }, (res) => {
+      let buf = "";
+      res.on("data", (chunk) => {
+        if (buf.length < 65536) buf += chunk;
+      });
+      // Settled on its end, and on a close or an error that comes instead.
+      const finish = () => {
+        if (settled) return;
+        if (res.statusCode !== 200) console.warn(`desktop: ${method} ${route.split("?")[0]} at port ${held.port} → HTTP ${res.statusCode}`);
+        let body = {};
+        try {
+          const parsed = JSON.parse(buf);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed;
+        } catch {
+          body = {};
+        }
+        done({ status: res.statusCode || 0, body });
+      };
+      res.on("end", finish);
+      res.on("close", finish);
+      res.on("error", finish);
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      done(null);
+    });
+    req.on("error", () => done(null));
+    req.end();
+  });
+}
+
+/** The native confirm of Update the Gateway, not a sheet on a window, which would hold the Gateways
+ *  window behind it. Resolves whether the owner pressed Update the Gateway. */
+async function confirmGatewayUpdate({ port, from, to, probe, kind }) {
+  const agents = probe && probe.status === 200 ? Number(probe.body.running_agents) || 0 : -1;
+  const sessions = probe && probe.status === 200 ? Number(probe.body.sessions) || 0 : -1;
+  const counts = agents >= 0 && (agents > 0 || sessions > 0) ? `, which interrupts ${[agents ? `${agents} running ${agents === 1 ? "agent" : "agents"}` : "", sessions ? `${sessions} live ${sessions === 1 ? "session" : "sessions"}` : ""].filter(Boolean).join(" and ")}` : "";
+  const message = `Update the gateway on port ${port} from ${from} to ${to}?`;
+  const detail = `It restarts${counts}. PersonalClaw uses it once it's back on ${to}.${kind === "git" ? ` Its source checkout moves to the v${to} tag.` : ""}`;
+  const { response } = await require("electron").dialog.showMessageBox({ type: "question", buttons: ["Update the Gateway", "Cancel"], defaultId: 0, cancelId: 1, message, detail });
+  return response === 0;
 }
 
 /** Once the updater has started and a gateway is in use, in this run: the copy an update replaced
@@ -3345,7 +3683,7 @@ function makeThisAppsUpdater() {
     appImage: process.env.APPIMAGE || "",
     // The pin, unless the home is served by a gateway the app found running: its own install pins it.
     // The kind of gateway, not what the row says (a signed-out row is still one kind or the other).
-    policy: () => readUpdatePolicy({ home: PERSONALCLAW_HOME, ownGateway: !adoptedGateway && !["served", "behind", "unusable"].includes(localState.state) }),
+    policy: () => readUpdatePolicy({ home: PERSONALCLAW_HOME, ownGateway: !adoptedGateway && !["served", "behind", "unusable", "updating"].includes(localState.state) }),
     // The app's own folder, which the system's temp cleaning never empties under a waiting update
     // and no other account can make: the updater keeps it 0700.
     workDir: path.join(app.getPath("userData"), "app-update"),
@@ -3655,6 +3993,15 @@ app.on("before-quit", (event) => {
           await signOutKept(ms);
         } catch (err) {
           console.warn(`desktop: sign-out on quit failed: ${err.message}`);
+        }
+      },
+      // Update the Gateway's sessions are at a gateway this app may not use: their own ask, with its
+      // own share of the budget, a press's own included, since the quit stops it.
+      async (ms) => {
+        try {
+          await signOutUpdateSessions(ms, { all: true });
+        } catch (err) {
+          console.warn(`desktop: an update session's sign-out on quit failed: ${err.message}`);
         }
       },
     ],

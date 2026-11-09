@@ -43,6 +43,7 @@
       <button id="use" hidden>Use the Gateway Already Running</button>
       <label id="remember-row" class="remember" hidden><input id="remember" type="checkbox" /> Use it automatically next time</label>
       <button id="releases" hidden>Open the Releases Page</button>
+      <button id="update" hidden>Update the Gateway</button>
       <button id="add">Add a Gateway…</button>
       <button id="retry">Try Again</button>
     </div>
@@ -62,12 +63,14 @@
         // A home a newer PersonalClaw served: the newer app, and no start that would be refused again.
         byId('releases').hidden = !chooser.releases;
         byId('retry').hidden = !chooser.retry;
+        byId('update').hidden = !chooser.update;
         // The first offer is the one most likely to work: a gateway already running, the newer app,
         // else a new try.
         byId('use').className = chooser.use ? 'primary' : '';
         byId('releases').className = chooser.releases ? 'primary' : '';
-        byId('retry').className = chooser.use || chooser.releases ? '' : 'primary';
-        for (const id of ['use', 'releases', 'add', 'retry']) byId(id).disabled = chooser.busy || pressing;
+        byId('update').className = chooser.update ? 'primary' : '';
+        byId('retry').className = chooser.use || chooser.releases || chooser.update ? '' : 'primary';
+        for (const id of ['use', 'releases', 'update', 'add', 'retry']) byId(id).disabled = chooser.busy || pressing;
       }
 
       function fail(res, fallback) {
@@ -84,10 +87,11 @@
       async function press(button, run, fallback) {
         pressing = true;
         byId('error').hidden = true;
-        for (const id of ['use', 'releases', 'add', 'retry']) byId(id).disabled = true;
+        for (const id of ['use', 'releases', 'update', 'add', 'retry']) byId(id).disabled = true;
         const res = await run();
         pressing = false;
-        if (!res || !res.ok) fail(res, fallback);
+        // Cancel at Update the Gateway's confirm is an answer, not a failure.
+        if ((!res || !res.ok) && !(res && res.cancelled)) fail(res, fallback);
         load();
       }
 
@@ -99,6 +103,8 @@
         press(byId('add'), () => window.pclawConnect.openGateways(), 'The Gateways window could not be opened.'));
       byId('retry').addEventListener('click', () =>
         press(byId('retry'), () => window.pclawConnect.start(), 'No gateway could be started here.'));
+      byId('update').addEventListener('click', () =>
+        press(byId('update'), () => window.pclawConnect.updateGateway(), 'The gateway could not be updated.'));
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.close(); });
       // The main process says when this computer's gateway came up, stopped or was found.
       window.pclawConnect.onChanged(() => load());

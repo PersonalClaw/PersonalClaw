@@ -191,12 +191,14 @@ describe("the \"This computer\" row, by how this computer's gateway stands", () 
     assert.match(older.statusDetail, /last used by PersonalClaw 0\.3\.7/);
   });
 
-  it("says a gateway it found and doesn't use is older than this app, or a build it can't use, with Try Again and nothing to switch to", () => {
+  it("says a gateway it found and doesn't use is older than this app, with Update the Gateway then Try Again, or a build it can't use, with Try Again, and nothing to switch to", () => {
     const behind = at({ state: "behind", sentence: "This home's gateway on port 8765 runs 0.3.7, older than this app (0.3.8) …" });
     assert.equal(behind.statusText, "Older than this app");
     assert.equal(behind.statusTone, "bad");
     assert.equal(behind.localBadge, "already running");
-    assert.deepEqual(behind.localAction, { id: "start", label: "Try Again" });
+    // Update the Gateway first, with Try Again beside it.
+    assert.deepEqual(behind.localAction, { id: "update-gateway", label: "Update the Gateway" });
+    assert.deepEqual(behind.localOption, { id: "start", label: "Try Again" });
     assert.equal(behind.switchable, false);
     assert.match(behind.statusDetail, /runs 0\.3\.7, older than this app/);
     const unusable = at({ state: "unusable", sentence: "This home's gateway on port 8765 reports 0.3.9, but this app can't use that build …" });
@@ -204,10 +206,24 @@ describe("the \"This computer\" row, by how this computer's gateway stands", () 
     assert.equal(unusable.statusTone, "bad");
     assert.deepEqual(unusable.localAction, { id: "start", label: "Try Again" });
     assert.equal(unusable.switchable, false);
-    for (const state of ["behind", "unusable"]) {
+    for (const [state, update] of [["behind", true], ["unusable", false]]) {
       const chooser = describeChooser({ state, sentence: "why" });
-      assert.deepEqual([chooser.retry, chooser.use, chooser.releases, chooser.settled], [true, false, false, false], state);
+      assert.deepEqual([chooser.update, chooser.retry, chooser.use, chooser.releases, chooser.settled], [update, true, false, false, false], state);
       assert.equal(chooser.sentence, "why");
+    }
+    // While the press runs: no offer, and the chooser holds its buttons.
+    const updating = at({ state: "updating", sentence: "Updating the gateway on port 8765 to 0.3.8…" });
+    assert.equal(updating.statusText, "Updating…");
+    assert.equal(updating.localAction, null);
+    assert.equal(describeChooser({ state: "updating" }).busy, true);
+    assert.equal(describeChooser({ state: "updating" }).update, false);
+    // The chooser says the update's own sentence, not that a gateway starts.
+    assert.equal(describeChooser({ state: "updating", sentence: "Updating the gateway on port 8765 to 0.3.8…" }).sentence, "Updating the gateway on port 8765 to 0.3.8…");
+    assert.equal(describeChooser({ state: "starting" }).sentence, "Starting PersonalClaw's gateway…");
+    // Cancel at the confirm is an answer: neither window shows a failure for it.
+    for (const page of ["connectDialog.html", "gatewayChooser.html"]) {
+      const html = fs.readFileSync(path.join(__dirname, "..", page), "utf8");
+      assert.match(html, /\(!res \|\| !res\.ok\) && !\(res && res\.cancelled\)/, `${page} says Cancel as a failure`);
     }
   });
 
@@ -286,11 +302,11 @@ describe("the IPC adaptor", () => {
     };
   }
 
-  it("registers exactly the eleven invokes the preload exposes; `changed` is the main process's to send", () => {
+  it("registers exactly the twelve invokes the preload exposes; `changed` is the main process's to send", () => {
     const ipc = fakeIpc();
     makeConnectDialog({ BrowserWindowCtor: class {}, ipcMain: ipc, handlers: {} }).registerIpc(ipc);
     const invokes = Object.entries(CONNECT_CHANNELS).filter(([k]) => k !== "changed").map(([, v]) => v);
-    assert.equal(invokes.length, 11);
+    assert.equal(invokes.length, 12);
     assert.deepStrictEqual(ipc.names().sort(), invokes.sort());
     const preload = fs.readFileSync(path.join(__dirname, "..", "connectPreload.js"), "utf8");
     for (const key of Object.keys(CONNECT_CHANNELS)) assert.match(preload, new RegExp(`CONNECT_CHANNELS\\.${key}\\b`), `the preload does not expose ${key}`);

@@ -249,16 +249,18 @@ describe("the app starts its own gateway first, uses this home's running one onl
     // The look after a failed start proves and sends no credential; the sign-in is the press's.
     assert.doesNotMatch(up, /reachHomeGateway|homeGateway\.signIn|adoptHomeGateway/, "the start signs in to a gateway nobody chose");
     // A gateway this app may not use is said on the row, and neither offered nor used.
-    assert.match(up, /if \(found\.ok\) \{\s*\/\/[^\n]*\n\s*const verdict = mayUseFoundGateway\(found\.gateway\);\s*if \(!verdict\.ok\) \{\s*setBehind\(found\.gateway, verdict, \{ show: false \}\);\s*return false;\s*\}\s*\/\/[^\n]*\n\s*if \(autoUseRunning\(\)\) return \(await useRunningGateway\(\)\)\.ok;\s*startFailure = \{ \.\.\.exit, found: true \};\s*setLocalState\("found", foundSentence\(found\.gateway\)\);\s*return false;/);
+    // A start proven there first ends what an Update the Gateway press kept for it.
+    assert.match(up, /if \(found\.ok\) \{\s*await signOutUpdateSessions\(\);\s*\/\/[^\n]*\n\s*const verdict = mayUseFoundGateway\(found\.gateway\);\s*if \(!verdict\.ok\) \{\s*setBehind\(found\.gateway, verdict, \{ show: false \}\);\s*return false;\s*\}\s*\/\/[^\n]*\n\s*if \(autoUseRunning\(\)\) return \(await useRunningGateway\(\)\)\.ok;\s*startFailure = \{ \.\.\.exit, found: true \};\s*setLocalState\("found", foundSentence\(found\.gateway\)\);\s*return false;/);
     assert.match(fnBody("autoUseRunning"), /shellStore\.getItem\(AUTO_USE_KEY\) === "1"/, "the standing yes is on unless the owner ticked it");
-    // Signing in happens in five places, each after a proof: reachHomeGateway (a press, the standing
+    // Signing in happens in six places, each after a proof: reachHomeGateway (a press, the standing
     // yes), the watch's follow of a gateway in use that moved, its take-back of a gateway that
-    // started again where it was, the owner's Sign In Again, and the window's door of the app's own.
+    // started again where it was, the owner's Sign In Again, the window's door of the app's own, and
+    // Update the Gateway's own short sessions, which no window ever holds (`updateSession`).
     const signIns = [...MAIN.matchAll(/homeGateway\.signIn\(/g)];
     const inside = (fn, at) => at > MAIN.indexOf(`async function ${fn}(`) && at < MAIN.indexOf("\n}\n", MAIN.indexOf(`async function ${fn}(`));
-    const places = ["reachHomeGateway", "followMovedGateway", "takeBackAdoptedGateway", "signInAgain", "askWindowDoor"];
+    const places = ["reachHomeGateway", "followMovedGateway", "takeBackAdoptedGateway", "signInAgain", "askWindowDoor", "updateSession"];
     assert.equal(signIns.length, places.length);
-    for (const m of signIns) assert.ok(places.some((fn) => inside(fn, m.index)), "a sign-in outside the five places");
+    for (const m of signIns) assert.ok(places.some((fn) => inside(fn, m.index)), "a sign-in outside the six places");
     const callers = [...MAIN.matchAll(/await reachHomeGateway\(/g)];
     assert.equal(callers.length, 1, "reachHomeGateway gained a caller");
     assert.match(fnBody("useRunningGateway"), /const found = await reachHomeGateway\(\);/);
@@ -291,7 +293,7 @@ describe("the app starts its own gateway first, uses this home's running one onl
   it("uses a running gateway only while its own is neither up nor starting, on a press and the standing yes alike, and keeps the box's answer", () => {
     // The refusal is useRunningGateway's first step, before any sign-in, so the press (through
     // useRunningHere) and the standing yes both meet it.
-    assert.match(fnBody("useRunningGateway"), /^function useRunningGateway\(\) \{\n\s*if \(ownGatewayLives\(\)\) return \{ ok: false, code: "own"/, "its own gateway can be adopted as one it did not start");
+    assert.match(fnBody("useRunningGateway"), /^function useRunningGateway\(\) \{\n\s*if \(ownGatewayLives\(\)\) \{\n(\s*\/\/[^\n]*\n)*\s*setLocalState\([^\n]*\);\n\s*return \{ ok: false, code: "own"/, "its own gateway can be adopted as one it did not start");
     assert.doesNotMatch(MAIN, /if \(gatewayProcess\) return \{ ok: false, code: "own"/, "a second, narrower refusal beside useRunningGateway's");
     const use = MAIN.slice(MAIN.indexOf("    use: async ({ remember }) => {"), MAIN.indexOf("    autoUse: async ({ on }) => {"));
     assert.match(use, /const used = await useRunningHere\(\);\s*if \(!used\.ok\) return used;\s*setAutoUseRunning\(remember\);/, "the box is kept for a gateway that could not be used");
@@ -397,6 +399,9 @@ describe("a start that timed out is the app's own gateway, never another one (ma
       adoptedGateway: null,
       localState: { state: "", sentence: "" },
       gatewayWatch: { drop() {} },
+      localGatewayUrl: null,
+      // What a press of Update the Gateway kept: none here.
+      signOutUpdateSessions: async () => {},
       sendStatus() {},
       setOlder: () => did.push("older"),
       setLocalState: (state, sentence = "") => {
@@ -468,7 +473,8 @@ describe("a start that timed out is the app's own gateway, never another one (ma
     assert.equal(answer.ok, false);
     assert.equal(answer.code, "own");
     assert.match(answer.message, /own gateway is running/);
-    assert.deepEqual(did, []);
+    // No look and no sign-in: the row says its own gateway, still starting.
+    assert.deepEqual(did, ["starting"]);
   });
 
   it("counts a child as living only while it spawned and has not exited", () => {
@@ -627,5 +633,92 @@ describe("the view cannot leave the origin the user confirmed", () => {
     assert.ok(start > 0, "allowedOrigin not found");
     const body = MAIN.slice(start, start + 400);
     assert.match(body, /activeUrl \|\| localGatewayUrl/);
+  });
+});
+
+describe("Update the Gateway sends only its own requests, over sessions of its own", () => {
+  const body = (name) => {
+    const start = MAIN.search(new RegExp(`^(async )?function ${name}\\(`, "m"));
+    assert.ok(start >= 0, `${name} is gone — this rail is now blind`);
+    return MAIN.slice(start, MAIN.indexOf("\n}\n", start));
+  };
+  const DESKTOP = path.join(__dirname, "..");
+  const sources = fs.readdirSync(DESKTOP).filter((f) => f.endsWith(".js"));
+
+  it("asks a gateway to update from one place, the engine, which only the press reaches", () => {
+    const asking = sources.filter((f) => /"POST", "\/api\/update"[,)]/.test(fs.readFileSync(path.join(DESKTOP, f), "utf8")));
+    assert.deepEqual(asking, ["gatewayFirst.js"]);
+    assert.equal([...MAIN.matchAll(/runGatewayUpdate\(/g)].length, 1, "the engine gained a caller");
+    assert.match(body("pressUpdateTheGateway"), /const out = await runGatewayUpdate\(\{/);
+    assert.doesNotMatch(fs.readFileSync(path.join(DESKTOP, "appUpdate.js"), "utf8"), /gatewayFirst|\/api\/update"/, "the updater's own check reaches the gateway's update");
+  });
+
+  it("sends one of six requests, each right after a proof of its start, as Node http to 127.0.0.1 with no User-Agent and no cookie store", () => {
+    const { ALLOWED_REQUESTS } = require("../gatewayFirst");
+    assert.deepEqual([...ALLOWED_REQUESTS], [
+      "GET /api/update/check",
+      "POST /api/update/check",
+      "POST /api/system/restart?probe=1",
+      "POST /api/update",
+      "GET /api/status",
+      "POST /api/auth/logout",
+    ]);
+    const ask = body("askOver");
+    const allowed = ask.indexOf("ALLOWED_REQUESTS.includes(`${method} ${route}`)");
+    const proven = ask.indexOf("await homeGateway.reach(PERSONALCLAW_HOME)");
+    const sent = ask.indexOf("sendToFoundGateway(");
+    assert.ok(allowed > 0 && proven > allowed && sent > proven, "a request goes before it is allowed or proven");
+    const send = body("sendToFoundGateway");
+    assert.match(send, /http\.request\(\{ host: "127\.0\.0\.1", port: held\.port, path: route, method, agent: false/);
+    assert.match(send, /Authorization: `Bearer \$\{held\.session\.token\}`/);
+    // Headers only: no body is written, POST /api/update's included.
+    assert.doesNotMatch(send, /User-Agent|Cookie|cookies\.set|net\.request|loadURL|token=|\.write\(/i);
+    // An answer the press's session gets refused to is the press's hold, never this app's sign-in ending.
+    for (const fn of ["updateFoundGatewayNow", "pressUpdateTheGateway", "askOver", "sendToFoundGateway", "holdUpdate"]) {
+      assert.doesNotMatch(body(fn), /noteShellRefusal/, `${fn} ends this app's sign-in on the press's refusal`);
+    }
+  });
+
+  it("mints its two sessions for minutes at the door, never its thirty days, and never adopts them", () => {
+    assert.match(MAIN, /const PLAN_SESSION_TTL = "5m";/);
+    assert.match(MAIN, /const UPDATE_SESSION_TTL = "30m";/);
+    const minted = body("updateSession");
+    assert.match(minted, /homeGateway\.signIn\(gateway, PERSONALCLAW_HOME, \{ ttl \}\)/);
+    assert.doesNotMatch(minted, /localSignIn|adopt|cookies|webContents|send\(|console\.\w+\([^)]*token/);
+    const press = body("pressUpdateTheGateway");
+    // No sign-in before the version is compared, and the plan's session ends before the box opens.
+    assert.ok(press.indexOf("mayUseFoundGateway(gateway)") < press.indexOf("updateSession(gateway, PLAN_SESSION_TTL, press)"));
+    assert.ok(press.indexOf("await endUpdateSession(first);") < press.indexOf("await confirmGatewayUpdate("));
+    assert.match(body("confirmGatewayUpdate"), /require\("electron"\)\.dialog\.showMessageBox\(\{ type: "question", buttons: \["Update the Gateway", "Cancel"\]/);
+  });
+
+  it("ends a press's session by its door's credential and counts it ended only when revoked, and asks at quit", () => {
+    const out = body("signOutAtPort");
+    assert.match(out, /const \{ path: route, headers \} = signOutRequest\(session, port, \{ windowDoor \}\);/);
+    assert.match(out, /done\(revoked \|\| res\.statusCode === 401\);/);
+    // Each transport settles on an answer's end, its close or its error, and on a timeout.
+    for (const fn of ["signOutAtPort", "sendToFoundGateway"]) {
+      const t = body(fn);
+      for (const event of ["end", "close", "error"]) assert.match(t, new RegExp(`res\\.on\\("${event}", finish\\)`), `${fn} doesn't settle on ${event}`);
+      assert.match(t, /req\.on\("timeout", \(\) => \{\s*req\.destroy\(\);\s*done\(/, `${fn} doesn't settle on a timeout`);
+    }
+    const quit = MAIN.slice(MAIN.indexOf('app.on("before-quit"'), MAIN.indexOf("stop: (budget) => stopGateway(budget)"));
+    assert.match(quit, /await signOutUpdateSessions\(ms, \{ all: true \}\);/);
+    // Its own ask, with its own share of the quit's budget, not the tail of the windows' sign-out.
+    assert.match(quit, /async \(ms\) => \{\s*try \{\s*await signOutUpdateSessions\(ms, \{ all: true \}\);/);
+    // A sign-out gets what the proof before it left of that budget.
+    const end = body("endUpdateSession");
+    assert.ok(end.indexOf("const left = deadline ? deadline - Date.now() : undefined;") > end.indexOf("await homeGateway.reach("), "the budget isn't read again after the proof");
+    assert.match(end, /signOutAtPort\(held\.session, held\.port, \{ windowDoor: [^}]*, timeoutMs: left \}\)/);
+  });
+
+  it("tries a press's kept sessions around a site's proof, never between it and what that proof is for", () => {
+    for (const fn of ["reachHomeGateway", "followMovedGateway"]) {
+      const b = body(fn);
+      assert.ok(b.indexOf("await signOutUpdateSessions();") >= 0 && b.indexOf("await signOutUpdateSessions();") < b.indexOf("await findHomeGateway("), `${fn} tries them after its own proof`);
+    }
+    const take = body("takeBackAdoptedGateway");
+    assert.match(take, /\} finally \{\s*await signOutUpdateSessions\(2000\);\s*\}\s*$/, "the take-back tries them before its own step is done, or for longer than the press's own 2 s");
+    assert.equal((take.match(/signOutUpdateSessions\(/g) || []).length, 1);
   });
 });
