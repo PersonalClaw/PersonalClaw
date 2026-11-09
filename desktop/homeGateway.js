@@ -52,7 +52,7 @@ const VERSION_FILE = "gateway.version.json";
 
 /** What a version a stamp names may hold, the characters PEP 440 spells one with: anything else is
  *  no version to put in a sentence. */
-const VERSION_SHAPE = /^v?[0-9][0-9A-Za-z.+!-]{0,63}$/;
+const VERSION_SHAPE = /^[vV]?[0-9][0-9A-Za-z.+!-]{0,63}$/;
 
 /** What a gateway's proof is made over, besides the nonce and the port (`home_gateway.PROOF_CONTEXT`). */
 const PROOF_CONTEXT = "personalclaw-gateway-proof";
@@ -379,6 +379,7 @@ module.exports = {
   SECRET_FILE,
   SIGN_IN_TTL,
   VERSION_FILE,
+  VERSION_SHAPE,
   WINDOW_DOOR_FIELD,
   gatewayProof,
   homeId,

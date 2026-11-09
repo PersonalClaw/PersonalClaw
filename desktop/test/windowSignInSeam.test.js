@@ -16,10 +16,12 @@ const vm = require("node:vm");
 
 const { makeLocalSignIn, movedUrl, movesOnRestart, parseReadyLine, signOutRequest } = require("../localSignIn");
 const { makeGatewayWatch } = require("../gatewayWatch");
-const { RUNTIME_FILE } = require("../homeGateway");
+const { RUNTIME_FILE, VERSION_SHAPE } = require("../homeGateway");
 const { decide, originKey } = require("../windowTraffic");
 const { classify: classifyRefusal } = require("../shellRefusal");
 const { LOCAL_STATES, describeLocal } = require("../connectDialog");
+const { compareVersions } = require("../appUpdate");
+const { behindSentence, unusableSentence } = require("../gatewayLost");
 
 const MAIN = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
 
@@ -91,6 +93,20 @@ const FUNCTIONS = [
   "bringUpLocalGateway",
   "socketGateway",
   "getGateway",
+  "reachHomeGateway",
+  "useRunningGateway",
+  "ownGatewayLives",
+  "shapedVersion",
+  "mayUseFoundGateway",
+  "setBehind",
+  "refusePairless",
+  "signOutAtPort",
+  "sawGateway",
+  "trashPreviousOnce",
+  "showNotConnected",
+  "endRefusal",
+  "refusalEnded",
+  "startFromRow",
 ];
 
 /** Every session and pair a fake handed out or the jar was given, and every window made: what the
@@ -166,6 +182,8 @@ function world({ windowDoor = false } = {}) {
   const reads = [];
   /** Every request main's http sent. */
   const requests = [];
+  /** What main asked of the Gateways window and its chooser. */
+  const dialog = [];
   /** The shell store's registry (`loadRegistry`): the local row, and any the test adds. */
   const registry = { endpoints: [{ id: "local", kind: "local", base_url: "http://127.0.0.1:40000" }] };
   const tokenOf = (headers) => {
@@ -336,6 +354,7 @@ function world({ windowDoor = false } = {}) {
       readRecord: () => gateways.record,
       pidIsAlive: (pid) => pid !== gateways.deadPid,
       startDigest: () => gateways.digest,
+      VERSION_SHAPE,
     },
     makeGatewayWatch: (opts) => makeGatewayWatch({ ...opts, setTimer: (fn) => (timers.push(fn), timers.length), clearTimer: () => {} }),
     registerWithGateway: async () => {
@@ -351,8 +370,29 @@ function world({ windowDoor = false } = {}) {
     stoppedSentence: () => "stopped",
     adoptedGoneSentence: () => "gone",
     setOlder: () => {},
-    showNotConnected: () => did.push("offline"),
+    // The Gateways window and its chooser: what main asks of them, in *dialog*.
+    connectDialog: { openChooser: () => dialog.push("openChooser"), closeChooser: () => dialog.push("closeChooser"), changed: () => {} },
+    // The chooser's press for this computer's row, once the gateway answers: the window loads it.
+    navigateToEndpoint: async (win, url) => {
+      if (!win || win.isDestroyed()) return false;
+      box.activeUrl = url;
+      win.webContents.loadURL(url);
+      return true;
+    },
     summarizePresence: () => ({}),
+    // The app's version, and the updater main tells which gateway it uses (`sawGateway`).
+    app: { getVersion: () => box.appVersion },
+    appVersion: "0.3.8",
+    compareVersions,
+    behindSentence,
+    unusableSentence,
+    appUpdater: { noted: [], noteGateway: (told) => box.appUpdater.noted.push(told), trashPrevious: () => did.push("trash") },
+    appUpdaterStarted: false,
+    previousTrashed: false,
+    refusedStart: "",
+    autoUseRunning: () => false,
+    foundSentence: () => "found",
+    notStartedSentence: () => "did not start",
   };
   // The door's answers, whatever a test puts in its place: each session and pair it hands out is noted.
   let signIn = async () => gateways.signIn;
@@ -400,7 +440,7 @@ function world({ windowDoor = false } = {}) {
   const runLater = () => {
     for (const handle of later.splice(0)) handle.fn();
   };
-  const made = { box, did, said, reads, requests, registry, later, runLater, cookieJar, localSignIn, windows, gateways, tick, holds, windowDoor };
+  const made = { box, did, dialog, said, reads, requests, registry, later, runLater, cookieJar, localSignIn, windows, gateways, tick, holds, windowDoor };
   WORLDS.push(made);
   return made;
 }
@@ -496,7 +536,8 @@ describe("the app's own gateway: a non-terminal loss, then a proof of the same s
 });
 
 describe("a gateway the app found: a loss retires its session; the same start takes it back, a new start rotates", () => {
-  const found = (port, token, digest) => ({ ok: true, gateway: { pid: 300, port, secretDigest: digest }, ready: ready(port, token), pair: null });
+  // A gateway the app found is used only with the window's door, whose sign-in has a pair.
+  const found = (port, token, digest) => ({ ok: true, gateway: { pid: 300, port, secretDigest: digest, windowDoor: true }, ready: ready(port, token, { window_door: true }), pair: PAIR });
 
   it("takes the same start back with the session it held, and its origin leaves the retired ones", async () => {
     const w = world();
@@ -509,7 +550,7 @@ describe("a gateway the app found: a loss retires its session; the same start ta
     await new Promise((r) => setImmediate(r));
     w.holds("lost");
     assert.equal(w.localSignIn.trafficState().retired.size, 1);
-    w.gateways.proof = { ok: true, gateway: { pid: 300, port: 5000, secretDigest: "adopted-start-1" } };
+    w.gateways.proof = { ok: true, gateway: { pid: 300, port: 5000, secretDigest: "adopted-start-1", windowDoor: true } };
     await w.tick();
     w.holds("proven");
     assert.equal(w.cookieJar.cookies.get("pc_token_5000"), TOKEN);
@@ -527,8 +568,8 @@ describe("a gateway the app found: a loss retires its session; the same start ta
     await new Promise((r) => setImmediate(r));
     w.holds("after a step");
     w.windows[0].url = "http://127.0.0.1:5000/#/chat/abc";
-    w.gateways.proof = { ok: true, gateway: { pid: 301, port: 5000, secretDigest: "adopted-start-2" } };
-    w.gateways.signIn = { ok: true, ready: ready(5000, NEXT), pair: null };
+    w.gateways.proof = { ok: true, gateway: { pid: 301, port: 5000, secretDigest: "adopted-start-2", windowDoor: true } };
+    w.gateways.signIn = { ok: true, ready: ready(5000, NEXT, { window_door: true }), pair: PAIR };
     await w.tick();
     w.holds("after tick");
     await new Promise((r) => setImmediate(r));
@@ -549,6 +590,342 @@ describe("a gateway the app found: a loss retires its session; the same start ta
     await new Promise((r) => setImmediate(r));
     w.holds("gone");
     assert.ok(w.did.includes("row:stopped"));
+  });
+});
+
+describe("a gateway the app found: used only at this app's version or newer, with the window's door", () => {
+  /** A proven answer of a found gateway's start. */
+  const proven = ({ port = 5000, pid = 300, digest = "found-start-1", version = "0.3.8", door = true } = {}) => ({ pid, port, secretDigest: digest, windowDoor: door, version });
+  const signedIn = (port, token) => ({ ok: true, ready: ready(port, token, { window_door: true }), pair: PAIR });
+  /** A world whose door counts each sign-in it is asked for. */
+  const counted = () => {
+    const w = world();
+    w.box.gatewayProcess = null;
+    w.signIns = [];
+    w.box.homeGateway.signIn = async (gateway) => (w.signIns.push(gateway.port), w.answer || signedIn(gateway.port, WINDOW));
+    return w;
+  };
+  /** Each place the app takes up a gateway it found, run against *gateway*'s proof. */
+  const SITES = {
+    "the start's own look": async (w) => {
+      w.box.autoUseRunning = () => true;
+      w.box.startGateway = async () => Promise.reject(Object.assign(new Error("served"), { exit: { code: 3 } }));
+      return w.box.bringUpLocalGateway();
+    },
+    "Use It": async (w) => (await w.box.useRunningGateway()).ok,
+    "a move it follows": async (w) => w.box.followMovedGateway(),
+    "a new start it takes back": async (w) => w.box.takeBackAdoptedGateway({ kind: "adopted", pid: 299, port: w.gateways.proof.gateway.port, secretDigest: "found-start-0" }, w.gateways.proof.gateway),
+    "Sign In Again": async (w) => {
+      w.box.adoptedGateway = { pid: 299, port: w.gateways.proof.gateway.port };
+      w.box.windowDoorInUse = true;
+      w.box.localGatewayUrl = `http://127.0.0.1:${w.gateways.proof.gateway.port}`;
+      return (await w.box.signInAgain()).ok;
+    },
+  };
+  const tryAt = async (site, gateway) => {
+    const w = counted();
+    w.gateways.proof = { ok: true, gateway };
+    w.gateways.record = { pid: gateway.pid, port: gateway.port };
+    const used = await SITES[site](w);
+    return { w, used };
+  };
+  const wroteNoCookie = (w, what) => assert.deepEqual(w.did.filter((d) => d.startsWith("set:")), [], `${what}: a cookie was written`);
+
+  it("is never signed in to at a version older than this app's, with the window's door or without it, at any of the five places, and the row says so", async () => {
+    assert.equal(
+      behindSentence({ port: 5000, version: "0.3.7", app: "0.3.8" }),
+      "This home's gateway on port 5000 runs 0.3.7, older than this app (0.3.8), and the app needs its gateway at 0.3.8 or newer. Update the gateway, then press Try Again."
+    );
+    // An older gateway is behind whether it has the door or not: its version is asked first.
+    // Compared as reported, which the compare trims: spaces round an older version leave it older.
+    // A version spelled with a capital V reads as one too.
+    for (const { version, door } of [{ version: "0.3.7", door: true }, { version: "0.3.7", door: false }, { version: "0.3.6", door: false }, { version: " 0.3.7 ", door: true }, { version: "V0.3.7", door: true }]) {
+      for (const site of Object.keys(SITES)) {
+        const what = `${site} at ${version}${door ? "" : " without the door"}`;
+        const { w, used } = await tryAt(site, proven({ version, door }));
+        assert.ok(!used, `${what}: used`);
+        assert.deepEqual(w.signIns, [], `${what}: signed in`);
+        wroteNoCookie(w, what);
+        assert.equal(w.box.localState.state, "behind", what);
+        assert.equal(w.box.localState.sentence, behindSentence({ port: 5000, version: version.trim(), app: "0.3.8" }), what);
+        assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "none", version: "" }), `${what}: the updater still hears of a gateway in use`);
+        assert.ok(!w.windows.some((win) => win.loads.some((url) => String(url).includes(":5000"))), `${what}: a window loaded it`);
+        assert.ok(!w.did.some((d) => d.startsWith("register") || d === "doorbell"), `${what}: it registered or rang`);
+      }
+    }
+  });
+
+  it("is never signed in to without the window's door, whatever version it reports, and says which", async () => {
+    const said = {
+      "0.3.6+local": "This home's gateway on port 5000 reports version 0.3.6+local, which this app can't compare with its own (0.3.8): the app needs its gateway at 0.3.8 or newer. Update the gateway, then press Try Again.",
+      "0.3.8": "This home's gateway on port 5000 reports 0.3.8, but this app can't use that build. Install the gateway again, then press Try Again.",
+      "0.3.9": "This home's gateway on port 5000 reports 0.3.9, but this app can't use that build. Install the gateway again, then press Try Again.",
+      "0.3.9<script>": "This home's gateway on port 5000 reports a version this app can't read, which it can't compare with its own (0.3.8): the app needs its gateway at 0.3.8 or newer. Update the gateway, then press Try Again.",
+    };
+    for (const [version, sentence] of Object.entries(said)) {
+      for (const site of Object.keys(SITES)) {
+        const { w, used } = await tryAt(site, proven({ version, door: false }));
+        const what = `${site} at ${version}`;
+        assert.ok(!used, `${what}: used`);
+        assert.deepEqual(w.signIns, [], `${what}: /api/token/local was asked`);
+        assert.deepEqual(w.requests, [], `${what}: a request was sent`);
+        wroteNoCookie(w, what);
+        assert.equal(w.box.localState.state, "unusable", what);
+        assert.equal(w.box.localState.sentence, sentence, what);
+        assert.ok(!w.said.some((line) => line.includes("<script>")), `${what}: an unread version reached the log`);
+      }
+    }
+  });
+
+  it("writes no cookie for a sign-in without its pair, and ends that session at the gateway it came from", async () => {
+    for (const site of ["Use It", "a move it follows", "a new start it takes back"]) {
+      const w = counted();
+      const gateway = proven();
+      w.gateways.proof = { ok: true, gateway };
+      w.gateways.record = { pid: gateway.pid, port: gateway.port };
+      w.answer = { ok: true, ready: ready(5000, NEXT), pair: null };
+      const used = await SITES[site](w);
+      assert.ok(!used, `${site}: used`);
+      wroteNoCookie(w, site);
+      assert.ok(w.did.includes(`signout:${NEXT}`), `${site}: the pairless session was left live: ${w.did.join(", ")}`);
+      assert.equal(w.requests.filter((r) => r.path === "/api/auth/logout")[0].port, 5000, site);
+      assert.equal(w.box.localState.state, "unusable", site);
+      assert.ok(w.said.some((line) => line.includes("without a pair; that session was ended")), `${site}: the log didn't say the session ended`);
+      assert.deepEqual(w.box.keptSessions, [], `${site}: an ended session was kept`);
+    }
+    // A sign-out that isn't answered 200 keeps the session to be signed out later, and says so after
+    // it; a version this app can't read is said as one.
+    const w = counted();
+    const gateway = proven({ version: "0.3.9<script>" });
+    w.gateways.proof = { ok: true, gateway };
+    w.gateways.record = { pid: gateway.pid, port: gateway.port };
+    w.gateways.answers = { "/api/auth/logout": { status: 500, body: "{}" } };
+    w.answer = { ok: true, ready: ready(5000, NEXT), pair: null };
+    assert.equal(await SITES["Use It"](w), false);
+    assert.deepEqual(w.box.keptSessions.map((k) => k.token), [NEXT], "a session that didn't end there was dropped");
+    const line = w.said.findIndex((l) => l.includes("without a pair; that session is kept to be signed out later"));
+    assert.ok(line >= 0 && w.said.findIndex((l) => l.includes("a sign-out at port 5000 → HTTP 500")) < line, w.said.join(" | "));
+    assert.equal(w.box.localState.sentence, unusableSentence({ port: 5000, version: "", app: "0.3.8", comparable: false }));
+    assert.ok(!w.said.some((l) => l.includes("<script>")), "an unread version reached the log");
+    // A version spelled with a capital V is said as it reads.
+    const v = counted();
+    v.gateways.proof = { ok: true, gateway: proven({ version: "V0.3.9" }) };
+    v.gateways.record = { pid: 300, port: 5000 };
+    v.answer = { ok: true, ready: ready(5000, NEXT), pair: null };
+    assert.equal(await SITES["Use It"](v), false);
+    assert.equal(v.box.localState.sentence, unusableSentence({ port: 5000, version: "V0.3.9", app: "0.3.8", comparable: true }));
+  });
+
+  it("uses one at this app's version or newer with the door, and a later start at it after a refusal, and tells the updater its version", async () => {
+    for (const site of Object.keys(SITES)) {
+      for (const version of ["0.3.8", "0.3.9", "0.3.9+local", "0.3.9<script>"]) {
+        const { w, used } = await tryAt(site, proven({ version }));
+        if (site === "Sign In Again") continue; // Sign In Again on a gateway in use is pinned beside it.
+        const what = `${site} at ${version}`;
+        assert.ok(used, `${what}: not used`);
+        assert.deepEqual(w.signIns, [5000], what);
+        // A version without a version's shape reaches neither the updater nor the log.
+        const told = version === "0.3.9<script>" ? "" : version;
+        assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: told }), `${what}: the updater wasn't told`);
+        assert.ok(!w.said.some((line) => line.includes("<script>")), `${what}: an unread version reached the log`);
+        if (version === "0.3.9+local") {
+          assert.ok(w.said.some((line) => line.includes("reports version 0.3.9+local") && line.endsWith("it is used")), `${what}: no line says it is used`);
+        }
+        if (version === "0.3.9<script>") {
+          assert.ok(w.said.some((line) => line.includes("reports a version this app can't read") && line.endsWith("it is used")), `${what}: no line says it is used`);
+        }
+      }
+    }
+    // Refused as older at a new start, then the same port's next start at the app's version.
+    const w = counted();
+    w.gateways.record = { pid: 300, port: 5000 };
+    const was = { kind: "adopted", pid: 299, port: 5000, secretDigest: "found-start-0" };
+    assert.equal(await w.box.takeBackAdoptedGateway(was, proven({ version: "0.3.7" })), false);
+    assert.equal(await w.box.takeBackAdoptedGateway(was, proven({ pid: 301, digest: "found-start-2", version: "0.3.8" })), true);
+    assert.deepEqual(w.signIns, [5000]);
+  });
+
+  /** A world using a found gateway at 0.3.8 on port 5000, its main window on it, and the watch's
+   *  next look refusing a new start there at 0.3.7. */
+  const refusedWhileInUse = async () => {
+    const w = counted();
+    const main = windowAt(9, "http://127.0.0.1:5000/#/chat");
+    w.box.mainWindow = { isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {}, webContents: main };
+    await w.box.adoptHomeGateway({ ok: true, gateway: proven(), ready: ready(5000, TOKEN, { window_door: true }), pair: PAIR });
+    w.gateways.record = { pid: 301, port: 5000 };
+    w.box.loseGateway();
+    await new Promise((r) => setImmediate(r));
+    w.gateways.proof = { ok: true, gateway: proven({ pid: 301, digest: "found-start-2", version: "0.3.7" }) };
+    await w.tick();
+    rowIs(w, "behind", "the older start is refused");
+    assert.equal(main.loads.at(-1), "file:loading.html?state=offline", "the main window doesn't say nothing serves it");
+    assert.ok(w.dialog.includes("openChooser"), "the chooser didn't open");
+    return { w, main };
+  };
+  /** The watch's next look proves a new start at 0.3.8 on the same port. */
+  const provenAgain = async (w) => {
+    w.gateways.record = { pid: 302, port: 5000 };
+    w.gateways.proof = { ok: true, gateway: proven({ pid: 302, digest: "found-start-3", version: "0.3.8" }) };
+    await w.tick();
+    await new Promise((r) => setImmediate(r));
+  };
+
+  it("ends a refusal once the watch takes back a start at this app's version: the row, the chooser and the main window come back", async () => {
+    const { w, main } = await refusedWhileInUse();
+    await provenAgain(w);
+    rowIs(w, "adopted", "the row still says the gateway is refused");
+    assert.equal(w.box.startFailure, null, "the refusal is still the start's failure");
+    assert.equal(w.box.refusedStart, "");
+    assert.ok(w.dialog.includes("closeChooser"), "the chooser stayed open");
+    assert.notEqual(main.loads.at(-1), "file:loading.html?state=offline", "the main window stayed on the offline page");
+    assert.equal(main.loads.at(-1), "http://127.0.0.1:5000");
+    assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: "0.3.8" }));
+  });
+
+  it("leaves a found gateway's watch armed when Try Again is pressed on its refused start, answers with the row, and starts nothing", async () => {
+    const { w } = await refusedWhileInUse();
+    const starts = [];
+    w.box.startGateway = async () => {
+      starts.push("start");
+    };
+    // The row's own start, as the Gateways window and the chooser press it.
+    const out = await w.box.startFromRow();
+    assert.equal(JSON.stringify(out), JSON.stringify({ ok: false, code: "behind", message: behindSentence({ port: 5000, version: "0.3.7", app: "0.3.8" }) }));
+    assert.deepEqual(starts, [], "Try Again started the app's own gateway");
+    assert.equal(w.box.gatewayWatch.kind, "adopted", "Try Again dropped the watch of the gateway in use");
+    assert.equal(w.box.gatewayWatch.withheld, true, "the watch stopped looking");
+    rowIs(w, "behind", "the press changed the row");
+    // The watch still takes the gateway back once a start this app may use is proven there.
+    await provenAgain(w);
+    rowIs(w, "adopted", "the watch didn't take the gateway back");
+  });
+
+  it("starts the app's own gateway from a stopped row while a found gateway is in use, letting go of its sign-in before the watch", async () => {
+    // A found gateway in use that never answered the start's wait: the row says stopped, the watch is
+    // neither withheld nor ended, so it never looks.
+    const w = counted();
+    await w.box.adoptHomeGateway({ ok: true, gateway: proven(), ready: ready(5000, TOKEN, { window_door: true }), pair: PAIR });
+    w.box.startFailure = { unanswered: true };
+    w.box.setLocalState("stopped", "PersonalClaw's gateway didn't answer.");
+    const starts = [];
+    w.box.startGateway = async () => {
+      starts.push("start");
+    };
+    const watch = w.box.gatewayWatch;
+    const drop = watch.drop;
+    watch.drop = () => {
+      w.did.push(`drop:${w.localSignIn.trafficState().withheld ? "withheld" : "open"}`);
+      drop();
+    };
+    const out = await w.box.startFromRow();
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.deepEqual(starts, ["start"], "Start a Gateway Here did nothing");
+    assert.ok(w.did.includes("drop:withheld"), `the watch was dropped while the found gateway's session was live: ${w.did.join(", ")}`);
+    assert.equal(w.box.adoptedGateway, null);
+    assert.equal(w.box.gatewayGone, true);
+    assert.ok(w.box.appUpdater.noted.some((n) => n.kind === "none"), "the updater still hears of the found gateway");
+  });
+
+  it("ends a refusal when the watch follows the gateway to a start this app may use on another port", async () => {
+    const w = counted();
+    const main = windowAt(9, "http://127.0.0.1:5000/#/chat");
+    w.box.mainWindow = { isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {}, webContents: main };
+    await w.box.adoptHomeGateway({ ok: true, gateway: proven(), ready: ready(5000, TOKEN, { window_door: true }), pair: PAIR });
+    w.box.loseGateway();
+    await new Promise((r) => setImmediate(r));
+    // The record moved to 5001, a start there at 0.3.7: refused, and the main window says so.
+    w.gateways.record = { pid: 301, port: 5001 };
+    w.gateways.proof = { ok: true, gateway: proven({ pid: 301, port: 5001, digest: "found-start-2", version: "0.3.7" }) };
+    await w.tick();
+    rowIs(w, "behind", "the moved start at 0.3.7 is refused");
+    assert.equal(main.loads.at(-1), "file:loading.html?state=offline");
+    // Then a start there at 0.3.8.
+    w.gateways.record = { pid: 302, port: 5001 };
+    w.gateways.proof = { ok: true, gateway: proven({ pid: 302, port: 5001, digest: "found-start-3", version: "0.3.8" }) };
+    await w.tick();
+    await new Promise((r) => setImmediate(r));
+    rowIs(w, "adopted", "the follow left the refusal on the row");
+    assert.equal(w.box.startFailure, null);
+    assert.equal(w.box.refusedStart, "");
+    assert.ok(w.dialog.includes("closeChooser"), "the chooser stayed open");
+    assert.equal(main.loads.at(-1), "http://127.0.0.1:5001", "the main window stayed on the offline page");
+  });
+
+  it("ends a refusal when the record comes back to the adopted start's own port with that same start proven", async () => {
+    const w = counted();
+    const main = windowAt(9, "http://127.0.0.1:5000/#/chat");
+    w.box.mainWindow = { isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {}, webContents: main };
+    await w.box.adoptHomeGateway({ ok: true, gateway: proven(), ready: ready(5000, TOKEN, { window_door: true }), pair: PAIR });
+    w.box.loseGateway();
+    await new Promise((r) => setImmediate(r));
+    w.gateways.record = { pid: 301, port: 5001 };
+    w.gateways.proof = { ok: true, gateway: proven({ pid: 301, port: 5001, digest: "found-start-2", version: "0.3.7" }) };
+    await w.tick();
+    rowIs(w, "behind");
+    // The record back on 5000, and the start it adopted proven there again.
+    w.gateways.record = { pid: 300, port: 5000 };
+    w.gateways.proof = { ok: true, gateway: proven() };
+    await w.tick();
+    await new Promise((r) => setImmediate(r));
+    rowIs(w, "adopted", "the same start's lift left the refusal on the row");
+    assert.equal(w.box.startFailure, null);
+    assert.equal(w.box.refusedStart, "");
+    assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: "0.3.8" }));
+  });
+
+  it("ends a refusal at a Sign In Again that signs the windows in at a found gateway, so Try Again then starts", async () => {
+    const { w } = await refusedWhileInUse();
+    // The start at 0.3.8 proven where the windows are, and the owner's Sign In Again there.
+    w.box.windowDoorInUse = true;
+    w.gateways.record = { pid: 302, port: 5000 };
+    w.gateways.proof = { ok: true, gateway: proven({ pid: 302, digest: "found-start-3", version: "0.3.8" }) };
+    assert.equal((await w.box.signInAgain()).ok, true);
+    assert.equal(w.box.startFailure, null, "the refusal outlived the sign-in");
+    assert.equal(w.box.refusedStart, "");
+    // The row's start no longer stands back for a refusal that has ended.
+    const starts = [];
+    w.box.startGateway = async () => {
+      starts.push("start");
+    };
+    await w.box.startFromRow();
+    assert.deepEqual(starts, ["start"]);
+  });
+
+  it("ends a refusal without moving a main window that shows a paired gateway", async () => {
+    const { w, main } = await refusedWhileInUse();
+    w.box.activeUrl = "https://gateway.example:8443";
+    const loads = main.loads.length;
+    await provenAgain(w);
+    rowIs(w, "adopted");
+    assert.equal(w.box.startFailure, null);
+    assert.equal(main.loads.length, loads, `the main window was moved off the paired gateway: ${main.loads.slice(loads).join(", ")}`);
+  });
+
+  it("tells the updater the gateway it signs in to again, and clears it for its own gateway, one that stopped and one it refuses", async () => {
+    const w = counted();
+    w.gateways.proof = { ok: true, gateway: proven({ version: "0.3.9" }) };
+    w.box.adoptedGateway = { pid: 300, port: 5000 };
+    w.box.windowDoorInUse = true;
+    w.box.localGatewayUrl = "http://127.0.0.1:5000";
+    assert.equal((await w.box.signInAgain()).ok, true);
+    assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: "0.3.9" }));
+    w.box.adoptedGone({ pid: 300, port: 5000 });
+    assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "none", version: "" }));
+    const own = world();
+    await own.box.bringUpLocalGateway();
+    assert.equal(JSON.stringify(own.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "own", version: "" }));
+    await own.box.gatewayLost({ code: 1 });
+    assert.equal(JSON.stringify(own.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "none", version: "" }));
+  });
+
+  it("moves the copy an update replaced to the Trash once the first gateway is in use in a run, at the start or later", async () => {
+    const w = counted();
+    w.gateways.proof = { ok: true, gateway: proven() };
+    w.box.appUpdaterStarted = true;
+    assert.equal((await w.box.useRunningGateway()).ok, true);
+    assert.equal(w.did.filter((d) => d === "trash").length, 1);
+    await w.box.adoptHomeGateway({ ok: true, gateway: proven({ pid: 302, digest: "found-start-3" }), ready: ready(5000, NEXT, { window_door: true }), pair: PAIR });
+    assert.equal(w.did.filter((d) => d === "trash").length, 1, "trashed twice in a run");
   });
 });
 
@@ -780,9 +1157,9 @@ describe("Sign In Again: offered only on a gateway with the window's door", () =
   it("a gateway the app found is signed in again at its door for the door's 30 days, and a new start is held with its own door's flag", async () => {
     const w = world();
     w.box.gatewayProcess = null;
-    await w.box.adoptHomeGateway({ ok: true, gateway: { pid: 300, port: 5000, secretDigest: "adopted-start-1" }, ready: ready(5000, TOKEN), pair: null });
+    await w.box.adoptHomeGateway({ ok: true, gateway: { pid: 300, port: 5000, secretDigest: "adopted-start-1", windowDoor: true }, ready: ready(5000, TOKEN, { window_door: true }), pair: PAIR });
     w.holds("after adoptHomeGateway");
-    assert.equal(w.box.windowDoorInUse, false);
+    assert.equal(w.box.windowDoorInUse, true);
     w.gateways.record = { pid: 301, port: 5000 };
     w.box.loseGateway();
     w.holds("after loseGateway");
@@ -796,7 +1173,7 @@ describe("Sign In Again: offered only on a gateway with the window's door", () =
     w.holds("after tick");
     await settle();
     w.holds("a new start with the door");
-    assert.equal(w.box.windowDoorInUse, true, "a new start with the door is held as the old one's flagless start");
+    assert.equal(w.box.windowDoorInUse, true, "a new start with the door is held without its door's flag");
     w.box.noteShellRefusal(w.localSignIn.stamp(), 403, refused("session_expired"));
     await settle();
     w.holds("after settle");
@@ -944,7 +1321,7 @@ describe("a gateway's start, the asks at its door, the doorbell's bound and an E
   const OPENED = (token = WINDOW, pair = PAIR) => ({ ok: true, ready: ready(51234, token, { window_door: true }), pair });
   const loopbackCookies = (w) => [...w.cookieJar.cookies.keys()].filter((name) => name.startsWith("pc_token_"));
   /** A gateway the app found, used: *door* says whether it has the window's door. */
-  async function foundStart(w, { pid = 300, port = 5000, digest = "adopted-start-1", door = false, token = TOKEN, pair = null } = {}) {
+  async function foundStart(w, { pid = 300, port = 5000, digest = "adopted-start-1", door = true, token = WINDOW, pair = PAIR } = {}) {
     w.box.gatewayProcess = null;
     w.gateways.record = { pid, port };
     await w.box.adoptHomeGateway({ ...FOUND(pid, port, digest, door), ready: ready(port, token, door ? { window_door: true } : {}), pair });
@@ -953,16 +1330,16 @@ describe("a gateway's start, the asks at its door, the doorbell's bound and an E
 
   it("a found gateway's second start, lost and proven again, is the same start: nothing is minted, reloaded or told", async () => {
     const w = world();
-    await foundStart(w);
+    await foundStart(w, { door: true, token: WINDOW, pair: PAIR });
     w.holds("after foundStart");
     w.gateways.record = { pid: 301, port: 5000 };
     w.box.loseGateway();
     w.holds("after loseGateway");
     await settle();
     w.holds("after settle");
-    w.gateways.proof = FOUND(301, 5000, "adopted-start-2");
+    w.gateways.proof = FOUND(301, 5000, "adopted-start-2", true);
     let asked = 0;
-    w.box.homeGateway.signIn = async () => ((asked += 1), { ok: true, ready: ready(5000, NEXT), pair: null });
+    w.box.homeGateway.signIn = async () => ((asked += 1), { ok: true, ready: ready(5000, NEXT, { window_door: true }), pair: PAIR });
     await w.tick();
     w.holds("after tick");
     await settle();
@@ -988,7 +1365,8 @@ describe("a gateway's start, the asks at its door, the doorbell's bound and an E
   });
 
   it("before a found gateway's same-start lift, one read with the held session: an ending answer lifts nothing", async () => {
-    for (const door of [true, false]) {
+    // A gateway the app found without the window's door is never used, so only one with it is lifted.
+    for (const door of [true]) {
       const w = world();
       await foundStart(w, door ? { door: true, token: WINDOW, pair: PAIR } : {});
       w.holds("after foundStart");
@@ -1513,7 +1891,7 @@ describe("a loss while the app signs in, a start the doorbell's bound stopped, a
   const OPENED = (token = WINDOW, pair = PAIR) => ({ ok: true, ready: ready(51234, token, { window_door: true }), pair });
   const loopbackCookies = (w) => [...w.cookieJar.cookies.keys()].filter((name) => name.startsWith("pc_token_"));
   /** A gateway the app found, used: *door* says whether it has the window's door. */
-  async function foundStart(w, { pid = 300, port = 5000, digest = "adopted-start-1", door = false, token = TOKEN, pair = null } = {}) {
+  async function foundStart(w, { pid = 300, port = 5000, digest = "adopted-start-1", door = true, token = WINDOW, pair = PAIR } = {}) {
     w.box.gatewayProcess = null;
     w.gateways.record = { pid, port };
     await w.box.adoptHomeGateway({ ...FOUND(pid, port, digest, door), ready: ready(port, token, door ? { window_door: true } : {}), pair });
@@ -1612,14 +1990,14 @@ describe("a loss while the app signs in, a start the doorbell's bound stopped, a
 
   it("a found gateway's new start: a loss during its cookie write lets nothing resume, and the watch stays withheld", async () => {
     const w = world();
-    await foundStart(w);
+    await foundStart(w, { door: true, token: WINDOW, pair: PAIR });
     w.gateways.record = { pid: 301, port: 5000 };
     w.box.loseGateway();
     w.holds("after loseGateway");
     await settle();
     w.holds("after the loss");
-    w.gateways.proof = FOUND(301, 5000, "adopted-start-2");
-    w.box.homeGateway.signIn = async () => ({ ok: true, ready: ready(5000, NEXT), pair: null });
+    w.gateways.proof = FOUND(301, 5000, "adopted-start-2", true);
+    w.box.homeGateway.signIn = async () => ({ ok: true, ready: ready(5000, NEXT, { window_door: true }), pair: PAIR });
     const set = w.cookieJar.set;
     let heard = 0;
     w.cookieJar.set = (details) => {
@@ -1797,32 +2175,6 @@ describe("a loss while the app signs in, a start the doorbell's bound stopped, a
     assert.equal(w.requests.length, sent);
     assert.equal(asked, 0, "the door of the start the bound stopped was asked");
     rowIs(w, "stopped");
-  });
-
-  it("after a found start's pairless ending read, three more looks read nothing, warn nothing and set no row", async () => {
-    const w = world();
-    await foundStart(w);
-    w.box.loseGateway();
-    w.holds("after loseGateway");
-    await settle();
-    w.holds("after the loss");
-    w.gateways.proof = FOUND(300, 5000, "adopted-start-1");
-    w.gateways.read = { status: 401, body: refused("session_expired") };
-    await w.tick();
-    await settle();
-    w.holds("after the ending read");
-    rowIs(w, "cant_sign_in");
-    assert.equal(w.reads.length, 1, "no read before the lift: this case is blind");
-    const said = w.said.length;
-    const rows = w.did.filter((d) => d.startsWith("row:")).length;
-    for (let look = 0; look < 3; look++) {
-      await w.tick();
-      await settle();
-      w.holds(`look ${look}`);
-    }
-    assert.equal(w.reads.length, 1, "an ended start was read again");
-    assert.equal(w.said.length, said, w.said.slice(said).join("\n"));
-    assert.equal(w.did.filter((d) => d.startsWith("row:")).length, rows, "a look set the row again");
   });
 
   it("a found gateway that moved: its start there is asked three times over five looks, once on a 403 or a 400, and the row offers nothing after the last", async () => {

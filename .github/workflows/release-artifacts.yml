@@ -909,6 +909,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/artifacts
       - name: Stage the release's files
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
           A="$RUNNER_TEMP/artifacts"
@@ -919,6 +921,11 @@ jobs:
           # Every desktop-mac leg's dmg, each named for its arch.
           for arch in arm64 x64; do
             ls staged/PersonalClaw-*-"$arch".dmg
+          done
+          # The names the desktop app's own update takes (desktop/appUpdate.js, assetName), in the
+          # tag's spelling: each desktop-mac leg's dmg, named for its arch, and the AppImage.
+          for name in "PersonalClaw-${VERSION:?}-arm64.dmg" "PersonalClaw-${VERSION}-x64.dmg" "PersonalClaw-${VERSION}.AppImage"; do
+            test -f "staged/$name" || { echo "::error::no staged/$name, the name the desktop app's update takes"; ls staged; exit 1; }
           done
           cp "$A"/wheel-sbom/*.spdx.json "$A"/image-sbom-gateway/*.spdx.json "$A"/image-sbom-web/*.spdx.json staged/
           cp "$A"/image-index-gateway/*.index.json "$A"/image-index-web/*.index.json indexes/
