@@ -14,6 +14,7 @@ import json
 import os
 import random
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -211,6 +212,27 @@ def test_a_planted_polluter_is_found_in_at_most_12_pytest_runs(tmp_path: Path) -
         (tmp_path / "scratch" / f"run-{i}" / "basetemp").is_dir()
         for i in range(1, len(found.runs) + 1)
     )
+
+
+def test_a_replays_scratch_is_never_under_the_machines_temporary_folder(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """🔴 Red with a scratch folder under tempfile.gettempdir(): a replay's --basetemp there holds
+    no pytest-of-* folder, so a worktree the replay's provenance test registers in the clone read
+    as the tests' own to a session in another checkout of it (tests/worktree_guard.py), and
+    failed it. The scratch goes under /var/tmp."""
+    _order(tmp_path, [*_earlier(2), VICTIM], seed=1, worker="gw0")
+    scratches: list[Path] = []
+
+    def stand_in(*, python, root, scratch):
+        scratches.append(scratch)
+        return _stand_in(set())[0]
+
+    monkeypatch.setattr(bp, "pytest_replay", stand_in)
+    bp.main([VICTIM, "--orders", str(tmp_path)])
+    (scratch,) = scratches
+    machine = os.path.realpath(tempfile.gettempdir())
+    assert not os.path.realpath(scratch).startswith(machine + os.sep), scratch
 
 
 def test_the_command_reads_the_artifact_and_says_what_it_found(tmp_path: Path, capsys) -> None:

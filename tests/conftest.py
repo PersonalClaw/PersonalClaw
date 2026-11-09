@@ -25,6 +25,7 @@ import real_home_guard
 import run_facts
 import shard_list
 import state_leak_guard
+import worktree_guard
 from hypothesis import HealthCheck, settings
 
 # ── Bytecode-cache rail (#2659) ─────────────────────────────────────────
@@ -362,6 +363,9 @@ def pytest_configure(config):
     )
     config.pluginmanager.register(security_census.Reporter(), "security-census")
     waiver_guard.register(config, _INVOKING_REPO_ROOT)
+    # A worktree a test adds to this repository and leaves registered there fails the session,
+    # named (tests/worktree_guard.py). The controller's alone.
+    config.pluginmanager.register(worktree_guard.Plugin(_INVOKING_REPO_ROOT), "worktree-guard")
     quarantine.configure(config, _INVOKING_REPO_ROOT)
     config.pluginmanager.register(source_index.WarmUp(), "source-index-warm-up")
     # The grammars the code map's tests parse with, fetched once and kept between runs, in the run's

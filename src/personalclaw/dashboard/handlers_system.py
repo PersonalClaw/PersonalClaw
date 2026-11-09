@@ -330,7 +330,10 @@ async def api_status(request: web.Request) -> web.Response:
             # held. Computed here, beside `cron`, because only the triggers handler owns that union.
             "triggers": _unified_trigger_count(state),
             "stats": Stats().snapshot(),
-            "stats_summary": Stats().summary(),
+            # The summary leads with the answer's own uptime: Stats' clock counts from the
+            # first time anything touched it (a stat counted, or a status read), not the
+            # gateway's start, so it gave another figure under the label.
+            "stats_summary": Stats().summary(uptime=data["uptime"]),
             "update_progress": state._update_progress,
             "version": personalclaw.__version__,
             "platform": sys.platform,

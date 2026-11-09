@@ -1914,12 +1914,17 @@ the full breadth is affordable for it, so off `main` it is measured, not reconst
 Every entry and every record names the run attempt that wrote it (`attempt`, from
 `GITHUB_RUN_ATTEMPT`). Three rules hold within one run:
 
-- **A key is held to its job's latest attempt.** On any rerun, on `main` too, `report` reads the
-  run's jobs as their latest attempts left them (`jobs?filter=latest`; each leg's job is named
-  `breadth-leg <key>`). A rerun's entries are the newest of each name across attempts, so a
-  shard that wrote none on its latest attempt would be stood in for by an older one. A key is
-  red, marked `shard_job`, when its job did not succeed in its latest attempt, or ran in a later
-  attempt than its entry names. When the jobs cannot be read, every key is red.
+- **A key is held to the attempt its job last ran in.** On any rerun, on `main` too, `report`
+  reads the run's jobs across every attempt (`jobs?filter=all`; each leg's job is named
+  `breadth-leg <key>`). A rerun lists each job it did not repeat again under the new attempt, a
+  copy with the same runner and start as the row it ran as, so a job is held to the attempt it
+  last ran in, not the attempt it is listed under (`ran_in`; `filter=latest` lists every copy
+  under the newest attempt, which read a leg the rerun left alone as stale). A rerun's entries
+  are the newest of each name across attempts, so a shard that wrote none in the attempt it last
+  ran in would be stood in for by an older one. A key is red, marked `shard_job`, when its job did
+  not succeed in the attempt it last ran in, ran in a later attempt than its entry names, or is
+  not listed in the attempt being reported. When the jobs cannot be read, or do not reach that
+  attempt, every key is red.
 - **A red stays red on a rerun.** Off `main`, on attempt N > 1, `report` reads the run's earlier
   attempts' records. A key red on any of them is red on this one, whatever its inputs, marked
   `red_on_an_earlier_attempt`. Without a record of each of attempts 1 to N-1, by the attempt

@@ -33,6 +33,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Home renders what agents and people wrote: an ask's title, a gate's prompt (without its widget), a question card's questions, a running or finished row's name and line, the line of each row in Your agents today (its ask, its work, or why it failed), a chat's title and last words, the conversation an ask came from, and Recent activity's reasons. A pinned markdown artifact renders as markdown. An approval's title, a tool's name, stays text.**
 - **A notification's title and first line render in the Notifications list, the bell and the note's toast, the Inbox row renders the start of its message inline, and a thread's context, a proposal's title and text preview, and a triage digest's titles and reasons render. The system banner on the desktop app carries plain text with no marks. The app's own toasts stay text.**
 - **A document's or an SVG's preview keeps no `class` attribute from its markup, and a document's HTML export and copied HTML keep none either.**
+- **The status answer's summary line (`stats_summary` in `/api/status`) gives the gateway's uptime, the one its `uptime` field gives. It counted from the first time the gateway read or recorded a stat, not from its start, and on macOS not while the machine slept, so it could say 5h 37m beside a 35h 51m uptime. `slack-channel`'s `/status` reply, which has no gateway uptime to give, now says "counted for" that window instead of calling it the uptime.**
 
 ## [0.3.7] — 2026-11-07
 

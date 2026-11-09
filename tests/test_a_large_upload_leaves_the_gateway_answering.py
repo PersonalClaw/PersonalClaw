@@ -22,7 +22,8 @@ load, not anything the loop waited on (:class:`_NoCpu`).
 
 A macOS runner that reads no thread's instruction count can leave none of it out, so there the
 probe measures wall time, and a virtual machine that stops the whole process for a tenth of a
-second fails a reading that no block of the loop did. A reading over the bound only by time the
+second fails a reading that no block of the loop did. So does a loaded Mac whose worker beside
+the loop ran, credited its window less its CPU. On macOS a reading over the bound only by time the
 process's own count says was ready is measured once more, on a fresh gateway, and the second is
 judged (:func:`_judged`): a block every upload makes is in both and fails, while a stall of the
 runner's passes. The limit: a block that comes only sometimes, or once a process (a lazy import on
@@ -50,6 +51,7 @@ import warnings
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import cpu_budget
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -536,8 +538,8 @@ def _said(runs: tuple) -> str:
 #: step less that wait, which may be all of it, and none of the count is left out. On a CI runner
 #: the count said 0.192 s ready in a 0.284 s step holding a 0.2 s wait to read, more than the step
 #: less the wait could hold, and the step was counted 0.091 s, the block missed (run 40760127591).
-#: A step the loop thread never gave up its CPU in is left its count as before: there the count
-#: can only be the runner's.
+#: A step the loop thread never gave up its CPU in is left its count, or the window less its CPU
+#: when its count runs past that (:meth:`_Window.end`): there the count can only be the runner's.
 _SLEPT_STEPS_EXCUSE_NOTHING = True
 
 
@@ -545,6 +547,29 @@ class SleptSteps(UserWarning):
     """Linux: a reading that held steps the loop thread slept in, whose count gave them time ready,
     and what it reads both ways (:data:`_SLEPT_STEPS_EXCUSE_NOTHING`), in the run's warnings
     summary, so a green run says what the rule costs it."""
+
+
+class AwakeSteps(UserWarning):
+    """Linux: a reading that held steps the loop thread never gave up its CPU in whose count ran
+    past their window, each left the window less its CPU (:meth:`_Window.end`), with both
+    readings, in the run's warnings summary and the job's summary: a runner that stalls the loop
+    again and again stays in sight."""
+
+
+class MeasuredAgain(UserWarning):
+    """macOS: a reading that held only on its second measurement (:func:`_judged`), with both,
+    in the run's warnings summary and the job's summary. A block that comes only sometimes can
+    pass that second measurement, so each such reading stays in sight; Linux, which counts each
+    thread's own time ready, catches such a block."""
+
+
+def _to_the_job_summary(title: str, lines: list[str]) -> None:
+    """*lines* under *title* in the job's summary (``GITHUB_STEP_SUMMARY``), where a CI run shows
+    them on its page; nothing off CI."""
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(f"### {title}\n\n" + "".join(f"- {line}\n" for line in lines) + "\n")
 
 
 #: How far a window's count of the loop thread's time ready may run past the window less its CPU
@@ -575,7 +600,8 @@ def _believed(wall: float, cpu: float, waited: float, slack: float = _COUNT_SLAC
     whole answer, which was counted 0.008 s of its 1.967 s, and the block was lost (run
     40518880630). A count that says less than that, however wrong, is not caught here. *slack* is
     how far past the window a count may run and still be the window's
-    (:data:`_A_LONE_THREADS_COUNT_LAG`)."""
+    (:data:`_A_LONE_THREADS_COUNT_LAG`). On Linux a window the loop thread never slept in is
+    ruled on in :meth:`_Window.end`."""
     return waited if waited <= wall - cpu + slack else 0.0
 
 
@@ -611,6 +637,9 @@ class _Window:
         self.no_cpu, self.threads = no_cpu, threads
         # The CPU clock first: its call is outside the window.
         self.cpu = time.thread_time()
+        #: Linux: an awake window whose count ran past it, as (what the count said, what the window
+        #: less its CPU left out) (:meth:`end`); else None.
+        self.awake_excused: tuple[float, float] | None = None
         # Linux: the loop thread's voluntary switches, read before the window starts and after it
         # ends, so a switch at either read is the window's, which only leaves out less
         # (:attr:`slept`).
@@ -626,6 +655,9 @@ class _Window:
         #: Linux: whether the loop thread gave up its CPU of its own accord in the window, and the
         #: time ready its count gave the window, before :func:`_believed` judged it.
         self.slept = False
+        #: Linux: whether both reads of the loop thread's voluntary switches were made and it made
+        #: none in the window (:meth:`end`).
+        self.awake = False
         self.ready = 0.0
         #: Whether the window's time ready was read: macOS reads none in a window shorter than
         #: :meth:`end`'s *counted_from*, which is wall time.
@@ -649,6 +681,7 @@ class _Window:
             self.read = now is not None
             slept_to = self.no_cpu.loop_slept()
             self.slept = self._slept_from is not None and slept_to is not None
+            self.awake = self.slept and slept_to == self._slept_from
             self.slept = self.slept and slept_to > self._slept_from
             self.ready = waited
         elif time.monotonic() - self.began >= counted_from:
@@ -658,7 +691,8 @@ class _Window:
             waited = self.no_cpu.waited(self.first, then, self.threads)
             self.read = True
             # macOS: the process's count is the loop thread's own when it is the only thread. A
-            # Linux count is each thread's own, brought up to date as it is read: no lag.
+            # Linux count is the thread's own as read, but a preemption between the window's end
+            # and its read lands in the count, past the window.
             listed = getattr(self.first, "threads", {}).keys() | getattr(then, "threads", {}).keys()
             lone = listed and listed <= self.threads
             if lone and self.no_cpu.source.startswith("macOS"):
@@ -670,9 +704,18 @@ class _Window:
         #: What the count said, before :func:`_believed` judged it.
         self.said = waited
         waited = _believed(wall, cpu, waited, slack)
+        if self.awake and self.said > wall - cpu + slack:
+            # A Linux count past what the window can hold, in a window the loop thread never gave
+            # up its CPU in: it slept on nothing (no lock, no read, no page from the disk, each a
+            # voluntary switch), so every moment it did not run it was ready, the runner's. The
+            # count is wrong, and the window less its CPU is what it can have been ready for: a
+            # 0.394 s step of 0.004 s CPU, 0 voluntary and 5 involuntary switches, its count
+            # 0.424 s, was counted in wall time and failed the starved-step plant (run 41610116147).
+            waited = max(0.0, wall - cpu)
+            self.awake_excused = (self.said, waited)
         #: What the window would count were all of the process's time ready the loop's, as much
-        #: as the window less the loop's CPU can hold: the least it can be, and what a runner that
-        #: reads no instruction counts cannot rule out (:meth:`_Probe.undecided`).
+        #: as the window less the loop's CPU can hold: the least it can be, and what macOS cannot
+        #: rule out (:meth:`_Probe.undecided`).
         ready = 0.0
         if self.first is not None and self.then is not None:
             ready = min(max(0.0, self.then.ready - self.first.ready), max(0.0, wall - cpu))
@@ -734,8 +777,12 @@ class _Probe:
         self.waited_for_a_cpu = 0.0
         self.answered_during = 0
         #: The longest step and the slowest answer, were all of the process's time ready over
-        #: each the loop's (:attr:`_Window.could`).
+        #: each the loop's (:attr:`_Window.could`), and what that step ran.
         self.worst_step_could = 0.0
+        self.worst_step_could_was = "nothing"
+        #: Linux: each step the awake rule left its window less its CPU
+        #: (:attr:`_Window.awake_excused`): (wall, CPU, what the count said, what was left out).
+        self.awake_steps: list[tuple[float, float, float, float]] = []
         self.slowest_answer_could = 0.0
         #: The reading this one was measured again after (:func:`_judged`), if it was.
         self.before: _Probe | None = None
@@ -753,7 +800,7 @@ class _Probe:
         self.stepped = 0.0
         self.left_out_ruled = self.left_out_unruled = 0.0
         #: macOS: the snapshots taken, and whether any read a thread's instruction count
-        #: (:attr:`reads_no_instructions`).
+        #: (:attr:`on_macos`, :attr:`reads_no_instructions`).
         self.snapshots = 0
         self.instructions_read = False
 
@@ -770,7 +817,7 @@ class _Probe:
         )
 
     def _note(self, window: _Window) -> None:
-        """Count *window*'s snapshots toward :attr:`reads_no_instructions`."""
+        """Count *window*'s snapshots toward :attr:`on_macos` and :attr:`reads_no_instructions`."""
         for snapshot in (window.first, window.then):
             if snapshot is not None:
                 self.snapshots += 1
@@ -812,9 +859,12 @@ class _Probe:
                     probe.left_out_ruled += wall - max(wall - ruled, cpu)
                     probe.left_out_unruled += wall - max(wall - unruled, cpu)
                 waited = ruled if _SLEPT_STEPS_EXCUSE_NOTHING else unruled
+                if window.awake_excused is not None:
+                    probe.awake_steps.append((wall, cpu, *window.awake_excused))
                 took = max(wall - waited, cpu)
                 probe.worst_step_wall = max(probe.worst_step_wall, wall)
-                probe.worst_step_could = max(probe.worst_step_could, window.could)
+                if window.could > probe.worst_step_could:
+                    probe.worst_step_could, probe.worst_step_could_was = window.could, _said(runs)
                 probe._note(window)
                 probe.waited_for_a_cpu += waited
                 if took > probe.worst_step:
@@ -867,6 +917,27 @@ class _Probe:
                     ),
                     stacklevel=2,
                 )
+            self._report_the_awake_steps()
+
+    def _report_the_awake_steps(self) -> None:
+        """Linux: each step the awake rule counted short, with both readings, as
+        :class:`AwakeSteps` and in the job's summary."""
+        if not self.awake_steps:
+            return
+        lines = [
+            f"a step of {wall:.3f}s and {cpu:.3f}s of CPU, its count {said:.3f}s ready, past its"
+            f" window: {left:.3f}s left out, so counted {max(wall - left, cpu):.3f}s, not"
+            f" {wall:.3f}s"
+            for wall, cpu, said, left in self.awake_steps
+        ]
+        warnings.warn(
+            AwakeSteps(
+                f"{len(lines)} step(s) the loop thread never gave up its CPU in had a count past"
+                " their window, each left the window less its CPU: " + "; ".join(lines)
+            ),
+            stacklevel=3,
+        )
+        _to_the_job_summary("upload probe: steps a runner stalled (Linux, awake)", lines)
 
     def _threads_over(self, window: _Window) -> tuple[float, list, dict[int, str]] | None:
         """macOS: the process's count of time ready over *window*, each other thread's CPU, run
@@ -953,17 +1024,31 @@ class _Probe:
         self.took = finished - started
         return result
 
-    def undecided(self, *, answers: bool = True) -> bool:
-        """Whether this reading is over the bound only by time the probe cannot place: on a runner
-        that reads no instruction counts (:attr:`reads_no_instructions`), every step, and
-        with *answers* every answer, is under the bound once the process's own time ready over it
-        is taken for the loop's. A reading over the bound even then is decided: it fails. One under
-        the bound is decided too."""
-        over = self.worst_step >= _BOUND or (answers and self.slowest_answer >= _BOUND)
-        placed = self.worst_step_could >= _BOUND or (
-            answers and self.slowest_answer_could >= _BOUND
-        )
-        return over and not placed and self.reads_no_instructions
+    @property
+    def on_macos(self) -> bool:
+        """macOS, with a snapshot taken: the count is the process's, and what the loop's share of
+        it was the probe can only bound (:meth:`_NoCpu.accounts`)."""
+        return self.no_cpu.source.startswith("macOS") and self.snapshots > 0
+
+    def undecided(self, *, answers: bool = True, bound: float = _BOUND) -> bool:
+        """Whether this reading is over *bound* (the one the test is held to, :data:`_BOUND` or
+        :func:`cpu_budget.limit`'s) only by time the probe cannot place: on macOS
+        (:attr:`on_macos`), every step, and with *answers* every answer, is under the bound once
+        the process's own time ready over it is taken for the loop's. A reading over the bound
+        even then is decided: it fails. One under the bound is decided too.
+
+        Every other thread that ran in a window is credited all of it less its CPU, whether its
+        instructions are read or not, so the loop is left only what of the process's count those
+        credits do not cover. On a loaded Mac that reads instruction counts, asyncio's worker ran
+        23,013 instructions in a 0.128 s step of 0.001 s CPU, the process 0.128 s ready over it,
+        and was credited 0.129 s, leaving the loop none; in another reading it was credited
+        0.195 s of a 0.233 s answer the process was 0.242 s ready over, leaving it 0.047 s. Each
+        read as a block and failed the filing test, as
+        main's file did once in 20 runs there. A runner that reads no instruction counts (a
+        virtual machine, :attr:`reads_no_instructions`) credits every thread so."""
+        over = self.worst_step >= bound or (answers and self.slowest_answer >= bound)
+        placed = self.worst_step_could >= bound or (answers and self.slowest_answer_could >= bound)
+        return over and not placed and self.on_macos
 
     def says(self) -> str:
         """The probe's reading, one line a field: what the longest step ran and how its time
@@ -1011,23 +1096,37 @@ class _Probe:
                 "this runner reads no instruction counts: nothing another thread could account for"
                 " is left out, so the probe measures wall time here. A reading over the bound only"
                 " by the process's time ready is measured again on a fresh gateway, and the second"
-                " judged; a block that comes only sometimes can pass that second measurement on"
-                " macOS, and Linux, which counts each thread's own time ready, catches it"
+                " judged"
+            )
+        if self.on_macos:
+            # What decides a reading here (:meth:`undecided`): the most any step, and any answer,
+            # holds even with all of the process's time ready taken for the loop's.
+            lines.append(
+                f"with the process's time ready taken for the loop's: the longest step"
+                f" {self.worst_step_could:.3f}s ({self.worst_step_could_was}), the slowest answer"
+                f" {self.slowest_answer_could:.3f}s"
             )
         if self.before is not None:
             lines.append(
                 "measured again: the first reading was over the bound only by time ready this"
-                " runner cannot place, and read:"
+                " runner cannot place; a block that comes only sometimes can pass the second on"
+                " macOS, and Linux, which counts each thread's own time ready, catches it. The"
+                " first read:"
             )
             lines += [f"  {line}" for line in self.before.says().splitlines()]
         return "\n".join(lines)
 
 
 def _set_aside(waited: float, said: float) -> list[str]:
-    """The line that says a window's count was set aside (:func:`_believed`), if it was."""
+    """What of a window's count was left out, when not all of it: none, set aside
+    (:func:`_believed`) or for a step the loop slept in (:data:`_SLEPT_STEPS_EXCUSE_NOTHING`), or
+    the window less its CPU (the awake rule, :meth:`_Window.end`), or what its steps left
+    (:func:`_held_to_its_steps`)."""
     if said == waited:
         return []
-    return [f"  its count said {said:.3f}s ready, more than it could hold: nothing left out"]
+    if waited == 0.0:
+        return [f"  its count said {said:.3f}s ready: nothing left out"]
+    return [f"  its count said {said:.3f}s ready: {waited:.3f}s of it left out"]
 
 
 def _over(threads: tuple[float, list, dict[int, str]] | None) -> list[str]:
@@ -1073,22 +1172,62 @@ def _items(store: KnowledgeStore) -> int:
     return store.db.execute("SELECT COUNT(*) AS c FROM items").fetchone()["c"]
 
 
-async def _judged(measure, gateway, again, *, answers: bool = True) -> _Probe:
+def _holds(probe: _Probe, *, answers: bool = True, limited: bool = False) -> None:
+    """*probe*'s reading held to the bound: its longest step and, with *answers*, its slowest
+    answer under :data:`_BOUND`; with *limited*, under :func:`cpu_budget.limit`'s, three times it
+    under a tracer.
+
+    Under a tracer (breadth's coverage leg) every line of the upload's threads runs several times
+    slower, and the loop thread waits for the interpreter's lock behind them: breadth run
+    42388523314's coverage/4 read a 0.136 s step of 0.001 s CPU and none ready, the loop thread
+    asleep 5 times in it, the upload's scan traced beside it. Only the scanning test takes the
+    allowance, as #5959's budgets do: its regression, the content scan run on the loop, holds it
+    0.32 s untraced and from 0.68 s traced, over the 0.375 s that the traced bound with its 1.25
+    margin asks (:func:`test_under_a_tracer_a_scan_on_the_loop_still_fails`). Its other regression,
+    the scan in a worker thread, held the loop 0.12 s, one parse that holds the interpreter's lock
+    and that a tracer does not lengthen: under the traced bound, so only the untraced legs fail it,
+    at 0.1 s. The other three keep 0.1 s under a tracer: their regressions held it 0.19 s
+    (completing), 0.18 s (filing) and 0.2 s (the security log), each under 0.375 s, and each passed
+    all 11 of its coverage-leg runs, from 2026-10-31 to 11-08, 10 of them from 11-01, at 0.1 s.
+    The CPU budget rail holds each test to its choice."""
+    bound = cpu_budget.limit(_BOUND) if limited else _BOUND
+    assert probe.worst_step < bound, f"the bound is {bound:.2f}s; {probe.says()}"
+    if answers:
+        assert probe.slowest_answer < bound, f"the bound is {bound:.2f}s; {probe.says()}"
+    if probe.before is not None:
+        first = probe.before
+        line = (
+            f"first: the longest step {first.worst_step:.3f}s ({first.worst_step_could:.3f}s with"
+            f" the process's time ready taken for the loop's), the slowest answer"
+            f" {first.slowest_answer:.3f}s ({first.slowest_answer_could:.3f}s); second: the"
+            f" longest step {probe.worst_step:.3f}s, the slowest answer {probe.slowest_answer:.3f}s"
+        )
+        warnings.warn(MeasuredAgain("held only when measured again: " + line), stacklevel=2)
+        _to_the_job_summary("upload probe: readings measured again (macOS)", [line])
+
+
+async def _judged(
+    measure, gateway, again, *, answers: bool = True, limited: bool = False
+) -> _Probe:
     """The reading to judge: *measure* run over *gateway*, and, when that reading is over the bound
     only by time the probe cannot place (:meth:`_Probe.undecided`), run once more over a fresh one
     from *again*, whose reading is judged as it is, carrying the first in its report.
 
-    A runner that reads no instruction counts, a macOS virtual machine, leaves nothing out of a
-    window, so a stall of the whole process there reads as a block: run 40578869717 counted a step
-    of the probe's own health check 0.097 s with 0.001 s of CPU, the process 0.096 s ready over it
-    and every other thread idle, and its answer 0.144 s. A block the upload makes, it makes every
-    time, so it fails the second measurement too; the runner's stall does not come back. A block
-    that comes only sometimes, or once a process (a lazy import on the loop), can pass the second
-    on macOS: Linux, which counts each thread's own time ready and leaves out exactly the loop's,
-    catches it. *answers* says whether the health
-    checks' answers are judged, as well as the steps."""
+    On macOS the count is the process's, and a thread that ran beside the loop is credited its
+    whole window less its CPU: a runner that reads no instruction counts, a macOS virtual
+    machine, credits every thread so. So a stall of the whole process there reads as a block: run
+    40578869717 counted a step of the probe's own health check 0.097 s with 0.001 s of CPU, the
+    process 0.096 s ready over it and every other thread idle, and its answer 0.144 s. A block the
+    upload makes, it makes every time, so it fails the second measurement too; the runner's stall
+    does not come back. A block that comes only sometimes, or once a process (a lazy import on
+    the loop), can pass the second on macOS: Linux, which counts each thread's own time ready and
+    leaves out exactly the loop's, catches it. *answers* says whether the health checks' answers
+    are judged, as well as the steps, and *limited* whether the test takes the tracer's
+    allowance (:func:`_holds`): a reading is measured again only when it is over the bound it is
+    judged against, so a limited test's reading under a tracer is never measured again for being
+    over :data:`_BOUND` alone."""
     probe = await measure(gateway)
-    if probe.undecided(answers=answers):
+    if probe.undecided(answers=answers, bound=cpu_budget.limit(_BOUND) if limited else _BOUND):
         first, probe = probe, await measure(again())
         probe.before = first
     return probe
@@ -1125,8 +1264,7 @@ async def test_completing_a_large_upload_leaves_the_gateway_answering(gateway, a
         return probe
 
     probe = await _judged(measure, gateway, again)
-    assert probe.worst_step < _BOUND, probe.says()
-    assert probe.slowest_answer < _BOUND, probe.says()
+    _holds(probe)  # kept at 0.1 s traced: its regression held the loop 0.19 s
 
 
 async def _multipart(filename: str, mime: str, payload: bytes, boundary: str):
@@ -1172,8 +1310,7 @@ async def test_filing_a_large_single_request_upload_leaves_the_gateway_answering
         return probe
 
     probe = await _judged(measure, gateway, again)
-    assert probe.worst_step < _BOUND, probe.says()
-    assert probe.slowest_answer < _BOUND, probe.says()
+    _holds(probe)  # kept at 0.1 s traced: its regression held the loop 0.18 s
 
 
 #: How long the planted security-log write takes: as long as the log's key once took to make,
@@ -1221,7 +1358,7 @@ async def test_a_slow_security_log_write_does_not_hold_the_gateway(gateway, agai
         return probe
 
     probe = await _judged(measure, gateway, again, answers=False)
-    assert probe.worst_step < _BOUND, probe.says()
+    _holds(probe, answers=False)  # kept at 0.1 s traced: its regression held the loop 0.2 s
 
 
 def _json_lines(size: int) -> bytes:
@@ -1239,33 +1376,75 @@ async def test_scanning_a_large_text_upload_leaves_the_gateway_answering(gateway
     """🔴 Red before: the content scan ran on the event loop, which went its whole run without
     a turn. In a worker thread its parse still held the loop for about 0.1 s; in a child
     process, not at all."""
+    probe = await _judged(_scanned_upload, gateway, again, limited=True)
+    # Its regression on the loop reads from 0.68 s traced. Its other, the scan in a worker thread,
+    # held the loop 0.12 s, one parse that holds the interpreter's lock and that a tracer does not
+    # lengthen: under the traced bound, so only the untraced legs fail it, at 0.1 s. See _holds.
+    _holds(probe, limited=True)
+
+
+async def _scanned_upload(gw, *, asked: bool = True) -> _Probe:
+    """The probe's reading over *gw* while it takes and scans a 2 MB upload of JSON lines; with
+    *asked*, a health check answered meanwhile, the premise a reading that holds needs."""
     payload = _json_lines(2 * _MB)
+    async with TestClient(TestServer(gw.app)) as client:
+        info = await _init(
+            client,
+            len(payload),
+            target="attachment",
+            filename="feed-export.jsonl",
+            mime="application/x-ndjson",
+        )
+        await _send_parts(client, info, payload)
+        probe = _Probe(client)
 
-    async def measure(gw) -> _Probe:
-        async with TestClient(TestServer(gw.app)) as client:
-            info = await _init(
-                client,
-                len(payload),
-                target="attachment",
-                filename="feed-export.jsonl",
-                mime="application/x-ndjson",
-            )
-            await _send_parts(client, info, payload)
-            probe = _Probe(client)
+        status, body = await probe.during(_complete(client, info["uploadId"]))
 
-            status, body = await probe.during(_complete(client, info["uploadId"]))
+    assert status == 200, body
+    (path,) = body["paths"]
+    assert os.path.getsize(path) == len(payload), "premise: the scanned upload was kept"
+    if asked:
+        assert probe.answered_during >= 1, f"premise: the gateway was asked; {probe.says()}"
+    return probe
 
-        assert status == 200, body
-        (path,) = body["paths"]
-        assert os.path.getsize(path) == len(payload), "premise: the scanned upload was kept"
-        assert (
-            probe.answered_during >= 1
-        ), f"premise: the gateway was asked meanwhile; {probe.says()}"
-        return probe
 
-    probe = await _judged(measure, gateway, again)
-    assert probe.worst_step < _BOUND, probe.says()
-    assert probe.slowest_answer < _BOUND, probe.says()
+def _a_tracer(frame, event, arg):  # noqa: ANN001, ANN202 — sys.settrace's signature
+    return _a_tracer
+
+
+#: How far over the traced bound the plant below must read, as #5959's limit holds its budgets.
+_TRACED_MARGIN = 1.25
+
+
+@pytest.mark.asyncio
+async def test_under_a_tracer_a_scan_on_the_loop_still_fails(gateway, monkeypatch):
+    """The vacuity arm of the traced bound: the regression the scanning test guards, the content
+    scan run on the loop, read under a tracer is over :func:`cpu_budget.limit`'s bound with
+    margin, so breadth's coverage leg still fails it. Where nothing traces yet, the test sets a
+    tracer on this thread and for the threads it starts; on the coverage leg, coverage's is it.
+    Measured on a loaded Mac: 0.32 s untraced, 0.68 to 0.74 s under coverage and 0.9 to 1.0 s
+    under this tracer, against a traced bound of 0.3 s."""
+    from personalclaw.uploads import content_scan, scan_child
+
+    async def on_the_loop(window: bytes) -> dict:
+        return {"dangerous": scan_child.is_dangerous(window)}
+
+    monkeypatch.setattr(content_scan, "_ask_child", on_the_loop)
+    set_here = not cpu_budget.traced()
+    if set_here:
+        threading.settrace(_a_tracer)
+        sys.settrace(_a_tracer)
+    try:
+        assert cpu_budget.traced(), "premise: a tracer is set"
+        probe = await _scanned_upload(gateway, asked=False)  # the scan holds the loop throughout
+    finally:
+        if set_here:
+            sys.settrace(None)
+            threading.settrace(None)
+    bound = _BOUND * cpu_budget.TRACED
+    assert probe.worst_step >= bound * _TRACED_MARGIN, f"the scan on the loop; {probe.says()}"
+    with patch.object(cpu_budget, "traced", lambda: True), pytest.raises(AssertionError):
+        _holds(probe, limited=True)
 
 
 # ── what the upload becomes is decided off the loop ─────────────────────────────────────────
@@ -2026,6 +2205,95 @@ class _VmReads(_NoCpu):
         self.beside = (self.beside[0] + beside[0], self.beside[1] + beside[1])
 
 
+class _MacReads(_VmReads):
+    """macOS on a machine that reads instruction counts, as a loaded Mac runs the suite, driven
+    as :class:`_VmReads` is: one thread beside the loop, asyncio's worker, in run state *was* at
+    the first snapshot and *now* at every later one, using the CPU and running the instructions
+    each :meth:`spend`'s *beside* gives. A worker that ran any instruction is credited its whole
+    window less its CPU (:meth:`_NoCpu.accounts`)."""
+
+    def __init__(self, *, was: int, now: int) -> None:
+        super().__init__(alone=True)
+        self.state, self.now = was, now
+        self.worker = (0.0, 0)
+
+    def snapshot(self) -> SimpleNamespace:
+        taken = super().snapshot()
+        taken.threads[threading.get_native_id()] = (self.cpu, 1, 0)
+        taken.threads[1] = (self.worker[0], self.state, self.worker[1])
+        self.state = self.now
+        return taken
+
+    def spend(self, wall: float, cpu: float, ready: float, _slept: int = 0, beside=(0.0, 0)):
+        super().spend(wall, cpu, ready)
+        self.worker = (self.worker[0] + beside[0], self.worker[1] + beside[1])
+
+
+#: The filing test's longest step in a 20-run repeat on a loaded Mac that reads instruction counts
+#: (run 20): 0.128 s in wall time and 0.001 s of CPU, the process 0.128 s ready over it, and
+#: asyncio's worker, running or ready and then waiting, 0.000015 s of CPU in 23,013 instructions.
+_MAC_STEP = (0.128, 0.001, 0.128, 0, (0.000015, 23_013))
+#: Its slowest answer in another run (run 13): 0.233 s in wall time and 0.003 s of CPU, the
+#: process 0.242 s ready over it, the worker waiting at both ends, 0.037579 s of CPU in
+#: 735,426,048 instructions; the run's longest step, 0.006 s, planted inside it.
+_MAC_ANSWER_STEP = (0.006, 0.001, 0.0, 0, (0.0, 0))
+_MAC_ANSWER = (0.233, 0.003, 0.242, (0.037579, 735_426_048))
+
+
+@pytest.mark.parametrize(
+    ("reads", "readings", "answer_over"),
+    [
+        pytest.param(lambda: _MacReads(was=1, now=3), (_MAC_STEP,), False, id="run 20's step"),
+        pytest.param(
+            lambda: _MacReads(was=3, now=3),
+            (_MAC_ANSWER_STEP, _MAC_ANSWER),
+            True,
+            id="run 13's answer",
+        ),
+    ],
+)
+def test_on_a_mac_that_reads_instructions_a_reading_a_worker_beside_was_credited_is_undecided(
+    reads, readings, answer_over
+):
+    """🔴 Red before: on a Mac that reads instruction counts every reading was decided, so one
+    whose time ready the worker beside was credited, though it barely ran, read as a block and
+    failed the filing test (2 of 20 runs; main's file 1 of 20). With all of the process's time
+    ready taken for the loop's it is under the bound, so it cannot be placed, and is measured
+    again (:func:`_judged`)."""
+    probe = _probed(reads(), *readings)
+    over = probe.slowest_answer if answer_over else probe.worst_step
+    assert over >= _BOUND, f"premise: credited to the worker, it reads over; {probe.says()}"
+    assert probe.instructions_read and not probe.reads_no_instructions
+    assert probe.undecided(), probe.says()
+
+
+@pytest.mark.asyncio
+async def test_on_a_mac_that_reads_instructions_a_worker_credited_reading_is_judged_again(
+    tmp_path, monkeypatch
+):
+    """🔴 Red before: run 20's reading was the one judged, and failed. It is measured again on a
+    fresh gateway, and the second reading, the runner's stall gone, is the one judged. A reading
+    that held only so is reported, as :class:`MeasuredAgain` and in the job's summary."""
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    readings = iter(
+        [
+            _probed(_MacReads(was=1, now=3), _MAC_STEP),
+            _probed(_MacReads(was=1, now=3), (0.01, 0.001, 0.0, 0, (0.0, 0))),
+        ]
+    )
+
+    async def measure(_where) -> _Probe:
+        return next(readings)
+
+    first, again = _folders(tmp_path)
+    probe = await _judged(measure, first, again)
+    assert probe.before is not None and probe.before.worst_step >= _BOUND, probe.says()
+    with pytest.warns(MeasuredAgain, match="held only when measured again: first"):
+        _holds(probe)
+    assert "readings measured again" in summary.read_text(encoding="utf-8")
+
+
 #: Run 40633805032's longest step, python-suite-macos (1/5) on a virtual machine that reads no
 #: instruction counts: 4.421 s in wall time and 0.001 s of CPU, holding the plant's 0.2 s wait to
 #: read, the process's count 12.922 s ready over it, and the hasher and asyncio's worker using
@@ -2155,6 +2423,20 @@ def test_an_answer_is_counted_no_less_than_the_steps_inside_it():
     assert probe.worst_step == pytest.approx(0.334, abs=0.001), probe.says()
     assert probe.slowest_answer >= _BOUND, f"the answer missed the block; {probe.says()}"
     assert probe.slowest_answer == pytest.approx(probe.worst_step), probe.says()
+
+
+def test_the_report_names_what_the_step_the_most_placed_reading_came_from_ran():
+    """The placed line (what decides a reading, :meth:`_Probe.undecided`) names what its step
+    ran, so a failure shaped like run 42376822434's says which step of the runner's own decided
+    its first reading."""
+    probe = _probed(_VmReads(), _VM_STEP, _VM_ANSWER)
+    assert probe.worst_step_could_was != "nothing", probe.says()
+    (placed,) = [
+        line
+        for line in probe.says().splitlines()
+        if "with the process's time ready taken for the loop's" in line
+    ]
+    assert f"({probe.worst_step_could_was})" in placed, placed
 
 
 @pytest.mark.parametrize(
@@ -2934,6 +3216,76 @@ class _LinuxSnapshots(_VmReads):
         )
 
 
+#: Run 41610116147's longest step, python-suite (2/3) on Linux, in the starved-step plant: 0.394 s
+#: in wall time and 0.004 s of CPU, with the loop thread's own count at 0.424 s ready, 34 ms past
+#: what the window less its CPU can hold, and no voluntary switch (5 involuntary).
+_CI_AWAKE_STEP_PAST_ITS_WINDOW = (0.394, 0.004, 0.424, 0)
+
+
+def test_a_linux_count_past_its_window_in_a_step_that_never_slept_leaves_the_rest_out():
+    """🔴 Red before: the count, past what the window could hold, was taken as wrong and the step
+    counted in wall time, 0.394 s, though the loop thread never gave up its CPU in it: what it did
+    not run, it was ready for. Now the window less its CPU is left out, and the step is its CPU."""
+    probe = _probed(_LinuxReads(), _CI_AWAKE_STEP_PAST_ITS_WINDOW)
+    assert probe.worst_step == pytest.approx(0.004), probe.says()
+    says = probe.says()
+    assert "nothing left out" not in says and "0.390s of it left out" in says, says
+    (wall, cpu, said, left), *more = probe.awake_steps
+    assert not more and (wall, cpu, said) == pytest.approx((0.394, 0.004, 0.424))
+    assert left == pytest.approx(0.390), "both readings are kept for the report"
+
+
+def test_a_linux_count_past_its_window_in_a_step_that_slept_still_leaves_nothing_out():
+    """The rule's other side: the same reading with one voluntary switch, a sleep that could have
+    been a block, keeps the count wrong and the step in wall time."""
+    wall, cpu, ready, _ = _CI_AWAKE_STEP_PAST_ITS_WINDOW
+    probe = _probed(_LinuxReads(), (wall, cpu, ready, 1))
+    assert probe.worst_step == pytest.approx(wall), probe.says()
+
+
+class _UnswitchedLinuxReads(_LinuxReads):
+    """:class:`_LinuxReads` whose loop thread's switches cannot be read."""
+
+    def loop_slept(self) -> None:
+        return None
+
+
+def test_a_linux_count_past_its_window_with_its_switches_unread_leaves_nothing_out():
+    """The rule needs both switch reads: with none, the loop thread may have slept, and the step
+    stays in wall time."""
+    probe = _probed(_UnswitchedLinuxReads(), _CI_AWAKE_STEP_PAST_ITS_WINDOW)
+    assert probe.worst_step == pytest.approx(0.394), probe.says()
+    assert probe.awake_steps == []
+
+
+def test_each_step_the_awake_rule_counted_short_is_in_the_warnings_and_the_job_summary(
+    monkeypatch, tmp_path
+):
+    """🔴 Red without the report: the awake rule's work was in none, so a runner that stalls the
+    loop again and again would pass in silence. Each step it counted short is reported with both
+    readings, as :class:`AwakeSteps` and in the job's summary, where the run's page shows it."""
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    probe = _probed(_LinuxReads(), _CI_AWAKE_STEP_PAST_ITS_WINDOW)
+    with pytest.warns(AwakeSteps, match="0.394s and 0.004s of CPU, its count 0.424s ready"):
+        probe._report_the_awake_steps()
+    written = summary.read_text(encoding="utf-8")
+    assert written.startswith("### upload probe: steps a runner stalled (Linux, awake)"), written
+    assert "counted 0.004s, not 0.394s" in written, written
+
+
+def test_a_reading_the_awake_rule_did_not_touch_reports_nothing(monkeypatch, tmp_path):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    wall, cpu, ready, _ = _CI_AWAKE_STEP_PAST_ITS_WINDOW
+    probe = _probed(_LinuxReads(), (wall, cpu, ready, 1))  # it slept: the rule left it whole
+    assert probe.awake_steps == []
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", AwakeSteps)
+        probe._report_the_awake_steps()
+    assert not summary.exists()
+
+
 def test_a_linux_count_a_few_ms_past_its_window_still_leaves_nothing_out():
     """The lag is macOS's alone: a Linux thread's count is brought up to date as it is read, so
     the CI runner's lone step, its count 3 ms past, read through Linux's snapshots, leaves nothing
@@ -2975,7 +3327,8 @@ class _StarvedRunner(_NoCpu):
     process's count says it was ready for every moment its loop thread did not run. So a step of
     the loop's that waits on a write and one the runner stalls read alike to the probe, as on run
     40578869717. *instructions* reads both threads' counts instead, the other thread's moving, so
-    the probe can tell it ran and could have been the one ready; *starved* False has the count say
+    the probe can tell it ran and could have been the one ready, as on a loaded Mac whose worker
+    beside ran; *starved* False has the count say
     the process was never ready."""
 
     def __init__(self, *, instructions: bool = False, starved: bool = True) -> None:
@@ -3047,65 +3400,260 @@ def _folders(tmp_path):
     return _mkdir(tmp_path / "first"), lambda: _mkdir(tmp_path / f"again-{next(made)}")
 
 
-@pytest.mark.asyncio
-async def test_on_a_starved_runner_a_blocking_write_on_the_loop_fails_both_measurements(tmp_path):
-    """The differential's failing side: on a runner that reads no instruction counts, with the
-    process starved, a write on the loop that waits on the disk reads as time ready, so the first
-    reading cannot be placed and is measured again on a fresh gateway. The write is the upload's
-    own, so it is in the second too, which is judged and fails. The report says why."""
-    first, again = _folders(tmp_path)
-    measure = _measure_on(_StarvedRunner, lambda where: _planted_app(_block_by_writing, where))
-    probe = await _judged(measure, first, again)
-    assert probe.before is not None, f"premise: the first reading was undecided; {probe.says()}"
-    assert probe.before.worst_step >= _BOUND, f"the first missed the write; {probe.says()}"
-    assert probe.worst_step >= _BOUND, f"the second missed the write; {probe.says()}"
-    says = probe.says()
-    assert "this runner reads no instruction counts" in says, says
-    assert "a block that comes only sometimes can pass" in says and "Linux" in says, says
-    assert "measured again" in says, says
-
-
-@pytest.mark.asyncio
-async def test_on_a_starved_runner_a_stalled_idle_loop_passes_the_second_measurement(tmp_path):
-    """🔴 Red before (the first reading was the one judged): the runner stalls the process once,
-    while the loop runs a step that waits on nothing, and the first reading is over the bound by
-    nothing the probe can place. Measured again on a fresh gateway, the stall is not there, and
-    the second reading is under the bound."""
-    first, again = _folders(tmp_path)
-    stalls = [_STALLED]
-    measure = _measure_on(_StarvedRunner, lambda _where: _stalled_once_app(stalls))
-    probe = await _judged(measure, first, again)
-    assert probe.before is not None, f"premise: the first reading was undecided; {probe.says()}"
-    assert probe.before.worst_step >= _BOUND, f"premise: the stall failed the first; {probe.says()}"
-    assert probe.worst_step < _BOUND, probe.says()
-    assert probe.slowest_answer < _BOUND, probe.says()
+async def _judged_undecided_first(tmp_path, measure_for) -> _Probe:
+    """:func:`_judged` over a starved runner's plant, tried up to :data:`_TRIES` times, each in
+    folders of its own and with the plant made afresh by *measure_for*, until the first reading
+    was undecided, the plant's premise; that try's probe. The runner the test runs on can add a
+    step of its own over the bound that the probe places, and so decide the first reading before
+    the plant's: a macOS runner did, in a 0.456 s gap around the plant's 0.288 s step (run
+    42376822434). Only such a placed reading is tried again. One that no step of the runner's
+    own placed, under the bound or over it, can only be the probe missing the plant, and fails
+    at once on every platform; :func:`_until_crowded`'s ``required`` part also fails on every
+    platform, after its last try. A premise unmet every time by placed readings fails on Linux
+    and skips on macOS, as :func:`_until_crowded` does, each try's reading named."""
+    readings = []
+    for n in range(_TRIES):
+        first, again = _folders(_mkdir(tmp_path / f"try-{n}"))
+        probe = await _judged(measure_for(), first, again)
+        if probe.before is not None:
+            return probe
+        if not (probe.worst_step_could >= _BOUND or probe.slowest_answer_could >= _BOUND):
+            pytest.fail(
+                f"premise: try {n}'s first reading was decided by no step of the runner's own:"
+                f" the probe missed the plant, or read it as decided; {probe.says()}"
+            )
+        readings.append(probe.says())
+    unmet = f"premise: the first reading was undecided, in none of {_TRIES} tries: " + "; ".join(
+        f"try {n}: {said}" for n, said in enumerate(readings)
+    )
+    if sys.platform == "darwin":
+        pytest.skip(unmet)
+    pytest.fail(unmet)
 
 
 @pytest.mark.parametrize(
     ("runner", "unread"),
     [
+        pytest.param(_StarvedRunner, True, id="no instruction counts read"),
         pytest.param(
-            lambda: _StarvedRunner(instructions=True), False, id="instruction counts read"
+            lambda: _StarvedRunner(instructions=True), False, id="a thread beside that ran"
         ),
-        pytest.param(lambda: _StarvedRunner(starved=False), True, id="no time ready to place"),
     ],
 )
 @pytest.mark.asyncio
-async def test_a_reading_over_the_bound_by_what_the_probe_can_place_is_never_measured_again(
+async def test_on_a_starved_runner_a_blocking_write_on_the_loop_fails_both_measurements(
     tmp_path, runner, unread
 ):
-    """Only a reading that cannot be placed is measured again: where the runner reads instruction
-    counts the probe leaves out what it can prove and judges the rest, and where the process's
-    count says it was never ready, the window is over the bound whatever the count. A runner's
-    stall that comes once fails such a reading: it is measured once."""
+    """The differential's failing side: on a starved Mac, a write on the loop that waits on the
+    disk reads as time ready, where every other thread is credited its window (a runner that
+    reads no instruction counts) or the one beside ran, so the first reading cannot be placed and
+    is measured again on a fresh gateway. The write is the upload's own, so it is in the second
+    too, which is judged and fails. The report says why."""
+    probe = await _judged_undecided_first(
+        tmp_path,
+        lambda: _measure_on(runner, lambda where: _planted_app(_block_by_writing, where)),
+    )
+    assert probe.before.worst_step >= _BOUND, f"the first missed the write; {probe.says()}"
+    assert probe.worst_step >= _BOUND, f"the second missed the write; {probe.says()}"
+    says = probe.says()
+    assert ("this runner reads no instruction counts" in says) == unread, says
+    assert "measured again" in says, says
+    assert "a block that comes only sometimes can pass" in says and "Linux" in says, says
+
+
+@pytest.mark.parametrize(
+    "runner",
+    [
+        pytest.param(_StarvedRunner, id="no instruction counts read"),
+        pytest.param(lambda: _StarvedRunner(instructions=True), id="a thread beside that ran"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_on_a_starved_runner_a_stalled_idle_loop_passes_the_second_measurement(
+    tmp_path, runner
+):
+    """🔴 Red before (the first reading was the one judged; with instruction counts read, until
+    the thread beside that ran made it undecided too): the runner stalls the process once, while
+    the loop runs a step that waits on nothing, and the first reading is over the bound by nothing
+    the probe can place. Measured again on a fresh gateway, the stall is not there, and the second
+    reading is under the bound."""
+
+    def measure_for():
+        stalls = [_STALLED]  # each try's plant stalls its first answer once
+        return _measure_on(runner, lambda _where: _stalled_once_app(stalls))
+
+    probe = await _judged_undecided_first(tmp_path, measure_for)
+    assert probe.before.worst_step >= _BOUND, f"premise: the stall failed the first; {probe.says()}"
+    assert probe.worst_step < _BOUND, probe.says()
+    assert probe.slowest_answer < _BOUND, probe.says()
+
+
+@pytest.mark.asyncio
+async def test_a_reading_over_the_bound_by_what_the_probe_can_place_is_never_measured_again(
+    tmp_path,
+):
+    """Only a reading that cannot be placed is measured again: where the process's count says it
+    was never ready, the window is over the bound whatever the count. A runner's stall that comes
+    once fails such a reading: it is measured once."""
     first, again = _folders(tmp_path)
     stalls = [_STALLED]
     probe = await _judged(
-        _measure_on(runner, lambda _where: _stalled_once_app(stalls)), first, again
+        _measure_on(
+            lambda: _StarvedRunner(starved=False), lambda _where: _stalled_once_app(stalls)
+        ),
+        first,
+        again,
     )
     assert probe.before is None, f"it was measured again; {probe.says()}"
     assert probe.worst_step >= _BOUND, f"premise: the stall is over the bound; {probe.says()}"
-    assert ("this runner reads no instruction counts" in probe.says()) == unread, probe.says()
+    assert "this runner reads no instruction counts" in probe.says(), probe.says()
+
+
+#: Breadth run 42388523314's coverage/4 reading of the scanning test: its longest step 0.136 s,
+#: 0.001 s of CPU and none ready, the loop thread asleep 5 times in it.
+_CI_TRACED_STEP = 0.136
+
+
+def _a_real_reading(*, step: float, answer: float = 0.01) -> _Probe:
+    """A real gateway's reading by hand: its longest step *step*, its slowest answer *answer*."""
+    probe = _Probe(None, asking=False, no_cpu=_NoCpu())
+    probe.took, probe.worst_step, probe.slowest_answer = 0.8, step, answer
+    return probe
+
+
+@pytest.mark.parametrize(
+    ("traced", "limited", "step", "answer", "holds"),
+    [
+        pytest.param(True, True, _CI_TRACED_STEP, 0.01, True, id="traced, limited: 0.136 s holds"),
+        pytest.param(True, False, _CI_TRACED_STEP, 0.01, False, id="traced, kept: 0.136 s fails"),
+        pytest.param(False, True, _CI_TRACED_STEP, 0.01, False, id="untraced, limited: fails"),
+        pytest.param(False, False, _CI_TRACED_STEP, 0.01, False, id="untraced, kept: fails"),
+        pytest.param(True, True, 0.31, 0.01, False, id="traced, limited: a 0.31 s step fails"),
+        pytest.param(True, True, 0.01, 0.31, False, id="traced, limited: a 0.31 s answer fails"),
+    ],
+)
+def test_a_real_gateway_is_held_to_its_tests_bound_under_a_tracer(
+    monkeypatch, traced, limited, step, answer, holds
+):
+    """🔴 Red with every real-gateway test read through the traced bound (traced, kept): the
+    regressions of the three under 0.375 s passed the coverage leg. Under a tracer a reading of a
+    *limited* test is held to :func:`cpu_budget.limit`'s bound, three times :data:`_BOUND`, and a
+    kept one to :data:`_BOUND`, as #5959's budgets are; untraced, each is held to the bound."""
+    monkeypatch.setattr(cpu_budget, "traced", lambda: traced)
+    probe = _a_real_reading(step=step, answer=answer)
+    bound = cpu_budget.limit(_BOUND) if limited else _BOUND
+    if holds:
+        _holds(probe, limited=limited)
+    else:
+        with pytest.raises(AssertionError, match=f"the bound is {bound:.2f}s"):
+            _holds(probe, limited=limited)
+
+
+@pytest.mark.parametrize("traced", [False, True], ids=["untraced", "traced"])
+@pytest.mark.parametrize("answers", [True, False])
+def test_a_reading_under_the_bound_holds_and_an_answer_counts_when_judged(
+    monkeypatch, traced, answers
+):
+    """A reading under the bound holds, traced or not; an answer over it fails a kept reading
+    only where answers are judged."""
+    monkeypatch.setattr(cpu_budget, "traced", lambda: traced)
+    _holds(_a_real_reading(step=0.01), answers=answers)
+    slow_answer = _a_real_reading(step=0.01, answer=_CI_TRACED_STEP)
+    if answers:
+        with pytest.raises(AssertionError):
+            _holds(slow_answer, answers=answers)
+    else:
+        _holds(slow_answer, answers=answers)
+
+
+def _a_starved_reading(*, could: float, step: float = 0.3) -> _Probe:
+    """A starved runner's reading by hand: its longest step *step*, of which *could* holds even
+    with the process's time ready taken for the loop's."""
+    probe = _Probe(None, asking=False, no_cpu=_StarvedRunner())
+    probe.snapshots, probe.took = 1, step
+    probe.worst_step, probe.worst_step_could = step, could
+    return probe
+
+
+def _measures_of(readings):
+    """A *measure_for* for :func:`_judged_undecided_first` whose measures return *readings* in
+    turn."""
+
+    def measure_for():
+        async def measure(_where) -> _Probe:
+            return next(readings)
+
+        return measure
+
+    return measure_for
+
+
+@pytest.mark.asyncio
+async def test_a_starved_plant_whose_first_reading_the_runner_decided_is_tried_again(tmp_path):
+    """🔴 Red before (one try): a first reading a step of the runner's own decided, 0.17 s that
+    the probe places, failed the plant's premise though the plant held. The next try's undecided
+    first reading is the one judged."""
+    # Try 0 decided by a step the probe places; try 1 undecided, then its second measurement.
+    readings = iter(
+        [
+            _a_starved_reading(could=0.17),
+            _a_starved_reading(could=0.01),
+            _a_starved_reading(could=0.01),
+        ]
+    )
+    probe = await _judged_undecided_first(tmp_path, _measures_of(readings))
+    assert probe.before is not None and probe.before.worst_step_could == 0.01, probe.says()
+
+
+@pytest.mark.asyncio
+async def test_a_starved_plant_whose_every_first_reading_was_decided_names_each(tmp_path):
+    """A premise unmet in every try, each first reading placed by a step of the runner's own,
+    skips on macOS and fails on Linux, as :func:`_until_crowded`'s does, naming what placed each
+    try's reading."""
+    readings = iter([_a_starved_reading(could=0.17) for _ in range(_TRIES)])
+    with pytest.raises((pytest.skip.Exception, pytest.fail.Exception)) as raised:
+        await _judged_undecided_first(tmp_path, _measures_of(readings))
+    assert raised.type is (
+        pytest.skip.Exception if sys.platform == "darwin" else pytest.fail.Exception
+    )
+    said = str(raised.value)
+    assert f"in none of {_TRIES} tries" in said and said.count("the longest step 0.170s") == _TRIES
+
+
+@pytest.mark.asyncio
+async def test_a_starved_plant_whose_first_reading_no_step_placed_fails_at_once(tmp_path):
+    """🔴 Red with a retry that tries every first reading that was not undecided again: a probe
+    that missed the starved plant once or twice in three tries passed, and three misses skipped
+    on macOS. A first reading no step of the runner's own placed, here one under the bound, can only
+    be a miss: it fails on every platform, and no other try is read."""
+    readings = iter([_a_starved_reading(could=0.01, step=0.05) for _ in range(_TRIES)])
+    with pytest.raises((pytest.fail.Exception, pytest.skip.Exception)) as raised:
+        await _judged_undecided_first(tmp_path, _measures_of(readings))
+    assert raised.type is pytest.fail.Exception, raised.value
+    assert "try 0's first reading was decided by no step of the runner's own" in str(raised.value)
+    assert len(list(readings)) == _TRIES - 1, "no try after the miss was read"
+
+
+@pytest.mark.asyncio
+async def test_under_a_tracer_a_limited_tests_reading_is_measured_again_only_over_its_bound(
+    tmp_path, monkeypatch
+):
+    """🔴 Red with a re-measure that compares every reading with :data:`_BOUND`: on a Mac under a
+    tracer, the scanning test's first reading of 0.2 s, under its traced bound of 0.3 s but over
+    0.1 s by time the probe cannot place, was measured again, and a second that read 0.35 s failed
+    a test the first had passed. A limited test is measured again only over its own bound."""
+    monkeypatch.setattr(cpu_budget, "traced", lambda: True)
+    readings = iter(
+        [_a_starved_reading(could=0.01, step=0.2), _a_starved_reading(could=0.35, step=0.35)]
+    )
+
+    async def measure(_where) -> _Probe:
+        return next(readings)
+
+    first, again = _folders(tmp_path)
+    probe = await _judged(measure, first, again, limited=True)
+    assert probe.before is None and probe.worst_step == pytest.approx(0.2), probe.says()
+    _holds(probe, limited=True)
 
 
 def test_a_reading_judged_by_its_steps_alone_is_not_measured_again_for_an_answer():

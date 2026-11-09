@@ -98,7 +98,7 @@ class Stats:
     # -- queries --
 
     def uptime_str(self) -> str:
-        """Human-readable uptime."""
+        """How long these counters have counted, as text; not the gateway's uptime (see summary)."""
         secs = round(time.monotonic() - self._start_time)
         h, rem = divmod(secs, 3600)
         d, h = divmod(h, 24)
@@ -115,8 +115,14 @@ class Stats:
         with self._mu:
             return dict(self._c)
 
-    def summary(self) -> str:
+    def summary(self, *, uptime: str | None = None) -> str:
         """One-line summary of the counters that are actually measured.
+
+        *uptime* is the gateway's own, as its status answer gives it, and the line leads with
+        it. With none, the line leads with how long these counters have counted: the window
+        starts when the singleton is first built (the first stat counted or read, not the
+        gateway's start) and on macOS ``time.monotonic()`` stops while the machine sleeps, so it
+        is not the uptime and is not called that.
 
         Reports only written counters. The previous version led with
         ``msgs 0 (ok 0 / fail 0) · tools approved 0 denied 0 auto 0 · timeouts 0`` on every
@@ -126,8 +132,9 @@ class Stats:
         so it could only ever emit "🔇 no messages". It had no caller.
         """
         s = self.snapshot()
+        lead = f"uptime {uptime}" if uptime is not None else f"counted for {self.uptime_str()}"
         return (
-            f"uptime {self.uptime_str()} · "
+            f"{lead} · "
             f"sessions {s['sessions_created']}/{s['sessions_cleaned']} · "
             f"subagents {s['subagents_spawned']} spawned, "
             f"{s['subagents_completed']} completed, {s['subagents_failed']} failed · "
@@ -136,7 +143,7 @@ class Stats:
         )
 
     def reset(self) -> None:
-        """Zero all counters and restart uptime clock."""
+        """Zero all counters and restart the window they count over (not the gateway's uptime)."""
         with self._mu:
             for k in self._c:
                 self._c[k] = 0

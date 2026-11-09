@@ -97,7 +97,7 @@ class TestStats(unittest.TestCase):
         s.inc_turns(2)
         s.inc_input_tokens(10)
         text = s.summary()
-        assert "uptime" in text
+        assert text.startswith("counted for ")
         assert "sessions 1/0" in text
         assert "subagents 1 spawned" in text
         assert "turns 2" in text
