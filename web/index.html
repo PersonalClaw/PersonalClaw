@@ -20,6 +20,33 @@
          authenticated owner can install the companion. -->
     <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
     <meta name="theme-color" content="#0f0f0f" />
+    <!-- The stored theme on the page before it paints, with app/theme.tsx's key and default, so no
+         frame shows the other mode; app/windowAppearance.ts keeps it current after. With none
+         stored, the theme the desktop app kept, since its own gateway opens on a new port, a new
+         origin, at each launch. Inline, not a file: a file at the root would need the browser
+         sign-in's pair. -->
+    <script>
+      (function () {
+        try {
+          var valid = function (v) { return v === 'dark' || v === 'light' || v === 'auto'; };
+          var p = localStorage.getItem('mode');
+          if (!valid(p)) {
+            var shell = window.pclawDesktop && window.pclawDesktop.appearance;
+            var kept = shell ? shell.kept : null;
+            if (valid(kept)) localStorage.setItem('mode', kept);
+            p = valid(kept) ? kept : 'dark';
+          }
+          var light = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+          var m = p === 'auto' ? (light ? 'light' : 'dark') : p;
+          var root = document.documentElement;
+          root.classList.toggle('light', m === 'light');
+          root.dataset.mode = m;
+          root.dataset.modePreference = p;
+          var colour = document.querySelector('meta[name="theme-color"]');
+          if (colour) colour.setAttribute('content', m === 'light' ? '#f0f4f8' : '#0f0f0f');
+        } catch (e) {}
+      })();
+    </script>
     <!-- iOS Safari honours only the apple-prefixed flag for standalone display;
          Chromium warns unless the standard name is present too. Both are live. -->
     <meta name="mobile-web-app-capable" content="yes" />

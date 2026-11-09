@@ -33,6 +33,12 @@
     .offline .hint { font-size: 13px; color: #9a9b9c; line-height: 1.5; }
     [hidden] { display: none !important; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* The app's theme: themeSource is set before this page loads, and this query follows it. */
+    @media (prefers-color-scheme: light) {
+      body { background: #f0f4f8; color: #1f1f1f; }
+      .spinner { border-color: #eef1f5; border-top-color: #b12e18; }
+      .status, .offline .hint { color: #444746; }
+    }
   </style>
 </head>
 <body>

@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useState, type ReactNode } from 'react'
+import { reportAppearance } from './windowAppearance'
 
 export type Mode = 'dark' | 'light'
 export type Preference = 'dark' | 'light' | 'auto'
@@ -56,11 +57,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const mode: Mode = preference === 'auto' ? sysMode : preference
 
-  useEffect(() => {
+  // In the commit that makes the switch, so no frame paints the old mode, and then said to whatever
+  // shows the page (`windowAppearance.ts`): the theme colour, and the desktop window at once.
+  useLayoutEffect(() => {
     const root = document.documentElement
     root.classList.toggle('light', mode === 'light')
     root.dataset.mode = mode
+    root.dataset.modePreference = preference
     localStorage.setItem(KEY, preference)
+    reportAppearance()
   }, [mode, preference])
 
   return (

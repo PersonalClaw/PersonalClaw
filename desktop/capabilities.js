@@ -102,6 +102,10 @@ const IPC_CHANNELS = {
   buddyResetPlace: `${IPC_PREFIX}buddy-reset-place`,
   buddyGetHideFromCapture: `${IPC_PREFIX}buddy-get-hide-from-capture`,
   buddySetHideFromCapture: `${IPC_PREFIX}buddy-set-hide-from-capture`,
+  /** renderer → main, fire and forget: the page's theme changed (`windowAppearance.js`), so the
+   * window, the strip above the page and the native chrome follow it at once. Taken only from an
+   * app window's page, and only well formed. Not a capability: it asks the OS for nothing. */
+  appearanceChanged: `${IPC_PREFIX}appearance-changed`,
 };
 
 /**

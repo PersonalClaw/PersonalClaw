@@ -791,6 +791,7 @@ inputs = [
   "tools/ci/",
   "web/e2e/fixtures/home/",
   "web/e2e/fixtures/scripted-chat.json",
+  "web/index.html",
   "web/package.json",
   "web/public/claw.svg",
   "web/src/",

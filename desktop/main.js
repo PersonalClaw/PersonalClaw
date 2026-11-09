@@ -117,6 +117,22 @@ const MAX_WAIT_MS = 120_000; // 2 min max wait for backend
 // app's record watch then reads no record and withholds the windows' sign-in for good.
 const PERSONALCLAW_HOME = appHome(process.env).home;
 const { TAB_BAR_HEIGHT, makeWindowChrome } = require("./windowChrome");
+const {
+  STORE_KEY: APPEARANCE_KEY,
+  DARK_CANVAS,
+  READ_SCRIPT,
+  fromPageRead,
+  launch: launchAppearance,
+  makeWindowAppearance,
+  focusedAppWindow,
+  appWindowOfSender,
+} = require("./windowAppearance");
+
+/** Every window the app has, for the appearance's window checks. */
+const allWindows = () => BaseWindow.getAllWindows();
+
+/** How long after a click or a key a page with no bridge is read for its theme. */
+const READ_AFTER_INPUT_MS = 100;
 /** How often the menu bar reads its count of what waits on you and what is running, while the
  *  doorbell's socket is down (connected, it reads on each ring instead). */
 const PRESENCE_REFRESH_MS = 5000;
@@ -1813,13 +1829,33 @@ function modalCSSFromVars(v) {
 
 // ── Window ──
 
-function syncNativeTheme(view, win) {
-  if (win.isDestroyed()) return;
-  view.webContents.executeJavaScript(
-    `document.documentElement.dataset.mode || ""`
-  ).then(mode => {
-    if (mode === "dark" || mode === "light") nativeTheme.themeSource = mode;
+/** Read the page's appearance with a fixed script, and bring the window to it (`windowAppearance.js`). */
+function readAppearance(view, win) {
+  if (win.isDestroyed() || view.webContents.isDestroyed()) return;
+  view.webContents.executeJavaScript(READ_SCRIPT).then((read) => {
+    const a = fromPageRead(read);
+    if (win.isDestroyed()) return;
+    if (a) windowAppearance.apply(win, a);
+    // A page with no mode of its own (the loading or offline page) follows `themeSource` by
+    // itself, so its window takes the canvas of the mode in force.
+    else windowAppearance.paint(win, nativeTheme.shouldUseDarkColors ? "dark" : "light");
   }).catch(() => {});
+}
+
+/**
+ * After the system's switch, colour each app window whose page has no mode of its own in the mode
+ * now in force. Never `apply`: a page that has a mode says its own theme, and two unfocused windows
+ * on gateways in different themes would otherwise take turns over `themeSource`.
+ */
+function paintModelessWindows() {
+  for (const win of appWindows()) {
+    const view = win._pcView;
+    if (!view || view.webContents.isDestroyed()) continue;
+    view.webContents.executeJavaScript(READ_SCRIPT).then((read) => {
+      if (win.isDestroyed()) return;
+      if (fromPageRead(read) === null) windowAppearance.paint(win, nativeTheme.shouldUseDarkColors ? "dark" : "light");
+    }).catch(() => {});
+  }
 }
 
 /**
@@ -1866,7 +1902,11 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
   // neither half can drift silently.
   const view = new WebContentsView({
     webPreferences: {
-      ...(attachBridge ? { preload: path.join(__dirname, "preload.js") } : {}),
+      // The kept theme rides in as an argument, for a page of the app's own whose origin, a new
+      // port at each launch, keeps none (the preload hands it over as `appearance.kept`).
+      ...(attachBridge
+        ? { preload: path.join(__dirname, "preload.js"), additionalArguments: [`--pclaw-appearance=${windowAppearance.preference()}`] }
+        : {}),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -1910,14 +1950,14 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
   // Window-level listeners are registered ONCE per window. Re-registering them on a rebuild would
   // leak a listener per gateway switch, and Electron caps them at ten before it starts warning.
   win._pcBounds = updateViewBounds;
-  win._pcSyncTheme = () => syncNativeTheme(win._pcView, win);
+  win._pcReadAppearance = () => readAppearance(win._pcView, win);
   win._pcView = view;
   if (!win._pcWired) {
     win._pcWired = true;
     win.on("resize", () => win._pcBounds());
     win.on("enter-full-screen", () => win._pcBounds());
     win.on("leave-full-screen", () => win._pcBounds());
-    win.on("focus", () => win._pcSyncTheme());
+    win.on("focus", () => win._pcReadAppearance());
     win.on("closed", () => {
       if (typeof win._pcTeardown === "function") win._pcTeardown();
     });
@@ -1948,6 +1988,21 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
   attachContextMenu(view.webContents);
 
   view.webContents.on("did-finish-load", applyTitle);
+  // The page's theme reaches the window at once: when its theme colour changes, which a paired
+  // gateway's view, with no bridge, says too; and on every load, as a backstop.
+  view.webContents.on("did-change-theme-color", () => win._pcReadAppearance());
+  view.webContents.on("did-finish-load", () => win._pcReadAppearance());
+  // A paired gateway's page has no bridge, and a switch that keeps its colour changes no theme
+  // colour, so it is also read shortly after each click or key, with at most one read waiting.
+  let readSoon = null;
+  if (!attachBridge) view.webContents.on("input-event", (_e, input) => {
+    if (input.type !== "mouseUp" && input.type !== "keyUp") return;
+    if (readSoon) return;
+    readSoon = setTimeout(() => {
+      readSoon = null;
+      win._pcReadAppearance();
+    }, READ_AFTER_INPUT_MS);
+  });
   view.webContents.on("page-title-updated", (e) => { e.preventDefault(); applyTitle(); });
 
   view.webContents.on("did-finish-load", () => {
@@ -1972,11 +2027,6 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
         document.body.prepend(bar);
       }
     `);
-    view.webContents.executeJavaScript(
-      `getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`
-    ).then(bg => { if (bg && !win.isDestroyed() && !windowChrome.shows()) win.setBackgroundColor(bg); }).catch(() => {});
-    view.webContents.executeJavaScript(windowChrome.script()).catch(() => {});
-    syncNativeTheme(view, win);
   });
 
   /** The origin this view is allowed to be, or `""` before anything is loaded. */
@@ -2149,7 +2199,9 @@ async function noteSessionEvent(details) {
   console.log(`gateway ${origin} signed this app out`);
 }
 
-const windowChrome = makeWindowChrome({ platform: process.platform, nativeTheme });
+/** The appearance the shell keeps (`windowAppearance.js`), made again at launch from the store. */
+let windowAppearance = makeWindowAppearance({ nativeTheme, canvas: DARK_CANVAS, focusedAppWindow: () => focusedAppWindow(allWindows) });
+const windowChrome = makeWindowChrome({ platform: process.platform, canvas: () => windowAppearance.canvas() });
 function makeWindow() {
   const win = new BaseWindow({
     width: 1280,
@@ -3456,6 +3508,22 @@ if (!app.requestSingleInstanceLock()) {
     // has the registry, and non-fatal by construction: a corrupt or unreadable store degrades to
     // spawn-local with a warning rather than taking the app down with it.
     shellStore = openShellStore({ home: PERSONALCLAW_HOME, log: (msg) => console.warn(`desktop: ${msg}`) });
+    // The app opens in the owner's theme: `themeSource` from the stored appearance before any
+    // window, or the loading page, is shown; nothing stored follows the system.
+    const launched = launchAppearance({
+      stored: shellStore.getItem(APPEARANCE_KEY),
+      systemDark: nativeTheme.shouldUseDarkColors,
+    });
+    nativeTheme.themeSource = launched.themeSource;
+    windowAppearance = makeWindowAppearance({
+      nativeTheme,
+      store: shellStore,
+      canvas: launched.canvas,
+      focusedAppWindow: () => focusedAppWindow(allWindows),
+    });
+    ipcMain.on(IPC_CHANNELS.appearanceChanged, (e, payload) => {
+      windowAppearance.changed(e.sender, payload, (s) => appWindowOfSender(allWindows, s));
+    });
     // Before any window loads one: the gateways the owner added are the loopback origins it may,
     // and no earlier version's localhost window cookie is left.
     syncPaired();
@@ -3484,10 +3552,10 @@ if (!app.requestSingleInstanceLock()) {
     const win = createWindow();
     // Never a blank window while this home's gateway is looked for or started.
     win.webContents.loadFile(path.join(__dirname, "loading.html"));
-    // The sidebar material follows the system's reduced-transparency setting in every window.
-    windowChrome.watch(() => appWindows());
     // The Linux tray's stills follow the system's light or dark appearance.
     nativeTheme.on("updated", () => trayPresence.appearanceChanged());
+    // A window on the loading or offline page follows the system's switch too.
+    nativeTheme.on("updated", () => paintModelessWindows());
 
     // This home's running gateway when one serves it, else the app's own. One that cannot be
     // brought up is said on the Gateways window's "This computer" row (`showLoadingThenConnect`).
@@ -3550,6 +3618,7 @@ let shutdownComplete = false;
  */
 app.on("before-quit", (event) => {
   isQuitting = true;
+  windowAppearance.flush();
   if (shutdownComplete) return;
   event.preventDefault();
 

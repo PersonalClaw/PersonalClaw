@@ -52,7 +52,7 @@ const {
 const PRELOAD = path.join(ROOT, "preload.js");
 const CONNECT_PRELOAD = path.join(ROOT, "connectPreload.js");
 /** The bridge's top-level surface. Exact, so a new namespace member is a decision. */
-const BRIDGE_KEYS = ["appUpdate", "buddy", "capabilities", "loginItem", "notifications", "onStatus", "pushToTalk", "systemBrowser"];
+const BRIDGE_KEYS = ["appUpdate", "appearance", "buddy", "capabilities", "loginItem", "notifications", "onStatus", "pushToTalk", "systemBrowser"];
 
 // ---------------------------------------------------------------------------------------
 // TIER 1 — execute the preload the way a sandboxed renderer would
@@ -91,6 +91,15 @@ describe("the capability preload loads under a sandboxed require (tier 1)", () =
     ]);
   });
 
+  it("hands the page the theme the shell kept, from its argument, only when it is one", () => {
+    const kept = (arg) => loadPreloadSandboxed(PRELOAD, { argv: [arg] }).exposed.pclawDesktop.appearance.kept;
+    assert.equal(kept("--pclaw-appearance=light"), "light");
+    assert.equal(kept("--pclaw-appearance=auto"), "auto");
+    for (const junk of ["--pclaw-appearance=", "--pclaw-appearance=sepia", "--pclaw-appearance=light;x", "--other=light"]) {
+      assert.equal(kept(junk), null, junk);
+    }
+  });
+
   it("the vocabulary inlined in the preload cannot drift from capabilities.js", () => {
     // Inlining bought the sandbox back at the price of a second copy of the vocabulary. This
     // is the rail that makes the price zero: it drives every bridge method and checks the
@@ -125,8 +134,10 @@ describe("the capability preload loads under a sandboxed require (tier 1)", () =
       [IPC_CHANNELS.buddyResetPlace, () => bridge.buddy.resetPlace()],
       [IPC_CHANNELS.buddyGetHideFromCapture, () => bridge.buddy.getHideFromCapture()],
       [IPC_CHANNELS.buddySetHideFromCapture, () => bridge.buddy.setHideFromCapture(true)],
+      [IPC_CHANNELS.appearanceChanged, () => bridge.appearance.changed({ preference: "light", mode: "light", canvas: "#f0f4f8" })],
     ];
     for (const [, drive] of drives) drive();
+    assert.equal(bridge.appearance.kept, null, "no kept theme without the shell's argument");
     assert.deepStrictEqual(
       channels,
       drives.map(([channel]) => channel),

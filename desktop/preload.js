@@ -58,6 +58,7 @@ const IPC_CHANNELS = {
   buddyResetPlace: `${IPC_PREFIX}buddy-reset-place`,
   buddyGetHideFromCapture: `${IPC_PREFIX}buddy-get-hide-from-capture`,
   buddySetHideFromCapture: `${IPC_PREFIX}buddy-set-hide-from-capture`,
+  appearanceChanged: `${IPC_PREFIX}appearance-changed`,
 };
 
 /**
@@ -80,6 +81,13 @@ const IPC_CHANNELS = {
  * by the main process, and used only for main→gateway calls, so page JS has no path
  * to it even if a page is compromised.
  */
+
+/** The shell's `--pclaw-appearance=` argument, when it names a theme. */
+function keptAppearance() {
+  const arg = (process.argv || []).find((a) => typeof a === "string" && a.startsWith("--pclaw-appearance="));
+  const value = arg ? arg.slice("--pclaw-appearance=".length) : "";
+  return value === "dark" || value === "light" || value === "auto" ? value : null;
+}
 
 const isKnown = (cap) => typeof cap === "string" && CAPABILITIES.includes(cap);
 
@@ -225,6 +233,22 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
     /** Resolves {ok, reason?}: a browser that did not open is an answer, so the page can offer
      * the link to open by hand. */
     open: (url) => ipcRenderer.invoke(IPC_CHANNELS.systemBrowserOpen, String(url ?? "")),
+  },
+
+  /** The page's theme (`web/src/app/windowAppearance.ts`): `changed({ preference, mode, canvas })`
+   * tells the shell at once, so the window, the strip above the page and the native chrome follow
+   * a switch with no focus change. Fire and forget; the main process takes it only from an app
+   * window, and only well formed. */
+  appearance: {
+    /** The theme the shell kept, for a page whose origin keeps none (the app's own gateway opens
+     *  on a new port at each launch): dark, light or auto, else null. */
+    kept: keptAppearance(),
+    changed: (a) =>
+      ipcRenderer.send(IPC_CHANNELS.appearanceChanged, {
+        preference: a?.preference,
+        mode: a?.mode,
+        canvas: a?.canvas,
+      }),
   },
 
   /** The app's own update (`appUpdate.js`). `status()` and `check()` resolve what it stands at:

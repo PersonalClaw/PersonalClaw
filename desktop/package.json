@@ -63,6 +63,7 @@
       "deepLinks.js",
       "goMenu.js",
       "windowChrome.js",
+      "windowAppearance.js",
       "loginItem.js",
       "nativeNotifications.js",
       "systemBrowser.js",

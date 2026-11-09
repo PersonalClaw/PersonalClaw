@@ -1,4 +1,5 @@
-import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { reportAppearance } from './windowAppearance'
 import { TOKENS, type Token } from '../design/tokenRegistry'
 import { runtime } from '../design/runtime'
 import { SCHEMES, getScheme, DEFAULT_SCHEME, type Scheme } from '../design/schemes'
@@ -189,8 +190,9 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     return ov.selects[t.varName] ?? t.value
   }
 
-  // apply all tokens to <html> + runtime whenever overrides or mode change
-  useEffect(() => {
+  // apply all tokens to <html> + runtime whenever overrides or mode change: in the commit, so no
+  // frame paints the old colours, and then said to whatever shows the page (`windowAppearance.ts`).
+  useLayoutEffect(() => {
     const root = document.documentElement
     for (const t of TOKENS) {
       if (t.kind === 'color') {
@@ -248,6 +250,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     //   data-mode stays owned by theme.tsx (canonical; appSdk reads it) — untouched here.
     root.dataset.theme = ov.scheme ?? DEFAULT_SCHEME
     root.dataset.ui = ov.selects['--ui-density'] ?? 'comfortable'
+    reportAppearance()
   }, [ov, mode])
 
   // persist (debounced-ish: on every change; small payload)
