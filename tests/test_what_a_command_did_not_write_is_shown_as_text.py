@@ -25,7 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from personalclaw import cli, cli_app_new, cli_commands, cli_doctor, cli_project, home_gateway
-from personalclaw.security import mask_child_output, terminal_text
+from personalclaw.security import mask_child_output, terminal_line, terminal_text
 
 pytestmark = pytest.mark.security
 
@@ -694,6 +694,36 @@ def test_a_vector_stores_own_report_is_shown_as_text(monkeypatch, capsys):
     out = capsys.readouterr().out
     _as_text(out)
     assert out.count(SHOWN) == 3, out
+
+
+def test_a_folders_memory_is_named_on_one_line():
+    """A folder whose name holds a line break is named on one line."""
+    part = SimpleNamespace(
+        is_global=False, folder="/tmp/clone\nnext", shown="~/clone\nnext", gone=False
+    )
+    named = cli_commands._memory_named(part)
+    assert "clone\\nnext" in named and "\n" not in named, repr(named)
+
+
+def test_the_one_line_form_escapes_its_ranges_and_the_line_feed():
+    """The one-line form escapes the rule's ranges and the line feed, and keeps every other
+    code point."""
+    wrong = []
+    for cp in range(0x110000):
+        if 0xD800 <= cp <= 0xDFFF:
+            continue
+        ch = chr(cp)
+        if cp == 0x0A:
+            want = "\\n"
+        elif cp == 0x0D:
+            want = "\\r"
+        elif cp in _ACTED_ON:
+            want = f"\\x{cp:02x}" if cp < 0x100 else f"\\u{cp:04x}"
+        else:
+            want = ch
+        if terminal_line(ch) != want:
+            wrong.append(hex(cp))
+    assert not wrong, wrong[:20]
 
 
 def test_a_folders_memory_is_named_as_text():

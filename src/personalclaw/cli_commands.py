@@ -23,6 +23,7 @@ from personalclaw.security import (
     BUILTIN_DENY_PATTERNS,
     redact_credentials,
     redact_exfiltration_urls,
+    terminal_line,
     terminal_text,
 )
 from personalclaw.security_audit import scan_history, scan_memory
@@ -1685,11 +1686,12 @@ def _learn(args: argparse.Namespace) -> None:
 
 def _memory_named(part: Any) -> str:
     """The memory *part* (a ``memory_locality.Partition``) in words, as ``memory_list`` names it:
-    every chat's, or a folder's, the folder's path shown as text (``security.terminal_text``)."""
+    every chat's, or a folder's, the folder's path shown as text on one line
+    (``security.terminal_line``)."""
     if part.is_global:
         return "the memory every chat keeps"
     named = (
-        f"the memory of {terminal_text(str(part.shown))}"
+        f"the memory of {terminal_line(str(part.shown))}"
         if part.folder
         else "a folder's memory no record names"
     )

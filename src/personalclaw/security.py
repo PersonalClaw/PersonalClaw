@@ -1476,6 +1476,11 @@ def terminal_text(text: str) -> str:
     return _ACTED_ON_CHARS_BUT_LF.sub(_visible_escape, text.replace("\r\n", "\n"))
 
 
+def terminal_line(text: str) -> str:
+    """*text* as :func:`terminal_text` gives it, on one line: a line break is ``\\n`` too."""
+    return _ACTED_ON_CHARS.sub(_visible_escape, text)
+
+
 def mask_child_output(
     output: "str | bytes | None",
     *,

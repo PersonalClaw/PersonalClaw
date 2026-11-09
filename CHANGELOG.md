@@ -20,7 +20,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An approval's choices and fields keep no secret's value, on the run's record or in what its status shows a model, as its question already did, and an approval, event or judge gate whose field names a secret in its name or type, or that pipes one in what it shows, is refused.**
 - **A workflow reads its secrets from Settings → Secrets alone, never from the gateway's own environment. A `{{secret:NAME}}` whose name only that environment holds (the shell or app that launched the gateway, a container's `env_file`) is a secret that is not set: run start says so, and so does the step, and an automation, a hook or a step that would start a run handed it is refused before the run starts. A name both hold is read from Settings → Secrets.**
 - **The first sign-in password a container sets with `PERSONALCLAW_LOGIN_PASSWORD` is taken out of the gateway's environment once it has been read, and out of the one its Restart or an applied update starts it with, so nothing the gateway starts inherits it.**
-- **The command line shows each character a terminal would act on as a visible escape, whatever wrote the text.**
+- **The command line shows each character a terminal would act on as a visible escape, whatever wrote the text, and a folder's `.env` names are checked before they're used.**
 
 ### Changed
 

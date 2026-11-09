@@ -1707,47 +1707,141 @@ def _read_the_env_files() -> None:
 
     The folder's ``.env`` may be anyone's, a repository just cloned among them, so it gives
     credentials only (``taken_from_a_folder``): never a ``PERSONALCLAW_*`` setting, which would
-    choose the sign-in mode, the bind address or the home, and no other name. Each name it takes,
-    and each it leaves out, is named on stderr, never its value. A folder that is the home reads
-    as the home.
+    choose the sign-in mode, the bind address or the home, nor one of the libraries' own settings
+    (``library_env.LIBRARY_ENV_NAMES``), which PersonalClaw sets itself, and no other name. Each
+    name it takes (and whether it takes it over the home's), each it leaves out and each the
+    environment already sets (the environment's value is the one used) is named on stderr, never its
+    value. A name that is not a variable name (``secrets_vault.valid_key_name``), and a value the
+    environment cannot hold, are neither set nor named: such names are counted on stderr instead.
+    Both ``.env`` files are read as written, with no ``${NAME}`` filled in, as the credential store
+    reads the home's, and a folder's ``.env`` that cannot be read as text gives nothing, said on
+    stderr. "Over your home's" names a credential the home's ``.env`` also sets: the keychain is not
+    read at start. The home's ``.env`` gets the same name and value check, without a line; one that
+    cannot be read as text is said, as the folder's is. A folder that is the home reads as the home.
     """
-    from dotenv import dotenv_values
-
     from personalclaw.config.credentials import mirrored_into_the_environment, taken_from_a_folder
+    from personalclaw.library_env import LIBRARY_ENV_NAMES
+    from personalclaw.secrets_vault import valid_key_name
 
     # Where the home is, not the home made: a command that needs no home (`--version`, `--help`)
     # answers later, and the code that writes into the home is what creates it. Read before the
     # folder's `.env`, which can no longer name it.
     home_env = resolve_config_dir() / ".env"
+    home_entries = _env_entries(home_env) if home_env.is_file() else {}
     folder_env = Path.cwd() / ".env"
     if folder_env.is_file() and folder_env.resolve() != home_env.resolve():
+        from personalclaw.security import terminal_line
+
+        # The folder's own name can hold what a terminal acts on, a line break among them, as a
+        # name could: it is written on one line, as each note below is one.
+        where = terminal_line(str(folder_env))
+        entries = _env_entries(folder_env, where=where)
         took: list[str] = []
+        over: list[str] = []
+        kept: list[str] = []
         left: list[str] = []
-        for key, value in dotenv_values(folder_env).items():
-            if value is None or key in os.environ:
+        unnamed = unusable = 0
+        for key, value in entries.items():
+            if not valid_key_name(key):
+                unnamed += 1
                 continue
-            if taken_from_a_folder(key) and mirrored_into_the_environment(key):
+            if value is None:
+                continue
+            if "\x00" in value:
+                unusable += 1
+                continue
+            credential = (
+                taken_from_a_folder(key)
+                and key.upper() not in LIBRARY_ENV_NAMES
+                and mirrored_into_the_environment(key)
+            )
+            if credential and key in os.environ:
+                kept.append(key)
+            elif credential:
                 os.environ.setdefault(key, value)
                 took.append(key)
+                held = home_entries.get(key)
+                if held is not None and "\x00" not in held:
+                    over.append(key)
             else:
                 left.append(key)
         if took:
             print(
-                f"personalclaw: took {', '.join(took)} from {folder_env}, the .env of the folder "
-                "this command started in.",
+                f"personalclaw: took {', '.join(took)} from {where}, the .env of the folder "
+                "this command started in"
+                + (f", over your home's {', '.join(over)}" if over else "")
+                + ".",
+                file=sys.stderr,
+            )
+        if kept:
+            its = (
+                "it too, and its line for it was"
+                if len(kept) == 1
+                else ("them too, and its lines for them were")
+            )
+            print(
+                f"personalclaw: kept your environment's {', '.join(kept)}: {where} sets {its} "
+                "not used.",
                 file=sys.stderr,
             )
         if left:
             print(
-                f"personalclaw: left out {', '.join(left)} from {folder_env}: a folder's .env "
+                f"personalclaw: left out {', '.join(left)} from {where}: a folder's .env "
                 "gives credentials only, and PersonalClaw's settings come from your home and "
                 "your environment.",
                 file=sys.stderr,
             )
-    if home_env.is_file():
-        for key, value in dotenv_values(home_env).items():
-            if value is not None and mirrored_into_the_environment(key):
-                os.environ.setdefault(key, value)
+        if unnamed:
+            print(
+                f"personalclaw: left out {_names(unnamed)} in {where} that "
+                f"{'is' if unnamed == 1 else 'are'} not a variable name (letters, digits and _, "
+                "not starting with a digit, at most 128 characters): neither used nor shown.",
+                file=sys.stderr,
+            )
+        if unusable:
+            print(
+                f"personalclaw: left out {_names(unusable)} in {where} whose value cannot be "
+                "set: neither used nor shown.",
+                file=sys.stderr,
+            )
+    for key, value in home_entries.items():
+        if (
+            value is not None
+            and valid_key_name(key)
+            and "\x00" not in value
+            and mirrored_into_the_environment(key)
+        ):
+            os.environ.setdefault(key, value)
+
+
+def _names(count: int) -> str:
+    return f"{count} name{'' if count == 1 else 's'}"
+
+
+def _env_entries(path: Path, *, where: str = "") -> dict[str, str | None]:
+    """The names and values of the ``.env`` at *path*, read as written (a ``${NAME}`` in a line is
+    that text, never a value this command's environment holds), its first name without a UTF-8
+    byte-order mark. A file that cannot be read as text gives none, said on stderr: every command
+    starts here, and one that stopped on a file it could not read would stop every command."""
+    from dotenv import dotenv_values
+
+    try:
+        entries = dict(dotenv_values(path, interpolate=False))
+    except (UnicodeDecodeError, OSError):
+        if not where:
+            from personalclaw.security import terminal_line
+
+            where = terminal_line(str(path))
+        print(
+            f"personalclaw: could not read {where} as text, so nothing in it was used.",
+            file=sys.stderr,
+        )
+        return {}
+    if entries:
+        first = next(iter(entries))
+        if first.startswith("\ufeff"):
+            entries = {(k[1:] if k == first else k): v for k, v in entries.items()}
+    return entries
 
 
 class _TerminalStream:
