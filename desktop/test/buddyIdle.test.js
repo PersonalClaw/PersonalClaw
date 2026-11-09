@@ -58,6 +58,7 @@ describe("the buddy's window in a real Electron", () => {
     assert.equal(root.error, undefined, root.error);
     assert.deepEqual(root.preloadErrors, []);
     assert.equal(root.bridge.buddy, "object");
+    assert.equal(root.bridge.buddyOwn, true, "window.pclawBuddy is not the window's own property");
     assert.deepEqual(root.bridge.keys, ["dragBy", "dragEnd", "dragStart", "onAway", "onConnection", "onFullScreen", "onHidden", "onLayout", "onOpenAlert", "onPlacement", "onRing", "openInApp", "openMenu", "pointerOver", "setPresentation", "setRegions"]);
     assert.equal(root.bridge.desktop, "undefined", "no capability bridge in the buddy's window");
   });

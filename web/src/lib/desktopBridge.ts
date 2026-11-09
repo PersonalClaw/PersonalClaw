@@ -264,14 +264,16 @@ declare global {
   }
 }
 
-/** The bridge, or null in a browser tab. */
+/** The bridge, or null in a browser tab. Read as the window's own property, the one the preload
+ *  script defines. */
 export function desktopBridge(): DesktopBridge | null {
-  return (typeof window !== 'undefined' && window.pclawDesktop) || null
+  return (typeof window !== 'undefined' && Object.hasOwn(window, 'pclawDesktop') && window.pclawDesktop) || null
 }
 
-/** The buddy window's bridge, or null anywhere else (a browser tab, the main window). */
+/** The buddy window's bridge, or null anywhere else (a browser tab, the main window). Read as
+ *  the window's own property, the one the buddy's preload script defines. */
 export function buddyBridge(): BuddyBridge | null {
-  return (typeof window !== 'undefined' && window.pclawBuddy) || null
+  return (typeof window !== 'undefined' && Object.hasOwn(window, 'pclawBuddy') && window.pclawBuddy) || null
 }
 
 /** Ask the OS for a capability through the shell. Null when there is no shell — the

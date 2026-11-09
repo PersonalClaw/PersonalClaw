@@ -206,6 +206,7 @@ describe("the bridge loads in a real Electron renderer (tier 2)", () => {
   it("window.pclawDesktop is an object, with no preload-error", { skip: skipped }, () => {
     assert.deepStrictEqual(rail.preloadErrors, [], "the preload errored during load");
     assert.strictEqual(rail.bridge, "object", `bridge was ${rail.bridge}`);
+    assert.strictEqual(rail.own, true, "window.pclawDesktop is not the window's own property");
     assert.deepStrictEqual(rail.keys, BRIDGE_KEYS);
   });
 
@@ -233,5 +234,6 @@ describe("the bridge loads in a real Electron renderer (tier 2)", () => {
     assert.strictEqual(live.launchFailed, undefined, live.detail);
     assert.deepStrictEqual(live.preloadErrors, []);
     assert.strictEqual(live.bridge, "object");
+    assert.strictEqual(live.own, true, "window.pclawConnect is not the window's own property");
   });
 });

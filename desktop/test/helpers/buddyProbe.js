@@ -619,6 +619,7 @@ app.whenReady().then(async () => {
     const page = (js) => win.webContents.executeJavaScript(js);
     out.bridge = {
       buddy: await page("typeof window.pclawBuddy"),
+      buddyOwn: await page("Object.hasOwn(window, 'pclawBuddy')"),
       keys: await page("window.pclawBuddy ? Object.keys(window.pclawBuddy).sort() : []"),
       desktop: await page("typeof window.pclawDesktop"),
     };
