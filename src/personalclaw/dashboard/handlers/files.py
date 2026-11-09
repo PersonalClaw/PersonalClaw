@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
@@ -269,20 +269,29 @@ async def api_reveal_path(request: web.Request) -> web.Response:
         # NEW refusal joins the shape the project converges on; converting the six is
         # its own change.
         return json_error("invalid_path", message="invalid or forbidden path", status=400)
+    # The opener runs in a session of its own and writes nowhere: what it, or the app it starts,
+    # prints is about a path an agent can name, and the gateway's own streams are the files
+    # `personalclaw logs` shows.
+    quiet: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "start_new_session": True,
+    }
     if action == "open":
         if not os.path.isfile(path):
             return web.json_response({"error": "not a regular file"}, status=400)
         if sys.platform == "darwin":
-            subprocess.Popen(["open", path])
+            subprocess.Popen(["open", path], **quiet)
         elif shutil.which("xdg-open"):
-            subprocess.Popen(["xdg-open", path])
+            subprocess.Popen(["xdg-open", path], **quiet)
         else:
             return web.json_response({"ok": True, "copy": path})
     else:
         if sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", path])
+            subprocess.Popen(["open", "-R", path], **quiet)
         elif shutil.which("xdg-open"):
-            subprocess.Popen(["xdg-open", str(Path(path).parent)])
+            subprocess.Popen(["xdg-open", str(Path(path).parent)], **quiet)
         else:
             return web.json_response({"ok": True, "copy": path})
     await sel_log_async(

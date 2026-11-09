@@ -1531,6 +1531,10 @@ class MaskingFormatter(logging.Formatter):
     it through :func:`mask_child_output`, which also keeps it on one line; this is the floor under
     every record, not a replacement for that.
 
+    Each character a terminal would act on is written as a visible escape (:func:`terminal_text`),
+    after the mask: a record's words can quote a model, a provider or a program, and the log is read
+    in a terminal. Its line breaks and tabs are kept, so a traceback reads as one.
+
     A record it cannot mask (the masker raised, or the record's arguments do not fit its message)
     is written as its time, level and logger with its words withheld. It is never written as it
     came, and never left to the handler's error path, which writes a failing record's message and
@@ -1561,13 +1565,13 @@ class MaskingFormatter(logging.Formatter):
         try:
             from personalclaw.filled_secrets import masked_here
 
-            return redact_for_display(masked_here(super().format(record)))
+            masked = redact_for_display(masked_here(super().format(record)))
         except Exception as exc:  # noqa: BLE001 - a record it cannot mask is withheld
-            return self._withheld(record, exc)
+            return terminal_text(self._withheld(record, exc))
+        return terminal_text(masked)
 
     def _withheld(self, record: logging.LogRecord, exc: Exception) -> str:
-        """*record*'s time, level and logger, which are PersonalClaw's own, and why the rest is
-        not shown."""
+        """*record*'s time, level and logger, and why the rest is not shown."""
         stand_in = logging.makeLogRecord(
             {
                 **record.__dict__,
@@ -1598,10 +1602,11 @@ class WithholdingHandler(logging.Handler):
             return
         failure = sys.exc_info()[1]
         try:
-            sys.stderr.write(
+            words = (
                 f"--- a log record from {record.name} ({record.filename}:{record.lineno}) could "
                 f"not be written ({type(failure).__name__}); its words are withheld ---\n"
             )
+            sys.stderr.write(terminal_text(words))
         except Exception:  # noqa: BLE001 - nowhere is left to say it
             pass
 

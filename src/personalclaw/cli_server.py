@@ -15,6 +15,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
+from typing import NoReturn
 
 from personalclaw import (
     __version__,
@@ -1457,15 +1458,17 @@ def _logs_cmd(args: argparse.Namespace) -> None:
       3. ``~/.personalclaw/gateway.log`` (foreground gateway)
 
     The log lines are the same everywhere (``log_sinks``): the gateway's own, its apps', and any
-    library's warnings.
+    library's warnings. What the reader prints is relayed a line at a time through
+    ``security.terminal_text`` (:func:`_relay`), so a line an older version wrote into a file as it
+    came reaches the terminal as text too.
     """
     follow = bool(getattr(args, "follow", False))
     lines = int(getattr(args, "lines", 100) or 100)
     plat = current_platform()
     unit = f"{SERVICE_NAME}.service"
 
-    # Audit before any os.execvp branch — the exec replaces this process
-    # so a post-exec audit call would never run.
+    # Audit before any relay branch: the relay ends this command with the reader's own exit, so
+    # an audit call after it would never run.
     sel().log_api_access(
         caller="cli",
         operation="logs",
@@ -1491,7 +1494,7 @@ def _logs_cmd(args: argparse.Namespace) -> None:
         if probe.returncode == 0 and probe.stdout.strip():
             if follow:
                 base.append("-f")
-            os.execvp("journalctl", base)
+            _relay(base)
         # Refuse to invoke sudo without a TTY: in non-interactive
         # contexts (cron, piped scripts, systemd ExecStartPre) the sudo
         # password prompt would block forever with no way to cancel.
@@ -1505,12 +1508,12 @@ def _logs_cmd(args: argparse.Namespace) -> None:
             )
             sys.exit(1)
         # Fall back to sudo journalctl. `--no-pager` prevents the pager
-        # (`less`) from taking over after exec, which behaves badly in
-        # piped/non-interactive contexts.
+        # (`less`) from taking over, which behaves badly in
+        # piped/non-interactive contexts. sudo prompts on the terminal itself.
         sudo_cmd = ["sudo", *base]
         if follow:
             sudo_cmd.append("-f")
-        os.execvp("sudo", sudo_cmd)
+        _relay(sudo_cmd)
 
     if plat == Platform.LAUNCHD and svc_macos.STDERR_LOG.exists():
         cmd = ["tail", "-n", str(lines)]
@@ -1519,7 +1522,7 @@ def _logs_cmd(args: argparse.Namespace) -> None:
         if svc_macos.STDOUT_LOG.exists():
             cmd.append(str(svc_macos.STDOUT_LOG))
         cmd.append(str(svc_macos.STDERR_LOG))
-        os.execvp("tail", cmd)
+        _relay(cmd)
 
     fallback = config_dir() / "gateway.log"
     if not fallback.exists():
@@ -1534,4 +1537,48 @@ def _logs_cmd(args: argparse.Namespace) -> None:
     if follow:
         cmd.append("-f")
     cmd.append(str(fallback))
-    os.execvp("tail", cmd)
+    _relay(cmd)
+
+
+def _relay(cmd: list[str]) -> NoReturn:
+    """Run the log reader *cmd* and write what it prints to stdout a line at a time, each through
+    ``security.terminal_text``, then end this command with the reader's exit status (128 and the
+    signal's number for a reader a signal ended). Its stdin and stderr stay the terminal's, so
+    ``sudo`` prompts there and the reader's own errors are its own. A Ctrl-C ends the reader and
+    this command with 130, and output whose reader went away (``personalclaw logs | head``) ends
+    them with 141, with nothing logged."""
+    # Bytes, a line at a time, decoded here: a text pipe would read a lone carriage return as a
+    # line break, and it is shown as the escape it is.
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    try:
+        assert proc.stdout is not None
+        for line in iter(proc.stdout.readline, b""):
+            sys.stdout.write(terminal_text(line.decode("utf-8", "replace")))
+            sys.stdout.flush()
+        status = proc.wait()
+    except KeyboardInterrupt:
+        _stop_reader(proc)
+        sys.exit(130)
+    except BrokenPipeError:
+        _stop_reader(proc)
+        # Python flushes stdout as it exits: what is left goes to the null device.
+        with contextlib.suppress(OSError, ValueError):
+            nowhere = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(nowhere, sys.stdout.fileno())
+            finally:
+                os.close(nowhere)
+        sys.exit(141)
+    sys.exit(128 - status if status < 0 else status)
+
+
+def _stop_reader(proc: "subprocess.Popen[bytes]") -> None:
+    """End the log reader *proc*: its pipe is closed, it is asked to stop, and it is given a few
+    seconds. A ``sudo`` runs as root, which this user cannot signal; it ends when its reader
+    does."""
+    if proc.stdout is not None:
+        proc.stdout.close()
+    with contextlib.suppress(OSError):
+        proc.terminate()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=5)

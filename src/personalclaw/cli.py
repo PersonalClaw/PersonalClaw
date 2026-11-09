@@ -1866,6 +1866,44 @@ class _TerminalStream:
         return getattr(self._stream, name)
 
 
+def _log_what_nothing_caught() -> None:
+    """An exception nothing caught, in a thread or in the command itself, and one Python could not
+    raise (``sys.unraisablehook``) are logged through the log's sinks (masked, and written as
+    text) rather than printed by Python's default hook straight to stderr, which for the gateway
+    is the console a service manager keeps. A thread ended by ``SystemExit`` says nothing, as the
+    default hook does, and a Ctrl-C keeps the default's word."""
+    import threading
+
+    def thread_stopped(hooked: Any) -> None:
+        if hooked.exc_type is None or issubclass(hooked.exc_type, SystemExit):
+            return
+        logging.getLogger("personalclaw").error(
+            "thread %s stopped on an error nothing caught",
+            getattr(hooked.thread, "name", "?"),
+            exc_info=(hooked.exc_type, hooked.exc_value, hooked.exc_traceback),
+        )
+
+    def command_stopped(exc_type: Any, exc_value: Any, exc_traceback: Any) -> None:
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        logging.getLogger("personalclaw").critical(
+            "an error nothing caught ended the command",
+            exc_info=(exc_type, exc_value, exc_traceback),
+        )
+
+    def could_not_raise(unraisable: Any) -> None:
+        logging.getLogger("personalclaw").error(
+            "%s: an error Python could not raise",
+            getattr(unraisable, "err_msg", None) or "Exception ignored",
+            exc_info=(unraisable.exc_type, unraisable.exc_value, unraisable.exc_traceback),
+        )
+
+    threading.excepthook = thread_stopped
+    sys.excepthook = command_stopped
+    sys.unraisablehook = could_not_raise
+
+
 def _show_the_streams_as_text() -> None:
     """Send every write to ``sys.stdout`` and ``sys.stderr`` through :class:`_TerminalStream`, so
     what a command prints reaches the terminal as text: a print no site wrapped, the gateway's own
@@ -1873,9 +1911,10 @@ def _show_the_streams_as_text() -> None:
     ``input()`` shows at a terminal, which the interpreter writes itself, so a caller whose prompt
     holds text PersonalClaw did not write passes it through ``terminal_text`` (``app_cli``); and a
     child that inherits the descriptors, so a child's output is piped and masked
-    (``security.mask_child_output``), never inherited. The sites that print what PersonalClaw did
-    not write still wrap it themselves. Installed once: a stream already wrapped is left as it
-    is."""
+    (``security.mask_child_output``), or, for ``personalclaw logs``' reader, piped and relayed
+    through ``terminal_text`` (``cli_server._relay``); that reader keeps the terminal's stderr for
+    its own errors and ``sudo``'s prompt. The sites that print what PersonalClaw did not write
+    still wrap it themselves. Installed once: a stream already wrapped is left as it is."""
     for name in ("stdout", "stderr"):
         stream = getattr(sys, name)
         if stream is not None and not isinstance(stream, _TerminalStream):
@@ -1960,6 +1999,7 @@ def main() -> None:
         from personalclaw.mcp_core import run_mcp_core_server
 
         log_sinks.attach(_console_log_handler())
+        _log_what_nothing_caught()
         run_mcp_core_server()
         return
 
@@ -2014,6 +2054,7 @@ def main() -> None:
     # both. An app loaded later is shown the moment its code loads: nothing here names one.
     log_sinks.attach(_console_log_handler())
     log_sinks.attach(_gateway_log_handler(config_dir() / "gateway.log"))
+    _log_what_nothing_caught()
     # The --verbose flag takes precedence, otherwise the persisted log_level from config.
     if args.verbose >= 2:
         level = logging.DEBUG

@@ -1353,6 +1353,12 @@ async def _a_file_in_its_own_data_folder_is_revealed(home: Path, yours: Path, da
         status, answer = await _reveal(home, APP, body)
     assert status == 200, answer
     popen.assert_called_once()
+    # The opener writes nowhere the gateway's own streams go, in a session of its own.
+    import subprocess
+
+    kwargs = popen.call_args.kwargs
+    assert kwargs.get("stdout") == kwargs.get("stderr") == kwargs.get("stdin") == subprocess.DEVNULL
+    assert kwargs.get("start_new_session") is True
 
 
 async def _without_the_storage_grant_it_has_no_folder(home: Path, yours: Path, data: Path) -> None:

@@ -370,7 +370,7 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "operator: post-update `setup --agent-only` re-run"
     ),
     "cli_server.py::_logs_cmd::subprocess.run": "operator: logs source probe",
-    "cli_server.py::_logs_cmd::os.execvp": "operator: exec journalctl/tail for `logs`",
+    "cli_server.py::_relay::subprocess.Popen": "operator: journalctl/tail for `logs`, relayed",
     # Dashboard marketplace/skills CLI shellouts — operator actions via the UI.
     "dashboard/handlers/_shared.py::_list_marketplace_skills::asyncio.create_subprocess_exec": (
         "operator: `personalclaw skills list`"

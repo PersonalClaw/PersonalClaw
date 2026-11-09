@@ -159,7 +159,7 @@ _GATEWAY_ENV: dict[str, str] = {
     ),
     "cli_config.py::_edit_config::subprocess.run": "the owner's $EDITOR",
     "cli_server.py::_logs_cmd::subprocess.run": "`logs` source probe",
-    "cli_server.py::_logs_cmd::os.execvp": "`logs` execs journalctl/tail in the owner's terminal",
+    "cli_server.py::_relay::subprocess.Popen": "`logs` relays journalctl/tail to the terminal",
     "dashboard/handlers/files.py::api_reveal_path::subprocess.Popen": "reveal in Finder/xdg-open",
     "dashboard/handlers/files.py::api_screenshot::asyncio.create_subprocess_exec": (
         "screencapture"
