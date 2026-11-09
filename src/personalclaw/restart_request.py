@@ -31,6 +31,8 @@ import sys
 from dataclasses import dataclass
 from typing import NoReturn
 
+from personalclaw.security import terminal_text
+
 logger = logging.getLogger(__name__)
 
 #: The exit status of a gateway that stopped to restart and could not start its new image: not 0,
@@ -176,7 +178,7 @@ def start(request: RestartRequest) -> NoReturn:
         logger.error("The restart could not start %s: %s", request.executable, reason)
         print(
             f"PersonalClaw stopped to restart and could not start again ({request.executable}: "
-            f"{reason}). Start it again.",
+            f"{terminal_text(str(reason))}). Start it again.",
             file=sys.stderr,
             flush=True,
         )

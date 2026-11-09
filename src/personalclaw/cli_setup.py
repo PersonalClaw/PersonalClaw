@@ -24,6 +24,7 @@ from personalclaw.config.transactions import mutate_config
 from personalclaw.constants import DATA_WARNING
 from personalclaw.env import browser_available
 from personalclaw.orchestrator_skill import generate_orchestrator_skill
+from personalclaw.security import terminal_text
 from personalclaw.skills import SkillsLoader
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,10 @@ class _Failure:
 
 def _failed(reason: str) -> str:
     """Say on stderr that a step failed, and hand back why, for the summary the run ends on."""
-    print(f"  ❌ {reason[:1].upper()}{reason[1:]}", file=sys.stderr)
+    print(
+        f"  ❌ {terminal_text(str(reason[:1].upper()))}{terminal_text(str(reason[1:]))}",
+        file=sys.stderr,
+    )
     return reason
 
 
@@ -63,7 +67,7 @@ def _run_step(
     except Exception as exc:  # noqa: BLE001 — one crashed step must not hide the steps after it
         logger.debug("setup step %r raised", step, exc_info=True)
         reason = f"{type(exc).__name__}: {exc}"
-        print(f"  ❌ {step}: {reason}", file=sys.stderr)
+        print(f"  ❌ {step}: {terminal_text(str(reason))}", file=sys.stderr)
     if reason:
         failures.append(_Failure(step, reason, retry))
 
@@ -79,7 +83,7 @@ def _end_if_failed(failures: list[_Failure]) -> None:
     count = f"{len(failures)} step" if len(failures) == 1 else f"{len(failures)} steps"
     print(f"\nSetup did not finish: {count} failed.", file=sys.stderr)
     for failure in failures:
-        print(f"  ❌ {failure.step}: {failure.reason}", file=sys.stderr)
+        print(f"  ❌ {failure.step}: {terminal_text(str(failure.reason))}", file=sys.stderr)
         print(f"     Run it again: {failure.retry}", file=sys.stderr)
     print("The steps that worked are saved; Enter at any prompt keeps its answer.", file=sys.stderr)
     sys.exit(1)
@@ -330,7 +334,9 @@ def _setup_noninteractive(
             mutate_config(_set_provider, path=config_path())
             print(f"  ✅ Agent runtime set: {provider}")
         except Exception as exc:
-            print(f"  ❌ Could not set the agent runtime: {exc}", file=sys.stderr)
+            print(
+                f"  ❌ Could not set the agent runtime: {terminal_text(str(exc))}", file=sys.stderr
+            )
             applied = False
 
     if credential and not _store_named_credential(credential):

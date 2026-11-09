@@ -35,6 +35,7 @@ from pathlib import Path
 
 from personalclaw import bounded_log
 from personalclaw.durability import inventory
+from personalclaw.security import terminal_text
 from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
@@ -642,5 +643,5 @@ def footprint_cmd(args) -> int:  # noqa: ANN001
         else:
             print(f"Nothing to reclaim — {reclaimed.stores} database(s) already compact.")
         for store_id, reason in sorted(reclaimed.skipped.items()):
-            print(f"⚠️  skipped {store_id}: {reason}")
+            print(f"⚠️  skipped {store_id}: {terminal_text(str(reason))}")
     return 0

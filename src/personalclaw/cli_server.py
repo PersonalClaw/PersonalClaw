@@ -46,6 +46,7 @@ from personalclaw.frontend import ensure_dev_dist_symlink
 from personalclaw.gateway import run_gateway
 from personalclaw.history import ConversationLog, HistoryConsolidator
 from personalclaw.memory import MemoryStore
+from personalclaw.security import terminal_text
 from personalclaw.sel import sel
 from personalclaw.service import controller as service_controller
 from personalclaw.service import linux as svc_linux
@@ -107,7 +108,7 @@ def _token(args: argparse.Namespace) -> None:
         gateway = home_gateway.reach(args.port)
         data = gateway.sign_in(args.ttl)
     except home_gateway.GatewayError as exc:
-        print(f"❌ {exc}", file=sys.stderr)
+        print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
         sys.exit(1)
     port = gateway.port
     token = str(data.get("token") or "")
@@ -172,14 +173,15 @@ def _logout(port: int | None) -> None:
         gateway = home_gateway.reach(port)
         status, data = gateway.post("/api/logout", {}, secret_header="X-Local-Secret")
     except home_gateway.GatewayError as exc:
-        print(f"❌ {exc}", file=sys.stderr)
+        print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
         sys.exit(1)
     if status != 200:
         print(f"❌ Failed to revoke sessions: HTTP {status}", file=sys.stderr)
         sys.exit(1)
     if not data.get("ok"):
         print(
-            f"❌ Failed to revoke sessions: {data.get('error', 'unknown error')}",
+            "❌ Failed to revoke sessions: "
+            f"{terminal_text(str(data.get('error', 'unknown error')))}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -287,7 +289,9 @@ def _stop(port: int | None) -> None:
             resources="via=service",
         )
         if failed:
-            print(f"❌ Could not stop {service.name}: {failed}", file=sys.stderr)
+            print(
+                f"❌ Could not stop {service.name}: {terminal_text(str(failed))}", file=sys.stderr
+            )
             sys.exit(1)
         print(
             f"✅ Stopped the PersonalClaw service ({service.name}). {service.comes_back}, or "
@@ -434,7 +438,9 @@ def _restart(port: int | None) -> None:
             resources="via=service",
         )
         if failed:
-            print(f"❌ Could not start {service.name}: {failed}", file=sys.stderr)
+            print(
+                f"❌ Could not start {service.name}: {terminal_text(str(failed))}", file=sys.stderr
+            )
             sys.exit(1)
         print(
             f"✅ {'Restarted' if was_running else 'Started'} the PersonalClaw service "
@@ -538,7 +544,7 @@ def _refuse_dirty_tree(tracked: list[str], operation: str) -> None:
     """
     print(f"  ⚠️  Local tracked-file changes would block {operation}:", file=sys.stderr)
     for line in tracked[:10]:
-        print(f"      {line}", file=sys.stderr)
+        print(f"      {terminal_text(str(line))}", file=sys.stderr)
     print("     Commit or `git stash` them, then re-run `personalclaw update`.", file=sys.stderr)
     sys.exit(1)
 
@@ -584,7 +590,10 @@ def _update_git_nightly(git_dir: str) -> None:
     print("  ⬇️  git fetch…")
     fetched = self_update.git_fetch(git_dir, branch)
     if fetched.returncode != 0:
-        print(f"  ❌ git fetch origin {branch} failed:\n{_git_said(fetched)}", file=sys.stderr)
+        print(
+            f"  ❌ git fetch origin {branch} failed:\n{terminal_text(str(_git_said(fetched)))}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if self_update.git_is_up_to_date(git_dir, branch):
@@ -637,7 +646,10 @@ _STEP_MARKS = {
 def _say_step(step: str, detail: str) -> None:
     """Print one step of a checkout's update; how one that stopped ended, on stderr."""
     ended = step in {"error", "cancelled"}
-    print(f"  {_STEP_MARKS.get(step, '•')} {detail}", file=sys.stderr if ended else None)
+    print(
+        f"  {_STEP_MARKS.get(step, '•')} {terminal_text(str(detail))}",
+        file=sys.stderr if ended else None,
+    )
 
 
 def _finish_git_update(git_dir: str, target: str) -> None:
@@ -658,7 +670,7 @@ def _finish_git_update(git_dir: str, target: str) -> None:
     except (asyncio.CancelledError, KeyboardInterrupt):
         sys.exit(130)
     if failed:
-        print(f"  ❌ {failed}", file=sys.stderr)
+        print(f"  ❌ {terminal_text(str(failed))}", file=sys.stderr)
         sys.exit(1)
 
     print("\n✅ PersonalClaw updated!")
@@ -943,7 +955,7 @@ def _install(args: list[str]) -> None:
     try:
         argv = install_argv(args)
     except NoInstallerError as exc:
-        print(f"  ❌ {exc}", file=sys.stderr)
+        print(f"  ❌ {terminal_text(str(exc))}", file=sys.stderr)
         sys.exit(1)
 
     print(f"  🔨 {shlex.join(argv)}")
@@ -967,14 +979,17 @@ def _install(args: list[str]) -> None:
         said, _as_it_was = self_update.stopped_upgrade_sentence(
             self_update.UPDATE_STOPPED, changed_distributions(environment), __version__
         )
-        print(f"  {_STEP_MARKS['cancelled']} {said}", file=sys.stderr)
+        print(f"  {_STEP_MARKS['cancelled']} {terminal_text(str(said))}", file=sys.stderr)
         sys.exit(130)
     if result.returncode != 0:
         # Same one-line summary the dashboard shows: uv's stderr is ANSI-colored and
         # leads with the headline, so raw stderr reads as corrupted or as a fragment.
         summary = self_update.installer_error_summary(result.stderr or "", limit=500)
         print(
-            f"  ❌ Install failed: {summary}" if summary else "  ❌ Install failed", file=sys.stderr
+            terminal_text(
+                str(f"  ❌ Install failed: {summary}" if summary else "  ❌ Install failed")
+            ),
+            file=sys.stderr,
         )
         sys.exit(1)
 
@@ -1133,11 +1148,11 @@ def _status(args: argparse.Namespace) -> None:
     try:
         gateway = home_gateway.reach(getattr(args, "port", None))
     except home_gateway.NoGatewayRunning as exc:
-        print(exc)
+        print(terminal_text(str(exc)))
         _print_service(service)
         return
     except home_gateway.GatewayError as exc:
-        print(f"❌ {exc}", file=sys.stderr)
+        print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
         sys.exit(1)
     request = urllib.request.Request(f"{gateway.url}/api/status")
     try:
@@ -1162,7 +1177,7 @@ def _status(args: argparse.Namespace) -> None:
 
     print(f"PersonalClaw v{__version__}\n")
     for label, path in _STATUS_LINES:
-        print(f"  {label + ':':<12} {_status_value(data, path)}")
+        print(f"  {label + ':':<12} {terminal_text(str(_status_value(data, path)))}")
     _print_service(service)
 
 
@@ -1280,7 +1295,8 @@ async def _gateway(
         )
     except GovernanceBootError as exc:
         print(
-            f"\n⛔ PersonalClaw did not start — governance could not be established.\n\n{exc}\n",
+            "\n⛔ PersonalClaw did not start — governance could not be "
+            f"established.\n\n{terminal_text(str(exc))}\n",
             file=sys.stderr,
         )
         raise SystemExit(1) from None
@@ -1361,23 +1377,25 @@ async def _consolidate_cmd(args: argparse.Namespace) -> None:
         ran = 0
         for key in keys:
             if consolidator.keeps_nothing_from(key):
-                print(f"  • {key} skipped: {_KEEPS_NOTHING}")
+                print(f"  • {terminal_text(str(key))} skipped: {_KEEPS_NOTHING}")
             elif await consolidator.consolidate_session(key):
                 ran += 1
-                print(f"  ✓ {key}")
+                print(f"  ✓ {terminal_text(str(key))}")
             else:
-                print(f"  • {key} (already in flight, skipped)")
+                print(f"  • {terminal_text(str(key))} (already in flight, skipped)")
         print(f"\n✅ Consolidated {ran}/{len(keys)} session(s).")
         return
 
     key = args.key
     if not conv_log.has_log(key):
-        print(f"❌ No conversation history for session '{key}'.", file=sys.stderr)
+        print(
+            f"❌ No conversation history for session '{terminal_text(str(key))}'.", file=sys.stderr
+        )
         sys.exit(1)
     if consolidator.keeps_nothing_from(key):
-        print(f"• Session '{key}' was not consolidated: {_KEEPS_NOTHING}.")
+        print(f"• Session '{terminal_text(str(key))}' was not consolidated: {_KEEPS_NOTHING}.")
         return
-    print(f"Consolidating session '{key}'…")
+    print(f"Consolidating session '{terminal_text(str(key))}'…")
     if await consolidator.consolidate_session(key):
         print("✅ Done.")
     else:

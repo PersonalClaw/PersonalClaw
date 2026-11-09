@@ -16,6 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from personalclaw.durability import home_paths, sqlite_files
+from personalclaw.security import terminal_text
 
 
 def left_out_of_restore(entry_path: str, rel: str) -> bool:
@@ -78,7 +79,15 @@ def said(what: str, left: list[str], since: int) -> None:
     """Say how the part *what* of a restore went: done, or what it put on *left* after its first
     *since*."""
     done = len(left) == since
-    print(f"  ✅ {what}" if done else f"  ⚠️  {what}: left unchanged: {', '.join(left[since:])}")
+    print(
+        terminal_text(
+            str(
+                f"  ✅ {what}"
+                if done
+                else f"  ⚠️  {what}: left unchanged: {', '.join(left[since:])}"
+            )
+        )
+    )
 
 
 def left_unchanged_line(left: list[str], what: str = "Merge") -> str:

@@ -33,6 +33,7 @@ from personalclaw.dashboard.origin import (
     tunnel_hint,
 )
 from personalclaw.python_support import python_support, rebuild_command
+from personalclaw.security import terminal_text
 
 
 def config_dir() -> Path:
@@ -148,7 +149,8 @@ def _connection_row(name: str, gateway: _GatewayReading) -> str:
         return f"⏹  registered, connection not tested ({where})"
     connection = (gateway.providers.get(name) or {}).get("connection") or {}
     state = connection.get("state")
-    detail = str(connection.get("detail") or "")
+    # The test's words can quote the provider's own answer.
+    detail = terminal_text(str(connection.get("detail") or ""))
     if state == CONNECTED:
         return f"✅ {detail or 'connected'}"
     if state == FAILED:
@@ -184,7 +186,7 @@ def _doctor_providers(gateway: _GatewayReading, *, start_agent_clis: bool = Fals
         registry = get_default_registry()
         entries = registry.list_entries()
     except Exception as exc:
-        print(f"  registry:    ⚠️  could not load ({exc})")
+        print(f"  registry:    ⚠️  could not load ({terminal_text(str(exc))})")
         return issues
 
     if not entries:
@@ -200,7 +202,7 @@ def _doctor_providers(gateway: _GatewayReading, *, start_agent_clis: bool = Fals
             # app: openai/anthropic/vllm/bedrock/…). The type is shown in the label;
             # no hardcoded core-native allow-list (that list went stale when the
             # model providers became apps).
-            print(f"  {label}: {_connection_row(entry.name, gateway)}")
+            print(f"  {terminal_text(str(label))}: {_connection_row(entry.name, gateway)}")
 
     return issues
 
@@ -230,13 +232,14 @@ def _report_acp_agent(entry: object, label: str, issues: list[str], *, start: bo
         else:
             readiness = runtime_tests.readiness(entry)
     except Exception as exc:
-        print(f"  {label}: ⚠️  could not check ({exc})")
+        print(f"  {terminal_text(str(label))}: ⚠️  could not check ({terminal_text(str(exc))})")
         return
 
     state = str(readiness.get("state") or "error")
     icon = _READINESS_ICONS.get(state, "⚠️")
     tested_at = readiness.get("tested_at")
-    detail = str(readiness.get("detail") or "")
+    # The test's words can quote what the CLI itself printed.
+    detail = terminal_text(str(readiness.get("detail") or ""))
     if state == "untested":
         detail = (
             "installed, not started — run `personalclaw doctor --start-agent-clis` to start "
@@ -245,7 +248,7 @@ def _report_acp_agent(entry: object, label: str, issues: list[str], *, start: bo
         )
     elif tested_at and not start:
         detail = f"{detail} (last Test {tested_at})"
-    print(f"  {label}: {icon} {detail}")
+    print(f"  {terminal_text(str(label))}: {icon} {detail}")
     # A CLI nobody started is not a failure — only a check that ran, and failed, is.
     if not readiness.get("ready") and state != "untested":
         issues.append(f"{label}: {state}")
@@ -254,7 +257,8 @@ def _report_acp_agent(entry: object, label: str, issues: list[str], *, start: bo
     if adapter and adapter["error"]:
         print(
             "      its ACP adapter did not install when its app was enabled: "
-            f"{adapter['error']}. Retry on its card in Settings → Models & Providers → Providers "
+            f"{terminal_text(str(adapter['error']))}. Retry on its card in Settings → Models & "
+            "Providers → Providers "
             "installs it again."
         )
         issues.append(f"{label}: ACP adapter not installed")
@@ -313,7 +317,7 @@ def _doctor_crypto() -> None:
         from cryptography.hazmat.primitives.serialization import Encoding
         from cryptography.x509.oid import NameOID
     except Exception as exc:  # noqa: BLE001 - a library that cannot load is what this reports
-        print(f"cryptography\tFAILED: {exc}", file=sys.stderr)
+        print(f"cryptography\tFAILED: {terminal_text(str(exc))}", file=sys.stderr)
         raise SystemExit(1) from None
     print(f"cryptography\t{cryptography.__version__}")
     print(f"openssl\t{backend.openssl_version_text()}")
@@ -538,7 +542,7 @@ def _doctor_config_readable() -> list[str]:
     if state is None:
         return []
     print(f"  config file: ❌ UNREADABLE — {state.path}")
-    print(f"               {state.reason}")
+    print(f"               {terminal_text(str(state.reason))}")
     print("               Your stored settings are NOT in effect. These are held at their")
     print("               most restrictive value until the file is repaired or removed:")
     for key, value in CONFIG_ON_DISCARDED_READ.items():
@@ -646,7 +650,10 @@ def _doctor_external_vector_store() -> list[str]:
         # that breaks that must not take the doctor down with it.
         info = provider.describe()
     except Exception as exc:
-        print(f"  chunk index: ⚠️  {name}: describe() raised ({str(exc)[:80]})")
+        print(
+            f"  chunk index: ⚠️  {terminal_text(str(name))}: describe() raised "
+            f"({terminal_text(str(str(exc)[:80]))})"
+        )
         return [f"vector store {name}: describe() raised"]
 
     local = None
@@ -668,15 +675,20 @@ def _doctor_external_vector_store() -> list[str]:
     count = "unknown" if info.count is None else str(info.count)
     local_txt = "" if local is None else f", local {local}"
     if not info.reachable:
-        print(f"  chunk index: ❌ {name} ({shape}) unreachable")
+        print(
+            f"  chunk index: ❌ {terminal_text(str(name))} ({terminal_text(str(shape))}) unreachable"
+        )
         # The provider's own sentence, which by contract carries the reason and no secret.
         if info.detail:
-            print(f"               {info.detail}")
+            print(f"               {terminal_text(str(info.detail))}")
         print("               Knowledge chunk search returns nothing while it is down —")
         print("               it does NOT fall back to the built-in index.")
         return [f"vector store {name} unreachable"]
 
-    print(f"  chunk index: ✅ {name} ({shape}) — {count} vector(s){local_txt}")
+    print(
+        f"  chunk index: ✅ {terminal_text(str(name))} ({terminal_text(str(shape))}) — {count} "
+        f"vector(s){local_txt}"
+    )
     if local and info.count == 0:
         print(f"               Empty while {local} local chunk(s) are embedded — searches")
         print("               find no chunks. Fix: re-enable the app to backfill, or")
@@ -704,7 +716,7 @@ def _doctor_backups() -> None:
 
         res = asyncio.run(_probe_backups(DoctorContext()))
     except Exception as exc:
-        print(f"  backups:     ⚠️  could not read ({str(exc)[:120]})")
+        print(f"  backups:     ⚠️  could not read ({terminal_text(str(str(exc)[:120]))})")
         return
     print(f"  backups:     {'✅' if res.ok else '❌'} {res.detail}")
     if res.remedy:
@@ -745,26 +757,32 @@ def _doctor_core_server(agent_path: Path) -> list[str]:
     ref = f"@{core_server_name()}"
     detail = core_server_detail(reading)
     if not reading.found:  # removed since the Agent row looked: nothing to check, nothing to fix
-        print(f"  {ref}: ⏹  {detail}")
+        print(f"  {terminal_text(str(ref))}: ⏹  {terminal_text(str(detail))}")
         return []
     if reading.unreadable:
-        print(f"  {ref}: ❌ {detail}")
+        print(f"  {terminal_text(str(ref))}: ❌ {terminal_text(str(detail))}")
         print(f"               {core_server_remedy(reading)}")
         return ["agent config unreadable"]
     issues: list[str] = []
     if reading.set_up:
-        print(f"  {ref}: ✅ {detail}")
+        print(f"  {terminal_text(str(ref))}: ✅ {terminal_text(str(detail))}")
     else:
-        print(f"  {ref}: ❌ {detail}")
+        print(f"  {terminal_text(str(ref))}: ❌ {terminal_text(str(detail))}")
         fix = _CORE_SERVER_FIX_LINES if core_server_command() else (core_server_remedy(reading),)
         for line in fix:
-            print(f"               {line}")
+            print(f"               {terminal_text(str(line))}")
         issues.append(f"{ref} server entry")
-    print(f"  tools:       {'lists' if reading.in_tools else 'does not list'} {ref}")
+    print(
+        f"  tools:       {'lists' if reading.in_tools else 'does not list'} "
+        f"{terminal_text(str(ref))}"
+    )
     if reading.in_allowed:
-        print(f"  allowedTools: lists {ref}, so its tools run without asking")
+        print(f"  allowedTools: lists {terminal_text(str(ref))}, so its tools run without asking")
     else:
-        print(f"  allowedTools: does not list {ref}, so its tools are not among those that run")
+        print(
+            f"  allowedTools: does not list {terminal_text(str(ref))}, so its tools are not "
+            "among those that run"
+        )
         print("               without asking")
     if not (reading.in_tools and reading.in_allowed):
         print(f"               {_LISTS_ARE_YOURS}")
@@ -811,7 +829,7 @@ def _doctor_maintenance(gateway: _GatewayReading) -> None:
             score = health_score(measured)
             target = float(_Cfg.load().resilience.remediation.target_score)
             deficits = deficit_rows(measured)
-            print(f"  measured:    {gateway.why}")
+            print(f"  measured:    {terminal_text(str(gateway.why))}")
         mark = "✅" if score >= target else "⚠️ "
         print(f"  health:      {mark} score {score:g} / target {target:g}")
         # Zero-count sources are measurements, not problems — the same filter the panel
@@ -842,7 +860,7 @@ def _doctor_maintenance(gateway: _GatewayReading) -> None:
             )
             print("               → Maintenance → Run now, or wait for the adaptive pass.")
     except Exception as exc:
-        print(f"  health:      ⚠️  could not measure ({str(exc)[:120]})")
+        print(f"  health:      ⚠️  could not measure ({terminal_text(str(str(exc)[:120]))})")
 
 
 def _venv_interpreter() -> Path | None:
@@ -1199,7 +1217,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         try:
             ver = _probe_python_version(venv_py)
         except Exception as exc:
-            print(f"  venv python: ❌ broken: {exc}")
+            print(f"  venv python: ❌ broken: {terminal_text(str(exc))}")
             issues.append("venv python")
         else:
             _interpreter_row("venv python", venv_py, ver, issues)
@@ -1448,7 +1466,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     # ── Summary ──
     print()
     if issues:
-        print(f"❌ Fix these issues: {', '.join(issues)}")
+        print(f"❌ Fix these issues: {terminal_text(str(', '.join(issues)))}")
         sys.exit(1)
     else:
         print("✅ PersonalClaw is ready!")

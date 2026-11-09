@@ -1446,11 +1446,14 @@ def redact_for_model(text: str) -> str:
     return redact_for_display(text)
 
 
-#: Characters written as a visible escape rather than raw: C0 controls but TAB, DEL, the C1
-#: controls (NEL among them) and the two Unicode separators some viewers break a line on.
-_UNSAFE_OUTPUT_CHARS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f-\x9f\u2028\u2029]")
+#: Characters written as a visible escape rather than raw: C0 controls but TAB, DEL, the C1 controls
+#: (NEL and the one-character CSI among them), the two Unicode line and paragraph separators, and
+#: the bidirectional overrides and isolates. The direction marks (U+200E, U+200F, U+061C) and the
+#: other format characters are kept on purpose: they are ordinary text in a right-to-left reply.
+_ACTED_ON_BUT_LF = r"\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069"
+_ACTED_ON_CHARS = re.compile(rf"[\x0a{_ACTED_ON_BUT_LF}]")
 #: The same set less the line feed, for text a person reads with its line breaks kept.
-_UNSAFE_OUTPUT_CHARS_BUT_LF = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]")
+_ACTED_ON_CHARS_BUT_LF = re.compile(rf"[{_ACTED_ON_BUT_LF}]")
 
 
 def _visible_escape(match: "re.Match[str]") -> str:
@@ -1460,6 +1463,17 @@ def _visible_escape(match: "re.Match[str]") -> str:
     if ch == "\r":
         return "\\r"
     return f"\\x{ord(ch):02x}" if ord(ch) < 0x100 else f"\\u{ord(ch):04x}"
+
+
+def terminal_text(text: str) -> str:
+    """*text* as a terminal, or a log a terminal shows, should get it when PersonalClaw did not
+    write it: a model's reply, a tool's or a provider's error, a saved memory, a log record's words.
+    Every character a terminal would act on rather than show (an escape, a carriage return, a
+    backspace, a bell, the C1 controls, a bidirectional override) is written as a visible escape
+    (``\\x1b``, ``\\u202e``), so the reader sees that something was there. Line breaks and tabs are
+    kept, a ``\\r\\n`` read as the line break it is, and every other character is kept as it came: a
+    no-break space, a zero-width joiner, CJK and emoji are ordinary text."""
+    return _ACTED_ON_CHARS_BUT_LF.sub(_visible_escape, text.replace("\r\n", "\n"))
 
 
 def mask_child_output(
@@ -1496,10 +1510,7 @@ def mask_child_output(
     text = redact_for_display(masked_here(text.strip()))
     if limit is not None and len(text) > limit:
         text = text[-limit:] if tail else text[:limit]
-    if one_line:
-        return _UNSAFE_OUTPUT_CHARS.sub(_visible_escape, text)
-    text = text.replace("\r\n", "\n")
-    return _UNSAFE_OUTPUT_CHARS_BUT_LF.sub(_visible_escape, text)
+    return _ACTED_ON_CHARS.sub(_visible_escape, text) if one_line else terminal_text(text)
 
 
 class MaskingFormatter(logging.Formatter):

@@ -19,6 +19,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from personalclaw.security import terminal_text
 from personalclaw.sqlite_compat import connect, sqlite3
 
 
@@ -45,7 +46,7 @@ def _whole(src_db: Path, label: str) -> bool:
         finally:
             check.close()
     except Exception as exc:  # noqa: BLE001 — a corrupt source must not abort the restore
-        print(f"  ⚠️  {label}: source unreadable ({exc}) — skipping merge")
+        print(f"  ⚠️  {label}: source unreadable ({terminal_text(str(exc))}) — skipping merge")
         return False
     return True
 
@@ -79,7 +80,10 @@ def ready_to_merge(
             opens(copy)
             opens(Path(dst_db))
         except Exception as exc:  # noqa: BLE001 — one store that cannot open must not abort
-            print(f"  ⚠️  {label}: could not be opened to merge ({exc}) — left unchanged")
+            print(
+                f"  ⚠️  {label}: could not be opened to merge ({terminal_text(str(exc))}) — "
+                "left unchanged"
+            )
             unchanged.append(label)
             ready = None
         yield ready

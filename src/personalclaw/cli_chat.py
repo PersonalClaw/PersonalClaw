@@ -34,6 +34,7 @@ from personalclaw.approval_brief import RISK_LABELS
 from personalclaw.cli_run import RunError
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import BANNER, DATA_WARNING
+from personalclaw.security import terminal_text
 from personalclaw.textfmt import clip_words
 
 #: What ends the interactive chat, besides Ctrl-D.
@@ -85,7 +86,7 @@ def _chat_main(args) -> int:
     try:
         gateway = home_gateway.reach(getattr(args, "port", None))
     except home_gateway.GatewayError as exc:
-        print(f"personalclaw chat: {exc}", file=sys.stderr)
+        print(f"personalclaw chat: {terminal_text(str(exc))}", file=sys.stderr)
         return 1
     model = getattr(args, "model", None) or ""
     sign_in = _SignIn(gateway)
@@ -110,7 +111,7 @@ def _failed(sign_in: _SignIn, exc: RunError) -> None:
     with how to start it again."""
     gateway = sign_in.gateway
     print(
-        f"personalclaw chat: {exc if gateway.answers() else gateway.gone()}",
+        f"personalclaw chat: {terminal_text(str(exc)) if gateway.answers() else gateway.gone()}",
         file=sys.stderr,
     )
 
@@ -226,6 +227,9 @@ class _Turn(cli_run._Collector):
         super().__init__(session_key, "plain")
         #: Whether stdout's last line is still open: an answer streams without a newline.
         self._open = False
+        #: A carriage return a chunk ended on, held until the next chunk says whether it is half
+        #: of a ``\r\n``.
+        self._held_cr = ""
         #: The approvals this turn asked for, by registry id, and the tool each is about.
         self._asked: dict[str, str] = {}
         #: The rows already shown, as (role, text): the gateway sends some of a turn's twice.
@@ -239,11 +243,15 @@ class _Turn(cli_run._Collector):
 
     def _show(self, kind: str, data: dict[str, Any]) -> None:
         if kind == "chat_chunk":
-            text = str(data.get("content", ""))
-            if text:
-                sys.stdout.write(text)
+            text = self._held_cr + str(data.get("content", ""))
+            self._held_cr = "\r" if text.endswith("\r") else ""
+            shown = text[:-1] if self._held_cr else text
+            if shown:
+                # A chunk at a time: each such character is a single character, so one at the end
+                # of a chunk is shown as an escape too.
+                sys.stdout.write(terminal_text(shown))
                 sys.stdout.flush()
-                self._open = not text.endswith("\n")
+                self._open = not shown.endswith("\n")
         elif kind in ("chat_segment", "tool_call"):
             # The answer so far is settled: what streams after a call is a new paragraph.
             self.close_line()
@@ -267,19 +275,24 @@ class _Turn(cli_run._Collector):
         self._shown.add((role, text))
         if role == "assistant":
             self.close_line()
-            print(text, flush=True)
+            print(terminal_text(text), flush=True)
         else:
             self.note(text)
 
     def note(self, text: str) -> None:
-        """Say *text* on stderr, on a line of its own, in printable characters only: what it says
-        of a call is words a model chose (the tool, its input), and a control character in them
-        could move the cursor or rewrite what the terminal shows."""
+        """Say *text* on stderr, on a line of its own, with each character a terminal would act on
+        shown as an escape (``security.terminal_text``): what it says of a call is words a model
+        chose (the tool, its input)."""
         self.close_line()
-        print(_printable(text), file=sys.stderr, flush=True)
+        print(terminal_text(text), file=sys.stderr, flush=True)
 
     def close_line(self) -> None:
-        """End the answer's open line on stdout, if there is one."""
+        """End the answer's open line on stdout, if there is one, showing a carriage return it
+        ended on as the escape it is."""
+        if self._held_cr:
+            sys.stdout.write(terminal_text(self._held_cr))
+            self._held_cr = ""
+            self._open = True
         if self._open:
             sys.stdout.write("\n")
             sys.stdout.flush()
@@ -314,12 +327,6 @@ def _ended(tool: str, frame: dict[str, Any]) -> str:
     word = _ENDED.get(str(frame.get("outcome") or ""), "Ended")
     why = str(frame.get("ended") or "")
     return f"{word}: {tool or 'the call'}" + (f" ({why})" if why else "") + "."
-
-
-def _printable(text: str) -> str:
-    """*text* with every character a terminal would act on rather than show removed, its line
-    breaks kept."""
-    return "".join(ch for ch in text if ch == "\n" or ch.isprintable())
 
 
 def _ensure_default_agent_in_config() -> str | None:

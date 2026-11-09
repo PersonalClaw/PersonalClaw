@@ -32,11 +32,13 @@ import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any
 
 from personalclaw import __version__, log_sinks
 from personalclaw.config import AppConfig, config_dir
 from personalclaw.config.loader import resolve_config_dir
 from personalclaw.constants import BANNER
+from personalclaw.security import terminal_text
 from personalclaw.seed import seed_cmd
 
 
@@ -103,7 +105,8 @@ def _resolve_gateway_args(args: argparse.Namespace) -> dict:
             main_home = default_config_dir().resolve()
         except OSError as exc:
             print(
-                f"--approval yolo refused: failed to resolve PERSONALCLAW_HOME: {exc}",
+                "--approval yolo refused: failed to resolve PERSONALCLAW_HOME: "
+                f"{terminal_text(str(exc))}",
                 file=sys.stderr,
             )
             sys.exit(2)
@@ -1747,6 +1750,44 @@ def _read_the_env_files() -> None:
                 os.environ.setdefault(key, value)
 
 
+class _TerminalStream:
+    """A text stream whose ``write`` hands on what it is given through
+    ``security.terminal_text``: each character a terminal would act on is written as a visible
+    escape, and text already escaped is written as it is. Everything else (``buffer``,
+    ``fileno``, ``isatty``, ``flush``, ``encoding``, ``reconfigure``…) is the stream's own, so what
+    writes bytes, or asks what the stream is, gets the stream itself."""
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+
+    def write(self, text: str) -> int:
+        self._stream.write(terminal_text(text))
+        return len(text)
+
+    def writelines(self, lines: Any) -> None:
+        for line in lines:
+            self.write(line)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+def _show_the_streams_as_text() -> None:
+    """Send every write to ``sys.stdout`` and ``sys.stderr`` through :class:`_TerminalStream`, so
+    what a command prints reaches the terminal as text: a print no site wrapped, the gateway's own
+    lines, an uncaught exception the default hook prints. Two writes go around it: the prompt
+    ``input()`` shows at a terminal, which the interpreter writes itself, so a caller whose prompt
+    holds text PersonalClaw did not write passes it through ``terminal_text`` (``app_cli``); and a
+    child that inherits the descriptors, so a child's output is piped and masked
+    (``security.mask_child_output``), never inherited. The sites that print what PersonalClaw did
+    not write still wrap it themselves. Installed once: a stream already wrapped is left as it
+    is."""
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name)
+        if stream is not None and not isinstance(stream, _TerminalStream):
+            setattr(sys, name, _TerminalStream(stream))
+
+
 def main() -> None:
     """Entry point — parse args and dispatch to the appropriate subcommand."""
     # stdout a line at a time, so that a line on stderr lands after what was printed before it
@@ -1755,6 +1796,7 @@ def main() -> None:
     # ahead of the prompt it answers.
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)
+    _show_the_streams_as_text()
 
     # The environment this command was launched with: its children's PATH and TMPDIR, whatever
     # changes `os.environ` later (`env.gateway_env`), and what a restart starts the new image with
@@ -2117,7 +2159,7 @@ def _workflow_cmd(args) -> int:  # noqa: ANN001
     try:
         result = replay_run(args.run_id)
     except ReplayError as exc:
-        print(f"cannot replay: {exc}", file=sys.stderr)
+        print(f"cannot replay: {terminal_text(str(exc))}", file=sys.stderr)
         return 1
 
     if getattr(args, "json", False):
@@ -2153,7 +2195,7 @@ def _workflow_cmd(args) -> int:  # noqa: ANN001
             f"{len(result.original)} node(s) — no divergence"
         )
         return 0
-    print(f"run {result.run_id}: DIVERGED — {div.describe()}")
+    print(f"run {result.run_id}: DIVERGED — {terminal_text(str(div.describe()))}")
     return 0
 
 
@@ -2189,7 +2231,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
             return
         for s in skills:
             desc = s["description"]
-            print(f"  {s['name']:<24} {desc[:60]}")
+            print(f"  {terminal_text(str(s['name'])):<24} {terminal_text(str(desc[:60]))}")
         return
 
     if cmd == "search":
@@ -2204,7 +2246,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
             print(f"No results for '{query}' on {marketplace_name}")
             return
         for r in results:
-            print(f"  {r.id:<40} {r.description[:50]}")
+            print(f"  {terminal_text(str(r.id)):<40} {terminal_text(str(r.description[:50]))}")
         return
 
     if cmd == "install":
@@ -2247,12 +2289,12 @@ def _handle_skills(args) -> None:  # noqa: ANN001
                 # whose entire job is to justify the refusal. Same sentence the consent
                 # surfaces render (`hiddenFindingsNote` in web/src/lib/scanFindings.ts).
                 lines.append(f"     +{hidden} more finding{'' if hidden == 1 else 's'} not shown")
-            _refuse("\n".join(lines))
+            _refuse(terminal_text(str("\n".join(lines))))
         except Exception as exc:
-            _refuse(f"❌ Install failed: {exc}")
+            _refuse(f"❌ Install failed: {terminal_text(str(exc))}")
         n = len(result.report.findings)
         note = f" (scanned, tier={result.tier.value}" + (f", {n} finding(s))" if n else ")")
-        print(f"✅ Installed: {result.path}{note}")
+        print(f"✅ Installed: {terminal_text(str(result.path))}{note}")
         return
 
     if cmd == "remove":
@@ -2280,11 +2322,11 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         report = run_aging(dry_run=getattr(args, "dry_run", False))
         print(report.summary())
         for name in report.to_archived:
-            print(f"  archived: {name}")
+            print(f"  archived: {terminal_text(str(name))}")
         for name in report.to_stale:
-            print(f"  stale:    {name}")
+            print(f"  stale:    {terminal_text(str(name))}")
         for name in report.reactivated:
-            print(f"  active:   {name}")
+            print(f"  active:   {terminal_text(str(name))}")
         return
 
     if cmd == "verify":
@@ -2307,13 +2349,13 @@ def _handle_skills(args) -> None:  # noqa: ANN001
             # A skill with no record gets "·", not a check: there is nothing to compare it with,
             # and a green check would falsely imply "verified intact".
             summary = rep.summary().split(": ", 1)[1]
-            print(f"  {marks.get(rep.state, '·')} {name}: {summary}")
+            print(f"  {marks.get(rep.state, '·')} " + terminal_text(f"{name}: {summary}"))
             for f in rep.mutated:
-                print(f"       changed: {f}")
+                print(f"       changed: {terminal_text(str(f))}")
             for f in rep.missing:
-                print(f"       missing: {f}")
+                print(f"       missing: {terminal_text(str(f))}")
             for f in rep.added:
-                print(f"       added:   {f}")
+                print(f"       added:   {terminal_text(str(f))}")
             edited += rep.state == EDITED
             damaged += rep.state == TAMPERED
         print(
@@ -2337,7 +2379,8 @@ def _incident_cmd(args) -> None:  # noqa: ANN001
     if action == "on":
         st = _inc.activate(getattr(args, "reason", "") or "")
         print(
-            f"⛔ Incident mode ON — unattended work suspended.\n   reason: {st.reason or '(none)'}"
+            "⛔ Incident mode ON — unattended work suspended.\n   reason: "
+            f"{terminal_text(str(st.reason or '(none)'))}"
         )
         print("   Resume with: personalclaw incident off")
     elif action == "off":
@@ -2347,7 +2390,8 @@ def _incident_cmd(args) -> None:  # noqa: ANN001
         st = _inc.get_incident()
         if st.active:
             print(
-                f"⛔ Incident mode ACTIVE since {st.started_at}\n   reason: {st.reason or '(none)'}"
+                f"⛔ Incident mode ACTIVE since {st.started_at}\n   reason: "
+                f"{terminal_text(str(st.reason or '(none)'))}"
             )
         else:
             print("✓ No incident — automation running normally.")

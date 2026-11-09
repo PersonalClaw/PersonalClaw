@@ -21,11 +21,18 @@ from typing import TYPE_CHECKING, Any, TextIO
 from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes, private_file
 from personalclaw.durability import home_paths, restore_items, sqlite_files
+from personalclaw.security import terminal_text
 from personalclaw.sqlite_compat import sqlite3
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.durability.inventory import StateEntry
     from personalclaw.gateway_base import LiveGateway
+
+
+def _shown(value: object) -> str:
+    """*value*, which PersonalClaw did not write, as the terminal is given it (terminal_text)."""
+    return terminal_text(str(value))
+
 
 VALID_COMPONENTS = (
     "memory",
@@ -64,11 +71,11 @@ def _data_filter(info: tarfile.TarInfo, _dest: str = "") -> tarfile.TarInfo | No
     """
     # Reject path traversal
     if ".." in PurePosixPath(info.name).parts or info.name.startswith("/"):
-        print(f"⚠️  Rejecting path traversal entry: {info.name}")
+        print(f"⚠️  Rejecting path traversal entry: {_shown(info.name)}")
         return None
     # Reject symlinks and hardlinks
     if info.issym() or info.islnk():
-        print(f"⚠️  Rejecting symlink/hardlink entry: {info.name}")
+        print(f"⚠️  Rejecting symlink/hardlink entry: {_shown(info.name)}")
         return None
     info.uid = info.gid = 0
     info.uname = info.gname = ""
@@ -552,7 +559,7 @@ def _list_components(stream: TextIO | None = None) -> None:
     named that is not one."""
     print("Available components:", file=stream)
     for k, v in COMPONENT_HELP.items():
-        print(f"  {k:16s} {v}", file=stream)
+        print(f"  {_shown(k):16s} {_shown(v)}", file=stream)
     print("\nCombine with commas: --components memory,crons,skills", file=stream)
 
 
@@ -563,7 +570,7 @@ def _copytree_safe(src: Path, dst: Path, **kwargs) -> None:
     def _ignore_symlinks(directory, contents):
         skipped = {name for name in contents if os.path.islink(os.path.join(directory, name))}
         for name in skipped:
-            print(f"⚠️  Skipping symlink in source tree: {os.path.join(directory, name)}")
+            print(f"⚠️  Skipping symlink in source tree: {_shown(os.path.join(directory, name))}")
         if outer_ignore:
             skipped |= set(outer_ignore(directory, contents))
         return skipped
@@ -618,7 +625,7 @@ def snapshot_main(
             reverse=True,
         )
         for s in snaps:
-            print(s)
+            print(_shown(s))
         if not snaps:
             print(f"No snapshots found in {out}")
         return 0
@@ -817,7 +824,7 @@ def snapshot_main(
         retention.list_snapshots(out), keep=args.keep, verified=last_verified()["archive"]
     )
     for name in retention.remove(plan.prune)[0]:
-        print(f"🗑  Pruned: {name} ({plan.reasons[name]})")
+        print(f"🗑  Pruned: {_shown(name)} ({_shown(plan.reasons[name])})")
     if plan.held is not None:
         print(f"🛡  Kept {plan.held.name} as well: {retention.HELD}.")
 
@@ -932,19 +939,19 @@ def _print_manifest(snap: Path) -> None:
     try:
         m = json.loads(mf.read_text())
         print("📋 Snapshot info:")
-        print(f"  Created: {m.get('created_at', 'unknown')}")
-        print(f"  From: {m.get('user', 'unknown')}@{m.get('hostname', 'unknown')}")
+        print(f"  Created: {_shown(m.get('created_at', 'unknown'))}")
+        print(f"  From: {_shown(m.get('user', 'unknown'))}@{_shown(m.get('hostname', 'unknown'))}")
         c = m.get("contents", {})
         print(f"  Memory DB: {c.get('memory_db', 0) // 1024} KB")
         _auto_kb = (
             c.get("triggers_json", 0) + c.get("event_triggers_json", 0) + c.get("crons_json", 0)
         ) // 1024
         print(f"  Automations: {_auto_kb} KB")
-        print(f"  Workspace files: {c.get('workspace_files', 0)}")
-        print(f"  Skills: {c.get('skill_count', 0)}")
+        print(f"  Workspace files: {_shown(c.get('workspace_files', 0))}")
+        print(f"  Skills: {_shown(c.get('skill_count', 0))}")
         print(f"  Notifications: {c.get('notifications_jsonl', 0) // 1024} KB")
     except Exception as e:
-        print(f"  (Could not read manifest: {e})")
+        print(f"  (Could not read manifest: {_shown(e)})")
 
 
 _MERGE_ALLOWED_TABLES = frozenset(
@@ -1001,12 +1008,12 @@ def _merge_memory(
         with closing(sqlite3.connect(str(src_db))) as check_conn:
             result = check_conn.execute("PRAGMA integrity_check;").fetchone()[0]
         if result != "ok":
-            print(f"  ⚠️  Source DB integrity check failed: {result} — skipping merge")
+            print(f"  ⚠️  Source DB integrity check failed: {_shown(result)} — skipping merge")
             if left_unchanged is not None:
                 left_unchanged.append(label)
             return
     except Exception as e:
-        print(f"  ⚠️  Source DB unreadable: {e} — skipping merge")
+        print(f"  ⚠️  Source DB unreadable: {_shown(e)} — skipping merge")
         if left_unchanged is not None:
             left_unchanged.append(label)
         return
@@ -1416,7 +1423,7 @@ def _merge_tables(src_db: Path, dst_db: Path, label: str, unchanged: list[str]) 
         except sqlite3.Error as exc:
             # Without each row's number here, no reference to these tables can follow its row, so
             # neither they nor a table that points into them is merged.
-            print(f"  ⚠️  {label}.{', '.join(numbered)}: {exc} — skipped")
+            print(f"  ⚠️  {label}.{_shown(', '.join(numbered))}: {_shown(exc)} — skipped")
             refused = set(numbered)
         for table in tables:
             if table in numbered:
@@ -1440,7 +1447,7 @@ def _merge_tables(src_db: Path, dst_db: Path, label: str, unchanged: list[str]) 
                 # A column-set mismatch between snapshot and live schema. Skip the table, keep the
                 # rest — the same call `_merge_memory` makes about its opportunistic `contributor`
                 # column, for the same reason: a partial restore beats an aborted one.
-                print(f"  ⚠️  {label}.{table}: {exc} — skipped")
+                print(f"  ⚠️  {label}.{table}: {_shown(exc)} — skipped")
                 unchanged.append(f"{label} ({table})")
                 continue
             imported += conn.total_changes - before
@@ -1462,7 +1469,7 @@ def _merge_tables(src_db: Path, dst_db: Path, label: str, unchanged: list[str]) 
                 conn.execute("ROLLBACK")
             except sqlite3.Error:
                 pass
-        print(f"  ⚠️  {label}: merge failed ({exc}) — left unchanged")
+        print(f"  ⚠️  {label}: merge failed ({_shown(exc)}) — left unchanged")
         unchanged.append(label)
         return 0
     finally:
@@ -1507,7 +1514,7 @@ def _merge_keyed_jsonl(
     try:
         imported = bounded_log.merge_jsonl(src, dst, key=key_field, at=at)
     except OSError as exc:
-        print(f"  ⚠️  {label}: {exc}")
+        print(f"  ⚠️  {label}: {_shown(exc)}")
         if left_unchanged is not None:
             left_unchanged.append(dst.name)
         return 0
@@ -1588,7 +1595,7 @@ def _merge_security_events(
     try:
         imported = bounded_log.merge_jsonl(src, dst, key="event_id", at="timestamp")
     except OSError as exc:
-        print(f"  ⚠️  Security events: {exc}")
+        print(f"  ⚠️  Security events: {_shown(exc)}")
         left.append(dst.name)
         return
     print(f"  Security events imported: {imported}")
@@ -1626,7 +1633,7 @@ def _merge_run_history(
     try:
         shards, imported = ScheduleRunStore(dst_dir.parent).merge_in(src_dir, left=left_unchanged)
     except OSError as exc:
-        print(f"  ⚠️  Run history: {exc}")
+        print(f"  ⚠️  Run history: {_shown(exc)}")
         if left_unchanged is not None:
             left_unchanged.append(dst_dir.name)
         return
@@ -1644,7 +1651,7 @@ def _backup_and_copy(pc: Path, backup: Path, snap: Path, component: str, left: l
         sqlite_files.move_aside(live, home_paths.home_path(backup, f))
         if (snap / f).is_file():
             if os.path.islink(snap / f):
-                print(f"⚠️  Skipping symlinked file from snapshot: {snap / f}")
+                print(f"⚠️  Skipping symlinked file from snapshot: {_shown(snap / f)}")
                 continue
             if component == "security":
                 # Key material: written 0600 from its first byte, never copied and then tightened.
@@ -1735,7 +1742,8 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
     kept_names = [_app_display_name(pc / "apps" / name) for name in kept]
     if kept_names:
         print(
-            f"  ✅ Kept the engine each of these apps had here: {', '.join(kept_names)}. An engine "
+            "  ✅ Kept the engine each of these apps had here: "
+            f"{_shown(', '.join(kept_names))}. An engine "
             "is built for this machine, so the restore leaves it in place."
         )
     aside = _engines_set_aside(backup / "apps")
@@ -1744,7 +1752,8 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
 
         for folder, size in aside:
             print(
-                f"  ⚠️  {_app_display_name(folder)}'s engine ({human_bytes(size)}) is in {folder}/ "
+                f"  ⚠️  {_shown(_app_display_name(folder))}'s engine "
+                f"({human_bytes(size)}) is in {_shown(folder)}/ "
                 "with the app, which the snapshot does not have. It goes when you delete that "
                 "folder."
             )
@@ -1763,12 +1772,16 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
         if home_paths.landing(pc, "triggers.json", []) is not None:
             automations_held = restore_hold.hold(pc, held_from)
     if automations_held:
-        print(f"  ⏸  {restore_hold.paused_line(len(automations_held), held_from)}")
+        print(f"  ⏸  {_shown(restore_hold.paused_line(len(automations_held), held_from))}")
     try:
         backup.rmdir()
     except OSError:
         print(f"  Previous state saved to: {backup}/")
-    print(restore_items.left_unchanged_line(left, "Replace") if left else "✅ Replace complete.")
+    print(
+        _shown(
+            restore_items.left_unchanged_line(left, "Replace") if left else "✅ Replace complete."
+        )
+    )
     return {
         "engines_kept": kept_names,
         "engines_set_aside": [
@@ -1791,7 +1804,7 @@ def _say_what_would_pause(snap: Path, pc: Path, components: list[str] | None) ->
     count = restore_hold.would_hold(snap / "triggers.json")
     if count:
         held_from = restore_hold.origin(_snapshot_home(snap), pc)
-        print(f"  {restore_hold.paused_line(count, held_from, would=True)}")
+        print(f"  {_shown(restore_hold.paused_line(count, held_from, would=True))}")
 
 
 def _offer_to_resume(pc: Path, done: dict) -> None:
@@ -1816,9 +1829,9 @@ def _offer_to_resume(pc: Path, done: dict) -> None:
             resumed, kept = restore_hold.resume_all(TriggerStore(base_dir=pc))
             print(f"▶  {restore_hold.resumed_line(len(resumed))}")
             for trigger, why in kept:
-                print(f"⚠️  {trigger.name or trigger.id} stays paused: {why}")
+                print(f"⚠️  {_shown(trigger.name or trigger.id)} stays paused: {_shown(why)}")
             return
-    print(f"⏸  {restore_hold.where_to_resume(count, held_from)}")
+    print(f"⏸  {_shown(restore_hold.where_to_resume(count, held_from))}")
 
 
 def _hold_what_was_in_flight(pc: Path, restored: list[str]) -> dict[str, list[str]]:
@@ -2049,8 +2062,9 @@ def print_merge_plan(rows: list[dict]) -> None:
     for row in sorted(rows, key=lambda r: (order.get(r["action"], 9), r["path"])):
         detail = f" — {row['detail']}" if row["detail"] else ""
         print(
-            f"  {label.get(row['action'], row['action'])} {row['path']:<28} "
-            f"[{row['strategy']}]{detail}"
+            f"  {_shown(label.get(row['action'], row['action']))} "
+            f"{_shown(row['path']):<28} "
+            f"[{row['strategy']}]{_shown(detail)}"
         )
     counts: dict[str, int] = {}
     for row in rows:
@@ -2132,10 +2146,10 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
                 continue  # hooks are merged below, by the rule a hook from elsewhere arrives by
             d = home_paths.landing(pc, f, left)
             if d is not None and not d.is_file() and sqlite_files.bring_in(snap / f, d):
-                print(f"  {f}: restored (was missing)")
+                print(f"  {_shown(f)}: restored (was missing)")
         said = _merge_records(snap, pc, "hooks.json", left_unchanged=left)
         if said:
-            print(f"  {said}")
+            print(f"  {_shown(said)}")
         restore_items.said("config", left, since)
 
     # 🔴 The run history, whose declared `append_dedup` had no executor. Grouped with
@@ -2185,7 +2199,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
             if d is not None and not d.is_file():
                 # Key material: written 0600 from its first byte, never copied and then tightened.
                 atomic_write_bytes(d, (snap / f).read_bytes())
-                print(f"  {f}: restored (was missing)")
+                print(f"  {_shown(f)}: restored (was missing)")
         # The SEL audit log, whose declared `append_dedup` had no executor. Placed AFTER the key
         # copy above, because whether the imported rows can verify depends on which key won.
         _merge_security_events(snap, pc, left_unchanged=left)
@@ -2278,23 +2292,23 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
                 # A folder of files, each taken in by the rule a sync takes another machine's in:
                 # what its machine's owner allowed there arrives waiting for this one's.
                 if bring_in_folder(pc, entry, src, left_unchanged=left):
-                    restored.append(rel)
+                    restored.append(_shown(rel))
             elif src.is_dir():
                 dst.mkdir(parents=True, exist_ok=True)
                 restore_items.copy_tree_no_overwrite(src, pc, rel, left, entry_path=rel)
-                restored.append(rel)
+                restored.append(_shown(rel))
             elif _records_entry(rel) is not None:
                 # A store of records: each of the archive's this home lacks comes in, into a home
                 # without one too — never the file copied in whole.
                 said = _merge_records(snap, pc, rel, left_unchanged=left)
                 if said:
-                    print(f"  {said}")
+                    print(f"  {_shown(said)}")
             elif src.is_file() and sqlite_files.bring_in(src, dst):
                 # A file the live home does not have. An EXISTING file is left alone: merge
                 # mode's contract is that local state wins, and these entries have no
                 # field-level merge executor yet (their declared strategies are the 13 the
                 # queue tracks) — so copy-if-missing is the honest half, not a silent overwrite.
-                restored.append(rel)
+                restored.append(_shown(rel))
         if restored:
             print(f"  Stores: recovered {len(restored)} ({', '.join(sorted(restored)[:6])}…)")
         restore_items.said("stores", left, since)
@@ -2313,7 +2327,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
     from personalclaw.memory_locality import take_in_restored_chats
 
     take_in_restored_chats(snap, pc)
-    print(restore_items.left_unchanged_line(left) if left else "✅ Merge complete.")
+    print(_shown(restore_items.left_unchanged_line(left) if left else "✅ Merge complete."))
     return left
 
 
@@ -2469,7 +2483,7 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
         return 2
     ok, error, manifest = validate_import_zip(archive)
     if not ok:
-        print(f"❌ {error}", file=sys.stderr)
+        print(f"❌ {_shown(error)}", file=sys.stderr)
         return 1
     pc = _pc_dir()
     populated = home_is_populated(pc)
@@ -2478,7 +2492,10 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
         print(f"🔀 Home holds {len(populated)} existing store(s) — proposing MERGE mode.")
         print("   Use --mode replace to overwrite instead (previous state is kept aside).")
     checked = "checksums verified" if manifest.get("verified") else "no checksums to verify"
-    print(f"📦 Export archive {archive.name} (format v{manifest.get('version')}, {checked})")
+    print(
+        f"📦 Export archive {_shown(archive.name)} (format "
+        f"v{_shown(manifest.get('version'))}, {checked})"
+    )
     if args.dry_run:
         print(f"\n🔍 Dry run — would import it into {pc} in {mode} mode")
         if mode == "replace":
@@ -2502,10 +2519,14 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
     )
     print(
         f"{'⚠️ ' if left else '✅'} Imported ({mode}): "
-        f"{', '.join(summary.get('items', [])) or 'nothing to add'}"
+        f"{_shown(', '.join(summary.get('items', [])) or 'nothing to add')}"
     )
     if left:
-        print(restore_items.left_unchanged_line(left, "Replace" if mode == "replace" else "Merge"))
+        print(
+            _shown(
+                restore_items.left_unchanged_line(left, "Replace" if mode == "replace" else "Merge")
+            )
+        )
     _offer_to_resume(pc, summary)
     print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")
     return 1 if left else 0
@@ -2600,7 +2621,7 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
                 print("Files in snapshot:")
                 for f in sorted(snap.rglob("*")):
                     if f.is_file():
-                        print(f"  {f.relative_to(snap)}")
+                        print(f"  {_shown(f.relative_to(snap))}")
                 print(f"  Current state would be moved to {pc}/pre-restore-<timestamp>/")
                 print("  An app the snapshot brings back keeps the engine it has here.")
                 _say_what_would_pause(snap, pc, components)
@@ -2631,7 +2652,7 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         if result == "ok":
             print("🔍 memory.db integrity: OK")
         else:
-            print(f"⚠️  memory.db integrity check failed: {result}")
+            print(f"⚠️  memory.db integrity check failed: {_shown(result)}")
             _audit("state_restore_rejected", f"reason=integrity_check_failed from={snap_path.name}")
             return 1
         if not (pc / "memory_index.db").is_file():
@@ -2651,14 +2672,14 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
     for name, has_one in engines:
         if has_one:
             print(
-                f"⚠️  {name}'s engine here does not match the version the restore brought back. "
-                "Install engine, on the app's card in Settings → Models & Providers → Providers, brings it up to date."  # noqa: E501
+                f"⚠️  {_shown(name)}'s engine here does not match the version the restore "
+                "brought back. Install engine, on the app's card in Settings → Models & Providers → Providers, brings it up to date."  # noqa: E501
             )
             continue
         print(
-            f"⚠️  {name} has no engine here: a snapshot leaves engines out, since each one is "
-            "built for the machine it runs on. Install it with Install engine, on the app's card "
-            "in Settings → Models & Providers → Providers."
+            f"⚠️  {_shown(name)} has no engine here: a snapshot leaves engines out, since "
+            "each one is built for the machine it runs on. Install it with Install engine, on the "
+            "app's card in Settings → Models & Providers → Providers."
         )
     _offer_to_resume(pc, done)
     print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")

@@ -51,6 +51,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from personalclaw.security import terminal_text
+
 # The single scaffolded app version + the files every type emits. Kept here so the
 # conformance test can assert the file set without re-deriving it.
 SCAFFOLD_VERSION = "0.1.0"
@@ -1459,12 +1461,12 @@ def _from_template_cmd(args: argparse.Namespace, *, url: str, archive: str) -> i
             force=args.force,
         )
     except ScaffoldError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {terminal_text(str(exc))}", file=sys.stderr)
         return 1
-    print(f"Fetched {result.source}")
+    print(f"Fetched {terminal_text(str(result.source))}")
     print(f"Created {result.path} — {len(result.files)} files")
     for rel in result.files:
-        print(f"  {rel}")
+        print(f"  {terminal_text(str(rel))}")
     print("")
     print("Next:")
     print(f"  pytest {result.path}")
@@ -1503,7 +1505,7 @@ def app_cmd(args: argparse.Namespace) -> int:
             force=args.force,
         )
     except ScaffoldError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {terminal_text(str(exc))}", file=sys.stderr)
         return 1
     print(f"Created {result.path} — a {result.type} app")
     for rel in result.files:

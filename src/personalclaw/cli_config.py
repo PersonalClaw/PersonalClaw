@@ -21,6 +21,7 @@ from personalclaw.config.loader import ConfigWriteError
 from personalclaw.config.secret_refs import reveal_stored_values
 from personalclaw.config.transactions import mutate_config, replace_unreadable_config
 from personalclaw.hooks import safe_read_file
+from personalclaw.security import terminal_text
 from personalclaw.sel import sel
 
 
@@ -195,6 +196,7 @@ def _run_config_action(args: argparse.Namespace, action: str | None) -> None:
         if isinstance(val, (dict, list)):
             print(json.dumps(val, indent=2))
         else:
+            val = terminal_text(str(val))
             print(val)
         _report_withheld(masked_paths, key)
         _report_unresolved(unresolved, key)
@@ -207,10 +209,10 @@ def _run_config_action(args: argparse.Namespace, action: str | None) -> None:
             try:
                 data = json.loads(safe_read_file(str(fp)))
             except PermissionError as e:
-                print(f"❌ {e}", file=sys.stderr)
+                print(f"❌ {terminal_text(str(e))}", file=sys.stderr)
                 sys.exit(1)
             except (json.JSONDecodeError, OSError) as e:
-                print(f"❌ Invalid JSON: {e}", file=sys.stderr)
+                print(f"❌ Invalid JSON: {terminal_text(str(e))}", file=sys.stderr)
                 sys.exit(1)
             if not isinstance(data, dict):
                 print("❌ Invalid JSON: config must be a JSON object", file=sys.stderr)
@@ -288,9 +290,9 @@ def _run_config_action(args: argparse.Namespace, action: str | None) -> None:
             except ConfigWriteError as exc:
                 # Refusing beats writing blind: a config whose content cannot be read is exactly
                 # the case where we cannot know what the write would destroy.
-                _refuse("config_set_file", str(fp), f"❌ {exc}")
+                _refuse("config_set_file", str(fp), f"❌ {terminal_text(str(exc))}")
             except (ValueError, OSError) as exc:
-                _refuse("config_set_file", str(fp), f"❌ {exc}")
+                _refuse("config_set_file", str(fp), f"❌ {terminal_text(str(exc))}")
             sel().log_api_access(
                 caller="cli",
                 operation="config_set_file",
@@ -340,7 +342,7 @@ def _run_config_action(args: argparse.Namespace, action: str | None) -> None:
                 try:
                     parsed = coerce_edit_value(key, parsed, spec)
                 except ConfigValueError as exc:
-                    print(f"❌ {key}: {exc}", file=sys.stderr)
+                    print(f"❌ {key}: {terminal_text(str(exc))}", file=sys.stderr)
                     sel().log_api_access(
                         caller="cli",
                         operation="config_set",
@@ -369,10 +371,9 @@ def _run_config_action(args: argparse.Namespace, action: str | None) -> None:
             # `config set agent.log_level DEBUG` destroyed ten instances and their keys, and
             # printed ✅ (#951). The blocks were not emptied, they were never serialised.
             #
-            # Read → apply one field → write the merged document is what the dashboard PATCH
-            # already does, in the same config transaction. Doing it here too is what makes the
-            # two write paths agree; the divergence is why the API got fixed while the CLI
-            # stayed destructive.
+            # Read → apply one field → write the merged document is what the dashboard PATCH already
+            # does, in the same config transaction. Doing it here too is what makes the two write
+            # paths agree; the divergence is why the API got fixed while the CLI stayed destructive.
             p = config_path()
             dotted: str = key
 
@@ -387,9 +388,9 @@ def _run_config_action(args: argparse.Namespace, action: str | None) -> None:
             except ConfigWriteError as exc:
                 # Absent is safe to write over, unreadable is not — the rule `AppConfig.save()`
                 # enforces too, stated once in the loader and shared by every write.
-                _refuse("config_set", shown, f"❌ {exc}")
+                _refuse("config_set", shown, f"❌ {terminal_text(str(exc))}")
             except (ValueError, OSError) as exc:
-                _refuse("config_set", shown, f"❌ {key}: {exc}")
+                _refuse("config_set", shown, f"❌ {key}: {terminal_text(str(exc))}")
             sel().log_api_access(
                 caller="cli",
                 operation="config_set",
@@ -439,7 +440,7 @@ def _run_config_action(args: argparse.Namespace, action: str | None) -> None:
             mutate_config(_pop, path=p)
         except ConfigWriteError as exc:
             # Same rule as every other write: unreadable means the damage is unknowable.
-            _refuse("config_unset", key, f"❌ {exc}")
+            _refuse("config_unset", key, f"❌ {terminal_text(str(exc))}")
         sel().log_api_access(
             caller="cli",
             operation="config_unset",
@@ -478,7 +479,7 @@ def _edit_config() -> None:
     try:
         original = p.read_bytes()
     except OSError as exc:
-        _refuse("config_edit", str(p), f"❌ Could not read {p}: {exc}")
+        _refuse("config_edit", str(p), f"❌ Could not read {p}: {terminal_text(str(exc))}")
     before: dict | None
     try:
         before = config_loader.read_config_for_merge(p)
@@ -502,7 +503,11 @@ def _edit_config() -> None:
         try:
             completed = subprocess.run([*editor, str(staged)], check=False)
         except OSError as exc:
-            _refuse("config_edit", str(p), f"❌ Could not start the editor {editor[0]!r}: {exc}")
+            _refuse(
+                "config_edit",
+                str(p),
+                f"❌ Could not start the editor {editor[0]!r}: {terminal_text(str(exc))}",
+            )
         if completed.returncode != 0:
             _refuse(
                 "config_edit",
@@ -516,7 +521,8 @@ def _edit_config() -> None:
             _refuse(
                 "config_edit",
                 str(p),
-                f"❌ The edit is not valid JSON ({exc}); {p.name} was not changed.",
+                f"❌ The edit is not valid JSON ({terminal_text(str(exc))}); {p.name} was not "
+                "changed.",
             )
         if not isinstance(edited, dict):
             _refuse(
@@ -536,9 +542,9 @@ def _edit_config() -> None:
                     path=p,
                 )
         except ConfigWriteError as exc:
-            _refuse("config_edit", str(p), f"❌ {exc}")
+            _refuse("config_edit", str(p), f"❌ {terminal_text(str(exc))}")
         except (ValueError, OSError) as exc:
-            _refuse("config_edit", str(p), f"❌ {exc}")
+            _refuse("config_edit", str(p), f"❌ {terminal_text(str(exc))}")
     finally:
         staged.unlink(missing_ok=True)
     print(f"✅ Saved {p}")

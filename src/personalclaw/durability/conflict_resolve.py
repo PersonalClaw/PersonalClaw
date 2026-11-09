@@ -65,6 +65,7 @@ from personalclaw.durability import conflicts as conflicts_mod
 from personalclaw.durability import home_paths
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import reconcile, writeback
+from personalclaw.security import terminal_text
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +227,7 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
             logger.warning("conflict resolve: write failed for %s", record_id, exc_info=True)
             return _refuse(
                 "write_failed",
-                f"nothing was applied: {exc}",
+                f"nothing was applied: {terminal_text(str(exc))}",
                 choice=choice,
                 record_id=record_id,
             )
@@ -241,7 +242,8 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
             return _refuse(
                 "moved",
                 (
-                    f"this machine's {rec.entity_id} changed while it was being written, so "
+                    f"this machine's {terminal_text(str(rec.entity_id))} changed while it was "
+                    "being written, so "
                     "nothing was written over it; look at it again, then choose"
                 ),
                 choice=choice,

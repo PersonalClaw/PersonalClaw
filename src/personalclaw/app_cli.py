@@ -36,6 +36,7 @@ from personalclaw import app_code
 from personalclaw.apps.manager import app_dir, list_apps
 from personalclaw.apps.native_contract import app_dir_on_path, load_bundle_module
 from personalclaw.sdk.cli import DoctorLine, SetupContext
+from personalclaw.security import terminal_text
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,10 @@ def run_app_setup_steps(only_app: str = "") -> list[tuple[str, str]]:
         steps = [(n, r) for (n, r) in steps if n == only_app]
         if not steps:
             why = f"no installed+enabled app named {only_app!r} declares a cli.setup step"
-            print(f"  ❌ {why[0].upper()}{why[1:]}.", file=sys.stderr)
+            print(
+                f"  ❌ {terminal_text(str(why[0].upper()))}{terminal_text(str(why[1:]))}.",
+                file=sys.stderr,
+            )
             return [(only_app, why)]
 
     def _safe_input(prompt: str) -> str:
@@ -138,7 +142,7 @@ def run_app_setup_steps(only_app: str = "") -> list[tuple[str, str]]:
         must treat empty as "skip / keep", so a headless `personalclaw setup` never
         crashes an app's step."""
         try:
-            return input(prompt)
+            return input(terminal_text(prompt))
         except EOFError:
             print()  # close the dangling prompt line
             return ""
@@ -163,7 +167,7 @@ def _run_setup_step(app_name: str, ref: str, ask: Callable[[str], str]) -> str:
         fn = _import_app_callable(app_name, ref)
     except Exception as exc:  # noqa: BLE001 — one bad app must not abort setup
         why = f"setup step unavailable — {_reason(exc)}"
-        print(f"  ❌ {app_name}: {why}", file=sys.stderr)
+        print(f"  ❌ {terminal_text(str(app_name))}: {terminal_text(str(why))}", file=sys.stderr)
         sel().log_api_access(
             caller="cli:setup",
             operation=f"app_cli_setup:{app_name}",
@@ -185,7 +189,7 @@ def _run_setup_step(app_name: str, ref: str, ask: Callable[[str], str]) -> str:
             fn(ctx)
     except Exception as exc:  # noqa: BLE001
         why = f"setup step failed — {_reason(exc)}"
-        print(f"  ❌ {app_name}: {why}", file=sys.stderr)
+        print(f"  ❌ {terminal_text(str(app_name))}: {terminal_text(str(why))}", file=sys.stderr)
         sel().log_api_access(
             caller="cli:setup",
             operation=f"app_cli_setup:{app_name}",
@@ -232,14 +236,14 @@ def run_app_doctor_probes() -> list[str]:
     """
     issues: list[str] = []
     for app_name, ref in _enabled_apps_with("doctor"):
-        print(f"\n{app_name}")
+        print(f"\n{terminal_text(str(app_name))}")
         try:
             with app_code.alone(app_name):
                 fn = _import_app_callable(app_name, ref)
                 with app_dir_on_path(app_name, app_dir(app_name)):
                     lines = _run_probe_with_timeout(lambda: fn(), _DOCTOR_TIMEOUT_SECS)
         except Exception as exc:  # noqa: BLE001
-            print(f"  {_STATUS_GLYPH['fail']} probe error: {_reason(exc)}")
+            print(f"  {_STATUS_GLYPH['fail']} probe error: {terminal_text(str(_reason(exc)))}")
             issues.append(f"{app_name} doctor probe error")
             continue
         if not isinstance(lines, list):
@@ -253,7 +257,7 @@ def run_app_doctor_probes() -> list[str]:
                 continue
             glyph = _STATUS_GLYPH.get(ln.status, "•")
             detail = f"  {ln.detail}" if ln.detail else ""
-            print(f"  {glyph} {ln.label}{detail}")
+            print(f"  {glyph} {terminal_text(str(ln.label))}{terminal_text(str(detail))}")
             if ln.status == "fail":
                 issues.append(f"{app_name}: {ln.label}")
     return issues

@@ -73,6 +73,11 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw import home_gateway, session_keys
 
+# What `_run_one` prints of a run is words a model, a provider or the gateway wrote (the reply, an
+# error row, a refused stop's answer), shown with each character a terminal would act on as an
+# escape. The json formats need nothing: json.dumps escapes every control character.
+from personalclaw.security import terminal_text
+
 if TYPE_CHECKING:
     import aiohttp
 
@@ -805,7 +810,7 @@ def _run_one(args) -> int:
         collector = _Collector(session_key, fmt)
         ending = asyncio.run(_consume(port, token, collector, prompt, timeout))
     except RunError as exc:
-        print(f"personalclaw run: {exc}", file=sys.stderr)
+        print(f"personalclaw run: {terminal_text(str(exc))}", file=sys.stderr)
         return 1
     finally:
         _shutdown_transient(transient)
@@ -833,7 +838,7 @@ def _run_one(args) -> int:
     elif fmt == "plain":
         text = collector.result_text()
         if text:
-            print(text)
+            print(terminal_text(text))
     # streaming-json already wrote its NDJSON as frames arrived.
 
     if ending is not None:
@@ -845,7 +850,7 @@ def _run_one(args) -> int:
             transient=transient is not None,
         )
         for line in said:
-            print(f"personalclaw run: {line}", file=sys.stderr)
+            print(f"personalclaw run: {terminal_text(line)}", file=sys.stderr)
         # A stop signal's exit is the one the shell reads for that signal (`_run` ends with it).
         return 128 + ending.signum if ending.signum else 1
     if collector.outcome == "stopped":
@@ -853,10 +858,10 @@ def _run_one(args) -> int:
     elif collector.outcome == "interrupted":
         # Its error row says which: the gateway restarted, or shut down, before the reply finished.
         for err in collector.errors or ["the gateway stopped before the turn finished"]:
-            print(f"personalclaw run: {err}", file=sys.stderr)
+            print(f"personalclaw run: {terminal_text(err)}", file=sys.stderr)
     elif not ok:
         for err in collector.errors or ["the gateway reported no reason"]:
-            print(f"personalclaw run: turn failed: {err}", file=sys.stderr)
+            print(f"personalclaw run: turn failed: {terminal_text(err)}", file=sys.stderr)
     return 0 if ok else 1
 
 
