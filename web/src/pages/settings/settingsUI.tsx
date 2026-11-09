@@ -189,7 +189,7 @@ export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, 
  *  the screen (`e2e/settingsRowsFitAPhone.spec.ts`). From `sm` up it is the two columns it was. */
 export function Row({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   const hintId = useId()
-  // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (98 hinted rows, and
+  // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (104 hinted rows, and
   // the divided-row layout is a deliberate distinction, not drift). The hint is independent of
   // that: a control with its own `aria-label` still needs the sentence beside it to be its description,
   // so this provides the hint id without claiming to name anything.
