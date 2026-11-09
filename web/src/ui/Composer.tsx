@@ -45,7 +45,7 @@ export function Composer({
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, contextParts, contextActions, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
-  replyStyle, sendHeldReason, sendHeldEverywhere = false, onReplace, hostPills, settled = false,
+  replyStyle, sendHeldReason, sendHeldEverywhere = false, onReplace, draftHoldsWidgetMessage, hostPills, settled = false,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -121,6 +121,20 @@ export function Composer({
   const canHandsFree = !!handsFree && !!onHandsFreeSubmit && !!onTranscribe
   useEffect(() => { if (!canHandsFree) setListening(false) }, [canHandsFree])
 
+  // What hands-free's dictation follows: the owner's own draft as it was when they began to speak,
+  // read at their first words and forgotten when the mode changes or a turn is sent. A draft
+  // holding a widget's message is not theirs, so dictation replaces it.
+  const valueRef = useRef(value)
+  valueRef.current = value
+  const widgetDraftRef = useRef(!!draftHoldsWidgetMessage)
+  widgetDraftRef.current = !!draftHoldsWidgetMessage
+  const spokenAfterRef = useRef<string | null>(null)
+  useEffect(() => { spokenAfterRef.current = null }, [listening])
+  const withYourDraft = (dictation: string) => {
+    if (spokenAfterRef.current === null) spokenAfterRef.current = widgetDraftRef.current ? '' : valueRef.current.trim()
+    return [spokenAfterRef.current, dictation].filter(Boolean).join(' ')
+  }
+
   // mic → STT: insert the transcript at the caret (or append) when it returns.
   const mic = useMicRecorder(onTranscribe, (text) => {
     inputRef.current?.insertAtCaret(text)
@@ -129,9 +143,22 @@ export function Composer({
     confirmationPhrases: handsFree!.confirmationPhrases,
     exitPhrases: handsFree!.exitPhrases,
     muted: (handsFree!.muteWhileSpeaking ?? true) && !!handsFree!.speaking,
-    // Dictation is the owner's words: it replaces the draft (onReplace), never joins a widget's.
-    onBuffer: (text) => (onReplace ?? onChange)(text),
-    onSubmit: (text) => { (onReplace ?? onChange)(text); onHandsFreeSubmit!(text) },
+    // Dictation is the owner's words: it goes in through onReplace, never joining a widget's.
+    onBuffer: (text) => (onReplace ?? onChange)(withYourDraft(text)),
+    onSubmit: (text) => {
+      const turn = withYourDraft(text)
+      // A lone confirmation phrase with nothing typed or said sends nothing.
+      if (!turn) return
+      spokenAfterRef.current = null
+      // Until the host renders, the box is what it left after the send: a sent turn empties it, and
+      // a held one comes back with that render unless a piece folds before it (a deferred defect).
+      valueRef.current = ''
+      ;(onReplace ?? onChange)(turn)
+      onHandsFreeSubmit!(turn)
+    },
+    // The microphone was blocked or stopped, or speech-to-text could not run: the mode is off, with
+    // its notice.
+    onEnded: () => setListening(false),
   } : undefined)
 
   // Push-to-talk: the desktop shell's global chord drives the
@@ -264,7 +291,7 @@ export function Composer({
       {/* The in-app half of the capture indicator. Rendered from the recorder's LIVE
           state, so a denied microphone (no stream) shows nothing — and a capture that
           ends any way at all takes the chip with it. */}
-      {mic.state === 'recording' && <MicCaptureChip onStop={mic.toggle} />}
+      {mic.state === 'recording' && <MicCaptureChip onStop={listening ? () => setListening(false) : mic.toggle} />}
       {/* Its neighbour's twin: transcription is in flight, so it is `loading`. "Stop recording"
           stays a real name change (the action genuinely differs); "Transcribing…" was progress
           wearing the name, and `aria-busy` carries that now. */}
@@ -465,8 +492,9 @@ export function Composer({
           )}
 
           {/* Voice mode (#4963): the 64 px orb, above the draft its dictation fills. `listening`
-              while it hears the owner, the turn's own phase the rest of the time; under reduced
-              motion the orb is one still frame. Its name is the phase's words. */}
+              while it hears the owner, which is the whole mode, and the turn's own phase while it
+              is muted for a reply read aloud; under reduced motion the orb is one still frame. Its
+              name is the phase's words. */}
           {listening && (
             <div data-voice-orb="" className="flex justify-center pt-s">
               <AgentOrb phase={voiceOrbPhase({ heard: mic.state === 'recording' && !mic.muted, phase })} size={64} />

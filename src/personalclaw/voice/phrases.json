@@ -10,5 +10,5 @@
     "pins that behaviour for both languages."
   ],
   "confirmation": ["do it", "go ahead", "send it", "execute"],
-  "exit": ["cancel", "never mind", "forget it"]
+  "exit": ["cancel", "cancel that", "never mind", "forget it"]
 }

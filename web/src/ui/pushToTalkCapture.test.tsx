@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { EditorView } from '@codemirror/view'
 import { render, screen, cleanup, act, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -306,7 +307,7 @@ describe('the transcript', () => {
     // seeded draft. So the two candidate implementations produce different strings and
     // the test can tell them apart:
     //
-    //   insert-at-cursor (correct) → 'spoken wordsdraft '   (inserted at the caret)
+    //   insert-at-cursor (correct) → 'spoken words draft '  (inserted at the caret, set apart)
     //   append (wrong)             → 'draft spoken words'   (concatenated at the end)
     //
     // Asserting the appended form would therefore have PASSED on an append
@@ -321,8 +322,50 @@ describe('the transcript', () => {
     await waitFor(() => expect(state.value).toContain('spoken words'))
     // The draft is preserved in full — the transcript is inserted, never a replacement.
     expect(state.value).toContain('draft ')
-    expect(state.value).toBe('spoken wordsdraft ')
+    expect(state.value).toBe('spoken words draft ')
     expect(state.value).not.toBe('draft spoken words')
+  })
+
+  it('sets a second dictation apart from the first', async () => {
+    const { fire } = installBridge()
+    const { state } = mountComposer({ value: 'draft ', transcript: 'spoken words' })
+
+    await chord(fire)
+    await waitFor(() => expect(recorders.length).toBe(1))
+    await chord(fire)
+    await waitFor(() => expect(state.value).toBe('spoken words draft '))
+
+    // The caret stays after the first transcript, so the second lands right behind it.
+    const view = EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!
+    expect(view.state.selection.main.head).toBe(12)
+    await chord(fire)
+    await waitFor(() => expect(recorders.length).toBe(2))
+    await chord(fire)
+    await waitFor(() => expect(state.value).toBe('spoken words spoken words draft '))
+  })
+
+  it('replaces a selected range with the dictation, and leaves the caret after it', async () => {
+    const { fire } = installBridge()
+    const { state } = mountComposer({ value: 'book the ferry tomorrow', transcript: 'a boat' })
+    const view = EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!
+    // "the ferry" selected.
+    act(() => { view.dispatch({ selection: { anchor: 5, head: 14 } }) })
+    await chord(fire)
+    await waitFor(() => expect(recorders.length).toBe(1))
+    await chord(fire)
+    await waitFor(() => expect(state.value).toBe('book a boat tomorrow'))
+    expect(view.state.selection.main.head).toBe(11)
+  })
+
+  it('sets a dictation apart from the bold before it, reading past the markers', async () => {
+    const { fire } = installBridge()
+    const { state } = mountComposer({ value: 'say **bold**', transcript: 'next' })
+    const view = EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!
+    act(() => { view.dispatch({ selection: { anchor: 12 } }) })
+    await chord(fire)
+    await waitFor(() => expect(recorders.length).toBe(1))
+    await chord(fire)
+    await waitFor(() => expect(state.value).toBe('say **bold** next'))
   })
 
   it('routes the insertion through the composer’s caret API, not string concatenation', () => {

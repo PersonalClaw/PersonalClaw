@@ -209,7 +209,7 @@ function HandsFreeSection() {
   }
 
   return (
-    <Section title="Hands-free voice" hint="Keep listening and send only when you say a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.">
+    <Section title="Hands-free voice" hint="Keep listening and send only when what you say ends with a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.">
       <RowGroup>
         <ChordRow
           value={typeof cfg.push_to_talk_chord === 'string' && cfg.push_to_talk_chord
@@ -219,7 +219,7 @@ function HandsFreeSection() {
         <PhraseRow label="Confirmation phrases"
           hint="Dictation accumulates in the composer until one of these ends what you just said — so a half-finished thought is never sent."
           values={phrases('confirmation_phrases')} onChange={(v, cb) => editPhrases('confirmation_phrases', v, cb)} />
-        <PhraseRow label="Exit phrases" hint="Saying one of these throws the accumulated dictation away."
+        <PhraseRow label="Discard phrases" hint="Ending what you said with one of these clears what you dictated. Hands-free keeps listening."
           values={phrases('exit_phrases')} onChange={(v, cb) => editPhrases('exit_phrases', v, cb)} />
         <ToggleRow label="Mute while speaking" hint="Release the microphone and discard what it captured while a reply plays aloud. This is what stops the assistant hearing itself."
           cfg={cfg} field="duplex_mute_enabled" patch={patch} />

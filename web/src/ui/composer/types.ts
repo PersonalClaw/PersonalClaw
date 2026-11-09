@@ -166,6 +166,10 @@ export interface ComposerProps {
   /** Put words in the draft that are the owner's alone (hands-free's dictation): the host
    *  replaces the draft with them, so they carry nothing of a widget's. Defaults to onChange. */
   onReplace?: (value: string) => void
+  /** True while the draft holds a widget's message. Hands-free keeps the owner's own draft in
+   *  front of what they say; a widget's message it replaces, so a spoken turn never carries a
+   *  widget's words as the owner's. */
+  draftHoldsWidgetMessage?: boolean
   /** 0–100 context-window usage for the bound session, read in the composer's Context control
    *  (`ContextDisclosure`) and nowhere else until the owner pins it. `undefined` means the backend
    *  reported NO measurement — the control then says why rather than show a fabricated 0%. A

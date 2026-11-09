@@ -280,7 +280,7 @@ describe('a widget\'s message in the chat composer', () => {
     expect(sends()).toEqual([])
   })
 
-  it('drops Revert and the follow-ups when hands-free speaks into an optimized draft, and sends the spoken words as the owner\'s', async () => {
+  it('drops Revert and the follow-ups when hands-free speaks after an optimized draft, and sends the draft and the spoken words as the owner\'s', async () => {
     await open()
     const editor = EditorView.findFromDOM(document.querySelector('[data-composer-region] .cm-editor') as HTMLElement)
     act(() => { editor?.dispatch({ changes: { from: 0, insert: 'tidy this' } }) })
@@ -291,16 +291,17 @@ describe('a widget\'s message in the chat composer', () => {
     expect(await screen.findByRole('button', { name: 'Show a code example' })).toBeTruthy()
     expect(h.handsFree?.onBuffer, 'premise: hands-free is wired').toBeTruthy()
     act(() => { h.handsFree?.onBuffer?.('check the logs') })
-    await waitFor(() => expect(composerText()).toContain('check the logs'))
+    // The optimized draft is the owner's own, so it stays in front and the dictation follows it.
+    await waitFor(() => expect(composerText()).toContain('A tidier ask, please check the logs'))
     expect(screen.queryByRole('button', { name: /revert to original/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Show a code example' })).toBeNull()
     act(() => { h.handsFree?.onSubmit?.('check the logs') })
     await settle()
     expect(sends()).toHaveLength(1)
     const [text, , meta] = sends()[0] as [string, string, Record<string, unknown> | undefined]
-    expect(text).toBe('check the logs')
+    expect(text).toBe('A tidier ask, please check the logs')
     expect(meta).toEqual({})
-    expect(await screen.findByText('check the logs', { selector: '[data-transcript-turn="user"] *' })).toBeTruthy()
+    expect(await screen.findByText('A tidier ask, please check the logs', { selector: '[data-transcript-turn="user"] *' })).toBeTruthy()
   })
 
   it('🔴 is not queued by a press on Queue in the moment after it lands', async () => {

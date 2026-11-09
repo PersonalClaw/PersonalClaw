@@ -3,19 +3,15 @@ import phraseTable from '../../../../src/personalclaw/voice/phrases.json'
 /** Hands-free (duplex) transcript accumulation.
  *
  *  The frontend owns the microphone, so it owns the buffer: in hands-free mode a
- *  dictated transcript accumulates here and only becomes a turn once the operator
- *  says a confirmation phrase. An exit phrase throws the buffer away.
+ *  dictated transcript accumulates here and only becomes a turn once what the owner
+ *  said ends with a confirmation phrase; a discard phrase at the end clears it.
  *
  *  The two matchers mirror `is_confirmation` / `is_exit` in
- *  `src/personalclaw/voice/duplex.py`, including the tail-anchored window. Matching is
+ *  `src/personalclaw/voice/duplex.py`: a phrase counts only when it ends what was said. Matching is
  *  logic, so it exists in both languages; `duplexPhraseCases.json` beside this file pins
  *  its behaviour, and both languages' tests run every case. The phrase lists come from
  *  `voice.confirmation_phrases` / `voice.exit_phrases`.
  */
-
-/** The confirmation is the last thing the operator says; a phrase buried at the
- *  head of a long dictation is part of the thought, not the trigger. */
-export const TAIL_WINDOW_WORDS = 6
 
 /** The shipped phrase lists, for a host that could not read `voice.*`. They come from
  *  `src/personalclaw/voice/phrases.json`, the table the backend's config defaults are read
@@ -55,7 +51,7 @@ function words(text: string): Word[] {
   return out
 }
 
-/** Every run of whole words `[first, last]` inside the trailing window that spells `phrase`.
+/** Every run of whole words `[first, last]` that spells `phrase`.
  *
  *  A run spells a phrase when the two are equal with the spaces between their words taken
  *  out: speech-to-text writes "never mind" as "Nevermind", "never-mind" or "Never mind.",
@@ -63,7 +59,7 @@ function words(text: string): Word[] {
  *  supplies part of one. With `splitWords` a single word of the phrase may also arrive as
  *  two ("never mind" for a "nevermind" phrase); without it a run may only join the
  *  phrase's own words together. */
-function phraseRuns(tokens: readonly Word[], phrase: string, tailWords: number, splitWords: boolean): [number, number][] {
+function phraseRuns(tokens: readonly Word[], phrase: string, splitWords: boolean): [number, number][] {
   const parts = words(phrase).map((w) => w.text)
   const key = parts.join('')
   if (!key) return []
@@ -81,8 +77,7 @@ function phraseRuns(tokens: readonly Word[], phrase: string, tailWords: number, 
       run += tokens[j].text
       if (!key.startsWith(run)) break
       if (run.length === key.length) {
-        // The window must stretch to hold a run longer than tailWords itself.
-        if (i >= tokens.length - Math.max(tailWords, j - i + 1)) runs.push([i, j])
+        runs.push([i, j])
         break
       }
       if (!splitWords && !bounds.has(run.length)) break
@@ -91,10 +86,14 @@ function phraseRuns(tokens: readonly Word[], phrase: string, tailWords: number, 
   return runs
 }
 
-function phraseInTail(text: string, phrases: readonly string[], tailWords: number, splitWords: boolean): boolean {
+/** True when a run of words that ends `text` spells one of `phrases`: the phrase is the last
+ *  thing said, so "do it please" or "cancel my 3pm meeting" holds none. */
+function phraseAtEnd(text: string, phrases: readonly string[], splitWords: boolean): boolean {
   const tokens = words(text)
   if (!tokens.length) return false
-  return phrases.some((phrase) => typeof phrase === 'string' && phraseRuns(tokens, phrase, tailWords, splitWords).length > 0)
+  const last = tokens.length - 1
+  return phrases.some((phrase) => typeof phrase === 'string'
+    && phraseRuns(tokens, phrase, splitWords).some(([, j]) => j === last))
 }
 
 /** True when `text` ends with a phrase that should fire the buffered turn.
@@ -103,15 +102,15 @@ function phraseInTail(text: string, phrases: readonly string[], tailWords: numbe
  *  ("Sendit.") but a word of the phrase is never assembled from two words that were said
  *  ("Goa head" is not "go ahead"). A false confirmation sends a half-finished thought; a
  *  false exit only discards one. */
-export function isConfirmation(text: string, phrases: readonly string[], tailWords = TAIL_WINDOW_WORDS): boolean {
+export function isConfirmation(text: string, phrases: readonly string[]): boolean {
   if (!text.trim()) return false
-  return phraseInTail(text, phrases, tailWords, false)
+  return phraseAtEnd(text, phrases, false)
 }
 
 /** True when `text` ends with a phrase that should clear the buffer. */
-export function isExit(text: string, phrases: readonly string[], tailWords = TAIL_WINDOW_WORDS): boolean {
+export function isExit(text: string, phrases: readonly string[]): boolean {
   if (!text.trim()) return false
-  return phraseInTail(text, phrases, tailWords, true)
+  return phraseAtEnd(text, phrases, true)
 }
 
 /** Drop the trailing confirmation phrase from a chunk — "draft it and send it"
@@ -123,7 +122,7 @@ export function stripTrailingPhrase(text: string, phrases: readonly string[]): s
   let first = -1
   for (const phrase of phrases) {
     if (typeof phrase !== 'string') continue
-    for (const [i, j] of phraseRuns(tokens, phrase, TAIL_WINDOW_WORDS, false)) {
+    for (const [i, j] of phraseRuns(tokens, phrase, false)) {
       if (j === tokens.length - 1 && (first < 0 || i < first)) first = i
     }
   }
@@ -134,7 +133,9 @@ export function stripTrailingPhrase(text: string, phrases: readonly string[]): s
 
 /** Fold one transcription chunk into the hands-free buffer.
  *
- *  Exit wins over confirmation: "send it — no, cancel" must not send. */
+ *  The phrases are judged on everything said so far, the buffer and this chunk together, so a
+ *  phrase the recording split across two chunks ("go", then "ahead") still counts. A phrase in both
+ *  lists counts as the exit, so a retraction never sends. */
 export function accumulateTranscript(
   buffer: string,
   chunk: string,
@@ -142,12 +143,12 @@ export function accumulateTranscript(
 ): HandsFreeStep {
   const text = (chunk ?? '').trim()
   if (!text) return { buffer, action: 'ignore' }
-  if (isExit(text, phrases.exit)) return { buffer: '', action: 'clear' }
-  if (isConfirmation(text, phrases.confirmation)) {
-    const tail = stripTrailingPhrase(text, phrases.confirmation)
-    const full = [buffer, tail].filter(Boolean).join(' ').trim()
-    // "go ahead" with nothing dictated yet is a stray confirmation, not a turn.
-    return full ? { buffer: full, action: 'submit' } : { buffer: '', action: 'clear' }
+  const said = [buffer, text].filter(Boolean).join(' ').trim()
+  if (isExit(said, phrases.exit)) return { buffer: '', action: 'clear' }
+  if (isConfirmation(said, phrases.confirmation)) {
+    // A phrase said with nothing before it still submits, with nothing dictated: the host sends
+    // what it already holds (a typed draft), or nothing.
+    return { buffer: stripTrailingPhrase(said, phrases.confirmation), action: 'submit' }
   }
-  return { buffer: [buffer, text].filter(Boolean).join(' ').trim(), action: 'accumulate' }
+  return { buffer: said, action: 'accumulate' }
 }

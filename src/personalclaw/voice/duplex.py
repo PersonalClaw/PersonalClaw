@@ -5,9 +5,10 @@ string decision the STT/TTS endpoints and the frontend mic hook need to make
 (the one read is the shipped phrase table, once, at import):
 
 * :func:`is_confirmation` / :func:`is_exit` — hands-free gating. A dictated
-  transcript accumulates in the frontend and only becomes a turn once the
-  operator says a confirmation phrase; an exit phrase clears the buffer. A
-  half-finished thought must never become an executed instruction.
+  transcript accumulates in the frontend and only becomes a turn once what the
+  operator said ends with a confirmation phrase; a discard (exit) phrase at the
+  end clears the buffer. A half-finished thought must never become an executed
+  instruction.
 * :func:`is_echo` — the assistant's own spoken reply bleeding back through the
   microphone. Any transcript sharing a run of ``ECHO_MIN_RUN`` consecutive
   words with the last synthesized text is the speaker, not the operator.
@@ -15,9 +16,9 @@ string decision the STT/TTS endpoints and the frontend mic hook need to make
   keeps the full text; only the *audio* drops code, URLs, paths, and flags,
   which are noise when read aloud.
 
-Both phrase matchers are **tail-anchored** (:data:`TAIL_WINDOW_WORDS`): the
-confirmation is the last thing the operator says, so scanning the whole buffer
-would let a "go ahead" uttered mid-thought fire the turn early.
+Both phrase matchers are **end-anchored**: a phrase counts only when it ends what
+was said, so a "go ahead" uttered mid-thought cannot fire the turn early, and
+"cancel my 3pm meeting" is not a retraction.
 
 ``web/src/ui/composer/duplex.ts`` mirrors the two phrase matchers for the
 frontend accumulation buffer (the frontend owns the mic, so it owns the
@@ -31,11 +32,6 @@ backend-only and have no mirror.
 import json
 import re
 from pathlib import Path
-
-# The confirmation must land near the end of the dictated chunk. Wide enough for
-# "go ahead please" or "ok do it then", narrow enough that a confirmation phrase
-# buried at the start of a long dictation does not fire a turn.
-TAIL_WINDOW_WORDS = 6
 
 # Consecutive-word run that marks a transcript as the assistant's own speech.
 # Three is the smallest run that is not routinely produced by two people
@@ -110,10 +106,8 @@ def _words(text: str) -> list[str]:
     return [w for w in folded if w]
 
 
-def _spells_phrase_in_tail(
-    tokens: list[str], phrase: list[str], tail_words: int, *, split_words: bool
-) -> bool:
-    """True when a run of whole ``tokens`` inside the trailing window spells ``phrase``.
+def _ends_with_phrase(tokens: list[str], phrase: list[str], *, split_words: bool) -> bool:
+    """True when a run of whole ``tokens`` that ends the list spells ``phrase``.
 
     A run spells a phrase when the two are equal with the spaces between their words
     taken out: speech-to-text writes "never mind" as "Nevermind", "never-mind" or
@@ -139,8 +133,7 @@ def _spells_phrase_in_tail(
             if not key.startswith(run):
                 break
             if len(run) == len(key):
-                # The window must stretch to hold a run longer than tail_words itself.
-                if i >= len(tokens) - max(tail_words, j - i + 1):
+                if j == len(tokens) - 1:
                     return True
                 break
             if not split_words and len(run) not in bounds:
@@ -148,8 +141,8 @@ def _spells_phrase_in_tail(
     return False
 
 
-def _phrase_in_tail(text: str, phrases: object, tail_words: int, *, split_words: bool) -> bool:
-    """True when any phrase is spelled by a run of words inside the trailing window."""
+def _phrase_at_end(text: str, phrases: object, *, split_words: bool) -> bool:
+    """True when any phrase is spelled by the run of words that ends ``text``."""
 
     if not isinstance(phrases, (list, tuple, set, frozenset)):
         return False
@@ -158,23 +151,18 @@ def _phrase_in_tail(text: str, phrases: object, tail_words: int, *, split_words:
         return False
     return any(
         isinstance(phrase, str)
-        and _spells_phrase_in_tail(tokens, _words(phrase), tail_words, split_words=split_words)
+        and _ends_with_phrase(tokens, _words(phrase), split_words=split_words)
         for phrase in phrases
     )
 
 
-def is_confirmation(
-    text: str,
-    phrases: object = DEFAULT_CONFIRMATION_PHRASES,
-    *,
-    tail_words: int = TAIL_WINDOW_WORDS,
-) -> bool:
+def is_confirmation(text: str, phrases: object = DEFAULT_CONFIRMATION_PHRASES) -> bool:
     """True when ``text`` ends with a phrase that should fire the buffered turn.
 
     Matching ignores case, punctuation, hyphens, apostrophes and the spaces
-    between the phrase's words, and is anchored to the trailing ``tail_words``
-    words, so "go ahead and tell me what you think about the plan" does not
-    execute — only a trailing "go ahead" does.
+    between the phrase's words, and the phrase must end what was said, so
+    neither "go ahead and tell me what you think about the plan" nor "do it
+    please" executes: only a "go ahead" or "do it" with nothing after it does.
 
     A confirmation is matched more strictly than an exit: its words may run
     together ("Sendit.") but a word of the phrase is never assembled from two
@@ -184,20 +172,19 @@ def is_confirmation(
 
     if not isinstance(text, str) or not text.strip():
         return False
-    return _phrase_in_tail(text, phrases, tail_words, split_words=False)
+    return _phrase_at_end(text, phrases, split_words=False)
 
 
-def is_exit(
-    text: str,
-    phrases: object = DEFAULT_EXIT_PHRASES,
-    *,
-    tail_words: int = TAIL_WINDOW_WORDS,
-) -> bool:
-    """True when ``text`` ends with a phrase that should clear the buffer."""
+def is_exit(text: str, phrases: object = DEFAULT_EXIT_PHRASES) -> bool:
+    """True when ``text`` ends with a phrase that should clear the buffer.
+
+    As for a confirmation, the phrase must end what was said: "cancel my 3pm
+    meeting" asks for something and clears nothing.
+    """
 
     if not isinstance(text, str) or not text.strip():
         return False
-    return _phrase_in_tail(text, phrases, tail_words, split_words=True)
+    return _phrase_at_end(text, phrases, split_words=True)
 
 
 def is_echo(transcript: str, last_tts_text: str, *, min_run: int = ECHO_MIN_RUN) -> bool:

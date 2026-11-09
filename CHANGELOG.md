@@ -48,6 +48,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A verifiable goal loop's completion judge answers for each sub-goal, and the loop's record and its next cycle name the sub-goals not met yet.**
 - **A code block offers Run in a chat's replies only. Anywhere else, a message in the Inbox and its thread, a notification, a tool's result, a scheduled run's result in its chat (after Regenerate too), a heartbeat's result in a chat, the list of saved prompts, a knowledge item, a skill or an app's text included, it offers Copy, and a scheduled run's result, a heartbeat's result and the list of saved prompts are drawn as what they are, not as the agent's reply.**
 - **Math in a quoted message stays inside its quote box, and math in any message stays inside that message's box. A displayed formula wider than its column scrolls inside its own box, where it ran past the column before, and is a tab stop named Formula.**
+- **Hands-free voice sends only when a confirmation phrase ends what you said and clears only when a discard phrase does, so "cancel my 3pm meeting" no longer throws your words away. It hears you between pieces, keeps what you typed, and turns off when the microphone is blocked, speech-to-text cannot run, or you press Listening.**
+- **A dictation is set apart by a space from the text before and after it, instead of running into it.**
 
 ## [0.3.7] — 2026-11-07
 

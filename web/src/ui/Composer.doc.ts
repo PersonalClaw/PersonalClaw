@@ -12,6 +12,7 @@ const doc: UiDoc = {
     { name: 'value', description: 'The current draft text (controlled).' },
     { name: 'onChange', description: 'Fires with the new draft on every edit.' },
     { name: 'onReplace', description: 'Puts words in the draft that are the owner\'s alone (hands-free dictation\'s buffer and submit): the host replaces the draft with them, so they carry nothing of a widget\'s. Defaults to onChange.' },
+    { name: 'draftHoldsWidgetMessage', description: 'True while the draft holds a widget\'s message. Hands-free keeps the owner\'s own draft in front of what they say and sends it with their words; a widget\'s message it replaces, so a spoken turn never carries a widget\'s words as the owner\'s. The chat passes it from its widget draft.' },
     { name: 'onSend', description: 'Called to send the draft — also invoked mid-stream, as "steer" when canSteer and "queue" otherwise, when canQueue.' },
     { name: 'streaming', description: 'True while a turn is streaming — flips the send button to Stop, a stop square with a thin arc turning round it (design/motion\'s sweep(); no arc under reduced motion), or to Steer or Queue with a typed draft.' },
     { name: 'phase', description: 'The running turn\'s phase (lib/workPhase), null until the gateway says one. The Stop control reads it as the agent orb does: its arc holds still where it is while the turn waits on the owner (an approval or a question) and turns on from there when the turn runs again. Left out, the arc turns for as long as the turn streams.' },

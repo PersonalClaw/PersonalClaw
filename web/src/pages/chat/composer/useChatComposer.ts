@@ -7,6 +7,7 @@ import { useComposerNotice } from '../../../ui/composer/ComposerNotice'
 import { useScreenShare } from '../../../ui/composer/useScreenShare'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../../../ui/composer/displayCapture'
 import { optimizeFailure, optimizeOutcome } from '../../../ui/composer/optimizeOutcome'
+import { TranscriptionRefused } from '../../../ui/composer/useMicRecorder'
 import type { ComposerValue } from '../../../ui/composer/types'
 import { coolWidgetHost, declineWidgetHost, useWidgetActionBridge, takePendingWidgetAction } from '../../../ui/widget/useWidgetActionBridge'
 import { api, ApiError, hasApiCode, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type DiscoveredAgent, type MemoryMode, type SessionTemplate } from '../../../lib/api'
@@ -1124,7 +1125,8 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
     const failed = transcriptionFailure(r)
     if (failed) {
       notice.showError(failed, 'voice-input')
-      return ''
+      // Said once, here; marked so the recorder adds nothing, and hands-free turns off.
+      throw new TranscriptionRefused(failed)
     }
     // The echo filter dropped this capture. Say so — silence
     // here is indistinguishable from a deaf microphone.
@@ -1133,8 +1135,10 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
       return ''
     }
     // Dictation worked, so a microphone or transcription failure no longer holds; a notice
-    // something else raised is not dictation's to take down.
-    notice.clear('voice-input')
+    // something else raised is not dictation's to take down. A hands-free piece leaves it: one
+    // still in flight when another was refused must not take down the notice saying why
+    // hands-free turned off.
+    if (!opts?.duplex) notice.clear('voice-input')
     return r.text ?? ''
   }
 

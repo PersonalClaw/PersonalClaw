@@ -1845,6 +1845,7 @@
   {
     "default": [
       "cancel",
+      "cancel that",
       "never mind",
       "forget it"
     ],
