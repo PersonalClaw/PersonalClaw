@@ -1432,7 +1432,7 @@ describe("main.js: the update is asked for in the app menu, and the swap is the 
 
   it("follows the pin only while the home's gateway is not one the app found running, and trashes the old copy once the new one has its gateway", () => {
     // The kind of gateway, never what the row says: a signed-out row is still one kind or the other.
-    assert.match(body("makeThisAppsUpdater"), /readUpdatePolicy\(\{ home: PERSONALCLAW_HOME, ownGateway: !adoptedGateway && !\["served", "behind", "unusable"\]\.includes\(localState\.state\) \}\)/);
+    assert.match(body("makeThisAppsUpdater"), /readUpdatePolicy\(\{ home: PERSONALCLAW_HOME, ownGateway: !adoptedGateway && !\["served", "behind", "unusable", "updating"\]\.includes\(localState\.state\) \}\)/);
     assert.match(body("makeThisAppsUpdater"), /ownsGateway: \(\) => gatewayWatch\.kind === "own",/);
     // At the start, once a gateway is up; or later, once the first one is in use (a start that
     // landed on the chooser, then Use It or a gateway started here), once a run.

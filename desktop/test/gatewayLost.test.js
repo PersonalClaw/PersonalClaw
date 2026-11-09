@@ -162,8 +162,16 @@ describe("a gateway that did not start, or stopped, lands on the Gateways window
   };
 
   it("shows no sheet anywhere in the app: a sheet would hold the window the Gateways window opens on", () => {
-    assert.doesNotMatch(MAIN, /showMessageBox\(/);
-    assert.doesNotMatch(MAIN, /\bdialog\b\s*[,}]/, "main.js still takes Electron's dialog");
+    // One native box or dialog of any kind, Update the Gateway's confirm, and it is given no window:
+    // never a sheet.
+    const boxes = MAIN.match(/\.show(?:MessageBox|MessageBoxSync|ErrorBox|OpenDialog|OpenDialogSync|SaveDialog|SaveDialogSync)\(/g) || [];
+    assert.equal(boxes.length, 1, `a native box or dialog beside Update the Gateway's confirm: ${boxes.join(", ")}`);
+    assert.match(body("confirmGatewayUpdate"), /\.dialog\.showMessageBox\(\{ type: "question",/, "the confirm's box was given a window");
+    // Electron's dialog is never taken by name, or under another one.
+    assert.doesNotMatch(MAIN, /\bdialog\b\s*[,}:]/, "main.js still takes Electron's dialog");
+    // The confirm is defined once and called from the press alone.
+    assert.equal((MAIN.match(/confirmGatewayUpdate\(/g) || []).length, 2, "the confirm gained a caller");
+    assert.match(body("pressUpdateTheGateway"), /confirmGatewayUpdate\(/, "the press no longer asks the confirm");
   });
 
   it("says a failed start at once, before the two-minute wait, on the Gateways window", () => {

@@ -70,6 +70,7 @@
       "gatewayShutdown.js",
       "quitSequence.js",
       "gatewayEnv.js",
+      "gatewayFirst.js",
       "gatewayLost.js",
       "localSignIn.js",
       "homeGateway.js",

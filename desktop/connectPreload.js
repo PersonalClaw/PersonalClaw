@@ -1,7 +1,7 @@
 /**
  * Preload for the connect dialog, and for the chooser that opens when nothing serves the windows.
  *
- * Eleven invokes and one event, and nothing else. Deliberately NOT `preload.js`: the switcher has no
+ * Twelve invokes and one event, and nothing else. Deliberately NOT `preload.js`: the switcher has no
  * business reaching the capability bridge, and the bridge has no business being reachable from a
  * window whose only job is picking a gateway. Two small surfaces beat one wide one.
  */
@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld("pclawConnect", {
   /** The "This computer" row's Open the Releases Page, for a home a newer PersonalClaw served: the
    *  main process opens its one fixed address in the browser. Takes nothing. */
   releases: () => ipcRenderer.invoke(CONNECT_CHANNELS.releases),
+  /** The behind row's and the chooser's Update the Gateway. */
+  updateGateway: () => ipcRenderer.invoke(CONNECT_CHANNELS.updateGateway),
   /** Hear when the list changed in the main process, to read it again. Returns an unsubscribe fn. */
   onChanged: (cb) => {
     if (typeof cb !== "function") return () => {};

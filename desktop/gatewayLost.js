@@ -156,7 +156,7 @@ function olderSentence(newest = "") {
 /** The This computer row's sentence for a gateway this app found on a version older than its own:
  *  the app needs its gateway at its own version or newer. */
 function behindSentence({ port, version, app }) {
-  return `This home's gateway on port ${port} runs ${version}, older than this app (${app}), and the app needs its gateway at ${app} or newer. Update the gateway, then press Try Again.`;
+  return `This home's gateway on port ${port} runs ${version}, older than this app (${app}), and the app needs its gateway at ${app} or newer. Update the Gateway brings it to ${app} or newer.`;
 }
 
 /** The row's sentence for a gateway this app found and can't use that isn't older than it: one whose

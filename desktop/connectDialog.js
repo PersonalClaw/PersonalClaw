@@ -51,12 +51,14 @@ const CONNECT_CHANNELS = Object.freeze({
   /** The chooser's Add a Gateway…: the Gateways window, where one is added. */
   gateways: "pclaw:connect:gateways",
   releases: "pclaw:connect:releases",
+  /** The behind row's and the chooser's Update the Gateway: the gateway this app found, updated, then used. */
+  updateGateway: "pclaw:connect:update-gateway",
   /** Main → dialog: the list changed (the local gateway came up, stopped, or was found), so read it again. */
   changed: "pclaw:connect:changed",
 });
 
 /** The "This computer" row's states, as `main.js` keeps them (`localState`). */
-const LOCAL_STATES = Object.freeze(["starting", "own", "found", "adopted", "stopped", "served", "older", "behind", "unusable", "signed_out", "cant_sign_in"]);
+const LOCAL_STATES = Object.freeze(["starting", "own", "found", "adopted", "stopped", "served", "older", "behind", "unusable", "updating", "signed_out", "cant_sign_in"]);
 
 /** Where a newer app comes from: the one page the "This computer" row's Open the Releases Page
  *  opens, in the browser. Fixed here, so the dialog names no address of its own. */
@@ -109,8 +111,21 @@ function describeLocal(local = {}) {
     // This home's gateway runs, and this app doesn't use it: it is older than this app (`behind`), or
     // a build this app can't use (`unusable`). Nothing is signed in to it; Try Again looks again,
     // once it is updated or installed again.
+    // Older than this app: Update the Gateway brings it to this app's release or newer, then
+    // uses it.
     case "behind":
-      return { state, badge: "already running", statusText: "Older than this app", statusTone: "bad", detail: sentence, action: { id: "start", label: "Try Again" } };
+      return {
+        state,
+        badge: "already running",
+        statusText: "Older than this app",
+        statusTone: "bad",
+        detail: sentence,
+        action: { id: "update-gateway", label: "Update the Gateway" },
+        option: { id: "start", label: "Try Again" },
+      };
+    // Update the Gateway is under way: the sentence says to which release.
+    case "updating":
+      return { state, badge: "already running", statusText: "Updating…", statusTone: "idle", detail: sentence, action: null };
     case "unusable":
       return { state, badge: "already running", statusText: "Can't be used", statusTone: "bad", detail: sentence, action: { id: "start", label: "Try Again" } };
     // The gateway runs and ended this app's sign-in: nothing signs it in again but the owner's press.
@@ -217,12 +232,15 @@ function describeRow(row, { activeId, health = {}, localBaseUrl = "", local } = 
  */
 function describeChooser(local = {}) {
   const here = describeLocal(local);
-  const busy = here.state === "starting";
+  const busy = here.state === "starting" || here.state === "updating";
   return {
     state: here.state,
-    sentence: busy ? "Starting PersonalClaw's gateway…" : here.detail || "PersonalClaw's gateway isn't running.",
+    // An update says its own progress; a start, that it starts.
+    sentence: here.state === "updating" && here.detail ? here.detail : busy ? "Starting PersonalClaw's gateway…" : here.detail || "PersonalClaw's gateway isn't running.",
     use: here.state === "found",
     releases: here.state === "older",
+    /** Update the Gateway, first, while the gateway this app found is older than it. */
+    update: here.state === "behind",
     // Try again starts or looks again: nothing it does helps a newer home, or a gateway this app
     // can't sign its windows in to from here.
     retry: here.state !== "older" && here.state !== "cant_sign_in",
@@ -364,6 +382,7 @@ function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {
     wrap(CONNECT_CHANNELS.autoUse, (arg) => handlers.autoUse({ on: (arg && arg.on) === true }));
     wrap(CONNECT_CHANNELS.gateways, () => handlers.gateways());
     wrap(CONNECT_CHANNELS.releases, () => handlers.releases());
+    wrap(CONNECT_CHANNELS.updateGateway, () => handlers.updateGateway());
   }
 
   return {
