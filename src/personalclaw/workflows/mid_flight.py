@@ -22,15 +22,20 @@ from typing import TYPE_CHECKING, Any
 from personalclaw import record_files
 from personalclaw.workflows import attention
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import mutations, store
+from personalclaw.workflows import mutations, store, supervisor_policy
 from personalclaw.workflows.bindings import node_deps
 from personalclaw.workflows.engine import release_execution_claim
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     TERMINAL_STATES,
     InstanceState,
+    ItemErrorPolicy,
+    LoopMode,
     Node,
+    NodeKind,
+    loop_mode,
     now_stamp,
+    skipped_on_ask,
     spec_path,
     walk,
 )
@@ -354,9 +359,345 @@ def _apply_fork(ctl: RunController, op: mutations.Op) -> None:
 
 
 def _skip_by_id(ctl: RunController, node_id: str) -> None:
+    """Skip the step *node_id* names where it runs at its own path. One inside a loop or a
+    foreach runs only under the paths each cycle and item opens, which the scheduler skips as it
+    opens them (the skip is on the spec): a row at its definition path would be one no cycle or
+    item ran."""
+    holders = fan_out_holders(ctl.root)
     for path, node in walk(ctl.root):
-        if node.id == node_id:
-            ctl._skip(path)
+        if node.id != node_id or holders.get(path):
+            continue
+        if node.is_container and _under_way(ctl, path):
+            # A group of steps with steps under way in it: the scheduler lets those finish and
+            # skips the rest (`tick._skip_as_asked`), so none is marked skipped while it runs.
+            continue
+        ctl._skip(path, reason=ASKED_SKIP)
+
+
+def _under_way(ctl: RunController, path: str) -> bool:
+    """Whether any step under instance path *path* is running or waiting."""
+    busy = (InstanceState.RUNNING, InstanceState.WAITING)
+    return any(p.startswith(f"{path}.") and i.state in busy for p, i in ctl.instances.items())
+
+
+# ── a skip asked mid-run: where it holds, and what it reaches ────────────────
+
+#: What a step a skip asked for mid-run says under its row, wherever it was skipped.
+ASKED_SKIP = "not run: skipped as asked"
+
+
+def cycle_ran_nothing(ctl: RunController, prefix: str) -> bool:
+    """Was every step of the loop cycle at *prefix* skipped, at least one of them as asked?"""
+    states = [
+        inst
+        for p, inst in ctl.instances.items()
+        if p == prefix or p.startswith(f"{prefix}.") or p.startswith(f"{prefix}#")
+    ]
+    return (
+        bool(states)
+        and all(inst.state == InstanceState.SKIPPED for inst in states)
+        and any(inst.degraded_reason == ASKED_SKIP for inst in states)
+    )
+
+
+#: Instance states the scheduler does not skip in a cycle or item it opened: done, or under way
+#: (`tick._visit` returns for a running or waiting step before it reads the skip).
+_NOT_SKIPPED = TERMINAL_STATES | {InstanceState.RUNNING, InstanceState.WAITING}
+
+
+def fan_out_holders(root: Node) -> dict[str, str]:
+    """Spec path → the nearest loop or foreach whose body it is in, for each step in one, from the
+    walk's own structure (``validator._parent_slots``' rule: a label may hold a dot)."""
+    parent: dict[str, tuple[str, str]] = {}
+    for path, node in walk(root):
+        for i, _child in enumerate(node.children):
+            parent[f"{path}.children[{i}]"] = (path, "children")
+        if node.body is not None:
+            parent[f"{path}.body"] = (path, "body")
+        for label in node.cases:
+            parent[f"{path}.cases[{label}]"] = (path, "cases")
+        if node.default_case is not None:
+            parent[f"{path}.default"] = (path, "default")
+    holders: dict[str, str] = {}
+    for path in parent:
+        up = path
+        while up in parent:
+            up, slot = parent[up]
+            if slot == "body":
+                holders[path] = up
+                break
+    return holders
+
+
+def skip_unreachable(ctl: RunController, to_skip: list[str]) -> None:
+    """Mark each of the frontier's *to_skip* skipped: an untaken branch's path, a step whose
+    input can never come, and a step a skip asked for mid-run in each cycle and item it opens
+    in, which says so (:data:`ASKED_SKIP`)."""
+    by_path = dict(walk(ctl.root)) if to_skip else {}
+    for path in to_skip:
+        node = by_path.get(spec_path(path))
+        ctl._skip(path, reason=ASKED_SKIP if node and skipped_on_ask(node) else "")
+
+
+def skip_reach(ctl: RunController, node_id: str) -> dict[str, Any] | None:
+    """What a skip of *node_id* reaches now (``instances``), and whether a loop or foreach it is
+    inside has still to open it in some cycle or item (``later``). None when no step has the id.
+
+    A step outside any loop or foreach is reached unless it has finished (:func:`_skip_by_id`
+    skips it at its own path, a waiting one included). Inside one it is reached in each cycle or
+    item that opened it where the scheduler will still skip something of it
+    (:func:`_unit_reached`)."""
+    by_path = dict(walk(ctl.root))
+    found = [path for path, node in by_path.items() if node.id == node_id]
+    if not found:
+        return None
+    holders = fan_out_holders(ctl.root)
+    states = {p: inst.state for p, inst in ctl.instances.items()}
+    instances: list[str] = []
+    later = False
+    for path in found:
+        node = by_path[path]
+        holder = holders.get(path, "")
+        if not holder:
+            if node.is_container:
+                reached = _unit_reached(ctl, node, path, states)
+            else:
+                reached = states.get(path, InstanceState.PENDING) not in TERMINAL_STATES
+            if reached:
+                instances.append(path)
+            continue
+        units = _opened_units(path, states)
+        instances += [u for u in units if _unit_reached(ctl, node, u, states)]
+        later = later or _opens_again(ctl, holder, holders, by_path, units)
+    return {"node_id": node_id, "instances": sorted(instances), "later": later}
+
+
+def _opened_units(path: str, states: dict[str, InstanceState]) -> list[str]:
+    """The instance paths the step at spec path *path* has opened at, one per cycle or item: each
+    one with a row at it or under it (a group of steps has no row of its own)."""
+    units: set[str] = set()
+    for row in states:
+        spec = spec_path(row)
+        if spec != path and not spec.startswith(f"{path}."):
+            continue
+        for cut in [i for i, ch in enumerate(row) if ch == "."] + [len(row)]:
+            if spec_path(row[:cut]) == path:
+                if row[:cut] != path:
+                    units.add(row[:cut])
+                break
+    return sorted(units)
+
+
+def _unit_reached(
+    ctl: RunController, node: Node, unit: str, states: dict[str, InstanceState]
+) -> bool:
+    """Whether a skip of *node* reaches it at instance path *unit*: the scheduler will still skip
+    something of it there. A step by its own row (not run, and not under way); a group of steps by
+    its steps there, one with no row or a row the scheduler still skips reached; a loop or foreach
+    while it still opens a cycle or item, or something of its current cycle or of an item is
+    reached; never one that has ended."""
+    if not node.is_container:
+        return states.get(unit, InstanceState.PENDING) not in _NOT_SKIPPED
+    if _derived(ctl, node, unit, states) in TERMINAL_STATES:
+        return False
+    if node.kind in (NodeKind.LOOP, NodeKind.FOREACH):
+        under = [p for p in states if p.startswith(f"{unit}.")]
+        if _opens_more(ctl, node, unit, under):
+            return True
+        return node.body is not None and any(
+            _unit_reached(ctl, node.body, inner, states) for inner in _open_cycles(ctl, node, unit)
+        )
+    fan_outs: list[str] = []
+    for sub, step in walk(node):
+        rel = sub[len("root") :]
+        if not rel or any(rel.startswith(f"{f}.") for f in fan_outs):
+            continue
+        if step.kind in (NodeKind.LOOP, NodeKind.FOREACH):
+            fan_outs.append(rel)
+            if _unit_reached(ctl, step, unit + rel, states):
+                return True
+        elif not step.is_container:
+            if states.get(unit + rel, InstanceState.PENDING) not in _NOT_SKIPPED:
+                return True
+    return False
+
+
+def _opens_more(ctl: RunController, node: Node, at: str, units: list[str]) -> bool:
+    """Whether loop or foreach *node*, at instance path *at* and not ended, has still to open a
+    cycle or item that none of *units* (instance paths) is in. A loop by its cycles, against a
+    counted loop's `n` and any loop's cycle budget (`supervisor_policy.loop_cycle_cap`: its
+    `max_iterations`, its supervisor's `budget.max_cycles`, or the run's Max cycles), the cycle
+    the engine stops at; a loop that is not counted and has no budget does. A foreach by its
+    items, resolved as the scheduler resolves them at *at*; one a failed item has halted
+    (`on_item_error: halt`) opens none, and a loop whose current cycle holds such a foreach with
+    a step still to start opens no other cycle, since that cycle never ends."""
+    if node.kind == NodeKind.LOOP:
+        current = int(ctl._iterations.get(at, 0))
+        cycle = f"{at}.body@{current}"
+        if _cycle_halted(ctl, cycle):
+            return all(not _in_unit(u, cycle) for u in units)
+        cap = supervisor_policy.loop_cycle_cap(node.config, ctl.run.policy_overrides)
+        counted = loop_mode(node) == LoopMode.COUNTED
+        if not counted and not cap:
+            return True
+        n = (node.config or {}).get("n")
+        total = (n if isinstance(n, int) and n > 0 else 1) if counted else cap
+        if cap:
+            total = min(total, cap)
+        if current + 1 < total:
+            return True
+        return not any(_in_unit(u, cycle) for u in units)
+    items = _items_at(ctl, node, at)
+    if items is None:
+        return True
+    if _halted(ctl, node, at, items):
+        return False
+    return any(not any(_in_unit(u, f"{at}.body#{i}") for u in units) for i in range(len(items)))
+
+
+def _open_cycles(ctl: RunController, node: Node, at: str) -> list[str]:
+    """The cycles and items loop or foreach *node* at *at* has open: a loop's current cycle, and
+    each item of a foreach whose items resolve."""
+    if node.kind == NodeKind.LOOP:
+        return [f"{at}.body@{int(ctl._iterations.get(at, 0))}"]
+    return [f"{at}.body#{i}" for i in range(len(_items_at(ctl, node, at) or []))]
+
+
+def _items_at(ctl: RunController, node: Node, at: str) -> list[Any] | None:
+    from personalclaw.workflows import tick
+
+    return tick.foreach_items(
+        node,
+        at=at,
+        inputs=ctl.run.inputs,
+        outputs=ctl._outputs,
+        instance_outputs=ctl._instance_outputs,
+    )
+
+
+def _halted(ctl: RunController, node: Node, at: str, items: list[Any]) -> bool:
+    """Whether foreach *node* at *at* opens no more items: under `on_item_error: halt` an item
+    has failed, and the scheduler opens none after it (`tick._visit_foreach`)."""
+    from personalclaw.workflows import tick
+
+    return tick.item_error_policy(node) == ItemErrorPolicy.HALT and any(
+        getattr(ctl.instances.get(f"{at}.body#{i}"), "state", None) == InstanceState.FAILED
+        for i in range(len(items))
+    )
+
+
+def _cycle_halted(ctl: RunController, cycle: str) -> bool:
+    """Whether loop cycle *cycle* holds a foreach that a failed item has halted
+    (`on_item_error: halt`) with a step still to start: the halt starts none
+    (`tick._visit_foreach`), so the foreach never ends, nor does the cycle, and the loop opens no
+    other. A step under way settles without the halt, so a foreach whose items need only those to
+    finish ends when they do, and so does the cycle."""
+    from personalclaw.workflows import tick
+
+    by_path = dict(walk(ctl.root))
+    busy = (InstanceState.RUNNING, InstanceState.WAITING)
+    settled = {
+        p: InstanceState.DONE if i.state in busy else i.state for p, i in ctl.instances.items()
+    }
+    for path, inst in ctl.instances.items():
+        head, sep, index = path.rpartition(".body#")
+        if inst.state != InstanceState.FAILED or not sep or not index.isdigit():
+            continue
+        node = by_path.get(spec_path(head)) if _in_unit(head, cycle) else None
+        if (
+            node is not None
+            and node.kind == NodeKind.FOREACH
+            and tick.item_error_policy(node) == ItemErrorPolicy.HALT
+            and _derived(ctl, node, head, settled) not in TERMINAL_STATES
+        ):
+            return True
+    return False
+
+
+def _derived(
+    ctl: RunController, node: Node, path: str, states: dict[str, InstanceState]
+) -> InstanceState:
+    """*node*'s state at instance path *path*, as the scheduler derives it."""
+    from personalclaw.workflows import tick
+
+    return tick.derive_state(
+        node,
+        path,
+        states,
+        declined_edges=ctl._declined_edges,
+        outputs=ctl._outputs,
+        inputs=ctl.run.inputs,
+        iterations=ctl._iterations,
+        instance_outputs=ctl._instance_outputs,
+    )
+
+
+def _opens_again(
+    ctl: RunController,
+    holder: str,
+    holders: dict[str, str],
+    by_path: dict[str, Node],
+    units: list[str],
+) -> bool:
+    """Whether the loop or foreach at spec path *holder* has still to open its step in some cycle
+    or item, given the step's cycles and items so far (*units*). Never once the run, or the
+    outermost loop or foreach the step is in (the one whose state decides), has ended. One that
+    runs only inside another loop or foreach does while an instance of it that has not ended
+    still opens a cycle or item the step has not, or while the one it runs in opens another
+    instance of it."""
+    if ctl.run.is_terminal:
+        return False
+    decider = holder
+    while holders.get(decider):
+        decider = holders[decider]
+    states = {p: inst.state for p, inst in ctl.instances.items()}
+    if _derived(ctl, by_path[decider], decider, states) in TERMINAL_STATES:
+        return False
+    node = by_path[holder]
+    if decider == holder:
+        return _opens_more(ctl, node, holder, units)
+    opened = _opened_units(holder, states)
+    if any(
+        _derived(ctl, node, at, states) not in TERMINAL_STATES and _opens_more(ctl, node, at, units)
+        for at in opened
+    ):
+        return True
+    return _opens_again(ctl, holders[holder], holders, by_path, opened)
+
+
+def _in_unit(instance: str, unit: str) -> bool:
+    """Whether *instance* is, or is inside, cycle or item *unit* (`….body@2`, `….body#0`)."""
+    return instance == unit or instance.startswith(f"{unit}.")
+
+
+def skip_refusal(
+    ctl: RunController, result: mutations.BatchResult
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """For a batch with skips, at every door a skip comes through (``submit_mutation``): what each
+    skip reaches (:func:`skip_reach`), and the refusal of the whole batch when one reaches
+    nothing, a step already run or under way wherever the run runs it, rather than an answer
+    that it was applied."""
+    names = [op.node_id for op in result.ops if op.kind == mutations.OpKind.SKIP]
+    reaches = [r for r in (skip_reach(ctl, n) for n in names) if r is not None]
+    done = [r["node_id"] for r in reaches if not r["instances"] and not r["later"]]
+    if not done:
+        return None, reaches
+    one = len(done) == 1
+    message = (
+        f"{', '.join(f'“{n}”' for n in done)} {'has' if one else 'have'} already run, or "
+        f"{'is' if one else 'are'} under way, wherever this run runs {'it' if one else 'them'}, "
+        "so there is nothing left to skip."
+    )
+    if len(result.ops) > len(done):
+        others = any(op.kind != mutations.OpKind.SKIP for op in result.ops)
+        message += f" Nothing else in this edit was {'applied' if others else 'skipped'} either."
+    refusal = {
+        "ok": False,
+        "code": "WF_SKIP_REACHES_NOTHING",
+        "message": message,
+        "issues": [{"code": "WF_SKIP_REACHES_NOTHING", "message": message, "node_id": done[0]}],
+    }
+    return refusal, reaches
 
 
 def _flag_stale(ctl: RunController, preview: mutations.CascadePreview) -> None:

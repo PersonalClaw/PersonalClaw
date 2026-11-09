@@ -284,6 +284,26 @@ class Node:
         )
 
 
+#: The spec key a skip asked mid-run sets on the step it names (``mutations``' skip op), kept on
+#: the run's spec so a rebuilt run reads the same decision.
+SKIPPED_ON_ASK = "__skipped"
+
+
+def loop_mode(node: Node) -> LoopMode:
+    """A loop node's mode, ``counted`` when it names none or one this version does not know (the
+    reading ``tick._loop_exit_test`` gives it)."""
+    try:
+        return LoopMode(str((node.config or {}).get("mode", "counted") or "counted"))
+    except ValueError:
+        return LoopMode.COUNTED
+
+
+def skipped_on_ask(node: Node) -> bool:
+    """Whether a skip asked mid-run names *node*: it is skipped wherever it opens, each cycle of a
+    loop and each item of a foreach included (``tick._visit``)."""
+    return bool((node.config or {}).get(SKIPPED_ON_ASK))
+
+
 def walk(node: Node, path: str = "root") -> list[tuple[str, Node]]:
     """Depth-first `(path, node)` pairs. The path IS the instance key the engine uses,
     so its shape is a contract: `root.children[0]`, `root.body`, `root.cases[hit]`."""

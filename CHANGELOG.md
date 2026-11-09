@@ -52,6 +52,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Math in a quoted message stays inside its quote box, and math in any message stays inside that message's box. A displayed formula wider than its column scrolls inside its own box, where it ran past the column before, and is a tab stop named Formula.**
 - **Hands-free voice sends only when a confirmation phrase ends what you said and clears only when a discard phrase does, so "cancel my 3pm meeting" no longer throws your words away. It hears you between pieces, keeps what you typed, and turns off when the microphone is blocked, speech-to-text cannot run, or you press Listening.**
 - **A dictation is set apart by a space from the text before and after it, instead of running into it.**
+- **Skipping a step or a group of steps inside a loop or foreach skips it in every cycle and item that has not run it yet and lets the steps already under way finish, and a skip that reaches no step is refused, saying why.**
 
 ## [0.3.7] — 2026-11-07
 

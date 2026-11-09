@@ -38,11 +38,13 @@ from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows.bindings import node_deps
 from personalclaw.workflows.models import (
     FROZEN_STATES,
+    SKIPPED_ON_ASK,
     TERMINAL_STATES,
     InstanceState,
     Node,
     NodeInstance,
     NodeKind,
+    skipped_on_ask,
     walk,
 )
 
@@ -631,12 +633,13 @@ def _apply_one(op: Op, spec: dict[str, Any], instances: dict[str, NodeInstance])
         return
 
     if op.kind == OpKind.SKIP:
-        # Recorded on the spec so a resumed run re-derives the same decision; the
+        # Recorded on the spec so a resumed run re-derives the same decision, and so the scheduler
+        # skips the step in each cycle and item it opens later (`tick._visit`); the
         # instance-state write is the controller's (single-writer rule).
         target = _find_node_dict(root, op.node_id)
         if target is None:
             raise _ApplyError("WF_MUT_UNKNOWN_NODE", f"node {op.node_id!r} vanished", op.node_id)
-        target.setdefault("config", {})["__skipped"] = True
+        target.setdefault("config", {})[SKIPPED_ON_ASK] = True
         return
 
     if op.kind == OpKind.DELETE:
@@ -841,6 +844,8 @@ def prepare_batch(
     if apply_issues:
         result.ok = False
         return result
+    _unskip_reset(candidate, ops, result.preview)
+    result.issues.extend(_rewound_under_a_skip(candidate, ops))
 
     from personalclaw.workflows.validator import validate_spec
 
@@ -858,6 +863,65 @@ def prepare_batch(
 
     result.spec = candidate
     return result
+
+
+def _unskip_reset(spec: dict[str, Any], ops: list[Op], preview: CascadePreview) -> None:
+    """Drop the skip from each step a rewind or `run_from` resets (`mid_flight._apply_reentry`'s
+    set) and from the step a rewind names, in the spec this batch writes: left on, the scheduler
+    skips the step it was asked to run again, and so does a run rebuilt from that spec. A step
+    this batch skips keeps its skip, and so does the step a `run_from` starts after."""
+    reset: set[str] = set()
+    for op in ops:
+        if op.kind == OpKind.REWIND:
+            # Its own step too: one inside a loop or foreach that a skip kept from ever running
+            # has no row for the cascade to name.
+            reset |= set(preview.rerun) | {op.node_id}
+        elif op.kind == OpKind.RUN_FROM:
+            reset |= set(preview.rerun) - {op.node_id}
+    reset -= {o.node_id for o in ops if o.kind == OpKind.SKIP}
+    root = spec.get("root")
+    if not reset or not isinstance(root, dict):
+        return
+    for node_id in reset:
+        target = _find_node_dict(root, node_id)
+        config = target.get("config") if target is not None else None
+        if isinstance(config, dict):
+            config.pop(SKIPPED_ON_ASK, None)
+
+
+def _rewound_under_a_skip(spec: dict[str, Any], ops: list[Op]) -> list[Issue]:
+    """One issue per rewind of a step inside a group, loop or foreach a skip asked for (and this
+    batch does not skip): the rewind is applied, and the step stays skipped with the group it is
+    in, whose skip the rewind does not undo."""
+    rewound = [o.node_id for o in ops if o.kind == OpKind.REWIND and o.node_id]
+    if not rewound:
+        return []
+    try:
+        root = Node.from_dict(spec.get("root") or {})
+    except ValueError:
+        return []
+    skipped_here = {o.node_id for o in ops if o.kind == OpKind.SKIP}
+    by_path = dict(walk(root))
+    issues: list[Issue] = []
+    for node_id in rewound:
+        for path, node in by_path.items():
+            if node.id != node_id:
+                continue
+            cuts = [i for i, ch in enumerate(path) if ch == "."]
+            holders = [by_path[path[:i]] for i in cuts if path[:i] in by_path]
+            for holder in holders:
+                if skipped_on_ask(holder) and holder.id not in skipped_here:
+                    issues.append(
+                        Issue(
+                            code="WF_MUT_REWOUND_UNDER_A_SKIP",
+                            message=(
+                                f"“{node_id}” is inside “{holder.id}”, which a skip asked for, so "
+                                f"it stays skipped: rewind “{holder.id}” to run it again"
+                            ),
+                            node_id=holder.id,
+                        )
+                    )
+    return issues
 
 
 # ── spec history ─────────────────────────────────────────────────────────────

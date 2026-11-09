@@ -26,7 +26,9 @@ from personalclaw.workflows.models import (
     Node,
     NodeKind,
     instance_order,
+    loop_mode,
     loop_parent,
+    now_stamp,
     spec_path,
     walk,
 )
@@ -91,12 +93,16 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     # The settled leaf's own output, as its own item reads it: by node id this was another item's
     # value whenever the leaf failed or was skipped here, and it feeds the breaker, the seen-set
     # and the handoff this cycle hands on.
-    output = node_bindings.item_output(ctl, path, node_id)
+    output = _cycle_output(ctl, path, node_id, parent_path, iteration)
     from personalclaw import review_triage
+    from personalclaw.workflows import mid_flight
 
     if declines.end_cycle(ctl, parent_path, node, iteration, output):
         # Her Deny ended this cycle: the next one would put the same call to her again, so the
         # loop waits for her instead, and neither its dry streak nor its breaker reads the cycle.
+        return
+    if mid_flight.cycle_ran_nothing(ctl, f"{parent_path}.body@{iteration}"):
+        _end_skipped_cycle(ctl, parent_path, node, iteration)
         return
     if _iteration_is_dry(ctl, node, parent_path, iteration, output):
         ctl._dry_streaks[parent_path] = ctl._dry_streaks.get(parent_path, 0) + 1
@@ -260,6 +266,74 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
         return
 
     loop_convergence.finish_loop(ctl, parent_path, node, iteration)
+
+
+def _cycle_output(
+    ctl: RunController, path: str, node_id: str, parent_path: str, iteration: int
+) -> Any:
+    """What the cycle that ended on the leaf at *path* produced, for its breaker, dry test and
+    handoff: the leaf's own output, as its own item reads it. Except when the leaf was skipped in
+    a cycle where a step was skipped as asked (the step itself, or one that reads it): it produced
+    nothing of its own, so the cycle is read by what its other steps produced. A cycle with no
+    asked skip (one ending on an untaken branch's reader, say) reads as it always has."""
+    from personalclaw.workflows import mid_flight
+
+    settled = ctl.instances.get(path)
+    cycle = f"{parent_path}.body@{iteration}"
+    if (
+        settled is not None
+        and settled.state == InstanceState.SKIPPED
+        and any(
+            (p == cycle or p.startswith(f"{cycle}."))
+            and inst.state == InstanceState.SKIPPED
+            and inst.degraded_reason == mid_flight.ASKED_SKIP
+            for p, inst in ctl.instances.items()
+        )
+    ):
+        return node_bindings.iteration_output(ctl, parent_path, iteration)[0]
+    return node_bindings.item_output(ctl, path, node_id)
+
+
+def _end_skipped_cycle(ctl: RunController, parent_path: str, node: Node, iteration: int) -> None:
+    """End a cycle that ran nothing, every step in it skipped as asked.
+
+    It produced nothing, so neither the breaker nor the exit test reads it: fed to the breaker,
+    each such cycle was the same output again, and a counted loop escalated as stalled on its third.
+    Steering queued for the loop is taken first, as at any boundary. Then a counted loop runs out
+    its count and any other loop ends there, since each later cycle would skip the same steps;
+    either ends on the latest cycle that ran something (a loop none of whose cycles ran anything is
+    skipped as asked itself). A step after the loop reads that cycle's output."""
+    from personalclaw.workflows import mid_flight
+
+    iteration_context.consume_steering(ctl, parent_path, node, iteration)
+    keep_going = False
+    if loop_mode(node) == LoopMode.COUNTED:
+        keep_going, _reason = loop_should_continue(node, iteration=iteration + 1)
+    ctl.journal.iteration(
+        parent_path,
+        node.id,
+        iteration=iteration,
+        outcome="continue" if keep_going else "skipped",
+        error_signature="",
+        tokens=0,
+    )
+    if keep_going:
+        ctl._iterations[parent_path] = iteration + 1
+        return
+    ran = iteration
+    while ran >= 0 and mid_flight.cycle_ran_nothing(ctl, f"{parent_path}.body@{ran}"):
+        ran -= 1
+    if ran >= 0:
+        loop_convergence.finish_loop(ctl, parent_path, node, ran)
+        return
+    loop_inst = ctl._instance(parent_path)
+    loop_inst.state = InstanceState.SKIPPED
+    loop_inst.completed_at = now_stamp()
+    loop_inst.degraded_reason = mid_flight.ASKED_SKIP
+    ctl.journal.step_skipped(
+        parent_path, node.id, epoch=loop_inst.epoch, actor="engine", reason=mid_flight.ASKED_SKIP
+    )
+    ctl._persist_state()
 
 
 def advance_skipped(ctl: RunController, skipped: list[str]) -> None:

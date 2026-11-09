@@ -2212,6 +2212,9 @@ def run_from(run_id: str, node_id: str, **kw: Any) -> dict[str, Any]:
 
 
 def skip_nodes(run_id: str, node_ids: list[str], *, supervisor: Any = None) -> dict[str, Any]:
+    """Skip *node_ids* in live run *run_id*. The answer says what each skip reaches, and a skip
+    that reaches nothing is refused, saying so, at every door a skip comes through
+    (``mid_flight.skip_refusal``, from ``RunController.submit_mutation``)."""
     controller = _live(run_id, supervisor)
     if controller is None:
         return _service_failure("WF_RUN_NOT_LIVE", f"run {run_id!r} has no live controller")
