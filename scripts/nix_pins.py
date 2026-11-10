@@ -42,6 +42,10 @@ PINS = {
         "the release asks for croniter>=2.0,<3, the cron grammar its expression corpus was "
         "measured against, and nixpkgs carries 6.x."
     ),
+    "idna": (
+        "the release asks for idna>=3.18,<4, the UTS46 table (Unicode 17) Browse maps a host "
+        "with, and nixpkgs carries 3.15."
+    ),
     "sqlite-vec": (
         "nixpkgs builds the binding from the extension's C sources and its metadata says "
         "0.0.0, which the release's sqlite-vec>=0.1,<1 refuses."
