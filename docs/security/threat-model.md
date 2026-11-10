@@ -199,7 +199,8 @@ says what that means.
   an app the fields its manifest lists in `permissions.config` and nothing else, and a
   write to any other field answers `403 config_field_not_declared`
   (`dashboard/handlers/core.py`). Install consent shows the list, and a manifest that
-  names a security setting fails to install (`apps/manifest.py::_config_permission_errors`).
+  names a security setting or an update setting fails to install
+  (`apps/manifest.py::_config_permission_errors`).
   `/api/apps/{name}/config` reaches only the calling app's own settings, and the file
   explorer hides the PersonalClaw home from an app token
   (`file_roots.py::dashboard_roots`), since `config.json` and `mcp.json`

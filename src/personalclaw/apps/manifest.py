@@ -655,26 +655,33 @@ PERMISSION_KEYS: frozenset[str] = frozenset(
 def _config_permission_errors(declared: list[str]) -> list[str]:
     """Install errors for ``permissions.config`` — each entry must name an ordinary setting.
 
-    Two refusals, both about what consent would otherwise misstate. A name that is not an
+    Three refusals, all about what consent would otherwise misstate. A name that is not an
     editable setting would render on the install screen as a grant that reaches nothing. A
-    security setting would render as one the gateway refuses on every request
-    (``config/edit_spec.app_write_refusal``), and reading one is no app's business either: the
-    posture is the owner's to see and change. The registry is ``_EDITABLE_CONFIG``
+    security setting, or a setting that is the owner's alone
+    (``config/edit_spec.OwnerOnlySetting``), would render as one the gateway refuses on every
+    request (``config/edit_spec.app_write_refusal``), and reading one is no app's business either:
+    the posture is the owner's to see and change. The registry is ``_EDITABLE_CONFIG``
     (``config/editable.py``), the one table every config write path validates against — imported
     lazily because only an install needs it.
     """
     if not declared:
         return []
-    from personalclaw.config.edit_spec import security_control
+    from personalclaw.config.edit_spec import owner_only_setting, security_control
     from personalclaw.config.editable import _EDITABLE_CONFIG
 
     errors: list[str] = []
     for entry in declared:
         spec = _EDITABLE_CONFIG.get(entry)
+        owned = owner_only_setting(spec) if spec is not None else None
         if spec is None:
             errors.append(
                 f"permissions.config entry {entry!r} is not a setting PersonalClaw lets anything "
                 "change — name an editable field such as 'voice.echo_filter_enabled'"
+            )
+        elif owned is not None:
+            errors.append(
+                f"permissions.config entry {entry!r} is {owned.kind}. {owned.sentence} Only the "
+                "owner can change it, from Settings"
             )
         elif security_control(spec) is not None:
             errors.append(

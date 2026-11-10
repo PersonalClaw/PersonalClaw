@@ -88,9 +88,11 @@ _EGRESS_HOST_RE = re.compile(
 __all__ = [
     "LARGE_JUMP",
     "SECURITY_SECTIONS",
+    "UPDATE_SETTING",
     "ConfigValueError",
     "LooseningAsk",
     "NotASecurityControl",
+    "OwnerOnlySetting",
     "SecurityControl",
     "app_write_refusal",
     "coerce_edit_value",
@@ -107,6 +109,7 @@ __all__ = [
     "loosens_when_shorter",
     "loosens_when_widened",
     "named",
+    "owner_only_setting",
     "security_control",
     "shown",
     "unconsented_loosening",
@@ -224,6 +227,31 @@ class SecurityControl:
 #: for that: every other question the owner is asked names itself (`http_errors.consent_required`
 #: takes the title from its caller).
 LOOSEN_TITLE = "Loosen a security setting?"
+
+
+@dataclass(frozen=True)
+class OwnerOnlySetting:
+    """A setting no app may write, whatever its manifest lists, and no manifest may list: the
+    owner's alone, as the routes it belongs with are (``apps/permissions.ROUTE_AUTHZ``).
+
+    Unlike a :class:`SecurityControl` it asks the owner nothing: the owner writes it as any
+    setting, in either direction. An app is refused its write in the class's own words
+    (:func:`app_write_refusal`; the settings PATCH answers ``403 update_setting_owner_only``, the
+    one class today, and a second one needs its own code there), and an install that lists it
+    fails (``apps/manifest._config_permission_errors``).
+    """
+
+    #: What the setting is, as a refusal names it: ``"an update setting"``.
+    kind: str
+    #: The class's one sentence, the whole of what a refusal says about why.
+    sentence: str
+
+
+#: The update settings: the owner's alone, as starting an update is.
+UPDATE_SETTING = OwnerOnlySetting(
+    kind="an update setting",
+    sentence="Apps can't change the update settings, as they can't start an update.",
+)
 
 
 @dataclass(frozen=True)
@@ -525,14 +553,27 @@ def security_control(spec: Mapping[str, Any]) -> SecurityControl | None:
     return control if isinstance(control, SecurityControl) else None
 
 
+def owner_only_setting(spec: Mapping[str, Any]) -> OwnerOnlySetting | None:
+    """The field's :class:`OwnerOnlySetting`, or ``None`` when an app may be granted it."""
+    owned = spec.get("owner_only")
+    return owned if isinstance(owned, OwnerOnlySetting) else None
+
+
 def app_write_refusal(field: str, spec: Mapping[str, Any], app: str) -> str:
     """Why the app-scoped caller *app* may not write *field*, or ``""`` when it may.
 
     Value-independent on purpose (see the module docstring): the answer depends only on WHO is
     asking and WHICH field, so it is decided before the value is read or validated, and a refused
-    app learns nothing about the stored value or the field's validation rules.
+    app learns nothing about the stored value or the field's validation rules. A security setting
+    and an :class:`OwnerOnlySetting` are refused; the second in its class's own sentence.
     """
-    if not app or security_control(spec) is None:
+    if not app:
+        return ""
+    owned = owner_only_setting(spec)
+    if owned is not None:
+        who = "Only the owner can change it, from Settings."
+        return f"{field} is {owned.kind}. {owned.sentence} {who}"
+    if security_control(spec) is None:
         return ""
     return (
         f"{field} is a security setting, and an app cannot change it — only the owner can, "
