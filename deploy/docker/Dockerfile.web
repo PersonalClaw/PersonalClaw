@@ -9,10 +9,10 @@
 # on the build platform, and only its built files (/app/web/dist) leave it: every stage whose
 # output runs in the image builds for the target. tests/test_docker_single_container.py holds
 # each of these.
-# node:24.22.0-alpine, the Node `.nvmrc` names, as its multi-arch index. Platform manifests:
-#   linux/amd64 sha256:429bdfbc204b4eabc6438e6d34e4e9d8dd2ca1df8289bcd78cdd3c5db387b7a5
-#   linux/arm64 sha256:5b12456322560dcf9342f7339662bccf8c5665cf0732a8ec8363687aa93c5277
-FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS builder
+# node:24.22.2-alpine, the Node `.nvmrc` names, as its multi-arch index. Platform manifests:
+#   linux/amd64 sha256:ec318aabf188af4e5488847eea4b24452650b9917140563e140762526a37f1df
+#   linux/arm64 sha256:1d9851811f111a340026bff10ecc075d51120788ef172c49337bf0f99e44a008
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/node:24.22.2-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8 AS builder
 
 WORKDIR /app
 

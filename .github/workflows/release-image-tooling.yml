@@ -63,14 +63,14 @@ jobs:
           # sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c.
           driver-opts: image=moby/buildkit:v0.34.0@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8
       - name: Build a two-platform image (no push)
-        # The base is the images' own node:24.22.0-alpine, by its multi-arch index, so each
+        # The base is the images' own node:24.22.2-alpine, by its multi-arch index, so each
         # platform pulls its own manifest. No context: the Dockerfile comes from stdin.
         # `cacheonly` keeps the result in BuildKit and nowhere else.
         run: |
           set -euo pipefail
           docker buildx version
           docker buildx build --platform linux/amd64,linux/arm64 --output type=cacheonly - <<'DOCKERFILE'
-          FROM mirror.gcr.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
+          FROM mirror.gcr.io/library/node:24.22.2-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8
           RUN echo "built for $(uname -m)" && node --version
           DOCKERFILE
           docker buildx inspect --bootstrap | grep -E '^(Driver|BuildKit version|Platforms):'
@@ -104,7 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx build --platform linux/amd64,linux/arm64 --sbom=true --provenance=mode=max --output "type=oci,dest=$RUNNER_TEMP/smoke.oci.tar" - <<'DOCKERFILE'
-          FROM mirror.gcr.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
+          FROM mirror.gcr.io/library/node:24.22.2-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8
           RUN echo "built for $(uname -m)" && node --version
           DOCKERFILE
           python3 -I tools/ci/oci_layout.py "$RUNNER_TEMP/smoke.oci.tar" --name smoke --out "$RUNNER_TEMP/read"
