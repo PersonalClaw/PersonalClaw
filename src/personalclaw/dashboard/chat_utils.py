@@ -464,6 +464,7 @@ _SLASH_COMMAND_HINTS: dict[str, str] = {
     "/model": "Switch the model for this chat",
     "/agent": "Switch the agent for this chat",
     "/effort": "Set reasoning effort for this chat",
+    "/preferences": "Open Chat preferences: this chat's explanations, reply style and Optimize",
     "/project": "Scope this new chat to a project",
     "/goal": "Start a goal loop on a task, from a new chat",
     "/tools": "Open the Tools page",

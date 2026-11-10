@@ -28,13 +28,13 @@
   - img "Nothing running"
   - heading "Good <time of day>, Alex" [level=#]
   - status
+  - status
   - textbox "Message input"
   - button "Add to message"
   - 'button "Agent and model: Agent · Auto"': Agent · Auto
-  - 'button "Reply style: Agent default"': Agent default
+  - button "Chat preferences"
   - 'button "Task mode: Agent"': Agent
   - 'button "Execution boundary: Normal"': Normal
-  - button "Optimize prompt (⌘↵)"
   - button "Voice input"
   - button "Hands-free voice"
   - button "Send message"
@@ -55,6 +55,7 @@
   - option "/model Switch the model for this chat"
   - option "/agent Switch the agent for this chat"
   - option "/effort Set reasoning effort for this chat"
+  - 'option "/preferences Open Chat preferences: this chat''s explanations, reply style and Optimize"'
   - option "/project Scope this new chat to a project"
   - option "/goal Start a goal loop on a task, from a new chat"
   - option "/tools Open the Tools page"

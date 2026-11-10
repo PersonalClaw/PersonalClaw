@@ -473,14 +473,32 @@ no ongoing capture to audit, because the capture ends before the crop overlay ev
 
 ---
 
+## Chat preferences
+
+**Where:** the gear on the chat box, or `/preferences`.
+
+Chat preferences holds this chat's explanations, its reply style and Optimize. A choice there
+applies to this chat only: your defaults and the agent stay as they are, and **Change your
+defaults** opens Settings → Agent. While this chat has a choice of its own, the gear shows a dot
+and its description names what changed. A pick applies at once and says Saved; on a chat your
+first message hasn't created yet, it's held and written as the chat is created, before that
+message is sent. Each section's **Now:** line names what the next turn uses and who chose it.
+
+**Optimize this draft** (`⌘↵`) rewrites your draft as a clearer prompt, using this chat for context.
+The window closes, the caret goes back to your draft, and a line above the chat box says
+**Optimizing your prompt…** until the rewrite lands with its offer to revert it. `⌘↵` in the chat
+box does the same, and `/optimize` optimizes a prompt and sends it.
+
+---
+
 ## Reply style: how the agent writes
 
-**Where:** the feather pill in the composer. An agent's own default is under **Reply style** on
-the agent's form, and the default for every agent is under Settings → Agent defaults →
+**Where:** Chat preferences, the gear on the chat box. An agent's own default is under **Reply
+style** on the agent's form, and the default for every agent is under Settings → Agent defaults →
 **Reply style**.
 
-A reply style changes how replies are written, never what they say: every fact, caveat and
-refusal stays as it would be without it, and so does what the agent may do.
+A reply style changes how replies are written, never what they say: every fact, caveat and refusal
+stays as it would be without it, and so does what the agent may do.
 
 | Style | What it asks for |
 |---|---|
@@ -489,10 +507,10 @@ refusal stays as it would be without it, and so does what the agent may do.
 | Terse | Short and direct: the answer first, no padding, only the reasoning that matters. |
 | Conversational | Fuller and warmer: full sentences, the reasoning and background, an example when it helps. |
 
-**Which style applies.** This conversation's choice wins, then the agent's, then Agent defaults
-(No style unless you change it). The pill names the style in effect and who chose it ("Terse
-(agent)"). **Agent default** resets this conversation so it follows its agent again; choosing
-here never edits the agent. A change applies from the next turn.
+**Which style applies.** This conversation's choice wins, then the agent's, then Agent defaults (No
+style unless you change it). Chat preferences names the style in effect and who chose it ("Now:
+Terse, from the agent"). **Agent default** resets this conversation so it follows its agent again;
+choosing here never edits the agent. A change applies from the next turn.
 
 **A personality's own voice.** Some personalities, such as Retro Terminal, bring a voice of
 their own on a new chat's first turn. A chosen style wins over it: while this chat has a style
@@ -502,21 +520,21 @@ its exact text: a style's section, which every turn adds, or the personality's v
 a new chat's first turn adds (the preview marks it `first_turn_only`), so a turn after that adds
 nothing for it.
 
-**What the next reply carries.** Open the pill: under the styles, a line says what the next turn
-adds, the chosen style on every turn, the personality's voice on a new chat's first turn, or no
+**What the next reply carries.** Open Chat preferences: under the styles, a line says what the next
+turn adds, the chosen style on every turn, the personality's voice on a new chat's first turn, or no
 style instruction, and whether a chosen style is replacing a personality's voice. **Show what is
-sent** shows the exact text, safety rules included. A brand-new chat has nothing to preview
-until its first message creates it.
+sent**, after both sections, shows the exact text, the explanations' section and the safety rules
+included. A brand-new chat has nothing to preview until its first message creates it.
 
 **Your own styles.** Settings → Agent defaults → **Your reply styles** adds, edits and deletes
 styles of your own: a title, a one-line description and the text, up to 4 KB. Each is kept as
-`styles/<name>.md` in your PersonalClaw folder and offered everywhere a style is chosen. An app
-can add styles too, but only when it holds the **replyStyles** permission, which its install
-screen names; its styles carry the app's name in the picker. A style file that is refused is
-listed under **Not loaded** with the file and the reason: one over 4 KB, one that opens or closes
-a style section, or one whose text, title or description names tools, permissions, approvals or
-the sandbox, or speaks of the prompt or the rules around it. The bundled styles are held to the
-same list.
+`styles/<name>.md` in your PersonalClaw folder and offered everywhere a style is chosen. An app can
+add styles too, but only when it holds the **replyStyles** permission, which its install screen
+names; its styles carry the app's name wherever a style is chosen. A style file that is refused is
+listed under **Not loaded** with the file and the reason: one over 4 KB, one that opens or closes a
+style section, or one whose text, title or description names tools, permissions, approvals or the
+sandbox, or speaks of the prompt or the rules around it. The bundled styles are held to the same
+list.
 
 **When a style goes away.** If you delete your style, or its app is disabled or loses the
 permission, a chat or agent that chose it keeps the choice but uses the next level down (the
@@ -527,9 +545,9 @@ app does.
 
 **Explanations.** How replies explain things to you: **No preference**, **Briefly**, **Step by
 step** or **With the background**. Your default is in Settings → Agent → Agent defaults →
-Explanations, and a chat's own choice wins over it. It changes how things are explained, never a
-fact, a caveat or a refusal. It's sent as its own section after the reply style's, and the
-platform's safety rules still come last.
+Explanations, and a chat's own choice in Chat preferences wins over it: **Your default** follows the
+setting. It changes how things are explained, never a fact, a caveat or a refusal. It's sent as its
+own section after the reply style's, and the platform's safety rules still come last.
 
 **How should I explain things?** After setup, a new chat offers this once, as a card that never
 blocks the composer, and not while the quick tour is showing you around: **Briefly**, **Step by

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { aDialogIsOpen } from '../../../ui/aDialogIsOpen'
 import { failureSentence, reportActionFailure } from '../../../app/reportingWrite'
 import { notify } from '../../../app/appSdk'
 import { usePlatform } from '../../../app/usePlatform'
@@ -15,7 +16,8 @@ import { idleRunState } from '../../../lib/workPhase'
 import { rewindPreviewText } from '../../../lib/rewindPreview'
 import { useComposerData } from '../../../lib/useComposerData'
 import { deliverableToOpenSession } from '../sessionDelivery'
-import { useReplyStyle } from './useReplyStyle'
+import { useInTurn, useReplyStyle } from './useReplyStyle'
+import { useExplainChoice } from './useExplainChoice'
 import { sessionTemplatePatch } from '../sessionTemplate'
 import { buildOptimizerContext } from '../optimizerContext'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, pruneBlocks, asSent, takeIn } from '../pasteBlocks'
@@ -62,6 +64,7 @@ const SLASH_HELP = [
   '- `/model` — switch the model for this chat',
   '- `/agent` — switch the agent for this chat',
   '- `/effort` — set the reasoning effort for this chat',
+  '- `/preferences` — open Chat preferences: this chat\u2019s explanations, its reply style and Optimize',
   '- `/project` — scope this new chat to a project (before it starts)',
   '- `/goal <task>` — start a goal loop on the task instead, from a new chat: it works cycle by cycle until the goal is met',
   '- `/tools` — open the Tools page',
@@ -351,7 +354,15 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   // Whether the selection shows the chat's own posture: at once on a new chat, and once the first
   // read is in on an existing one. Until then its task mode is a default, not the chat's.
   const [postureKnown, setPostureKnown] = useState(!sessionId)
-  const replyStyle = useReplyStyle(() => sessionRef.current)
+  // Chat preferences' two hooks write in one queue (`useInTurn`): the server takes the picks in the
+  // order they were made, so the last answer is what the chat holds.
+  const prefWrites = useInTurn()
+  const replyStyle = useReplyStyle(() => sessionRef.current, prefWrites)
+  // An explanations answer carries the whole text the next turn appends: the Reply style section
+  // takes its preview, and only that, so Show what is sent stays exact after either pick.
+  const explain = useExplainChoice(() => sessionRef.current, replyStyle.adoptPreview, prefWrites)
+  // Chat preferences, the gear on the chat box (`ChatPreferences`); `/preferences` opens it.
+  const [preferencesOpen, setPreferencesOpen] = useState(false)
 
   // Restore the composer selection from the resumed session's binding, once both
   // the binding (from detail) and the discovered-agent catalog have loaded. ACP
@@ -381,6 +392,8 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
       if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      // A dialog open over the page (Chat preferences) owns the key: the editor is behind it.
+      if (aDialogIsOpen()) return
       // The composer is a CodeMirror editor (.cm-content), not a <textarea>.
       const cm = composerRef.current?.querySelector<HTMLElement>('.cm-content')
       if (cm) { e.preventDefault(); cm.focus() }
@@ -580,6 +593,18 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
         project_id: projectId || undefined,
       })
       sessionRef.current = created.key
+      // Before the navigate below: it remounts the chat, whose one read of the detail must carry these.
+      // Same contract at session START: the composer already shows these picks, so a swallowed failure
+      // means the brand-new session runs under settings the user can see but does not have.
+      if (acp) await persistSelection('this agent', api.setSessionAcpAgent(created.key, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: selection.model && selection.model !== 'Auto' ? selection.model : undefined }))
+      if (selection.approval !== 'normal') await persistSelection('this approval mode', api.setApprovalMode(selection.approval, created.key))
+      if (selection.taskMode !== 'agent') await persistSelection('this task mode', api.setTaskMode(selection.taskMode, created.key))
+      // Persist a pre-start reasoning-effort pick (applySelection couldn't, since the
+      // session didn't exist yet).
+      if (selection.reasoning) await persistSelection('this reasoning effort', api.setReasoningEffort(created.key, selection.reasoning))
+      await replyStyle.persistOnCreate(created.key)
+      // After the reply style's, so its answer's preview carries both.
+      await explain.persistOnCreate(created.key)
       // The navigate below changes the URL seg from `new` → the session key, which
       // REMOUNTS ChatSession (different React key) — dropping the optimistic user
       // turn we just added. Seed the instant-paint cache with the just-sent user
@@ -599,15 +624,6 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
       // without adding a history entry — and via the router, not a raw
       // history.replaceState bypass.
       navigate(`chat/${created.key}`, { replace: true })
-      // Same contract at session START: the composer already shows these picks, so a swallowed failure
-      // means the brand-new session runs under settings the user can see but does not have.
-      if (acp) await persistSelection('this agent', api.setSessionAcpAgent(created.key, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: selection.model && selection.model !== 'Auto' ? selection.model : undefined }))
-      if (selection.approval !== 'normal') await persistSelection('this approval mode', api.setApprovalMode(selection.approval, created.key))
-      if (selection.taskMode !== 'agent') await persistSelection('this task mode', api.setTaskMode(selection.taskMode, created.key))
-      // Persist a pre-start reasoning-effort pick (applySelection couldn't, since the
-      // session didn't exist yet).
-      if (selection.reasoning) await persistSelection('this reasoning effort', api.setReasoningEffort(created.key, selection.reasoning))
-      await replyStyle.persistOnCreate(created.key)
       return created.key
     })()
     ensureInFlightRef.current = p
@@ -645,6 +661,8 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
         setInput(''); setOpenAgentSignal((n) => n + 1); return true
       case '/effort':
         setInput(''); setOpenReasoningSignal((n) => n + 1); return true
+      case '/preferences':
+        setInput(''); setPreferencesOpen(true); return true
       case '/tools':
         setInput(''); navigate('tools'); return true
       case '/goal':
@@ -1529,10 +1547,11 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
     // posture of a reopened chat instead of the 'persistent' default.
     setMemoryMode((d.memory_mode || 'persistent') as MemoryMode)
     replyStyle.restore(d)
+    explain.restore(d)
   }
 
   return {
     widgetDraft: draft.widget, draftIsAWidgets, sendWithPrompt, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft,
-    setRoutingSuggestion, acpFor, activatePlanMode, startGoalLoop, adoptDetail, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
+    setRoutingSuggestion, acpFor, activatePlanMode, startGoalLoop, adoptDetail, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
   }
 }

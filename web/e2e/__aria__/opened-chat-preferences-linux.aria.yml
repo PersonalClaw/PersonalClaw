@@ -1,0 +1,79 @@
+- navigation:
+  - button "PersonalClaw, Home":
+    - img "PersonalClaw"
+    - text: PersonalClaw
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Chat history":
+    - button "New chat"
+    - searchbox "Search chats"
+    - 'button "Group by: Folders"'
+    - status
+    - text: No chats yet
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Chat history"
+  - button "More actions"
+  - img "Nothing running"
+  - heading "Good <time of day>, Alex" [level=#]
+  - status
+  - status
+  - textbox "Message input"
+  - button "Add to message"
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
+  - button "Chat preferences"
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Execution boundary: Normal"': Normal
+  - button "Voice input"
+  - button "Hands-free voice"
+  - button "Send message" [disabled]
+  - 'button "Project: No project"': No project
+  - button "Show health-check status"
+  - button "Break a goal into tasks"
+  - button "Save a note to my knowledge base"
+  - button "Run a command and explain the output"
+  - button "What can you help me with?"
+  - button "Set up a daily briefing"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"
+- dialog "Chat preferences":
+  - text: Chat preferences
+  - button "Close"
+  - paragraph: For this chat only. Your defaults and the agent stay as they are.
+  - button "Change your defaults"
+  - region "Explanations":
+    - heading "Explanations" [level=#]
+    - status
+    - text: "Now: Your default (No preference)"
+    - radiogroup "Explanations":
+      - radio "Your default (No preference)" [checked]: Your default (No preference) Follows your default, and any change to it.
+      - radio "No preference": No preference The agent explains things its usual way.
+      - radio "Briefly": Briefly The short answer first. Details when you ask.
+      - radio "Step by step": Step by step Numbered steps you can follow.
+      - radio "With the background": With the background The why and the context, then the answer.
+  - region "Reply style":
+    - heading "Reply style" [level=#]
+    - status
+    - text: "Now: Agent default"
+    - radiogroup "Reply style":
+      - radio "Agent default" [checked]: Agent default Follows this agent, then the platform default.
+      - radio "No style": "No style No style instruction: the agent writes as its own prompt says."
+      - radio "Plain": "Plain Plainer prose: the answer first, no filler openers or summary close, the shortest accurate word."
+      - radio "Terse": "Terse Short and direct: the answer first, no padding, only the reasoning that matters."
+      - radio "Conversational": "Conversational Fuller and warmer: full sentences, the reasoning and background, an example when it helps."
+    - paragraph: Changes style only, never a fact, a caveat or a refusal. A choice here applies to this conversation and does not edit the agent.
+  - region "Your draft":
+    - heading "Your draft" [level=#]
+    - button "Optimize this draft ⌘↵" [disabled]
+    - paragraph: Rewrites your draft as a clearer prompt, using this chat for context. You can revert it.

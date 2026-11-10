@@ -127,7 +127,9 @@ describe('every popup container in the tree contains its item type', () => {
       const hasCursor = /key === 'ArrowDown'|key === 'ArrowUp'|useMenuCursor\(|menuCursorKeydown\(/.test(src)
       const rendersRows = /(?:options|filtered|opts|items|rows)\s*\.map\(/.test(src) && /<(?:motion\.)?button/.test(src)
       if (!hasCursor || !rendersRows) return []
-      return [{ file: f.slice(SRC.length + 1), declares: /role="(?:listbox|menu|combobox|grid|tree)"/.test(src) }]
+      // A radiogroup is a container role too: its radios are the rows, and the arrows move the
+      // choice (`ui/ChoiceList`, `ui/Segmented`).
+      return [{ file: f.slice(SRC.length + 1), declares: /role="(?:listbox|menu|combobox|grid|tree|radiogroup)"/.test(src) }]
     })
 
     // Vacuity floors: this matcher does the enumerating, so prove it resolved the known members.

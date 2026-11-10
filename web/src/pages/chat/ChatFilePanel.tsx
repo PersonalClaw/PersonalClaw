@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { aDialogIsOpen } from '../../ui/aDialogIsOpen'
 import { fvs } from '../../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
@@ -80,7 +81,8 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); viewerRef.current?.save() }
-      else if (e.key === 'Escape') { if (expanded) setExpanded(false); else onClose() }
+      // A dialog open over the page owns Escape, as the turn's Stop key yields to it (TurnStatusRow).
+      else if (e.key === 'Escape' && !aDialogIsOpen()) { if (expanded) setExpanded(false); else onClose() }
     }
     window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
   }, [expanded, onClose])

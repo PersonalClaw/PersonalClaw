@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { aDialogIsOpen } from './aDialogIsOpen'
 import { useFocusReturn } from './useFocusReturn'
 import { useResizablePanel } from './useResizablePanel'
 import { createPortal } from 'react-dom'
@@ -104,7 +105,11 @@ export function SidePanel({ title, tooltip, icon, onClose, urlKey, storeKey = 's
     return () => root.style.setProperty('--rightpanel-open', String(Math.max(0, cur() - 1)))
   }, [expanded])
   useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { if (expanded) setExpanded(false); else close() } }
+    // A dialog open over the page owns Escape, as the turn's Stop key yields to it (TurnStatusRow).
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || aDialogIsOpen()) return
+      if (expanded) setExpanded(false); else close()
+    }
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h)
   }, [expanded, close])
   // Escape closed the panel but dropped focus to <body>, throwing a keyboard user back to the top of

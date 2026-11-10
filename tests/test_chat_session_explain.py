@@ -1,7 +1,8 @@
 """This chat's own explanations choice: its route, its meta line and the session's detail.
 
 ``PATCH /api/chat/sessions/{session}/explain`` sets this chat's choice (``""`` follows the owner's
-default again) and answers with the re-resolved state, as the reply style's route does. An absent
+default again) and answers with the re-resolved state, as the reply style's route does, and with
+the reply style's state, whose preview holds the whole text the next turn appends. An absent
 or unknown value is refused and keeps the choice already made. The choice rides the session's meta
 line across a restart, and the detail carries it beside the reply style. An app may set it only on
 a chat it owns, as it may the reply style.
@@ -45,6 +46,20 @@ async def test_the_patch_sets_this_chats_choice_and_answers_the_resolved_state(c
     )
     assert body["explain_default"] == "default"
     assert chat_app._sessions["ex"].explain == "step_by_step"
+
+
+@pytest.mark.asyncio
+async def test_the_answer_carries_the_preview_with_the_explanations_section_in_it(chat_app):
+    """Chat preferences shows what is sent from the answer: an explanations pick keeps it exact."""
+    chat_app.get_or_create_session("ex")
+    async with TestClient(TestServer(_make_app(chat_app))) as client:
+        resp = await client.patch("/api/chat/sessions/ex/explain", json={"explain": "step_by_step"})
+        body = await resp.json()
+    preview = body["reply_style_preview"]
+    assert (preview["explain"], preview["explain_source"]) == ("step_by_step", "conversation")
+    assert "[EXPLANATIONS: Step by step]" in preview["instruction"]
+    assert "Explain things step by step." in preview["instruction"]
+    assert (body["reply_style"], body["reply_style_source"]) == ("", "platform")
 
 
 @pytest.mark.asyncio

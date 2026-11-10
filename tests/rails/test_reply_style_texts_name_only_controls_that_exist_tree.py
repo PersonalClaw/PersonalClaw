@@ -2,7 +2,7 @@
 
 The platform default is ``agent.reply_style``. Settings → Agent defaults carries its row,
 labelled Reply style, so the CHANGELOG's entries, the chat guide, the module, the config
-fields' own descriptions, the agent form and the composer's picker may send the owner there, and
+fields' own descriptions, the agent form and Chat preferences may send the owner there, and
 only while that row exists: each text that names Agent defaults (or, in the CHANGELOG, Settings)
 is held to it. The behaviour is held in
 ``tests/test_reply_style.py``.
@@ -54,8 +54,8 @@ def _texts() -> dict[str, str]:
         "agent form": _region(
             "web/src/pages/agents/AgentForm.tsx", "/** The agent's reply style choices", "\n}\n"
         ),
-        "composer picker": _region(
-            "web/src/ui/composer/controls.tsx", "/** Reply-style picker", "\n}\n"
+        "Chat preferences": _region(
+            "web/src/ui/composer/ReplyStyleChoices.tsx", "/** Reply-style choices", "\n}\n"
         ),
     }
 

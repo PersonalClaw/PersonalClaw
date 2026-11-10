@@ -26,15 +26,15 @@
   - button "Chat history"
   - button "More actions"
   - heading "Good <time of day>, Alex" [level=#]
+  - status
   - img "Listening"
   - status: End with “do it” to send, or say “cancel” to clear.
   - textbox "Message input"
   - button "Add to message"
   - 'button "Agent and model: Agent · Auto"': Agent · Auto
-  - 'button "Reply style: Agent default"': Agent default
+  - button "Chat preferences"
   - 'button "Task mode: Agent"': Agent
   - 'button "Execution boundary: Normal"': Normal
-  - button "Optimize prompt (⌘↵)" [disabled]
   - button "Listening to your microphone — stop recording": Listening
   - button "Hands-free voice" [pressed]
   - button "Send message" [disabled]

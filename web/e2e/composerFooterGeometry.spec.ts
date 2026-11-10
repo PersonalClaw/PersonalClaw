@@ -85,7 +85,7 @@ async function readFooter(page: Page): Promise<Footer> {
         send: find(/^Send message$/),
         task: find(/^Task mode: /),
         boundary: find(/^Execution boundary: /),
-        style: find(/^Reply style: /),
+        prefs: find(/^Chat preferences$/),
         runsOn: find(/^Runs on: /),
         context: find(/^Context$/),
       },
@@ -123,15 +123,16 @@ for (const screen of ['a new chat', 'a chat with a turn', 'a chat with a measure
         await gotoRoute(page, route)
         await expect(page.getByRole('button', { name: /^Execution boundary: / })).toBeVisible()
         const f = await readFooter(page)
-        const { plus, pill, send, task, boundary, style, context } = f.byName
-        for (const [k, b] of Object.entries({ plus, pill, send, task, boundary })) expect(b, `${k} is in the composer`).not.toBeNull()
+        const { plus, pill, send, task, boundary, prefs, context } = f.byName
+        for (const [k, b] of Object.entries({ plus, pill, send, task, boundary, prefs })) expect(b, `${k} is in the composer`).not.toBeNull()
         if (screen === 'a chat with a measured context') expect(context, 'the Context control is in the composer').not.toBeNull()
         expectNothingCollides(f)
         expect(sameRow(plus!, pill!), `+ and the pill share the first row: ${where(plus!)}, ${where(pill!)}`).toBe(true)
         // The send cluster keeps the first row wherever `+`, the shortest pill and it fit: every
         // phone but the narrowest, where it takes a line of its own rather than collide.
         if (width >= 360) expect(sameRow(pill!, send!), `the send cluster is on the first row: ${where(send!)}`).toBe(true)
-        const rest = [task!, boundary!, ...(style ? [style] : []), ...(context ? [context] : [])]
+        // Chat preferences, the gear, sits on the second row with the task mode and the boundary.
+        const rest = [prefs!, task!, boundary!, ...(context ? [context] : [])]
         for (const b of rest) expect(b.top, `${where(b)} is below the first row`).toBeGreaterThanOrEqual(pill!.bottom)
         for (const b of rest) expect(sameRow(b, task!), `${where(b)} shares the second row`).toBe(true)
         if (MAX_COMPOSER_H[width]) {

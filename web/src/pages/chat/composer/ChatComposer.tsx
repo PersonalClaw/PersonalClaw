@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { AlertTriangle, BookText, Boxes, Camera, Check, Clock, CornerDownLeft, EyeOff, ListChecks, Loader2, NotebookPen, Pin, Repeat, X } from 'lucide-react'
 import { api } from '../../../lib/api'
@@ -32,6 +32,8 @@ import { KnowledgeChips } from './KnowledgeChips'
 import { PasteCards } from './PasteCards'
 import { QueueStack } from './QueueStack'
 import { AutoNudgeMenuItem } from './AutoNudgeMenuItem'
+import { ChatPreferencesGear, ChatPreferencesWindow, changedHere } from './ChatPreferences'
+import { returnFocusTo } from '../../../ui/useFocusTrap'
 import { ExecutionBoundary, PERMISSION_MODES, TaskModePill, said, useBoundaryReading } from './ExecutionBoundary'
 import { MEMORY_MODES } from '../memoryModeCopy'
 import { WidgetDraftChips } from './WidgetDraftChips'
@@ -44,13 +46,15 @@ import { publishContextReading, setContextPinned, useContextPinned } from '../..
 // notices, the notice line, uploads and their progress, the attachment, knowledge and paste chips,
 // the revert-optimize offer, the steers and the queue, the pickers and the crop step, the skills
 // review, the routing chip, the organize chip, the plan gate, the floor-model label, and a new
-// chat's project. In the composer's footer, beside the agent-and-model pill: the task mode and the
+// chat's project. In the composer's footer, beside the agent-and-model pill: Chat preferences (this
+// chat's explanations, its reply style and Optimize, `ChatPreferences`), the task mode and the
 // Execution Boundary control (`ExecutionBoundary`), where the next turn may act. Its state and its
 // actions are `useChatComposer`'s.
 
+/** Optimize is in Chat preferences, not the footer: ⌘↵ and `/optimize` still reach it. */
 const CHAT_CONTROLS: ComposerControls = {
   agent: true, model: true, approval: false, reasoning: true,
-  attach: true, mic: true, optimize: true, slash: true,
+  attach: true, mic: true, optimize: false, slash: true,
 }
 
 /** The ask before a switch of the open chat `session`'s model: the gateway says whether to ask and
@@ -89,10 +93,16 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
   /** The reply being read out, which hands-free waits on. */
   speakingTurn: number | null
 }) {
-  const { acpFor, activatePlanMode, startGoalLoop, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion, widgetDraft, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft, sendWithPrompt } = composer
+  const { acpFor, activatePlanMode, startGoalLoop, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, focusComposerSoon, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion, widgetDraft, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft, sendWithPrompt } = composer
   const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, contextParts, sessionCost, autoChain, startedBy, workingDir } = stream
   // The status-line pin is the owner's; the reading it shows is this chat's, live, and goes with it.
   const contextPinned = useContextPinned()
+  // What runs once Chat preferences has gone: Optimize this draft puts the caret back in the editor
+  // after the window's trap has given focus back to the gear.
+  const afterPreferences = useRef<(() => void) | null>(null)
+  // The gear's box: a click doesn't focus a button in every browser, so closing gives the focus back
+  // to the gear whether a click or a key opened it.
+  const gearWrap = useRef<HTMLSpanElement>(null)
   useEffect(() => {
     publishContextReading(sessionId ? { pct: contextPct, window: contextWindow, parts: contextParts, cost: sessionCost } : null)
   }, [sessionId, contextPct, contextWindow, contextParts, sessionCost])
@@ -185,6 +195,16 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
       <KnowledgeChips items={mentionedKnowledge}
         onRemove={(id) => setMentionedKnowledge((prev) => prev.filter((k) => k.id !== id))} />
       <PasteCards blocks={livePasteBlocks} onRemove={removePaste} />
+      {/* The optimizer at work, said where the rewrite will land: Optimize this draft, ⌘↵ and
+          `/optimize` have no button of their own in the footer to show it on. Always mounted, so a
+          screen reader hears it start. */}
+      <div role="status" aria-live="polite">
+        {optimizing && (
+          <span data-type="caption" className="mb-2 flex items-center gap-1.5 text-on-surface-var">
+            <Loader2 size={12} className="shrink-0 animate-spin text-primary" aria-hidden /> Optimizing your prompt…
+          </span>
+        )}
+      </div>
       {/* revert-optimize: the optimize rewrite replaces the draft in place, so
           offer a one-click undo back to what the user originally typed. */}
       {preOptimize !== null && (
@@ -305,7 +325,6 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
         <ComposerStage ref={composerRef} settled={!started} value={input} onChange={(v) => { editInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} phase={turnPhase} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
-          replyStyle={{ ...replyStyle.pill, onSelect: (s) => void replyStyle.pill.onSelect(s) }}
           onOpenPrompts={() => setPromptPaletteOpen(true)}
           plusMenuExtra={(close) => (
             <>
@@ -372,6 +391,8 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
           screenShare={{ available: screenShare.available, sharing: screenShare.sharing, disabledReason: screenShare.disabledReason, onToggle: screenShare.toggle }}
           hostPills={(
             <>
+              <ChatPreferencesGear wrapRef={gearWrap} open={preferencesOpen} changed={changedHere(replyStyle.pill, explain.choice)}
+                onOpen={() => { afterPreferences.current = () => returnFocusTo(gearWrap.current?.querySelector('button')); setPreferencesOpen(true) }} />
               <TaskModePill value={selection.taskMode ?? 'agent'} onChoose={chooseTaskMode} />
               {/* In an app's conversation the app's grant decides every turn and a choice here
                   would be overwritten by it, so the permission mode shows that grant and is not
@@ -384,6 +405,15 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
             </>
           )} />
       </div>
+      <AnimatePresence onExitComplete={() => { const then = afterPreferences.current; afterPreferences.current = null; then?.() }}>
+        {preferencesOpen && (
+          <ChatPreferencesWindow replyStyle={replyStyle.pill} explain={explain.choice} readHomeDefault={() => { void explain.readHomeDefault() }}
+            canOptimize={input.trim().length > 0} optimizing={optimizing}
+            onOptimize={() => { afterPreferences.current = focusComposerSoon; setPreferencesOpen(false); void optimize() }}
+            onChangeDefaults={() => { afterPreferences.current = null; setPreferencesOpen(false); navigate('settings/agent') }}
+            onClose={() => setPreferencesOpen(false)} />
+        )}
+      </AnimatePresence>
       {/* CREATE-TIME session setup — the project binding, frozen once the chat starts, so it
           is NOT a composer control (the composer's controls stay live for the whole chat); it
           lives just below the new-chat composer and disappears once started. Keyed off

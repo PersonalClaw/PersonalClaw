@@ -78,7 +78,7 @@ describe('Agent defaults › Explanations', () => {
   it('says what it changes and that it never changes a fact', async () => {
     await mountPanel()
     await screen.findByRole('button', { name: 'Explanations: Step by step' })
-    expect(screen.getByText('How replies explain things to you. Changes how things are explained, never a fact, a caveat or a refusal.')).toBeTruthy()
+    expect(screen.getByText('How replies explain things to you. Changes how things are explained, never a fact, a caveat or a refusal. A chat can choose its own in Chat preferences.')).toBeTruthy()
   })
 
   it('is found by Settings search', async () => {

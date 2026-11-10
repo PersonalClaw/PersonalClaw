@@ -125,29 +125,10 @@ export interface ComposerProps {
     disabledReason?: string
     onToggle: () => void
   }
-  /** Reply style — how the agent writes its replies, per conversation.
-   *  Absent → no control (the goal composer has no conversation to scope one to).
-   *  `effective`/`source` are the BACKEND's resolution; the composer displays them and
-   *  never re-derives the order. */
-  replyStyle?: {
-    choice: string
-    effective: string
-    source: string
-    agentDefault: string
-    /** `by` names the app that adds a style (an app's style only). */
-    styles: { id: string; title: string; description: string; by?: string }[]
-    /** The backend's preview of what the next turn carries for its voice; null before the chat
-     *  exists. Shown in the picker as it arrives. */
-    preview?: {
-      applies: 'style' | 'persona' | 'none'
-      style: string; persona: string
-      instruction: string; first_turn_only: boolean; refused: string
-    } | null
-    onSelect: (style: string) => void
-  }
-  /** Pills a host owns, drawn in the toolbar after the built-in ones: the chat's task mode and
-   *  Execution Boundary control (what the next turn may do, and where), and the loop composer's
-   *  "Runs on", a choice that belongs to what that host creates. */
+  /** Pills a host owns, drawn in the toolbar after the built-in ones: the chat's Chat preferences
+   *  gear (its explanations, reply style and Optimize), then its task mode and Execution Boundary
+   *  control (what the next turn may do, and where), and the loop composer's "Runs on", a choice
+   *  that belongs to what that host creates. */
   hostPills?: ReactNode
   /** When true, a draft can be sent while a turn runs instead of being dropped. */
   canQueue?: boolean

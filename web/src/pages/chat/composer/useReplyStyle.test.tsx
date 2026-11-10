@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 // ── The chat's reply style: restored from the backend's resolution, never derived here ─────────
 //
-// The hook holds what the composer's picker shows for the open chat. It adopts the backend's
+// The hook holds what Chat preferences' Reply style section shows for the open chat. It adopts the backend's
 // RESOLVED style and source (from the session detail and from each PATCH's answer) instead of
 // working one out from the conversation's choice and the agent's style, and a pick made before
 // the chat exists is held as a choice and persisted when the chat is created.
@@ -79,13 +79,59 @@ describe('useReplyStyle', () => {
     expect(result.current.pill).toMatchObject({ choice: '', effective: 'conversational', source: 'agent' })
   })
 
-  it('a failed PATCH is told, and the picker keeps what it showed', async () => {
+  it('a failed PATCH is told, and the section goes back to what it showed', async () => {
     h.setSessionReplyStyle.mockRejectedValue(new Error('gateway refused'))
     const { result } = renderHook(() => useReplyStyle(() => 's1'))
     act(() => result.current.restore(resolved({ reply_style: 'terse' })))
-    await act(async () => { await result.current.pill.onSelect('default') })
-    expect(h.notify).toHaveBeenCalledWith("Couldn't apply this reply style to this session: gateway refused", 'error')
+    let said = ''
+    await act(async () => { said = await result.current.pill.onSelect('default') })
+    expect(said).toBe('failed')
+    expect(h.notify).toHaveBeenCalledWith("Couldn't save this chat's reply style: gateway refused", 'error')
     expect(result.current.pill.choice).toBe('terse')
+  })
+
+  it("a refused pick's line and notice say it in plain words, naming no route, field or id", async () => {
+    // The server's own sentence for a style it no longer lists (`api_chat_session_reply_style`).
+    const sentence = "That reply style isn't available. Pick one from the list."
+    h.setSessionReplyStyle.mockRejectedValue(new Error(sentence))
+    const { result } = renderHook(() => useReplyStyle(() => 's1'))
+    act(() => result.current.restore(resolved({ reply_style: 'terse' })))
+    await act(async () => { await result.current.pill.onSelect('default') })
+    const line = result.current.pill.refused
+    const notice = String(h.notify.mock.calls.at(-1)?.[0])
+    for (const said of [line, notice]) for (const word of ['/api/', 'reply_style', 'session']) expect(said).not.toContain(word)
+    expect([line, notice]).toEqual([sentence, `Couldn't save this chat's reply style: ${sentence}`])
+  })
+
+  it('a pick shows at once, before its answer', async () => {
+    let answer: (v: unknown) => void = () => {}
+    h.setSessionReplyStyle.mockReturnValue(new Promise((r) => { answer = r }))
+    const { result } = renderHook(() => useReplyStyle(() => 's1'))
+    let pending: Promise<string> = Promise.resolve('')
+    act(() => { pending = result.current.pill.onSelect('terse') })
+    expect(result.current.pill.choice).toBe('terse')
+    await act(async () => { answer(resolved()); expect(await pending).toBe('saved') })
+  })
+
+  it('picks reach the server one after another: an overtaken one is not sent, and a refused last one goes back to the one before it', async () => {
+    const calls: { style: string; ok: (v: unknown) => void; no: (e: Error) => void }[] = []
+    h.setSessionReplyStyle.mockImplementation((_s: string, style: string) => new Promise((ok, no) => { calls.push({ style, ok, no }) }))
+    const { result } = renderHook(() => useReplyStyle(() => 's1'))
+    let first: Promise<string> = Promise.resolve('')
+    let second: Promise<string> = Promise.resolve('')
+    let third: Promise<string> = Promise.resolve('')
+    await act(async () => { first = result.current.pill.onSelect('terse') })
+    await act(async () => { second = result.current.pill.onSelect('default') })
+    await act(async () => { third = result.current.pill.onSelect('conversational') })
+    expect(calls.map((c) => c.style)).toEqual(['terse'])
+    expect(result.current.pill.choice).toBe('conversational')
+    await act(async () => { calls[0].ok(resolved({ reply_style: 'terse' })) })
+    await waitFor(() => expect(calls.map((c) => c.style)).toEqual(['terse', 'conversational']))
+    await act(async () => { calls[1].no(new Error('gateway refused')) })
+    expect([await first, await second, await third]).toEqual(['stale', 'stale', 'failed'])
+    expect(result.current.pill.choice).toBe('terse')
+    expect(result.current.pill.refused).toBe('gateway refused')
+    expect(h.notify).toHaveBeenCalledTimes(1)
   })
 
   it('a pick before the chat exists is held, then persisted when it is created', async () => {
@@ -127,12 +173,16 @@ function propsOf(src: string, tag: string): string[] {
   return [...top.matchAll(/(?:^|\s)([A-Za-z]\w*)=/g)].map((m) => m[1])
 }
 
-describe('the chat composer hands the reply style to the picker', () => {
+describe('the chat composer hands the reply style to Chat preferences', () => {
   const CHAT_COMPOSER = readFileSync(join(process.cwd(), 'src/pages/chat/composer/ChatComposer.tsx'), 'utf8')
 
-  it('ComposerStage is given the hook\'s state, so the chat shows its picker', () => {
-    const props = propsOf(CHAT_COMPOSER, 'ComposerStage')
-    expect(props, 'ComposerStage moved or lost its props, so this reads nothing').toContain('onSend')
-    expect(props).toContain('replyStyle')
+  it('ChatPreferencesWindow is given the hook\'s state, and the composer\'s footer is not', () => {
+    const prefs = propsOf(CHAT_COMPOSER, 'ChatPreferencesWindow')
+    expect(prefs, 'ChatPreferencesWindow moved or lost its props, so this reads nothing').toContain('onClose')
+    expect(prefs).toContain('replyStyle')
+    expect(prefs).toContain('explain')
+    const stage = propsOf(CHAT_COMPOSER, 'ComposerStage')
+    expect(stage, 'ComposerStage moved or lost its props, so this reads nothing').toContain('onSend')
+    expect(stage).not.toContain('replyStyle')
   })
 })

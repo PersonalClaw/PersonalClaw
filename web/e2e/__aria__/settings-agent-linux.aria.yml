@@ -63,7 +63,7 @@
     - 'button "Reply style: Plain"': Plain
     - 'button "Reply style: Terse"': Terse
     - 'button "Reply style: Conversational"': Conversational
-    - text: Explanations How replies explain things to you. Changes how things are explained, never a fact, a caveat or a refusal.
+    - text: Explanations How replies explain things to you. Changes how things are explained, never a fact, a caveat or a refusal. A chat can choose its own in Chat preferences.
     - status
     - 'button "Explanations: No preference" [pressed]': No preference
     - 'button "Explanations: Briefly"': Briefly
@@ -77,7 +77,7 @@
     - spinbutton "Approval wait": "#"
     - text: min
     - heading "Your reply styles" [level=#]
-    - paragraph: "Styles of your own, offered beside the bundled ones in the composer, on an agent and here. Tone guidance only, up to # KB: a style that names tools, permissions, approvals or the sandbox, speaks of the prompt or the rules around it, or opens or closes a style section, is refused. Changes style only, never a fact, a caveat or a refusal."
+    - paragraph: "Styles of your own, offered beside the bundled ones in Chat preferences, on an agent and here. Tone guidance only, up to # KB: a style that names tools, permissions, approvals or the sandbox, speaks of the prompt or the rules around it, or opens or closes a style section, is refused. Changes style only, never a fact, a caveat or a refusal."
     - list
     - button "New style"
     - heading "Runners" [level=#]

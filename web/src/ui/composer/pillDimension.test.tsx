@@ -183,10 +183,11 @@ describe('the rail', () => {
   })()
 
   it('finds every pill trigger (not vacuously green)', () => {
-    // Three at the time of writing (agent-and-model, permission mode, reply style). If another
-    // pill appears, `dimension` being a REQUIRED prop means typecheck stops it before this test
-    // does — this floor is here so the assertion below cannot pass by matching nothing.
-    expect(sites.length, 'the matcher must find the pill triggers').toBeGreaterThanOrEqual(3)
+    // Two at the time of writing (agent-and-model, permission mode): the reply style pill moved
+    // into Chat preferences. If another pill appears, `dimension` being a REQUIRED prop means
+    // typecheck stops it before this test does — this floor is here so the assertion below cannot
+    // pass by matching nothing.
+    expect(sites.length, 'the matcher must find the pill triggers').toBeGreaterThanOrEqual(2)
   })
 
   it('has no pill trigger without a dimension', () => {

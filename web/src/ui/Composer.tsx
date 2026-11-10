@@ -5,7 +5,7 @@ import { IconButton } from './IconButton'
 import { duration, spring, physics, expr, sweep } from '../design/motion'
 import { AgentOrb, ORB_LOOKS } from './AgentOrb'
 import { voiceOrbPhase } from './composer/voiceOrb'
-import { AgentModelPill, ApprovalPill, ReplyStylePill, PlusMenu } from './composer/controls'
+import { AgentModelPill, ApprovalPill, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
 import { StopSweep } from './composer/StopSweep'
@@ -39,15 +39,15 @@ const FOCUS_RING = { outlineWidth: '2px', outlineStyle: 'solid', outlineColor: '
 
 /** The one configurable composer — used by Chat and the goal composer. `controls` picks
  *  which inline pills + "+"-menu items appear; `data`/`selection` feed real
- *  agent/model/mode options. Pill cluster: [+] agent-and-model · approval ·
- *  reply style … [mic] [send]. Textarea auto-grows to a user-resizable max. */
+ *  agent/model/mode options. Pill cluster: [+] agent-and-model · (approval where
+ *  enabled) · the host's pills … [mic] [send]. Textarea auto-grows to a user-resizable max. */
 export function Composer({
   value, onChange, onSend, streaming, phase, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, contextParts, contextActions, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
-  replyStyle, sendHeldReason, sendHeldEverywhere = false, onReplace, onHandsFreeStart, draftHoldsWidgetMessage, hostPills, settled = false,
+  sendHeldReason, sendHeldEverywhere = false, onReplace, onHandsFreeStart, draftHoldsWidgetMessage, hostPills, settled = false,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -200,7 +200,7 @@ export function Composer({
 
   const sel = selection
   // The footer's controls in two groups: what the next message is (`+`, and who answers it), then
-  // how the turn runs (the reply style, and the host's task mode and Execution Boundary). Wide, they
+  // how the turn runs (the host's pills: the chat's Chat preferences, task mode and Execution Boundary). Wide, they
   // share one row beside the send cluster; in the chat's reading column (768 px, #5718) that row is
   // tight, so it never wraps and the first group gives up width first, its pill truncating its label.
   // On a phone (#3808: at 390 the footer wrapped a
@@ -212,7 +212,7 @@ export function Composer({
   // by classes alone, so crossing the breakpoint keeps every control mounted and Send keeps its focus.
   const hasLead = !!controls.attach || !!controls.agent || !!controls.model
   const hasContext = contextPct !== undefined || contextWindow !== undefined || !!sessionCost
-  const hasRest = !!controls.approval || !!replyStyle || !!hostPills || hasContext
+  const hasRest = !!controls.approval || !!hostPills || hasContext
   // A host with no first group (the loop composer) keeps the one wrapping row at every width.
   const twoRows = isMobile && hasLead
   const lead = (
@@ -233,11 +233,6 @@ export function Composer({
   const rest = (
     <>
       {controls.approval && <ApprovalPill value={sel?.approval ?? 'normal'} onSelect={(m) => onSelect?.({ approval: m })} />}
-      {/* Reply style — feature-detected on the prop, not a `controls` flag:
-          it needs a conversation to scope itself to, and the goal composer has none.
-          Always rendered when present, including at Default, so a change in how replies
-          read is attributable to a control the owner can see. */}
-      {replyStyle && <ReplyStylePill {...replyStyle} />}
       {hostPills}
       {/* Context and cost, collapsed until opened: no number shows until the owner opens this or
           pins it to the status line. */}

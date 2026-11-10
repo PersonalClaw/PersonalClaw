@@ -14,7 +14,7 @@ const TABLE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', '
 const LABELS = (JSON.parse(readFileSync(TABLE, 'utf8')) as { id: string; label: string }[]).map((r) => r.label)
 /** The choice the answered config states: not the default, so the pressed pill is one a person picked. */
 const CHOSEN = 'step_by_step'
-const HINT = 'How replies explain things to you. Changes how things are explained, never a fact, a caveat or a refusal.'
+const HINT = 'How replies explain things to you. Changes how things are explained, never a fact, a caveat or a refusal. A chat can choose its own in Chat preferences.'
 
 /** Answers the page's config read with the run's own config, its explanation set to {@link CHOSEN}.
  *  Every other request, and any write, goes to the run's gateway as it would. */

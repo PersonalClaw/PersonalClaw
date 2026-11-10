@@ -7,8 +7,8 @@ import type { ComposerData } from './types'
 // At 390 px the footer wrapped one control per row, with `+` alone on the first, so the composer
 // grew to 316 px against #3804's 276. On a phone the footer is two rows: `+` and the
 // agent-and-model pill on the first, beside the send cluster, the pill truncating its label rather
-// than wrapping under `+`; the composer's other controls (the reply style, the host's task mode and
-// Execution Boundary, and the Context control once there is a reading) on the second, their pills
+// than wrapping under `+`; the composer's other controls (the chat's Chat preferences gear, the host's
+// task mode and Execution Boundary, and the Context control once there is a reading) on the second, their pills
 // capped so all four share it. A host with no first
 // group (the loop composer) and any wider composer keep the one wrapping row. Both layouts are one
 // tree, so crossing the breakpoint remounts nothing. jsdom lays nothing out, so this pins the
@@ -28,6 +28,7 @@ vi.mock('../../lib/api', async (orig) => {
 
 const { Composer } = await import('../Composer')
 const { PillButton } = await import('./controls')
+const { ChatPreferencesGear } = await import('../../pages/chat/composer/ChatPreferences')
 
 const DATA = {
   agents: [{ name: 'researcher' }],
@@ -62,8 +63,8 @@ function composer(controls = CHAT_CONTROLS) {
   render(
     <Composer value="" onChange={() => {}} onSend={() => {}} onAttach={() => {}} onOpenPrompts={() => {}} controls={controls} data={DATA}
       selection={{ agent: 'researcher', model: 'Acme:deep', approval: 'normal', taskMode: 'agent', reasoning: '' }}
-      replyStyle={{ choice: '', effective: 'default', source: 'default', agentDefault: 'default', styles: [{ id: 'default', title: 'Default', description: '' }], onSelect: () => {} }}
       hostPills={<>
+        <ChatPreferencesGear open={false} onOpen={() => {}} changed={[]} />
         <PillButton icon={null} label="Agent" dimension="Task mode" open={false} toggle={() => {}} />
         <PillButton icon={null} label="Normal" dimension="Execution boundary" open={false} toggle={() => {}} />
       </>} />,
@@ -99,7 +100,7 @@ describe('on a phone', () => {
 
   it('puts every other control in the second row, a line of its own after the send cluster', () => {
     composer()
-    for (const name of ['Task mode: Agent', 'Execution boundary: Normal', /^Reply style/]) expect(rowOf(name), String(name)).toBe('rest')
+    for (const name of ['Task mode: Agent', 'Execution boundary: Normal', 'Chat preferences']) expect(rowOf(name), String(name)).toBe('rest')
     const rest = document.querySelector('[data-composer-row="rest"]') as HTMLElement
     expect(rest.className).toMatch(/\border-last\b/)
     expect(rest.className).toMatch(/\bbasis-full\b/)
@@ -131,7 +132,7 @@ describe('wider than a phone', () => {
   it('keeps every control in one row beside the send cluster', () => {
     composer()
     expect(footer().getAttribute('data-composer-footer')).toBe('one-row')
-    for (const name of ['Add to message', /^Agent and model: /, 'Task mode: Agent', 'Execution boundary: Normal', /^Reply style/]) {
+    for (const name of ['Add to message', /^Agent and model: /, 'Task mode: Agent', 'Execution boundary: Normal', 'Chat preferences']) {
       expect(rowOf(name), String(name)).toBe('lead')
     }
     expect(document.querySelector('[data-composer-row="rest"]')).toBeNull()

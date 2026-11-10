@@ -28,13 +28,13 @@
   - img "Nothing running"
   - heading "Good <time of day>, Alex" [level=#]
   - status
+  - status
   - textbox "Message input"
   - button "Add to message"
   - 'button "Agent and model: Agent · Auto"': Agent · Auto
-  - 'button "Reply style: Agent default"': Agent default
+  - button "Chat preferences"
   - 'button "Task mode: Agent"': Agent
   - 'button "Execution boundary: Normal"': Normal
-  - button "Optimize prompt (⌘↵)" [disabled]
   - button "Voice input"
   - button "Hands-free voice"
   - button "Send message" [disabled]
