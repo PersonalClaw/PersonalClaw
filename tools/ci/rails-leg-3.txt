@@ -14,6 +14,7 @@ tests/rails/test_every_socket_strips_the_sign_in_pair_tree.py
 tests/rails/test_function_size_tree.py
 tests/rails/test_http_error_codes_append_only_tree.py
 tests/rails/test_keychain_namespace_census.py
+tests/rails/test_merge_controller_gate_plants_tree.py
 tests/rails/test_model_reach_census_tree.py
 tests/rails/test_no_await_walks_shared_state_tree.py
 tests/rails/test_no_security_log_write_holds_the_event_loop_tree.py

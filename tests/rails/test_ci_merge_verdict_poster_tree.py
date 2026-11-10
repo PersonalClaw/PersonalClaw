@@ -253,9 +253,16 @@ def _problems(text: str) -> list[str]:
     return found
 
 
+#: The runs the poster wakes on: Merge and the four that judge a head again, and those five with
+#: each gate's (tools/ci/workflows.py's GATES). Either list is the beside shape's: the change that
+#: puts the gates in the wake lands after the one that reads them, and until it does, a head judged
+#: while a gate's run was going is judged again by the sweep or at the head's next wake.
+_WAKES_BEFORE = [workflows.NAMES[workflows.MERGE], "Dependency review", "CodeQL", "Contract", "DCO"]
+_WAKES = [*_WAKES_BEFORE, *(gate.name for gate in workflows.GATES)]
+
+
 def _shape(on: object) -> str | None:
     """``beside`` when the poster's triggers are the beside shape's, else None."""
-    names = [workflows.NAMES[workflows.MERGE], "Dependency review", "CodeQL", "Contract", "DCO"]
     both = {"check_run": {"types": ["completed"]}, "schedule": [{"cron": "*/10 * * * *"}]}
     if not isinstance(on, dict) or set(on) != {"workflow_run", "workflow_dispatch", *both}:
         return None
@@ -264,7 +271,11 @@ def _shape(on: object) -> str | None:
     head = inputs.get("head") if isinstance(inputs, dict) else None
     if (
         all(on[k] == v for k, v in both.items())
-        and on["workflow_run"] == {"workflows": names, "types": ["in_progress", "completed"]}
+        and on["workflow_run"]
+        in (
+            {"workflows": names, "types": ["in_progress", "completed"]}
+            for names in (_WAKES_BEFORE, _WAKES)
+        )
         and set(dispatch) == {"inputs"}
         and set(inputs) == {"head"}
         and isinstance(head, dict)
@@ -333,11 +344,14 @@ _DISPATCH_TOKEN = (
 
 
 #: The poster's wake, which workflows' runs it judges, as the tree spells it, in either shape (its
-#: types are ``[completed]``, or ``[in_progress, completed]`` beside): a plant anchored here reads
-#: a tree that lists the DCO run as well as one that does not.
+#: types are ``[completed]``, or ``[in_progress, completed]`` beside) and its list in either
+#: spelling (``[...]``, or one name a line): a plant anchored here reads a tree that lists the DCO
+#: run as well as one that does not.
 _WAKE = "<the poster's workflow_run wake>"
 _WAKE_LIST = "<the poster's workflows list>"
-_WAKE_LINES = re.compile(r"    (workflows: \[[^\]\n]*\])\n    types: \[[^\]\n]*\]\n")
+_WAKE_LINES = re.compile(
+    r"    (workflows:(?: \[[^\]\n]*\]|(?:\n      - [^\n]+)+))\n    types: \[[^\]\n]*\]\n"
+)
 
 
 def _anchored(text: str, old: str, new: str) -> tuple[str, str]:
@@ -390,6 +404,18 @@ def _anchored(text: str, old: str, new: str) -> tuple[str, str]:
         (
             _WAKE_LIST,
             'workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]',
+            "runs on",
+        ),
+        (
+            _WAKE_LIST,
+            'workflows: ["Merge", "Dependency review", "CodeQL", "Contract", "DCO", "Action pins",'
+            ' "Release image tooling"]',
+            "runs on",
+        ),
+        (
+            _WAKE_LIST,
+            'workflows: ["Merge", "Dependency review", "CodeQL", "Contract", "DCO", "Nix",'
+            ' "Action pins"]',
             "runs on",
         ),
         (
@@ -474,6 +500,23 @@ def test_a_planted_edit_of_the_poster_fails(old: str, new: str, says: str) -> No
     assert any(says in p for p in _problems(text.replace(old, new))), _problems(
         text.replace(old, new)
     )
+
+
+def _spelled(names: list[str], *, block: bool) -> str:
+    if block:
+        return "workflows:" + "".join(f"\n      - {name}" for name in names)
+    return "workflows: [" + ", ".join(f'"{name}"' for name in names) + "]"
+
+
+@pytest.mark.parametrize("names", [_WAKES_BEFORE, _WAKES], ids=["the five", "with the gates"])
+@pytest.mark.parametrize("block", [False, True], ids=["on one line", "one name a line"])
+def test_either_wake_list_in_either_spelling_keeps_the_trust_shape(
+    names: list[str], block: bool
+) -> None:
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    old, new = _anchored(text, _WAKE_LIST, _spelled(names, block=block))
+    assert text.count(old) == 1, f"the wake's list is not once: {old!r}"
+    assert _problems(text.replace(old, new)) == []
 
 
 #: Each event the poster can be started by, and when its jobs take a runner: ``head``, a pull

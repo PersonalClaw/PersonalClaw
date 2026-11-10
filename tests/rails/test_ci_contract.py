@@ -58,6 +58,7 @@ from tools.ci import jobs as run_jobs
 from tools.ci import merge_decision
 from tools.ci import plan as ci_plan
 from tools.ci import rails_census, shards, shell_installs, supply_chain, verdict
+from tools.ci import workflows as ci_workflows
 
 #: An exact release, ``X.Y.Z``.
 _EXACT = re.compile(r"\d+\.\d+\.\d+")
@@ -16766,6 +16767,169 @@ THE_RENDER_SMOKE_HAS_A_COPY_IN_CI = Row(
 )
 
 ROWS = (*ROWS, THE_RENDER_SMOKE_HAS_A_COPY_IN_CI)
+
+
+# ── Every workflow a pull request starts is judged by the merge verdict, or says why not ─────────
+#
+# A workflow of its own that a pull request's paths start runs on the head, and nothing read it
+# until it was a gate of the merge verdict (tools/ci/workflows.py's GATES): a head red there
+# could merge under a green verdict. So every workflow with a pull_request, pull_request_target
+# or merge_group trigger is one the verdict reads itself (READ), a gate, or named in NOT_GATING
+# with why it gates nothing; one whose pull_request runs by a paths filter (paths or
+# paths-ignore) is a gate, never the last.
+# It is read from the tree's own lists, so a head that adds such a workflow lists it in the same
+# change, and its core review reads the line.
+
+_PR_WORKFLOWS = ".github/workflows"
+
+
+def _pull_triggered(root: Path) -> dict[str, tuple[list[str], bool]]:
+    """Each workflow of the tree a pull request's events start: its events, and whether its
+    pull_request trigger is filtered by paths (``paths`` or ``paths-ignore``)."""
+    found: dict[str, tuple[list[str], bool]] = {}
+    folder = root / _PR_WORKFLOWS
+    for path in sorted([*folder.glob("*.yml"), *folder.glob("*.yaml")]) if folder.is_dir() else []:
+        on = ci_workflows.triggers(yaml.safe_load(path.read_text(encoding="utf-8")))
+        events = [e for e in ci_workflows.PULL_EVENTS if e in on]
+        if events:
+            spec = on.get("pull_request")
+            filtered = isinstance(spec, dict) and bool({"paths", "paths-ignore"} & set(spec))
+            found[path.name] = (events, filtered)
+    return found
+
+
+def _pull_census_check(root: Path) -> list[str]:
+    bad: list[str] = []
+    gates = [g.file for g in ci_workflows.GATES]
+    lists = {
+        "READ": list(ci_workflows.READ),
+        "GATES": gates,
+        "NOT_GATING": list(ci_workflows.NOT_GATING),
+    }
+    triggered = _pull_triggered(root)
+    for name, (events, filtered) in triggered.items():
+        held = [k for k, files in lists.items() if name in files]
+        if not held:
+            bad.append(
+                f"{name} runs on {', '.join(events)}, and tools/ci/workflows.py names it in none of"
+                " READ, GATES and NOT_GATING: the merge verdict would not read it"
+            )
+        elif len(held) > 1:
+            bad.append(f"{name} is in {' and '.join(held)}: a workflow is in one list")
+        if filtered and name not in gates:
+            bad.append(
+                f"{name}'s pull_request runs by a paths filter, so it is a gate (GATES), not"
+                f" {held[0] if held else 'unlisted'}"
+            )
+    for name, why in ci_workflows.NOT_GATING.items():
+        if not isinstance(why, str) or not why.strip():
+            bad.append(f"workflows.NOT_GATING gives {name} no reason it gates nothing")
+    for key, files in lists.items():
+        for name in files:
+            if name not in triggered:
+                bad.append(
+                    f"workflows.{key} names {name}, which is no workflow a pull request starts"
+                )
+    return bad
+
+
+def _pull_census_scaffold(root: Path) -> None:
+    pull = "on:\n  pull_request:\njobs: {}\n"
+    target = "on:\n  pull_request_target:\n    types: [opened, synchronize]\njobs: {}\n"
+    for name in ci_workflows.READ:
+        _write(root, f"{_PR_WORKFLOWS}/{name}", target if name != ci_workflows.MERGE else pull)
+    for name in ci_workflows.NOT_GATING:
+        _write(
+            root, f"{_PR_WORKFLOWS}/{name}", "on:\n  pull_request:\n    types: [closed]\njobs: {}\n"
+        )
+    for gate in ci_workflows.GATES:
+        _write(
+            root,
+            gate.path,
+            f"name: {gate.name}\non:\n  pull_request:\n    paths: [{gate.path}]\njobs: {{}}\n",
+        )
+    _write(
+        root, f"{_PR_WORKFLOWS}/weekly.yml", "on:\n  schedule:\n    - cron: '0 0 * * 0'\njobs: {}\n"
+    )
+
+
+def _pr_workflow(name: str, text: str) -> Callable[[Path], None]:
+    return lambda root: _write(root, f"{_PR_WORKFLOWS}/{name}", text)
+
+
+EVERY_PULL_REQUEST_WORKFLOW_IS_JUDGED_OR_SAYS_WHY_NOT = Row(
+    name="every-workflow-a-pull-request-starts-is-read-by-the-merge-verdict-a-gate-or-says-why-not",
+    check=_pull_census_check,
+    scaffold=_pull_census_scaffold,
+    controls=(
+        Control(
+            "a new workflow a pull request's paths start, in no list",
+            _pr_workflow("lint.yml", "on:\n  pull_request:\n    paths: [src/**]\njobs: {}\n"),
+            expect="lint.yml runs on pull_request, and tools/ci/workflows.py names it in none",
+        ),
+        Control(
+            "a new pull_request_target workflow, in no list",
+            _pr_workflow("label.yml", "on:\n  pull_request_target:\njobs: {}\n"),
+            expect="label.yml runs on pull_request_target",
+        ),
+        Control(
+            "a new merge_group workflow, in no list",
+            _pr_workflow("queue.yml", "on:\n  merge_group:\njobs: {}\n"),
+            expect="queue.yml runs on merge_group",
+        ),
+        Control(
+            "a workflow GATES names is gone",
+            _remove(ci_workflows.GATES[0].path),
+            expect=f"workflows.GATES names {ci_workflows.GATES[0].file}, which is no workflow",
+        ),
+        Control(
+            "a gate that no pull request starts any more",
+            _pr_workflow(ci_workflows.GATES[0].file, "on:\n  push:\njobs: {}\n"),
+            expect=f"workflows.GATES names {ci_workflows.GATES[0].file}, which is no workflow",
+        ),
+        Control(
+            "a workflow named as gating nothing that a pull request's paths start",
+            _pr_workflow(
+                ci_workflows.FEEDBACK, "on:\n  pull_request:\n    paths: [src/**]\njobs: {}\n"
+            ),
+            expect=f"{ci_workflows.FEEDBACK}'s pull_request runs by a paths filter",
+        ),
+        Control(
+            "a workflow named as gating nothing that a pull request's paths-ignore filters",
+            _pr_workflow(
+                ci_workflows.FEEDBACK,
+                "on:\n  pull_request:\n    paths-ignore: [docs/**]\njobs: {}\n",
+            ),
+            expect=f"{ci_workflows.FEEDBACK}'s pull_request runs by a paths filter",
+        ),
+        Control(
+            "a new workflow that runs only on a schedule",
+            _pr_workflow("nightly.yml", "on:\n  schedule:\n    - cron: '0 1 * * *'\njobs: {}\n"),
+            fails=False,
+        ),
+        Control(
+            "a new workflow that runs only on a push to main",
+            _pr_workflow("main.yml", "on:\n  push:\n    branches: [main]\njobs: {}\n"),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, EVERY_PULL_REQUEST_WORKFLOW_IS_JUDGED_OR_SAYS_WHY_NOT)
+
+
+def test_a_workflow_named_as_gating_nothing_says_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NOT_GATING is the module's, not the tree's, so its reason is held here: each one names
+    why the merge verdict needs no run of its workflow."""
+    _pull_census_scaffold(tmp_path)
+    assert _pull_census_check(tmp_path) == []
+    for why in ("", "  ", None):
+        monkeypatch.setitem(ci_workflows.NOT_GATING, ci_workflows.FEEDBACK, why)
+        assert _pull_census_check(tmp_path) == [
+            f"workflows.NOT_GATING gives {ci_workflows.FEEDBACK} no reason it gates nothing"
+        ], why
 
 
 #: The rows that need more than the suite's default cap, each with its own, keyed by the row's

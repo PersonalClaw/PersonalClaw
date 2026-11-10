@@ -6,7 +6,9 @@
 # smokes each platform loaded from that layout, and `release.yml` then pushes the layout with
 # every digest kept (#3911). That runs only on a tag or the weekly rehearsal, after a pull
 # request has merged, so a bad pin or a broken layout step would first show there. This runs
-# both on a pull request that changes them, with nothing to log in to and nothing to push:
+# both on a pull request that changes them, with nothing to log in to and nothing to push, and
+# the merge verdict holds that pull request to it (tools/ci/workflows.py's GATES). Never dispatch
+# it on a pull request's branch: it joins that run's concurrency group and cancels it.
 # - `pin-smoke`, the three pins, which tests/rails/test_ci_supply_chain_contract.py holds equal
 #   to the release build's;
 # - `layout-smoke`, the layout path: a two-platform image built to a layout with the release's

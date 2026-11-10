@@ -10,8 +10,9 @@
 # Read-only: the token reads public tags, and the job holds `contents: read` and nothing else.
 # Weekly, for a tag that moves upstream; and on every pull request that changes a workflow, a
 # local action or this check, so a pin whose comment names another release fails before it
-# merges. On a pull request an answer the API could not give is a warning, so an API blip
-# cannot turn it red; a mismatch fails there too. One API call per release, about thirty.
+# merges: the merge verdict holds that pull request to this run (tools/ci/workflows.py's GATES).
+# On a pull request an answer the API could not give is a warning, so an API blip cannot turn
+# it red; a mismatch fails there too. One API call per release, about thirty.
 # See docs/maintainers/ci.md, "Supply chain".
 name: Action pins
 

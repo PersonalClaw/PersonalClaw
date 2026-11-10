@@ -65,6 +65,23 @@ trusted-run branch the old path left).
    review or DCO run completes, the poster judges its head again from the head's own completed
    Merge run (and, for a head that changes a definition, its contract run), so they may finish
    in any order.
+5b. The head's gates passed: each workflow of its own that a pull request's paths start
+   (``workflows.GATES``). Every ``pull_request`` run of the gate's workflow file on the head is
+   read, by its path, its event and the head, so a candidate's own workflow of the same name, a
+   dispatch, a push or a run on an older head never stands in for one. Each must pass on every
+   attempt: the gate's jobs ``success`` and no other job red. One that ran no job (a run GitHub
+   could not start posts no check run) is red. Of a run a newer one on the head cancelled, only what
+   that cancel did is set aside (its last attempt's cancelled jobs, the jobs that attempt never got
+   to, its own conclusion), never a red job, so a rerun, a close or a reopen never turns a red into
+   a green. A cancelled job a runner ran for its whole ``timeout-minutes`` (main's copy, 360 where
+   it names none) timed out. Main's copy of the gate's filter decides only whether no run is red: a
+   head that changes a path it names needs one, and a filter this does not read (a pattern beyond
+   ``*``, a last ``**`` and plain paths, or a ``pull_request`` filtered by more than its paths) is
+   unread. A run still going is a red that waits; a gate run's completion, once the poster wakes on
+   it, judges the head again. A gate's red is flake-class only when each of its red jobs was
+   cancelled or failed at a step that fetches only outside inputs (GitHub's set-up, the checkout,
+   the Nix installer), and not then for a head that changes the gate's workflow or a local action,
+   whose run takes those steps from the head; a timeout is the change's own.
 6. CodeQL analysed the head in every language ``main``'s CodeQL analyses name, and the pull
    request brings no alert of its own: the newest run of GitHub's dynamic CodeQL workflow on the
    head finished, with an ``Analyze (<language>)`` job that concluded ``success`` for each of
@@ -208,13 +225,17 @@ CONTRACT_TITLE = "Contract {head}"
 CONTRACT_JOB = "contract"
 #: The old path's trusted-run branches, which the sweep still deletes.
 TRUSTED_PREFIX = "trusted-run/"
-#: A reason that waits, on CodeQL to finish or to process or on the head's contract run to
-#: report, which a later look clears.
+#: A reason that waits, on CodeQL to finish or to process, on the head's contract run to report or
+#: on a gate's run to finish, which a later look clears.
 WAITING = "waiting: "
 #: The waiting reason of a head whose contract run has not reported.
 WAITING_CONTRACT = f"{WAITING}main's CI contract over its definitions "
 #: The fenced block a red's output text carries while any of its reasons waits.
 WAITING_FENCE = "merge-verdict-waiting"
+#: Each gate of the verdict (rule 5b), by its run's path.
+GATED: dict[str, workflows.Gate] = {g.path: g for g in workflows.GATES}
+#: The waiting reason of a head whose gate run has not finished: then the gate's what and file.
+WAITING_GATE = f"{WAITING}the head's "
 #: A trusted-run branch the old path left, older than this, is swept away.
 SWEEP_AFTER = datetime.timedelta(days=1)
 #: merge.yml's job that judges the run with main's verdict.py.
@@ -574,9 +595,20 @@ def _red(
         # What it waits on, one per line: the sweep reads only the fence. A red for another
         # reason too is marked as well, so that once the wait ends its reasons are read again:
         # the fence goes with the last wait, so no head is judged again for ever.
-        waits = ["contract" if r.startswith(WAITING_CONTRACT) else "codeql" for r in waiting]
+        waits = [_fence_word(r) for r in waiting]
         output["text"] = f"```{WAITING_FENCE}\n" + "\n".join(sorted(set(waits))) + "\n```\n"
     return Posting(head, "failure", output, run.url, f"{run.id}/{run.attempt}")
+
+
+def _fence_word(reason: str) -> str:
+    """What a waiting reason waits on, as its fence names it: the contract, a gate's file, or
+    CodeQL."""
+    if reason.startswith(WAITING_CONTRACT):
+        return "contract"
+    for gate in workflows.GATES:
+        if reason.startswith(f"{WAITING_GATE}{gate.what} ({gate.file}) "):
+            return gate.file
+    return "codeql"
 
 
 def _names(paths: list[str]) -> str:
@@ -688,6 +720,288 @@ def sign_off_reasons(get: Get, repo: str, head: str) -> list[str]:
     if newest.get("conclusion") != "success":
         return [f"the head's sign-off check (DCO) is {newest.get('conclusion')!r}: {DCO_FIX}"]
     return []
+
+
+@dataclass(frozen=True)
+class Gates:
+    """What the head's gate runs say (rule 5b): every reason one is not green; of those, each red
+    that is flake-class, with why (every red job of its gate cancelled or failed at a step that
+    fetches only outside inputs); each passed gate's runs, by file; and the summary's line for
+    each gate that passed or was not expected."""
+
+    reasons: list[str]
+    outside: list[tuple[str, str]]
+    passed: dict[str, str]
+    lines: list[str]
+
+
+def changed_paths(base_tree: trust.Tree, head_tree: trust.Tree) -> list[str]:
+    """Every path whose entry differs between the trees, or that one side has and the other not:
+    read from the two trees, so with no cap on how many."""
+    paths = set(base_tree.blobs) | set(head_tree.blobs)
+    return sorted(p for p in paths if base_tree.blobs.get(p) != head_tree.blobs.get(p))
+
+
+#: GitHub's bound on a job that names no ``timeout-minutes``, in minutes.
+JOB_MINUTES = 360
+#: Where a repository's own actions live: a gate's step that uses one runs the head's copy.
+LOCAL_ACTIONS = ".github/actions/"
+
+
+def gate_filter(tree: trust.Tree, gate: workflows.Gate) -> tuple[list[str], dict[str, int]]:
+    """Main's copy of the gate's ``pull_request`` paths, and each of the gate's jobs' bound
+    (its ``timeout-minutes``, :data:`JOB_MINUTES` when it names none), read from main's tree:
+    unread when main has no such workflow, its filter is one :func:`workflows.pull_request_paths`
+    refuses, or a bound is not a whole number of minutes from 1."""
+    entry = tree.blobs.get(gate.path)
+    if entry is None:
+        raise Unread(f"main has no {gate.path}, which tools/ci's GATES names")
+    # Imported here, as trust.py does: only reading a workflow needs PyYAML.
+    import yaml
+
+    try:
+        doc = yaml.safe_load(tree.read(entry))
+    except yaml.YAMLError as exc:
+        raise Unread(f"main's {gate.file} is not YAML: {exc}") from exc
+    try:
+        patterns = workflows.pull_request_paths(doc)
+    except ValueError as exc:
+        raise Unread(f"main's {gate.file} {exc}") from exc
+    jobs = doc.get("jobs") if isinstance(doc, Mapping) else None
+    bounds: dict[str, int] = {}
+    for name in gate.jobs:
+        job = jobs.get(name) if isinstance(jobs, Mapping) else None
+        minutes = job.get("timeout-minutes", JOB_MINUTES) if isinstance(job, Mapping) else None
+        minutes = JOB_MINUTES if minutes is None else minutes
+        if _int(minutes) is None or minutes < 1:
+            raise Unread(
+                f"main's {gate.file} bounds `{name}` by {minutes!r}, not a whole number of minutes"
+            )
+        bounds[name] = minutes
+    return patterns, bounds
+
+
+def gate_runs(get: Get, repo: str, head: str, gate: workflows.Gate) -> list[Mapping[str, Any]]:
+    """Every ``pull_request`` run of the gate's workflow on *head*, oldest first: read by its path,
+    its event and the head, so no other run stands in for one, and held to the listing's count."""
+    query = urllib.parse.urlencode({"head_sha": head, "event": "pull_request"})
+    runs = _pages(get, f"/repos/{repo}/actions/workflows/{gate.file}/runs?{query}", "workflow_runs")
+    if any(_int(r.get("id")) is None for r in runs):
+        raise Unread(f"a run of {head}'s {gate.file} names no id")
+    ours = [
+        r
+        for r in runs
+        if r.get("path") == gate.path
+        and r.get("event") == "pull_request"
+        and r.get("head_sha") == head
+    ]
+    return sorted(ours, key=lambda r: int(r["id"]))
+
+
+def _red_step(job: Mapping[str, Any]) -> str:
+    """The first step of a job that did not pass, or "" when it names none."""
+    steps = job.get("steps")
+    for step in steps if isinstance(steps, list) else []:
+        if isinstance(step, Mapping) and step.get("conclusion") in ("failure", "timed_out"):
+            return str(step.get("name") or "")
+    return ""
+
+
+def _job_time(job: Mapping[str, Any], field: str) -> datetime.datetime:
+    """A job's ``started_at`` or ``completed_at``, as the jobs API writes it, with its zone."""
+    text = job.get(field)
+    try:
+        when = datetime.datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        when = None
+    if when is None or when.tzinfo is None:
+        raise Unread(f"job {job.get('id')} names no {field} with a zone: {text!r}")
+    return when
+
+
+def _ran(job: Mapping[str, Any]) -> bool:
+    """Whether a runner took the job. One GitHub cancelled before any runner took it names no
+    runner and no step, and its ``started_at`` is when it was queued, so its time is its wait."""
+    return job.get("runner_id") not in (None, 0) or job.get("steps") != []
+
+
+def _ran_to_bound(job: Mapping[str, Any], minutes: int) -> bool:
+    """Whether a job ran for its whole bound. GitHub ends a job that reaches its
+    ``timeout-minutes`` as ``cancelled``, as it ends one a newer run, a person or a lost runner
+    cancels, so only its time tells them apart: a job whose start or end this cannot read is
+    unread. A job cancelled before it started can end before its start: it did not. Only a job a
+    runner took (:func:`_ran`) is timed: one cancelled in the queue names its wait."""
+    elapsed = _job_time(job, "completed_at") - _job_time(job, "started_at")
+    return elapsed.total_seconds() >= 60 * minutes
+
+
+def _outside(gate: workflows.Gate, conclusion: object, step: str, own: bool) -> str:
+    """Why a red job of the gate is flake-class, or "" when it is the change's own: a cancelled
+    job, or one that failed at a step that fetches only outside inputs, unless the head changes
+    what those steps run (*own*: the gate's workflow, or a local action), which the run takes from
+    the head. A job that timed out is the change's own (:func:`_ran_to_bound`): its bound has wide
+    headroom, so a hang is the change's until shown otherwise."""
+    if conclusion == "cancelled":
+        return (
+            f"the {gate.what} was cancelled (a newer run in {gate.file}'s concurrency group, a"
+            " person, or a lost runner cancels it)"
+        )
+    if (
+        conclusion == "failure"
+        and not own
+        and (step in gate.outside or step.startswith(workflows.OUTSIDE_PREFIXES))
+    ):
+        return f"the {gate.what} failed at `{step}`, a step that fetches only outside inputs"
+    return ""
+
+
+def _gate_run(
+    get: Get,
+    repo: str,
+    gate: workflows.Gate,
+    run: Mapping[str, Any],
+    *,
+    bounds: Mapping[str, int],
+    own: bool = False,
+    superseded: bool = False,
+) -> list[tuple[str, str | None]]:
+    """Why one gate run on the head is not green on every attempt, each with why it is
+    flake-class ("" for the change's own, None for a reason that waits): the gate's jobs, each one
+    ``success`` on every attempt; no other job red; and an attempt that ran no job (a run GitHub
+    could not start, which posts no check run) red. A cancelled job that ran for its whole bound
+    (*bounds*, main's) timed out, the change's own.
+
+    A *superseded* run is an older one a newer run on the head cancelled. Only what that cancel
+    did is set aside: its last attempt's cancelled jobs, the jobs that attempt never got to and
+    its own conclusion. Every other red holds: a job that failed or timed out on any attempt, a
+    cancelled job that names a step that failed (red at that step), and any red of an earlier
+    attempt, so a close and a reopen never turn a red into a green. A job the cancel ended before
+    it concluded is set aside whatever it was doing, so on that path the newer run on the head is
+    what must pass."""
+    run_id, url = int(run["id"]), str(run.get("html_url") or run["id"])
+    if run.get("status") != "completed":
+        wait = f"{WAITING_GATE}{gate.what} ({gate.file}) is {run.get('status')!r}, not finished"
+        return [(f"{wait}: run {url}", None)]
+    attempts = _int(run.get("run_attempt"))
+    if attempts is None or attempts < 1:
+        raise Unread(f"{gate.file} run {run_id} names no attempt")
+    reds: list[tuple[str, str | None]] = []
+
+    def red(text: str, why: str = "") -> None:
+        reds.append((f"the head's {gate.what} ({gate.file}) is red: {text} (run {url})", why))
+
+    for attempt in range(1, attempts + 1):
+        cancelled_here = superseded and attempt == attempts
+        jobs = _pages(get, f"/repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs")
+        if not jobs:
+            if not cancelled_here:
+                red(f"attempt {attempt} ran no job, and the run is {run.get('conclusion')!r}")
+            continue
+        for name in () if cancelled_here else gate.jobs:
+            count = sum(1 for j in jobs if j.get("name") == name)
+            if count != 1:
+                red(f"attempt {attempt} has {count} `{name}` jobs, not one")
+        for job in jobs:
+            name, status, conclusion = (
+                str(job.get("name") or ""),
+                job.get("status"),
+                job.get("conclusion"),
+            )
+            passed = conclusion == "success" or (
+                name not in gate.jobs and conclusion in ("skipped", "neutral")
+            )
+            if status == "completed" and passed:
+                continue
+            if status != "completed":
+                red(f"attempt {attempt}'s `{name}` is {status!r} in a completed run")
+                continue
+            bound = bounds.get(name, JOB_MINUTES)
+            if conclusion == "cancelled" and _ran(job) and _ran_to_bound(job, bound):
+                red(f"attempt {attempt}'s `{name}` timed out at its {bound} minutes")
+                continue
+            step = _red_step(job)
+            if conclusion == "cancelled" and step:
+                # It failed at a step before the cancel came: it is judged as that failure.
+                conclusion = "failure"
+            if conclusion == "cancelled" and cancelled_here:
+                continue
+            at = f" at `{step}`" if step else ""
+            red(
+                f"attempt {attempt}'s `{name}` is {conclusion!r}{at}",
+                _outside(gate, conclusion, step, own),
+            )
+    if not reds and not superseded and run.get("conclusion") != "success":
+        red(f"the run is {run.get('conclusion')!r}")
+    return reds
+
+
+def gate_reading(
+    get: Get,
+    repo: str,
+    head: str,
+    main_tree: trust.Tree,
+    base_tree: trust.Tree,
+    head_tree: trust.Tree,
+) -> Gates:
+    """The head's gates (rule 5b). Each gate's ``pull_request`` runs on the head are read always,
+    one listing a gate, and every one must pass on every attempt, so a head whose own filter starts
+    a run is held to it. Of a run a newer one on the head cancelled, only what the cancel did is
+    set aside, never a red job (:func:`_gate_run`). Main's filter (*main_tree*'s copy) decides
+    only whether no run is red: one is expected when a path the head changes against *base_tree*
+    matches it. A head that changes a gate's workflow or a local action owns a red at a step that
+    fetches outside inputs, since the run takes those steps from the head."""
+    reasons: list[str] = []
+    outside: list[tuple[str, str]] = []
+    passed: dict[str, str] = {}
+    lines: list[str] = []
+    changed = changed_paths(base_tree, head_tree)
+    for gate in workflows.GATES:
+        patterns, bounds = gate_filter(main_tree, gate)
+        hits = [p for p in changed if workflows.filter_matches(patterns, p)]
+        own = any(p == gate.path or p.startswith(LOCAL_ACTIONS) for p in changed)
+        runs = gate_runs(get, repo, head, gate)
+        newest = int(runs[-1]["id"]) if runs else None
+        superseded = {
+            int(r["id"])
+            for r in runs
+            if r.get("conclusion") == "cancelled" and int(r["id"]) != newest
+        }
+        if not runs:
+            if hits:
+                reasons.append(
+                    f"the head changes {_names(hits)}, which main's {gate.file} runs on, and has"
+                    f" no {gate.what} ({gate.file}) run on pull_request: its own copy's filter may"
+                    " miss it, and a diff of more than 300 files starts none"
+                )
+            else:
+                lines.append(
+                    f"no {gate.what} ({gate.file}) was expected: it changes no path main's"
+                    f" {gate.file} runs on"
+                )
+            continue
+        reds = [
+            red
+            for run in runs
+            for red in _gate_run(
+                get,
+                repo,
+                gate,
+                run,
+                bounds=bounds,
+                own=own,
+                superseded=int(run["id"]) in superseded,
+            )
+        ]
+        if not reds:
+            kept = [r for r in runs if int(r["id"]) not in superseded]
+            urls = ", ".join(str(r.get("html_url") or r["id"]) for r in kept)
+            passed[gate.file] = urls
+            lines.append(f"its {gate.what} ({gate.file}) passed on every attempt: run {urls}")
+            continue
+        reasons += [reason for reason, _ in reds]
+        if all(why for _, why in reds):
+            outside += [(reason, str(why)) for reason, why in reds]
+    return Gates(reasons, outside, passed, lines)
 
 
 def _all_pages(get: Get, path: str) -> list[Mapping[str, Any]]:
@@ -1224,7 +1538,8 @@ def judge(
     get: Get, repo: str, run_id: int, controller_revision: str, queue: Queue | None = None
 ) -> Outcome:
     """What a completed run of a workflow the poster follows does: a Merge run is judged; a
-    Dependency review, DCO, CodeQL or contract run judges its head again."""
+    Dependency review, DCO, CodeQL or contract run judges its head again, and so does a gate run
+    (rule 5b) once the poster follows it."""
     run = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
     if not isinstance(run, Mapping):
         raise Unread(f"run {run_id} is not an object")
@@ -1242,6 +1557,17 @@ def judge(
         if not branch.startswith(CONTRACT_PREFIX) or not _SHA.fullmatch(named):
             return Outcome(why=f"run {run_id} is on {branch!r}, which names no head")
         return rejudge(get, repo, named, controller_revision, queue)
+    if owner == repo and run.get("path") in GATED:
+        head = run.get("head_sha")
+        if (
+            run.get("event") != "pull_request"
+            or run.get("status") != "completed"
+            or not isinstance(head, str)
+        ):
+            return Outcome(why=f"run {run_id} is not a completed pull request run of a gate")
+        if not _SHA.fullmatch(head):
+            raise Unread(f"run {run_id} of {run.get('path')} names no head")
+        return rejudge(get, repo, head, controller_revision, queue)
     if owner == repo and str(run.get("path", "")).startswith(CODEQL_WORKFLOW):
         head = run.get("head_sha")
         if run.get("status") != "completed" or not isinstance(head, str):
@@ -1320,9 +1646,9 @@ query($owner: String!, $name: String!, $app: Int!) {
 
 def waiting_heads(query: Query, repo: str, app: int) -> list[str] | None:
     """The heads of the open pull requests into main whose newest merge verdict of the App's is a
-    red that still waits (on CodeQL or on its contract run), the oldest such verdict first, from
-    one GraphQL read. None when that read gives no answer this reads, or more pull requests than
-    a sweep looks at: the sweep then reads each head itself."""
+    red that still waits (on CodeQL, on its contract run or on a gate's run), the oldest such
+    verdict first, from one GraphQL read. None when that read gives no answer this reads, or more
+    pull requests than a sweep looks at: the sweep then reads each head itself."""
     owner, name = repo.split("/", 1)
     try:
         answer = query(WAITING_QUERY, {"owner": owner, "name": name, "app": app})
@@ -1359,10 +1685,10 @@ def judge_waiting(
     skip: frozenset[str] = frozenset(),
     queue: Queue | None = None,
 ) -> list[Outcome]:
-    """Every open pull request into main whose newest merge verdict, the controller App's, is a
-    red that still waits (on CodeQL, or on its contract run, whose completion wakes nothing): judge
-    its head again, and keep only what changed. A head whose contract run has reported comes back
-    with its verdict and its contract branch to delete.
+    """Every open pull request into main whose newest merge verdict, the controller App's, is a red
+    that still waits (on CodeQL, on its contract run, whose completion wakes nothing, or on a gate's
+    run): judge its head again, and keep only what changed. A head whose contract run has reported
+    comes back with its verdict and its contract branch to delete.
 
     With ``query``, one GraphQL read first names the heads that wait (:func:`waiting_heads`): none,
     and the sweep ends there; some, and only those are read again, through the REST reads below,
@@ -1477,6 +1803,7 @@ def decide(
     # Every reason that holds, so one verdict names all a head must fix.
     reasons: list[str] = []
     moved: list[Moved] = []
+    gates = Gates([], [], {}, [])
     try:
         base = main_tip(get, repo)
         tree_oid, head_tree = api_tree(get, repo, head)
@@ -1489,15 +1816,20 @@ def decide(
             _, base_tree = api_tree(get, repo, built_on)
             comparison = trust.compare_trees(base_tree, head_tree, base=built_on, head=head)
             changed = [] if comparison.trusted else [c.path for c in comparison.changes]
+            # The gates' filters are main's tip's; the head's change is against what it was
+            # built on.
+            gate_trees = (api_tree(get, repo, base)[1], base_tree)
         elif behind:
             # Its definitions are not compared: against main's tip, a head main has moved past
             # reads as changing every definition main changed since. It updates before any run
             # of it counts, so no contract runs for it either.
             reasons.append(f"the head is {behind} commits behind main: update the branch")
+            gate_trees = None
         else:
             _, base_tree = api_tree(get, repo, base)
             comparison = trust.compare_trees(base_tree, head_tree, base=base, head=head)
             changed = [] if comparison.trusted else [c.path for c in comparison.changes]
+            gate_trees = (base_tree, base_tree)
         if changed and run.event != "pull_request":
             return Outcome(
                 why=(
@@ -1512,6 +1844,9 @@ def decide(
         codeql = codeql_reading(get, repo, head, base)
         reasons += codeql.reasons
         moved = codeql.moved
+        if gate_trees is not None:
+            gates = gate_reading(get, repo, head, *gate_trees, head_tree)
+            reasons += gates.reasons
         if changed:
             contract = contract_run(get, repo, head, base)
             if contract is None:
@@ -1546,14 +1881,14 @@ def decide(
         )
         reasons.append(f"{WAITING_CONTRACT}{running}")
     if reasons:
-        retried = _retry_note(get, repo, run, tree_oid, failing, reasons, queue)
+        retried = _retry_note(get, repo, run, tree_oid, failing, reasons, queue, gates.outside)
         return Outcome(
             posting=_red(run, reasons, head, moved, retried),
             dispatch=start,
             base=base,
             cleanup=cleanup,
         )
-    toolchain = {"runner": ",".join(labels) or "unnamed", "definitions": base}
+    toolchain = {"runner": ",".join(labels) or "unnamed", "definitions": base, **gates.passed}
     ran = [f"- the definitions that ran are main's at `{base}`"]
     if changed and contract is not None:
         toolchain = {**toolchain, "definitions": head, "contract": contract.url or str(contract.id)}
@@ -1585,6 +1920,7 @@ def decide(
             "- its sign-off check (DCO) passed",
             "- CodeQL analysed every language main has, and found no alert it brings",
             *([f"- {moved_note(moved)}"] if moved else []),
+            *[f"- {line}" for line in gates.lines],
             f"- {len(records)} job records, their digests in the receipt below",
             *(
                 [
@@ -1789,14 +2125,27 @@ def flake_class(
     others: list[str],
     changed: Mapping[tuple[str, str], object],
     flaky: frozenset[str],
+    *,
+    outside: tuple[str, ...] = (),
+    results_red: bool = True,
 ) -> tuple[bool, str]:
     """Whether the run's red is flake-class (0.4.0 A5, with CORE's first condition), and why:
     every reason is its ``results`` job's; every job of the last attempt that did not pass is a
     suite, end-to-end or web-unit job's, failed in its tests or cancelled or timed out with none
     failed; and each failed test was classified by its rerun, reads no file the pull request
-    changes, and has a flaky history: an open flaky-test issue. Anything else goes to a person."""
+    changes, and has a flaky history: an open flaky-test issue. Anything else goes to a person.
+
+    A gate's red is flake-class when every red job of it was cancelled or failed at a step that
+    fetches only outside inputs (*outside*, each such red's why, :func:`gate_reading`): alone
+    when ``results`` passed, and beside a ``results`` red only when that red is flake-class too.
+    A new head runs the gate again, and each new head must pass on its first attempt."""
     if others:
         return False, f"its red is not its tests' alone: {others[0]}"
+    if outside and not results_red:
+        return True, "; ".join(outside) + ": a new head runs it again"
+    if outside:
+        ok, why = flake_class(get, repo, run, [], changed, flaky)
+        return (ok, f"{why}; and {'; '.join(outside)}") if ok else (ok, why)
     jobs = _pages(get, f"/repos/{repo}/actions/runs/{run.id}/attempts/{run.attempt}/jobs", "jobs")
     judges = [_int(j.get("id")) for j in jobs if j.get("name") == RESULTS_JOB]
     if len(judges) != 1 or judges[0] is None:
@@ -1856,13 +2205,27 @@ def _retry_note(
     failing: list[str],
     reasons: list[str],
     queue: Queue | None,
+    outside: list[tuple[str, str]] | None = None,
 ) -> Retry | str | None:
     """The retry note on a pull request's red (:func:`retry`): none on another run's red, or on a
-    red whose every reason waits, which is no red to retry yet; why it is unread, when it is."""
+    red whose every reason waits, which is no red to retry yet; why it is unread, when it is. A
+    gate's flake-class red (*outside*, :func:`gate_reading`) is no other reason: its why goes to
+    :func:`flake_class`."""
     if run.event != "pull_request" or all(r.startswith(WAITING) for r in reasons):
         return None
+    gated = dict(outside or [])
+    others = [r for r in reasons if r not in failing and r not in gated]
     try:
-        return retry(get, repo, run, tree_oid, [r for r in reasons if r not in failing], queue)
+        return retry(
+            get,
+            repo,
+            run,
+            tree_oid,
+            others,
+            queue,
+            outside=tuple(dict.fromkeys(gated.values())),
+            results_red=bool(failing),
+        )
     except (Unread, trust.Refused) as exc:
         return f"unread: {exc}"
 
@@ -1878,6 +2241,8 @@ def retry(
     pull: int | None = None,
     head: str = "",
     changed: Mapping[tuple[str, str], object] | None = None,
+    outside: tuple[str, ...] = (),
+    results_red: bool = True,
 ) -> Retry | str:
     """What the red verdict on a pull request's run says of its retries, or why it says nothing
     but that. The count is the run's attempts after the first, and each earlier head of the pull
@@ -1907,7 +2272,14 @@ def retry(
         if tree == tree_oid or _change(get, repo, "main", sha) == own:
             count += 1
     ok, why = flake_class(
-        get, repo, run, others, own if changed is None else changed, timeline.flaky
+        get,
+        repo,
+        run,
+        others,
+        own if changed is None else changed,
+        timeline.flaky,
+        outside=outside,
+        results_red=results_red,
     )
     return Retry(count, ok, why)
 

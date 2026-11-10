@@ -452,6 +452,42 @@ verdict says all it must fix:
   naming GitHub proves nothing, and a merge commit can carry a conflict resolution no one signed
   off. A red names the fix, update with rebase or rebase locally, in its title. The poster
   follows DCO as it follows Dependency review.
+- **The path-filtered gates:** a workflow of its own that a pull request's paths start, not the
+  plan, is a gate (`tools/ci/workflows.py`'s `GATES`, each with its jobs and its outside-input
+  steps). Every `pull_request` run of the gate's workflow file on the head is read, by its path, its
+  event and the head (the run takes its steps from the head's copy; only the path is `main`'s), so a
+  candidate's own workflow of the same name, a dispatch, a push or a run on an older head counts for
+  nothing. Each must pass on every attempt: the gate's jobs `success` and no other job red. A run
+  that ran no job (one GitHub could not start, which posts no check run) is red. Of a run a newer
+  one on the head cancelled, which a close, a reopen or a re-push does, only what that cancel did is
+  set aside: its last attempt's cancelled jobs, the jobs that attempt never got to and its own
+  conclusion. A job that failed or timed out on any attempt, and any red of an earlier attempt,
+  holds, so a rerun, a close or a reopen never turns a red into a green. GitHub ends a job that
+  reaches its `timeout-minutes` as `cancelled`, so a cancelled job that ran for its whole bound
+  (`main`'s copy, 360 minutes where it names none) is read as timed out: the bound is `main`'s, so a
+  head that raises its own gets `main`'s. A job no runner took (one cancelled in the queue, whose
+  time is its wait) is never read as timed out. A cancelled job that names a failed step is red at
+  that step. A job the cancel ended before it concluded is set aside whatever it was doing, so on
+  that path the newer run on the head is what must pass. `main`'s copy of the gate's filter decides
+  only whether no run is red: a head that changes a path it names, read from the two trees with no
+  cap, needs one, and one that has none is red without waiting (a diff of more than 300 files starts
+  none). The filter is read as GitHub reads it (`workflows.filter_matches`), and one with a pattern
+  beyond `*`, a last `**` and plain paths, or a `pull_request` filtered by more than its paths, is
+  unread, so red. A run still going is a red that waits, its fence word the gate's file. The poster
+  does not wake on a gate's run yet, so a head judged while its gate's run was going stays red until
+  it is judged again, by the sweep (below) or at the head's next wake (its next Merge-run
+  completion, say). A gate's red is flake-class only when each of its red jobs was cancelled before
+  its bound or failed at a step that fetches only outside inputs (GitHub's set-up, the checkout, the
+  Nix installer), so the retry note (above) reads it as one a retry may clear; not so for a head
+  that changes the gate's workflow or a local action, since its run takes those steps from the head;
+  and a timeout is the change's own. A gate job and its steps hold no `if:` and no
+  `continue-on-error` (`tests/rails/test_workflow_path_filters_tree.py`), which the head's copy
+  could use to read a red as green. Never dispatch `nix.yml` or `release-image-tooling.yml` on a
+  pull request's branch: each shares its pull request run's concurrency group and cancels the run
+  the verdict reads. Never re-run an older gate run on a head while a newer one runs, either: it
+  joins the same group and cancels the newer run. A row of the CI contract holds every workflow a
+  pull request's events start to one the verdict reads itself (`READ`), a gate, or `NOT_GATING` with
+  why it gates nothing; one whose `pull_request` runs by `paths` or `paths-ignore` is a gate.
 - **CodeQL, read from what it ran:** the newest run of GitHub's dynamic CodeQL workflow
   (`dynamic/github-code-scanning/codeql`) on the head finished, with an `Analyze (<language>)`
   job concluded `success` for each language `main`'s default-setup analyses name; each of those
@@ -482,19 +518,19 @@ verdict says all it must fix:
   `main`, with all three analyses green. The `CodeQL` summary check is never read for its
   conclusion: GitHub computes it when the first language's analysis uploads, so it reads
   `neutral` on most pull requests. A red with a reason that waits on CodeQL (not run, still running,
-  still processing) or on its contract run is marked waiting in its output, whatever its other
-  reasons, and such heads are judged again until nothing waits, so a red never says it waits on
-  something that has finished: a head red for another reason gets its final reasons, the contract's
-  result among them, and its contract branch is deleted. The mark goes with the last wait, so no
-  head is judged again for ever. Such heads are judged again: when GitHub's CodeQL workflow
-  completes (followed by name, matched by its run's path), when the summary check completes
-  (`check_run`, which starts a runner only for code scanning's CodeQL check), and by the sweep, for
-  open pull requests whose newest verdict is a waiting red, posting only a verdict that changed. The
-  sweep runs every ten minutes by its cron, but GitHub fires that schedule far less often: 7 times
-  of 144 in the 24 hours to 09:47 UTC on 2026-10-25, 110 to 283 minutes apart. So every poster run,
-  whatever woke it, also judges again the three heads whose waiting verdict is oldest
-  (`WAITING_PER_RUN`), past its own head and only when the one GraphQL read answers. Heads under
-  review wake the poster all the time, so a waiting head is picked up within minutes of any
+  still processing), on its contract run or on a gate's run is marked waiting in its output,
+  whatever its other reasons, and such heads are judged again until nothing waits, so a red never
+  says it waits on something that has finished: a head red for another reason gets its final
+  reasons, the contract's result among them, and its contract branch is deleted. The mark goes with
+  the last wait, so no head is judged again for ever. Such heads are judged again: when GitHub's
+  CodeQL workflow completes (followed by name, matched by its run's path), when the summary check
+  completes (`check_run`, which starts a runner only for code scanning's CodeQL check), and by the
+  sweep, for open pull requests whose newest verdict is a waiting red, posting only a verdict that
+  changed. The sweep runs every ten minutes by its cron, but GitHub fires that schedule far less
+  often: 7 times of 144 in the 24 hours to 09:47 UTC on 2026-10-25, 110 to 283 minutes apart. So
+  every poster run, whatever woke it, also judges again the three heads whose waiting verdict is
+  oldest (`WAITING_PER_RUN`), past its own head and only when the one GraphQL read answers. Heads
+  under review wake the poster all the time, so a waiting head is picked up within minutes of any
   activity. The CodeQL workflow's wake is proved: the completion of main's CodeQL run 40071173659
   started poster run 40072081053. The sweep stays all the same, for one gap: that wake fires when
   the run completes, right after its last language uploads, and a head judged before that upload is
@@ -1064,8 +1100,10 @@ each of the seven to a census of its reads, with a planted read per form the cen
 dropped entry per list. A docs page none of them reads plans none of them.
 
 Three workflows of their own, no catalogue job, start by a `paths:` filter instead of the plan:
-`nix.yml`, `action-pins.yml` and `release-image-tooling.yml`. The gateway image's build is the
-catalogue's `image` entry, whose inputs `tests/rails/test_ci_image_tree.py` holds.
+`nix.yml`, `action-pins.yml` and `release-image-tooling.yml`. Each is a gate of the merge
+verdict (`tools/ci/workflows.py`'s `GATES`), and the contract fails a workflow a pull request
+starts that no list names. The gateway image's build is the catalogue's `image` entry, whose
+inputs `tests/rails/test_ci_image_tree.py` holds.
 `tests/rails/test_workflow_path_filters_tree.py` holds each filter to a census of what its jobs
 read: the workflow's file, each local action a step uses, each path a `run:` step names (each
 Python script followed into what it names), and for a step that runs `nix`, the flake, its lock
