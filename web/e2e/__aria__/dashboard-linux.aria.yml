@@ -7,8 +7,9 @@
   - button "Library"
   - group "Chat history":
     - button "New chat"
+    - button "Open Chat history"
     - searchbox "Search chats"
-    - 'button "Group by: Folders"'
+    - 'button "Sort and filter: Recent activity · Active"'
     - status
     - text: No chats yet
   - text: Platform

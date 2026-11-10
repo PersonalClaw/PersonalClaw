@@ -26,8 +26,8 @@ const RULES: Array<[ThreadPip, string, string, boolean]> = [
 
 function rail() {
   const threads = [...RULES.map(([pip]) => t(pip, pip)), t('calm', null)]
-  return render(<ThreadRail groups={[{ id: 'folder:', name: 'No folder', threads }]} selectedKey="" status="ready"
-    onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}} />)
+  return render(<ThreadRail rows={threads} selectedKey="" status="ready"
+    onOpen={() => {}} onRetry={() => {}} />)
 }
 const row = (pip: string, word: string) => screen.getByRole('button', { name: `Chat ${pip}, ${word}` })
 /** The dot itself: the innermost mark, painted in the row's colour. */

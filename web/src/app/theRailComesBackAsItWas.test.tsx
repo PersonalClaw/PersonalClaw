@@ -6,11 +6,11 @@ import type { Command } from './CommandPalette'
 
 // ── The sidebar comes back as it was, after a reload or a collapse (#3812) ────────────────────────
 //
-// The rail's open state, its width, each project's disclosure and how far it was scrolled are kept on
-// this device, and the thread it lights is the address's. Driven through the real shell: the rail is
-// toggled from the toolbar, the keyboard and the palette, resized by its keyboard handle, a group is
-// closed and the rail scrolled; a reload then opens it exactly so. A collapse keeps the full rail's
-// place: opening it again, before or after a reload, comes back to the same rows.
+// The rail's open state, its width, its chat list's view and how far it was scrolled are kept on this
+// device, and the thread it lights is the address's. Driven through the real shell: the rail is
+// toggled from the toolbar, the keyboard and the palette, resized by its keyboard handle, its list
+// sorted by title and the rail scrolled; a reload then opens it exactly so. A collapse keeps the
+// full rail's place: opening it again, before or after a reload, comes back to the same rows.
 //
 // jsdom lays nothing out, so the scroll area is given a size by hand (600 px showing 2,000 px of
 // rows) and keeps the scroll position it is set to. jsdom reports no Mac, so ⌘B reads as Ctrl+B.
@@ -136,7 +136,7 @@ const toggle = () => document.querySelector<HTMLElement>('[data-rail-toggle]')!
 const scroller = () => document.querySelector<HTMLElement>('[data-rail-scroll]')!
 const railWidth = () => document.querySelector<HTMLElement>('nav[data-tour="rail"]')!.style.width
 const expanded = () => toggle().getAttribute('aria-label') === 'Collapse sidebar'
-const group = (name: RegExp) => within(rail()).getByRole('button', { name })
+const sortAndFilter = () => within(rail()).getByRole('button', { name: /^Sort and filter/ })
 
 /** The scroll area's size and position, which jsdom does not lay out: 600 px showing 2,000. */
 const scrolled = new WeakMap<Element, number>()
@@ -161,13 +161,16 @@ function scrollRailTo(y: number) {
 const paletteToggle = () => act(() => rows.find((r) => r.label === 'Show or hide the sidebar')!.run())
 
 describe('the sidebar after a collapse', () => {
-  it('opened again, it keeps the search as typed and what it found, the address and the lit chat', async () => {
+  it('opened again, it keeps the search as typed and what it found, its view, the address and the lit chat', async () => {
     location.hash = '#/chat/chat-2'
     const user = userEvent.setup()
     renderApp()
     await row(/^Order the soil/)
     await user.type(within(rail()).getByRole('searchbox', { name: 'Search chats' }), 'soil')
     await waitFor(() => expect(within(rail()).queryByRole('button', { name: /^Plan the garden/ })).toBeNull())
+    await user.click(sortAndFilter())
+    await user.click((await screen.findAllByRole('button', { name: /^Title/ })).find((b) => !rail().contains(b))!)
+    await user.click(screen.getByRole('button', { name: 'Done' }))
 
     await user.click(toggle())
     await waitFor(() => expect(expanded()).toBe(false))
@@ -176,6 +179,7 @@ describe('the sidebar after a collapse', () => {
     expect(within(rail()).getByRole('searchbox', { name: 'Search chats' })).toHaveValue('soil')
     await row(/^Order the soil/)
     expect(within(rail()).queryByRole('button', { name: /^Plan the garden/ }), 'still what the search found').toBeNull()
+    expect(sortAndFilter()).toHaveAttribute('aria-label', 'Sort and filter: Title (A to Z) · Active')
     expect(location.hash).toBe('#/chat/chat-2')
     expect(lit()).toEqual(['Order the soil'])
   })
@@ -194,19 +198,21 @@ describe('the sidebar after a collapse', () => {
 })
 
 describe('the sidebar after a reload', () => {
-  it('toggled from the toolbar, the keyboard and the palette, then reloaded: open, as wide, as scrolled, its groups as they were', async () => {
+  it('toggled from the toolbar, the keyboard and the palette, then reloaded: open, as wide, as scrolled, in its view', async () => {
     location.hash = '#/chat/chat-2'
     const user = userEvent.setup()
     const view = renderApp()
     await row(/^Order the soil/)
-    // Wider by two of its handle's steps, the "No folder" group closed, scrolled 300 px down.
+    // Wider by two of its handle's steps, the list sorted by title, scrolled 300 px down.
     const handle = screen.getByRole('separator', { name: /Resize navigation/ })
     handle.focus()
     await user.keyboard('{ArrowRight}{ArrowRight}')
     const wide = railWidth()
     expect(wide).not.toBe('')
-    await user.click(group(/^No folder, /))
-    expect(group(/^No folder, /)).toHaveAttribute('aria-expanded', 'false')
+    await user.click(sortAndFilter())
+    await user.click(await screen.findByRole('button', { name: /^Title/ }))
+    await user.click(screen.getByRole('button', { name: 'Done' }))
+    expect(sortAndFilter()).toHaveAttribute('aria-label', 'Sort and filter: Title (A to Z) · Active')
     scrollRailTo(300)
 
     await user.click(toggle())
@@ -225,8 +231,7 @@ describe('the sidebar after a reload', () => {
     expect(expanded()).toBe(true)
     expect(railWidth()).toBe(wide)
     expect(lit()).toEqual(['Order the soil'])
-    expect(group(/^No folder, /)).toHaveAttribute('aria-expanded', 'false')
-    expect(group(/^Garden, /)).toHaveAttribute('aria-expanded', 'true')
+    expect(sortAndFilter()).toHaveAttribute('aria-label', 'Sort and filter: Title (A to Z) · Active')
     await waitFor(() => expect(scroller().scrollTop).toBe(300))
   })
 

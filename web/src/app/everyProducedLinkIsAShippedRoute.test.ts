@@ -23,6 +23,7 @@ import { join } from 'node:path'
 import * as manifest from '../../e2e/routes'
 import { approvalDestination } from './approvalDestination'
 import { numberedThreads } from './threadRail'
+import { DEFAULT_VIEW } from './chatListView'
 import { chatFindPath } from '../pages/chat/searchDeepLink'
 import { DEFAULT_NOTIFICATION_ROUTE, NOTIFICATION_SOURCE_ROUTES } from '../lib/nativeNotifications'
 import type { ThreadChat, ThreadLoop } from '../lib/useThreads'
@@ -189,7 +190,7 @@ function paletteAddresses(app: string): string[] {
     { id: SAMPLE.code, kind: 'code' },
     { id: SAMPLE.run, kind: 'general', run_id: SAMPLE.run },
   ] as ThreadLoop[]
-  const threads = numberedThreads({ sessions: [chat], loops, items: [], approvals: [] }, [], [], 'folder', {})
+  const threads = numberedThreads({ sessions: [chat], loops, items: [], approvals: [] }, undefined, [], [], DEFAULT_VIEW)
   return [
     ...[...nav.matchAll(/id: '([^']+)'/g)].map((m) => m[1]),
     ...[...(rows + keys).matchAll(/navigate\('([^']+)'\)/g)].map((m) => m[1]),

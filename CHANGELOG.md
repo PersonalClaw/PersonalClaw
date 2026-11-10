@@ -39,6 +39,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The desktop app can update an older gateway it found, from the Gateways window, and then use it.**
 - **Hands-free voice explains itself: its button beside the microphone has a waveform icon and says what it does when you point at it or tab to it, and while it listens the chat names the phrase that sends and the one that clears.**
 - **Apps can't change the update settings, as they can't start an update. `updates.channel`, `updates.pin`, `updates.auto`, `updates.check_enabled` and `updates.last_version` are yours alone to change, with nothing new to confirm, and an app that lists one in `permissions.config` fails its next validation, and gets 403 for it until then.**
+- **The sidebar's chat history is one list, with a search, a small Sort and filter menu and Open Chat history beside New chat. The menu starts at Recent activity and Active, sorts by Date created or Title, shows Archived or All, and narrows the list to a kind, or to one or more folders or tags. The new chat's Chat history panel shows the same list without New chat, so it now lists goal loops, code sessions and channel chats too, and its rows no longer show a time, and its expand control opens the Chat history page; View all chats is gone.**
 
 ### Fixed
 
@@ -61,6 +62,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Hands-free voice sends only when a confirmation phrase ends what you said and clears only when a discard phrase does, so "cancel my 3pm meeting" no longer throws your words away. It hears you between pieces, keeps what you typed, and turns off when the microphone is blocked, speech-to-text cannot run, or you press Listening.**
 - **A dictation is set apart by a space from the text before and after it, instead of running into it.**
 - **Skipping a step or a group of steps inside a loop or foreach skips it in every cycle and item that has not run it yet and lets the steps already under way finish, and a skip that reaches no step is refused, saying why.**
+- **In the sidebar and the Chat history panel, the search field, the Sort and filter button, the open chat's row and the sidebar's lit page have a visible edge, at 3:1 or better.**
 
 ## [0.3.7] — 2026-11-07
 

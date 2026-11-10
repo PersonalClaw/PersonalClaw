@@ -1,4 +1,4 @@
-import { useId, useMemo, type ReactNode } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { SlidersHorizontal, Check, type LucideIcon } from 'lucide-react'
 import { Popover } from './Popover'
 import { FilterRow } from './FilterRow'
@@ -6,6 +6,8 @@ import { Button } from './Button'
 import { TextLink } from './TextLink'
 import { fvs } from '../design/fontWeight'
 import { accentChip } from '../design/accent'
+import { cx } from './cx'
+import { EDGE } from './SearchField'
 
 /** One selectable choice within a filter section. */
 export interface FilterOption {
@@ -39,6 +41,26 @@ export interface FilterSectionDef {
   /** Several choices at once (Chat history's tags, any of which a chat may carry): `value` is the
    *  chosen keys joined by commas, '' for none, and each row adds or removes its own key. */
   multi?: boolean
+  /** At most this many choices until the owner opens the rest from a "Show all" row, in place: the
+   *  chosen ones, then the ones with the most rows, each in the section's order. Unset, every one. */
+  limit?: number
+  /** What the choices are, for the "Show all 23 folders" row. */
+  limitNoun?: string
+}
+
+/** The choices a section shows before its Show all row is pressed (`limit`): every chosen one, then
+ *  the largest by count, up to the limit, in the section's order. */
+export function limitedOptions(s: FilterSectionDef): FilterOption[] {
+  if (!s.limit || s.options.length <= s.limit) return s.options
+  const chosen = s.options.filter((o) => isChosen(s, o.key))
+  const rest = s.options
+    .map((o, i) => ({ o, i }))
+    .filter(({ o }) => !isChosen(s, o.key))
+    .sort((a, b) => (b.o.count ?? 0) - (a.o.count ?? 0) || a.i - b.i)
+    .slice(0, Math.max(0, s.limit - chosen.length))
+    .map(({ o }) => o)
+  const shown = new Set([...chosen, ...rest].map((o) => o.key))
+  return s.options.filter((o) => shown.has(o.key))
 }
 
 /** A multi section's value with `key` added, or taken out if it was in. */
@@ -56,16 +78,25 @@ function isChosen(s: FilterSectionDef, key: string): boolean {
  *  popover holding every list criterion (scope / status / sort / …) as titled
  *  single-select sections. A count badge on the trigger shows how many sections
  *  hold a non-default value, so an active filter is obvious without opening it.
+ *  At `size="sm"` the trigger is a 32 px icon button with its edge and a dot while
+ *  a section is set, for a list's own toolbar. A section with a `limit` shows that
+ *  many choices, the chosen ones first and then the largest, and a "Show all N
+ *  <limitNoun>" row that opens the rest in place.
  *
  *  This replaces the older pattern of lining up a filter Segmented + a sort
  *  <select> + a scope dropdown across the header — collapsing N competing widgets
  *  into one, consistent across every page. */
-export function FilterMenu({ sections, label = 'Filter', align = 'right', className }: {
+export function FilterMenu({ sections, label = 'Filter', align = 'right', className, size = 'md' }: {
   sections: FilterSectionDef[]
+  /** The word beside the icon; at `size="sm"`, the trigger's whole name and tooltip, which should say
+   *  what is set ("Sort and filter: Recent activity · Active", `headerFilterLabel`). */
   label?: string
   align?: 'left' | 'right'
   /** Added to the trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
   className?: string
+  /** `sm`: the icon alone, 32 px, on the container with its edge, and a dot while a section is set,
+   *  for a list's own toolbar (the chat list's search row). */
+  size?: 'sm' | 'md'
 }) {
   const activeCount = useMemo(
     () => sections.reduce((n, s) => n + (s.value !== s.defaultKey ? 1 : 0), 0),
@@ -82,7 +113,19 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right', classN
       // clamped into the viewport. Eleven consumers move together, which is why the sweep re-measured
       // all 17 routes afterwards rather than just this one.
       portal
-      trigger={(open, toggle) => (
+      trigger={(open, toggle) => size === 'sm' ? (
+        <button type="button" onClick={toggle} aria-label={label} title={label} aria-expanded={open}
+          data-filter-menu={activeCount > 0 ? 'set' : 'default'}
+          className={cx(
+            'relative inline-flex size-8 shrink-0 items-center justify-center rounded-md transition-colors duration-(--duration-short) hover:bg-surface-high hover:text-on-surface',
+            EDGE,
+            open ? 'bg-surface-high text-on-surface' : 'bg-surface-container text-on-surface-var',
+            className,
+          )}>
+          <SlidersHorizontal size={16} strokeWidth={2} aria-hidden />
+          {activeCount > 0 && <span aria-hidden data-filter-set className="absolute right-1 top-1 size-1.5 rounded-pill bg-primary" />}
+        </button>
+      ) : (
         <button type="button" onClick={toggle} aria-label="Filter & sort" title="Filter & sort" aria-expanded={open}
           data-type="body-s"
           className={`relative inline-flex items-center gap-1.5 h-10 rounded-pill px-4 transition-colors ${activeCount > 0 || open ? '' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}${className ? ` ${className}` : ''}`}
@@ -105,20 +148,49 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right', classN
 /** The open menu's body: each section's choices, with its Clear, and Done. Shared by `FilterMenu`
  *  and the header's `HeaderFilter`, so the two are one menu. */
 export function FilterSections({ sections, close }: { sections: FilterSectionDef[]; close: () => void }) {
+  // The sections whose Show all row was pressed, by title: for as long as the menu is open.
+  const [whole, setWhole] = useState<ReadonlySet<string>>(() => new Set())
+  // The choices a limited section has shown, by title: a choice shown stays shown until the menu
+  // closes, so unticking one that was shown for being chosen neither moves it nor drops the focus.
+  const seen = useRef(new Map<string, Set<string>>())
+  // A section whose Show all row was just pressed: the focus goes to its first choice, since the
+  // row it was on is gone.
+  const opened = useRef<string | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const title = opened.current
+    if (title === null) return
+    opened.current = null
+    const section = [...(rootRef.current?.querySelectorAll<HTMLElement>('[data-section]') ?? [])].find((el) => el.dataset.section === title)
+    section?.querySelector<HTMLElement>('button[aria-pressed]')?.focus()
+  }, [whole])
+  const shownOf = (s: FilterSectionDef): FilterOption[] => {
+    if (whole.has(s.title) || !s.limit || s.options.length <= s.limit) return s.options
+    const keep = new Set([...(seen.current.get(s.title) ?? []), ...limitedOptions(s).map((o) => o.key)])
+    seen.current.set(s.title, keep)
+    return s.options.filter((o) => keep.has(o.key))
+  }
   return (
-    <div className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto overscroll-contain">
-      {sections.map((s) => (
+    <div ref={rootRef} className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto overscroll-contain">
+      {sections.map((s) => {
+        const options = shownOf(s)
+        return (
         <Section key={s.title} title={s.title}
           onClear={s.value !== s.defaultKey ? () => s.onChange(s.defaultKey) : undefined}>
-          {s.options.map((o) => (
+          {options.map((o) => (
             <Row key={o.key} option={o} selected={isChosen(s, o.key)}
               onClick={() => s.onChange(s.multi ? toggledKey(s.value, o.key) : o.key)} />
           ))}
+          {options.length < s.options.length && (
+            <FilterRow label={`Show all ${s.options.length} ${s.limitNoun ?? 'choices'}`} selected={false}
+              onClick={() => { opened.current = s.title; setWhole((prev) => new Set([...prev, s.title])) }} />
+          )}
           {s.actions?.map((a) => (
             <FilterRow key={a.label} label={a.label} icon={a.icon} hint={a.hint} selected={false} onClick={() => { close(); a.onSelect() }} />
           ))}
         </Section>
-      ))}
+        )
+      })}
       <Button variant="ghost" size="sm" onClick={close} className="mt-1 w-full">Done</Button>
     </div>
   )
@@ -129,7 +201,7 @@ export function FilterSections({ sections, close }: { sections: FilterSectionDef
 function Section({ title, onClear, children }: { title: string; onClear?: () => void; children: ReactNode }) {
   const titleId = useId()
   return (
-    <div role="group" aria-labelledby={titleId} className="flex flex-col gap-0.5">
+    <div role="group" aria-labelledby={titleId} data-section={title} className="flex flex-col gap-0.5">
       <div className="flex items-center justify-between px-2 pb-0.5">
         <span id={titleId} data-type="caption" className="text-on-surface-low uppercase tracking-wide">{title}</span>
         {onClear && <TextLink onClick={onClear} size="xs">Clear</TextLink>}

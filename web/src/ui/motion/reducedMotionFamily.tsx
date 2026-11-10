@@ -61,11 +61,11 @@ export type ReducedMotionMember = {
 /** The chat history with one chat, in the state `pip`. */
 function railWith(pip: 'running' | 'waiting') {
   return (
-    <ThreadRail status="ready" selectedKey="" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}}
-      groups={[{ id: 'folder:', name: 'No folder', threads: [{
+    <ThreadRail status="ready" selectedKey="" onOpen={() => {}} onRetry={() => {}}
+      rows={[{
         key: 'chat:c1', kind: 'chat', id: 'c1', title: 'Seed order', projectId: '', route: 'chat/c1',
         pip, pinned: false, activeAt: 0, folderId: '', tagIds: [],
-      }] }]} />
+      }]} />
   )
 }
 

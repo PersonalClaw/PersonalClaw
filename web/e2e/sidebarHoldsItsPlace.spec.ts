@@ -37,7 +37,6 @@ const MANY = Array.from({ length: COUNT }, (_, i) => ({
 }))
 
 const LONG = 'Find a supplier for heritage tomato seeds that ships to the north before the first frost of the year'
-const LONG_FOLDER = 'The garden behind the house on the hill, with the raised beds, the greenhouse and the orchard'
 const FEW = [
   { key: 'e2e-few-0', title: 'Plan the beds', messages: 2, run_state: 'idle', project_id: 'p-garden', folder_id: 'f-garden', last_activity_ts: '2026-10-01T00:03:00Z' },
   { key: 'e2e-few-1', title: LONG, messages: 2, run_state: 'idle', project_id: 'p-garden', folder_id: 'f-garden', last_activity_ts: '2026-10-01T00:02:00Z' },
@@ -129,8 +128,8 @@ const measure = (row: ReturnType<Page['locator']>) => row.evaluate((b) => {
 test.describe('a long name', () => {
   test.use({ viewport: { width: 1280, height: 800 } })
 
-  test("a chat's and a folder's are cut short on screen, and shown whole while the row has keyboard focus", async ({ page }) => {
-    await stubThreads(page, FEW, LONG_FOLDER)
+  test("a chat's is cut short on screen, and shown whole while the row has keyboard focus", async ({ page }) => {
+    await stubThreads(page, FEW)
     await gotoRoute(page, 'dashboard')
     const row = page.locator(`${RAIL} [data-thread-key="chat:e2e-few-1"]`)
     await expect(row).toBeVisible()
@@ -146,19 +145,12 @@ test.describe('a long name', () => {
     expect(focused.cut, 'the whole name shows while the row has focus').toBe(false)
     expect(focused.height, 'the row grows to hold it').toBeGreaterThan(resting.height)
 
-    // The folder's own row, its disclosure.
-    const folder = page.locator(RAIL).getByRole('button', { name: `${LONG_FOLDER}, 3 chats` })
-    const folderResting = await measure(folder)
-    expect(folderResting.cut, "the folder's name is cut short on screen").toBe(true)
-    // The search row's Group by control comes after the search, and the folder after it.
+    // The search row's Sort and filter menu comes after the search, and the first row after it.
     await page.locator(RAIL).getByRole('searchbox', { name: 'Search chats' }).focus()
     await page.keyboard.press('Tab')
-    await expect(page.locator(RAIL).getByRole('button', { name: /^Group by: / }), 'Tab from the search reaches Group by').toBeFocused()
+    await expect(page.locator(RAIL).getByRole('button', { name: /^Sort and filter: / }), 'Tab from the search reaches Sort and filter').toBeFocused()
     await page.keyboard.press('Tab')
-    await expect(folder, 'and the next Tab reaches the folder').toBeFocused()
-    const folderFocused = await measure(folder)
-    expect(folderFocused.cut, "the folder's whole name shows while its row has focus").toBe(false)
-    expect(folderFocused.height).toBeGreaterThan(folderResting.height)
+    await expect.poll(() => focusedThread(page), 'and the next Tab reaches the first row').toBe('chat:e2e-few-0')
   })
 })
 

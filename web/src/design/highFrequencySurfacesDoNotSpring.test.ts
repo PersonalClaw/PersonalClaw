@@ -45,6 +45,7 @@ const HIGH_FREQUENCY: Record<string, string> = {
   'ui/NotificationBell.tsx': 'the bell, its badge and its list',
   'ui/SystemWidget.tsx': 'the System popover and its background-agent rows',
   'ui/ListScaffold.tsx': 'the shared list rows',
+  'ui/ThreadRail.tsx': 'the chat list, in the sidebar and the Chat history panel',
   'pages/chat/history/ChatHistorySidePanel.tsx': 'the chat history panel',
   'pages/loops/LoopsListPage.tsx': 'the loops list',
   'pages/chat/hero/ChatHero.tsx': 'the empty chat’s suggestion and starter chips',
@@ -169,10 +170,10 @@ describe('the rail can fail', () => {
   })
 
   it('a stagger() planted on the chat history list is caught', () => {
-    const rel = 'pages/chat/history/ChatHistorySidePanel.tsx'
-    // The shape the panel shipped with, put back on its list.
+    const rel = 'ui/ThreadRail.tsx'
+    // The shape the panel shipped with, put on the one list both hosts draw.
     const planted = read(rel).replace(
-      /(\{recent\.map\()/,
+      /(<WindowedList)/,
       '<motion.div variants={{ animate: { transition: stagger(0.03) } }} initial="initial" animate="animate">$1',
     )
     expect(planted, 'the plant did not land').not.toBe(read(rel))

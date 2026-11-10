@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { api, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval } from './api'
+import { api, type AppStarted, type ChatSessionSummary, type InboxItem, type Loop, type PendingApproval } from './api'
 import { useQuery } from './data'
 import { loopApprovalId, placeOfRefs, type ApprovalPlace } from '../app/approvalDestination'
 import { loopTitle, toLanes, type ActivityInput, type ApprovalInput, type AttentionInput, type Lane, type LaneCard, type LoopInput } from './attentionLanes'
-import { sessionRecencyMs } from './epoch'
+import { epochSeconds, sessionRecencyMs } from './epoch'
 import { loopRoute } from './loopKind'
 import { sessionTitle } from './sessionTitle'
 import { refreshKinds, useChatSocket, type WsMessage } from './useChatSocket'
@@ -31,7 +31,7 @@ import { refreshKinds, useChatSocket, type WsMessage } from './useChatSocket'
  *    it: without it a chat would read failed until its next turn.
  *  · **Order is not decided here.** Groups come in the order their first thread does, and threads
  *    in their list's order, chats before loops. Each thread carries what the sidebar's named order
- *    reads (`pinned`, `activeAt`), and the sidebar sorts by it (`byRailOrder`, `app/threadRail.tsx`).
+ *    reads (`pinned`, `activeAt`), and the sidebar sorts by it (`chatListView.rowOrder`, `app/useChatList.ts`).
  */
 
 /** The group a thread with no project goes under, shown as "No project". */
@@ -71,6 +71,14 @@ export interface Thread {
    *  worker's turn), else when it completed, started or was created: the newest of these. Its
    *  status never changes it, and neither does a worker's turn under way once a cycle time is in. */
   activeAt: number
+  /** The chat is archived (its `lifecycle`). Only a chat can be, and only the archive's read lists
+   *  one (`chat:sessions:archived`). */
+  archived?: boolean
+  /** When it was made, in epoch ms: a chat's `created`, a loop's `created_at`. Absent when its row
+   *  does not say. */
+  createdAt?: number
+  /** The app that started the chat (`StartedByApp`), absent on one of yours. */
+  startedBy?: AppStarted
 }
 
 export interface ProjectThreads {
@@ -80,6 +88,7 @@ export interface ProjectThreads {
 
 /** The chat list's fields the join reads. */
 export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id' | 'pinned' | 'attention' | 'folder_id' | 'tags'>
+  & Partial<Pick<ChatSessionSummary, 'created' | 'lifecycle' | 'created_by_app' | 'created_by_app_name'>>
 /** The loop list's fields the join reads. */
 export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'> & Partial<Pick<Loop, 'created_at' | 'completed_at' | 'last_cycle_at' | 'broken'>>
 
@@ -125,6 +134,19 @@ function chatPip(s: ThreadChat): ThreadPip | null {
   return s.run_state?.last_outcome === 'error' ? 'failed' : 'unread'
 }
 
+/** What a chat's row says beyond its place in the list: archived, when it was made, the app that
+ *  started it. Each only when the row says it. */
+function chatFacts(s: ThreadChat): Pick<Thread, 'archived' | 'createdAt' | 'startedBy'> {
+  // The one parser: a time with no zone names no moment, so it gives none.
+  const created = epochSeconds(s.created)
+  const app = str(s.created_by_app)
+  return {
+    ...(s.lifecycle === 'archived' ? { archived: true } : {}),
+    ...(created !== undefined ? { createdAt: created * 1000 } : {}),
+    ...(app !== '' ? { startedBy: { created_by_app: app, ...(str(s.created_by_app_name) ? { created_by_app_name: str(s.created_by_app_name) } : {}) } } : {}),
+  }
+}
+
 /** An epoch-seconds field of a loop row as ms, 0 when it holds no number. */
 function ms(secs: unknown): number {
   return typeof secs === 'number' && Number.isFinite(secs) ? secs * 1000 : 0
@@ -161,6 +183,7 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
       folderId: '',
       tagIds: [],
       activeAt: lastCycle || Math.max(ms(l.completed_at), ms(l.started_at), ms(l.created_at)),
+      ...(ms(l.created_at) > 0 ? { createdAt: ms(l.created_at) } : {}),
     })
     if (lastCycle > 0) cycleTimed.add(`loop:${id}`)
     if (str(l.session_key) !== '') loopBySession.set(str(l.session_key), `loop:${id}`)
@@ -201,6 +224,7 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
       folderId: str(s.folder_id),
       tagIds: (Array.isArray(s.tags) ? s.tags : []).filter((t): t is string => typeof t === 'string' && t !== ''),
       activeAt: sessionRecencyMs(s),
+      ...chatFacts(s),
     })
   }
   for (const t of loopThreads) {

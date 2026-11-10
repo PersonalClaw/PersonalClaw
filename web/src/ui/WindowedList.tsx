@@ -1,5 +1,5 @@
 import {
-  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState,
   type ReactNode,
 } from 'react'
 
@@ -138,6 +138,10 @@ export function WindowedList<T>({
 }: WindowedListProps<T>) {
   const total = items.length
   const windowed = total > WINDOWING_THRESHOLD
+  // Its own, not the noun's: two lists of one noun can share a page (the sidebar's and the Chat
+  // history panel's, or the sidebar's and the Chat history page's), and a shared id points both
+  // lists at the first one's hint.
+  const hintId = useId()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const scrollerRef = useRef<HTMLElement | null>(null)
   /** Measured row heights live in a REF, with a version counter as the only state.
@@ -448,7 +452,6 @@ export function WindowedList<T>({
     )
   }
 
-  const hintId = `windowed-hint-${noun.replace(/\W+/g, '')}`
   return (
     <>
       {windowed && (

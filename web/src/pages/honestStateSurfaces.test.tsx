@@ -598,21 +598,31 @@ describe('copy that says what the surface does', () => {
 // `.catch(() => [])`, so every reader took the "you have none" branch, and the page's empty state
 // carried an invitation to act on the false claim. The swallow is the load-error census's to count;
 // what each surface owes is the branch: the failure first, the list in hand kept through a failed
-// revalidation, and the empty state, still there, for an account that really has none.
+// revalidation, and the empty state, still there, for an account that really has none. The side
+// panel is the sidebar's chat list now (`useChatList`), which reads its chats with the loops, the
+// Inbox and the approvals under one key (`dashboard:threads`), so those three answer empty here.
 
 describe('the chat list says when it could not be read', () => {
   const trip = { key: 'chat-1', title: 'Trip planning', updated_at: '2026-09-26T10:00:00Z', origin: 'manual' }
+  const none = () => Promise.resolve([])
   const SURFACES = [
-    { row: 'the side panel', mount: () => <ChatHistorySidePanelBody navigate={() => {}} onOpen={() => {}} />, empty: () => screen.getByText('No chats yet.') },
+    {
+      row: 'the side panel', mount: () => <ChatHistorySidePanelBody onOpen={() => {}} />,
+      empty: () => screen.getByText('No chats yet'),
+      also: { uLoops: none, inboxOpen: none, approvals: none, chatFolders: none, chatTags: none } as Answers,
+      seed: () => writeQuery('dashboard:threads', { sessions: [trip], loops: [], items: [], approvals: [] }),
+    },
     {
       row: 'the history page',
       mount: () => <ChatHistoryPage navigate={() => {}} query={{}} setQuery={() => {}} />,
       empty: () => screen.getByRole('heading', { name: 'No chats yet' }),
+      also: {} as Answers,
+      seed: () => writeQuery('chat:sessions', [trip]),
     },
   ]
 
   it.each(SURFACES.map((r) => [r.row, r] as const))('%s: a failed read is a retryable LoadError, not "No chats yet"', async (_, r) => {
-    answer({ chatSessions: boom })
+    answer({ ...r.also, chatSessions: boom })
     render(r.mount())
     const alert = await waitFor(() => screen.getByRole('heading', { name: "Couldn't load your chats" }).closest('[role="alert"]') as HTMLElement)
     expect(within(alert).getByRole('button', { name: /Retry/ })).toBeInTheDocument()
@@ -620,8 +630,8 @@ describe('the chat list says when it could not be read', () => {
   })
 
   it.each(SURFACES.map((r) => [r.row, r] as const))('%s: the list in hand stays when its revalidation fails', async (_, r) => {
-    writeQuery('chat:sessions', [trip])
-    answer({ chatSessions: boom })
+    r.seed()
+    answer({ ...r.also, chatSessions: boom })
     render(r.mount())
     await waitFor(() => expect(api.chatSessions).toHaveBeenCalled())
     await act(async () => { await new Promise((res) => setTimeout(res, 20)) })
@@ -630,7 +640,7 @@ describe('the chat list says when it could not be read', () => {
   })
 
   it.each(SURFACES.map((r) => [r.row, r] as const))('%s: an account with none says so, and it is no alert', async (_, r) => {
-    answer({ chatSessions: () => Promise.resolve([]) })
+    answer({ ...r.also, chatSessions: () => Promise.resolve([]) })
     render(r.mount())
     await waitFor(() => expect(r.empty()).toBeInTheDocument())
     expect(screen.queryByRole('heading', { name: "Couldn't load your chats" })).toBeNull()

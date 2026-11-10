@@ -211,6 +211,20 @@ describe('WindowedList — clause: screen-reader row/count semantics stay correc
     expect(posOf('r3001')).toBe('3002')
   })
 
+  it('two lists of the same noun on one page each point at their own hint', () => {
+    const list = (n: number) => (
+      <WindowedList items={rows(n)} rowKey={(it) => it.id} rowHeights="uniform" estimateRowHeight={ROW_H} gap={0}
+        noun="chats" findHint="use the Search chats field above." className="flex flex-col">
+        {(it) => <button>{it.title}</button>}
+      </WindowedList>
+    )
+    render(<>{list(100)}{list(100)}</>)
+    const hints = screen.getAllByRole('list').map((l) => l.getAttribute('aria-describedby'))
+    expect(hints.every(Boolean)).toBe(true)
+    expect(new Set(hints).size).toBe(2)
+    for (const id of hints) expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1)
+  })
+
   it('role="list" has ONLY listitem children — the spacers are padding, not elements', () => {
     const { list, scrollTo } = mount({ n: 5000 })
     scrollTo(1000 * ROW_H)

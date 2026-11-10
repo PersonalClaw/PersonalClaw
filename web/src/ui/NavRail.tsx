@@ -45,11 +45,20 @@ const COLLAPSED_W = 64
  *  2 px out. A scroll area keeps this much clear at an edge so a focused row's ring is never cut. */
 export const RING_REACH = 4
 
+/** The lit pill of the open destination, the open chat's row and a lit Open Chat history: the
+ *  rail's quiet selected fill, distinct from hover (a lighter fill) and from keyboard focus (the
+ *  focus ring), with the list controls' at-rest edge (`SearchField`'s `EDGE`), which is what tells
+ *  it from the ground at 3:1 or more (`design/sidebarContrast.test.ts`). */
+export const SELECTED_PILL = 'absolute inset-0 rounded-pill bg-surface-low border border-on-surface-low/70'
+
 const OVERLAY_W = 264
-/** The least height the chat history keeps between the rail's two blocks: its pinned bar (the
- *  heading, New chat and the search) and one row. A window shorter than both blocks and this scrolls
- *  the rail as one column instead (#5878). */
-export const HISTORY_FLOOR = 136
+/** The least height the chat history keeps between the rail's two blocks: its pinned bar (New chat
+ *  and Open Chat history, then the search and its Sort and filter menu) and one row. A window
+ *  shorter than both blocks and this scrolls the rail as one column instead (#5878). 136 px at 100%.
+ *  At large text the bar grows, and wraps in a narrow rail, so the floor is the bar's measured
+ *  height (`--chat-list-bar`, which the chat list sets on its scroller) and a row (2.5rem: the row
+ *  and the scroll area's foot) where that is more: the list keeps a whole row at every text size. */
+export const HISTORY_FLOOR = 'max(136px, calc(var(--chat-list-bar, 0px) + 2.5rem))'
 // How far past its own width the CLOSED overlay drawer parks: `shadow-2xl`'s 38px reach
 // (spread −12 + blur 50), rounded up, so none of its shadow is left on screen.
 const CLOSED_SHADOW_CLEARANCE = 48
@@ -170,11 +179,11 @@ export function NavRail({
           // below — a role on the label span would override that inherited weight.
           data-type="body-m"
           className={rowCls(active ? 'text-on-surface' : 'text-on-surface-var hover:bg-surface-low/60 hover:text-on-surface')}
-          style={withWeight({ height: 32 }, active ? 470 : 400)}>
+          style={withWeight({ minHeight: 32 }, active ? 470 : 400)}>
           {/* The active pill, behind the icon and label. It changes item at once, by colour: a rail
               click is the most frequent action in the app, and a pill sliding over from the last
               item says nothing about where you are now. */}
-          {active && <span className="absolute inset-0 rounded-pill bg-surface-low" />}
+          {active && <span className={SELECTED_PILL} />}
           <span className="relative z-10 shrink-0 inline-flex">
             <Icon size={18} strokeWidth={2} />
             {/* Collapsed rail has no room for the pill badge — show a dot so

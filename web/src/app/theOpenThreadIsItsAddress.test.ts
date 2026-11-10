@@ -21,50 +21,48 @@ function loop(id: string, kind: 'loop' | 'code' = 'loop', route = kind === 'code
   return { key: `loop:${id}`, kind, id, title: id, projectId: '', route, pip: null, pinned: false, activeAt: 0, folderId: '', tagIds: [] }
 }
 
-const GROUPS = [{
-  threads: [
-    chat('chat-1'), chat('web:7f3a'), chat('a'), chat('a/b'),
-    loop('a1b2c3d4'), loop('e5f6a7b8', 'code'), loop('c9d0e1f2', 'loop', 'workflows/runs/run-42'),
-  ],
-}]
+const ROWS = [
+  chat('chat-1'), chat('web:7f3a'), chat('a'), chat('a/b'),
+  loop('a1b2c3d4'), loop('e5f6a7b8', 'code'), loop('c9d0e1f2', 'loop', 'workflows/runs/run-42'),
+]
 
 describe('the open thread', () => {
   it('is the chat the address opens', () => {
-    expect(threadAt('chat', 'chat-1', GROUPS)).toBe('chat:chat-1')
-    expect(threadAt('chat', 'web:7f3a', GROUPS)).toBe('chat:web:7f3a')
+    expect(threadAt('chat', 'chat-1', ROWS)).toBe('chat:chat-1')
+    expect(threadAt('chat', 'web:7f3a', ROWS)).toBe('chat:web:7f3a')
   })
 
   it('is matched whole, so a chat whose key extends another is not lit for it', () => {
-    expect(threadAt('chat', 'a/b', GROUPS)).toBe('chat:a/b')
-    expect(threadAt('chat', 'a', GROUPS)).toBe('chat:a')
+    expect(threadAt('chat', 'a/b', ROWS)).toBe('chat:a/b')
+    expect(threadAt('chat', 'a', ROWS)).toBe('chat:a')
   })
 
   it('is none on the chat pages that are not a thread', () => {
-    for (const sub of ['', 'new', 'history', 'room', 'room/r-1']) expect(threadAt('chat', sub, GROUPS)).toBe('')
+    for (const sub of ['', 'new', 'history', 'room', 'room/r-1']) expect(threadAt('chat', sub, ROWS)).toBe('')
   })
 
   it('is none for a chat the rail does not list', () => {
-    expect(threadAt('chat', 'loop-a1b2c3d4-worker', GROUPS)).toBe('')
+    expect(threadAt('chat', 'loop-a1b2c3d4-worker', ROWS)).toBe('')
   })
 
   it("is the loop or code session the address opens, on any of its own sub-pages", () => {
-    expect(threadAt('loops', 'a1b2c3d4', GROUPS)).toBe('loop:a1b2c3d4')
-    expect(threadAt('loops', 'a1b2c3d4/cycles', GROUPS)).toBe('loop:a1b2c3d4')
-    expect(threadAt('code', 'e5f6a7b8', GROUPS)).toBe('loop:e5f6a7b8')
+    expect(threadAt('loops', 'a1b2c3d4', ROWS)).toBe('loop:a1b2c3d4')
+    expect(threadAt('loops', 'a1b2c3d4/cycles', ROWS)).toBe('loop:a1b2c3d4')
+    expect(threadAt('code', 'e5f6a7b8', ROWS)).toBe('loop:e5f6a7b8')
   })
 
   it("is a code session opened by a loop address, an address it had before", () => {
-    expect(threadAt('loops', 'e5f6a7b8', GROUPS)).toBe('loop:e5f6a7b8')
+    expect(threadAt('loops', 'e5f6a7b8', ROWS)).toBe('loop:e5f6a7b8')
   })
 
   it("is the run-backed loop whose run page is open", () => {
-    expect(threadAt('workflows', 'runs/run-42', GROUPS)).toBe('loop:c9d0e1f2')
+    expect(threadAt('workflows', 'runs/run-42', ROWS)).toBe('loop:c9d0e1f2')
   })
 
   it('is none on a page that is no thread', () => {
-    expect(threadAt('loops', 'history', GROUPS)).toBe('')
-    expect(threadAt('loops', '', GROUPS)).toBe('')
-    expect(threadAt('settings', 'agent', GROUPS)).toBe('')
-    expect(threadAt('workflows', 'runs', GROUPS)).toBe('')
+    expect(threadAt('loops', 'history', ROWS)).toBe('')
+    expect(threadAt('loops', '', ROWS)).toBe('')
+    expect(threadAt('settings', 'agent', ROWS)).toBe('')
+    expect(threadAt('workflows', 'runs', ROWS)).toBe('')
   })
 })
