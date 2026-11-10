@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import type { Thread } from '../lib/useThreads'
 import { ThreadRail, type ThreadRailGroup } from './ThreadRail'
@@ -57,9 +57,15 @@ describe('the top of the chat history', () => {
   })
 
   it('paints the rail\'s solid surface, above the rows, so no row shows through it', () => {
+    // The rail's surface token, set on the root with a colour nothing else uses, reaches the bar, and
+    // the bar paints it. jsdom 30 inherits a custom property but does not substitute var() in a
+    // value, so the paint is read from the bar's own declaration.
+    document.documentElement.style.setProperty('--color-rail', 'rgb(1, 2, 3)')
+    onTestFinished(() => { document.documentElement.style.removeProperty('--color-rail') })
     render(<ThreadRail groups={[GARDEN]} selectedKey="chat:chat-3" status="ready" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}} />)
     const style = getComputedStyle(bar())
-    expect(style.background).toBe('var(--color-rail)')
+    expect(style.getPropertyValue('--color-rail'), 'the token reaches the bar').toBe('rgb(1, 2, 3)')
+    expect(bar().style.background, 'the bar paints the token').toBe('var(--color-rail)')
     // A row's label is raised over its selected fill; the bar sits above every part of a row.
     const row = document.querySelector<HTMLElement>('[data-thread-key="chat:chat-3"]')!
     const raised = [...row.querySelectorAll<HTMLElement>('span')].map((sp) => Number(getComputedStyle(sp).zIndex) || 0)
