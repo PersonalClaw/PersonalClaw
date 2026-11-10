@@ -11,9 +11,11 @@ const doc: UiDoc = {
   props: [
     { name: 'icon', description: 'The Lucide icon component to render (rendered at strokeWidth 2, absoluteStrokeWidth).' },
     { name: 'title', description: "Tooltip override — defaults to `label`, matching ui/SquareIconButton. Use it when the accessible NAME must carry a row's subject (e.g. `Delete: <title>` on a list of 83 notifications) while the hover hint stays the bare verb." },
-      { name: 'label', description: 'Accessible name (aria-label) and native tooltip — required, since there is no visible text.' },
+      { name: 'label', description: 'Accessible name (aria-label) and, without a tip, the native tooltip — required, since there is no visible text.' },
+    { name: 'tip', description: 'What the control does, said before it is used: a real tooltip (ui/Tooltip) on hover and keyboard focus, and the button’s description at all times. With it the button carries no native title; a disabledReason follows the tip as its own sentence. The composer’s microphone and hands-free voice pass it.' },
     { name: 'onClick', description: 'Click handler; receives the mouse event. Suppressed while disabled.' },
-    { name: 'active', description: 'Renders the currently-on (toggled) state — a surface-high fill instead of the bare idle glyph.' },
+    { name: 'active', description: 'Renders the currently-on (toggled) state — a surface-high fill instead of the bare idle glyph, or the tone activeTone names.' },
+    { name: 'activeTone', description: 'The tone active takes. listening wears the microphone capture chip’s tone (the listening phase), for a control that is on because it hears the owner: the composer’s microphone while it records and hands-free voice while it is on. neutral, the default, is the surface-high fill a hover also uses, which is why a listening control should not wear it.' },
     { name: 'expanded', description: 'For a button that opens a disclosure (a popover or a panel): whether it is open, announced as aria-expanded. The composer\'s Context control passes it. Omit it on a button that opens nothing, so no expanded state is announced.' },
     { name: 'filled', description: 'Solid primary treatment (bg-primary / on-primary) for an emphasized action; carries its own emphasis so the hover halo is suppressed.' },
     { name: 'size', description: 'Hit-area width/height in px (default 40). Shrink for dense inline chrome.' },

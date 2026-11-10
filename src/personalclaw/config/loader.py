@@ -3378,9 +3378,9 @@ class VoiceConfig:
     exit_phrases: list[str] = field(
         default_factory=lambda: list(DEFAULT_EXIT_PHRASES),
         metadata=_meta(
-            "Exit Phrases",
-            "Saying one of these in hands-free mode clears the accumulated "
-            "transcript without sending it.",
+            "Discard Phrases",
+            "Ending what you said in hands-free mode with one of these clears what "
+            "you dictated without sending it; hands-free keeps listening.",
         ),
     )
     echo_filter_enabled: bool = field(

@@ -628,6 +628,31 @@ page stays at `#/terminal`, and the command palette's **Terminal** row opens it.
 
 ---
 
+## Talk instead of typing: voice input and hands-free voice
+
+Two buttons sit beside Send. Without speech-to-text set up, either one says so when you use it,
+and hands-free turns off.
+
+- **Voice input** (the microphone) dictates into the box at your cursor, or in place of what you
+  selected. Press it, speak, press it again: what you said is written into your draft, set apart
+  from the text around it by a space, and nothing is sent. It never sends.
+- **Hands-free voice** (the waveform beside it) keeps listening and sends for you. Talk, then end
+  with a confirmation phrase such as "do it" or "go ahead": what you said is sent as your
+  message, without the phrase. End with a discard phrase such as "cancel" or "never mind" to
+  clear what you dictated; hands-free keeps listening. A phrase counts only when it ends what you
+  said, so "cancel my 3pm meeting" is dictation and "do it please" waits for you to finish.
+
+While hands-free is on, the line under the orb names the phrase that sends and the one that
+clears, and says when it is paused while a reply is read aloud. The microphone stays open for the
+whole mode, so nothing you say between two pieces of the recording is lost. Anything you typed
+before you started talking stays in front of what you say, and is sent with it. Hands-free turns
+off when you press it or the Listening chip. It also turns off, with a notice saying why, when the
+microphone is blocked or stops, or speech-to-text cannot transcribe what it heard.
+
+Both buttons say what they do when you point at them or tab to them. The phrases are yours to
+change in Settings → Speech & Transcription → Hands-free voice (`voice.confirmation_phrases`,
+`voice.exit_phrases`, shown as Discard phrases).
+
 ## Which model answers a turn
 
 A turn runs on the model you pick in the composer's agent-and-model pill. Left on **Auto**, it runs on a

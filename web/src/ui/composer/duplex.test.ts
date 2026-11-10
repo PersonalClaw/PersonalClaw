@@ -50,15 +50,17 @@ describe('the shared phrase cases (tests/test_voice_duplex.py runs the same file
 })
 
 describe('isConfirmation / isExit', () => {
-  it('matches a trailing phrase, case- and punctuation-insensitively', () => {
+  it('matches a phrase that ends what was said, case- and punctuation-insensitively', () => {
     expect(isConfirmation('Do it.', CONFIRM)).toBe(true)
     expect(isConfirmation('draft the email and send it', CONFIRM)).toBe(true)
-    expect(isConfirmation('ok go ahead please', CONFIRM)).toBe(true)
+    expect(isConfirmation('ok go ahead', CONFIRM)).toBe(true)
     expect(isExit('oh never mind', EXIT)).toBe(true)
   })
 
-  it('is tail-anchored — a confirmation mid-thought does not fire', () => {
+  it('counts a phrase only when it ends what was said', () => {
     expect(isConfirmation('go ahead and tell me what you think about the plan', CONFIRM)).toBe(false)
+    expect(isConfirmation('ok go ahead please', CONFIRM)).toBe(false)
+    expect(isExit('cancel my 3pm meeting', EXIT)).toBe(false)
   })
 
   it('rejects empty text, substrings and non-consecutive words', () => {
@@ -69,8 +71,10 @@ describe('isConfirmation / isExit', () => {
     expect(isExit('cancellation policy', EXIT)).toBe(false)
   })
 
-  it('matches a multi-word phrase against a tail shorter than the window', () => {
-    expect(isConfirmation('go ahead', CONFIRM, 1)).toBe(true)
+  it('does not count a phrase followed by any word', () => {
+    expect(isConfirmation('go ahead', CONFIRM)).toBe(true)
+    expect(isConfirmation('go ahead then', CONFIRM)).toBe(false)
+    expect(isExit('never mind that', EXIT)).toBe(false)
   })
 
   it('fires on nothing when the phrase list is empty', () => {
@@ -134,8 +138,24 @@ describe('accumulateTranscript', () => {
     })
   })
 
-  it('treats a stray confirmation with an empty buffer as a clear, not a turn', () => {
-    expect(accumulateTranscript('', 'go ahead', PHRASES)).toEqual({ buffer: '', action: 'clear' })
+  it('sends a confirmation split across two pieces, without the phrase', () => {
+    const first = accumulateTranscript('', 'book the ferry go', PHRASES)
+    expect(first).toEqual({ buffer: 'book the ferry go', action: 'accumulate' })
+    expect(accumulateTranscript(first.buffer, 'ahead.', PHRASES)).toEqual({ buffer: 'book the ferry', action: 'submit' })
+  })
+
+  it('clears on a discard phrase split across two pieces', () => {
+    const first = accumulateTranscript('', 'book the ferry never', PHRASES)
+    expect(first.action).toBe('accumulate')
+    expect(accumulateTranscript(first.buffer, 'mind.', PHRASES)).toEqual({ buffer: '', action: 'clear' })
+  })
+
+  it('keeps a piece that only begins with a discard phrase', () => {
+    expect(accumulateTranscript('', 'Cancel my 3pm meeting', PHRASES)).toEqual({ buffer: 'Cancel my 3pm meeting', action: 'accumulate' })
+  })
+
+  it('submits a confirmation said with nothing before it, so the host sends what it holds or nothing', () => {
+    expect(accumulateTranscript('', 'go ahead', PHRASES)).toEqual({ buffer: '', action: 'submit' })
   })
 
   it('discards "send it, never mind" when speech-to-text writes the retraction as one word', () => {

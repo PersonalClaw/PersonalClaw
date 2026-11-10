@@ -6,6 +6,7 @@ import { liveMarkdown, liveMarkdownTheme } from './liveMarkdown'
 import { MentionMenu, type MentionPick } from './MentionMenu'
 import { SlashMenu } from './SlashMenu'
 import { enterKeyAction } from './enterKeyAction'
+import { spacedInsertion } from './spokenText'
 import { HIDDEN_CHAR_CLASS } from '../widget/actionTurn'
 
 /** Detect an active `@query` at the caret (word-boundary @, query has no space). */
@@ -40,7 +41,9 @@ export function pastedImages(data: DataTransfer | null | undefined): File[] {
 
 export interface MarkdownInputHandle {
   focus: () => void
-  /** Replace the current selection (or insert at caret) with `text`. */
+  /** Replace the current selection (or insert at caret) with spoken `text`, set apart by a space
+   *  from the words on either side (`spacedInsertion`). One transaction, so a selection is replaced
+   *  and the caret lands after the transcript. */
   insertAtCaret: (text: string) => void
 }
 
@@ -343,7 +346,11 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
     insertAtCaret: (text: string) => {
       const view = viewRef.current
       if (!view) return
-      view.dispatch(view.state.replaceSelection(text))
+      const { doc, selection } = view.state
+      const { from, to } = selection.main
+      const { insert, caret } = spacedInsertion(doc.sliceString(Math.max(0, from - 8), from), doc.sliceString(to, to + 8), text)
+      if (!insert) return
+      view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + caret } })
       requestAnimationFrame(() => view.focus())
     },
   }), [])

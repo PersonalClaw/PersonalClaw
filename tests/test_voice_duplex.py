@@ -1,7 +1,7 @@
 """The duplex-loop pure functions.
 
 Every rule these functions implement is a decision the voice loop makes without
-asking a model, so each is pinned here: tail-anchored phrase gating, the
+asking a model, so each is pinned here: phrase gating at the end of what was said, the
 three-consecutive-word echo threshold at/below/above the line, and each
 individual reduction ``clean_for_speech`` performs.
 
@@ -53,7 +53,7 @@ def _phrase_cases() -> list[dict]:
         "send it",
         "execute",
         "draft the email and send it",
-        "ok go ahead please",
+        "ok go ahead",
         "  execute  ",
     ],
 )
@@ -71,9 +71,12 @@ def test_is_confirmation_matches_trailing_phrase(text):
         "redo it",
         "undo it",
         "execution plan",
-        # Tail-anchored: a confirmation buried at the head of a long dictation
-        # is part of the thought, not the trigger.
+        # A confirmation counts only when it ends what was said: at the head of a
+        # dictation it is part of the thought, not the trigger.
         "go ahead and tell me what you think about the deployment plan tomorrow",
+        # Followed by any word, a courtesy word included, it does not count.
+        "ok go ahead please",
+        "so we can do it this way",
         # "do" and "it" present but not consecutive.
         "do you want it",
     ],
@@ -100,15 +103,17 @@ def test_is_confirmation_ignores_a_non_sequence_phrase_argument():
     assert is_confirmation("do it", "do it") is False
 
 
-def test_is_confirmation_tail_window_is_configurable():
-    text = "go ahead and tell me what you think about it"
-    assert is_confirmation(text) is False
-    assert is_confirmation(text, tail_words=20) is True
+def test_a_phrase_followed_by_any_word_does_not_count():
+    assert is_confirmation("go ahead") is True
+    assert is_confirmation("go ahead then") is False
+    assert is_exit("never mind") is True
+    assert is_exit("never mind that") is False
+    assert is_exit("cancel my 3pm meeting") is False
 
 
-def test_is_confirmation_multiword_phrase_matches_a_short_tail():
-    # The window must stretch to hold a phrase longer than tail_words itself.
-    assert is_confirmation("go ahead", DEFAULT_CONFIRMATION_PHRASES, tail_words=1) is True
+def test_there_is_no_window():
+    """The end of what was said is the only place a phrase counts, so no window is shipped."""
+    assert not hasattr(duplex, "TAIL_WINDOW_WORDS")
 
 
 def test_is_confirmation_rejects_non_string_input():
@@ -154,9 +159,9 @@ def test_is_exit_rejects(text):
 
 
 def test_send_it_never_mind_is_heard_as_an_exit():
-    """Exit wins over confirmation within one chunk, so the chunk must be heard as both;
-    with the retraction written as one word it used to be heard only as "send it"."""
-    assert is_confirmation("Send it. Nevermind.") is True
+    """The retraction ends what was said, so the piece is an exit and nothing is sent, with
+    the retraction written as one word too."""
+    assert is_confirmation("Send it. Nevermind.") is False
     assert is_exit("Send it. Nevermind.") is True
 
 

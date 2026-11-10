@@ -105,9 +105,10 @@ differ by glyph as well as tone, so no two waiting or failed states are told apa
 - **64 px, rarely:** only in empty states, voice mode and the buddy's expanded view. The empty chat
   opens on it, still and in the rest colour (`idle`), where the brand mark used to morph: nothing
   runs in a new chat, so nothing on it moves. Voice mode is the composer's hands-free state: while
-  it is on, the orb stands above the draft, `listening` while the microphone hears the owner and
-  the turn's own phase the rest of the time (muted while a reply is spoken, transcribing, or
-  between segments). In an empty chat it takes the place of the chat's orb, so one shows.
+  it is on, the orb stands above the draft, `listening` while the microphone hears the owner,
+  which is the whole mode, since it stays open between pieces, and the turn's own phase while it
+  is muted for a reply read aloud. In an empty chat it takes the place of the chat's orb, so one
+  shows.
 - **Settings › Appearance › Design, both sizes:** every phase at 20 and 64 px under its family, in the owner's own
   scheme, closed until asked for, since the active family moves. The visual suite photographs it.
 

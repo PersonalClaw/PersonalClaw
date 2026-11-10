@@ -66,7 +66,7 @@
         - cell "built-in voice"
         - cell "—"
   - heading "Hands-free voice" [level=#]
-  - paragraph: Keep listening and send only when you say a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.
+  - paragraph: Keep listening and send only when what you say ends with a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.
   - text: Push-to-talk shortcut Used by the desktop app for global push-to-talk. A browser tab has no global shortcuts, so this is saved for when you run the desktop app.
   - 'button "Push-to-talk shortcut: ⌘⇧Space — activate to change"': ⌘⇧Space
   - status
@@ -81,13 +81,15 @@
   - textbox "Confirmation phrases":
     - /placeholder: ""
   - status
-  - text: Exit phrases Saying one of these throws the accumulated dictation away. cancel
+  - text: Discard phrases Ending what you said with one of these clears what you dictated. Hands-free keeps listening. cancel
   - button "Remove cancel"
+  - text: cancel that
+  - button "Remove cancel that"
   - text: never mind
   - button "Remove never mind"
   - text: forget it
   - button "Remove forget it"
-  - textbox "Exit phrases":
+  - textbox "Discard phrases":
     - /placeholder: ""
   - status
   - text: Mute while speaking Release the microphone and discard what it captured while a reply plays aloud. This is what stops the assistant hearing itself.

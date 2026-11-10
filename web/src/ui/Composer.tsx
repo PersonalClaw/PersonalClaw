@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, Ear, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
+import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, AudioLines, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { duration, spring, physics, expr, sweep } from '../design/motion'
 import { AgentOrb, ORB_LOOKS } from './AgentOrb'
@@ -11,6 +11,7 @@ import { resolveSendButton } from './composer/sendButtonState'
 import { StopSweep } from './composer/StopSweep'
 import { DROP_GROW_PX, INSTANT, RISE_GROW_PX, riseScale } from './composer/rise'
 import { useMicRecorder } from './composer/useMicRecorder'
+import { DEFAULT_PHRASES } from './composer/duplex'
 import type { ComposerProps } from './composer/types'
 import { useIsMobile } from '../app/useIsMobile'
 import { bindingLabel } from '../app/keymap'
@@ -20,6 +21,7 @@ import { cx } from './cx'
 import { Button } from './Button'
 import { useQuery } from '../lib/data'
 import { usePushToTalk, ensureMicGrant, useCaptureReport } from '../lib/pushToTalk'
+import { desktopBridge } from '../lib/desktopBridge'
 import { MicCaptureChip } from './MicCaptureChip'
 import { ContextDisclosure, nearLimit, nearLimitSaid } from './composer/ContextDisclosure'
 
@@ -45,7 +47,7 @@ export function Composer({
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, contextParts, contextActions, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
-  replyStyle, sendHeldReason, sendHeldEverywhere = false, onReplace, hostPills, settled = false,
+  replyStyle, sendHeldReason, sendHeldEverywhere = false, onReplace, onHandsFreeStart, draftHoldsWidgetMessage, hostPills, settled = false,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -121,6 +123,20 @@ export function Composer({
   const canHandsFree = !!handsFree && !!onHandsFreeSubmit && !!onTranscribe
   useEffect(() => { if (!canHandsFree) setListening(false) }, [canHandsFree])
 
+  // What hands-free's dictation follows: the owner's own draft as it was when they began to speak,
+  // read at their first words and forgotten when the mode changes or a turn is sent. A draft
+  // holding a widget's message is not theirs, so dictation replaces it.
+  const valueRef = useRef(value)
+  valueRef.current = value
+  const widgetDraftRef = useRef(!!draftHoldsWidgetMessage)
+  widgetDraftRef.current = !!draftHoldsWidgetMessage
+  const spokenAfterRef = useRef<string | null>(null)
+  useEffect(() => { spokenAfterRef.current = null }, [listening])
+  const withYourDraft = (dictation: string) => {
+    if (spokenAfterRef.current === null) spokenAfterRef.current = widgetDraftRef.current ? '' : valueRef.current.trim()
+    return [spokenAfterRef.current, dictation].filter(Boolean).join(' ')
+  }
+
   // mic → STT: insert the transcript at the caret (or append) when it returns.
   const mic = useMicRecorder(onTranscribe, (text) => {
     inputRef.current?.insertAtCaret(text)
@@ -129,9 +145,22 @@ export function Composer({
     confirmationPhrases: handsFree!.confirmationPhrases,
     exitPhrases: handsFree!.exitPhrases,
     muted: (handsFree!.muteWhileSpeaking ?? true) && !!handsFree!.speaking,
-    // Dictation is the owner's words: it replaces the draft (onReplace), never joins a widget's.
-    onBuffer: (text) => (onReplace ?? onChange)(text),
-    onSubmit: (text) => { (onReplace ?? onChange)(text); onHandsFreeSubmit!(text) },
+    // Dictation is the owner's words: it goes in through onReplace, never joining a widget's.
+    onBuffer: (text) => (onReplace ?? onChange)(withYourDraft(text)),
+    onSubmit: (text) => {
+      const turn = withYourDraft(text)
+      // A lone confirmation phrase with nothing typed or said sends nothing.
+      if (!turn) return
+      spokenAfterRef.current = null
+      // Until the host renders, the box is what it left after the send: a sent turn empties it, and
+      // a held one comes back with that render unless a piece folds before it (a deferred defect).
+      valueRef.current = ''
+      ;(onReplace ?? onChange)(turn)
+      onHandsFreeSubmit!(turn)
+    },
+    // The microphone was blocked or stopped, or speech-to-text could not run: the mode is off, with
+    // its notice.
+    onEnded: () => setListening(false),
   } : undefined)
 
   // Push-to-talk: the desktop shell's global chord drives the
@@ -224,13 +253,30 @@ export function Composer({
   // Transcription is the same action working — `loading` announces that as `aria-busy`, so the
   // name stays the one the user can find the control by.
   const micLabel = mic.state === 'recording' ? 'Stop recording' : 'Voice input'
-  // The label states what the control does, never why it is unavailable — a reason
-  // folded into the name makes the action unfindable by the name it has when it works.
-  const handsFreeLabel = !listening
-    ? 'Hands-free voice'
-    : mic.muted
-      ? 'Hands-free voice — paused while speaking'
-      : `Hands-free voice — say “${handsFree?.confirmationPhrases[0] ?? 'go ahead'}” to send`
+  // Hands-free keeps one name in every state: on or off is its pressed state, and how it works is
+  // its tooltip and, while it is on, the line under the orb. A name carries no passing state, so
+  // the control is findable by the name it always has.
+  const sendPhrase = handsFree?.confirmationPhrases[0] ?? DEFAULT_PHRASES.confirmation[0]
+  const clearPhrase = handsFree?.exitPhrases[0] ?? DEFAULT_PHRASES.exit[0]
+  const handsFreeTip = listening
+    ? 'Listening. Press to stop.'
+    : `Hands-free voice: talk instead of typing, and end with “${sendPhrase}” to send.`
+  // A press that opens the microphone checks the desktop app's grant first, as the shortcut does,
+  // so a microphone turned off for the app names System Settings. A browser tab has no grant to
+  // check, and its press acts at once, as it always has.
+  const grantPendingRef = useRef(false)
+  const afterGrant = (open: () => void) => {
+    if (!desktopBridge()) { open(); return }
+    // One check at a time: a second press while the grant is being asked about does nothing more.
+    if (grantPendingRef.current) return
+    grantPendingRef.current = true
+    void ensureMicGrant()
+      .then((err) => (err ? onMicError?.(err) : open()))
+      .finally(() => { grantPendingRef.current = false })
+  }
+  const pressMic = () => (mic.state !== 'idle' ? mic.toggle() : afterGrant(mic.toggle))
+  // Turning it on clears the host's notice from when it last stopped: the mode works again.
+  const pressHandsFree = () => (listening ? setListening(false) : afterGrant(() => { onHandsFreeStart?.(); setListening(true) }))
   const sendKind = resolveSendButton({ processing: !!processing, streaming: !!streaming, canSend, canQueue: !!canQueue, canSteer: !!canSteer, justSent, held: !!sendHeldReason, heldAll: !!sendHeldReason && sendHeldEverywhere })
   // While a turn runs the button is the Stop control: a stop square with a thin arc turning round
   // it (`docs/design/agent-orb.md`). The lap is `design/motion`'s `sweep()`, which is null under
@@ -264,15 +310,16 @@ export function Composer({
       {/* The in-app half of the capture indicator. Rendered from the recorder's LIVE
           state, so a denied microphone (no stream) shows nothing — and a capture that
           ends any way at all takes the chip with it. */}
-      {mic.state === 'recording' && <MicCaptureChip onStop={mic.toggle} />}
+      {mic.state === 'recording' && <MicCaptureChip onStop={listening ? () => setListening(false) : mic.toggle} />}
       {/* Its neighbour's twin: transcription is in flight, so it is `loading`. "Stop recording"
           stays a real name change (the action genuinely differs); "Transcribing…" was progress
           wearing the name, and `aria-busy` carries that now. */}
       {controls.mic && onTranscribe && !listening && (
         <IconButton icon={Mic} label={micLabel}
-          active={mic.state !== 'idle'} size={40}
+          tip="Voice input: dictate into the box. It never sends."
+          active={mic.state !== 'idle'} activeTone={mic.state === 'recording' ? 'listening' : 'neutral'} size={40}
           loading={mic.state === 'transcribing'}
-          onClick={mic.toggle} />
+          onClick={pressMic} />
       )}
       {/* Screen context. Rendered only when the config master
           switch is on, so an install that never opted in has no capture affordance at
@@ -292,11 +339,11 @@ export function Composer({
           It replaces the push-to-talk button while active so there is one mic owner —
           two live capture paths would fight over the same track. */}
       {controls.mic && canHandsFree && (
-        <IconButton icon={Ear} label={handsFreeLabel}
-          active={listening} size={40}
+        <IconButton icon={AudioLines} label="Hands-free voice" tip={handsFreeTip}
+          active={listening} activeTone="listening" size={40}
           disabled={!listening && mic.state !== 'idle'}
           disabledReason="Finish the current recording first"
-          onClick={() => setListening((v) => !v)} />
+          onClick={pressHandsFree} />
       )}
       {/* The send/stop/steer/sent/processing choice is a pure state machine
           (resolveSendButton) so it's unit-testable without mounting the composer. Every kind
@@ -465,12 +512,22 @@ export function Composer({
           )}
 
           {/* Voice mode (#4963): the 64 px orb, above the draft its dictation fills. `listening`
-              while it hears the owner, the turn's own phase the rest of the time; under reduced
-              motion the orb is one still frame. Its name is the phase's words. */}
+              while it hears the owner, which is the whole mode, and the turn's own phase while it
+              is muted for a reply read aloud; under reduced motion the orb is one still frame. Its
+              name is the phase's words. */}
           {listening && (
             <div data-voice-orb="" className="flex justify-center pt-s">
               <AgentOrb phase={voiceOrbPhase({ heard: mic.state === 'recording' && !mic.muted, phase })} size={64} />
             </div>
+          )}
+          {/* How it works, where a phone can read it too: it has no hover for the tooltip. The status
+              is there whenever hands-free can run, empty and hidden while it is off, so a screen
+              reader speaks the line the moment it fills. */}
+          {canHandsFree && (
+            <p role="status" data-hands-free-line="" data-type="caption"
+              className={listening ? 'pt-xs text-center text-on-surface-low' : 'sr-only'}>
+              {!listening ? '' : mic.muted ? 'Paused while the reply is read aloud.' : `End with “${sendPhrase}” to send, or say “${clearPhrase}” to clear.`}
+            </p>
           )}
 
           {/* live-markdown editor (CodeMirror 6): the caret line shows raw

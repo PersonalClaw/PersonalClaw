@@ -15,6 +15,7 @@ import { ApiError } from '../../../lib/api'
 import { WIDGET_SAID } from '../chatTypes'
 import { FILL_HOLD, GOAL_REFUSAL, MIXED_NOTICE, PART_CHANGED_NOTICE } from './useChatComposer'
 import { pressIntoFrame } from '../../../test/pressIntoFrame'
+import { TranscriptionRefused } from '../../../ui/composer/useMicRecorder'
 
 const SALES_NO = '\u201cSales\u201d is turned down while this chat is open.'
 /** Why a goal loop won't start from a draft whose words can't be told apart from a widget's. */
@@ -34,6 +35,7 @@ const h = vi.hoisted(() => ({
   sendChat: vi.fn(),
   setApprovalMode: vi.fn(),
   setSessionReplyStyle: vi.fn(),
+  transcribeAudio: vi.fn(),
   notify: vi.fn(),
 }))
 
@@ -41,7 +43,7 @@ vi.mock('../../../lib/api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../lib/api')>()
   const api = new Proxy({
     createChatSession: h.createChatSession, sendChat: h.sendChat, setApprovalMode: h.setApprovalMode,
-    setSessionReplyStyle: h.setSessionReplyStyle,
+    setSessionReplyStyle: h.setSessionReplyStyle, transcribeAudio: h.transcribeAudio,
   } as Record<string, unknown>, {
     get(t, p: string) { return p in t ? t[p] : (t[p] = () => Promise.resolve({})) },
   })
@@ -708,10 +710,21 @@ describe('a widget action waits for your Send', () => {
   it('routes hands-free\'s buffer and submit through the draft\'s replace, never its edit', () => {
     // A structure pin: dictation replaces the draft (no widget's mark carries over to it), and
     // the edit that empties a widget's draft, which is the owner's no to its frame, is not used.
+    // What it replaces the draft with is the owner's own draft followed by the dictation.
     const composer = readFileSync(join(process.cwd(), 'src/ui/Composer.tsx'), 'utf8')
-    expect(composer).toContain('onBuffer: (text) => (onReplace ?? onChange)(text)')
-    expect(composer).toContain('onSubmit: (text) => { (onReplace ?? onChange)(text); onHandsFreeSubmit!(text) }')
+    expect(composer).toContain('onBuffer: (text) => (onReplace ?? onChange)(withYourDraft(text))')
+    expect(composer).toContain(';(onReplace ?? onChange)(turn)')
+    expect(composer).toContain('onHandsFreeSubmit!(turn)')
+    expect(composer).not.toMatch(/onBuffer: \(text\) => [^\n]*editInput/)
+    const submit = composer.match(/onSubmit: \(text\) => \{[\s\S]*?\n    \},/)?.[0] ?? ''
+    expect(submit, 'the onSubmit body was not found').toContain('onHandsFreeSubmit!(turn)')
+    expect(submit).not.toContain('editInput')
     const chat = readFileSync(join(process.cwd(), 'src/pages/chat/composer/ChatComposer.tsx'), 'utf8')
+    // A widget's message is not the owner's draft, so the composer is told which it holds.
+    expect(chat).toContain('draftHoldsWidgetMessage={!!widgetDraft}')
+    // Hands-free turning on clears the notice from when it last stopped, and nothing else does
+    // for a hands-free piece, so a refusal's notice is not cleared by a piece still in flight.
+    expect(chat).toContain("onHandsFreeStart={() => notice.clear('voice-input')}")
     // Its replace also takes down what an edit would: Revert's saved draft and the follow-ups.
     expect(chat).toContain('onReplace={(v) => { replaceDraft(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length) setFollowups([]) }}')
     expect(chat).toMatch(/onHandsFreeSubmit=\{\(t\) => \{ void send\(t, \{ inputOrigin: 'voice' \}\) \}\}/)
@@ -1067,5 +1080,36 @@ describe('useChatComposer applies the selection', () => {
     expect(c.replyStyle.pill).toMatchObject({ choice: 'terse', effective: 'terse', source: 'conversation', agentDefault: '' })
     expect(c.recallPrompt(0)).toBe('first')
     expect(c.recallPrompt(1)).toBe('second')
+  })
+})
+
+describe('useChatComposer transcribes what was said', () => {
+  it('marks a refused transcription after saying why, once, so hands-free turns off without a second notice', async () => {
+    h.transcribeAudio.mockResolvedValueOnce({ error: 'Speech-to-text is not set up.', code: 'stt_unavailable' })
+    const m = mount()
+    await act(async () => {
+      await expect(m.result.current.c.transcribe(new Blob(['x']), { duplex: true })).rejects.toBeInstanceOf(TranscriptionRefused)
+    })
+    expect(m.result.current.c.notice.notice?.text).toBe('Speech-to-text is not set up.')
+  })
+
+  it('keeps the notice saying why hands-free turned off when a piece still in flight succeeds', async () => {
+    h.transcribeAudio.mockResolvedValueOnce({ error: 'Speech-to-text is not set up.', code: 'stt_unavailable' })
+    h.transcribeAudio.mockResolvedValueOnce({ text: 'book the ferry' })
+    const m = mount()
+    await act(async () => {
+      await expect(m.result.current.c.transcribe(new Blob(['x']), { duplex: true })).rejects.toBeInstanceOf(TranscriptionRefused)
+    })
+    await act(async () => { await m.result.current.c.transcribe(new Blob(['y']), { duplex: true }) })
+    expect(m.result.current.c.notice.notice?.text).toBe('Speech-to-text is not set up.')
+  })
+
+  it('answers an echo of the assistant’s own voice with nothing, and says so', async () => {
+    h.transcribeAudio.mockResolvedValueOnce({ text: '', filtered: 'echo' })
+    const m = mount()
+    let got: string | undefined
+    await act(async () => { got = await m.result.current.c.transcribe(new Blob(['x']), { duplex: true }) })
+    expect(got).toBe('')
+    expect(m.result.current.c.notice.notice?.text).toMatch(/assistant’s own voice/)
   })
 })

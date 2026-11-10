@@ -40,9 +40,9 @@
     },
     {
       "name": "exit_after_a_confirmation_in_the_same_chunk",
-      "why": "'send it, never mind' must be heard as both, so the loop's exit-wins rule can discard it",
+      "why": "'send it, never mind' ends with the retraction, so it is an exit and not a confirmation: nothing is sent",
       "text": "Send it. Nevermind.",
-      "confirmation": true,
+      "confirmation": false,
       "exit": true
     },
     {
@@ -121,8 +121,8 @@
       "exit": false
     },
     {
-      "name": "exit_folded_but_outside_the_tail",
-      "why": "folding does not widen the tail window: an idiom at the head of a long dictation is not a retraction",
+      "name": "exit_folded_but_not_at_the_end",
+      "why": "folding does not move the end: an idiom at the head of a dictation is not a retraction",
       "text": "Nevermind the weather, book the Tuesday ferry to the island for two",
       "confirmation": false,
       "exit": false
@@ -179,9 +179,37 @@
       "exit": false
     },
     {
-      "name": "confirmation_outside_the_tail",
-      "why": "a confirmation at the head of a long dictation is part of the thought",
+      "name": "confirmation_not_at_the_end",
+      "why": "a confirmation at the head of a dictation is part of the thought",
       "text": "Go ahead and tell me what you think about the plan",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "exit_cancel_that",
+      "why": "'cancel that' is a shipped discard phrase, so the natural retraction still clears what was said",
+      "text": "Never mind, cancel that.",
+      "confirmation": false,
+      "exit": true
+    },
+    {
+      "name": "exit_not_at_the_end",
+      "why": "a discard phrase counts only when it ends what was said: this asks for something",
+      "text": "Cancel my 3pm meeting",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "confirmation_inside_a_sentence",
+      "why": "a confirmation counts only when it ends what was said: this is part of the thought",
+      "text": "So we can do it this way",
+      "confirmation": false,
+      "exit": false
+    },
+    {
+      "name": "confirmation_followed_by_a_word",
+      "why": "a phrase followed by any word does not count, a courtesy word included",
+      "text": "Do it please",
       "confirmation": false,
       "exit": false
     }

@@ -14,9 +14,10 @@ import { DEFAULT_PHRASES } from './duplex'
  * send, or the first test would pass on a loop that never submits at all.
  *
  * jsdom has neither getUserMedia nor MediaRecorder; both are faked at the boundary, as in
- * micMuteDrain.test.tsx. Each segment is ended by hand (the hook's own 4 s timer does it in
- * the app), and the microphone refuses once the recorded transcripts run out, which ends the
- * loop instead of leaving a segment recording after the test.
+ * micMuteDrain.test.tsx. The microphone opens once for the whole mode; each segment is ended by
+ * hand (the hook's own 4 s timer does it in the app), and the harness turns the mode off once the
+ * recorded transcripts run out, which releases the microphone instead of leaving a segment
+ * recording after the test.
  */
 
 let recorders: FakeRecorder[] = []
@@ -39,19 +40,11 @@ class FakeRecorder {
   }
 }
 
-function fakeMicrophone(segments: number) {
-  let opened = 0
+function fakeMicrophone() {
   const track = { kind: 'audio', stop: vi.fn() }
-  Object.defineProperty(navigator, 'mediaDevices', {
-    configurable: true,
-    value: {
-      getUserMedia: vi.fn(async () => {
-        opened += 1
-        if (opened > segments) throw Object.assign(new Error('no more'), { name: 'NotAllowedError' })
-        return { getTracks: () => [track], getAudioTracks: () => [track] }
-      }),
-    },
-  })
+  const getUserMedia = vi.fn(async () => ({ getTracks: () => [track], getAudioTracks: () => [track] }))
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia } })
+  return { track, getUserMedia }
 }
 
 beforeEach(() => {
@@ -66,13 +59,13 @@ afterEach(() => {
 
 /** Say each recorded transcript as one hands-free segment; return what the loop did. */
 async function dictate(transcripts: string[]) {
-  fakeMicrophone(transcripts.length)
+  const mic = fakeMicrophone()
   const queue = [...transcripts]
   const onSubmit = vi.fn()
   const onBuffer = vi.fn()
-  function Harness() {
+  function Harness({ enabled }: { enabled: boolean }) {
     useMicRecorder(async () => queue.shift() ?? '', undefined, () => {}, {
-      enabled: true,
+      enabled,
       confirmationPhrases: DEFAULT_PHRASES.confirmation,
       exitPhrases: DEFAULT_PHRASES.exit,
       onSubmit,
@@ -80,7 +73,7 @@ async function dictate(transcripts: string[]) {
     })
     return null
   }
-  render(<Harness />)
+  const { rerender } = render(<Harness enabled />)
   for (let n = 1; n <= transcripts.length; n++) {
     await waitFor(() => expect(recorders.length).toBe(n))
     await act(async () => {
@@ -88,6 +81,10 @@ async function dictate(transcripts: string[]) {
     })
     await waitFor(() => expect(onBuffer).toHaveBeenCalledTimes(n))
   }
+  await act(async () => { rerender(<Harness enabled={false} />) })
+  // One microphone for the whole mode, released when it ends.
+  expect(mic.getUserMedia).toHaveBeenCalledTimes(1)
+  expect(mic.track.stop).toHaveBeenCalled()
   return { onSubmit, onBuffer }
 }
 

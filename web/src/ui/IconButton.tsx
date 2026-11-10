@@ -1,7 +1,12 @@
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { Loader2, type LucideIcon } from 'lucide-react'
 import { cx } from './cx'
+import { Tooltip, type TooltipTriggerProps } from './Tooltip'
 import { spring, physics, exprHeavy, duration, instant } from '../design/motion'
+import { phaseToken } from '../lib/workPhase'
+
+/** Listening's tone, the one the microphone's capture chip wears (`MicCaptureChip`). */
+const LISTENING_TONE = phaseToken('listening')
 
 /** Round icon button — pill hit area, rounded outline icon (ROND feel).
  *  A press and a hover show by colour, at once (the `active:` tint is the hover's), plus a
@@ -10,7 +15,7 @@ import { spring, physics, exprHeavy, duration, instant } from '../design/motion'
  *  wobble. Keeps the icon-morph (`iconKey`) and success `bloom` moments. Yields to
  *  reduced-motion; halo drops below the heavy-effect threshold. */
 export function IconButton({
-  icon: Icon, label, title, onClick, active, expanded, filled, size = 40, iconSize = 20, className, disabled, disabledReason, loading = false, iconKey, bloom, tone = 'neutral',
+  icon: Icon, label, title, tip, onClick, active, activeTone = 'neutral', expanded, filled, size = 40, iconSize = 20, className, disabled, disabledReason, loading = false, iconKey, bloom, tone = 'neutral',
 }: {
   icon: LucideIcon
   label: string
@@ -20,8 +25,15 @@ export function IconButton({
    *  `#/notifications` the name is `Delete: <notification title>` (83 rows, otherwise 83 identical
    *  names in the AX tree) while the hover hint stays "Delete". */
   title?: string
+  /** What the control does, said before it is used: shown as a real tooltip (`ui/Tooltip`) on hover
+   *  and keyboard focus, and its description at all times. With it the button carries no native
+   *  title; a `disabledReason` joins the tip. */
+  tip?: string
   onClick?: (e: React.MouseEvent) => void
   active?: boolean
+  /** The tone `active` takes. `listening` wears the microphone capture chip's tone, for a control
+   *  that is on because it is hearing the owner; `neutral` is the surface fill a hover also uses. */
+  activeTone?: 'neutral' | 'listening'
   /** The button opens a disclosure (a popover, a panel): whether it is open, as `aria-expanded`.
    *  Omit it for a button that opens nothing. */
   expanded?: boolean
@@ -101,9 +113,12 @@ export function IconButton({
   // Soft hover halo — non-filled + live buttons at bold intensity only (filled
   // buttons carry their own emphasis; refined mode stays flat).
   const showHalo = !off && !filled && !reduce && exprHeavy(0.5)
-  return (
+  const tipText = tip && (disabled && disabledReason ? `${tip} ${disabledReason}.` : tip)
+  const listening = !!active && activeTone === 'listening' && !disabled && !filled
+  const render = (trigger?: TooltipTriggerProps) => (
     <motion.button
       type="button"
+      {...trigger}
       aria-label={label}
       aria-disabled={disabled || undefined}
       // Same contract as `HeaderControl` below/above: `active` drove a tint only. The composer's optimize
@@ -115,7 +130,8 @@ export function IconButton({
       // site. It is the ONLY signal a screen-reader user gets here: the glyph swap is decorative
       // (`aria-hidden`) and the name never changes, by design, so the action stays findable.
       aria-busy={loading || undefined}
-      title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
+      // With a tip, the tooltip is the description and the native title would say it twice.
+      title={tipText ? undefined : disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
       onClick={off ? undefined : onClick}
       // A tween, not `physics.playful`: the pulse is three keyframes, and motion animates only two
       // on a spring, so on the spring it threw and never played. The beat is the keyframes' own
@@ -137,7 +153,8 @@ export function IconButton({
             // solid tiers carry the rule's reasons; rail: `design/solidButtonFocusRing.test.ts`.
             ? 'bg-primary text-on-primary hover:bg-primary-emphasis active:bg-primary-emphasis focus-visible:outline-on-surface'
             : active
-              ? 'bg-surface-high text-on-surface'
+              // Listening wears its own tone, set below, instead of the fill a hover also uses.
+              ? (listening ? 'hover:brightness-110' : 'bg-surface-high text-on-surface')
               : tone === 'danger'
                 // This tier's own resting ink, with the sibling's danger RULE — see the prop's note.
                 ? 'text-on-surface-var hover:text-danger active:text-danger'
@@ -147,7 +164,11 @@ export function IconButton({
         loading && !disabled && 'cursor-progress',
         className,
       )}
-      style={{ width: size, height: size }}
+      style={{
+        width: size,
+        height: size,
+        ...(listening ? { background: `color-mix(in srgb, var(${LISTENING_TONE}) 16%, transparent)`, color: `var(${LISTENING_TONE})` } : {}),
+      }}
     >
       {/* Hover halo — soft radial that fades in on hover (bold intensity only). */}
       {showHalo && (
@@ -198,4 +219,5 @@ export function IconButton({
       </AnimatePresence>
     </motion.button>
   )
+  return tipText ? <Tooltip text={tipText}>{(trigger) => render(trigger)}</Tooltip> : render()
 }
