@@ -423,7 +423,7 @@ function NoteChannel({ label, notes }: { label: string; notes?: TaskNote[] }) {
             {/* Written as lines by an agent or a person: each line keeps its break (`breaks`). */}
             <div data-type="body-s"><Markdown breaks>{n.content}</Markdown></div>
             {(n.timestamp || n.created_at) && (
-              <div data-type="caption" className="mt-0.5 text-on-surface-low">{relTime(n.timestamp || n.created_at)}</div>
+              <div data-type="caption" className="mt-1.5 text-on-surface-low">{relTime(n.timestamp || n.created_at)}</div>
             )}
           </li>
         ))}

@@ -465,7 +465,7 @@ function RoomTranscriptLine({ line }: { line: RoomLine }) {
           position this is before reading it, which is the whole difference between a room and a
           chat. The blurb rides along because a member's position is only legible next to the
           role it argues from. */}
-      <div className="mb-xs flex flex-wrap items-baseline gap-s">
+      <div className="mb-1.5 flex flex-wrap items-baseline gap-s">
         <span data-type="title-m" className="text-on-surface" style={fvs(550)}>{line.label}</span>
         {line.blurb && <span data-type="body-s" className="text-on-surface-low">{line.blurb}</span>}
       </div>

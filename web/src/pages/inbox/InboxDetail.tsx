@@ -212,7 +212,7 @@ export function InboxDetail({ item, owner = '', sortingHeld = '', onChanged, nav
             <div className="flex flex-col gap-2">
               {item.thread_context!.map((t, i) => (
                 <div key={i} className="rounded-md bg-surface-container/60 px-m py-1.5">
-                  <div data-type="caption" className="text-on-surface-var mb-0.5" style={fvs(600)}>{t.sender_name || 'Unknown'}</div>
+                  <div data-type="caption" className="text-on-surface-var mb-1.5" style={fvs(600)}>{t.sender_name || 'Unknown'}</div>
                   <div data-type="body-s" className="text-on-surface-low leading-relaxed"><Markdown breaks>{t.text}</Markdown></div>
                 </div>
               ))}

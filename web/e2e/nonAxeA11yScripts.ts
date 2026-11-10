@@ -158,7 +158,12 @@ export const CLIPPED_RING = `() => {
     const clipStyle = getComputedStyle(cl)
     const hidesX = ['hidden','clip'].includes(clipStyle.overflowX)
     const hidesY = ['hidden','clip'].includes(clipStyle.overflowY)
-    const cr = cl.getBoundingClientRect()
+    const box = cl.getBoundingClientRect()
+    // A clipper that clips on both axes paints out to its clip margin (a rendered body's room for a
+    // ring), so its edge is that far out. A browser that reads no clip margin reports none.
+    const clipsBoth = clipStyle.overflowX === 'clip' && clipStyle.overflowY === 'clip'
+    const margin = clipsBoth ? parseFloat((String(clipStyle.overflowClipMargin || '').match(/[\\d.]+px/) || ['0'])[0]) || 0 : 0
+    const cr = { top: box.top - margin, left: box.left - margin, right: box.right + margin, bottom: box.bottom + margin }
     const insideClipper = r.top >= cr.top - 1 && r.left >= cr.left - 1 && r.right <= cr.right + 1 && r.bottom <= cr.bottom + 1
     if (!insideClipper) continue
     const need = w + off

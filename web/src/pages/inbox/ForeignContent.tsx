@@ -40,8 +40,8 @@ export function ForeignContent({ item, owner, children }: {
   const who = item.owner_username || 'someone else'
   return (
     <div role="group" aria-label={`Content from ${who} — quoted, not your own`}
-      className="rounded-md border-l-2 border-warn/50 bg-surface-container/60 pl-m pr-m py-2">
-      <div data-type="caption" className="mb-1 inline-flex items-center gap-1.5 text-on-surface-var" style={fvs(600)}>
+      className="overflow-clip rounded-md border-l-2 border-warn/50 bg-surface-container/60 pl-m pr-m py-2">
+      <div data-type="caption" className="mb-1.5 inline-flex items-center gap-1.5 text-on-surface-var" style={fvs(600)}>
         <Quote size={11} aria-hidden />
         {/* The exact form the server's `contributor_label` emits, so the same string a
             reviewer greps for appears on both sides of the wire. */}

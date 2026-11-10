@@ -269,7 +269,7 @@ function RunPanel({ tool }: { tool: ToolItem }) {
                   in issue 2515, which is `scrollable-region-focusable` with a computed name of the
                   whole result. `role="group"` + an explicit label is what stops the output becoming
                   the name — same trio as the rest of the family. */}
-              <div tabIndex={0} role="group" aria-label="Tool result" className="max-h-96 overflow-y-auto">
+              <div tabIndex={0} role="group" aria-label="Tool result" className="-mx-[4px] max-h-96 overflow-y-auto p-[4px]">
                 {result.ok
                   ? <ToolOutput text={withoutFence(result.output ?? '')} />
                   : <pre data-type="body-s" className="text-danger font-mono whitespace-pre-wrap break-words">{result.error}</pre>}

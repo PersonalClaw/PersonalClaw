@@ -356,7 +356,7 @@ export function UpdatesPanel() {
                   </div>
                   {newEntries && (
                     <div data-type="body-s" tabIndex={0} role="group" aria-label="What the update brings"
-                      className="mt-xs max-h-40 overflow-auto">
+                      className="-mx-[4px] mt-xs max-h-40 overflow-auto p-[4px]">
                       <Markdown>{newEntries}</Markdown>
                     </div>
                   )}

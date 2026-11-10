@@ -86,9 +86,14 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
   useEffect(() => {
     const el = wrapRef.current?.parentElement
     if (!el) return
-    const ro = new ResizeObserver(() => setHostW(el.clientWidth))
+    // The column's content width: a body's padding, where it has one (Safari's `.md-clip`), is not column.
+    const content = () => {
+      const s = getComputedStyle(el)
+      return el.clientWidth - (parseFloat(s.paddingLeft) || 0) - (parseFloat(s.paddingRight) || 0)
+    }
+    const ro = new ResizeObserver(([e]) => setHostW(e ? e.contentRect.width : content()))
     ro.observe(el)
-    setHostW(el.clientWidth)
+    setHostW(content())
     return () => ro.disconnect()
   }, [])
 

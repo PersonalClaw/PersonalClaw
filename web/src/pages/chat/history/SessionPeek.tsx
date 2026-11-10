@@ -110,7 +110,7 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
   const shown = detail.messages.filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'error').slice(-12)
   return (
     <div className="flex h-full min-h-0 flex-col gap-m">
-      <div className="flex min-h-0 flex-1 flex-col gap-m overflow-y-auto">
+      <div className="-mx-[4px] flex min-h-0 flex-1 flex-col gap-m overflow-y-auto p-[4px]">
         {shown.length === 0 && !streamText ? (
           <p className="px-2 py-6 text-center text-on-surface-low text-[0.8125rem]">No messages yet — say hi below.</p>
         ) : shown.map((m, i) => (

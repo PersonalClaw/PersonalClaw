@@ -819,7 +819,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             </button>
             {promptOpen && <div className="mt-2" />}
             {promptOpen
-              ? <div data-type="body-m" className="max-h-[40vh] overflow-y-auto text-on-surface">
+              ? <div data-type="body-m" className="-mx-[4px] max-h-[40vh] overflow-y-auto p-[4px] text-on-surface">
                   <Markdown>{c.goal}</Markdown>
                   {c.success_criteria && <p data-type="body-s" className="mt-2 text-on-surface-low"><span className="text-on-surface-var">Done when:</span> {c.success_criteria}</p>}
                   {/* Sub-goals live inside the expanded prompt — they're part of
@@ -856,7 +856,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                     </div>
                   )}
                 </div>
-              : <div data-type="body-s" className="pl-[22px] text-on-surface-var line-clamp-2 break-words"><Markdown>{c.goal}</Markdown></div>}
+              : <div data-type="body-s" className="pl-[22px] text-on-surface-var line-clamp-2 break-words"><Markdown inline>{c.goal}</Markdown></div>}
           </div>
 
           {c.error_message && (() => {

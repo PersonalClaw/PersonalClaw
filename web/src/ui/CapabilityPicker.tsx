@@ -77,7 +77,7 @@ export function CapabilityPeekModal({ peek, onClose }: {
   const icon = <Sparkle size={18} className="text-primary" />
   return (
     <Modal title={title || 'Preview'} icon={icon} onClose={onClose}>
-      <div className="max-h-[60vh] overflow-y-auto">
+      <div className="-mx-[4px] max-h-[60vh] overflow-y-auto p-[4px]">
         {peek.kind === 'skill' ? (
           loading ? (
             <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low py-4"><Loader2 size={14} className="animate-spin" /> Loading skill…</div>

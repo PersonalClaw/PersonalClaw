@@ -564,7 +564,38 @@ function rehypeHits() {
 const REMARK: PluggableList = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]]
 const REMARK_BREAKS: PluggableList = [...REMARK, remarkSoftBreaks]
 const REMARK_LINE: PluggableList = [...REMARK, remarkLineOnly]
-const REHYPE: PluggableList = [embeddedHtmlAsText, [rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex]
+/** The largest size, in em, a formula may ask for (`\rule`, `\kern`, `\raisebox` and the like). A real
+ *  formula asks for fractions of an em up to a few: a table's strut, a space, a nudge. Sizes the
+ *  renderer computes, such as a tall matrix's delimiters, are not capped. A negative size is not
+ *  capped either, which is why the body and the quoted frame clip to their boxes (`.md-clip`). A
+ *  diagram label's math is the diagram renderer's own, is not capped here, and is held by the
+ *  diagram's box. */
+export const MATH_MAX_SIZE = 10
+
+/** The name a math display is announced by. */
+export const MATH_DISPLAY_NAME = 'Formula'
+
+/** A math display scrolls a formula wider than its column (`.katex-display` in tokens.css), so it takes
+ *  this repo's form for a text scroll region: a tab stop, a group, and a name of its own. A box that
+ *  scrolls with no name of its own is announced by its content, which here is the formula's source. */
+function rehypeMathDisplays() {
+  return (tree: HastNode) => {
+    const walk = (node: HastNode): void => {
+      for (const kid of node.children ?? []) {
+        const classes = kid.properties?.className
+        if (kid.type === 'element' && Array.isArray(classes) && classes.includes('katex-display')) {
+          kid.properties = { ...kid.properties, tabIndex: 0, role: 'group', ariaLabel: MATH_DISPLAY_NAME }
+        }
+        walk(kid)
+      }
+    }
+    walk(tree)
+  }
+}
+
+const REHYPE: PluggableList = [
+  embeddedHtmlAsText, [rehypeRaw, { passThrough: ['math', 'inlineMath'] }], [rehypeKatex, { maxSize: MATH_MAX_SIZE }], rehypeMathDisplays,
+]
 /** Inline sinks take the same HTML policy, and no LaTeX (see `inline` mode below). */
 const REHYPE_INLINE: PluggableList = [embeddedHtmlAsText, rehypeRaw]
 const REHYPE_INLINE_HITS: PluggableList = [...REHYPE_INLINE, rehypeHits]
@@ -742,9 +773,11 @@ function componentsWith(
       const n = href ? sourceOf(href) : undefined
       if (n === undefined) return <Link href={href}>{children}</Link>
       return (
-        <span className="whitespace-nowrap">
-          <Link href={href}>{children}</Link>
-          <sup data-source-n={n} className="ml-[1px] tabular-nums text-on-surface-low"><span className="sr-only">source </span>{n}</sup>
+        // A word joiner keeps the number on the link's last word, and the link's own words wrap. The
+        // number is one piece: its words for a screen reader open it, and no break falls before the digit.
+        <span>
+          <Link href={href}>{children}</Link>{'\u2060'}
+          <sup data-source-n={n} className="ml-[1px] whitespace-nowrap tabular-nums text-on-surface-low"><span className="sr-only">source </span>{n}</sup>
         </span>
       )
     }
@@ -904,14 +937,15 @@ export const Markdown = memo(function Markdown({ children, className, inline, li
   const segments = widgets ? parseWidgetBlocks(text, streaming) : null
   const offerBeside = !!beside && !streaming
   if (!segments || (segments.length === 1 && segments[0].type === 'md')) {
-    return <div className={`text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside} sourceOf={sourceOf} breaks={breaks}>{text}</MarkdownText></div>
+    // A body clips what it draws to its own box (`.md-clip` in tokens.css), as a message's frame does.
+    return <div className={`md-clip text-on-surface ${className ?? ''}`}><MarkdownText onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside} sourceOf={sourceOf} breaks={breaks}>{text}</MarkdownText></div>
   }
   let wi = 0
   return (
     // flow-root: widgets float left when their natural width is narrow enough
     // (the WidgetFrame measures the host column itself); the formatting context
     // keeps the float contained inside THIS turn.
-    <div className={`flow-root text-on-surface ${className ?? ''}`}>
+    <div className={`md-clip flow-root text-on-surface ${className ?? ''}`}>
       {segments.map((seg, i) => {
         if (seg.type !== 'widget') return <MarkdownText key={i} onFileClick={onFileClick} chatSessionKey={chatSessionKey} citations={citations} beside={offerBeside} sourceOf={sourceOf} breaks={breaks}>{seg.content}</MarkdownText>
         // Resolve the block's renderer through the ONE content registry (was a

@@ -800,7 +800,7 @@ function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm:
   // copy button, and a language label, all reusing the chat's CodeBlock.
   if (item.content && tm.key === 'gist') {
     return (
-      <div className={`${prominent ? fillFrame : baseFrame} px-m ${textMax}`}>
+      <div className={`${prominent ? fillFrame : baseFrame} px-m py-[4px] ${textMax}`}>
         <Markdown>{gistFence(item.content, item.gist_language)}</Markdown>
       </div>
     )
