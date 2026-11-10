@@ -63,7 +63,7 @@ a wait: the step under the lock is still the one writer.
 | `loop_convergence.py` | what a tripped loop does next: one decision through `loop.tick.evaluate` on the node's `SupervisorPolicy`, the ladder position persisted on the run row, a replan as a real mutation, or a hand-off to a human |
 | `gate_answers.py` | a step waiting on a human — a gate, or an action that parked: its durable continuation, the typed confirmation, the escalation's outcome question, the `revise` verb, judge/human divergence, what answering a parked step does, a decline and ending the run at an approval it did not get, closing an ended run's waits, and withdrawing an ask nobody answered |
 | `ending_sentence.py` | the sentence a run ends with when a step's failure is the reason: how a step is named (a fan-out item by its item), a failure's cause as one clause, the steps after a step in each sequence that holds it, and the ending of a run that went on past a failed step (`for_failures`). Also WHY a step or a loop handed the run to a person, decided once: the closed cause vocabulary (`CAUSES`: budget, judge, approval_timeout, approval, refusal, step), each stop's sentence and its remedy (`loop_stop`, `step_stop`), read in the order of what is most true — a failed cycle's first failed step, then the judge's own ruling on the cycle the loop ended on, then the budget |
-| `mid_flight.py` | the mid-flight mutation queue — held beside the run so a restart keeps it — and applying it at the tick's safe point: rewind and `run_from`, skip, set-input, fork, and the stale-input flags. An edit that would let a step do more than it does is refused before it is queued, unless the owner's yes covers it (`posture_refusal`, the rule every save of a definition follows) |
+| `mid_flight.py` | the mid-flight mutation queue — held beside the run so a restart keeps it — and applying it at the tick's drain point: rewind and `run_from`, skip, set-input, fork, and the stale-input flags. An edit that would let a step do more than it does is refused before it is queued, unless the owner's yes covers it (`posture_refusal`, the rule every save of a definition follows), and so is a skip that reaches no step still to run (`skip_refusal`). What a skip reaches (`skip_reach`), the skips the frontier makes (`skip_unreachable`), and whether a loop cycle ran nothing because of one (`cycle_ran_nothing`) |
 | `effect_boundary.py` | the effect ledger at execution time: ATTEMPTED before an effect-committing dispatch, its verdict after, and the committed-effect refusal or teardown before a redo |
 | `task_projection.py` | projecting settled nodes into Tasks and running their done-criteria, scheduled off the tick and never failing a node whose work succeeded. A done-criterion is checked in the run's own folder (`provisioning.run_workdir`): its command runs there, and a file check's path is read there; one that leaves it, a link's target included, is reported as not run, as is a check in a run with no folder. `task_verified` records the folder. A step's task is born with its step's state (`materialize.project_status`), names no person as its author, and is nobody's work to pick up: not the owner's (`Task.belongs_to`), and not ready work for anyone (`tasks.registry.ready_tasks`), since the run keeps its status. The Tasks page says it is from a workflow run and links to the run, and offers the run instead of an edit that would be refused. A step whose own output is what the owner sees of it (the morning triage's one step, which delivers its digest) declares `materialize_task: false` beside its `provider`. A run that keeps nothing (an Incognito or Temporary chat's work) puts none of its steps on the Tasks page, which your other chats and loops read, and adds no line to its project's overview (`run_finish.revise_project_overview`): neither is asked, so no refusal is recorded for a write the run never asked for |
 | `run_start.py` | what a run binds before its first node: the declared workspace (the folder its steps work in when it is isolated, and the tree its project is bound to when it works in place), the project's context dir as the folder its steps work in otherwise (its memory is the project's, the folder the project binds: `memory_locality.work_folder`), a restricted origin's memory posture; and the context its tick loop runs in (`run_context`): a restricted run's work runs as its own from its record, under its mode and on its origin's model, however it is started or resumed; and, when a run resumes, the steps a controller now gone left running, back in the queue at their epoch (`requeue_lost_steps`) |
@@ -802,6 +802,43 @@ A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,
 4. **TOCTOU re-verify + `expect_version`.** Two edits computed against the same
    version cannot both apply; the second was reasoned about against state that
    has moved. The version lives on `run.spec_version`.
+
+**A skip holds wherever its step opens.** A `skip` names a step by its id and is kept on the
+run's spec (`models.SKIPPED_ON_ASK`), so a run rebuilt from disk reads it too. A step outside
+any loop or foreach is skipped at its own path, a waiting one included: a skip of the waiting
+step itself moves past it. Inside one, the frontier skips the step at each path it opens, each
+cycle of a loop and each item of a foreach that has not run it, saying "not run: skipped as
+asked", and the step gets no row at its definition path, which no cycle or item runs. A group
+of steps a skip names (a sequence or parallel, a loop or foreach), wherever it is, lets the
+steps under way in it finish and starts none of the rest: it is skipped once none is under way
+(`tick._skip_as_asked`), so no running or waiting step (a question, a timer, an event) is
+marked skipped while it goes on, and an event with no timeout holds the group's skip until it
+fires. A step under way that goes back to the queue (a retry after a failed attempt, a pause,
+a restart) has not started again, so the skip reaches it there.
+
+The answer says what each skip reaches (`mid_flight.skip_reach`): the cycles and items where
+it will still skip something, judged by each one's own steps, and whether its loop or foreach
+will open more, by cycle against a counted loop's `n` and any loop's cycle budget (its
+`max_iterations`, its supervisor's `budget.max_cycles`, or the run's Max cycles), and by item
+for a foreach, which opens none once a failed item has halted it (`on_item_error: halt`); a
+loop whose current cycle holds such a foreach with a step still to start opens no other cycle,
+since that cycle never ends. A loop or foreach the skip names is reached while it still opens
+a cycle or item, or while something of its current cycle or of an item is reached. Nothing
+more opens once the outermost loop or foreach the step is in has ended, nor from one inside a
+live one whose instances have each run every cycle or item. A skip that reaches nothing (a
+step outside any loop or foreach that has finished; a step inside one, or a group, that has
+run or is under way wherever the run runs it) is refused with `WF_SKIP_REACHES_NOTHING`,
+through `skip_nodes` and the edit route alike, and a batch it is in applies nothing.
+
+A loop cycle whose steps were all skipped ran nothing, so neither its breaker nor its exit
+test reads it: a counted loop runs out its count and any other loop ends there, since each
+later cycle would skip the same steps; either ends on the latest cycle that ran something (a
+loop none of whose cycles ran anything is skipped as asked itself). A cycle that ends on a
+skipped step, or on a step that reads one, is read by what its other steps produced. A rewind
+drops the skip from the step it names and from each step it resets, and a `run_from` from each
+step it resets, in the spec that edit writes, so the step runs again; a step inside a group a
+skip still names stays skipped, and the rewind's answer says so
+(`WF_MUT_REWOUND_UNDER_A_SKIP`). A fork starts from the run's spec, so it keeps the skip.
 
 A rewind whose cascade would re-run completed work reports
 `needs_confirmation` and applies nothing until confirmed. The cascade is

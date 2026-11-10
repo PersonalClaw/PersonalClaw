@@ -112,6 +112,7 @@ from personalclaw.workflows.models import (
     NodeKind,
     OnError,
     lane_for,
+    skipped_on_ask,
     walk,
 )
 from personalclaw.workflows.validator import EDGE_BINDING, dep_edges_for_root
@@ -526,6 +527,11 @@ def _visit(
         return
     if not enabled:
         return
+    # A step a skip asked for mid-run is skipped wherever it opens: in each cycle of a loop and
+    # for each item of a foreach, whose paths the skip could not name when it was asked.
+    if skipped_on_ask(node):
+        _skip_as_asked(node, path, states, fr)
+        return
     # Derived ordering, applied to the whole subtree: a node waits for what its own config
     # binds (and any `needs` it declares), and its children are not visited until then. Placed
     # before the kind dispatch so one gate covers every shape — a leaf, a `foreach` whose
@@ -786,6 +792,23 @@ def _ordering_satisfied(
         if not _is_terminal(pstate):
             satisfied = False
     return satisfied
+
+
+def _skip_as_asked(node: Node, path: str, states: dict[str, InstanceState], fr: Frontier) -> None:
+    """Skip *node* at *path*, which a skip asked mid-run names. A group of steps with steps under
+    way in it (running, or waiting on someone) holds those, and starts nothing else in it: it is
+    skipped once none is under way, so only steps that never started are marked skipped."""
+    if node.is_container:
+        busy = sorted(
+            p
+            for p, st in states.items()
+            if p.startswith(f"{path}.") and st in (InstanceState.RUNNING, InstanceState.WAITING)
+        )
+        if busy:
+            for p in busy:
+                (fr.running if states[p] == InstanceState.RUNNING else fr.waiting).append(p)
+            return
+    _mark_unreachable(path, states, fr)
 
 
 def _mark_unreachable(path: str, states: dict[str, InstanceState], fr: Frontier) -> None:
@@ -1189,6 +1212,26 @@ def taken_case(node: Node, path: str, ctx: BindingContext) -> tuple[str, str, No
         return None
     label, case_node = selected
     return label, case_path(path, label), case_node
+
+
+def foreach_items(
+    node: Node,
+    *,
+    at: str = "",
+    inputs: dict[str, Any] | None = None,
+    outputs: dict[str, Any] | None = None,
+    instance_outputs: dict[str, tuple[str, Any]] | None = None,
+) -> list[Any] | None:
+    """The items foreach *node* fans out over at instance path *at*, resolved as the scheduler
+    resolves them there (a foreach inside another one's item reads that item's outputs), or None
+    while its binding does not resolve yet. Public for the controller's own question of how many
+    items a fan-out opens (``mid_flight.skip_reach``), so the two cannot count differently."""
+    ctx = BindingContext(
+        inputs=dict(inputs or {}),
+        node_outputs=dict(outputs or {}),
+        instance_outputs=dict(instance_outputs or {}),
+    )
+    return _resolve_items(node, ctx.scoped_to(at) if at else ctx)
 
 
 def _resolve_items(node: Node, ctx: BindingContext) -> list[Any] | None:

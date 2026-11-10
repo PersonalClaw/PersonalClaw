@@ -864,8 +864,7 @@ class RunController:
         # terminal, which is what satisfies a downstream `needs` edge instead of leaving
         # a join waiting on a leg that will never run. A loop cycle a skip finished is read at
         # its boundary, as a settle would have read it.
-        for path in fr.to_skip:
-            self._skip(path)
+        mid_flight.skip_unreachable(self, fr.to_skip)
         loop_iteration.advance_skipped(self, fr.to_skip)
 
         # Clock-and-disk admission: the two rules the frontier structurally cannot apply, because
@@ -1185,6 +1184,11 @@ class RunController:
         )
         if refused is not None:
             return {**body, **refused}
+        refused, reaches = mid_flight.skip_refusal(self, result)
+        if refused is not None:
+            return {**body, **refused, "reaches": reaches}
+        if reaches:
+            body["reaches"] = reaches
         if result.preview.needs_confirmation and not confirm:
             body["ok"] = False
             body["needs_confirmation"] = True

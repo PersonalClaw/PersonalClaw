@@ -451,15 +451,23 @@ WF_ERROR_CODES: dict[str, str] = {
         "a resume names is no cap (`max_tokens`, `max_cost`), or caps came with a gate's answer "
         "rather than with a resume that clears a pause. Nothing is started or resumed."
     ),
-    # ── workflows/mid_flight.py — an edit's posture screen ─────────────────
+    # ── workflows/mid_flight.py — an edit's posture and skip screens ───────
     "WF_MUT_NEEDS_OWNER_YES": (
         "The edit of a running workflow would let a step do more than it does (approve its own "
         "tool calls, or change things where it only read) and carried no owner's yes for it, so "
         "nothing was queued; the failure names each such step."
     ),
+    "WF_SKIP_REACHES_NOTHING": (
+        "A skip named a step or group that has already run or is under way wherever the run runs "
+        "it, so it reaches nothing; nothing in the edit is applied."
+    ),
     # ── workflows/mutations.py — mid-flight spec edits ─────────────────────
     # Emitted as `Issue(code=..., message=...)` from op parsing and application.
     "WF_MUT_UNKNOWN_OP": "A mutation op could not be parsed into a typed op.",
+    "WF_MUT_REWOUND_UNDER_A_SKIP": (
+        "A rewind named a step inside a group, loop or foreach that a skip asked for: the rewind "
+        "is applied, and the step stays skipped until that group is rewound."
+    ),
     "WF_MUT_NO_OPS": "The mutation request carried no ops.",
     "WF_MUT_MIXED_ADDRESSING": (
         "One batch mixes `node_id` addressing with `parent_id`+index addressing. One scheme "
