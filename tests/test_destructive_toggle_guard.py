@@ -308,6 +308,7 @@ def _app() -> web.Application:
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(60)
 async def test_no_boolean_toggle_irreversibly_deletes_state(seeded_home: Path) -> None:
     """The change. Every machine-derived toggle, off and back on, against a populated home."""
     toggles = boolean_toggles()

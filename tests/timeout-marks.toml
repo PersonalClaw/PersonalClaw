@@ -878,3 +878,8 @@ reason = "the whole-file census's walk of the package, following databases opene
 site = "tests/rails/test_no_route_the_shell_polls_opens_a_database_on_the_event_loop.py::test_the_shells_pollers_are_followed_to_their_handlers"
 cap = 50
 reason = "follows each poller to its handler through the whole-file census's walk of the package, built once for the module by whichever of its tests runs first (_package_opens); 7 s here, and the census's own walk 24 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_destructive_toggle_guard.py::test_no_boolean_toggle_irreversibly_deletes_state"
+cap = 60
+reason = "every boolean toggle in the editable config, each off and on again by two awaited PATCH round trips; 27.8 s on CI at worst when it passed, and 30.04 s past the 30 s cap (breadth's coverage leg, 2026-11-10)"
