@@ -313,9 +313,7 @@ def test_rich_ingest_fences_the_transcript():
         for _path, node in walk(root)
         if "inputs.transcript" in str((node.config or {}).get("prompt") or "")
     }
-    assert (
-        len(prompts) >= 5
-    ), (  # the classifier plus every lens
+    assert len(prompts) >= 5, (  # the classifier plus every lens
         f"only {len(prompts)} prompts interpolate the transcript: {sorted(prompts)}"
     )
     # The pipe chain, parsed the way the validator parses it — a prose mention of the word does
