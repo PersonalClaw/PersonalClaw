@@ -74,11 +74,11 @@ compressed to WOFF2. Its glyphs and tables are unchanged but for the flag WOFF2 
 in the head table to mark its lossless transform.
 
 ------------------------------------------------------------------------------
-KaTeX fonts 0.19.0 (math in rendered messages)
+KaTeX fonts 0.19.1 (math in rendered messages)
 
 Files:   assets/KaTeX_*.woff2, .woff and .ttf. The build adds a content hash to each
          name and inlines the smallest face into the stylesheet.
-Source:  https://github.com/KaTeX/KaTeX/tree/v0.19.0/fonts
+Source:  https://github.com/KaTeX/KaTeX/tree/v0.19.1/fonts
 Licence: SIL Open Font License 1.1, with Reserved Font Names
 
 Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)
