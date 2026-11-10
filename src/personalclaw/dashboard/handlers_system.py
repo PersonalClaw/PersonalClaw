@@ -990,22 +990,22 @@ async def api_onboarding(request: web.Request) -> web.Response:
     )
 
 
-#: The answers the card once saved here: every Explanations choice but No preference. They are the
-#: owner's Explanations default now (``agent.explain``), saved through the config PATCH, so this
-#: route refuses them by name. Read from the one table (``explanations.json``).
+#: The answers the first-run card once saved here: every Explanations choice but No preference.
+#: They are the owner's Explanations default now (``agent.explain``), saved through the config
+#: PATCH, so this route refuses them by name. Read from the one table (``explanations.json``).
 _FORMER_ANSWERS = tuple(i for i in _explanations.EXPLAIN_IDS if i != _explanations.DEFAULT)
 
 
 async def api_onboarding_explain(request: web.Request) -> web.Response:
     """Skip the one optional question, "How should I explain things?", once.
 
-    ``POST /api/onboarding/explain`` with ``{"answer": "skip"}``, which the card's Skip sends: it
-    records ``explain_asked`` in the onboarding state and writes nothing else. An answer is the
-    owner's Explanations default, ``agent.explain``, saved through the config PATCH, whose write
-    records the question as asked. A second claim is refused (409), and the check and the claim
-    are one step on the loop, with nothing awaited between them, so of two in flight (two tabs, a
-    retry) the second is the 409. The three answers this route once took are a 400 naming
-    ``agent.explain``.
+    ``POST /api/onboarding/explain`` with ``{"answer": "skip"}``, which the one-time window sends
+    just before it opens: it records ``explain_asked`` in the onboarding state and writes nothing
+    else. An answer is the owner's Explanations default, ``agent.explain``, saved through the config
+    PATCH, whose write records the question as asked. A second claim is refused (409), and the check
+    and the claim are one step on the loop, with nothing awaited between them, so of two in flight
+    (two tabs, a retry) the second is the 409. The three answers this route once took are a 400
+    naming ``agent.explain``.
     """
     from personalclaw.http_errors import json_error
     from personalclaw.onboarding import load_onboarding_state, merge_onboarding_state

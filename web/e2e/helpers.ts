@@ -708,6 +708,29 @@ export const OPENERS: Opener[] = [
       return true
     },
   },
+  // "How should I explain things?": the window a new chat asks it in, once, after setup. The
+  // run's home never ran the setup flow, so its own read says setup isn't done: this passes that
+  // read on as done with the question open, and answers the claim here, so the claim never
+  // reaches the gateway. The page loads again because the new chat already open read once,
+  // before these answers were in place.
+  {
+    label: 'explain question',
+    route: 'chat',
+    open: async (page) => {
+      await page.route('**/api/onboarding', async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback()
+        const response = await route.fetch()
+        const body = (await response.json()) as Record<string, unknown>
+        await route.fulfill({ response, json: { ...body, step: 'done', explain_asked: false } })
+      })
+      await page.route('**/api/onboarding/explain', (route) => route.request().method() === 'POST'
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, state: { step: 'done', explain_asked: true } }) })
+        : route.fallback())
+      await page.reload()
+      await expect(page.getByRole('dialog', { name: 'How should I explain things?' })).toBeVisible({ timeout: 15_000 })
+      return true
+    },
+  },
   { label: 'knowledge peek dock', route: 'knowledge', open: clickRowBody },
   { label: 'inbox peek dock', route: 'inbox', open: clickRowBody },
   {

@@ -40,6 +40,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Hands-free voice explains itself: its button beside the microphone has a waveform icon and says what it does when you point at it or tab to it, and while it listens the chat names the phrase that sends and the one that clears.**
 - **Apps can't change the update settings, as they can't start an update. `updates.channel`, `updates.pin`, `updates.auto`, `updates.check_enabled` and `updates.last_version` are yours alone to change, with nothing new to confirm, and an app that lists one in `permissions.config` fails its next validation, and gets 403 for it until then.**
 - **The sidebar's chat history is one list, with a search, a small Sort and filter menu and Open Chat history beside New chat. The menu starts at Recent activity and Active, sorts by Date created or Title, shows Archived or All, and narrows the list to a kind, or to one or more folders or tags. The new chat's Chat history panel shows the same list without New chat, so it now lists goal loops, code sessions and channel chats too, and its rows no longer show a time, and its expand control opens the Chat history page; View all chats is gone.**
+- **"How should I explain things?" is asked once, in a small window on your first new chat after setup, instead of a card under every new chat. Pick an answer or keep the default; it does not come back.**
 
 ### Fixed
 

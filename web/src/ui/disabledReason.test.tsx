@@ -92,6 +92,11 @@ describe('an unavailable button says why', () => {
     render(<Button loading disabledReason="x">Go</Button>)
     expect(screen.getByRole('button').hasAttribute('disabled')).toBe(true)
   })
+
+  it('keeps its reason as the description over a described-by hint', () => {
+    render(<><Button disabled disabledReason="Enter a name first" ariaDescribedBy="what">Create project</Button><span id="what">Makes the project.</span></>)
+    expect(screen.getByRole('button', { name: 'Create project' })).toHaveAccessibleDescription('Enter a name first')
+  })
 })
 
 // ── The same rule for a header control ────────────────────────────────────────────────

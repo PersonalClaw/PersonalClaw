@@ -886,8 +886,8 @@ async def _apply_yolo_live(state: DashboardState | None, value: object) -> None:
 
 
 def _mark_explain_asked(path_key: str, app_name: str) -> None:
-    """After a write of *path_key*: the owner's Explanations default answers the question the
-    first-run card asks, so the card never asks it again. An app's write answers nothing for the
+    """After a write of *path_key*: the owner's Explanations default answers the question a new
+    chat's window asks once, so the window never asks it. An app's write answers nothing for the
     owner. A store that cannot record it is logged; the setting is written either way.
 
     On the loop, as the onboarding routes merge, since the merge reads and writes the state with no

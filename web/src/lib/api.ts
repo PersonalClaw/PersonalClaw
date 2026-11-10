@@ -6730,7 +6730,8 @@ export interface OnboardingState {
   /** The name and handle this run continued past step 1 with, until it finishes — what a second
    *  tab joins the run with. Not identity: the flow writes that only when the run finishes. */
   name_draft?: OnboardingNameDraft | null
-  /** Whether "How should I explain things?" was answered or skipped, so its card shows once. */
+  /** Whether "How should I explain things?" was asked (claimed just before its window opened, or
+   *  answered), so it is asked once. */
   explain_asked?: boolean
 }
 /** `name_draft` in `onboarding.json` (`_NAME_DRAFT_SCHEMA` in `personalclaw/onboarding.py`). */
@@ -9307,9 +9308,9 @@ export const api = {
 
   // onboarding readiness + the in-flow fix (bind a chat model)
   onboarding: () => get<OnboardingState>('/api/onboarding'),
-  /** Skip "How should I explain things?": records the question as asked and writes nothing; a
-   *  second claim is a 409. An answer is the Explanations default instead
-   *  (`patchConfig('agent.explain', …)`), whose write records the question as asked. */
+  /** Claim "How should I explain things?" just before its window opens: records the question as
+   *  asked and writes nothing; a second claim is a 409. An answer is the Explanations default
+   *  instead (`patchConfig('agent.explain', …)`), whose write records the question as asked. */
   answerExplain: (answer: 'skip') =>
     post<{ ok: boolean; state: OnboardingState }>('/api/onboarding/explain', { answer }),
   /** Record first-run progress — a PARTIAL merge at both levels, so each step sends

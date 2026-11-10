@@ -144,7 +144,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     pendingRouting, setRoutingSuggestion, setLiveRun, started, stream,
     followNewTurn: () => followNewTurn(), oweSpokenReply: (sid) => oweSpokenReply(sid),
   })
-  const { adoptDetail, applyTemplate, composerFocused, composerRef, focusComposerSoon, input, memoryMode, notice, quoteToComposer, replaceDraft, selection, send, setInput, setSelection } = composer
+  const { adoptDetail, applyTemplate, composerFocused, composerRef, draftUnderWay, focusComposerSoon, input, memoryMode, notice, quoteToComposer, replaceDraft, selection, send, setInput, setSelection } = composer
   // The task mode in the address (`?mode=`), for what is shown only (`chat/composer/taskModeInUrl`).
   // A new thread the address moves to another mode is set up as one a link opens: in that mode,
   // with approval back to Normal.
@@ -267,7 +267,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               </div>
             </>
           ) : !started ? (
-            <ChatHero name={name} stage={stage} onPickStarter={applyTemplate} onPickSuggestion={(s) => replaceDraft(s)} />
+            <ChatHero name={name} stage={stage} onPickStarter={applyTemplate} onPickSuggestion={(s) => replaceDraft(s)}
+              draftUnderWay={draftUnderWay} onExplainClosed={focusComposerSoon} />
           ) : (
             <>
               <Transcript transcript={transcript} stream={stream} sessionId={sessionId} memoryMode={memoryMode} navigate={navigate}

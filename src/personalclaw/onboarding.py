@@ -100,9 +100,9 @@ def default_state() -> dict[str, Any]:
         "essentials": {"model": None, "search": False, "speech": False, "channel": None},
         "first_success": {k: False for k in _FIRST_SUCCESS_KEYS},
         "name_draft": None,
-        # Whether the one optional "How should I explain things?" question has been answered (the
-        # owner's ``agent.explain`` set through the config PATCH) or skipped
-        # (``POST /api/onboarding/explain``), so its card is offered once.
+        # Whether the one optional "How should I explain things?" question has been asked: claimed
+        # just before its window opens (``POST /api/onboarding/explain``), or answered by the
+        # owner's ``agent.explain`` set through the config PATCH, so it is asked once.
         "explain_asked": False,
     }
 

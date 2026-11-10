@@ -293,6 +293,7 @@ export function Popover({
       {open && (portal ? anchor != null : true) && (
         <motion.div
           ref={menuRef}
+          data-flyout=""
           onKeyDown={portal ? onFlyoutKeyDown : undefined}
           variants={overlayEnter} initial="initial" animate="animate" exit="exit"
           className={portal

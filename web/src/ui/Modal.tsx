@@ -59,7 +59,7 @@ export function Modal({ title, icon, onClose, children, layoutId, size = 'sheet'
         initial={{ opacity: 0, scale: enterScale, y: enterY }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 6 }}
         transition={reduce ? spring.effects : physics.playful}>
         <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface/95 px-l py-m">
-          <div className="flex min-w-0 items-center gap-s">{icon}<span data-type="title-l" className="truncate text-on-surface">{title}</span></div>
+          <div className="flex min-w-0 items-center gap-s">{icon}<span data-type="title-l" className={size === 'compact' ? 'min-w-0 text-on-surface [overflow-wrap:anywhere]' : 'truncate text-on-surface'}>{title}</span></div>
           <div className="flex shrink-0 items-center gap-xs">
             <IconButton icon={X} label="Close" size={34} onClick={onClose} />
           </div>

@@ -34,14 +34,14 @@ afterEach(() => cleanup())
 
 describe('ChatHero', () => {
   it('greets the owner by first name around the composer it is handed', async () => {
-    render(<ChatHero name="Ada Park" stage={<div>the composer</div>} onPickStarter={vi.fn()} onPickSuggestion={vi.fn()} />)
+    render(<ChatHero name="Ada Park" stage={<div>the composer</div>} onPickStarter={vi.fn()} onPickSuggestion={vi.fn()} draftUnderWay={() => false} onExplainClosed={vi.fn()} />)
     expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/^Good (morning|afternoon|evening), Ada$/)
     expect(screen.getByText('the composer')).toBeTruthy()
     await screen.findByText('Summarise my week')
   })
 
   it('opens on the agent orb at its 64 px size, still in the rest colour: nothing runs in a new chat', async () => {
-    const { container } = render(<ChatHero name="Ada" stage={null} onPickStarter={vi.fn()} onPickSuggestion={vi.fn()} />)
+    const { container } = render(<ChatHero name="Ada" stage={null} onPickStarter={vi.fn()} onPickSuggestion={vi.fn()} draftUnderWay={() => false} onExplainClosed={vi.fn()} />)
     const orb = container.querySelector('[data-agent-orb]') as HTMLElement
     expect(orb.dataset.orbSize).toBe('64')
     expect(orb.dataset.orbPhase).toBe('idle')
@@ -53,7 +53,7 @@ describe('ChatHero', () => {
 
   it('fills the composer from a suggestion or a starter, and sends nothing', async () => {
     const onPickStarter = vi.fn(); const onPickSuggestion = vi.fn()
-    render(<ChatHero name="Ada" stage={null} onPickStarter={onPickStarter} onPickSuggestion={onPickSuggestion} />)
+    render(<ChatHero name="Ada" stage={null} onPickStarter={onPickStarter} onPickSuggestion={onPickSuggestion} draftUnderWay={() => false} onExplainClosed={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Plan the release' }))
     expect(onPickSuggestion).toHaveBeenCalledWith('Plan the release')
     expect(screen.getByText('Your starters')).toBeTruthy()
@@ -64,14 +64,14 @@ describe('ChatHero', () => {
   it('says it is still reading rather than showing an empty strip', () => {
     h.suggestions.mockReturnValue(new Promise(() => {}))
     h.sessionTemplates.mockReturnValue(new Promise(() => {}))
-    render(<ChatHero name="Ada" stage={null} onPickStarter={vi.fn()} onPickSuggestion={vi.fn()} />)
+    render(<ChatHero name="Ada" stage={null} onPickStarter={vi.fn()} onPickSuggestion={vi.fn()} draftUnderWay={() => false} onExplainClosed={vi.fn()} />)
     expect(screen.getAllByRole('status').map((s) => s.getAttribute('aria-busy'))).toEqual(['true', 'true'])
   })
 
   it('shows neither strip when there is nothing to offer', async () => {
     h.suggestions.mockResolvedValue({ suggestions: [], generated_at: 0, stale: false, refreshing: false, needs_model: '' })
     h.sessionTemplates.mockResolvedValue([])
-    render(<ChatHero name="Ada" stage={null} onPickStarter={vi.fn()} onPickSuggestion={vi.fn()} />)
+    render(<ChatHero name="Ada" stage={null} onPickStarter={vi.fn()} onPickSuggestion={vi.fn()} draftUnderWay={() => false} onExplainClosed={vi.fn()} />)
     await vi.waitFor(() => expect(screen.queryAllByRole('status')).toHaveLength(0))
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })

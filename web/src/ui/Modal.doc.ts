@@ -15,7 +15,7 @@ const doc: UiDoc = {
     { name: 'onClose', description: 'Called on any dismiss — the X button, Escape, or a scrim click. Required.' },
     { name: 'size', description: "'sheet' (the default) caps the sheet at the dialog width; 'compact' at SURFACE_WIDTHS.compactModal (520px), for one short form or a few choices (Chat preferences)." },
     { name: 'describedBy', description: 'The id of the element that describes the dialog, as aria-describedby: its first line.' },
-    { name: 'title', description: 'The modal heading, shown in the pinned header (also the aria-label when a string).' },
+    { name: 'title', description: 'The modal heading, shown in the pinned header (also the aria-label when a string). A compact modal wraps a long title, so a question is whole on a phone; a sheet cuts it short.' },
   ],
   bestPractices: [
     { guidance: true, description: 'Reach for Modal for any centered dialog rather than hand-rolling a fixed overlay — the scrim, Escape/scrim-click dismiss, focus trap, viewport centering, and enter/exit motion come built in.' },

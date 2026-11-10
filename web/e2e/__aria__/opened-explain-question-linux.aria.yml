@@ -1,0 +1,63 @@
+- navigation:
+  - button "PersonalClaw, Home":
+    - img "PersonalClaw"
+    - text: PersonalClaw
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Chat history":
+    - button "New chat"
+    - button "Open Chat history"
+    - searchbox "Search chats"
+    - 'button "Sort and filter: Recent activity · Active"'
+    - status
+    - text: No chats yet
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Chat history"
+  - button "More actions"
+  - img "Nothing running"
+  - heading "Good <time of day>, Alex" [level=#]
+  - status
+  - status
+  - textbox "Message input"
+  - button "Add to message"
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
+  - button "Chat preferences"
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Execution boundary: Normal"': Normal
+  - button "Voice input"
+  - button "Hands-free voice"
+  - button "Send message" [disabled]
+  - 'button "Project: No project"': No project
+  - button "Show health-check status"
+  - button "Break a goal into tasks"
+  - button "Save a note to my knowledge base"
+  - button "Run a command and explain the output"
+  - button "What can you help me with?"
+  - button "Set up a daily briefing"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"
+- dialog "How should I explain things?":
+  - text: How should I explain things?
+  - button "Close"
+  - paragraph: I can shape how I explain things to you. That never changes a fact, a caveat or a refusal.
+  - button "Briefly"
+  - text: The short answer first. Details when you ask.
+  - button "Step by step"
+  - text: Numbered steps you can follow.
+  - button "With the background"
+  - text: The why and the context, then the answer.
+  - button "Use the default"
+  - text: "No preference: I explain things my usual way."
+  - paragraph: Change this any time in Settings → Agent → Agent defaults → Explanations. For one chat only, use Chat preferences, the gear on the chat box.

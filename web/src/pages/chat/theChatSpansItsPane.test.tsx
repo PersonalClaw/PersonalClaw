@@ -193,7 +193,7 @@ describe('no chat surface holds a fixed column width', () => {
     'pages/chat/composer/ChatComposer.tsx',
     'pages/chat/composer/ComposerFold.tsx',
     'pages/chat/hero/ChatHero.tsx',
-    'pages/chat/hero/ExplainCard.tsx',
+    'pages/chat/hero/ExplainQuestion.tsx',
   ]
   /** A cap in a length: `maxWidth: 720`, `maxWidth: '768px'`, `max-w-[452px]`, a `var(...)` width. */
   const FIXED = [

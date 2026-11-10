@@ -1,7 +1,7 @@
-"""The owner's Explanations default, once set, answers the question the first-run card asks.
+"""The owner's Explanations default, once set, answers the question a new chat's window asks.
 
 Setting ``agent.explain`` through the config PATCH records ``explain_asked`` in the onboarding
-state, so the card never asks what the owner already chose in Settings. Only the owner's own write
+state, so the window never asks what the owner already chose in Settings. Only the owner's own write
 does: an app that may write the setting answers nothing for the owner, and a refused write or a
 write of another setting records nothing either.
 """

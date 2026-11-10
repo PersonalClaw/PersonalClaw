@@ -5,8 +5,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── An accessibility prop the type checker cannot see ─────────────────────────────────────────────
 //
-// `ui/Button` declares its aria surface in camelCase — `ariaLabel`, `ariaExpanded`, `ariaPressed` —
-// and spreads no rest props. So a call site written like this:
+// `ui/Button` declares its aria surface in camelCase — `ariaLabel`, `ariaExpanded`, `ariaPressed`,
+// `ariaDescribedBy` — and spreads no rest props. So a call site written like this:
 //
 //   <Button aria-expanded={isOpen} aria-label={`Show delivery detail for ${r.label}`}>detail</Button>
 //
@@ -93,7 +93,7 @@ describe('a hyphenated aria prop on one of our components is dropped, so nobody 
   it('no call site passes aria-* to an app component that cannot forward it', () => {
     const dropped = hyphenatedAriaOnAppComponents()
       .map((h) => `${h.file}  <${h.comp} ${h.arias.join(' ')}>  → ${h.def} declares camelCase only`)
-    expect(dropped, `these compile and reach nothing:\n${dropped.join('\n')}\n\nUse the component's own camelCase prop (ariaLabel / ariaExpanded / ariaPressed).`)
+    expect(dropped, `these compile and reach nothing:\n${dropped.join('\n')}\n\nUse the component's own camelCase prop (ariaLabel / ariaExpanded / ariaPressed / ariaDescribedBy).`)
       .toEqual([])
   })
 

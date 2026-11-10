@@ -110,7 +110,7 @@ export function buttonLook(variant: Variant, size: Size, shape: 'pill' | 'squirc
 export function Button({
   children, variant = 'primary', size = 'md', shape = 'pill',
   loading = false, loadingLabel, className, onClick, disabled, type = 'button', title, ariaLabel, ariaExpanded, ariaPressed,
-  disabledReason,
+  ariaDescribedBy, disabledReason,
 }: {
   children: ReactNode
   variant?: Variant
@@ -164,6 +164,11 @@ export function Button({
   // on and the row they are not. Separate from `ariaExpanded` on purpose: expanded means "reveals
   // content", pressed means "is the current selection", and one attribute cannot carry both.
   ariaPressed?: boolean
+  // The id of visible text beside the button that says what it does, read after its name: a
+  // choice's hint under it, say. Visible text outside the button, so the name stays the label
+  // people read. Dropped while a `disabledReason` shows: `aria-describedby` outranks `title`, so
+  // the reason would be read no more (`Toggle` yields its hint the same way).
+  ariaDescribedBy?: string
   // WHY this button is unavailable, when `disabled` is true.
   //
   // A native `disabled` button is removed from the tab order entirely, so a keyboard user
@@ -212,6 +217,7 @@ export function Button({
       aria-label={ariaLabel}
       aria-expanded={ariaExpanded}
       aria-pressed={ariaPressed}
+      aria-describedby={softOff ? undefined : ariaDescribedBy}
       // `loading` cross-fades the label to opacity 0 and swaps in an aria-hidden spinner, so
       // sighted users see the action is in flight and everyone else got NO signal at all —
       // the button just went quiet and disabled while keeping its original name. `aria-busy`

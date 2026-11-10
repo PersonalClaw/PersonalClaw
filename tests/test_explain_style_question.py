@@ -1,6 +1,6 @@
 """The one optional question: "How should I explain things?", and the claim that it was asked.
 
-The answer is a setting now: the owner's Explanations default, ``agent.explain``, which the card
+The answer is a setting now: the owner's Explanations default, ``agent.explain``, which the window
 saves through the config PATCH. ``POST /api/onboarding/explain`` keeps one job, the
 claim: ``{"answer": "skip"}`` records the question as asked and writes nothing, so it does not come
 back, and a second claim is a 409. The three answers it once took are a 400 naming
