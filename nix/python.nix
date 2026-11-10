@@ -149,6 +149,14 @@ let
     pillow = "PIL";
   };
 
+  # What a rebuilt package's wheel requires at run time that its nixpkgs recipe leaves to its test
+  # or optional inputs, which the rebuild goes without (`doCheck = false`). The wheel's
+  # runtime-deps check names each one missing. Each entry says where nixpkgs keeps it.
+  leftToTheTests = {
+    # nixpkgs keeps starlette in its examples extra, and its tests reach it through fastapi.
+    sse-starlette = [ "starlette" ];
+  };
+
   # uv.lock names a package as PEP 503 does; nixpkgs' `pname` is the distribution's own name.
   normalize = name: lib.toLower (lib.replaceStrings [ "_" "." ] [ "-" "-" ] name);
   pinned = lib.listToAttrs (map (pin: lib.nameValuePair pin.name (fromWheel pin)) pins);
@@ -161,7 +169,10 @@ let
       pinOf drv
     else if drv ? overridePythonAttrs && holdsAPin drv then
       drv.overridePythonAttrs (old: {
-        dependencies = map resolve (old.dependencies or [ ]);
+        dependencies = map resolve (
+          (old.dependencies or [ ])
+          ++ map (name: pkgs.${name}) (leftToTheTests.${normalize drv.pname} or [ ])
+        );
         propagatedBuildInputs = map resolve (old.propagatedBuildInputs or [ ]);
         doCheck = false;
       })
