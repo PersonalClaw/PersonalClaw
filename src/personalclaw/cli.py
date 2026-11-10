@@ -32,11 +32,13 @@ import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any
 
 from personalclaw import __version__, log_sinks
 from personalclaw.config import AppConfig, config_dir
 from personalclaw.config.loader import resolve_config_dir
 from personalclaw.constants import BANNER
+from personalclaw.security import terminal_text
 from personalclaw.seed import seed_cmd
 
 
@@ -103,7 +105,8 @@ def _resolve_gateway_args(args: argparse.Namespace) -> dict:
             main_home = default_config_dir().resolve()
         except OSError as exc:
             print(
-                f"--approval yolo refused: failed to resolve PERSONALCLAW_HOME: {exc}",
+                "--approval yolo refused: failed to resolve PERSONALCLAW_HOME: "
+                f"{terminal_text(str(exc))}",
                 file=sys.stderr,
             )
             sys.exit(2)
@@ -1704,47 +1707,218 @@ def _read_the_env_files() -> None:
 
     The folder's ``.env`` may be anyone's, a repository just cloned among them, so it gives
     credentials only (``taken_from_a_folder``): never a ``PERSONALCLAW_*`` setting, which would
-    choose the sign-in mode, the bind address or the home, and no other name. Each name it takes,
-    and each it leaves out, is named on stderr, never its value. A folder that is the home reads
-    as the home.
+    choose the sign-in mode, the bind address or the home, nor one of the libraries' own settings
+    (``library_env.LIBRARY_ENV_NAMES``), which PersonalClaw sets itself, and no other name. Each
+    name it takes (and whether it takes it over the home's), each it leaves out and each the
+    environment already sets (the environment's value is the one used) is named on stderr, never its
+    value. A name that is not a variable name (``secrets_vault.valid_key_name``), and a value the
+    environment cannot hold, are neither set nor named: such names are counted on stderr instead.
+    Both ``.env`` files are read as written, with no ``${NAME}`` filled in, as the credential store
+    reads the home's, and a folder's ``.env`` that cannot be read as text gives nothing, said on
+    stderr. "Over your home's" names a credential the home's ``.env`` also sets: the keychain is not
+    read at start. The home's ``.env`` gets the same name and value check, without a line; one that
+    cannot be read as text is said, as the folder's is. A folder that is the home reads as the home.
     """
-    from dotenv import dotenv_values
-
     from personalclaw.config.credentials import mirrored_into_the_environment, taken_from_a_folder
+    from personalclaw.library_env import LIBRARY_ENV_NAMES
+    from personalclaw.secrets_vault import valid_key_name
 
     # Where the home is, not the home made: a command that needs no home (`--version`, `--help`)
     # answers later, and the code that writes into the home is what creates it. Read before the
     # folder's `.env`, which can no longer name it.
     home_env = resolve_config_dir() / ".env"
+    home_entries = _env_entries(home_env) if home_env.is_file() else {}
     folder_env = Path.cwd() / ".env"
     if folder_env.is_file() and folder_env.resolve() != home_env.resolve():
+        from personalclaw.security import terminal_line
+
+        # The folder's own name can hold what a terminal acts on, a line break among them, as a
+        # name could: it is written on one line, as each note below is one.
+        where = terminal_line(str(folder_env))
+        entries = _env_entries(folder_env, where=where)
         took: list[str] = []
+        over: list[str] = []
+        kept: list[str] = []
         left: list[str] = []
-        for key, value in dotenv_values(folder_env).items():
-            if value is None or key in os.environ:
+        unnamed = unusable = 0
+        for key, value in entries.items():
+            if not valid_key_name(key):
+                unnamed += 1
                 continue
-            if taken_from_a_folder(key) and mirrored_into_the_environment(key):
+            if value is None:
+                continue
+            if "\x00" in value:
+                unusable += 1
+                continue
+            credential = (
+                taken_from_a_folder(key)
+                and key.upper() not in LIBRARY_ENV_NAMES
+                and mirrored_into_the_environment(key)
+            )
+            if credential and key in os.environ:
+                kept.append(key)
+            elif credential:
                 os.environ.setdefault(key, value)
                 took.append(key)
+                held = home_entries.get(key)
+                if held is not None and "\x00" not in held:
+                    over.append(key)
             else:
                 left.append(key)
         if took:
             print(
-                f"personalclaw: took {', '.join(took)} from {folder_env}, the .env of the folder "
-                "this command started in.",
+                f"personalclaw: took {', '.join(took)} from {where}, the .env of the folder "
+                "this command started in"
+                + (f", over your home's {', '.join(over)}" if over else "")
+                + ".",
+                file=sys.stderr,
+            )
+        if kept:
+            its = (
+                "it too, and its line for it was"
+                if len(kept) == 1
+                else ("them too, and its lines for them were")
+            )
+            print(
+                f"personalclaw: kept your environment's {', '.join(kept)}: {where} sets {its} "
+                "not used.",
                 file=sys.stderr,
             )
         if left:
             print(
-                f"personalclaw: left out {', '.join(left)} from {folder_env}: a folder's .env "
+                f"personalclaw: left out {', '.join(left)} from {where}: a folder's .env "
                 "gives credentials only, and PersonalClaw's settings come from your home and "
                 "your environment.",
                 file=sys.stderr,
             )
-    if home_env.is_file():
-        for key, value in dotenv_values(home_env).items():
-            if value is not None and mirrored_into_the_environment(key):
-                os.environ.setdefault(key, value)
+        if unnamed:
+            print(
+                f"personalclaw: left out {_names(unnamed)} in {where} that "
+                f"{'is' if unnamed == 1 else 'are'} not a variable name (letters, digits and _, "
+                "not starting with a digit, at most 128 characters): neither used nor shown.",
+                file=sys.stderr,
+            )
+        if unusable:
+            print(
+                f"personalclaw: left out {_names(unusable)} in {where} whose value cannot be "
+                "set: neither used nor shown.",
+                file=sys.stderr,
+            )
+    for key, value in home_entries.items():
+        if (
+            value is not None
+            and valid_key_name(key)
+            and "\x00" not in value
+            and mirrored_into_the_environment(key)
+        ):
+            os.environ.setdefault(key, value)
+
+
+def _names(count: int) -> str:
+    return f"{count} name{'' if count == 1 else 's'}"
+
+
+def _env_entries(path: Path, *, where: str = "") -> dict[str, str | None]:
+    """The names and values of the ``.env`` at *path*, read as written (a ``${NAME}`` in a line is
+    that text, never a value this command's environment holds), its first name without a UTF-8
+    byte-order mark. A file that cannot be read as text gives none, said on stderr: every command
+    starts here, and one that stopped on a file it could not read would stop every command."""
+    from dotenv import dotenv_values
+
+    try:
+        entries = dict(dotenv_values(path, interpolate=False))
+    except (UnicodeDecodeError, OSError):
+        if not where:
+            from personalclaw.security import terminal_line
+
+            where = terminal_line(str(path))
+        print(
+            f"personalclaw: could not read {where} as text, so nothing in it was used.",
+            file=sys.stderr,
+        )
+        return {}
+    if entries:
+        first = next(iter(entries))
+        if first.startswith("\ufeff"):
+            entries = {(k[1:] if k == first else k): v for k, v in entries.items()}
+    return entries
+
+
+class _TerminalStream:
+    """A text stream whose ``write`` hands on what it is given through
+    ``security.terminal_text``: each character a terminal would act on is written as a visible
+    escape, and text already escaped is written as it is. Everything else (``buffer``,
+    ``fileno``, ``isatty``, ``flush``, ``encoding``, ``reconfigure``…) is the stream's own, so what
+    writes bytes, or asks what the stream is, gets the stream itself."""
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+
+    def write(self, text: str) -> int:
+        self._stream.write(terminal_text(text))
+        return len(text)
+
+    def writelines(self, lines: Any) -> None:
+        for line in lines:
+            self.write(line)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+def _log_what_nothing_caught() -> None:
+    """An exception nothing caught, in a thread or in the command itself, and one Python could not
+    raise (``sys.unraisablehook``) are logged through the log's sinks (masked, and written as
+    text) rather than printed by Python's default hook straight to stderr, which for the gateway
+    is the console a service manager keeps. A thread ended by ``SystemExit`` says nothing, as the
+    default hook does, and a Ctrl-C keeps the default's word."""
+    import threading
+
+    def thread_stopped(hooked: Any) -> None:
+        if hooked.exc_type is None or issubclass(hooked.exc_type, SystemExit):
+            return
+        logging.getLogger("personalclaw").error(
+            "thread %s stopped on an error nothing caught",
+            getattr(hooked.thread, "name", "?"),
+            exc_info=(hooked.exc_type, hooked.exc_value, hooked.exc_traceback),
+        )
+
+    def command_stopped(exc_type: Any, exc_value: Any, exc_traceback: Any) -> None:
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        logging.getLogger("personalclaw").critical(
+            "an error nothing caught ended the command",
+            exc_info=(exc_type, exc_value, exc_traceback),
+        )
+
+    def could_not_raise(unraisable: Any) -> None:
+        logging.getLogger("personalclaw").error(
+            "%s: an error Python could not raise",
+            getattr(unraisable, "err_msg", None) or "Exception ignored",
+            exc_info=(unraisable.exc_type, unraisable.exc_value, unraisable.exc_traceback),
+        )
+
+    threading.excepthook = thread_stopped
+    sys.excepthook = command_stopped
+    sys.unraisablehook = could_not_raise
+
+
+def _show_the_streams_as_text() -> None:
+    """Send every write to ``sys.stdout`` and ``sys.stderr`` through :class:`_TerminalStream`, so
+    what a command prints reaches the terminal as text: a print no site wrapped, the gateway's own
+    lines, an uncaught exception the default hook prints. Two writes go around it: the prompt
+    ``input()`` shows at a terminal, which the interpreter writes itself, so a caller whose prompt
+    holds text PersonalClaw did not write passes it through ``terminal_text`` (``app_cli``); and a
+    child that inherits the descriptors, so a child's output is piped and masked
+    (``security.mask_child_output``), or, for ``personalclaw logs``' reader, piped and relayed
+    through ``terminal_text`` (``cli_server._relay``); that reader keeps the terminal's stderr for
+    its own errors and ``sudo``'s prompt. The sites that print what PersonalClaw did not write
+    still wrap it themselves. Installed once: a stream already wrapped is left as it is."""
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name)
+        if stream is not None and not isinstance(stream, _TerminalStream):
+            setattr(sys, name, _TerminalStream(stream))
 
 
 def main() -> None:
@@ -1755,6 +1929,7 @@ def main() -> None:
     # ahead of the prompt it answers.
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)
+    _show_the_streams_as_text()
 
     # The environment this command was launched with: its children's PATH and TMPDIR, whatever
     # changes `os.environ` later (`env.gateway_env`), and what a restart starts the new image with
@@ -1824,6 +1999,7 @@ def main() -> None:
         from personalclaw.mcp_core import run_mcp_core_server
 
         log_sinks.attach(_console_log_handler())
+        _log_what_nothing_caught()
         run_mcp_core_server()
         return
 
@@ -1878,6 +2054,7 @@ def main() -> None:
     # both. An app loaded later is shown the moment its code loads: nothing here names one.
     log_sinks.attach(_console_log_handler())
     log_sinks.attach(_gateway_log_handler(config_dir() / "gateway.log"))
+    _log_what_nothing_caught()
     # The --verbose flag takes precedence, otherwise the persisted log_level from config.
     if args.verbose >= 2:
         level = logging.DEBUG
@@ -2117,7 +2294,7 @@ def _workflow_cmd(args) -> int:  # noqa: ANN001
     try:
         result = replay_run(args.run_id)
     except ReplayError as exc:
-        print(f"cannot replay: {exc}", file=sys.stderr)
+        print(f"cannot replay: {terminal_text(str(exc))}", file=sys.stderr)
         return 1
 
     if getattr(args, "json", False):
@@ -2153,7 +2330,7 @@ def _workflow_cmd(args) -> int:  # noqa: ANN001
             f"{len(result.original)} node(s) — no divergence"
         )
         return 0
-    print(f"run {result.run_id}: DIVERGED — {div.describe()}")
+    print(f"run {result.run_id}: DIVERGED — {terminal_text(str(div.describe()))}")
     return 0
 
 
@@ -2189,7 +2366,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
             return
         for s in skills:
             desc = s["description"]
-            print(f"  {s['name']:<24} {desc[:60]}")
+            print(f"  {terminal_text(str(s['name'])):<24} {terminal_text(str(desc[:60]))}")
         return
 
     if cmd == "search":
@@ -2204,7 +2381,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
             print(f"No results for '{query}' on {marketplace_name}")
             return
         for r in results:
-            print(f"  {r.id:<40} {r.description[:50]}")
+            print(f"  {terminal_text(str(r.id)):<40} {terminal_text(str(r.description[:50]))}")
         return
 
     if cmd == "install":
@@ -2247,12 +2424,12 @@ def _handle_skills(args) -> None:  # noqa: ANN001
                 # whose entire job is to justify the refusal. Same sentence the consent
                 # surfaces render (`hiddenFindingsNote` in web/src/lib/scanFindings.ts).
                 lines.append(f"     +{hidden} more finding{'' if hidden == 1 else 's'} not shown")
-            _refuse("\n".join(lines))
+            _refuse(terminal_text(str("\n".join(lines))))
         except Exception as exc:
-            _refuse(f"❌ Install failed: {exc}")
+            _refuse(f"❌ Install failed: {terminal_text(str(exc))}")
         n = len(result.report.findings)
         note = f" (scanned, tier={result.tier.value}" + (f", {n} finding(s))" if n else ")")
-        print(f"✅ Installed: {result.path}{note}")
+        print(f"✅ Installed: {terminal_text(str(result.path))}{note}")
         return
 
     if cmd == "remove":
@@ -2280,11 +2457,11 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         report = run_aging(dry_run=getattr(args, "dry_run", False))
         print(report.summary())
         for name in report.to_archived:
-            print(f"  archived: {name}")
+            print(f"  archived: {terminal_text(str(name))}")
         for name in report.to_stale:
-            print(f"  stale:    {name}")
+            print(f"  stale:    {terminal_text(str(name))}")
         for name in report.reactivated:
-            print(f"  active:   {name}")
+            print(f"  active:   {terminal_text(str(name))}")
         return
 
     if cmd == "verify":
@@ -2307,13 +2484,13 @@ def _handle_skills(args) -> None:  # noqa: ANN001
             # A skill with no record gets "·", not a check: there is nothing to compare it with,
             # and a green check would falsely imply "verified intact".
             summary = rep.summary().split(": ", 1)[1]
-            print(f"  {marks.get(rep.state, '·')} {name}: {summary}")
+            print(f"  {marks.get(rep.state, '·')} " + terminal_text(f"{name}: {summary}"))
             for f in rep.mutated:
-                print(f"       changed: {f}")
+                print(f"       changed: {terminal_text(str(f))}")
             for f in rep.missing:
-                print(f"       missing: {f}")
+                print(f"       missing: {terminal_text(str(f))}")
             for f in rep.added:
-                print(f"       added:   {f}")
+                print(f"       added:   {terminal_text(str(f))}")
             edited += rep.state == EDITED
             damaged += rep.state == TAMPERED
         print(
@@ -2337,7 +2514,8 @@ def _incident_cmd(args) -> None:  # noqa: ANN001
     if action == "on":
         st = _inc.activate(getattr(args, "reason", "") or "")
         print(
-            f"⛔ Incident mode ON — unattended work suspended.\n   reason: {st.reason or '(none)'}"
+            "⛔ Incident mode ON — unattended work suspended.\n   reason: "
+            f"{terminal_text(str(st.reason or '(none)'))}"
         )
         print("   Resume with: personalclaw incident off")
     elif action == "off":
@@ -2347,7 +2525,8 @@ def _incident_cmd(args) -> None:  # noqa: ANN001
         st = _inc.get_incident()
         if st.active:
             print(
-                f"⛔ Incident mode ACTIVE since {st.started_at}\n   reason: {st.reason or '(none)'}"
+                f"⛔ Incident mode ACTIVE since {st.started_at}\n   reason: "
+                f"{terminal_text(str(st.reason or '(none)'))}"
             )
         else:
             print("✓ No incident — automation running normally.")

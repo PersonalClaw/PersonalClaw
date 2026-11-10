@@ -100,6 +100,7 @@ from personalclaw.security import (
     mask_child_output,
     redact_credentials,
     redact_exfiltration_urls,
+    terminal_text,
 )
 from personalclaw.sel import sel, sel_log_async
 from personalclaw.session import SessionManager
@@ -1092,7 +1093,7 @@ class GatewayOrchestrator:
         try:
             argv = install_argv(["--quiet", *missing])
         except NoInstallerError as exc:
-            print(f"❌ {exc}", file=sys.stderr)
+            print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
             logger.error("Dep repair impossible: %s", exc)
             return
 
@@ -5174,7 +5175,7 @@ class GatewayOrchestrator:
                 return
             print("Checking for updates…")
             status = await _updates.update_status(asked=False, at_start=True)
-            print(_updates.update_result_line(status))
+            print(terminal_text(str(_updates.update_result_line(status))))
             if status.get("available"):
                 logger.info("Updates available from remote")
                 from personalclaw.config import AppConfig
@@ -5491,7 +5492,7 @@ class GatewayOrchestrator:
             if not self._no_dashboard:
                 self._announce_dashboard()
             for _ch_name in _connected_channels:
-                print(f"PersonalClaw gateway connected to {_ch_name}")
+                print(f"PersonalClaw gateway connected to {terminal_text(str(_ch_name))}")
 
         asyncio.create_task(_start_session_pool())
         print("PersonalClaw gateway starting…")

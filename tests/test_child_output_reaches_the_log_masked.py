@@ -556,3 +556,12 @@ def test_the_rail_sees_the_shapes_it_is_for():
     )
     hits = _unmasked_log_calls(ast.parse(src))
     assert [h.split(":")[0] for h in hits] == ["2", "3", "4"], hits
+
+
+def test_a_childs_bidirectional_controls_are_written_as_escapes():
+    """On one line or keeping its line breaks, a child's output follows the rule the command line
+    and the log follow (``security.terminal_text``): a bidirectional override or isolate is written
+    as a visible escape."""
+    printed = "a\u202eb\u2066c\u2069d"
+    for one_line in (True, False):
+        assert mask_child_output(printed, one_line=one_line) == "a\\u202eb\\u2066c\\u2069d"

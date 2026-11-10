@@ -13,6 +13,7 @@ from pathlib import Path
 
 from personalclaw import container_host, gateway_base, tmux_substrate
 from personalclaw.config import loader as config_loader
+from personalclaw.security import terminal_text
 from personalclaw.service import linux, macos
 from personalclaw.service.common import (
     LAUNCHD_LABEL,
@@ -88,7 +89,7 @@ def install_service(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -
         try:
             carried = linux.install(extra=extra, without=without)
         except linux.ServiceInstallError as exc:
-            print(f"❌ {exc}", file=sys.stderr)
+            print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
             return 1
         _print_installed("unit", linux.UNIT_PATH, carried)
         return 0
@@ -96,7 +97,7 @@ def install_service(*, extra: Iterable[str] = (), without: Iterable[str] = ()) -
         try:
             carried = macos.install(extra=extra, without=without)
         except macos.ServiceInstallError as exc:
-            print(f"❌ {exc}", file=sys.stderr)
+            print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
             return 1
         _print_installed("plist", macos.PLIST_PATH, carried)
         return 0
@@ -144,11 +145,11 @@ def service_status() -> int:
         )
         return 0 if running else 1
     if plat == Platform.SYSTEMD:
-        print(linux.status())
+        print(terminal_text(str(linux.status())))
         _print_environment(linux.installed_environment())
         return 0 if linux.is_active() else 1
     if plat == Platform.LAUNCHD:
-        print(macos.status())
+        print(terminal_text(str(macos.status())))
         _print_environment(macos.installed_environment())
         return 0 if macos.is_active() else 1
     _unsupported_message()

@@ -20,6 +20,8 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
+from personalclaw.security import terminal_text
+
 if TYPE_CHECKING:
     from personalclaw.inbound.tokens import SurfaceToken
 
@@ -423,7 +425,8 @@ def inbound_cmd(args) -> int:
         current = tokens.surface_token(surface, load_surface_token(surface))
     except tokens.RegistryUnavailable as exc:
         print(
-            f"❌ {surface}: the token registry is unreadable, so every surface token refuses: {exc}",
+            f"❌ {surface}: the token registry is unreadable, so every surface token refuses: "
+            f"{terminal_text(str(exc))}",
             file=sys.stderr,
         )
         return 1

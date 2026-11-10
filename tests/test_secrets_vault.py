@@ -665,3 +665,9 @@ def repo_root() -> Path:
     root = Path(__file__).resolve().parents[1]
     assert (root / "src" / "personalclaw").is_dir(), root
     return root
+
+
+def test_a_name_that_ends_in_a_line_break_is_not_a_key_name():
+    """The whole name is checked: a line break at its end is not a variable name's."""
+    assert not sv.valid_key_name("A_TOKEN\n")
+    assert sv.valid_key_name("A_TOKEN")

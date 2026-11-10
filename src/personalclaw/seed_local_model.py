@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from personalclaw import memory_writes
+from personalclaw.security import terminal_text
 
 if TYPE_CHECKING:
     from personalclaw.llm.catalog import ModelInfo
@@ -657,7 +658,7 @@ def seed_local_model_cmd(args) -> int:  # noqa: ANN001 — argparse.Namespace at
         apps_dir=getattr(args, "local_model_apps_dir", None),
     )
     stream = sys.stdout if result.ok else sys.stderr
-    print(f"seed-local-model: {result.status}: {result.detail}", file=stream)
+    print(f"seed-local-model: {result.status}: {terminal_text(str(result.detail))}", file=stream)
     return 0
 
 

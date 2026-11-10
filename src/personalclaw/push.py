@@ -68,6 +68,7 @@ from urllib.parse import urlparse
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import OWNED_KEY_PREFIX
+from personalclaw.security import terminal_text
 
 
 def config_dir() -> Path:
@@ -851,7 +852,7 @@ def push_cmd(args: Any) -> int:
     print(f"ntfy topic:     {'configured' if status['ntfy_configured'] else 'not configured'}")
     print(f"subscribed:     {status['subscribed']} device(s)")
     for device in status["devices"]:
-        print(f"  - {device}")
+        print(f"  - {terminal_text(str(device))}")
     return 0
 
 

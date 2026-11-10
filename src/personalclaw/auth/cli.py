@@ -21,6 +21,7 @@ from typing import Any
 
 from personalclaw import session_keys
 from personalclaw.auth import credentials as creds
+from personalclaw.security import terminal_text
 
 
 def _print_status() -> int:
@@ -69,7 +70,7 @@ def _set_auth_field(name: str, value: object) -> None:
     try:
         mutate_config(_apply)
     except ConfigWriteError as exc:
-        print(f"❌ {exc}", file=sys.stderr)
+        print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
         raise SystemExit(1) from exc
 
 
@@ -114,10 +115,10 @@ def auth_cmd(args) -> int:
         try:
             creds.set_password(user, plaintext)
         except ValueError as exc:
-            print(f"❌ {exc}", file=sys.stderr)
+            print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
             return 1
         except creds.CredentialError as exc:
-            print(f"❌ {exc}", file=sys.stderr)
+            print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
             return 1
         print(f"✅ Password set for {user!r} ({creds.credentials_path()}, 0600).")
         if not _auth_config().get("login_enabled"):
@@ -216,17 +217,17 @@ def _revoke_cmd(args) -> int:
         print("   Your password and 2FA enrollment are untouched.")
         return 0
     except home_gateway.GatewayError as exc:
-        print(f"❌ {exc} Nothing was revoked.", file=sys.stderr)
+        print(f"❌ {terminal_text(str(exc))} Nothing was revoked.", file=sys.stderr)
         return 1
     try:
         status, answer = gateway.post("/api/logout", {}, secret_header="X-Local-Secret")
     except home_gateway.GatewayError as exc:
-        print(f"❌ {exc} Nothing was revoked.", file=sys.stderr)
+        print(f"❌ {terminal_text(str(exc))} Nothing was revoked.", file=sys.stderr)
         return 1
     if status != 200 or not answer.get("ok"):
         print(
             "❌ The gateway did not revoke the sessions: "
-            f"{home_gateway.error_text(answer, status)}",
+            f"{terminal_text(str(home_gateway.error_text(answer, status)))}",
             file=sys.stderr,
         )
         return 1
@@ -270,7 +271,7 @@ def _rotate_key_cmd(args) -> int:
     except home_gateway.NoGatewayRunning:
         gateway = None
     except home_gateway.GatewayError as exc:
-        print(f"❌ {exc} Nobody was signed out.", file=sys.stderr)
+        print(f"❌ {terminal_text(str(exc))} Nobody was signed out.", file=sys.stderr)
         return 1
     if gateway is None:
         signed_out = _sessions_here().rotate_signing_key(actor="cli")
@@ -283,12 +284,12 @@ def _rotate_key_cmd(args) -> int:
                 work=ROTATE_KEY_WORK,
             )
         except home_gateway.GatewayError as exc:
-            print(f"❌ {exc} Nobody was signed out.", file=sys.stderr)
+            print(f"❌ {terminal_text(str(exc))} Nobody was signed out.", file=sys.stderr)
             return 1
         if status != 200 or not answer.get("ok"):
             print(
                 "❌ The gateway did not replace the key, so nobody was signed out: "
-                f"{home_gateway.error_text(answer, status)}",
+                f"{terminal_text(str(home_gateway.error_text(answer, status)))}",
                 file=sys.stderr,
             )
             return 1

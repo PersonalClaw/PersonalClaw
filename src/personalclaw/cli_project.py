@@ -12,11 +12,13 @@ two facts the user has to act on — what was skipped, and which credentials the
 from __future__ import annotations
 
 import argparse
+import copy
 import sys
 from pathlib import Path
 from typing import Any
 
 from personalclaw.atomic_write import write_private_file
+from personalclaw.security import terminal_text
 from personalclaw.workflows import project_archive as pa
 
 
@@ -81,7 +83,9 @@ def _export(args: argparse.Namespace) -> int:
             passphrase=args.passphrase or "",
         )
     except pa.ArchiveRefused as exc:
-        print(f"❌ Export refused ({exc.reason}): {exc.detail}", file=sys.stderr)
+        print(
+            f"❌ Export refused ({exc.reason}): {terminal_text(str(exc.detail))}", file=sys.stderr
+        )
         return 1
 
     out = (
@@ -97,7 +101,7 @@ def _export(args: argparse.Namespace) -> int:
 
     size = len(raw)
     human = f"{size // 1024}K" if size < 1024 * 1024 else f"{size / 1024 / 1024:.1f}M"
-    print(f"✅ Exported {project.name} → {out} ({human})")
+    print(f"✅ Exported {terminal_text(str(project.name))} → {out} ({human})")
     print(
         f"   {len(plan.entries)} entities · {plan.artifact_count} artifact(s) · "
         f"{plan.run_count} run(s)"
@@ -105,12 +109,14 @@ def _export(args: argparse.Namespace) -> int:
     if plan.skipped:
         print(f"   ⤺ {len(plan.skipped)} left behind:")
         for line in plan.skipped[:10]:
+            line = terminal_text(str(line))
             print(f"     · {line}")
         if len(plan.skipped) > 10:
             print(f"     · … and {len(plan.skipped) - 10} more")
     if plan.secrets_present:
         # Named, never carried. An importer that does not know a credential is expected produces a
         # project that looks complete and fails on its first run.
+        plan.secrets_present = [terminal_text(str(name)) for name in plan.secrets_present]
         print(
             f"   🔑 {len(plan.secrets_present)} credential(s) must be re-entered on the far side: "
             f"{', '.join(sorted(plan.secrets_present))}"
@@ -121,8 +127,20 @@ def _export(args: argparse.Namespace) -> int:
 
 
 def _refused_by_a_link(link: Exception) -> int:
-    print(f"❌ {link}, so no project can be imported here until the link is gone.", file=sys.stderr)
+    print(
+        f"❌ {terminal_text(str(link))}, so no project can be imported here until the link is gone.",
+        file=sys.stderr,
+    )
     return 1
+
+
+def _as_shown(plan: Any) -> Any:
+    """A copy of *plan* for the lines that show it: its project's name and the credential names it
+    expects as the terminal is given them (:func:`terminal_text`)."""
+    shown = copy.copy(plan)
+    shown.project_name = terminal_text(str(plan.project_name))
+    shown.secrets_expected = [terminal_text(str(name)) for name in plan.secrets_expected]
+    return shown
 
 
 def _import(args: argparse.Namespace) -> int:
@@ -148,17 +166,20 @@ def _import(args: argparse.Namespace) -> int:
             archive, existing_names=existing, passphrase=args.passphrase or ""
         )
     except pa.ArchiveRefused as exc:
-        print(f"❌ Refused ({exc.reason}): {exc.detail}", file=sys.stderr)
+        print(f"❌ Refused ({exc.reason}): {terminal_text(str(exc.detail))}", file=sys.stderr)
         return 1
     except pa.EncryptionUnavailable as exc:
-        print(f"❌ {exc}", file=sys.stderr)
+        print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
         return 1
 
+    # What the lines below show is the archive's own words: its project's name and the credential
+    # names it expects, as the terminal is given them. The import takes the plan as it was read.
+    read, plan = plan, _as_shown(plan)
     print(import_summary(plan, preview=True))
     if plan.refused:
         print(f"   ✖ {len(plan.refused)} refused:")
         for issue in plan.refused[:10]:
-            print(f"     · {issue.path}: {issue.message}")
+            print(f"     · {terminal_text(str(issue.path))}: {terminal_text(str(issue.message))}")
         if len(plan.refused) > 10:
             print(f"     · … and {len(plan.refused) - 10} more")
 
@@ -170,12 +191,15 @@ def _import(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        created, written, left = pa.import_project(plan, extracted, store=store, home=config_dir())
+        created, written, left = pa.import_project(read, extracted, store=store, home=config_dir())
     except LinkInTheWay as link:
         return _refused_by_a_link(link)
-    print(f"✅ Imported as {created.name} ({created.id}) — {len(written)} entities written")
+    print(
+        f"✅ Imported as {terminal_text(str(created.name))} ({created.id}) — {len(written)} "
+        "entities written"
+    )
     if left:
-        print(f"   ⚠️  Left unchanged: {'; '.join(left)}")
+        print(f"   ⚠️  Left unchanged: {terminal_text(str('; '.join(left)))}")
     if plan.secrets_expected:
         print(
             f"   🔑 Re-enter {len(plan.secrets_expected)} credential(s): "

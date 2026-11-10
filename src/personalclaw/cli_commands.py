@@ -23,6 +23,8 @@ from personalclaw.security import (
     BUILTIN_DENY_PATTERNS,
     redact_credentials,
     redact_exfiltration_urls,
+    terminal_line,
+    terminal_text,
 )
 from personalclaw.security_audit import scan_history, scan_memory
 from personalclaw.sel import redact_event, sel
@@ -67,13 +69,13 @@ def _spawn(args: argparse.Namespace) -> None:
     try:
         gateway = home_gateway.reach(getattr(args, "port", None))
     except home_gateway.GatewayError as exc:
-        _refuse(f"Error: {exc}")
+        _refuse(f"Error: {terminal_text(str(exc))}")
     try:
         token = mint_local_token(gateway)
     except RunError as exc:
         # The gateway is this home's and answers; a mint failure is a DIFFERENT fact than "not
         # running" and must read as one.
-        _refuse(f"Error: {exc}")
+        _refuse(f"Error: {terminal_text(str(exc))}")
 
     if action == "list":
         _spawn_list(gateway, token)
@@ -95,9 +97,9 @@ def _spawn_list(gateway: home_gateway.HomeGateway, token: str) -> None:
     except urllib.error.HTTPError as e:
         try:
             body = json.loads(e.read())
-            print(f"Error: {body.get('error', e.reason)}", file=sys.stderr)
+            print(f"Error: {terminal_text(str(body.get('error', e.reason)))}", file=sys.stderr)
         except Exception:
-            print(f"Error: {e.code} {e.reason}", file=sys.stderr)
+            print(f"Error: {e.code} {terminal_text(str(e.reason))}", file=sys.stderr)
         sys.exit(1)
     except (urllib.error.URLError, OSError):
         _lost(gateway)
@@ -107,7 +109,7 @@ def _spawn_list(gateway: home_gateway.HomeGateway, token: str) -> None:
         return
     for a in agents:
         status = "✅" if a.get("done") else "⏳"
-        print(f"  {status} {a['id']}  {a.get('task', '')[:60]}")
+        print(f"  {status} {a['id']}  {terminal_text(str(a.get('task', ''))[:60])}")
 
 
 def _spawn_run(args: argparse.Namespace, gateway: home_gateway.HomeGateway, token: str) -> None:
@@ -124,9 +126,9 @@ def _spawn_run(args: argparse.Namespace, gateway: home_gateway.HomeGateway, toke
     except urllib.error.HTTPError as e:
         try:
             body = json.loads(e.read())
-            print(f"Error: {body.get('error', e.reason)}", file=sys.stderr)
+            print(f"Error: {terminal_text(str(body.get('error', e.reason)))}", file=sys.stderr)
         except Exception:
-            print(f"Error: {e.code} {e.reason}", file=sys.stderr)
+            print(f"Error: {e.code} {terminal_text(str(e.reason))}", file=sys.stderr)
         sys.exit(1)
     except (urllib.error.URLError, OSError):
         _lost(gateway)
@@ -134,7 +136,7 @@ def _spawn_run(args: argparse.Namespace, gateway: home_gateway.HomeGateway, toke
     agent_id = result["id"]
 
     if args.fire_and_forget:
-        print(f"Spawned subagent {agent_id}: {result['task']}")
+        print(f"Spawned subagent {agent_id}: {terminal_text(str(result['task']))}")
         return
 
     # Block: poll until done
@@ -153,9 +155,10 @@ def _spawn_run(args: argparse.Namespace, gateway: home_gateway.HomeGateway, toke
             sys.exit(1)
         if status.get("done"):
             if status.get("error"):
-                print(f"Error: {status['error']}", file=sys.stderr)
+                print(f"Error: {terminal_text(str(status['error']))}", file=sys.stderr)
                 sys.exit(1)
-            print(status.get("result", ""))
+            # A subagent's reply: words its model wrote.
+            print(terminal_text(str(status.get("result", ""))))
             return
 
 
@@ -198,7 +201,7 @@ def _handle_agent(args: argparse.Namespace) -> None:
     cfg = AppConfig.load()
 
     if action == "list":
-        print(render_agent_table(cfg))
+        print(terminal_text(str(render_agent_table(cfg))))
 
     elif action == "create":
         if args.name in cfg.agents:
@@ -303,8 +306,8 @@ def _discover(args: argparse.Namespace) -> None:
         return
     print(f"Found {len(found)} gateway{'s' if len(found) != 1 else ''}:")
     for inst in found:
-        print(f"\n  {inst.name or '(unnamed)'}")
-        print(f"    url:     {inst.base_url or '(no address advertised)'}")
+        print(f"\n  {terminal_text(str(inst.name or '(unnamed)'))}")
+        print(f"    url:     {terminal_text(str(inst.base_url or '(no address advertised)'))}")
         if inst.requires_pairing:
             print("    pairing: required — run `personalclaw auth enroll` on that machine")
             print("             for a single-use code, then redeem it from this device.")
@@ -327,7 +330,7 @@ def _automation(args: argparse.Namespace) -> None:
         if getattr(args, "as_json", False):
             print(json.dumps(report.to_dict(), indent=2))
         else:
-            print(render(report))
+            print(terminal_text(str(render(report))))
         if not report.ok:
             sys.exit(1)
 
@@ -406,7 +409,7 @@ def _cron_refuse(
     """
     print("This needs your yes:", file=sys.stderr)
     for sentence in questions:
-        print(f"  {sentence}", file=sys.stderr)
+        print(f"  {terminal_text(str(sentence))}", file=sys.stderr)
     if on_the_page:
         print(
             f"{nothing} A yes given here cannot say which version of the workflow it is for: "
@@ -453,7 +456,7 @@ def _cron(args: argparse.Namespace) -> None:
     # be untrue of it, and every write is refused until it can be read.
     found = unreadable(store)
     if found is not None:
-        _refuse(f"Error: {found}")
+        _refuse(f"Error: {terminal_text(str(found))}")
 
     action = getattr(args, "cron_action", None)
     if action == "list":
@@ -479,8 +482,8 @@ def _cron(args: argparse.Namespace) -> None:
                 shown = _sv.to_schedule_row(trigger)
             else:
                 shown = {"name": redact_for_display(trigger.name or "")}
-            detail = str(shown.get("message") or "")
-            print(f"  {status} {trigger.id}  {shown.get('name') or ''}  ({sched})  {detail[:60]}")
+            words = f"{trigger.id}  {shown.get('name') or ''}  ({sched})  "
+            print(f"  {status} {terminal_text(words + str(shown.get('message') or '')[:60])}")
 
     elif action == "add":
         cron_expr = getattr(args, "cron_expr", None)
@@ -488,7 +491,7 @@ def _cron(args: argparse.Namespace) -> None:
         approval_mode = getattr(args, "approval_mode", "") or ""
         problem = _cron_channel_problem(channel)
         if problem:
-            _refuse(f"Error: {problem}")
+            _refuse(f"Error: {terminal_text(str(problem))}")
         # The parser requires exactly one of the two (`cron_cadence` in `cli.build_parser`), and
         # `tools.create` refuses an interval that would never fire (`arm.semantic_spec_issues`).
         if cron_expr is not None:
@@ -550,7 +553,7 @@ def _cron(args: argparse.Namespace) -> None:
                 resources=f"name={args.name}",
                 error=result.text,
             )
-            _refuse(result.text)
+            _refuse(terminal_text(str(result.text)))
         trigger_id = str((result.data.get("trigger") or {}).get("id") or "")
         granted = ((result.data.get("trigger") or {}).get("capabilities") or {}).get("providers")
         if granted:
@@ -569,7 +572,7 @@ def _cron(args: argparse.Namespace) -> None:
             source="cli",
             resources=f"job_id={trigger_id} approval_mode={approval_mode or 'default'}",
         )
-        print(result.text)
+        print(terminal_text(str(result.text)))
 
     elif action == "update":
         patch: dict = {}
@@ -584,7 +587,7 @@ def _cron(args: argparse.Namespace) -> None:
                     continue
                 problem = _cron_channel_problem(val)
                 if problem:
-                    _refuse(f"Error: {problem}")
+                    _refuse(f"Error: {terminal_text(str(problem))}")
                 patch["delivery"] = f"channel:{val}"
             elif field == "name":
                 patch["name"] = val
@@ -688,8 +691,8 @@ def _cron(args: argparse.Namespace) -> None:
             error="" if result.ok else result.text,
         )
         if not result.ok:
-            _refuse(result.text)
-        print(result.text)
+            _refuse(terminal_text(str(result.text)))
+        print(terminal_text(str(result.text)))
 
     elif action == "remove":
         # `confirm=True`: the flag exists so a TOOL CALL cannot delete by accident. A human who
@@ -698,13 +701,13 @@ def _cron(args: argparse.Namespace) -> None:
         result = _tools.delete(store, trigger_id=args.job_id, confirm=True)
         if not result.ok:
             _refuse(f"Job not found: {args.job_id}")
-        print(result.text)
+        print(terminal_text(str(result.text)))
 
     elif action == "pause":
         result = _tools.set_paused(store, trigger_id=args.job_id, paused=True)
         if not result.ok:
             _refuse(f"Job not found: {args.job_id}")
-        print(result.text)
+        print(terminal_text(str(result.text)))
 
     elif action == "resume":
         result = _tools.set_paused(store, trigger_id=args.job_id, paused=False)
@@ -713,8 +716,8 @@ def _cron(args: argparse.Namespace) -> None:
         # is strictly more useful than "Job not found", and the row does exist, so that message
         # would be wrong as well as unhelpful.
         if not result.ok:
-            _refuse(result.text)
-        print(result.text)
+            _refuse(terminal_text(str(result.text)))
+        print(terminal_text(str(result.text)))
 
     elif action == "trigger":
         # Fire via the RUNNING gateway (a CLI process has no clock loop). The id is looked up in
@@ -742,8 +745,8 @@ def _cron(args: argparse.Namespace) -> None:
             error="" if ok else message,
         )
         if not ok:
-            _refuse(f"Error: {message}")
-        print(message)
+            _refuse(f"Error: {terminal_text(str(message))}")
+        print(terminal_text(str(message)))
 
 
 def _security(args: argparse.Namespace) -> None:
@@ -768,9 +771,9 @@ def _security(args: argparse.Namespace) -> None:
         if findings:
             print(f"⚠️  {len(findings)} suspicious entries found:\n")
             for f in findings:
-                print(f"  📄 {f['file']}")
+                print(f"  📄 {terminal_text(str(f['file']))}")
                 print(f"     {f['warning']}")
-                print(f"     {f['snippet'][:120]}…\n")
+                print(f"     {terminal_text(str(f['snippet'][:120]))}…\n")
         else:
             print("✅ No suspicious tool usage found in recent history.")
 
@@ -778,8 +781,8 @@ def _security(args: argparse.Namespace) -> None:
         if mem_findings:
             print(f"\n⚠️  {len(mem_findings)} suspicious memory entries:\n")
             for f in mem_findings:
-                print(f"  [{f['type']}] {f['key']}: {f['warning']}")
-                print(f"    {f['value'][:120]}\n")
+                print(f"  [{f['type']}] {terminal_text(str(f['key']))}: {f['warning']}")
+                print(f"    {terminal_text(str(f['value'][:120]))}\n")
         elif not findings:
             pass
         else:
@@ -800,17 +803,22 @@ def _security(args: argparse.Namespace) -> None:
             outcome = e.get("outcome", "?")
             src = e.get("source", "?")
             caller = e.get("caller_identity", "?")
-            print(f"  {ts}  [{src}] {etype}: {op} → {outcome}  (caller: {caller})")
-            # What it ran or touched: a shell call's command, the file a write changed.
+            print(
+                f"  {terminal_text(str(ts))}  [{terminal_text(str(src))}] "
+                f"{terminal_text(str(etype))}: {terminal_text(str(op))} → "
+                f"{terminal_text(str(outcome))}  (caller: {terminal_text(str(caller))})"
+            )
+            # What it ran or touched: a shell call's command, the file a write changed. A model
+            # chose them, so they are shown as text, as the error and the reason are.
             if e.get("resources"):
-                print(f"    resources: {e['resources']}")
+                print(f"    resources: {terminal_text(str(e['resources']))}")
             if e.get("error"):
-                print(f"    error: {e['error'][:120]}")
+                print(f"    error: {terminal_text(str(e['error'][:120]))}")
             reason = (e.get("metadata") or {}).get("reason")
             if reason:
-                print(f"    reason: {str(reason)[:120]}")
+                print(f"    reason: {terminal_text(str(reason)[:120])}")
             if e.get("downstream_service"):
-                print(f"    downstream: {e['downstream_service']}")
+                print(f"    downstream: {terminal_text(str(e['downstream_service']))}")
     elif action == "verify":
 
         # CLI verify is an explicit offline audit — check the entire chain. A broken chain exits 1,
@@ -859,7 +867,7 @@ async def _run_eval(args: argparse.Namespace) -> None:
                 )
                 _refuse(
                     f"Error: scenario '{name}' not found.\n"
-                    f"Available scenarios: {', '.join(available)}"
+                    f"Available scenarios: {terminal_text(str(', '.join(available)))}"
                 )
             scenarios.append(load_scenario(resolved))
     else:
@@ -867,7 +875,7 @@ async def _run_eval(args: argparse.Namespace) -> None:
 
     total_turns = sum(len(sess.turns) for s in scenarios for sess in s.sessions)
     names = ", ".join(s.name for s in scenarios)
-    print(f"Running: {names} ({total_turns} turns)\n")
+    print(f"Running: {terminal_text(str(names))} ({total_turns} turns)\n")
 
     config = AppConfig.load()
     provider_factory = config.create_provider_factory()
@@ -901,22 +909,28 @@ async def _run_eval(args: argparse.Namespace) -> None:
                                     )
                                     reason, _ = redact_exfiltration_urls(verdict.reason)
                                     reason, _ = redact_credentials(reason)
-                                    print(f"  🧑‍⚖️ Judge: {verdict.score}/5 — {reason}")
+                                    print(
+                                        f"  🧑‍⚖️ Judge: {verdict.score}/5 — "
+                                        f"{terminal_text(str(reason))}"
+                                    )
                                 except Exception as exc:
-                                    print(f"  ⚠️ Judge failed for turn: {exc}")
+                                    print(f"  ⚠️ Judge failed for turn: {terminal_text(str(exc))}")
                                     tr.assertion_results[idx] = (a, False)
         finally:
             await judge.shutdown()
 
     report = format_results(results)
-    print("\n" + report)
+    print("\n" + terminal_text(str(report)))
 
     dims = score_by_dimension(results)
     if dims:
         print("## Dimension Summary")
         for dim, s in sorted(dims.items()):
             status = "✅" if s["rate"] >= 0.75 else "❌"
-            print(f"  {status} {dim}: {s['passed']}/{s['total']} ({s['rate']:.0%})")
+            print(
+                f"  {status} {terminal_text(str(dim))}: {s['passed']}/{s['total']} "
+                f"({s['rate']:.0%})"
+            )
 
     overall = sum(1 for r in results if r.passed)
     print(f"\nOverall: {overall}/{len(results)} scenarios passed")
@@ -968,7 +982,7 @@ async def _judge_bench(args: argparse.Namespace) -> None:
 
     if getattr(args, "list_sets", False):
         for name in jb.list_fixture_sets():
-            print(name)
+            print(terminal_text(str(name)))
         return
 
     try:
@@ -977,14 +991,15 @@ async def _judge_bench(args: argparse.Namespace) -> None:
         fixture_set = jb.load_fixture_set(args.fixture_set)
         paired, unpaired = jb.build_specs(fixture_set, tiers=tiers, sample_counts=samples)
     except (jb.JudgeBenchError, ValueError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"Error: {terminal_text(str(exc))}", file=sys.stderr)
         raise SystemExit(1) from exc
 
     cells = jb.bench_cells(paired, unpaired)
     calls = sum(int(c["judge_samples"]) for c in cells)
     print(
-        f"Judge benchmark '{fixture_set.name}' "
-        f"({len(fixture_set.fixtures)} fixtures, {', '.join(fixture_set.rubric_classes())})\n"
+        f"Judge benchmark '{terminal_text(str(fixture_set.name))}' "
+        f"({len(fixture_set.fixtures)} fixtures, "
+        f"{terminal_text(str(', '.join(fixture_set.rubric_classes())))})\n"
         f"  tiers:   {', '.join(tiers)}\n"
         f"  samples: {', '.join(str(s) for s in samples)}\n"
         f"  cells:   {len(cells)}\n"
@@ -997,18 +1012,20 @@ async def _judge_bench(args: argparse.Namespace) -> None:
     result = await jb.run_judge_bench(
         args.fixture_set, tiers=tiers, sample_counts=samples, budget_usd=args.budget
     )
-    print(jb.render_table_tsv(result.table))
+    print(terminal_text(str(jb.render_table_tsv(result.table))))
     print("## Recommendations")
     for rec in result.recommendations:
         if rec.verdict == jb.REC_RECOMMENDED:
             print(
-                f"  {rec.rubric_class}: bind '{rec.use_case}' to {rec.model_ref or '<unbound>'} "
+                f"  {terminal_text(str(rec.rubric_class))}: bind "
+                f"'{terminal_text(str(rec.use_case))}' to "
+                f"{terminal_text(str(rec.model_ref or '<unbound>'))} "
                 f"(tier {rec.tier}, judge_samples {rec.samples}, ${rec.cost_usd})"
             )
         else:
-            print(f"  {rec.rubric_class}: {rec.verdict}")
+            print(f"  {terminal_text(str(rec.rubric_class))}: {rec.verdict}")
         for note in rec.notes:
-            print(f"    - {note}")
+            print(f"    - {terminal_text(str(note))}")
     from personalclaw.evals import store
 
     print(f"\nArtifacts: {store.matrix_dir(result.bench_id)}")
@@ -1028,14 +1045,15 @@ def _eval_harvest(args: argparse.Namespace) -> None:
         try:
             suite = hv.load_harvested_suite(workflow_name=getattr(args, "workflow", "") or "")
         except hv.EmptyHarvestError as exc:
-            print(f"Refusing: {exc}", file=sys.stderr)
+            print(f"Refusing: {terminal_text(str(exc))}", file=sys.stderr)
             raise SystemExit(1) from exc
         print(f"Harvested suite: {len(suite)} case(s)")
         for installed in suite:
             block = installed.get("harvest") or {}
             print(
-                f"  {installed.get('name')}  run={block.get('run_id')}  "
-                f"workflow={block.get('workflow_name')}  status={block.get('status')}"
+                f"  {terminal_text(str(installed.get('name')))}  run={block.get('run_id')}  "
+                f"workflow={terminal_text(str(block.get('workflow_name')))}  "
+                f"status={block.get('status')}"
             )
         return
 
@@ -1048,7 +1066,7 @@ def _eval_harvest(args: argparse.Namespace) -> None:
     )
 
     if report.is_refusal:
-        print(f"Refusing: {report.refusal}", file=sys.stderr)
+        print(f"Refusing: {terminal_text(str(report.refusal))}", file=sys.stderr)
         raise SystemExit(1)
 
     wrote = sum(1 for c in report.cases if c.written)
@@ -1058,11 +1076,14 @@ def _eval_harvest(args: argparse.Namespace) -> None:
     )
     for case in report.cases:
         mark = "+" if case.written else "=" if not dry_run else " "
-        print(f"  {mark} {case.name}  run={case.run_id}  sha256={case.sha256[:12]}")
+        print(
+            f"  {mark} {terminal_text(str(case.name))}  run={case.run_id}  "
+            f"sha256={case.sha256[:12]}"
+        )
     if report.skipped:
         print("Skipped:")
         for reason, count in sorted(report.skipped_by_reason().items()):
-            print(f"  {count} x {reason}")
+            print(f"  {count} x {terminal_text(str(reason))}")
     if not report.cases:
         # NOT a refusal: runs existed and every one was disqualified, with a reason each.
         print(
@@ -1102,7 +1123,7 @@ async def _study(args: argparse.Namespace) -> None:
             power = " [low_power]" if row.get("low_power") else ""
             print(
                 f"{row['study_id']}\t{row.get('kind')}\t"
-                f"{(row.get('subject') or {}).get('template_id', '')}\t"
+                f"{terminal_text(str((row.get('subject') or {}).get('template_id', '')))}\t"
                 f"k={row.get('k')}\t{verdict}{power}"
             )
         return
@@ -1134,7 +1155,7 @@ async def _study(args: argparse.Namespace) -> None:
     except studies.StudyError as exc:
         # A study whose arms cannot be built is refused BEFORE the preflight, so the printed
         # spend is never for a matrix that could not have run.
-        print(f"Refusing: {exc}", file=sys.stderr)
+        print(f"Refusing: {terminal_text(str(exc))}", file=sys.stderr)
         raise SystemExit(1) from exc
 
     suite = study_arms.harvested_study_cases(
@@ -1150,7 +1171,9 @@ async def _study(args: argparse.Namespace) -> None:
     )
     print(
         f"Study {reg.study_id} ({reg.kind}) on "
-        f"{reg.subject.get('template_id') or '<unnamed template>'}\n" + pre.render() + "\n"
+        f"{terminal_text(str(reg.subject.get('template_id') or '<unnamed template>'))}\n"
+        + terminal_text(str(pre.render()))
+        + "\n"
     )
     if pre.refusal:
         raise SystemExit(1)
@@ -1166,7 +1189,7 @@ async def _study(args: argparse.Namespace) -> None:
             samples=samples,
         )
     except studies.StudyError as exc:
-        print(f"Refusing: {exc}", file=sys.stderr)
+        print(f"Refusing: {terminal_text(str(exc))}", file=sys.stderr)
         raise SystemExit(1) from exc
 
     agreement = "unmeasurable" if result.agreement is None else f"{result.agreement:.2f}"
@@ -1174,7 +1197,7 @@ async def _study(args: argparse.Namespace) -> None:
     print(f"  win rate:  {result.win_rate}")
     print(f"  agreement: {agreement} (floor {result.agreement_floor})")
     if result.fail_reason:
-        print(f"  fail reason: {result.fail_reason}")
+        print(f"  fail reason: {terminal_text(str(result.fail_reason))}")
     for hit in result.locked_regressions:
         print(f"  locked regression: {hit}")
     if result.evidence_ref:
@@ -1208,7 +1231,8 @@ def _ablation(args: argparse.Namespace) -> None:
             return
         for comp in rows:
             print(
-                f"{comp.component_id}\t{comp.kind}\t{comp.target}\t{comp.subject}\t"
+                f"{comp.component_id}\t{comp.kind}\t{terminal_text(str(comp.target))}"
+                f"\t{terminal_text(str(comp.subject))}\t"
                 f"arms={','.join(comp.arms())}"
             )
         return
@@ -1237,12 +1261,13 @@ def _ablation(args: argparse.Namespace) -> None:
         # Before the preflight print, so a typo'd target is a message and not a matrix.
         ablation.validate_component(component)
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"Error: {terminal_text(str(exc))}", file=sys.stderr)
         raise SystemExit(1) from exc
     arms = component.arms()
     print(
-        f"Ablation '{component.component_id}' ({component.kind} → {component.target})\n"
-        f"  subject: {component.subject}\n"
+        f"Ablation '{component.component_id}' ({component.kind} → "
+        f"{terminal_text(str(component.target))})\n"
+        f"  subject: {terminal_text(str(component.subject))}\n"
         f"  arms:    {', '.join(arms)}\n"
         f"  trials:  {trials} per arm\n"
         f"  cells (the spend): {len(arms) * trials}\n"
@@ -1266,12 +1291,12 @@ def _ablation(args: argparse.Namespace) -> None:
     except ablation.LiveStateMutatedError as exc:
         # Loud, not swallowed: the run altered the operator's config, which is the one thing
         # an ablation must never do.
-        print(f"REFUSED: {exc}", file=sys.stderr)
+        print(f"REFUSED: {terminal_text(str(exc))}", file=sys.stderr)
         raise SystemExit(1) from exc
     except (scenario_lib.ScenarioLibraryError, evals_store.PinRequiredError) as exc:
         # A misregistered subject or an incomplete pin is a registry mistake, not a crash. The
         # message already names what is installed — a traceback on top of it only hides it.
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"Error: {terminal_text(str(exc))}", file=sys.stderr)
         raise SystemExit(1) from exc
     _print_ablation_report(report)
     if report.verdict == ablation.REMOVE:
@@ -1296,11 +1321,11 @@ def _ablation_bench_skill(args: argparse.Namespace, skill: str) -> None:
         )
         origin = "operator" if subject else "harvested"
         print(
-            f"Skill bench '{skill}'\n"
+            f"Skill bench '{terminal_text(str(skill))}'\n"
             f"  consulted runs: {len({r['run_id'] for r in runs})}\n"
-            f"  subject:        {population.subject or '<none>'} ({origin})\n"
+            f"  subject:        {terminal_text(str(population.subject or '<none>'))} ({origin})\n"
             f"  harvested candidates: {len(population.candidates)}\n"
-            + (f"  {population.reason}\n" if population.reason else "")
+            + (terminal_text(str(f"  {population.reason}\n" if population.reason else "")))
             + "--dry-run: nothing was called."
         )
         return
@@ -1310,12 +1335,12 @@ def _ablation_bench_skill(args: argparse.Namespace, skill: str) -> None:
         trials=max(1, int(getattr(args, "trials", 3) or 3)),
         budget_usd=float(getattr(args, "budget", 0.0) or 0.0),
     )
-    print(f"Skill bench '{skill}' → {report.verdict}")
+    print(f"Skill bench '{terminal_text(str(skill))}' → {report.verdict}")
     print(f"  consulted runs: {len(report.consulted_run_ids)}")
     if report.subject:
         replayed = f"  replayed: {report.subject} ({report.subject_origin or 'operator'}"
         replayed += f", run {report.subject_run_id})" if report.subject_run_id else ")"
-        print(replayed)
+        print(terminal_text(str(replayed)))
     if len(report.subject_candidates) > 1:
         # Say what was NOT scored. One subject per MatrixSpec is the current shape; printing the
         # population makes an under-scored bench visible instead of reading as the whole history.
@@ -1328,7 +1353,7 @@ def _ablation_bench_skill(args: argparse.Namespace, skill: str) -> None:
     if report.delta is not None:
         print(f"  delta (surfaced − suppressed): {report.delta}")
     if report.reason:
-        print(f"  {report.reason}")
+        print(f"  {terminal_text(str(report.reason))}")
 
 
 def _eval_gate(args: argparse.Namespace) -> None:
@@ -1355,11 +1380,12 @@ def _eval_gate(args: argparse.Namespace) -> None:
             )
         for member in subset.members:
             print(
-                f"{member.name}\tturns={member.turns}\tassertions={member.hard_assertions}\t"
+                f"{terminal_text(str(member.name))}\tturns={member.turns}"
+                f"\tassertions={member.hard_assertions}\t"
                 f"{member.sha256[:12]}"
             )
         for name, reason in subset.excluded:
-            print(f"excluded\t{name}\t{reason}")
+            print(f"excluded\t{terminal_text(str(name))}\t{terminal_text(str(reason))}")
         print(
             f"\n{len(subset.members)} scenario(s), {subset.turns} turns per arm "
             f"({subset.turns * 2} for before+after), subset {subset.sha256()[:12]}"
@@ -1393,9 +1419,11 @@ def _eval_gate(args: argparse.Namespace) -> None:
         )
         print(
             f"Gate '{pid}' ({prop.kind})\n"
-            f"  scenarios: {len(subset.members)} ({', '.join(subset.names) or '<none>'})\n"
+            f"  scenarios: {len(subset.members)} "
+            f"({terminal_text(str(', '.join(subset.names) or '<none>'))})\n"
             f"  cells (the spend): {len(subset.members) * 2 * trials}\n"
-            f"  candidate files:   {', '.join(staged) or '<none — this proposal is ungateable>'}\n"
+            f"  candidate files:   "
+            f"{terminal_text(str(', '.join(staged) or '<none — this proposal is ungateable>'))}\n"
             f"  budget: {ceiling_line}\n"
             "--dry-run: nothing was called."
         )
@@ -1420,7 +1448,7 @@ def _print_gate_report(report) -> None:
 
     print(f"Gate '{report.run_id}': {report.state}")
     if report.reason:
-        print(f"  {report.reason}")
+        print(f"  {terminal_text(str(report.reason))}")
     if report.state != "gated":
         return
     print(
@@ -1446,8 +1474,8 @@ def _print_gate_report(report) -> None:
         print("  spend:  not measured (no cell reported one)")
     bound = report.bound or {}
     if bound.get("halted"):
-        print(f"  HALTED on budget: {bound.get('halt_reason')}")
-        print(f"  not run: {', '.join(bound.get('not_run') or [])}")
+        print(f"  HALTED on budget: {terminal_text(str(bound.get('halt_reason')))}")
+        print(f"  not run: {terminal_text(str(', '.join(bound.get('not_run') or [])))}")
     pin = report.pin or {}
     subset_hash = str(pin.get("scenario_sha256") or "")[:12]
     print(f"  pin:    model_fp={pin.get('model_fp') or 'n/a'} subset={subset_hash or 'n/a'}")
@@ -1488,7 +1516,11 @@ def _retrieval_eval(args: argparse.Namespace) -> None:
         try:
             card = json.loads(Path(label_path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            print(f"Error: unreadable card {label_path}: {exc}", file=sys.stderr)
+            print(
+                f"Error: unreadable card {terminal_text(str(label_path))}: "
+                f"{terminal_text(str(exc))}",
+                file=sys.stderr,
+            )
             raise SystemExit(1) from exc
         # Accept the card shape this command PRINTS, so the round-trip is copy-edit-apply
         # and not "now transform it into some other schema".
@@ -1546,10 +1578,10 @@ def _retrieval_eval(args: argparse.Namespace) -> None:
             except rb.EmptyBenchmarkError as exc:
                 # Not a crash and NOT a zero score: a store with no labels has no P@k, and
                 # printing 0.0 here would file "retrieval is broken" as a finding.
-                print(f"Not measured: {exc}")
+                print(f"Not measured: {terminal_text(str(exc))}")
                 continue
             except (rb.MaskNotAppliedError, rb.StoreMutatedError) as exc:
-                print(f"REFUSED: {exc}", file=sys.stderr)
+                print(f"REFUSED: {terminal_text(str(exc))}", file=sys.stderr)
                 raise SystemExit(1) from exc
             _print_retrieval_report(result)
         finally:
@@ -1597,7 +1629,8 @@ def _print_retrieval_report(result) -> None:
         print(
             f"    {contrib.arm:<10} ΔP@k={_num(contrib.contribution_p):>9} "
             f"ΔR@k={_num(contrib.contribution_r):>9} solo P@k={_num(contrib.solo_p_at_k):>9} "
-            f"→ {contrib.verdict}" + (f"  ({contrib.reasons[0]})" if contrib.reasons else "")
+            f"→ {contrib.verdict}"
+            + (terminal_text(str(f"  ({contrib.reasons[0]})" if contrib.reasons else "")))
         )
     print(
         f"  enable threshold: ΔP@k >= {rb.MIN_ARM_CONTRIBUTION} over "
@@ -1626,7 +1659,7 @@ def _learn(args: argparse.Namespace) -> None:
             saved = svc.write_lesson(rule, category, negative)
             refused = None if saved else svc.lesson_refusal(rule, negative)
         if refused is not None:
-            _refuse(f"Not saved, and nothing in memory changed: {refused[1]}.")
+            _refuse(f"Not saved, and nothing in memory changed: {terminal_text(str(refused[1]))}.")
         neg = f" ({negative})" if negative else ""
         print(f"Saved: {rule}{neg} [{category}]")
         return
@@ -1640,7 +1673,7 @@ def _learn(args: argparse.Namespace) -> None:
             for part, e in rows:
                 val = json.loads(e["value_json"])
                 kept = "" if part.is_global else f" (kept in {_memory_named(part)})"
-                print(f"  [knowledge] {val}{kept}")
+                print(f"  [knowledge] {terminal_text(str(val))}{kept}")
         elif action == "remove":
             removed = [part for part, svc in services if svc.delete_lesson(args.query)]
             if not removed:
@@ -1653,10 +1686,15 @@ def _learn(args: argparse.Namespace) -> None:
 
 def _memory_named(part: Any) -> str:
     """The memory *part* (a ``memory_locality.Partition``) in words, as ``memory_list`` names it:
-    every chat's, or a folder's."""
+    every chat's, or a folder's, the folder's path shown as text on one line
+    (``security.terminal_line``)."""
     if part.is_global:
         return "the memory every chat keeps"
-    named = f"the memory of {part.shown}" if part.folder else "a folder's memory no record names"
+    named = (
+        f"the memory of {terminal_line(str(part.shown))}"
+        if part.folder
+        else "a folder's memory no record names"
+    )
     return f"{named}, a folder that is gone" if part.gone else named
 
 
@@ -1712,7 +1750,10 @@ def _memory_action(action: str | None, args: argparse.Namespace, store: Any, svc
                 val = json.loads(e["value_json"])
             except Exception:
                 val = e["value_json"]
-            print(f"  {e['key']}: {val}  (confidence={e['confidence']}, source={e['source']})")
+            print(
+                f"  {terminal_text(str(e['key']))}: {terminal_text(str(val))}"
+                f"  (confidence={e['confidence']}, source={terminal_text(str(e['source']))})"
+            )
 
     elif action == "search":
         results = svc.search_episodic(query_text=args.query, limit=10)
@@ -1725,9 +1766,9 @@ def _memory_action(action: str | None, args: argparse.Namespace, store: Any, svc
                 if isinstance(r.get("tags"), str)
                 else r.get("tags", [])
             )
-            print(f"  [{r.get('importance', 0):.1f}] {r['text'][:120]}")
+            print(f"  [{r.get('importance', 0):.1f}] {terminal_text(str(r['text'][:120]))}")
             if tags:
-                print(f"        tags: {', '.join(tags)}")
+                print(f"        tags: {terminal_text(', '.join(str(t) for t in tags))}")
 
     elif action == "stats":
         stats = store.memory_stats()
@@ -1751,8 +1792,8 @@ def _memory_action(action: str | None, args: argparse.Namespace, store: Any, svc
         if findings:
             print(f"⚠️  {len(findings)} suspicious entries:\n")
             for f in findings:
-                print(f"  [{f['type']}] {f['key']}: {f['warning']}")
-                print(f"    {f['value'][:120]}\n")
+                print(f"  [{f['type']}] {terminal_text(str(f['key']))}: {f['warning']}")
+                print(f"    {terminal_text(str(f['value'][:120]))}\n")
         else:
             print("✅ No suspicious content in memory.")
 

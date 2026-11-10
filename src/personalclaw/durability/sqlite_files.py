@@ -38,6 +38,7 @@ from pathlib import Path
 
 from personalclaw.atomic_write import SQLITE_SIDECARS
 from personalclaw.durability.home_paths import put_file
+from personalclaw.security import terminal_text
 from personalclaw.sqlite_compat import connect
 
 #: The first bytes of every SQLite database file.
@@ -84,7 +85,10 @@ def copy_file(src: Path | str, dst: Path | str) -> str:
             return str(dst)
         except Exception as exc:  # noqa: BLE001 — every failure falls back to the file's bytes
             name = Path(src).name
-            print(f"⚠️  sqlite backup failed for {name} ({exc}); falling back to a file copy")
+            print(
+                f"⚠️  sqlite backup failed for {name} ({terminal_text(str(exc))}); falling "
+                "back to a file copy"
+            )
     shutil.copy2(str(src), str(dst))
     return str(dst)
 

@@ -96,7 +96,7 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "cli_run.py::start_transient_gateway::subprocess.Popen": "PersonalClaw's own gateway",
     "cli_server.py::_install::subprocess.Popen": _COMPOSED,
     "cli_server.py::_install::subprocess.run": _COMPOSED,
-    "cli_server.py::_logs_cmd::os.execvp": "journalctl or tail, from the owner's CLI",
+    "cli_server.py::_relay::subprocess.Popen": "journalctl or tail, from the owner's CLI",
     "cli_server.py::_logs_cmd::subprocess.run": _PROBE,
     "cli_server.py::_refresh_agent_config::subprocess.run": "PersonalClaw's own setup command",
     "cli_server.py::_spawn_detached_gateway::subprocess.Popen": "PersonalClaw's own gateway",

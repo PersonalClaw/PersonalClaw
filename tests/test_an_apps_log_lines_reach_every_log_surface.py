@@ -17,8 +17,11 @@ These drive the gateway's own start (``cli.main``), the dashboard's ring buffer 
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
+import os
+import subprocess
 import sys
 import textwrap
 import uuid
@@ -283,6 +286,212 @@ def test_every_sink_shows_the_same_lines_a_library_held_to_warning(start_gateway
         assert own in body, f"{surface} missed PersonalClaw's own DEBUG line at DEBUG"
 
 
+def _a_reader(
+    monkeypatch, cli_server, printed: bytes | None = None, status: int = 0
+) -> list[list[str]]:
+    """The log reader ``personalclaw logs`` runs, as ``tail`` would print the files it is handed
+    (or *printed*, when given): each run's command line is recorded, and so is a ``terminate``.
+    It must be started with its stdout a byte pipe and nothing else."""
+    runs: list[list[str]] = []
+
+    class _Reader:
+        def __init__(self, cmd, **kwargs):
+            assert kwargs == {"stdout": subprocess.PIPE}, kwargs
+            runs.append(list(cmd))
+            shown = [Path(a) for a in cmd if a.startswith("/")]
+            self.stdout = io.BytesIO(
+                printed if printed is not None else b"".join(f.read_bytes() for f in shown)
+            )
+
+        def wait(self, timeout=None) -> int:
+            return status
+
+        def terminate(self) -> None:
+            runs.append(["terminate"])
+
+    def _exec(*args) -> None:
+        pytest.fail(f"the log reader replaced this process instead of being relayed: {args!r}")
+
+    monkeypatch.setattr(cli_server.subprocess, "Popen", _Reader)
+    monkeypatch.setattr(cli_server.os, "execvp", _exec)
+    return runs
+
+
+def test_personalclaw_logs_shows_a_line_written_as_it_came_as_text(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """A line an older version wrote into the service's log as it came is shown as text: the
+    reader's output is relayed through the rule, not handed to the terminal."""
+    from personalclaw import cli_server
+    from personalclaw.service import macos as svc_macos
+    from personalclaw.service.common import Platform
+
+    log_dir = tmp_path / "Logs"
+    log_dir.mkdir()
+    monkeypatch.setattr(svc_macos, "STDOUT_LOG", log_dir / "gateway.log")
+    monkeypatch.setattr(svc_macos, "STDERR_LOG", log_dir / "gateway.err")
+    svc_macos.STDERR_LOG.write_text(
+        "12:00:00 WARNING log_probe: ok\x1b\rdone\u202eend\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(cli_server, "current_platform", lambda: Platform.LAUNCHD)
+    _a_reader(monkeypatch, cli_server)
+    with pytest.raises(SystemExit) as ended:
+        cli_server._logs_cmd(type("Args", (), {"follow": False, "lines": 20})())
+    assert ended.value.code == 0
+    out = capsys.readouterr().out
+    assert "log_probe: ok\\x1b\\rdone\\u202eend\n" in out, repr(out)
+    assert not any(ch in out for ch in "\x1b\r\u202e"), repr(out)
+
+
+def test_personalclaw_logs_of_a_foreground_gateway_shows_its_lines_as_text(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """With no service, the home's gateway.log is read, and relayed the same way."""
+    from personalclaw import cli_server
+    from personalclaw.service.common import Platform
+
+    (tmp_path / "gateway.log").write_bytes(b"12:00:00 WARNING log_probe: ok\x1b\rdone\n")
+    monkeypatch.setattr(cli_server, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(cli_server, "current_platform", lambda: Platform.UNSUPPORTED)
+    runs = _a_reader(monkeypatch, cli_server)
+    with pytest.raises(SystemExit) as ended:
+        cli_server._logs_cmd(type("Args", (), {"follow": False, "lines": 20})())
+    assert ended.value.code == 0
+    assert runs == [["tail", "-n", "20", str(tmp_path / "gateway.log")]], runs
+    out = capsys.readouterr().out
+    assert "log_probe: ok\\x1b\\rdone\n" in out and "\x1b" not in out, repr(out)
+
+
+def test_personalclaw_logs_relays_a_real_readers_bytes_and_its_status(capfd) -> None:
+    """A real reader's output comes through a byte pipe a line at a time: a lone carriage return
+    stays its escape, a byte that is not UTF-8 is the replacement character, and the command ends
+    with the reader's own status."""
+    from personalclaw import cli_server
+
+    code = (
+        "import sys; sys.stdout.buffer.write(bytes.fromhex('6f6b0d646f6e651b0a')"
+        " + chr(0x202E).encode() + b'end' + bytes([0xFF])); sys.exit(3)"
+    )
+    with pytest.raises(SystemExit) as ended:
+        cli_server._relay([sys.executable, "-I", "-c", code])
+    assert ended.value.code == 3
+    out, err = capfd.readouterr()
+    assert out == "ok\\rdone\\x1b\n\\u202eend\ufffd", repr(out)
+    assert err == "", repr(err)
+
+
+@pytest.mark.parametrize(
+    ("probed", "follow", "reader"),
+    [
+        ("row\n", False, ["journalctl", "--no-pager", "-u", "personalclaw.service", "-n", "20"]),
+        (
+            "",
+            True,
+            ["sudo", "journalctl", "--no-pager", "-u", "personalclaw.service", "-n", "20", "-f"],
+        ),
+    ],
+    ids=["journalctl", "sudo"],
+)
+def test_personalclaw_logs_on_a_systemd_service_relays_the_journal_as_text(
+    tmp_path, monkeypatch, capsys, probed, follow, reader
+) -> None:
+    """Under systemd the journal is read, through sudo when this user cannot read it, and what it
+    prints is relayed through the rule too."""
+    from personalclaw import cli_server
+    from personalclaw.service import linux as svc_linux
+    from personalclaw.service.common import Platform
+
+    unit = tmp_path / "personalclaw.service"
+    unit.write_text("[Unit]\n", encoding="utf-8")
+    monkeypatch.setattr(svc_linux, "UNIT_PATH", unit)
+    monkeypatch.setattr(cli_server, "current_platform", lambda: Platform.SYSTEMD)
+    monkeypatch.setattr(
+        cli_server.subprocess,
+        "run",
+        lambda args, **kw: subprocess.CompletedProcess(args, 0, stdout=probed, stderr=""),
+    )
+    monkeypatch.setattr(sys, "stdin", type("Tty", (), {"isatty": lambda self: True})())
+    runs = _a_reader(monkeypatch, cli_server, printed=b"x\x1bz\n")
+    with pytest.raises(SystemExit) as ended:
+        cli_server._logs_cmd(type("Args", (), {"follow": follow, "lines": 20})())
+    assert ended.value.code == 0
+    assert runs == [reader], runs
+    out = capsys.readouterr().out
+    assert "x\\x1bz\n" in out and "\x1b" not in out, repr(out)
+
+
+def test_personalclaw_logs_into_a_pipe_that_closed_ends_quietly(tmp_path, monkeypatch) -> None:
+    """Output whose reader went away (``personalclaw logs | head``) ends the log reader and the
+    command with 141, and what Python flushes as it exits goes nowhere."""
+    from personalclaw import cli_server
+
+    log = tmp_path / "gateway.log"
+    log.write_bytes(b"a line\n")
+    runs = _a_reader(monkeypatch, cli_server)
+    with open(tmp_path / "stdout", "wb") as kept:
+
+        class _Closed:
+            def write(self, text: str) -> int:
+                raise BrokenPipeError(32, "Broken pipe")
+
+            def flush(self) -> None:
+                pass
+
+            def fileno(self) -> int:
+                return kept.fileno()
+
+        monkeypatch.setattr(sys, "stdout", _Closed())
+        with pytest.raises(SystemExit) as ended:
+            cli_server._relay(["tail", "-n", "20", str(log)])
+        assert os.path.samestat(os.fstat(kept.fileno()), os.stat(os.devnull))
+    assert ended.value.code == 141
+    assert runs == [["tail", "-n", "20", str(log)], ["terminate"]], runs
+
+
+def test_a_ctrl_c_ends_the_log_reader_and_the_command_with_130(monkeypatch) -> None:
+    """A Ctrl-C ends the reader and the command with 130, a sudo this user cannot signal too."""
+    from personalclaw import cli_server
+
+    ended_with: list[str] = []
+
+    class _Interrupted(io.BytesIO):
+        def readline(self, *args) -> bytes:
+            raise KeyboardInterrupt
+
+    class _Sudo:
+        def __init__(self, cmd, **kwargs) -> None:
+            self.stdout = _Interrupted()
+
+        def terminate(self) -> None:
+            ended_with.append("terminate")
+            raise PermissionError(1, "Operation not permitted")
+
+        def wait(self, timeout=None) -> int:
+            ended_with.append("wait")
+            return -2
+
+    monkeypatch.setattr(cli_server.subprocess, "Popen", _Sudo)
+    try:
+        with pytest.raises(SystemExit) as ended:
+            cli_server._relay(["sudo", "journalctl", "-f"])
+    except KeyboardInterrupt:
+        pytest.fail("a Ctrl-C went past the relay")
+    assert ended.value.code == 130
+    assert ended_with == ["terminate", "wait"]
+
+
+def test_personalclaw_logs_ends_with_the_status_a_signal_gives(tmp_path, monkeypatch) -> None:
+    """A reader a signal ended gives the command 128 and the signal's number, as a shell does."""
+    from personalclaw import cli_server
+
+    log = tmp_path / "gateway.log"
+    log.write_bytes(b"a line\n")
+    _a_reader(monkeypatch, cli_server, status=-15)
+    with pytest.raises(SystemExit) as ended:
+        cli_server._relay(["tail", "-n", "20", str(log)])
+    assert ended.value.code == 143
+
+
 def test_personalclaw_logs_on_a_macos_service_reads_the_stream_the_gateway_logs_to(
     tmp_path, monkeypatch
 ) -> None:
@@ -299,13 +508,7 @@ def test_personalclaw_logs_on_a_macos_service_reads_the_stream_the_gateway_logs_
     svc_macos.STDOUT_LOG.write_text("Dashboard:\n", encoding="utf-8")
     svc_macos.STDERR_LOG.write_text("12:00:00 WARNING log_probe: a line\n", encoding="utf-8")
     monkeypatch.setattr(cli_server, "current_platform", lambda: Platform.LAUNCHD)
-    execs: list[list[str]] = []
-
-    def _exec(_file: str, argv: list[str]) -> None:
-        execs.append(argv)
-        raise SystemExit(0)
-
-    monkeypatch.setattr(cli_server.os, "execvp", _exec)
+    execs = _a_reader(monkeypatch, cli_server)
     with pytest.raises(SystemExit):
         cli_server._logs_cmd(type("Args", (), {"follow": False, "lines": 20})())
     assert execs and execs[0][-1] == str(svc_macos.STDERR_LOG), execs
@@ -331,13 +534,7 @@ def test_personalclaw_logs_on_a_macos_service_shows_what_it_printed_too(
     svc_macos.STDOUT_LOG.write_text("Dashboard:\n", encoding="utf-8")
     svc_macos.STDERR_LOG.write_text("", encoding="utf-8")
     monkeypatch.setattr(cli_server, "current_platform", lambda: Platform.LAUNCHD)
-    execs: list[list[str]] = []
-
-    def _exec(_file: str, argv: list[str]) -> None:
-        execs.append(argv)
-        raise SystemExit(0)
-
-    monkeypatch.setattr(cli_server.os, "execvp", _exec)
+    execs = _a_reader(monkeypatch, cli_server)
     with pytest.raises(SystemExit):
         cli_server._logs_cmd(type("Args", (), {"follow": follow, "lines": lines})())
     assert execs == [
@@ -361,13 +558,7 @@ def test_personalclaw_logs_on_a_macos_service_leaves_out_a_stdout_file_that_is_n
     monkeypatch.setattr(svc_macos, "STDERR_LOG", log_dir / "gateway.err")
     svc_macos.STDERR_LOG.write_text("12:00:00 WARNING log_probe: a line\n", encoding="utf-8")
     monkeypatch.setattr(cli_server, "current_platform", lambda: Platform.LAUNCHD)
-    execs: list[list[str]] = []
-
-    def _exec(_file: str, argv: list[str]) -> None:
-        execs.append(argv)
-        raise SystemExit(0)
-
-    monkeypatch.setattr(cli_server.os, "execvp", _exec)
+    execs = _a_reader(monkeypatch, cli_server)
     with pytest.raises(SystemExit):
         cli_server._logs_cmd(type("Args", (), {"follow": False, "lines": 20})())
     assert execs == [["tail", "-n", "20", str(svc_macos.STDERR_LOG)]], execs

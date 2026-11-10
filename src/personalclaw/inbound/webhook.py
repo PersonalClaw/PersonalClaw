@@ -48,6 +48,7 @@ from aiohttp import web
 
 from personalclaw import record_files
 from personalclaw.config.external_access import WEBHOOK_SURFACE
+from personalclaw.security import terminal_text
 
 logger = logging.getLogger(__name__)
 
@@ -489,7 +490,10 @@ def _create(store: Any, args: Any) -> int:
     label = str(getattr(args, "label", "") or "").strip() or f"{name} sender"
     client, token = make_sender(store, automation, label=label, ttl_secs=ttl, actor="cli")
     said = instructions(automation, token)
-    print(f"✅ Made the sender token “{client.label}” for “{name}” ({automation}).")
+    print(
+        f"✅ Made the sender token “{terminal_text(str(client.label))}” for "
+        f"“{terminal_text(str(name))}” ({terminal_text(str(automation))})."
+    )
     print(
         f"⏱  It works for {duration_words(ttl)}, until {until_words(client.expires_at)}; then make "
         "a new one. Settings → Devices & Access → External access and Settings → Devices & Access "
@@ -542,7 +546,9 @@ def _list(store: Any, named: str) -> int:
             return 1
     found = _senders(automation)
     if not found:
-        print("No sender tokens" + (f" for {automation}." if automation else "."))
+        print(
+            "No sender tokens" + (terminal_text(str(f" for {automation}." if automation else ".")))
+        )
         return 0
     for c in found:
         if c.disabled:
@@ -552,7 +558,8 @@ def _list(store: Any, named: str) -> int:
         else:
             state = f"works until {until_words(c.expires_at)}"
         print(
-            f"  {c.client_id}  “{c.label}”  for {c.scope.get('trigger', '')}, {state}, "
+            f"  {c.client_id}  “{terminal_text(str(c.label))}”  for "
+            f"{terminal_text(str(c.scope.get('trigger', '')))}, {state}, "
             f"{_used(c.last_seen_at)}"
         )
     return 0
@@ -567,7 +574,8 @@ def _revoke(client_id: str) -> int:
         return 1
     clients.revoke_client(client_id, actor="cli")
     print(
-        f"✅ Revoked the sender token “{client.label}”. A program still sending it is refused, "
+        f"✅ Revoked the sender token “{terminal_text(str(client.label))}”. A program still "
+        "sending it is refused, "
         "and told it was revoked."
     )
     return 0

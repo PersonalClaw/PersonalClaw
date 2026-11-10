@@ -14,6 +14,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from personalclaw.security import terminal_text
+
 try:
     from importlib.resources import files as _resource_files
 except ImportError:  # pragma: no cover — PersonalClaw targets py3.12+.
@@ -306,7 +308,7 @@ def seed_cmd(args) -> int:  # noqa: ANN001 — argparse.Namespace at call site
     try:
         seed(fixture, replace=replace)
     except SeedError as exc:
-        print(f"seed: error: {exc}", file=sys.stderr)
+        print(f"seed: error: {terminal_text(str(exc))}", file=sys.stderr)
         # EXIT_RAIL = user-input rejection ("denied"). SeedError with any
         # other code maps to "error".
         # Log ``exc.rail`` (short code-controlled constant) rather than
@@ -331,7 +333,7 @@ def seed_cmd(args) -> int:  # noqa: ANN001 — argparse.Namespace at call site
         # target path (e.g. ``[Errno 17] File exists: '/home/user/dev'``)
         # which would defeat the ``target_set`` presence-only design below.
         # The user still sees the full detail on stderr for debuggability.
-        print(f"seed: error: {exc}", file=sys.stderr)
+        print(f"seed: error: {terminal_text(str(exc))}", file=sys.stderr)
         _safe_audit(
             outcome="error",
             resources=f"fixture={fixture!r} replace={replace} reason={type(exc).__name__}",

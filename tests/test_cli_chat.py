@@ -495,8 +495,8 @@ def test_the_endings_it_names_are_the_four_an_approval_can_have():
 
 def test_what_waits_is_shown_as_text(capsys):
     """The line about a waiting call shows the tool, its risk, its input and where to answer it,
-    and the words a model chose are shown as text: a control character among them is not passed
-    to the terminal, which would act on it rather than show it."""
+    and the words a model chose are shown as text: a control character among them reaches the
+    terminal as a visible escape, not as the character it would act on."""
     turn = cli_chat._Turn("chat-1")
     turn.feed(
         {
@@ -512,9 +512,77 @@ def test_what_waits_is_shown_as_text(capsys):
     )
     err = capsys.readouterr().err
     assert f"{ASKS} (risk: caution)." in err, err
-    assert '{"text": "milk and eggs"}' in err, err
+    assert '{"text": "milk\\x1b and eggs"}' in err, err
     assert "\x1b" not in err
     assert "Answer it in PersonalClaw (the dashboard or your phone)" in err, err
+
+
+#: Characters a terminal acts on rather than shows, around a tab, which is ordinary text.
+_ACTS = "ok\x1b\rdone\tx\u202eend"
+#: The same words as the terminal is given them: each of those characters as a visible escape.
+_SHOWN = "ok\\x1b\\rdone\tx\\u202eend"
+
+
+def test_a_streamed_reply_shows_what_a_terminal_would_act_on_as_escapes(capsys):
+    """A reply is words a model wrote. Streamed, each character a terminal would act on
+    reaches the terminal as an escape, a chunk at a time, whichever chunk it comes in, and the tab
+    is kept."""
+    turn = cli_chat._Turn("chat-1")
+    for part in ("ok\x1b", "\rdone\t", "x\u202eend"):
+        turn.feed({"type": "chat_chunk", "data": {"session": "chat-1", "content": part}})
+    turn.close_line()
+    out = capsys.readouterr().out
+    assert out == _SHOWN + "\n", repr(out)
+
+
+def test_a_crlf_split_across_two_chunks_is_the_line_break_it_is(capsys):
+    """A carriage return a chunk ends on waits for the next chunk: with a line feed after it, the
+    two are one line break."""
+    turn = cli_chat._Turn("chat-1")
+    for part in ("a\r", "\nb"):
+        turn.feed({"type": "chat_chunk", "data": {"session": "chat-1", "content": part}})
+    turn.close_line()
+    assert capsys.readouterr().out == "a\nb\n"
+
+
+def test_a_carriage_return_the_reply_ends_on_is_shown(capsys):
+    """A carriage return the reply ends on is shown as the escape it is when the line closes."""
+    turn = cli_chat._Turn("chat-1")
+    turn.feed({"type": "chat_chunk", "data": {"session": "chat-1", "content": "a\r"}})
+    turn.close_line()
+    assert capsys.readouterr().out == "a\\r\n"
+
+
+def test_a_reply_that_did_not_stream_is_shown_as_text(capsys):
+    """A reply the gateway adds as a row (a slash command's) is shown the same way."""
+    turn = cli_chat._Turn("chat-1")
+    turn.feed(
+        {
+            "type": "chat_message",
+            "data": {"session": "chat-1", "role": "assistant", "content": _ACTS},
+        }
+    )
+    out = capsys.readouterr().out
+    assert out == _SHOWN + "\n", repr(out)
+
+
+def test_a_refused_request_is_said_with_the_gateways_answer_as_text(capsys):
+    """A request the gateway refused is said with its answer, which can quote a provider's."""
+    gateway = SimpleNamespace(answers=lambda: True, gone=lambda: "gone")
+    cli_chat._failed(SimpleNamespace(gateway=gateway), cli_chat.RunError(f"HTTP 500 {_ACTS}"))
+    err = capsys.readouterr().err
+    assert err == f"personalclaw chat: HTTP 500 {_SHOWN}\n", repr(err)
+
+
+def test_an_error_row_is_shown_as_text_with_its_tabs(capsys):
+    """An error row can quote a provider's answer. It goes through the same rule as every note,
+    which keeps a tab."""
+    turn = cli_chat._Turn("chat-1")
+    turn.feed(
+        {"type": "chat_message", "data": {"session": "chat-1", "role": "error", "content": _ACTS}}
+    )
+    err = capsys.readouterr().err
+    assert err == _SHOWN + "\n", repr(err)
 
 
 @pytest.mark.asyncio

@@ -1186,6 +1186,23 @@ def _reset_session_restrictions():
 
 
 @pytest.fixture(autouse=True)
+def _a_test_leaves_the_exception_hooks_as_it_found_them():
+    """Put ``sys.excepthook``, ``threading.excepthook`` and ``sys.unraisablehook`` back after every
+    test.
+
+    ``cli.main()`` installs PersonalClaw's own (``cli._log_what_nothing_caught``), and pytest sets
+    its thread and unraisable hooks once, at configure: left behind, a later test's thread
+    exception would only be logged, never reported as pytest's warning. The streams need nothing
+    of this kind: pytest's capture swaps ``sys.stdout`` and ``sys.stderr`` at every phase.
+    """
+    import threading
+
+    saved = (sys.excepthook, threading.excepthook, sys.unraisablehook)
+    yield
+    sys.excepthook, threading.excepthook, sys.unraisablehook = saved
+
+
+@pytest.fixture(autouse=True)
 def _restore_personalclaw_logging():
     """Snapshot + restore the gateway's logging around every test.
 

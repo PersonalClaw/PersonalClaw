@@ -839,3 +839,103 @@ def _capture_api(monkeypatch) -> list[tuple[str, dict]]:
 
     monkeypatch.setattr(cli_run, "_api", _fake)
     return calls
+
+
+# ── What a model or a provider wrote is shown as text ────────────────────────────
+
+#: Characters a terminal acts on rather than shows, around a tab, which is ordinary text.
+_ACTS = "ok\x1b\rdone\tx\u202eend"
+#: The same words as the terminal is given them: each of those characters as a visible escape.
+_SHOWN = "ok\\x1b\\rdone\tx\\u202eend"
+
+
+def _a_turn_that_says(monkeypatch, *frames: tuple[str, dict]) -> None:
+    """The run's turn feeds *frames* (kind, data) to its collector, as the gateway would."""
+    _a_gateway_of_this_home_runs(monkeypatch)
+    monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
+    monkeypatch.setattr(cli_run, "_token_total", lambda key: 0)
+
+    async def _turn(port, token, collector, prompt, timeout):
+        for kind, data in frames:
+            collector.feed({"type": kind, "data": {"session": collector.session_key, **data}})
+
+    monkeypatch.setattr(cli_run, "_consume", _turn)
+
+
+def test_a_plain_reply_shows_what_a_terminal_would_act_on_as_escapes(monkeypatch, capsys):
+    """A reply is words a model wrote. Each character a terminal would act on reaches the
+    terminal as an escape, and the tab is kept."""
+    _a_turn_that_says(
+        monkeypatch,
+        ("chat_chunk", {"content": _ACTS}),
+        ("chat_done", {"outcome": TURN_COMPLETE}),
+    )
+    assert cli_run._run_one(_args(prompt="hi")) == 0
+    out = capsys.readouterr().out
+    assert out == _SHOWN + "\n", repr(out)
+
+
+def test_the_json_report_carries_the_reply_as_it_came_and_escaped(monkeypatch, capsys):
+    """VACUITY: the json format is for a program, which reads the reply exactly as it came, and
+    json.dumps already escapes every control character, so none reaches the terminal raw."""
+    _a_turn_that_says(
+        monkeypatch,
+        ("chat_chunk", {"content": _ACTS}),
+        ("chat_done", {"outcome": TURN_COMPLETE}),
+    )
+    assert cli_run._run_one(_args(prompt="hi", fmt="json")) == 0
+    out = capsys.readouterr().out
+    assert json.loads(out)["result"] == _ACTS
+    assert not any(ch in out for ch in "\x1b\r\u202e"), repr(out)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "said"),
+    [(TURN_ERROR, f"personalclaw run: turn failed: {_SHOWN}"), (TURN_INTERRUPTED, _SHOWN)],
+)
+def test_an_error_row_shows_what_a_terminal_would_act_on_as_escapes(
+    outcome, said, monkeypatch, capsys
+):
+    """An error row can quote a provider's answer: it reaches stderr as text too."""
+    _a_turn_that_says(
+        monkeypatch,
+        ("chat_message", {"role": "error", "content": _ACTS}),
+        ("chat_done", {"outcome": outcome}),
+    )
+    assert cli_run._run_one(_args(prompt="hi")) == 1
+    err = capsys.readouterr().err
+    assert said in err, repr(err)
+    assert not any(ch in err for ch in "\x1b\r\u202e"), repr(err)
+
+
+def test_a_refused_request_shows_the_gateways_answer_as_text(monkeypatch, capsys):
+    """A request the gateway refused is said with its answer, which can quote a provider's."""
+    _a_gateway_of_this_home_runs(monkeypatch)
+
+    def _api(port, token, path, body=None):
+        raise cli_run.RunError(f"{path} failed: HTTP 500 {_ACTS}")
+
+    monkeypatch.setattr(cli_run, "_api", _api)
+    assert cli_run._run_one(_args(prompt="hi")) == 1
+    err = capsys.readouterr().err
+    assert f"failed: HTTP 500 {_SHOWN}" in err, repr(err)
+    assert not any(ch in err for ch in "\x1b\r\u202e"), repr(err)
+
+
+def test_a_refused_stop_is_said_with_the_gateways_answer_as_text(monkeypatch, capsys):
+    """A run that stops its turn itself says what the gateway answered when it refused the
+    stop, and that answer can quote a provider's."""
+    _a_gateway_of_this_home_runs(monkeypatch)
+    monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
+
+    async def _timed_out(port, token, collector, prompt, timeout):
+        ending = cli_run._Ending()
+        ending.stop(cli_run.TIMED_OUT)
+        ending.failed = f"HTTP 500 {_ACTS}"
+        return ending
+
+    monkeypatch.setattr(cli_run, "_consume", _timed_out)
+    assert cli_run._run_one(_args(prompt="hi")) == 1
+    err = capsys.readouterr().err
+    assert f"the gateway did not stop the turn: HTTP 500 {_SHOWN}" in err, repr(err)
+    assert not any(ch in err for ch in "\x1b\r\u202e"), repr(err)

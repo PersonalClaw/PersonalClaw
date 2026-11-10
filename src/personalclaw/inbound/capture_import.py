@@ -48,6 +48,7 @@ from typing import Any, Callable, Iterable
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import config_dir
+from personalclaw.security import terminal_text
 
 logger = logging.getLogger(__name__)
 
@@ -915,7 +916,8 @@ def capture_cmd(
         # The store is the sibling half. Name it rather than showing a
         # traceback: "no module named …" is the actionable fact.
         print(
-            f"capture import needs the capture store, which is not installed: {exc}",
+            "capture import needs the capture store, which is not installed: "
+            f"{terminal_text(str(exc))}",
             file=sys.stderr,
         )
         return 1
@@ -923,7 +925,7 @@ def capture_cmd(
     if getattr(args, "as_json", False):
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
-        print(render_report(report))
+        print(terminal_text(str(render_report(report))))
 
     if report["imported"] or report["duplicate"]:
         return 0

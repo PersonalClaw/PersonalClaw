@@ -66,6 +66,7 @@ from personalclaw.durability.home_paths import (
     not_read,
 )
 from personalclaw.record_ids import is_path_in_store, is_safe_relative_path
+from personalclaw.security import terminal_text
 from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
@@ -1481,7 +1482,10 @@ def backup_cmd(args) -> int:
             try:
                 machine_id(home)  # before the earlier export is cleared: a link at it refuses
             except LinkInTheWay as link:
-                print(f"❌ Nothing was exported: {link}. Remove the link.", file=sys.stderr)
+                print(
+                    f"❌ Nothing was exported: {terminal_text(str(link))}. Remove the link.",
+                    file=sys.stderr,
+                )
                 return 1
             entries = None
             changes: Changes | None = None
@@ -1501,7 +1505,7 @@ def backup_cmd(args) -> int:
                 try:
                     clear_shards(out_dir)
                 except ValueError as exc:
-                    print(f"❌ {exc}.", file=sys.stderr)
+                    print(f"❌ {terminal_text(str(exc))}.", file=sys.stderr)
                     return 1
             result = export_shards(home, out_dir, entries=entries)
             if changes is not None:
@@ -1512,9 +1516,9 @@ def backup_cmd(args) -> int:
         )
         print(f"📁 {out_dir}")
         for entry_id, reason in sorted(result.skipped.items()):
-            print(f"⚠️  skipped {entry_id}: {reason}")
+            print(f"⚠️  skipped {entry_id}: {terminal_text(str(reason))}")
         for path, why in sorted(result.left_out.items()):
-            print(f"⚠️  could not export {path}: {why}")
+            print(f"⚠️  could not export {path}: {terminal_text(str(why))}")
         print(f"ℹ️  {NOT_A_BACKUP}")
         return 1 if result.left_out else 0
 
@@ -1536,7 +1540,7 @@ def backup_cmd(args) -> int:
         return 0
     print(f"❌ Export INVALID — {len(report.problems)} problem(s):")
     for problem in report.problems[:50]:
-        print(f"  - {problem}")
+        print(f"  - {terminal_text(str(problem))}")
     if len(report.problems) > 50:
         print(f"  … and {len(report.problems) - 50} more")
     return 1

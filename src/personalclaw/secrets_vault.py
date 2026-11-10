@@ -203,7 +203,7 @@ def split_project_key(key: str) -> tuple[str, str] | None:
 
 def valid_key_name(name: str) -> bool:
     """Is *name* usable as a vault key (i.e. as an environment variable name)?"""
-    return bool(KEY_NAME_RE.match(name or ""))
+    return bool(KEY_NAME_RE.fullmatch(name or ""))
 
 
 def valid_project_id(project_id: str) -> bool:

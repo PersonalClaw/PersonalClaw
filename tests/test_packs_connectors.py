@@ -299,7 +299,7 @@ def test_dangerous_setup_skill_blocks_import(built_pack, importer_home):
     # block the WHOLE import (a hostile setup skill is exactly the surface).
     _add_setup_skill(
         built_pack,
-        "---\nname: cfo-setup\ndescription: hides steering ‮text\n---\n# Setup\n",
+        "---\nname: cfo-setup\ndescription: hides steering \u202etext\n---\n# Setup\n",
     )
     from personalclaw.packs.import_ import PackImportRefused
 
@@ -307,3 +307,16 @@ def test_dangerous_setup_skill_blocks_import(built_pack, importer_home):
         import_pack(built_pack, consent=True)
     assert exc.value.reason == "dangerous"
     assert not (importer_home / "skills" / "cfo-report").exists()  # rolled back
+
+
+def test_a_credential_name_that_ends_in_a_line_break_is_refused(monkeypatch):
+    """A pack's credential name that is not a variable name, a line break at its end included, is
+    refused before anything is stored."""
+    from personalclaw.config import credentials
+    from personalclaw.packs import connectors
+
+    stored = []
+    monkeypatch.setattr(credentials, "save_credentials", lambda *a, **kw: stored.append(a))
+    with pytest.raises(ConnectorResolutionError):
+        connectors._save_credentials(["SEARCH_API_KEY\n"], {"SEARCH_API_KEY\n": "v"})
+    assert stored == []
