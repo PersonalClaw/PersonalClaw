@@ -27,6 +27,7 @@
   - button "More actions"
   - heading "Good <time of day>, Alex" [level=#]
   - img "Listening"
+  - status: End with “do it” to send, or say “cancel” to clear.
   - textbox "Message input"
   - button "Add to message"
   - 'button "Agent and model: Agent · Auto"': Agent · Auto
@@ -35,7 +36,7 @@
   - 'button "Execution boundary: Normal"': Normal
   - button "Optimize prompt (⌘↵)" [disabled]
   - button "Listening to your microphone — stop recording": Listening
-  - button "Hands-free voice — say “do it” to send" [pressed]
+  - button "Hands-free voice" [pressed]
   - button "Send message" [disabled]
   - 'button "Project: No project"': No project
   - button "Show health-check status"

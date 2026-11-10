@@ -27,6 +27,7 @@
   - button "More actions"
   - img "Nothing running"
   - heading "Good <time of day>, Alex" [level=#]
+  - status
   - textbox "Message input"
   - button "Add to message"
   - 'button "Agent and model: Agent · Auto"': Agent · Auto
