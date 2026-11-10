@@ -22,7 +22,7 @@ import { withRowRuns, withRunEnded } from './turnRuns'
 import type { RoutingSuggestion } from './RoutingChip'
 import type { TurnPaste } from './PasteChip'
 import type { TurnEnding } from './transcript/TurnHead'
-import { type ChatTurn, type Segment, type ApprovalSegment, type QuestionSegment, appendThinking, type SubagentCard, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, foldStepLine, noteOf, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText, servedModelOf, imageDeliveryOf, noticeSegment } from './chatTypes'
+import { type ChatTurn, type Segment, type ApprovalSegment, type QuestionSegment, appendThinking, type SubagentCard, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, foldStepLine, noteOf, rowText, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText, servedModelOf, imageDeliveryOf, noticeSegment } from './chatTypes'
 
 // ── The chat's stream: the open session as the gateway tells it ───────────────────────────────
 //
@@ -742,7 +742,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
           endTextRun()
           patchLastAssistant((segs) => {
             const last = segs[segs.length - 1]
-            return last?.kind === 'text' && last.text === text ? segs : [...segs, { kind: 'text', text }]
+            return last?.kind === 'text' && last.text === text ? segs : [...segs, rowText(text, d.meta as { from_outside?: unknown } | undefined)]
           })
         } else if (d.role === 'tool' && !(d.meta as { tool_call_id?: string } | undefined)?.tool_call_id) {
           // A line the gateway wrote about a step, folded as a reload folds it (`foldStepLine`): a

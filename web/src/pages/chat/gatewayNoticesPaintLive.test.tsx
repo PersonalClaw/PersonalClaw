@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent, within } from '@testing-library/react'
 import { runState, runningState } from '../../test/runState'
 
 // ── A line the gateway adds to a chat is painted when it is added ──────────────────────────────
@@ -144,6 +144,30 @@ describe('a notice the gateway adds to the chat', () => {
     pushFrame('chat_done', { outcome: 'complete' })
     pushFrame('chat_message', { role: 'assistant', content: RESTARTED })
     await waitFor(() => expect(occurrences(RESTARTED)).toBe(1))
+  })
+})
+
+// A scheduled run's result opened as a chat reaches the open chat as an assistant row the gateway
+// took in from outside (`meta.from_outside`), and is drawn as that result, not as the agent's reply.
+describe("a scheduled run's result sent to the open chat", () => {
+  /** The code block holding `text`, with its buttons. */
+  const block = (text: string) => Array.from(document.querySelectorAll('pre'))
+    .find((pre) => (pre.textContent ?? '').includes(text))?.closest('div.group\\/code') as HTMLElement | undefined
+
+  it("its code offers Copy and no Run, and a notice the agent's chat writes offers Run", async () => {
+    await openRunning()
+    pushFrame('chat_chunk', { content: 'An answer.', seq: 1 })
+    pushFrame('chat_done', { outcome: 'complete' })
+    pushFrame('chat_message', {
+      role: 'assistant', content: '# Cron Job Result: j\n\n```sh\necho theirs\n```',
+      meta: { from_outside: { what: 'The result of the scheduled run of j', source: 'trigger:j1', source_type: 'schedule_result', source_id: 'j1' } },
+    })
+    pushFrame('chat_message', { role: 'assistant', content: '```sh\necho mine\n```' })
+    await waitFor(() => expect(block('echo mine')).toBeDefined())
+    expect(within(block('echo mine')!).getByRole('button', { name: /Run/ })).toBeInTheDocument()
+    const theirs = block('echo theirs')!
+    expect(within(theirs).getByRole('button', { name: 'Copy code' })).toBeInTheDocument()
+    expect(within(theirs).queryByRole('button', { name: /Run/ })).toBeNull()
   })
 })
 

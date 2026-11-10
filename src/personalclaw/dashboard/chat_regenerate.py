@@ -24,7 +24,7 @@ from personalclaw.own_words import (
 from personalclaw.request_validation import bool_field, json_object_body, string_field
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
-from personalclaw.turn_source import TURN_STARTS
+from personalclaw.turn_source import FROM_OUTSIDE, TURN_STARTS, provenance
 
 logger = logging.getLogger(__name__)
 
@@ -130,16 +130,28 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
 
         variants: list[dict] = []
         if not retrying_failed_turn:
-            # Only a REAL answer is variant-worthy — an error bubble is not an
-            # alternative response, so a retry stashes nothing.
-            ai_msg = msgs[anchor_idx]
-            _rv = ai_msg.get("variants")
-            variants = list(_rv) if isinstance(_rv, list) else []  # type: ignore[arg-type]
-            current_entry = {"content": ai_msg.get("content", ""), "ts": ai_msg.get("ts", "")}
-            if not any(v.get("content") == current_entry["content"] for v in variants):
-                variants.append(current_entry)
-            if len(variants) > _MAX_VARIANTS:
-                variants = variants[-_MAX_VARIANTS:]
+            # Only a REAL answer of this chat's is variant-worthy. An error bubble is no
+            # alternative response, so a retry stashes nothing, and a row taken in from outside
+            # (turn_source.FROM_OUTSIDE, a run's result) answers nothing here: a variant keeps no
+            # meta, so one kept as a variant came back as the agent's reply. What is kept is the
+            # turn's last answer of its own; a turn with none keeps nothing.
+            ai_msg = next(
+                (
+                    m
+                    for m in reversed(msgs[u_idx + 1 : anchor_idx + 1])
+                    if m.get("role") == "assistant"
+                    and (provenance(m).get("meta") or {}).get(FROM_OUTSIDE) is None
+                ),
+                None,
+            )
+            if ai_msg is not None:
+                _rv = ai_msg.get("variants")
+                variants = list(_rv) if isinstance(_rv, list) else []  # type: ignore[arg-type]
+                current_entry = {"content": ai_msg.get("content", ""), "ts": ai_msg.get("ts", "")}
+                if not any(v.get("content") == current_entry["content"] for v in variants):
+                    variants.append(current_entry)
+                if len(variants) > _MAX_VARIANTS:
+                    variants = variants[-_MAX_VARIANTS:]
 
         # The images the replaced attempt made are what the replay RETAKES: a generation in
         # the new turn lands as each one's next version instead of a second image beside it.

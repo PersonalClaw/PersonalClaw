@@ -2071,8 +2071,9 @@ export interface ChatHistoryMsg {
   // `[]`, when the turn loaded none, and never listing a REFUSED skill (named to the agent
   // but never loaded). `finish_reason: 'length'` marks a reply cut at the model's output cap —
   // absent when the reply finished on its own. A user message that ran a saved prompt carries
-  // `ran_prompt`: the prompt's name and the text the agent was sent in its place.
-  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string; kind?: 'lesson' }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[]; finish_reason?: string; model_substitution?: string; ran_prompt?: { name?: unknown; text?: unknown } }
+  // `ran_prompt`: the prompt's name and the text the agent was sent in its place. A row the
+  // gateway took in from outside (such as a scheduled run's result) carries `from_outside`.
+  meta?: { tool_call_id?: string; input?: string; purpose?: string; output?: string; done?: boolean; tool?: string; memory_citations?: { n: number; id: string | null; preview?: string; kind?: 'lesson' }[]; skills_used?: { name: string; state: string; loaded_tokens: number }[]; finish_reason?: string; model_substitution?: string; ran_prompt?: { name?: unknown; text?: unknown }; from_outside?: unknown }
 }
 
 /** One question an agent put to its owner (`owner_questions`), as its card shows it: every string

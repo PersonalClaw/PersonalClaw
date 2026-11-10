@@ -25,7 +25,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock('../../../lib/api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../lib/api')>()
-  return { ...real, api: { ...real.api, chatSessionDetail: h.detail, sendChat: h.sendChat } }
+  // A drawn widget asks whether it is saved as an artifact.
+  return { ...real, api: { ...real.api, chatSessionDetail: h.detail, sendChat: h.sendChat, artifactExists: () => Promise.resolve(false) } }
 })
 vi.mock('../../../lib/useChatSocket', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../lib/useChatSocket')>()
@@ -64,6 +65,31 @@ beforeEach(async () => {
   ;({ SessionPeekBody } = await import('./SessionPeek'))
 })
 afterEach(() => cleanup())
+
+// A scheduled run's result opened as a chat is a row the gateway took in from outside
+// (`meta.from_outside`): a peek at that chat draws it as the result it is, as the chat does.
+describe("a scheduled run's result in a peeked chat", () => {
+  it('is drawn as written; the same text as a reply is drawn as a reply', async () => {
+    h.detail.mockResolvedValue({
+      key: KEY, title: 'Cron: j', run_state: runState({ session: KEY }),
+      messages: [
+        { role: 'user', content: 'Draft the release notes' },
+        { role: 'assistant', content: '# Cron Job Result: j\n\n<widget title="Theirs">A</widget>', meta: { from_outside: { what: 'The result of the scheduled run of j', source: 'trigger:j1', source_type: 'schedule_result', source_id: 'j1' } } },
+        { role: 'assistant', content: '<widget title="Mine">B</widget>' },
+      ],
+    })
+    // A widget block is drawn by the content type registered for it.
+    const { registerBuiltinContentTypes } = await import('../../../ui/content/registerBuiltins')
+    registerBuiltinContentTypes()
+    const { container } = render(<SessionPeekBody sessionKey={KEY} onOpen={vi.fn()} />)
+    await screen.findByText('Draft the release notes')
+    expect(container.textContent).toContain('<widget title="Theirs">')
+    expect(container.textContent).not.toContain('<widget title="Mine">')
+    // The reply's is drawn, and the result's is not.
+    await waitFor(() => expect(container.querySelector('iframe[title="Mine"]')).not.toBeNull())
+    expect(container.querySelector('iframe[title="Theirs"]')).toBeNull()
+  })
+})
 
 describe('a turn that runs in the peeked chat', () => {
   it('a turn already running when the peek opens shows its phase and the gateway’s line', async () => {

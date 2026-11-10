@@ -57,6 +57,7 @@ from personalclaw.request_validation import bool_field, json_object_body
 from personalclaw.security import MaskConflict
 from personalclaw.sel import sel
 from personalclaw.stale_write import stale_write_refusal
+from personalclaw.turn_source import FROM_OUTSIDE, provenance
 
 
 def config_dir() -> Path:
@@ -282,7 +283,12 @@ def maybe_submit_plan_draft(
         start = 0
     markdown = ""
     for msg in reversed(session.messages[start:]):
-        if msg.get("role") == "assistant" and str(msg.get("content", "")).strip():
+        # A row taken in from outside drafts nothing: it is no answer of the step's turn.
+        if (
+            msg.get("role") == "assistant"
+            and str(msg.get("content", "")).strip()
+            and (provenance(msg).get("meta") or {}).get(FROM_OUTSIDE) is None
+        ):
             markdown = str(msg["content"])
             break
     if not markdown:

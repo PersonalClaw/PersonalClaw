@@ -82,6 +82,8 @@ class _Session:
 
     def __init__(self):
         self.messages = []
+        #: The meta each row was written with, beside `messages`.
+        self.metas = []
         self.key = "t"
         self.agent = "personalclaw"
         self.model = None
@@ -100,8 +102,9 @@ class _Session:
         self._takes_steers = False
         self.queue_depth = 0
 
-    def append(self, role, text, cls):
+    def append(self, role, text, cls, meta=None):
         self.messages.append((role, text, cls))
+        self.metas.append(meta)
 
 
 class _State:
@@ -312,6 +315,30 @@ class TestRunChatPrompts:
         asyncio.run(run_chat(s, sl, "/prompts get"))
         assert "@review" in sl.messages[-1][1]
 
+    @pytest.mark.parametrize("command", ["/prompts", "/prompts list", "/prompts theirs"])
+    def test_the_list_is_words_taken_in_from_outside(self, tmp_path, mock_sel, command):
+        """🔴 Red before: the list wrote each prompt's description, its file's own text, as the
+        chat's own answer. Every form but `get <name>` lists them."""
+        from personalclaw.turn_source import FROM_OUTSIDE
+
+        _provider_prompt(
+            tmp_path, "theirs", "Do it.", description="Theirs\n\n```sh\necho theirs\n```"
+        )
+        s, sl = _ss()
+        asyncio.run(run_chat(s, sl, command))
+        assert sl.metas[-1][FROM_OUTSIDE]["source_type"] == "prompt_listing"
+
+    def test_each_list_row_keeps_a_record_of_its_own(self, tmp_path, mock_sel):
+        """🔴 Red before: every list row held one shared record, so a later write to one row's
+        meta, a turn's file chips, was written to them all."""
+        _provider_prompt(tmp_path, "review", "Do review.")
+        s1, c1 = _ss()
+        s2, c2 = _ss()
+        asyncio.run(run_chat(s1, c1, "/prompts list"))
+        asyncio.run(run_chat(s2, c2, "/prompts list"))
+        c1.metas[-1]["file_changes"] = []
+        assert "file_changes" not in c2.metas[-1]
+
     def test_slash_list_explicit(self, tmp_path, mock_sel):
         """``/prompts list`` works the same as ``/prompts``."""
         _provider_prompt(tmp_path, "review", "Do review.")
@@ -323,6 +350,45 @@ class TestRunChatPrompts:
         s, sl = _ss()
         asyncio.run(run_chat(s, sl, "/prompts get nonexistent"))
         assert "not found" in sl.messages[-1][1]
+
+    @pytest.mark.parametrize("name", ["two\nlines", "a`b", "cr\rline", "x" * 200])
+    def test_a_name_no_prompt_has_is_quoted_on_one_line(self, tmp_path, mock_sel, name):
+        """🔴 Red before: the reply quoted the name as it was typed, every line and backtick of it,
+        so what came after its first line or backtick was drawn outside the quote."""
+        s, sl = _ss()
+        asyncio.run(run_chat(s, sl, f"/prompts get {name}"))
+        role, text, _ = sl.messages[-1]
+        assert role == "assistant" and "not found" in text
+        assert not {"\n", "\r"} & set(text) and text.count("`") == 2
+        assert len(text) <= len("Prompt `` not found.") + 80
+
+    def test_a_prompt_that_cannot_run_quotes_what_was_typed_on_one_line(self, tmp_path, mock_sel):
+        """🔴 Red before: a prompt that could not run quoted all that was typed after `get`, every
+        line and backtick of it."""
+        _provider_prompt(
+            tmp_path,
+            "needvar",
+            "Hello {{who}}!",
+            variables=[{"name": "who", "type": "string", "required": True}],
+        )
+        s, sl = _ss()
+        asyncio.run(run_chat(s, sl, "/prompts get needvar\n```sh\necho x\n```"))
+        role, text, _ = sl.messages[-1]
+        assert role == "assistant" and "blocked" in text
+        assert "\n" not in text and text.count("`") == 2
+
+    def test_a_prompt_over_the_size_limit_quotes_what_was_typed_on_one_line(
+        self, tmp_path, mock_sel, monkeypatch
+    ):
+        """🔴 Red before: a prompt over the size limit quoted all that was typed after `get`, every
+        line and backtick of it."""
+        monkeypatch.setattr("personalclaw.dashboard.chat_runner.MAX_PROMPT_BYTES", 5)
+        _provider_prompt(tmp_path, "review", "Do review.")
+        s, sl = _ss()
+        asyncio.run(run_chat(s, sl, "/prompts get review\n```sh\necho x\n```"))
+        role, text, _ = sl.messages[-1]
+        assert role == "assistant" and "exceeds size limit" in text
+        assert "\n" not in text and text.count("`") == 2
 
     def test_slash_get_render_failure_blocked(self, tmp_path, mock_sel):
         """A prompt with a missing required variable is reported as blocked."""

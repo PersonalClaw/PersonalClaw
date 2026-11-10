@@ -15,6 +15,11 @@ describe('buildOptimizerContext', () => {
     expect(ctx).toBe('user: Show the view\na widget: [UI] open: {"url":"https://x.example/a"}')
   })
 
+  it("leaves out a row the gateway took in from outside: it is no turn of the chat's", () => {
+    const outside: ChatTurn = { role: 'assistant', segments: [{ kind: 'text', text: 'Mine.' }, { kind: 'text', text: '# Cron Job Result: j', outside: true }] }
+    expect(buildOptimizerContext([turn('user', 'Summarize.'), outside])).toBe('user: Summarize.\nassistant: Mine.')
+  })
+
   it('orders newest LAST', () => {
     // Deliberately asymmetric: a symmetric fixture passes either orientation, which is
     // how a reversed context ships green.
