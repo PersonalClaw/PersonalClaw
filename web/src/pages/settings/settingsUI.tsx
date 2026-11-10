@@ -323,8 +323,9 @@ export function SavedToast({ show }: { show: boolean }) {
 
 /** A row's "Saved" confirmation: `saved` reads true for 1.5 s after `flash()`. The timer is
  *  cleared when the row unmounts, so a row that goes away mid-confirmation never sets state
- *  afterwards (in a test, after the page and its `window` are already gone). */
-function useSavedFlash(): [boolean, () => void] {
+ *  afterwards (in a test, after the page and its `window` are already gone). Chat preferences'
+ *  sections confirm a pick with it too. */
+export function useSavedFlash(): [boolean, () => void] {
   const [saved, setSaved] = useState(false)
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(timer.current), [])

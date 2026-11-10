@@ -6894,7 +6894,7 @@ export interface OnboardingImportJob {
  *  gateway has them now. `job` is null when this gateway has run none — after a restart too. */
 export interface OnboardingImportStatus { reading: OnboardingImportReading; job: OnboardingImportJob | null }
 export interface ChatModelOption { name: string; model_id: string; provider: string; description?: string }
-/** A reply style, as the picker lists it: bundled, your own (`own:<name>`, a file under the home's
+/** A reply style, as Chat preferences and the agent form list it: bundled, your own (`own:<name>`, a file under the home's
  *  `styles/`) or one an app adds with the `replyStyles` permission (`<app>:<name>`). */
 export interface ReplyStyle {
   id: string; title: string; description: string
@@ -6922,6 +6922,13 @@ export interface ReplyStylePreview {
   explain: string; explain_source: string
   applies: 'style' | 'persona' | 'none'
   instruction: string; first_turn_only: boolean; refused: string
+}
+
+/** How a chat's replies explain things, as the backend resolves it
+ *  (`explanations.EXPLAIN_PRECEDENCE`): what this chat states (`''` follows your default), the
+ *  choice the next turn resolves to, the scope that decided it, and your default. */
+export interface ExplainState {
+  explain: string; explain_effective: string; explain_source: string; explain_default: string
 }
 
 /** A chat's reply-style state as the backend resolves it (`reply_style.REPLY_STYLE_PRECEDENCE`). */
@@ -9448,7 +9455,7 @@ export const api = {
     /** Reply style. `reply_style` is what THIS conversation states (`''` = follows its agent);
      *  the rest is resolved by the backend, which owns the order: the composer displays
      *  `reply_style_source`, it never derives it. */
-  } & Partial<ReplyStyleState> & {
+  } & Partial<ReplyStyleState> & Partial<ExplainState> & {
     /** The newest `chat_chunk.seq` these messages hold (read in the same step as them). A
      *  chat resuming the in-flight `streaming` partial drops chunks stamped at or below it. */
     stream_seq?: number
@@ -9473,7 +9480,13 @@ export const api = {
   setSessionReplyStyle: (session: string, style: string) =>
     patch<{ ok: boolean } & ReplyStyleState>(
       `/api/chat/sessions/${encodeURIComponent(session)}/reply-style`, { reply_style: style }),
-  /** The reply styles a conversation or an agent can choose, in the picker's order. */
+  /** Set this chat's own explanations choice: an `explanations.json` id, or `''` to follow your
+   *  default (`agent.explain`) again. The answer is the RE-RESOLVED state, with the reply-style
+   *  state too, whose preview holds the whole text the next turn appends. */
+  setSessionExplain: (session: string, explain: string) =>
+    patch<{ ok: boolean } & ExplainState & ReplyStyleState>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/explain`, { explain }),
+  /** The reply styles a conversation or an agent can choose, in the order Chat preferences and the agent form list them. */
   replyStyles: () => get<ReplyStyleList>('/api/chat/reply-styles'),
   /** Create or replace one of your own styles (`styles/<name>.md`). The server applies the checks a
    *  style file meets at load; a refusal is a 400 whose message says why. */

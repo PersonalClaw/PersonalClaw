@@ -1,12 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { ReplyStylePill, type ReplyStyleOption, type ReplyStylePreviewView } from './controls'
+import { ReplyStyleChoices, ShowWhatIsSent, type ReplyStyleOption, type ReplyStylePreviewView } from './ReplyStyleChoices'
 
-// ── The picker previews what the next turn carries for its voice ───────────────────────────
+// ── Chat preferences previews what the next turn carries for its voice ─────────────────────
 //
 // The preview is the backend's (`reply_style.preview`), read from the same resolution the turn
 // uses, so it names whether the chosen style or the identity's persona applies and shows the exact
-// text appended. The picker renders it as it arrives; it never composes an instruction itself.
+// text appended, the explanations' section included. Chat preferences renders it as it arrives,
+// the line under the Reply style section and Show what is sent once after both sections; it never
+// composes an instruction itself.
 
 const STYLES: ReplyStyleOption[] = [
   { id: 'default', title: 'Default', description: 'No style instruction.' },
@@ -15,9 +17,14 @@ const STYLES: ReplyStyleOption[] = [
 
 const base = { choice: 'terse', effective: 'terse', source: 'conversation', agentDefault: '', styles: STYLES }
 
+/** The Reply style section and Show what is sent, as Chat preferences lays them out. */
 function open(preview: ReplyStylePreviewView | null) {
-  render(<ReplyStylePill {...base} preview={preview} onSelect={vi.fn()} />)
-  fireEvent.click(screen.getByRole('button', { name: /Reply style:/ }))
+  render(
+    <>
+      <ReplyStyleChoices {...base} preview={preview} onSelect={vi.fn()} />
+      <ShowWhatIsSent instruction={preview?.instruction ?? ''} />
+    </>,
+  )
 }
 
 describe('the reply-style preview', () => {

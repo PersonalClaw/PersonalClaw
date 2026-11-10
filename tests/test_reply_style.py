@@ -435,6 +435,49 @@ class TestConversationScope:
         assert [m for m in session.messages if m.get("content") == "hi"] == []
 
     @pytest.mark.asyncio
+    async def test_a_refusal_says_in_plain_words_what_to_do(self, chat_app, subtests):
+        """A refused pick's sentence is what Chat preferences shows its owner, in the section and
+        in a notice, so it names no route, field or id: only what to do instead."""
+        chat_app.get_or_create_session("say")
+        said: dict[str, str] = {}
+        with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
+            async with TestClient(TestServer(_make_app(chat_app))) as client:
+                for where, method, path, body in (
+                    (
+                        "the reply style's route",
+                        "PATCH",
+                        "/api/chat/sessions/say/reply-style",
+                        {"reply_style": "shouty"},
+                    ),
+                    (
+                        "a send",
+                        "POST",
+                        "/api/chat?ws=1",
+                        {"message": "hi", "session": "say", "reply_style": "shouty"},
+                    ),
+                    (
+                        "the explanations route",
+                        "PATCH",
+                        "/api/chat/sessions/say/explain",
+                        {"explain": "sideways"},
+                    ),
+                ):
+                    resp = await client.request(method, path, json=body)
+                    assert resp.status == 400, where
+                    said[where] = (await resp.json())["error"]["message"]
+        for where, sentence in said.items():
+            with row(subtests, where=where):
+                for word in ("/api/", "reply_style", "explain must", '""'):
+                    assert word not in sentence
+        assert said == {
+            "the reply style's route": "That reply style isn't available. Pick one from the list.",
+            "a send": "That reply style isn't available. Pick one from the list.",
+            "the explanations route": (
+                "That isn't one of the explanation choices. Pick one from the list."
+            ),
+        }
+
+    @pytest.mark.asyncio
     async def test_a_send_with_an_empty_style_resets_it_as_the_patch_does(self, chat_app):
         session = chat_app.get_or_create_session("keep")
         session.reply_style = "plain"

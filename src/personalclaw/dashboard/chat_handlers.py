@@ -235,7 +235,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         ):
             return json_error(
                 "bad_request",
-                message='reply_style must be "" or a style listed by GET /api/chat/reply-styles',
+                message="That reply style isn't available. Pick one from the list.",
                 status=400,
             )
     if not isinstance(agent, str) or not (agent == "" or _AGENT_NAME_RE.match(agent)):
@@ -3282,7 +3282,7 @@ async def api_chat_session_reply_style(request: web.Request) -> web.Response:
     if (choice == "" and raw != "") or (choice and not is_available(choice)):
         return json_error(
             "bad_request",
-            message='reply_style must be "" or a style listed by GET /api/chat/reply-styles',
+            message="That reply style isn't available. Pick one from the list.",
             status=400,
         )
     session.reply_style = choice
@@ -3296,15 +3296,16 @@ async def api_chat_session_explain(request: web.Request) -> web.Response:
 
     Body ``{"explain": "" | <an explanations id>}``: one of the choices in ``explanations.json``,
     or ``""`` to follow the owner's default (``agent.explain``) again. Responds with the
-    re-resolved state, so the caller shows what actually takes effect. Absent or unknown is
-    refused and keeps the choice already made.
+    re-resolved state, and the reply-style state whose preview holds the whole text the next turn
+    appends, so the caller shows what actually takes effect. Absent or unknown is refused and keeps
+    the choice already made.
     """
     state: DashboardState = request.app["state"]
     session = resolve_session(state, request.match_info["session"])
     if not session:
         return json_error("not_found", status=404)
     body = await json_object_body(request)
-    from personalclaw.explanations import EXPLAIN_IDS, normalize_choice
+    from personalclaw.explanations import normalize_choice
 
     if "explain" not in body:
         return json_error(
@@ -3317,13 +3318,15 @@ async def api_chat_session_explain(request: web.Request) -> web.Response:
     if choice == "" and raw != "":
         return json_error(
             "bad_request",
-            message='explain must be "" or one of: ' + ", ".join(EXPLAIN_IDS),
+            message="That isn't one of the explanation choices. Pick one from the list.",
             status=400,
         )
     session.explain = choice
     session._dirty = True
     state.push_sessions_update()
-    return web.json_response({"ok": True, **_explain_payload(session)})
+    # With the reply-style state too: its preview is the whole text the next turn appends, which
+    # this choice changes, so Chat preferences' Show what is sent stays exact.
+    return web.json_response({"ok": True, **_voice_payload(session)})
 
 
 _MAX_CONTEXT_PER_SOURCE = 10

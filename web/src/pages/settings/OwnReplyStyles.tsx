@@ -65,7 +65,7 @@ export function OwnReplyStyles() {
 
   return (
     <Section title="Your reply styles"
-      hint={`Styles of your own, offered beside the bundled ones in the composer, on an agent and here. Tone guidance only, up to ${cap} KB: a style that names tools, permissions, approvals or the sandbox, speaks of the prompt or the rules around it, or opens or closes a style section, is refused. Changes style only, never a fact, a caveat or a refusal.`}>
+      hint={`Styles of your own, offered beside the bundled ones in Chat preferences, on an agent and here. Tone guidance only, up to ${cap} KB: a style that names tools, permissions, approvals or the sandbox, speaks of the prompt or the rules around it, or opens or closes a style section, is refused. Changes style only, never a fact, a caveat or a refusal.`}>
       <ul className="flex flex-col">
         {own.map((s) => (
           <li key={s.id} className="flex items-center gap-m border-b border-outline-variant/30 py-2 last:border-0">

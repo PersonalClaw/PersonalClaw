@@ -166,11 +166,12 @@ Top to bottom:
   the search or the fetch returned; the session inspector's Sources section lists the chat's. A link the
   model wrote from memory is no source and stays a plain link. Showing them fetches nothing.
 - **The composer** is the anchor: attachments, `@` mentions and `/` commands in it, and Brief the
-  agent in its `+` menu; the one agent-and-model pill, the task mode and the reply style in its
-  footer; and the Execution Boundary control beside them, which shows the permission mode, the
-  working folder, the sandbox, the network reach and the memory mode, and changes the permission
-  mode, the folder and a new chat's memory mode. While a turn runs, the send button is its Stop. In
-  reading mode the composer folds away until the owner wants to type.
+  agent in its `+` menu; the one agent-and-model pill, the task mode and Chat preferences (the gear
+  behind which this chat's explanations, its reply style and Optimize sit) in its footer; and the
+  Execution Boundary control beside them, which shows the permission mode, the working folder, the
+  sandbox, the network reach and the memory mode, and changes the permission mode, the folder and a
+  new chat's memory mode. While a turn runs, the send button is its Stop. In reading mode the
+  composer folds away until the owner wants to type.
 - **The session inspector** is the right pane, the Activity rail, closed until the owner opens it:
   a slim column of sections, each a disclosure with a one-line summary while it is folded, which
   she opens, folds and moves up and down, kept for this browser. Environment (the project, the

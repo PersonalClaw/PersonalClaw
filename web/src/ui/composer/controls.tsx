@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText, Feather, RotateCcw } from 'lucide-react'
+import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText, RotateCcw } from 'lucide-react'
 import { Popover, MenuRow } from '../Popover'
 import { Button } from '../Button'
 import { physics } from '../../design/motion'
@@ -17,7 +17,7 @@ const APPROVAL: { id: ApprovalMode; label: string; hint: string }[] = [
   { id: 'trust', label: 'Trust', hint: 'Auto-approve in this chat' },
   { id: 'yolo', label: 'YOLO', hint: 'Auto-approve everywhere — auto-expires, re-enable to extend' },
 ]
-// Shared trigger for every composer pill (agent-and-model, approval, reply style).
+// Shared trigger for every composer pill (agent-and-model, approval, a host's task mode).
 // An active tint while its popover is open and a spring chevron flip; a press shows by
 // colour, at once, with no scale — these pills are pressed many times an hour. The
 // popover itself opens via Popover.
@@ -445,123 +445,6 @@ export function ApprovalPill({ value, onSelect }: { value: ApprovalMode; onSelec
       {(close) => APPROVAL.map((a) => (
         <MenuRow key={a.id} label={a.label} hint={a.hint} selected={a.id === value} onClick={() => { onSelect(a.id); close() }} />
       ))}
-    </Popover>
-  )
-}
-
-/** A reply style the picker lists: the backend's `GET /api/chat/reply-styles` rows. `by` names the
- *  app that adds it (an app's style only), which the picker shows beside its title. */
-export type ReplyStyleOption = { id: string; title: string; description: string; by?: string }
-
-/** A style's name as the picker says it: an app's carries the app, `Brief (Acme)`. */
-export const replyStyleName = (s: ReplyStyleOption) => (s.by ? `${s.title} (${s.by})` : s.title)
-
-/** What the next turn carries for its voice, as the backend previews it (`reply_style.preview`). */
-export type ReplyStylePreviewView = {
-  applies: 'style' | 'persona' | 'none'
-  style: string; persona: string
-  instruction: string; first_turn_only: boolean; refused: string
-}
-
-/** A persona theme's id as a name: `retro-terminal` → "Retro Terminal". */
-const personaName = (id: string) => id.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-
-/** The preview line under the picker: which voice the next turn carries and, on request, the exact
- *  text it appends. Rendered as the backend sent it; nothing here composes an instruction. */
-function ReplyStylePreviewLine({ preview, title }: { preview: ReplyStylePreviewView; title: (id: string) => string }) {
-  const [shown, setShown] = useState(false)
-  const said = preview.refused
-    ? preview.refused
-    : preview.applies === 'style'
-      ? `Next reply: the ${title(preview.style)} style, on every turn.`
-      : preview.applies === 'persona'
-        ? `Next reply: the ${personaName(preview.persona)} voice, on a new chat\u2019s first turn.`
-        : 'Next reply: no style instruction is added.'
-  return (
-    <div className="border-t border-outline-variant/30 px-m py-2 flex flex-col gap-1">
-      <span data-type="body-s">{said}</span>
-      {preview.applies === 'style' && preview.persona && !preview.refused && (
-        <span data-type="caption" className="text-on-surface-low">It replaces the {personaName(preview.persona)} voice while it is chosen.</span>
-      )}
-      {preview.instruction && (
-        <>
-          <button type="button" data-type="caption" className="self-start underline text-on-surface-low"
-            aria-expanded={shown} onClick={() => setShown((v) => !v)}>
-            {shown ? 'Hide what is sent' : 'Show what is sent'}
-          </button>
-          {shown && (
-            <pre data-type="caption" className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container p-2 text-on-surface-low">{preview.instruction.trim()}</pre>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
-/** Who chose the style, as the pill says it; the conversation's own choice needs no word. */
-const REPLY_STYLE_CHOSEN_BY: Record<string, string> = { agent: ' (agent)', platform: ' (default)' }
-
-/** Reply-style picker: how the agent writes its replies in this conversation.
- *
- *  `""` (Agent default) follows the bound agent's style, then the platform default; each other row is a
- *  style this conversation chooses for itself, `default` included (no style, even when the agent
- *  asks for one). The rows and their one-line descriptions come from the backend.
- *
- *  This component RESOLVES NOTHING. `effective` and `source` arrive decided by the backend, which
- *  owns the one statement of the order (`reply_style.REPLY_STYLE_PRECEDENCE`); a label computed
- *  here from `choice` and the agent's style would be a second statement of it.
- *
- *  The pill shows the EFFECTIVE style and who chose it, so a change in how replies read can be
- *  traced to a control the owner can see. */
-export function ReplyStylePill({ choice, effective, source, agentDefault, styles, preview, onSelect }: {
-  /** What THIS conversation states: a style id, or `''` to follow the agent. */
-  choice: string
-  /** The style the next turn resolves to (a style id). */
-  effective: string
-  /** Which scope decided, a member of the backend's precedence tuple, or `''` before a
-   *  conversation exists to resolve against. Then the pill shows the CHOICE, not an effect. */
-  source: string
-  /** What the bound agent's definition states, for the reset row's hint. */
-  agentDefault: string
-  styles: ReplyStyleOption[]
-  /** What the next turn carries for its voice, from the backend; absent before the chat exists. */
-  preview?: ReplyStylePreviewView | null
-  onSelect: (style: string) => void
-}) {
-  const title = (id: string) => {
-    const s = styles.find((x) => x.id === id)
-    return s ? replyStyleName(s) : id
-  }
-  // A style this chat chose that the server no longer lists (its app disabled or without its grant,
-  // its file deleted). The pick is kept and the turn uses the next level down; the row says so and
-  // cannot be picked again until the style is back. Only once the list has arrived.
-  const gone = source !== '' && choice !== '' && styles.length > 0 && !styles.some((s) => s.id === choice)
-  const label = source === ''
-    ? (choice ? title(choice) : 'Agent default')
-    : `${title(effective)}${effective === 'default' ? '' : (REPLY_STYLE_CHOSEN_BY[source] ?? '')}`
-  return (
-    <Popover portal width={300} trigger={(open, toggle) => (
-      <PillButton icon={<Feather size={16} strokeWidth={2} />} label={label} dimension="Reply style" open={open} toggle={toggle} />
-    )}>
-      {(close) => (
-        <div className="flex flex-col">
-          <MenuRow label="Agent default"
-            hint={agentDefault ? `This agent asks for ${title(agentDefault)}` : 'Follows this agent, then the platform default'}
-            selected={choice === ''} onClick={() => { onSelect(''); close() }} />
-          {styles.map((s) => (
-            <MenuRow key={s.id} label={s.id === 'default' ? 'No style' : replyStyleName(s)} hint={s.description}
-              selected={choice === s.id} onClick={() => { onSelect(s.id); close() }} />
-          ))}
-          {gone && (
-            <MenuRow label={`${choice} — no longer available`} disabled selected
-              hint="This chat keeps the choice and uses the next level down until the style is back." />
-          )}
-          {preview && <ReplyStylePreviewLine preview={preview} title={title} />}
-          <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
-            Changes style only, never a fact, a caveat or a refusal. A choice here applies to this conversation and does not edit the agent.
-          </div>
-        </div>
-      )}
     </Popover>
   )
 }

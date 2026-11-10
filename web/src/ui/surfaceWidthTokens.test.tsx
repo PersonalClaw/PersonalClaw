@@ -89,6 +89,12 @@ describe('dialogs and overlays keep their own caps while every page spans the pa
     expectRealCap(screen.getByRole('dialog', { name: 'Token dialog' }), SURFACE_WIDTHS.modal)
   })
 
+  it('caps a compact Modal with the compact width token, narrower than a sheet', () => {
+    mount(<Modal title="Compact dialog" size="compact" onClose={() => {}}><span>Modal body</span></Modal>)
+    expectRealCap(screen.getByRole('dialog', { name: 'Compact dialog' }), SURFACE_WIDTHS.compactModal)
+    expect(parseInt(SURFACE_WIDTHS.compactModal, 10)).toBeLessThan(parseInt(SURFACE_WIDTHS.modal, 10))
+  })
+
   it('caps the expanded SidePanel with its own width token', () => {
     mount(
       <SidePanel title="Token panel" onClose={() => {}}>

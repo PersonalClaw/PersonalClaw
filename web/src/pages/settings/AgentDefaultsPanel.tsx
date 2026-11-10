@@ -15,7 +15,7 @@ import { InlineError } from '../../ui/InlineError'
 import { accentChip } from '../../design/accent'
 import { setAgentYolo } from './agentYolo'
 import { APPROVAL_MODE_HINT, APPROVAL_MODES, approvalModeMeans } from './approvalModes'
-import { replyStyleName } from '../../ui/composer/controls'
+import { replyStyleName } from '../../ui/composer/ReplyStyleChoices'
 import { OwnReplyStyles } from './OwnReplyStyles'
 import explanationsTable from '../../../../src/personalclaw/explanations.json'
 
@@ -565,7 +565,7 @@ function ExplanationsRow({ cfg, patch }: {
   const value = EXPLANATION_PILLS.some((o) => o.key === stored) ? stored : 'default'
   return (
     <Row label="Explanations"
-      hint="How replies explain things to you. Changes how things are explained, never a fact, a caveat or a refusal.">
+      hint="How replies explain things to you. Changes how things are explained, never a fact, a caveat or a refusal. A chat can choose its own in Chat preferences.">
       <div className="flex items-center gap-s">
         <SavedToast show={saved} />
         <SegPills ariaLabel="Explanations" value={value} onChange={(v) => patch('explain', v, flash, 'explanations')}

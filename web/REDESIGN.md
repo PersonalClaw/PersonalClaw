@@ -168,7 +168,8 @@ new chrome.
    consent copy changes only in a change that is about it ([`AGENTS.md`](../AGENTS.md)). The keys
    are in §6.
 6. **The composer is the anchor.** Everything that decides the next turn sits in it or beside it:
-   attachments and mentions, the one agent-and-model pill, the task mode, the reply style, and the
+   attachments and mentions, the one agent-and-model pill, the task mode, Chat preferences (the
+   gear behind which this chat's explanations, its reply style and Optimize sit), and the
    Execution Boundary control, which shows the permission mode, the sandbox, the workspace, the
    network or host reach and the memory mode before anything runs. While a turn runs, the send
    button is its Stop. The owner sees what the next turn may do where they type it, and the thread

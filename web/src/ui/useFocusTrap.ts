@@ -1,5 +1,14 @@
 import { useEffect, useRef } from 'react'
 
+/** Give focus back to `el` once what took it has closed. It is marked while it lands, so a tooltip
+ *  on it stays shut (`ui/Tooltip`): focus given back is not a request to say what the control is. */
+export function returnFocusTo(el: HTMLElement | null | undefined) {
+  if (!el || !el.isConnected || typeof el.focus !== 'function' || document.activeElement === el) return
+  el.setAttribute('data-focus-returned', '')
+  el.focus()
+  el.removeAttribute('data-focus-returned')
+}
+
 /** Trap keyboard focus within a container while it's mounted (the modal
  *  contract: a dialog with aria-modal must keep Tab focus inside it, not let it
  *  escape to the page behind). Tab/Shift+Tab cycle through the container's
@@ -66,9 +75,7 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>() {
       // Restore focus to the element focused BEFORE the dialog opened — but only
       // if it's still in the document and outside this (closing) dialog. Focusing
       // a detached or in-dialog node is a no-op that drops focus to <body>.
-      if (prevActive && prevActive.isConnected && !root.contains(prevActive) && typeof prevActive.focus === 'function') {
-        prevActive.focus()
-      }
+      if (prevActive && !root.contains(prevActive)) returnFocusTo(prevActive)
     }
   }, [])
 

@@ -8,7 +8,7 @@ import { Combobox } from '../../ui/Combobox'
 import { Field, TextInput, TextArea, Segmented, FieldError, Select } from '../../ui/forms'
 import { APPROVAL_MODES, isBuiltinDefaultAgent } from './agentMeta'
 import { ModelUnavailableNote, unavailableModelOption, type ModelUnavailable } from './agentModelStatus'
-import { replyStyleName, type ReplyStyleOption } from '../../ui/composer/controls'
+import { replyStyleName, type ReplyStyleOption } from '../../ui/composer/ReplyStyleChoices'
 
 /** A type, not an interface: a refused save is re-applied field by field (`rebaseRecord` in
  *  `lib/staleWrite.ts`), which takes a plain record. */
@@ -210,9 +210,9 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable, r
         <TextArea value={draft.voice} onChange={(v) => set('voice', v)} rows={compact ? 3 : 4} placeholder="Blunt and witty. Has strong opinions and states them. No hedging or filler." />
       </Field>
       {/* Reply style — the PER-AGENT scope, so the style travels with this agent into every
-          conversation that binds it. A conversation can choose its own from the composer;
+          conversation that binds it. A conversation can choose its own in Chat preferences;
           doing so never edits this value. */}
-      <Field label="Reply style" hint="How this agent writes its replies. Changes style only, never a fact, a caveat or a refusal. Any chat can choose its own from the composer.">
+      <Field label="Reply style" hint="How this agent writes its replies. Changes style only, never a fact, a caveat or a refusal. Any chat can choose its own in Chat preferences.">
         <Select value={draft.reply_style} onChange={(v) => set('reply_style', v)} options={replyStyleOptions(replyStyles, draft.reply_style)} />
       </Field>
 

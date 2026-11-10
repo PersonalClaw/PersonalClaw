@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
-import { ReplyStylePill, type ReplyStyleOption } from './controls'
+import { ReplyStyleChoices, type ReplyStyleOption } from './ReplyStyleChoices'
 import { replyStyleOptions } from '../../pages/agents/AgentForm'
 import { replyStylePills } from '../../pages/settings/AgentDefaultsPanel'
 import { SegPills } from '../../pages/settings/settingsUI'
 
-// ── Your own and an app's styles in the picker, and a style that is gone ────────────────────
+// ── Your own and an app's styles in Chat preferences, and a style that is gone ──────────────
 
 afterEach(() => cleanup())
 
@@ -16,28 +16,28 @@ const STYLES: ReplyStyleOption[] = [
   { id: 'acme:brief', title: 'Brief', description: 'From Acme.', by: 'Acme' },
 ]
 
-function open(props: Partial<Parameters<typeof ReplyStylePill>[0]> = {}) {
-  render(<ReplyStylePill choice="" effective="default" source="platform" agentDefault="" styles={STYLES} onSelect={vi.fn()} {...props} />)
-  fireEvent.click(screen.getByRole('button', { name: /Reply style:/ }))
+function open(props: Partial<Parameters<typeof ReplyStyleChoices>[0]> = {}) {
+  render(<ReplyStyleChoices choice="" effective="default" source="platform" agentDefault="" styles={STYLES} onSelect={vi.fn()} {...props} />)
 }
 
-describe('the picker lists every available style', () => {
+describe('Chat preferences lists every available style', () => {
   it('names an app’s style with the app that adds it', () => {
     open()
-    expect(screen.getByText('Brief (Acme)')).toBeTruthy()
-    expect(screen.getByText('Formal')).toBeTruthy()
+    expect(screen.getByRole('radio', { name: 'Brief (Acme)' })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: 'Formal' })).toBeTruthy()
   })
 
-  it('the pill names an app’s style with its app too', () => {
-    render(<ReplyStylePill choice="acme:brief" effective="acme:brief" source="conversation" agentDefault="" styles={STYLES} onSelect={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'Reply style: Brief (Acme)' })).toBeTruthy()
+  it('"Now:" names an app’s style with its app too', () => {
+    open({ choice: 'acme:brief', effective: 'acme:brief', source: 'conversation' })
+    expect(screen.getByText(/^Now:/).textContent).toBe('Now: Brief (Acme), for this chat')
   })
 
-  it('a chosen style that is gone is named as no longer available, and cannot be picked', () => {
+  it('a chosen style that is gone is named as no longer available, stays checked, and cannot be picked', () => {
     const onSelect = vi.fn()
-    render(<ReplyStylePill choice="acme:gone" effective="terse" source="agent" agentDefault="terse" styles={STYLES} onSelect={onSelect} />)
-    fireEvent.click(screen.getByRole('button', { name: /Reply style:/ }))
-    const row = screen.getByText(/acme:gone — no longer available/)
+    open({ choice: 'acme:gone', effective: 'terse', source: 'agent', agentDefault: 'terse', onSelect })
+    const row = screen.getByRole('radio', { name: 'acme:gone — no longer available' })
+    expect(row.getAttribute('aria-checked')).toBe('true')
+    expect(row.getAttribute('aria-disabled')).toBe('true')
     fireEvent.click(row)
     expect(onSelect).not.toHaveBeenCalled()
   })

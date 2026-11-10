@@ -133,6 +133,12 @@ async function open(text = /Here it is/) {
   act(() => { (document.activeElement as HTMLElement | null)?.blur?.() })
 }
 
+/** Optimize, as the chat offers it: the gear, then Optimize this draft in Chat preferences. */
+async function optimizeThroughPreferences() {
+  fireEvent.click(screen.getByRole('button', { name: 'Chat preferences' }))
+  fireEvent.click(await screen.findByRole('button', { name: /^Optimize this draft/ }))
+}
+
 /** A frame's action, from a frame the owner gave its focus unless *earned* says otherwise. */
 function offer(frame = 'Sales', earned = true) {
   act(() => { publishWidgetAction(ACTION, { frame, host: `frame-${++hostSeq}`, ...(earned ? { earned } : {}) }) })
@@ -284,7 +290,7 @@ describe('a widget\'s message in the chat composer', () => {
     await open()
     const editor = EditorView.findFromDOM(document.querySelector('[data-composer-region] .cm-editor') as HTMLElement)
     act(() => { editor?.dispatch({ changes: { from: 0, insert: 'tidy this' } }) })
-    fireEvent.click(screen.getByRole('button', { name: 'Optimize prompt (⌘↵)' }))
+    await optimizeThroughPreferences()
     await waitFor(() => expect(composerText()).toContain('A tidier ask, please'))
     expect(screen.getByRole('button', { name: /revert to original/ })).toBeTruthy()
     frame('chat_followups', { items: ['Show a code example'] })
@@ -556,7 +562,7 @@ describe('a widget\'s message in the chat composer', () => {
     await open()
     offer()
     await landed('[UI] refresh')
-    fireEvent.click(screen.getByRole('button', { name: 'Optimize prompt (⌘↵)' }))
+    await optimizeThroughPreferences()
     await waitFor(() => expect(composerText()).toContain('A tidier ask, please'))
     frame('chat_followups', { items: ['A tidier ask, please'] })
     fireEvent.click(await screen.findByRole('button', { name: 'A tidier ask, please' }))

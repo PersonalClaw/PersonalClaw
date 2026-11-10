@@ -20,7 +20,7 @@ import { framesMayHaveMoved } from './framesMayHaveMoved'
  *  in with it for depth. Pass `layoutId` to morph the sheet OUT of the element
  *  that opened it (a shared-element "grow from the trigger" transition) — the
  *  trigger must render a `motion.*` with the same `layoutId`. */
-export function Modal({ title, icon, onClose, children, layoutId }: {
+export function Modal({ title, icon, onClose, children, layoutId, size = 'sheet', describedBy }: {
   title: ReactNode
   icon?: ReactNode
   onClose: () => void
@@ -28,6 +28,11 @@ export function Modal({ title, icon, onClose, children, layoutId }: {
   /** Shared-element id: when the opening trigger carries the same layoutId, the
    *  sheet morphs from that element's box instead of scaling from center. */
   layoutId?: string
+  /** `sheet` (the default) caps the sheet at the dialog width; `compact` at the width of one short
+   *  form or a few choices (`SURFACE_WIDTHS.compactModal`). */
+  size?: 'sheet' | 'compact'
+  /** The id of the element that describes the dialog, as `aria-describedby`: its first line. */
+  describedBy?: string
 }) {
   const trapRef = useFocusTrap<HTMLDivElement>()
   const reduce = useReducedMotion()
@@ -48,8 +53,9 @@ export function Modal({ title, icon, onClose, children, layoutId }: {
       <motion.div ref={trapRef} role="dialog" aria-modal="true"
         {...(layoutId ? { layoutId } : {})}
         aria-label={typeof title === 'string' ? title : undefined}
+        aria-describedby={describedBy}
         className="squircle relative flex max-h-full w-full flex-col overflow-hidden bg-surface shadow-sheet"
-        style={{ maxWidth: SURFACE_WIDTHS.modal }}
+        style={{ maxWidth: size === 'compact' ? SURFACE_WIDTHS.compactModal : SURFACE_WIDTHS.modal }}
         initial={{ opacity: 0, scale: enterScale, y: enterY }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 6 }}
         transition={reduce ? spring.effects : physics.playful}>
         <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface/95 px-l py-m">

@@ -18,6 +18,8 @@ import { useMode } from './theme'
  *  pane (#5718), and these do not. Each is that surface's measure, not a preference. */
 export const SURFACE_WIDTHS = {
   modal: '1260px',
+  /** A modal of one short form or a few choices (`Modal size="compact"`): Chat preferences. */
+  compactModal: '520px',
   expandedSidePanel: '1300px',
   snipOverlay: '1420px',
   loopCockpit: '1440px',

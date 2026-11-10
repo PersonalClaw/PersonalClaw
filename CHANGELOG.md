@@ -22,6 +22,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The first sign-in password a container sets with `PERSONALCLAW_LOGIN_PASSWORD` is taken out of the gateway's environment once it has been read, and out of the one its Restart or an applied update starts it with, so nothing the gateway starts inherits it.**
 - **The command line and the gateway's log show each character a terminal would act on as a visible escape, whatever wrote the text, and a folder's `.env` names are checked before they're used.**
 
+### Added
+
+- **Chat preferences, the gear on the chat box, holds this chat's explanations, its reply style and Optimize. A choice there applies to this chat only, the gear shows a dot while the chat has one, and /preferences opens it; ⌘↵ and /optimize still optimize.**
+
 ### Changed
 
 - **"How should I explain things?" is a setting now, in Settings → Agent → Agent defaults → Explanations, and it reaches every chat, temporary and folder chats included. An answer you gave the old card moves there.**

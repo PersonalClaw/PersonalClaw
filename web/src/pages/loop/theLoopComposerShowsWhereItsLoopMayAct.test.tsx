@@ -120,6 +120,14 @@ describe('the loop’s Mode', () => {
   })
 })
 
+describe('Optimize', () => {
+  it('keeps its own button in the loop composer, which has no Chat preferences', async () => {
+    await composer()
+    expect(screen.getByRole('button', { name: 'Optimize prompt (⌘↵)' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Chat preferences' })).toBeNull()
+  })
+})
+
 describe('where the loop may act', () => {
   it('says the gateway’s sandbox and network for the loop’s Mode, read again when it changes', async () => {
     const user = userEvent.setup()

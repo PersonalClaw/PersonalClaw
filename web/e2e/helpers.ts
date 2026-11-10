@@ -695,6 +695,19 @@ export const OPENERS: Opener[] = [
   // Voice mode (#4963): hands-free on, the composer's 64 px orb listening. It is the composer's own
   // state with no address, so it is opened here rather than listed in `routes.ts`.
   { label: 'composer voice mode', route: 'chat', open: openVoiceMode },
+  // Chat preferences (the gear on the chat box): this chat's explanations, its reply style and
+  // Optimize, in a compact window.
+  {
+    label: 'chat preferences',
+    route: 'chat',
+    open: async (page) => {
+      const gear = page.getByRole('button', { name: 'Chat preferences' })
+      if (!(await gear.count())) return { skip: 'no Chat preferences button on #/chat' }
+      await gear.click()
+      await expect(page.getByRole('dialog', { name: 'Chat preferences' })).toBeVisible()
+      return true
+    },
+  },
   { label: 'knowledge peek dock', route: 'knowledge', open: clickRowBody },
   { label: 'inbox peek dock', route: 'inbox', open: clickRowBody },
   {

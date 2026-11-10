@@ -104,8 +104,9 @@ export function Tooltip({ text, children }: { text: string; children: (trigger: 
     // release; a tap's focus comes after its pointerup, so touch and pen keep the mark until then.
     onPointerUp: (e) => { if (e.pointerType === 'mouse') pressing.current = false },
     onPointerCancel: () => { pressing.current = false },
-    onFocus: () => {
+    onFocus: (e) => {
       if (pressing.current) { pressing.current = false; return }
+      if (e.currentTarget.hasAttribute('data-focus-returned')) return
       keepOpen()
       setOpen(true)
     },
