@@ -129,8 +129,8 @@ def test_the_lockfile_is_the_thing_that_is_parsed():
         "the tree; in both cases the floors below are vacuous and this ratchet must be re-derived."
     )
     # Every floored package is installed for a dependent that is still here (the web workspace
-    # itself, mermaid and monaco-editor, the mobile CLI's xcode, postcss and the CSS toolchain),
-    # so a tree missing any of them means the finder, not the tree, changed.
+    # itself, mermaid and monaco-editor, postcss and the CSS toolchain), so a tree missing any of
+    # them means the finder, not the tree, changed.
     assert {name for _, name, _ in rows} == set(_FLOORS), (
         "the floored packages present in the lockfile are "
         f"{sorted({n for _, n, _ in rows})}, expected {sorted(_FLOORS)}"
