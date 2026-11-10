@@ -134,7 +134,14 @@ from urllib.parse import urlparse, urlsplit
 
 from personalclaw.browse.transport import SESSION_DETACHED
 from personalclaw.cancellation import cancel_and_wait
-from personalclaw.net.guard import GuardDecision, evaluate
+from personalclaw.net.guard import (
+    ALLOWED_HOSTS,
+    EGRESS_OFF_REASON,
+    PLACES,
+    GuardDecision,
+    allow_host_step,
+    evaluate,
+)
 from personalclaw.net.policy import EgressPolicy, egress_policy_for
 from personalclaw.sel import SecurityEvent, SecurityEventLog
 
@@ -329,6 +336,10 @@ class NavigationOutcome:
     pinned_ips: list[str] = field(default_factory=list)
     error: str = ""
     recovery_hints: list[str] = field(default_factory=list)
+    #: A refusal's category, as the guard gave it (``GuardDecision.category``), or
+    #: :data:`BROWSE_DENY` for one this session reached itself: what fixes the words it is said
+    #: in while its work holds a stored secret's value (:func:`_told`).
+    category: str = ""
     #: A block of one frame of the page, rather than of the page's own document.
     frame: bool = False
     #: How many more times a frame from the same host was blocked on the same page after this
@@ -430,7 +441,7 @@ def _frame_records(tree: Any) -> list[tuple[str, bool, str]]:
     Raises ``ValueError`` on a tree without a top frame: a page whose frames cannot be read
     cannot be judged, and the caller refuses rather than treat it as empty."""
     if not isinstance(tree, dict) or not isinstance(tree.get("frame"), dict):
-        raise ValueError(f"the browser answered no frame tree ({tree!r:.120})")
+        raise ValueError(f"the browser answered no frame tree{_detail(f'{tree!r:.120}')}")
     records: list[tuple[str, bool, str]] = []
     stack: list[tuple[Any, bool]] = [(tree, True)]
     while stack:
@@ -443,10 +454,21 @@ def _frame_records(tree: Any) -> list[tuple[str, bool, str]]:
     return records
 
 
+#: The category of a deny this session reached without the guard (:func:`_deny`).
+BROWSE_DENY = "browse"
+
+
 def _deny(url: str, reason: str) -> GuardDecision:
-    """A deny this session reached without the guard: a frame it cannot judge or watch."""
+    """A deny this session reached without the guard: a frame it cannot judge or watch. Its reason
+    is browse's own words, with what an exception said only while no value is held
+    (:func:`_detail`)."""
     return GuardDecision(
-        allow=False, url=url, host=_host_of(url), reason=reason, risk_level="destructive"
+        allow=False,
+        url=url,
+        host=_host_of(url),
+        reason=reason,
+        risk_level="destructive",
+        category=BROWSE_DENY,
     )
 
 
@@ -699,7 +721,7 @@ class GatedCdpSession:
             # strictest input the in-page guard can be given, not a wider one.
             self._script_allow_hosts = tuple(self._layered_policy().allow_hosts)
         except Exception as exc:
-            logger.warning("browse: no BROWSE allow_hosts for the guard script (%s)", exc)
+            logger.warning("browse: no BROWSE allow_hosts for the guard script%s", _detail(exc))
             self._script_allow_hosts = ()
         try:
             from personalclaw.browse.safety_script import safety_script
@@ -709,7 +731,7 @@ class GatedCdpSession:
             await self._transport.send(ADD_SCRIPT, {"source": source})
         except Exception as exc:
             self._quarantine = (
-                f"the in-page guard script was not installed ({exc}); this session refuses "
+                f"the in-page guard script was not installed{_detail(exc)}; this session refuses "
                 "to navigate rather than load a page unguarded"
             )
             raise CdpSessionError(self._quarantine) from exc
@@ -719,8 +741,9 @@ class GatedCdpSession:
                 await self._transport.send(SET_AUTO_ATTACH, _auto_attach())
                 await self._start_barrier()
             except Exception as exc:
+                said = _detail(exc)
                 self._quarantine = self._quarantine or (
-                    f"the page's frames could not be watched ({exc}); this session refuses to "
+                    f"the page's frames could not be watched{said}; this session refuses to "
                     "navigate rather than show a frame it cannot judge"
                 )
                 raise CdpSessionError(self._quarantine) from exc
@@ -793,8 +816,9 @@ class GatedCdpSession:
             reply = await self._transport.send(GET_FRAME_TREE, {})
             records = _frame_records((reply or {}).get("frameTree"))
         except Exception as exc:
+            said = _detail(exc)
             self._quarantine = (
-                f"the page's frames could not be read ({exc}); this session refuses to read or "
+                f"the page's frames could not be read{said}; this session refuses to read or "
                 "navigate a page whose document it could not judge"
             )
             raise CdpSessionError(self._quarantine) from exc
@@ -829,9 +853,10 @@ class GatedCdpSession:
                 allow=False,
                 url=url,
                 host=_host_of(url),
-                reason=f"no BROWSE egress policy is available ({exc}); browsing fails closed",
+                reason=f"no BROWSE egress policy is available{_detail(exc)}; browsing fails closed",
                 risk_level="destructive",
                 recovery_hints=["This build cannot resolve the BROWSE egress profile."],
+                category=BROWSE_DENY,
             )
         try:
             kwargs: dict[str, Any] = {} if self._resolver is None else {"resolver": self._resolver}
@@ -841,8 +866,11 @@ class GatedCdpSession:
                 allow=False,
                 url=url,
                 host=_host_of(url),
-                reason=f"the egress guard raised while judging this URL ({exc}); failing closed",
+                reason=(
+                    f"the egress guard raised while judging this URL{_detail(exc)}; failing closed"
+                ),
                 risk_level="destructive",
+                category=BROWSE_DENY,
             )
 
     async def _judge(self, url: str, *, paused: bool = False) -> GuardDecision:
@@ -891,15 +919,15 @@ class GatedCdpSession:
             # unknown. Quarantine rather than retry: an unknown page under a gate that
             # cannot see it is exactly the state this module exists to prevent.
             self._quarantine = (
-                f"the CDP transport failed during {NAVIGATE} ({exc}); the browser's state "
+                f"the CDP transport failed during {NAVIGATE}{_detail(exc)}; the browser's state "
                 "is unknown, so this session no longer navigates"
             )
             return NavigationOutcome(
                 ok=False,
                 allowed=True,
                 url=url,
-                host=decision.host,
-                error=str(exc),
+                host=_shown_host(url, decision.host),
+                error=_said(str(exc)),
                 reason=self._quarantine,
                 risk_level="caution",
                 recovery_hints=["Discard this session and open a new one."],
@@ -915,7 +943,7 @@ class GatedCdpSession:
                 ok=False,
                 allowed=True,
                 url=url,
-                host=decision.host,
+                host=_shown_host(url, decision.host),
                 error=failed,
                 reason=(
                     f"{NAVIGATE} loaded no document ({failed}), so the page still holds what it "
@@ -929,7 +957,7 @@ class GatedCdpSession:
             ok=True,
             allowed=True,
             url=url,
-            host=decision.host,
+            host=_shown_host(url, decision.host),
             pinned_ips=list(decision.pinned_ips),
             risk_level=decision.risk_level,
         )
@@ -983,7 +1011,9 @@ class GatedCdpSession:
             # only defers frames' early blanks to the check when they load.
             self._page_navigating = True
             await self._transport.send(NAVIGATE_TO_HISTORY_ENTRY, {"entryId": entry["id"]})
-            return NavigationOutcome(ok=True, allowed=True, url=url, host=_host_of(url))
+            return NavigationOutcome(
+                ok=True, allowed=True, url=url, host=_shown_host(url, _host_of(url))
+            )
         if denied is None:
             return NavigationOutcome(ok=False, allowed=True, reason="there is no earlier page")
         return NavigationOutcome(
@@ -1001,7 +1031,7 @@ class GatedCdpSession:
             ok=False,
             allowed=False,
             url=url,
-            host=_host_of(url),
+            host=_shown_host(url, _host_of(url)),
             reason=(
                 "the session was never started, so the in-page guard script is not "
                 "installed and the first document would load unguarded"
@@ -1016,7 +1046,7 @@ class GatedCdpSession:
             ok=False,
             allowed=False,
             url=url,
-            host=_host_of(url),
+            host=_shown_host(url, _host_of(url)),
             reason=reason,
             risk_level="destructive",
             recovery_hints=["Discard this session and open a new one."],
@@ -1027,8 +1057,9 @@ class GatedCdpSession:
         try:
             await self._quiesce()
         except Exception as exc:
+            said = _detail(exc)
             self._quarantine = self._quarantine or (
-                f"the page's events could not be judged ({exc}); this session no longer reads "
+                f"the page's events could not be judged{said}; this session no longer reads "
                 "or navigates a page it cannot judge"
             )
 
@@ -1101,7 +1132,8 @@ class GatedCdpSession:
                 return
             blocked = self._record_block(
                 _deny(
-                    url, f"the frames of a page restored from the cache could not be read ({exc})"
+                    url,
+                    f"the frames of a page restored from the cache could not be read{_detail(exc)}",
                 ),
                 operation=GET_FRAME_TREE,
                 phase=PHASE_RESTORED,
@@ -1205,7 +1237,7 @@ class GatedCdpSession:
                     if failed:
                         logger.info("browse: a frame's early blank loaded nothing (%s)", failed)
                 except Exception as exc:
-                    logger.info("browse: a frame's early blank was refused (%s)", exc)
+                    logger.info("browse: a frame's early blank was refused%s", _detail(exc))
                 finally:
                     if held:
                         self._release()
@@ -1218,9 +1250,11 @@ class GatedCdpSession:
         try:
             await step
         except Exception as exc:
-            logger.warning("browse: a frame event could not be judged (%s)", exc)
+            logger.warning("browse: a frame event could not be judged%s", _detail(exc))
             blocked = self._record_block(
-                _deny("", f"the browser reported a frame this session could not judge ({exc})"),
+                _deny(
+                    "", f"the browser reported a frame this session could not judge{_detail(exc)}"
+                ),
                 operation=method,
                 phase=PHASE_FRAME_UNJUDGED,
             )
@@ -1328,6 +1362,7 @@ class GatedCdpSession:
                     host=_host_of(info_url),
                     reason=f"a {kind!r} target this session cannot judge is {left}",
                     risk_level="caution",
+                    category=BROWSE_DENY,
                 ),
                 operation=ATTACHED_TO_TARGET,
                 phase=PHASE_TARGET_LEFT_PAUSED if waiting else PHASE_TARGET_LEFT_RUNNING,
@@ -1360,7 +1395,7 @@ class GatedCdpSession:
             await self._judge_attach(sid, tid, True, started, info_url)
         except Exception as exc:
             blocked = self._record_block(
-                _deny(info_url or started, f"the frame could not be judged ({exc})"),
+                _deny(info_url or started, f"the frame could not be judged{_detail(exc)}"),
                 operation=ATTACHED_TO_TARGET,
                 phase=PHASE_FRAME_UNJUDGED,
                 frame=True,
@@ -1470,8 +1505,8 @@ class GatedCdpSession:
             blocked = self._record_block(
                 _deny(
                     self._judged.get(tid, ""),
-                    f"the frame could not be watched ({exc}); it is blanked rather than loaded "
-                    "unjudged",
+                    f"the frame could not be watched{_detail(exc)}; it is blanked rather than "
+                    "loaded unjudged",
                 ),
                 operation=ATTACHED_TO_TARGET,
                 phase=PHASE_FRAME_ATTACHED,
@@ -1487,7 +1522,7 @@ class GatedCdpSession:
         try:
             await self._transport.send(RUN_IF_WAITING, {}, session_id=sid)
         except Exception as exc:
-            logger.info("browse: a paused target could not be let run (%s)", exc)
+            logger.info("browse: a paused target could not be let run%s", _detail(exc))
 
     async def _judge_frames(
         self, records: list[tuple[str, bool, str]], *, operation: str, phase: str
@@ -1580,9 +1615,13 @@ class GatedCdpSession:
                 if FRAME_GONE in str(exc):
                     return True
                 if self._closed:
-                    logger.debug("browse: a denied frame's blank ended with the session (%s)", exc)
+                    logger.debug(
+                        "browse: a denied frame's blank ended with the session%s", _detail(exc)
+                    )
                     return False
-                logger.warning("browse: a denied frame could not be blanked on its own (%s)", exc)
+                logger.warning(
+                    "browse: a denied frame could not be blanked on its own%s", _detail(exc)
+                )
                 await self._blank_page_for(blocked)
                 return False
             failed = _navigation_failed(reply)
@@ -1662,11 +1701,11 @@ class GatedCdpSession:
                 raise RuntimeError(f"{NAVIGATE} to {BLANK_URL} loaded no document ({failed})")
         except Exception as exc:
             if self._closed:
-                logger.debug("browse: a teardown ended with the session (%s)", exc)
+                logger.debug("browse: a teardown ended with the session%s", _detail(exc))
                 return
             where = blocked.host or _screened(blocked.url)
             self._quarantine = _held_masked(
-                f"could not enforce the block on {where!r} ({exc}); "
+                f"could not enforce the block on {where!r}{_detail(exc)}; "
                 "this session no longer navigates"
             )
             logger.error("browse: %s", self._quarantine)
@@ -1674,7 +1713,9 @@ class GatedCdpSession:
                 try:
                     await self._transport.send(NAVIGATE, {"url": BLANK_URL})
                 except Exception as last:
-                    logger.error("browse: the quarantined page was not blanked either (%s)", last)
+                    logger.error(
+                        "browse: the quarantined page was not blanked either%s", _detail(last)
+                    )
         finally:
             self._page_running -= 1
             self._release(exposing=True)
@@ -1773,14 +1814,19 @@ class GatedCdpSession:
             self._settle_head_start(fid)
             if early is not None:
                 return early
+        # Said to the run as well as audited, and each names the host it refused as browse shows
+        # it (:func:`_shown_host`), in the words :func:`_told` says it in.
+        shown = _shown_host(decision.url, decision.host)
+        reason, hints = _told(decision, shown)
         outcome = NavigationOutcome(
             ok=False,
             allowed=False,
             url=decision.url,
-            host=decision.host,
-            reason=decision.reason,
+            host=shown,
+            reason=_held_masked(reason),
             risk_level=decision.risk_level or "destructive",
-            recovery_hints=list(decision.recovery_hints),
+            recovery_hints=[_held_masked(hint) for hint in hints],
+            category=decision.category,
             frame=frame,
             blanked=BLANKED_FRAME if frame else "",
         )
@@ -1788,13 +1834,15 @@ class GatedCdpSession:
             # Counted or recorded, the frame's load-time denial of the same host is this denial.
             self._remember(self._head_starts, fid, outcome)
         if frame:
-            host = outcome.host or outcome.url
-            first = self._frame_blocks.get(host)
+            # Counted by the host the guard read, so two refused hosts that show alike keep a row
+            # each.
+            key = decision.host or decision.url
+            first = self._frame_blocks.get(key)
             if first is not None:
                 first.repeats += 1
                 outcome.counted_on = (first, operation, phase)
                 return outcome
-            self._remember(self._frame_blocks, host, outcome)
+            self._remember(self._frame_blocks, key, outcome)
         self._blocks.append(outcome)
         self._audit(outcome, operation=operation, phase=phase)
         return outcome
@@ -1808,9 +1856,13 @@ class GatedCdpSession:
         WHY ``ungated`` for the second: nothing was refused, and a ``denied`` row is filed under
         the audit surface's Denied family, which would assert a refusal that never happened. The
         word is the one a tool call that ran without asking the host writes, and no family claims
-        it. Each address and reason in it is masked of the values its work holds
-        (``filled_secrets.masked_here``), as every audit row the work writes is."""
-        host, reason = _held_masked(outcome.host or ""), _held_masked(outcome.reason or "")
+        it. Each address and reason in it is masked of the values its work holds, in the letters an
+        address carries them in too (``credentials.masked_in_addresses``), its host is the one
+        browse shows (:func:`_shown_host`), and its reason is said as the run is told one
+        (:func:`_told`), whatever outcome it is handed."""
+        shown = _shown_host(outcome.url, outcome.host or "")
+        host = _held_masked(shown)
+        reason = _held_masked(_told(outcome, shown)[0])
         try:
             SecurityEventLog().log(
                 SecurityEvent(
@@ -1888,10 +1940,101 @@ class _PageTransport:
 
 
 def _held_masked(text: str) -> str:
-    """*text* masked of each value the work running here holds (``filled_secrets.masked_here``)."""
-    from personalclaw.filled_secrets import masked_here
+    """*text*, an address or what is said of one, masked of each value the work running here holds
+    (``credentials.masked_in_addresses``)."""
+    from personalclaw.browse.credentials import masked_in_addresses
 
-    return masked_here(text)
+    return masked_in_addresses(text)
+
+
+#: What a refusal says while its work holds a stored secret's value, by the guard's category
+#: (``GuardDecision.category``), naming the host it refused in its one slot as browse shows it.
+_TOLD = {
+    "not_listed": "host {shown} is not on this run's egress allow-list",
+    "deny_list": "host {shown} is on the egress deny list",
+    "metadata": "host {shown} is the cloud metadata service, which browse never reaches",
+    "unresolvable": "host {shown} could not be found",
+    **{category: f"host {{shown}} is on {place}" for category, place in PLACES.items()},
+    "malformed": "the address is not one browse opens",
+    "egress_off": EGRESS_OFF_REASON,
+}
+#: What a refusal of any other category says while a value is held.
+_TOLD_OTHERWISE = "browse may not open host {shown}"
+#: The hint a refusal of a host browse withholds gives: the one way to learn which host it was.
+_SEE_WHICH = "To see which host it was, run the step once without its secret."
+
+
+def _told(decision: GuardDecision | NavigationOutcome, shown: str) -> tuple[str, list[str]]:
+    """What *decision*, a refusal or what the run was told of one, says to the run and in its audit
+    row, and the steps it offers.
+
+    While its work holds a stored secret's value, the guard's own sentence is never said: it quotes
+    the host as a page wrote it, and an address the host resolved to. It says the fixed words of
+    its category instead (:data:`_TOLD`), the host as browse shows it (*shown*) in their one slot,
+    and fixed hints: the one that lets a host through names it only when browse shows it (a site
+    the run was set to reach), and a refusal of a host it withholds says how to see which host it
+    was (:data:`_SEE_WHICH`). A refusal browse reached without the guard (:func:`_deny`) says its
+    own words, which name no address. Otherwise what the guard said."""
+    from personalclaw.browse.credentials import WITHHELD
+    from personalclaw.filled_secrets import held_here
+
+    if not held_here() or decision.category == BROWSE_DENY:
+        return decision.reason, list(decision.recovery_hints)
+    category = decision.category
+    told = _TOLD.get(category, _TOLD_OTHERWISE).format(shown=shown or WITHHELD)
+    named = bool(shown) and shown != WITHHELD
+    if category == "not_listed":
+        step = allow_host_step(shown) if named else f"add that host to {ALLOWED_HOSTS}"
+        return told, [
+            "This run's safety profile limits egress to an allow-list.",
+            *([] if named else [_SEE_WHICH]),
+            f"To allow it, {step}, or widen the egress tier in the governance ceiling.",
+        ]
+    if category in ("loopback", "unspecified", "private"):
+        if named:
+            return told, ["Fetch a public URL.", f"If {shown} is yours, {allow_host_step(shown)}."]
+        return told, [
+            "Fetch a public URL.",
+            _SEE_WHICH,
+            f"If it is yours, add it to {ALLOWED_HOSTS}.",
+        ]
+    if category in ("metadata", "link_local"):
+        return told, [
+            "The cloud metadata endpoint is never fetchable; use the runtime's own credential "
+            "tooling instead."
+        ]
+    if category == "unresolvable":
+        checked = "Check the hostname; the fetch fails closed on an unresolvable host."
+        return told, [checked] if named else [checked, _SEE_WHICH]
+    if category == "malformed":
+        return told, ["Use an http or https URL."]
+    if category == "egress_off":
+        return told, list(decision.recovery_hints)
+    return told, [] if named else [_SEE_WHICH]
+
+
+def _said(text: str) -> str:
+    """*text*, what an exception or the browser said, as browse passes it on: nothing while the
+    work running here holds a stored secret's value, since it can quote an address a page chose,
+    which can carry a value in more forms than any mask follows."""
+    from personalclaw.filled_secrets import held_here
+
+    return "" if held_here() else text
+
+
+def _detail(said: object) -> str:
+    """What *said*, an exception or what the browser answered, said (:func:`_said`), as the clause
+    in brackets after browse's own words; nothing when it says nothing."""
+    text = _said(str(said))
+    return f" ({text})" if text else ""
+
+
+def _shown_host(url: str, host: str) -> str:
+    """*host*, the host a guard read from *url*, as browse shows it (``credentials.shown_host``):
+    read again from *url* with a held value kept whole, and masked."""
+    from personalclaw.browse.credentials import shown_host
+
+    return shown_host(url, host)
 
 
 def _screened(url: str) -> str:

@@ -68,13 +68,14 @@ action that silently no-ops is worse than one that says it cannot run.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from personalclaw import filled_secrets
 from personalclaw.action_providers.base import (
@@ -276,6 +277,53 @@ def _config_refusal(goal: str, start_url: str) -> tuple[str, str, str] | None:
     return None
 
 
+_Execute = TypeVar("_Execute", bound=Callable[..., Awaitable[ActionResult]])
+
+
+def _knowing_its_sites(execute: _Execute) -> _Execute:
+    """*execute*, one browse step, run knowing the sites it was set to reach before the browser is
+    touched (``browse.credentials.known_sites``): its start page's, and each host the BROWSE
+    egress allow-list names (:func:`_listed_hosts`). The browser's transport starts its tasks
+    inside that, so what they judge and record knows them too."""
+
+    @functools.wraps(execute)
+    async def run(
+        self: Any, action_config: dict[str, Any], ctx: ActionContext, timeout: int = 30
+    ) -> ActionResult:
+        from personalclaw.browse.credentials import known_sites
+
+        start_url = str((action_config or {}).get("start_url") or "").strip()
+        with known_sites(start_url, _listed_hosts()):
+            return await execute(self, action_config, ctx, timeout)
+
+    return cast(_Execute, run)
+
+
+def _grant_scope(start_url: str) -> tuple[str, ...]:
+    """The sites a grant names for a step starting at *start_url* (``browse.grant.scope_for_url``):
+    while the step holds a stored secret's value, ``[withheld]`` when browse withholds its start
+    site (``credentials.origin_of``), since the grant's pending list and its audit rows reach no
+    held-value mask."""
+    from personalclaw.browse.credentials import WITHHELD, origin_of
+    from personalclaw.browse.grant import scope_for_url
+
+    if filled_secrets.held_here() and origin_of(start_url) == WITHHELD:
+        return (WITHHELD,)
+    return scope_for_url(start_url)
+
+
+def _listed_hosts() -> tuple[str, ...]:
+    """The hosts the BROWSE egress allow-list names, the operator's ``security.egress`` layered on
+    (``net.policy.egress_policy_for``); none when it can't be read."""
+    try:
+        from personalclaw.net.policy import BROWSE, egress_policy_for
+
+        return tuple(egress_policy_for(BROWSE).allow_hosts)
+    except Exception:  # no profile is no site known: what browse shows is withheld, not widened
+        logger.debug("browse: the BROWSE allow-list could not be read", exc_info=True)
+        return ()
+
+
 class BrowseActionProvider(ActionProvider):
     """Drive a real browser toward a goal, bounded by steps, budget and the egress policy.
 
@@ -307,6 +355,7 @@ class BrowseActionProvider(ActionProvider):
         """Browse's goal is what its model reads (:attr:`model_text_keys`)."""
         return True
 
+    @_knowing_its_sites
     async def execute(
         self,
         action_config: dict[str, Any],
@@ -426,16 +475,11 @@ class BrowseActionProvider(ActionProvider):
             # open — and it is requested HERE, ahead of `_open`, so an unauthorized task never
             # reaches the browser. The grant binds to THIS browser, and below to the tab the
             # browser opens for this run, so close-to-kill can tell that tab from any other.
-            from personalclaw.browse.grant import (
-                grant_denied_error,
-                grant_gate,
-                request_grant,
-                scope_for_url,
-            )
+            from personalclaw.browse.grant import grant_denied_error, grant_gate, request_grant
 
             grant = await request_grant(
                 task=goal,
-                scope=scope_for_url(start_url),
+                scope=_grant_scope(start_url),
                 gate=grant_gate(),
                 bound_device_id=status.device_id,
             )

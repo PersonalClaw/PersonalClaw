@@ -454,15 +454,20 @@ def request_login(
 
     **Nothing in the returned payload can hold a credential.** ``evidence`` carries the screened URL
     and the reason code; there is no field for a value, and the two facts it states — which site,
-    and that a human must act — are exactly the two the agent may know. The import is
-    function-local so ``browse`` stays importable without the workflows package (the CDP transport
-    makes the same choice for ``websockets``).
+    and that a human must act — are exactly the two the agent may know. While the step holds a
+    stored secret's value, the site is named as browse shows it (``credentials.origin_of``), and
+    ``[withheld]`` with no profile named when browse withholds it: a site a held value coincides
+    with is never named, whole or masked. The import is function-local so ``browse`` stays
+    importable without the workflows package (the CDP transport makes the same choice for
+    ``websockets``).
     """
-    from personalclaw.browse.credentials import screen_url
+    from personalclaw import filled_secrets
+    from personalclaw.browse.credentials import WITHHELD, origin_of, screen_url
     from personalclaw.workflows.needs_input import build_item
 
     ts = time.time() if now is None else now
-    slug = site_slug(url)
+    shown = origin_of(url) if filled_secrets.held_here() else url
+    slug = WITHHELD if shown == WITHHELD else site_slug(shown)
     safe_url = screen_url(url)
     blocker = _REASON_BLOCKER.get(reason, "needs you to sign in")
     # Where to sign in is the browser the step DRIVES — the one it resumes in. Nothing opens a
@@ -494,7 +499,7 @@ def request_login(
             "site": slug,
             "url": safe_url,
             "reason": reason,
-            "profile": str(profile_dir(url)),
+            **({} if slug == WITHHELD else {"profile": str(profile_dir(url))}),
             "credentials_seen_by_agent": "none",
         },
         resume_token=resume_token,

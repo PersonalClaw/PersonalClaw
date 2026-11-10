@@ -57,14 +57,22 @@ through ``decide`` — it goes through ``browse.vision``, which resolves the exi
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from personalclaw.browse.compress import assert_no_base64, compress_page
-from personalclaw.browse.credentials import screen_action_render, screen_text, screen_url
+from personalclaw.browse.credentials import (
+    WITHHELD,
+    its_own_host_held,
+    known_sites,
+    screen_action_render,
+    screen_text,
+    screen_url,
+)
 from personalclaw.browse.extraction import (
     ROLE_LINK,
     ElementRef,
@@ -493,8 +501,7 @@ async def verify_submission(
         )
 
     shown = screen_url(url_after)  # the raw one only decided whether the page changed
-    extraction = extract_page(html_after, url=shown)
-    fenced = _fence_page(_outline_text(extraction, ""), shown)
+    _extraction, fenced = _read_for_the_model(html_after, shown, url_after, "")
     raw = ""
     try:
         raw = await decide(f"{_VERIFY_INSTRUCTION}\n\nTHE PAGE NOW SHOWS:\n{fenced}")
@@ -511,7 +518,10 @@ async def verify_submission(
     )
 
 
-async def _read_once(page: PageDriver, url: str) -> tuple[str, str]:
+async def _read_once(page: PageDriver, url: str) -> tuple[str, str, str]:
+    """The page's HTML, its URL screened, and its URL as the browser reported it, which only
+    decides what of the page's own host is masked in what is read of it
+    (``credentials.its_own_host_held``)."""
     html = await page.html()
     # 🔴 SCREENED at the point it is read, which is the only place the browser's own
     # URL enters this process. One call therefore covers all six consumers at once — the
@@ -520,7 +530,8 @@ async def _read_once(page: PageDriver, url: str) -> tuple[str, str]:
     # and the SEL row. The post-login redirect is exactly where an OAuth `code=` or an
     # implicit-flow `#access_token=` sits, so this is not a hypothetical path: it is THE
     # path a token would take into a prompt.
-    return html, screen_url(await page.current_url() or url)
+    reported = await page.current_url() or url
+    return html, screen_url(reported), reported
 
 
 #: How many blanked frames one step's prompt names; the rest are counted.
@@ -545,7 +556,7 @@ def _note_frame_blocks(st: _LoopState, session: Any) -> None:
     frames = [b for b in blocks if getattr(b, "frame", False) is True]
     new = frames[st.frame_blocks_seen :]
     for block in new[:_FRAME_WARNINGS_PER_STEP]:
-        host = screen_url(str(getattr(block, "host", "") or "")) or "this page"
+        host = str(getattr(block, "host", "") or "") or "this page"
         reason = str(getattr(block, "reason", "") or "it is not allowed")
         done = getattr(block, "blanked", "")
         if done == BLANKED_PAGE:
@@ -564,9 +575,26 @@ def _note_frame_blocks(st: _LoopState, session: Any) -> None:
     st.frame_blocks_seen = len(frames)
 
 
-async def _read_page(page: PageDriver, url: str, session: Any) -> tuple[str, str]:
-    """Read the page's HTML and its screened URL, once more when the first read's reply was
-    discarded on a session that is still sound.
+def _read_for_the_model(
+    html: str, url: str, reported: str, screenshot: str
+) -> tuple[PageExtraction, str]:
+    """A page as its model reads it: its extraction, and its outline fenced under *url*, its
+    screened address. Read with the page's own host masked while it is a site browse doesn't show
+    (``credentials.its_own_host_held``, from *reported*, its address as the browser reported it)."""
+    with its_own_host_held(reported):
+        extraction = extract_page(html, url=url)
+        return extraction, _fence_page(_outline_text(extraction, screenshot), url)
+
+
+def _visited_before(st: _LoopState, target: str) -> bool:
+    """Whether the run already visited *target*, an address as it is shown: never one withheld,
+    which names no page."""
+    return target in st.visited and target != WITHHELD
+
+
+async def _read_page(page: PageDriver, url: str, session: Any) -> tuple[str, str, str]:
+    """Read the page's HTML and its URL (:func:`_read_once`), once more when the first read's reply
+    was discarded on a session that is still sound.
 
     A reply is discarded when a denied redirect was torn down, or a denied frame blanked after
     its document loaded, while it was in flight
@@ -591,6 +619,25 @@ def _discarded_on_a_sound_session(exc: BaseException, session: Any) -> bool:
 # ── the loop ──────────────────────────────────────────────────────────────────
 
 
+_Loop = TypeVar("_Loop", bound=Callable[..., Awaitable["BrowseLoopResult"]])
+
+
+def _knowing_its_start_page(loop: _Loop) -> _Loop:
+    """*loop* run knowing its start page's site (``credentials.known_sites``), beside any its
+    caller knows: what it shows of it while its work holds a stored secret's value. A caller that
+    opens its own session enters ``credentials.known_sites(start_url)`` before it opens it, or that
+    session's frames fail closed, the start site's included: its transport's tasks start without
+    the table."""
+
+    @functools.wraps(loop)
+    async def run(*args: Any, **kwargs: Any) -> BrowseLoopResult:
+        with known_sites(str(kwargs.get("start_url") or "")):
+            return await loop(*args, **kwargs)
+
+    return cast(_Loop, run)
+
+
+@_knowing_its_start_page
 async def run_browse_loop(
     *,
     goal: str,
@@ -725,7 +772,7 @@ async def run_browse_loop(
                 )
 
         try:
-            html, url = await _read_page(page, url, session)
+            html, url, reported = await _read_page(page, url, session)
         except Exception as exc:
             return BrowseLoopResult(
                 ok=False,
@@ -739,13 +786,12 @@ async def run_browse_loop(
             )
 
         _note_frame_blocks(st, session)
-        extraction = extract_page(html, url=url)
         try:
             screenshot = await page.screenshot()
         except Exception:
             logger.debug("browse: screenshot unavailable", exc_info=True)
             screenshot = ""
-        fenced = _fence_page(_outline_text(extraction, screenshot), url)
+        extraction, fenced = _read_for_the_model(html, url, reported, screenshot)
         prompt = compose_prompt(
             goal=goal,
             fenced_page=fenced,
@@ -834,7 +880,7 @@ async def run_browse_loop(
             outcome_note = "recorded"
         elif isinstance(action, NavigateAction):
             safe_target = screen_url(action.url)
-            if safe_target in st.visited:
+            if _visited_before(st, safe_target):
                 st.warnings.append(f"you have already visited {safe_target}")
             nav = await session.navigate(action.url)
             if not getattr(nav, "ok", False) and getattr(nav, "allowed", False):
@@ -1127,8 +1173,9 @@ async def _actuate(
                 # ledger and the SEL row — defeating the refusal by explaining it.
                 state.login_required_ref = action.ref
                 state.warnings.append(
-                    f"{action.ref} ({target.label}) is a credential field; browse never types "
-                    "passwords or one-time codes. The run is pausing so you can sign in yourself."
+                    f"{action.ref} ({shown_words(target.label)}) is a credential field; browse "
+                    "never types passwords or one-time codes. The run is pausing so you can sign "
+                    "in yourself."
                 )
                 return "refused: credential field"
             await page.fill(target, action.value)

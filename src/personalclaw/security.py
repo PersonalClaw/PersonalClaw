@@ -1608,8 +1608,13 @@ _KNOWN_VALUE_MASK = "[REDACTED: credential]"
 GUESSED_VALUE_MIN_LEN = 8
 
 
-def redact_known_values(text: str, values: Iterable[str]) -> str:
-    """*text* with every occurrence of each of *values* replaced by a credential mask.
+def redact_known_values(
+    text: str, values: Iterable[str], mask: str = _KNOWN_VALUE_MASK, *, ignore_case: bool = False
+) -> str:
+    """*text* with every occurrence of each of *values* replaced by a credential mask (*mask*, for a
+    caller that reads the text again before it masks it: ``browse.credentials.held_as_origins``),
+    in any case for a caller that reads an address (``ignore_case``:
+    ``browse.credentials.masked_in_addresses``, as a browser reads a scheme and a host).
 
     For the code that itself handed those values out: a command it ran with a resolved
     ``{{secret:KEY}}`` or a credential in its environment. The shape-based mask cannot see a
@@ -1624,10 +1629,10 @@ def redact_known_values(text: str, values: Iterable[str]) -> str:
         return text
     forms = known | {json.dumps(v, ensure_ascii=a)[1:-1] for v in known for a in (True, False)}
     forms |= {f for v in known for f in _encoded_forms(v)}
-    wanted = [re.escape(_KNOWN_VALUE_MASK)] + [
+    wanted = [re.escape(mask)] + [
         _form_pattern(form) for form in sorted(forms, key=len, reverse=True)
     ]
-    return re.compile("|".join(wanted)).sub(_KNOWN_VALUE_MASK, text)
+    return re.compile("|".join(wanted), re.IGNORECASE if ignore_case else 0).sub(mask, text)
 
 
 def redact_values_for_display(value: Any) -> Any:
