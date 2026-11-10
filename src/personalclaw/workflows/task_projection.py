@@ -55,7 +55,7 @@ def _schedule_verification(ctl: RunController, spec: Any, path: str, node_id: st
         return
 
     async def _verify_and_emit() -> None:
-        passed = await _run_criterion(ctl, spec.done_criterion)
+        passed, folder = await _run_criterion(ctl, spec.done_criterion)
         ctl.publish_task_verified(
             path,
             node_id,
@@ -64,6 +64,7 @@ def _schedule_verification(ctl: RunController, spec: Any, path: str, node_id: st
             # False reports a failure that never happened.
             passed=passed,
             criterion=str(spec.done_criterion)[:200],
+            folder=folder,
         )
 
     try:
@@ -76,28 +77,46 @@ def _schedule_verification(ctl: RunController, spec: Any, path: str, node_id: st
     handle.add_done_callback(ctl._projection_writes.discard)
 
 
-async def _run_criterion(ctl: RunController, raw: Any) -> bool | None:
-    """Evaluate a done-criterion to the TRISTATE `verified_done` expects.
+def criterion_folder(ctl: RunController) -> str:
+    """The folder run *ctl* works in (``provisioning.run_workdir``), where its steps' done
+    criteria are checked, or ``""`` when it has none."""
+    from personalclaw.workflows import provisioning
+
+    return provisioning.run_workdir(ctl.run.id)
+
+
+async def _run_criterion(ctl: RunController, raw: Any) -> tuple[bool | None, str]:
+    """Evaluate a done-criterion to the TRISTATE `verified_done` expects, in the run's folder, and
+    that folder (``""`` when the run has none), which its `task_verified` records.
 
     `None` (could not run) is preserved all the way out, never collapsed to False. The whole
     point of the tristate is that a missing binary is not a failing test: reporting "the check
     failed" for a criterion that never executed sends the user to debug their code when the
     problem is their environment, and the two project to different blocked kinds for exactly
     that reason.
+
+    The check looks where the run's steps work (:func:`criterion_folder`): a command runs there
+    and a file check's path is read from there, confined to it. A run with no folder of its own
+    could not run the check: run where the gateway was started, it would look at some other tree.
     """
     from personalclaw.workflows import verified_done as _vd
 
     checks, problems = _vd.parse_criterion(raw)
     if problems or not checks:
         # An unparseable criterion is UNRUNNABLE, not failed. The author wrote something the
-        # engine could not read, which is a different problem from the work being wrong.
-        return None
+        # engine could not read, which is a different problem from the work being wrong. It was
+        # checked nowhere, so it names no folder.
+        return None, ""
+    folder = criterion_folder(ctl)
+    if not folder:
+        return None, ""
     verdict = _vd.Verdict()
     for check in checks:
         if check.kind is _vd.CheckKind.COMMAND:
             from personalclaw.loop.gates import run_verify_command
 
-            outcome = await run_verify_command(check.command, None, label=f"criterion:{ctl.run.id}")
+            label = f"criterion:{ctl.run.id}"
+            outcome = await run_verify_command(check.command, folder, label=label)
             verdict.results.append(
                 _vd.CheckResult(
                     kind=check.kind.value,
@@ -107,20 +126,28 @@ async def _run_criterion(ctl: RunController, raw: Any) -> bool | None:
                 )
             )
         else:
-            verdict.results.append(_vd.evaluate_file_phrase(check, _read_criterion_file))
-    return verdict.passed
+            verdict.results.append(
+                _vd.evaluate_file_phrase(check, lambda p: _read_criterion_file(p, folder))
+            )
+    return verdict.passed, folder
 
 
-def _read_criterion_file(path: str) -> str | None:
-    """Read a file for a `file_phrase` check, or None when it cannot be read.
+def _read_criterion_file(path: str, folder: str) -> str | None:
+    """Read a file for a `file_phrase` check, *path* taken in the run's *folder*, or None when it
+    cannot be read.
 
     None rather than "" — `evaluate_file_phrase` treats an unreadable file as UNRUNNABLE, and an
-    empty string would read as "the file exists and the phrase is absent", which is a
-    claim about
-    content nobody read.
+    empty string would read as "the file exists and the phrase is absent", which is a claim about
+    content nobody read. A path that leaves *folder* (climbing out of it, or naming a file
+    elsewhere, a link's target included) is not read either: the check is of the run's work, and
+    it reports the check as not run.
     """
     try:
-        return Path(path).read_text(encoding="utf-8", errors="replace")
+        root = Path(folder).resolve()
+        target = (root / path).resolve()
+        if not target.is_relative_to(root):
+            return None
+        return target.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return None
 

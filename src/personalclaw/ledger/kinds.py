@@ -184,7 +184,9 @@ SKIPPED_BUDGET = "skipped_budget"
 #: finished — and the ledger is the one channel that survives that. It is also the only way the
 #: flywheel can pair a reviewer's output with the `judge_divergence` rows its rejections produce:
 #: a reviewer whose findings are always rejected is a fake gate, and that claim is only provable
-#: when both halves live in the same vocabulary.
+#: when both halves live in the same vocabulary. A row with ``judged`` is a step's verdict on the
+#: filed finding whose row stamp it names (a verify panel's verifier: ``refuted`` true or false),
+#: not a finding of its own; the latest verdict on a row is the one its list shows.
 REVIEW_FINDING = "review_finding"
 
 #: The user's own answer to one digest proposal, whether it was

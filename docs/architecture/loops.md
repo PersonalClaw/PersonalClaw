@@ -480,11 +480,17 @@ The supervisor does not take the worker's word for it:
   `judge_verdict` row carrying a `check` record (command, folder, outcome, exit
   code, output) and the sentence its page shows; a goal with several sub-goals
   asks its judge once the check passes, shown the check's output beside the
-  cycles' reports, and the answer is on the same row. A check that cannot run, or
-  a judge that gives no answer, puts `cannot_judge` on the row: why, in words, and
-  that the loop asks again after its next cycle. An open-ended judge that gives no
-  verdict leaves the same kind of row, so no cycle is left blank. None of these
-  rows carries a score.
+  cycles' reports, and the answer is on the same row: a verdict and a reason for
+  each sub-goal (`gates.criteria_verdicts`, the stage gate's reader). The loop
+  completes only when each passes; the sentence names the sub-goals failed or not
+  known, and the next cycle's nudge names them too. A one-word PASS from a custom
+  prompt passes each, and a one-word FAIL is said once, as a FAIL that named no
+  sub-goal. An install keeps its stored judge prompt, unless it is one of the
+  earlier one-word bundled texts, never edited, which is replaced.
+  A check that cannot run, or a judge that gives no answer, puts `cannot_judge`
+  on the row: why, in words, and that the loop asks again after its next cycle.
+  An open-ended judge that gives no verdict leaves the same kind of row, so no
+  cycle is left blank. None of these rows carries a score.
 - The **reproduce** pass at completion re-checks a genuine finish before its
   document deliverable graduates to an artifact, and runs only when there is one
   to graduate (a verifiable goal's check is its output).

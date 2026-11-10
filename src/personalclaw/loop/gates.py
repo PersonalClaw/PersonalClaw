@@ -403,7 +403,15 @@ def _criteria_object(raw: str) -> dict | None:
     return None
 
 
-def criteria_verdicts(raw: str | None, criteria: list[str]) -> tuple[list[dict], bool]:
+def one_word_fail(whole: str = "stage", item: str = "criterion") -> str:
+    """The reason each criterion carries when the judge answered a one-word FAIL for the *whole*
+    (:func:`criteria_verdicts`): it named none, so none is known not met."""
+    return f"the judge failed the {whole} without saying which {item} is not met"
+
+
+def criteria_verdicts(
+    raw: str | None, criteria: list[str], *, whole: str = "stage", item: str = "criterion"
+) -> tuple[list[dict], bool]:
     """A stage-gate judge's answer, one verdict per exit criterion, and whether it rendered one.
 
     The judge answers ``{"criteria": [{"n": 1, "verdict": "pass"|"fail"|"cant_tell", "reason":
@@ -415,41 +423,41 @@ def criteria_verdicts(raw: str | None, criteria: list[str]) -> tuple[list[dict],
     whole stage still counts as an answer: PASS passes every criterion, a FAIL that names none is
     ``cant_tell`` for each, because nothing says which one failed. No answer at all (an empty or
     unreadable reply: the judge's model was unavailable) is ``cant_tell`` for each, and not
-    rendered, so the caller can tell a refusal from an outage (:func:`verdict_rendered`)."""
+    rendered, so the caller can tell a refusal from an outage (:func:`verdict_rendered`).
+
+    *whole* and *item* are what a one-word answer's reason calls the thing judged and each of its
+    criteria: a stage and its criteria by default, a goal and its sub-goals for a goal loop."""
     from personalclaw.safety_flags import yes_or_no
 
     text = raw or ""
     found = _criteria_object(text)
     if found is not None:
         answers: dict[int, dict] = {}
-        for item in found["criteria"]:
-            if not isinstance(item, dict):
+        for entry in found["criteria"]:
+            if not isinstance(entry, dict):
                 continue
             try:
-                n = int(item["n"])
+                n = int(entry["n"])
             except (KeyError, TypeError, ValueError):
                 continue
-            word = str(item.get("verdict") or "").strip().lower().replace("-", "_")
+            word = str(entry.get("verdict") or "").strip().lower().replace("-", "_")
             word = _CANT_TELL_SPELLINGS.get(word, word)
-            reason = " ".join(str(item.get("reason") or "").split())[:400]
+            reason = " ".join(str(entry.get("reason") or "").split())[:400]
             if word not in CRITERION_VERDICTS:
                 word, reason = "cant_tell", "the judge's answer was not pass, fail or can't tell"
             answers[n] = {"verdict": word, "reason": reason}
-            if word == "fail" and yes_or_no(item.get("outside")) is True:
+            if word == "fail" and yes_or_no(entry.get("outside")) is True:
                 answers[n]["outside"] = True
-        missing = {"verdict": "cant_tell", "reason": "the judge gave no answer for this criterion"}
+        missing = {"verdict": "cant_tell", "reason": f"the judge gave no answer for this {item}"}
         return [
             {"criterion": c, **answers.get(i, missing)} for i, c in enumerate(criteria, 1)
         ], True
     if verdict_rendered(text):
         if verdict_is_pass(text):
-            whole = {"verdict": "pass", "reason": "the judge passed the stage as a whole"}
+            said = {"verdict": "pass", "reason": f"the judge passed the {whole} as a whole"}
         else:
-            whole = {
-                "verdict": "cant_tell",
-                "reason": "the judge failed the stage as a whole without saying which criterion",
-            }
-        return [{"criterion": c, **whole} for c in criteria], True
+            said = {"verdict": "cant_tell", "reason": one_word_fail(whole, item)}
+        return [{"criterion": c, **said} for c in criteria], True
     none = {"verdict": "cant_tell", "reason": "the judge gave no verdict"}
     return [{"criterion": c, **none} for c in criteria], False
 

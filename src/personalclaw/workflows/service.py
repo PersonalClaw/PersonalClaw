@@ -1697,10 +1697,11 @@ async def delete_run(
     # What its steps started ends with it (`started_work.end_run`), read off its state before the
     # directory holding that state goes: a run that ended without ending them leaves none behind.
     from personalclaw import started_work
+    from personalclaw.loop.children import DELETED
 
     await started_work.end_run(
         run,
-        ending="was deleted",
+        ending=DELETED,
         subagents=getattr(getattr(supervisor, "_state", None), "subagents", None),
         supervisor=supervisor,
     )

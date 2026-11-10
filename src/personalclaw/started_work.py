@@ -16,7 +16,24 @@ work ran (``SubagentInfo.starter_ended``), which would take the work up again.
   goes on.
 * A workflow run's ending ends what its steps started (:func:`end_run`, from
   ``RunController._finish`` and ``service.delete_run``): what the session of one of its steps'
-  subagents (``subagent:<id>``) started.
+  subagents (``subagent:<id>``) started, and what four step kinds launched (:func:`_end_launched`):
+  the agent of an Invoke Agent (``invoke-agent``) or Run Prompt (``run-prompt``) action step
+  (``SubagentInfo.workflow_run``), the child run a ``subworkflow`` step waits on, and the run a
+  Run workflow (``run-workflow``) step starts to go on alone (both ``parent_run_id``; the second
+  with ``spawned_by_node_id``). Which of those end depends on how the run ended:
+
+  - cancelled or deleted: all four end, saying the run's clause, a Run workflow run still queued
+    behind its workflow's overlap policy included, and so does what those agents started from
+    their own sessions (``subagent:<id>``);
+  - failed, escalated or declined: the subworkflow runs it was still waiting on end, since nothing
+    waits for them now. One whose step settled and let it go on (``child_run_attach``) goes on, and
+    so do the agents and Run workflow runs its steps launched to go on alone, since no one stopped
+    them;
+  - finished: nothing more ends.
+
+  No ending reaches a fork, which continues the run rather than being its work. A child it ends is
+  cancelled like any run, so the child's own ending ends what its steps launched, all four kinds,
+  after a parent's failure too.
 
 And what an ended subagent started from its own session ends with it, so a batch a background
 subagent started does not outlive the Stop that ends the subagent. So does what still waits for
@@ -236,16 +253,115 @@ async def end_run(
         state = instances if instances is not None else store.read_state(run.id)
         steps = {str(inst.subagent_id) for inst in state.values() if inst.subagent_id}
         steps |= {info.id for info in _agents(subagents) if info.parent_run == lane}
+        if _stopped(ending):
+            # What the agents its steps launched started from their own sessions ends too.
+            steps |= {info.id for info in _launched_agents(run, subagents)}
         sessions = frozenset(f"subagent:{agent_id}" for agent_id in steps)
         own = f"{lane}:"
         name = str(run.title or run.workflow_name or run.id)
+        clause = because or f"the workflow run “{name}” that started it {ending}"
         ended = await end_started(
             subagents=subagents,
             supervisor=supervisor,
             owns=lambda key: key in sessions or key.startswith(own),
-            clause=because or f"the workflow run “{name}” that started it {ending}",
+            clause=clause,
+        )
+        launched = await _end_launched(
+            run, ending=ending, clause=clause, subagents=subagents, supervisor=supervisor
         )
     except Exception:
         logger.warning("run %s: could not end what its steps started", run.id, exc_info=True)
         return 0
-    return ended.runs + ended.subagents
+    return ended.runs + ended.subagents + launched
+
+
+def _stopped(ending: str) -> bool:
+    """Whether a run that ended *ending* was stopped: its owner's Cancel, an ending that stopped
+    it, or its deletion."""
+    from personalclaw.loop.children import DELETED
+    from personalclaw.workflows.models import RunStatus, run_ending
+
+    return ending in {run_ending(RunStatus.CANCELLED), DELETED}
+
+
+def _launched_agents(run: Any, subagents: Any) -> list[Any]:
+    """The agents run *run*'s Invoke Agent and Run Prompt steps launched
+    (``SubagentInfo.workflow_run``)."""
+    return [
+        info
+        for info in _agents(subagents)
+        if str(getattr(info, "workflow_run", "") or "") == run.id
+    ]
+
+
+def _let_go(run_id: str) -> set[str]:
+    """The child runs a settled `subworkflow` step of run *run_id* recorded
+    (``child_run_attach``): that step stopped waiting for them, so they go on alone."""
+    from personalclaw.workflows import journal
+
+    return {
+        str(row.get("child_run_id") or "")
+        for row in journal.ledger(run_id, kinds={journal.CHILD_RUN_ATTACH})
+    }
+
+
+def _launched_runs(run: Any, *, stopped: bool) -> list[Any]:
+    """The runs run *run*'s steps launched that end with it (*stopped*: it was stopped). Never a
+    fork, which continues it. A stopped run's include a Run workflow step's run, live or still
+    queued behind its workflow's overlap policy (a DRAFT, ``overlap.is_queued``). One that ended
+    unfinished ends only the subworkflow runs it was still waiting on."""
+    from personalclaw.workflows import overlap, store
+    from personalclaw.workflows.models import RunStatus
+
+    let_go = set() if stopped else _let_go(run.id)
+    found: dict[str, Any] = {}
+    for child in store.active_runs():
+        if child.parent_run_id != run.id or child.forked_from or child.id in let_go:
+            continue
+        if child.spawned_by_node_id and not stopped:
+            continue
+        found[child.id] = child
+    if stopped:
+        for child in store.started_runs(run.id):
+            if child.status == RunStatus.DRAFT and overlap.is_queued(child):
+                found.setdefault(child.id, child)
+    return list(found.values())
+
+
+async def _end_launched(
+    run: Any, *, ending: str, clause: str, subagents: Any, supervisor: Any
+) -> int:
+    """End what run *run*'s steps launched, by how it ended (*ending*, the module's rule): the
+    runs :func:`_launched_runs` names, and, when it was stopped, the agents whose
+    ``workflow_run`` it is (an Invoke Agent or Run Prompt step's). Each ends saying *clause*,
+    through the paths every ending uses, so a cancelled child's own ending ends what it launched
+    in turn.
+    Returns how many it reached. Fail-open, one by one."""
+    from personalclaw.workflows import service, store
+    from personalclaw.workflows.models import RunStatus, run_ending
+
+    stopped = _stopped(ending)
+    unfinished = {
+        run_ending(s) for s in (RunStatus.FAILED, RunStatus.ESCALATED, RunStatus.DECLINED)
+    }
+    if not stopped and ending not in unfinished:
+        return 0
+
+    reached = 0
+    for child in _launched_runs(run, stopped=stopped):
+        if store.cancel_requested(child.id):
+            continue
+        try:
+            if service.cancel_run(child.id, supervisor=supervisor, reason=clause).get("ok"):
+                reached += 1
+        except Exception:
+            logger.warning("could not stop run %s (%s)", child.id, clause, exc_info=True)
+    if not stopped or subagents is None:
+        return reached
+    going = [info.id for info in _launched_agents(run, subagents) if not info.done]
+    if going:
+        try:
+            reached += await subagents.stop_agents(going, because=clause)
+        except Exception:
+            logger.warning("could not stop subagents %s (%s)", going, clause, exc_info=True)
+    return reached

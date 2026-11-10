@@ -36,7 +36,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -112,6 +112,8 @@ class Finding:
     origin_run_id: str = ""
     origin_node_id: str = ""
     origin_session_key: str = ""
+    #: Why a verify panel refuted it, when one did (``status`` "Refuted").
+    refute_reason: str = ""
 
     def __post_init__(self) -> None:
         self.severity = normalize_severity(self.severity)
@@ -164,6 +166,7 @@ class Finding:
             "origin_run_id": self.origin_run_id,
             "origin_node_id": self.origin_node_id,
             "origin_session_key": self.origin_session_key,
+            "refute_reason": self.refute_reason,
         }
 
 
@@ -209,6 +212,123 @@ def _finding_from_mapping(
         origin_node_id=node_id,
         origin_session_key=session_key,
     )
+
+
+#: The field a review step's output carries on each finding it filed: that finding's row, as
+#: :func:`row_stamp` names it, so a step that later judges the finding names the row it judged.
+REVIEW_KEY = "review_key"
+#: A review row's status once a step judging its finding refuted it (:func:`verdict_on`).
+REFUTED = "Refuted"
+
+
+def row_stamp(key: str, instance_path: str, epoch: int) -> str:
+    """The one name of a filed finding's row: its key (:attr:`Finding.key`, taken before the
+    ledger redacts the row) and the instance and epoch of the step that filed it, so the same
+    words filed again, by another round or a re-run, are another row."""
+    return f"{key}|{instance_path}|{int(epoch or 0)}"
+
+
+def keyed_findings(
+    output: Any,
+    *,
+    run_id: str = "",
+    node_id: str = "",
+    instance_path: str = "",
+    epoch: int = 0,
+    filed: Collection[str] = (),
+) -> tuple[list[Finding], Any]:
+    """The findings a review step's *output* files, and *output* with each of them carrying its
+    row's stamp under :data:`REVIEW_KEY` (a copy; the step's own value is not edited; a JSON string
+    comes back as JSON), in one pass, so one reading of a row decides both. A step that reads them
+    on (a verify panel's verifier) then judges a finding the review list names by its row, never
+    by its words. A row whose stamp is one this run already filed (*filed*: a step that relabels or
+    joins findings filed before) keeps it and is not filed again; any other stamp, another run's,
+    is this run's finding, filed and stamped anew."""
+    as_text = isinstance(output, str)
+    try:
+        data: Any = json.loads(output) if as_text else output
+    except (TypeError, ValueError):
+        return [], output
+    rows: Any = data.get("findings") if isinstance(data, Mapping) else data
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return [], output
+    findings: list[Finding] = []
+    stamped: list[Any] = []
+    for row in rows:
+        parsed = None
+        stamp = row.get(REVIEW_KEY) if isinstance(row, Mapping) else None
+        if isinstance(row, Mapping) and not (isinstance(stamp, str) and stamp in filed):
+            fields = {k: v for k, v in row.items() if k != REVIEW_KEY}
+            parsed = _finding_from_mapping(fields, run_id=run_id, node_id=node_id, session_key="")
+        if parsed is None:
+            stamped.append(row)
+            continue
+        findings.append(parsed)
+        stamped.append({**fields, REVIEW_KEY: row_stamp(parsed.key, instance_path, epoch)})
+    if not findings:
+        return [], output
+    data = {**data, "findings": stamped} if isinstance(data, Mapping) else stamped
+    return findings, (json.dumps(data, ensure_ascii=False) if as_text else data)
+
+
+def carries_stamps(output: Any) -> bool:
+    """Whether a step's *output* holds a finding that carries a stamp (:data:`REVIEW_KEY`): a cheap
+    test, so the ledger is read for the stamps a run filed only when one may be among them."""
+    if isinstance(output, str):
+        return f'"{REVIEW_KEY}"' in output
+    rows = output.get("findings") if isinstance(output, Mapping) else output
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return False
+    return any(isinstance(row, Mapping) and row.get(REVIEW_KEY) for row in rows)
+
+
+def unstamped(value: Any) -> Any:
+    """*value* without the review list's stamps (:data:`REVIEW_KEY`, at any depth): a copy, and
+    JSON text that carries one comes back as JSON text, its keys sorted. What a loop's breaker
+    compares, since a stamp names the instance that filed the finding and so differs each cycle
+    for the same findings."""
+    if isinstance(value, str):
+        if f'"{REVIEW_KEY}"' not in value:
+            return value
+        try:
+            data = json.loads(value)
+        except (TypeError, ValueError):
+            return value
+        return json.dumps(_without_stamps(data), sort_keys=True, ensure_ascii=False)
+    return _without_stamps(value)
+
+
+def _without_stamps(value: Any) -> Any:
+    if isinstance(value, str):
+        # Stamped JSON text a later step carries on inside its own output.
+        return unstamped(value)
+    if isinstance(value, Mapping):
+        return {k: _without_stamps(v) for k, v in value.items() if k != REVIEW_KEY}
+    if isinstance(value, (list, tuple)):
+        return [_without_stamps(v) for v in value]
+    return value
+
+
+def verdict_on(output: Any, judged: Any) -> tuple[str, bool, str] | None:
+    """``(stamp, refuted, reason)`` when a step judging one finding, *judged* (its item, as handed
+    to it, carrying :data:`REVIEW_KEY`), answered *output* with a verdict on it (``refuted`` true or
+    false, a verify panel's verifier), else None. The stamp is the finding's own, from what the
+    step was given, so a verifier that words the finding its own way still judges the row it was
+    handed. An item with no stamp gives ``("", refuted, reason)``: a verdict on no row."""
+    if not isinstance(judged, Mapping):
+        return None
+    stamp = str(judged.get(REVIEW_KEY, "") or "")
+    if isinstance(output, str):
+        if '"refuted"' not in output:
+            return None
+        try:
+            output = json.loads(output)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(output, Mapping) or not isinstance(output.get("refuted"), bool):
+        return None
+    reason = " ".join(str(output.get("refute_reason", "") or "").split())[:500]
+    return stamp, output["refuted"], reason
 
 
 def parse_findings(

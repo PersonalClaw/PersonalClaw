@@ -47,7 +47,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw import approval_answer, filled_secrets, review_triage
+from personalclaw import approval_answer, filled_secrets
 from personalclaw.approval_answer import Principal
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.guardrails.calls import CallLog, capture_model_calls
@@ -73,6 +73,7 @@ from personalclaw.workflows import (
     mid_flight,
     mutations,
     node_bindings,
+    review_service,
     run_admission,
     run_budget,
     run_finish,
@@ -1913,34 +1914,7 @@ class RunController:
                 evidence=out.get("judge_evidence", {}),
             )
 
-        # Review findings → Run Ledger. ANY stage whose output
-        # carries `findings` is a review-producing stage — the `{{block:finding-record}}` prompt
-        # contract is what makes it one, not the node kind, so `audit-sweep`'s parallel infer nodes
-        # and a judge gate both land here without either declaring anything new.
-        #
-        # Emitted RAW (the reviewer's own claimed `location`), one row per finding. Anchor
-        # validation deliberately does NOT happen here: findings must be validated against the
-        # ACTUAL diff "before render", and the diff at settle time is not the diff the human will
-        # be looking at — the worker keeps working. Validating once at emit and storing the verdict
-        # would bake in an answer that goes stale, which is the exact wrong-line failure the
-        # validation exists to prevent. The panel re-anchors on every read.
-        # A `findings` key in a DICT output, or a JSON string that mentions one — an `infer` node
-        # returns its JSON as text, and gating on dicts alone would make the emit fire for
-        # `transform` nodes and stay silent for the LLM reviewers this is actually about. The cheap
-        # substring test comes first so a megabyte of prose is not JSON-parsed on every settle.
-        raw_out = result.output
-        if isinstance(raw_out, dict) or (isinstance(raw_out, str) and '"findings"' in raw_out):
-            for finding in review_triage.parse_findings(
-                raw_out, run_id=self.run.id, node_id=item.node.id or item.path
-            ):
-                self.journal.write(
-                    journal_mod.REVIEW_FINDING,
-                    instance_path=item.path,
-                    node_id=item.node.id,
-                    epoch=inst.epoch,
-                    template=str(self.run.workflow_name or ""),
-                    **finding.to_dict(),
-                )
+        review_service.record_review(self, item, inst, result)
 
         if result.state in SUCCESS_STATES:
             ref, preview = self.journal.store_output(item.path, result.output)
@@ -2464,8 +2438,10 @@ class RunController:
             run_finish.chain_after_run(self.services, self.run, status)
         self._publish("workflow_run_update", {"status": status.value, "error": error})
         if status in TERMINAL_RUN_STATUSES:
-            await run_finish.drain_overlap_queue(self)
+            # What its steps launched ends first: a Run workflow run it queued behind itself is
+            # cancelled while still queued, not started by the drain and only then cancelled.
             await run_finish.end_what_its_steps_started(self, status, because=because)
+            await run_finish.drain_overlap_queue(self)
 
     def _item_context(self, item: ReadyNode) -> dict[str, Any]:
         """The per-item fields a foreach row renders: `[i/total] label`.
@@ -2575,11 +2551,19 @@ class RunController:
         )
 
     def publish_task_verified(
-        self, path: str, node_id: str, *, task_id: str, passed: bool | None, criterion: str = ""
+        self,
+        path: str,
+        node_id: str,
+        *,
+        task_id: str,
+        passed: bool | None,
+        criterion: str = "",
+        folder: str = "",
     ) -> None:
-        """Emit a verification outcome. `passed` is the TRISTATE — see `journal.task_verified`."""
+        """Emit a verification outcome. `passed` is the TRISTATE — see `journal.task_verified`.
+        *folder* is where the check ran (the run's own), "" when it had none and could not run."""
         self.journal.task_verified(
-            path, node_id, task_id=task_id, passed=passed, criterion=criterion
+            path, node_id, task_id=task_id, passed=passed, criterion=criterion, folder=folder
         )
         self._publish(
             "workflow_task_verified",

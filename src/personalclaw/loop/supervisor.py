@@ -152,21 +152,18 @@ async def _verify_command_signal(
 async def _all_criteria_met(
     loop: Loop, criteria: list[str], findings: list[dict], check: dict
 ) -> tuple[bool | None, dict]:
-    """A strict judge over a verifiable loop's criteria: PASS only if the evidence from completed
-    cycles shows EVERY criterion is met. Guards against a green command on a partial build. It is
-    shown the check's own result beside the cycles' reports: what it judges is the work's result,
-    not only the worker's account of it.
+    """A strict judge over a verifiable loop's criteria, one verdict each: met only if the evidence
+    from completed cycles shows EVERY criterion is met. Guards against a green command on a partial
+    build. It is shown the check's own result beside the cycles' reports: what it judges is the
+    work's result, not only the worker's account of it.
 
-    Returns its decision — True (all met), False (>=1 unmet → keep going), or None (no answer →
-    defer; the watchdog still bounds by budget) — and its answer for the cycle's verdict.
-    Conservative: any ambiguity is NOT a pass.
+    Returns its decision — True (all met), False (one fails, or it cannot tell → keep going), or
+    None (no answer → defer; the watchdog still bounds by budget) — and its answer for the cycle's
+    verdict, each sub-goal's verdict and reason under ``criteria`` (``gates.criteria_verdicts``).
+    A one-word PASS from a custom prompt still passes each, and a FAIL that names none is
+    can't-tell for each. Conservative: any ambiguity is NOT a pass.
     """
-    from personalclaw.loop.gates import (
-        for_a_judge,
-        judge_verdict,
-        verdict_is_pass,
-        verdict_rendered,
-    )
+    from personalclaw.loop.gates import criteria_verdicts, for_a_judge, judge_verdict
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
     recent = findings[-6:]
@@ -189,7 +186,7 @@ async def _all_criteria_met(
         f"\n\nThe supervisor ran the check `{check['command']}` in {check['dir']} this cycle: "
         f"it passed (exit 0){printed}"
     )
-    criteria_block = "\n".join(f"- {s}" for s in criteria)
+    criteria_block = "\n".join(f"{n}. {s}" for n, s in enumerate(criteria, 1))
     # The completion gate lives in the prompt system (bundled ``task-subgoal-judge``, bindable in
     # Settings → Prompts).
     prompt = render_use_case_prompt(
@@ -200,13 +197,13 @@ async def _all_criteria_met(
         return None, {"outcome": "no_answer", "why": "its prompt could not be loaded"}
     raw = await judge_verdict(prompt, loop_id=loop.id)
     answer = " ".join((raw or "").split())[:300]
-    if verdict_is_pass(raw):
-        return True, {"outcome": "pass", "answer": answer}
-    # A real FAIL → keep cycling. A non-verdict (judge/provider unavailable) → defer (None), NOT a
-    # clean False, so the watchdog can flag a degraded done-ness brain rather than silently spin;
-    # budget still caps the loop.
-    if verdict_rendered(raw):
-        return False, {"outcome": "fail", "answer": answer}
+    verdicts, rendered = criteria_verdicts(raw, criteria, whole="goal", item="sub-goal")
+    # A sub-goal that fails or cannot be told → keep cycling. A non-verdict (judge/provider
+    # unavailable) → defer (None), NOT a clean False, so the watchdog can flag a degraded
+    # done-ness brain rather than silently spin; budget still caps the loop.
+    if rendered:
+        met = all(v["verdict"] == "pass" for v in verdicts)
+        return met, {"outcome": "pass" if met else "fail", "answer": answer, "criteria": verdicts}
     why = (
         f"its answer was neither PASS nor FAIL (“{answer}”)"
         if answer
@@ -259,7 +256,7 @@ def _record_check(
     elif judge["outcome"] == "pass":
         sentence += ", and the judge found every sub-goal met."
     elif judge["outcome"] == "fail":
-        sentence += ", but the judge found a sub-goal not met yet."
+        sentence += f", but {_unmet_words(judge.get('criteria') or [])}."
     else:
         sentence += f", but the judge gave no answer: {judge['why']}."
         cannot_judge = f"{sentence} The loop keeps going and asks again after its next cycle."
@@ -278,6 +275,49 @@ def _record_check(
         record["cannot_judge"] = cannot_judge
     cycle = int(findings[-1].get("cycle", len(findings))) if findings else 0
     loop_files.write_verdict(loop.id, cycle, record)
+
+
+def named_verdict(verdict: dict) -> str:
+    """A sub-goal's verdict as the loop says it: the sub-goal, and its reason when it has one
+    ("“Fixes section” (there is no fixes section yet)")."""
+    reason = str(verdict.get("reason") or "")[:200]
+    return f"“{verdict.get('criterion', '')}”" + (f" ({reason})" if reason else "")
+
+
+def _unmet_words(verdicts: list[dict]) -> str:
+    """What a judge that did not pass the goal found, by sub-goal: the ones it failed and the
+    ones it could not tell, each named with its reason ("the judge found “Fixes section” (there
+    is no fixes section yet) not met yet"). A one-word FAIL named none, and is said once."""
+    from personalclaw.loop.gates import one_word_fail
+
+    said = one_word_fail("goal", "sub-goal")
+    if verdicts and all(v.get("reason") == said for v in verdicts):
+        return said
+    failed = [named_verdict(v) for v in verdicts if v.get("verdict") == "fail"]
+    unclear = [named_verdict(v) for v in verdicts if v.get("verdict") not in ("pass", "fail")]
+    parts = []
+    if failed:
+        parts.append(f"the judge found {'; '.join(failed)} not met yet")
+    if unclear:
+        verb = "is" if len(unclear) == 1 else "are"
+        who = "" if failed else "the judge "
+        parts.append(f"{who}could not tell whether {'; '.join(unclear)} {verb} met")
+    return ", and ".join(parts) or "the judge found a sub-goal not met yet"
+
+
+def unmet_sub_goals(loop_id: str) -> list[dict]:
+    """The sub-goals the last check's judge did not find met, each with its verdict and reason,
+    for the next cycle's worker; ``[]`` when the last check was not judged or the judge passed
+    the goal. The last check is the latest cycle verdict that carries one (:func:`_record_check`).
+    """
+    for verdict in reversed(loop_files.get_verdicts(loop_id)):
+        if "check" not in verdict:
+            continue
+        judge = verdict.get("judge") or {}
+        if judge.get("outcome") != "fail":
+            return []
+        return [v for v in judge.get("criteria") or [] if v.get("verdict") != "pass"]
+    return []
 
 
 async def _judge_assessment_signal(

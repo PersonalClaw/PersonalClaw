@@ -986,7 +986,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
         filename="task-subgoal_judge.md",
         kind="user",
         category="loop",
-        description="Verifiable-goal sub-goal gate: after the automated check passes, confirm EVERY sub-goal is met from cycle evidence (PASS/FAIL out).",  # noqa: E501
+        description="Verifiable-goal sub-goal gate: after the automated check passes, judge EACH sub-goal from cycle evidence (a pass, fail or can't-tell verdict with a reason for each, as JSON).",  # noqa: E501
         variables=(
             PromptVariable(
                 name="task", type="textarea", required=True, description="The overall goal."
@@ -995,7 +995,7 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
                 name="criteria",
                 type="textarea",
                 required=True,
-                description="The sub-goals, one '- <sub-goal>' per line.",
+                description="The sub-goals, numbered from 1, one '<n>. <sub-goal>' per line.",
             ),
             PromptVariable(
                 name="evidence",
@@ -1484,6 +1484,11 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
                 type="boolean",
                 default=False,
                 description="True when this loop runs multi-agent with a roster (the worker is the orchestrator).",  # noqa: E501
+            ),
+            PromptVariable(
+                name="unmet_sub_goals",
+                default="",
+                description="The sub-goals the last check's judge did not find met, each with its reason, joined with '; ' (empty when the last check was not judged or the judge passed the goal).",  # noqa: E501
             ),
         ),
     ),
