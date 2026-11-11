@@ -834,8 +834,9 @@ class TestTheStopEndsWithItsFanout:
     async def test_a_next_start_that_fails_in_the_reap_leaves_the_reap_whole(self) -> None:
         """A running helper is stopped, and the start of the helper waiting for its slot raises in
         the reap (the audit log refusing its row, as a full disk makes it). The stopped helper
-        still ends reaped with its stop's reason, its slot is given back once, not twice, and the
-        rest of its reap runs: its Activity row hears that it ended."""
+        still ends reaped with its stop's reason, and the Stop says it stopped it; its slot is
+        given back once, not twice, and the rest of its reap runs: its Activity row hears that it
+        ended."""
         sessions, began = _sessions_that_say_they_started()
         ended: list[str] = []
 
@@ -862,10 +863,7 @@ class TestTheStopEndsWithItsFanout:
                     raise OSError(28, "No space left on device")
 
             sel.return_value.log_tool_invocation.side_effect = full
-            try:
-                await mgr.cancel(running.id, reason="Cancelled by user")
-            except OSError:
-                pass
+            assert await mgr.cancel(running.id, reason="Cancelled by user") is True
             await _settle(mgr)
             assert running.reaped and running.error == "Cancelled by user", (
                 running.reaped,
@@ -876,6 +874,115 @@ class TestTheStopEndsWithItsFanout:
                 waiting.done,
             )
             assert running.id in ended, "the reap's tail ran to its end"
+
+    @pytest.mark.asyncio
+    async def test_a_next_start_that_fails_after_a_denied_start_leaves_that_ending_whole(
+        self,
+    ) -> None:
+        """A chat's last helper asks to start under its tripped breaker, and another chat's
+        helper, started by its own grant, waits for the slot. The start is denied, and the waiting
+        helper's start raises in the drain that follows (the audit log refusing its row). The
+        refusal still ends its chat's stop and says the denied helper ended, so the chat's next
+        helper is not refused."""
+        from personalclaw.approval_grants import YOU, ToolDecision
+
+        answer = asyncio.Event()
+
+        async def owner(_event, _key=""):
+            await answer.wait()
+            return ToolDecision(False, "rejected", YOU)
+
+        ended: list[str] = []
+
+        async def on_event(etype: str, info: SubagentInfo, _extra: dict) -> None:
+            if etype == "subagent_done":
+                ended.append(info.id)
+
+        sessions = _hanging_sessions()
+        sessions.get_approval_policy = MagicMock(return_value="")
+        ctx = _mock_ctx_builder()
+        ctx.hooks.auto_approve_subagent_spawn = False
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=ctx,
+            on_done=AsyncMock(),
+            on_event=on_event,
+            is_yolo=lambda: False,
+            on_spawn_approval=owner,
+            max_concurrent=1,
+        )
+        chat = "dashboard:a-chat-whose-start-is-denied"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel") as sel:
+            asking = mgr.spawn("the helper asking to start", parent_session_key=chat)
+            granted = mgr.spawn(
+                "another chat's helper", parent_session_key="dashboard:b", approval_mode="auto"
+            )
+            assert asking is not None and not asking.queued
+            assert granted is not None and granted.queued
+            start = mgr._tasks[asking.id]
+            _trip(mgr, chat)
+
+            def full(**kw):
+                if kw.get("metadata", {}).get("subagent_id") == granted.id:
+                    raise OSError(28, "No space left on device")
+
+            sel.return_value.log_tool_invocation.side_effect = full
+            answer.set()
+            await asyncio.wait({start})
+            assert start.exception() is None, start.exception()
+            assert asking.done and asking.declined, asking.error
+            assert not granted.queued and not granted.never_ran, "the waiting helper started"
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+            assert asking.id in ended, "the denied helper's Activity row heard it ended"
+            following = mgr.spawn("the chat's next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+
+    @pytest.mark.asyncio
+    async def test_a_next_start_that_fails_after_a_helper_ends_on_its_own_leaves_that_ending_whole(
+        self,
+    ) -> None:
+        """A chat's last helper ends on its own under its tripped breaker, and the start of
+        another chat's helper waiting for the slot raises in the drain its ending makes (the
+        audit log refusing its row). The ending still runs to its end: the chat's stop ends, the
+        helper's session is reset and its report reaches its chat."""
+        delivered: list[str] = []
+
+        async def on_done(batch: list[SubagentInfo]) -> None:
+            delivered.extend(info.id for info in batch)
+
+        sessions = _completing_sessions()
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=on_done,
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        chat = "dashboard:a-chat-whose-last-helper-ends"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel") as sel:
+            last = mgr.spawn("the chat's last helper", parent_session_key=chat)
+            waiting = mgr.spawn("another chat's helper", parent_session_key="dashboard:b")
+            assert last is not None and not last.queued and waiting is not None and waiting.queued
+            ending = mgr._tasks[last.id]
+            _trip(mgr, chat)
+
+            def full(**kw):
+                if kw.get("metadata", {}).get("subagent_id") == waiting.id:
+                    raise OSError(28, "No space left on device")
+
+            sel.return_value.log_tool_invocation.side_effect = full
+            await asyncio.wait({ending})
+            assert ending.exception() is None, ending.exception()
+            await mgr.flush_deliveries()
+            assert last.done and not last.error, last.error
+            assert not waiting.queued and not waiting.never_ran, "the waiting helper started"
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+            assert any(
+                c.args and c.args[0].endswith(last.id) for c in sessions.reset.await_args_list
+            ), "its session was reset"
+            assert last.id in delivered, "its report reached its chat"
+            following = mgr.spawn("the chat's next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
 
     @pytest.mark.asyncio
     async def test_the_run_budgets_late_cancel_spares_a_helper_of_the_next_fanout(self) -> None:

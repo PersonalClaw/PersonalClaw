@@ -935,12 +935,8 @@ class SubagentManager:
             self._note_child_outcome(info)
             # Its slot goes to the helper waiting for it, as when a helper ends on its own: a
             # reaped run skips its own drain, so without this the waiting one stayed queued until
-            # some other helper ended, and a later spawn took the slot first. A start that fails
-            # here (its audit row refused) must not cut this reap's commit or its tail.
-            try:
-                self._drain_queue()
-            except Exception:
-                logger.exception("Reaper: the next helper could not start after %s", agent_id)
+            # some other helper ended, and a later spawn took the slot first.
+            self._drain_queue()
         info.reaped = True
         self._maybe_clear_fanout(_fanout_key(info))
 
@@ -1757,7 +1753,11 @@ class SubagentManager:
             self._drain_queue()
             return
         logger.info("Draining queue: dispatching %s (%d left)", info.id, len(self._queue))
-        self._dispatch_run(info)
+        try:
+            self._dispatch_run(info)
+        except Exception:
+            # A failed start (its audit row refused) must not cut short the ending that drained it.
+            logger.exception("Draining queue: the start of %s raised", info.id)
         if self._queue and self._running_count < self._max_concurrent:
             asyncio.get_event_loop().call_later(2.0, self._drain_queue)
 
