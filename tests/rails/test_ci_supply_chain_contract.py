@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime
 import functools
 import json
+import re
 import sys
 import tomllib
 from collections.abc import Callable
@@ -36,6 +37,7 @@ from test_ci_contract import (
     REPO,
     Control,
     Row,
+    _pinned,
     _plant,
     _plants,
     _write,
@@ -100,6 +102,26 @@ _PINNED_NODE_BASE = (
 )
 #: The web image's SPA stage as it starts today: on the build platform, pinned by digest.
 _SPA_FROM = f"FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/{_NODE_BASE}"
+#: The action pins the action-sha plants below edit, as the workflows pin them today, and the Nix
+#: install action's release comment in nix.yml, so a Dependabot bump of the actions leaves those
+#: plants able to find what they edit.
+_PYPI_PUBLISH = _pinned(_RELEASE_YML, r"(pypa/gh-action-pypi-publish@[0-9a-f]{40} # v[0-9.]+)")
+_NIX_ACTION_COMMENT = _pinned(
+    ".github/workflows/nix.yml", r"cachix/install-nix-action@[0-9a-f]{40}( # v[0-9.]+)"
+)
+_GITHUB_SCRIPT = _pinned(
+    ".github/workflows/dco.yml", r"(actions/github-script@[0-9a-f]{40} # v[0-9.]+)"
+)
+_UPLOAD_ARTIFACT = _pinned(
+    ".github/workflows/pr.yml", r"(actions/upload-artifact@[0-9a-f]{40} # v[0-9.]+)"
+)
+_DOWNLOAD_ARTIFACT = _pinned(_MERGE_YML, r"(actions/download-artifact@[0-9a-f]{40} # v[0-9.]+)")
+#: The web image's nginx tag as it pins today, and the next minor line, so a Dependabot bump of
+#: the base leaves the plants below able to find what they edit.
+_NGINX_TAG = _NGINX.split("@", 1)[0]
+_NGINX_PARTS = re.fullmatch(r"nginx:(\d+)\.(\d+)(?:\.\d+)?-(\S+)", _NGINX_TAG)
+assert _NGINX_PARTS, f"{_NGINX_TAG}: the moved-tag plant needs nginx:<major>.<minor>-<flavour>"
+_NGINX_MOVED = f"nginx:{_NGINX_PARTS[1]}.{int(_NGINX_PARTS[2]) + 1}-{_NGINX_PARTS[3]}"
 
 
 def _locked(name: str) -> str:
@@ -339,36 +361,43 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _plant(
                 "an action by tag",
                 ".github/workflows/dco.yml",
-                "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0",
+                _GITHUB_SCRIPT,
                 "actions/github-script@v9",
+                expect="actions/github-script@v9 is not pinned by commit SHA",
             ),
             # The tier workflows (#3915) are read as every workflow is.
             _plant(
                 "an action by tag in pr.yml",
                 ".github/workflows/pr.yml",
-                "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2",
+                _UPLOAD_ARTIFACT,
                 "actions/upload-artifact@v7",
                 expect="actions/upload-artifact@v7 is not pinned by commit SHA",
             ),
             _plant(
                 "an action by branch in merge.yml",
                 ".github/workflows/merge.yml",
-                "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2",
+                _DOWNLOAD_ARTIFACT,
                 "actions/download-artifact@main",
                 expect="actions/download-artifact@main is not pinned by commit SHA",
             ),
             _plant(
                 "an action by branch",
                 _RELEASE_YML,
-                "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2",
+                _PYPI_PUBLISH,
                 "pypa/gh-action-pypi-publish@release/v1",
+                expect="pypa/gh-action-pypi-publish@release/v1 is not pinned by commit SHA",
             ),
-            _plant("a SHA with no release comment", ".github/workflows/nix.yml", " # v31.11.2", ""),
+            _plant(
+                "a SHA with no release comment",
+                ".github/workflows/nix.yml",
+                _NIX_ACTION_COMMENT,
+                "",
+            ),
             _plant(
                 "a SHA whose comment is a bare major",
                 ".github/workflows/dco.yml",
-                "# v9.0.0",
-                "# v9",
+                _GITHUB_SCRIPT.split(" ", 1)[1],
+                _GITHUB_SCRIPT.split(" ", 1)[1].split(".", 1)[0],
             ),
             _planted_workflow("a docker:// action by tag", "      - uses: docker://alpine:3.20\n"),
             _planted_workflow(
@@ -442,7 +471,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 "an image base by tag alone",
                 "deploy/docker/Dockerfile.web",
                 _NGINX,
-                "nginx:1.27-alpine",
+                _NGINX_TAG,
             ),
             # The SPA stage builds on the build platform; the flag changes nothing the pin rule
             # reads, so each base below is judged by the image after it.
@@ -597,9 +626,9 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _plant(
                 "a base whose tag moved without its comment",
                 _WEB,
-                "nginx:1.27-alpine@sha256:",
-                "nginx:1.28-alpine@sha256:",
-                expect="names nginx:1.28-alpine",
+                f"{_NGINX_TAG}@sha256:",
+                f"{_NGINX_MOVED}@sha256:",
+                expect=f"names {_NGINX_MOVED}",
             ),
             # Images a run: step or a Dockerfile fetches outside FROM.
             _run_step("docker run --rm ubuntu:latest true", expect="ubuntu:latest is not"),
