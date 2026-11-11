@@ -556,23 +556,27 @@ A published core release is an **obligation on the other two repos**, and the or
   website PR (`scripts/validate-release-parity.mjs` reads both repositories' tags), until
   the pins PR below lands. A website dependency PR waiting at that moment waits for the
   pins. Keep the window between the tags and the pins PR short.
-- **The installer mirror, right after the bump PR merges (no tag needed).** The website
-  serves the installer from its own `public/install`, which must be byte for byte
-  `deploy/website/install.sh` (`cmp`). A bump moves `PC_MIN_VERSION`, so it needs a
-  website PR that copies the file. Until that deploys, the website's scheduled
-  release-follow check reports the served installer as drifted in its tracking issue,
-  and the getting-started verify recipe fails for users.
+- **The installer reaches the website with the pins PR.** The website serves the
+  installer from its own `public/install`, which `npm run sync:sources` writes from the
+  pinned core commit's `deploy/website/install.sh`, recording its digest and that commit.
+  The website's checks hold the file to the pin byte for byte
+  (`scripts/served-installer.mjs`), so a copy of the file can't land on its own: it moves
+  with the pins PR below. A bump moves `PC_MIN_VERSION`, so from the bump's merge until that
+  PR deploys, the getting-started verify recipe (the served installer against `main`'s
+  `install.sh.sha256`) fails for users, and the website's scheduled release-follow check
+  reports the served installer as drifted in its tracking issue. Keep that window short:
+  tag soon after the bump, and land the pins PR right after the tag.
 - **`PersonalClawApps`** — tag it at the matching commit. The website's
   `released` channel requires *both* a core tag and an apps tag to resolve, and
   will fail closed without them. The apps tag **triggers nothing**: apps CI runs
   only on PRs and pushes to `main`, there is no apps release workflow, and users
   get apps from the default branch, not from a tag. It exists for the website's pin.
 - **`personalclaw.dev`** — bump `sources/personalclaw.sources.json` (tag **and**
-  dereferenced commit for core + apps), bump `package.json`, and refresh anything
-  the release changed. `release.yml`'s `website-follow` job nudges its
-  `release-follow.yml`; if the `website-follow` environment holds no
-  `WEBSITE_DISPATCH_TOKEN` secret the nudge is skipped and the website's own daily
-  watchdog catches it instead.
+  dereferenced commit for core + apps), run `npm run sync:sources` (which writes
+  `public/install`), bump `package.json`, and refresh anything the release changed.
+  `release.yml`'s `website-follow` job nudges its `release-follow.yml`; if the
+  `website-follow` environment holds no `WEBSITE_DISPATCH_TOKEN` secret the nudge is
+  skipped and the website's own daily watchdog catches it instead.
 
 The nudge's token is an **environment** secret, so only a tag's release run can read it:
 a repository secret reaches every workflow a branch of this repository runs, a pull

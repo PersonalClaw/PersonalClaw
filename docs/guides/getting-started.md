@@ -410,6 +410,16 @@ Settings → Updates still checks once when you press it, and `personalclaw upda
 when you run it by hand. This is a separate switch from `updates.auto`: one governs whether
 PersonalClaw *looks*, the other whether it *installs*.
 
+### Upgrading to workflow secrets from Settings → Secrets alone
+
+- **A workflow reads its `{{secret:NAME}}` from Settings → Secrets only.** From 0.3.8 it no longer
+  reads the gateway's starting environment: a container's `env_file` or `environment:`, a service
+  unit, the shell or app that starts the gateway, or a `.env` in the folder it starts in. Before you
+  update, save each secret a workflow uses in Settings → Secrets (in a container,
+  `personalclaw setup --credential NAME`), then take it out of that environment. A workflow that
+  names a secret set only there is refused when its run starts, or the step that uses it fails. A
+  model provider's key and an automation's own action read the environment as before.
+
 ### Upgrading to sign-ins that need more than the cookie
 
 - **Every browser and every paired phone or device signs in again, once.** A browser's sign-in
