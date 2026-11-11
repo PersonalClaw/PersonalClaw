@@ -59,10 +59,11 @@ function foldedIndex(): Map<string, LucideIcon> {
     const held = out.get(lower)
     // 🪤 A NAME COLLISION IS NOT A CONFLICT. lucide ships spellings that differ only in case —
     // `Grid2x2Check`/`Grid2X2Check`, `Grid3x3`/`Grid3X3`, `Move3d`/`Move3D`, `Rotate3d`, `Scale3d`
-    // — and in every such pair today BOTH names export the SAME component object. Dropping on the
+    // — and most such groups are ONE component object under two names. Dropping on the
     // collision alone (the obvious `seen`-set version) therefore refused 7 names it had nothing to
     // choose between, so `grid3x3` fell back to the generic glyph while `Grid3x3` worked. Compare
-    // the VALUES: identical is a no-op, genuinely different is the ambiguity worth refusing.
+    // the VALUES: identical is a no-op, and a case-only spelling group of DIFFERENT components
+    // (`LetterS`/`Letters`, since lucide 1.64) is refused, while each exact spelling resolves.
     if (held !== undefined && held !== value) {
       out.delete(lower)
       conflicted.add(lower)

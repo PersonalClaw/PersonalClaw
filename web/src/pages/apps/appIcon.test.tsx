@@ -120,14 +120,6 @@ describe('resolveAppIcon folds case', () => {
     // FLOOR 3 (the fold is not two hand-picked names): `brain` and `squareterminal` above would
     // both pass a two-entry special case. This asserts the index is built from lucide's own values
     // — and it is what measured the fold's one real limit.
-    //
-    // 🪤 THE FOLD IS NOT TOTAL, BY DESIGN. lucide ships names that differ ONLY in case —
-    // `Grid2x2Check`/`Grid2X2Check`, `Grid3x3`/`Grid3X3`, `Move3d`/`Move3D`, `Rotate3d`, `Scale3d`
-    // and the rest of that family — and they are DIFFERENT component objects. A fold that picked
-    // one would resolve an app's icon by coin-flip, so `foldedIndex` drops an ambiguous key
-    // instead of choosing, and those spellings fall back to Blocks. That is the honest outcome:
-    // the exact spelling still works for every one of them, since the fold is only consulted
-    // after an exact-name miss. Asserting `missed` is empty here would be asserting the coin-flip.
     const iconValues = new Set<unknown>(Object.values(lucideIconRegistry))
     const byLower = new Map<string, Set<unknown>>()
     for (const [key, value] of Object.entries(Lucide as unknown as Record<string, unknown>)) {
@@ -139,21 +131,37 @@ describe('resolveAppIcon folds case', () => {
     const canonical = Object.keys(lucideIconRegistry)
     expect(canonical.length).toBeGreaterThan(1000)
 
-    const ambiguous = canonical.filter((n) => (byLower.get(n.toLowerCase())?.size ?? 0) > 1)
-    // MEASURED, and it is why the fold compares values rather than counting names: there are
-    // case-only name collisions (`Grid2x2Check`/`Grid2X2Check`, `Move3d`/`Move3D`, …) but ZERO of
-    // them are value-distinct, so no canonical name is genuinely ambiguous today. The first
-    // version of this fix dropped on the name collision alone and silently refused 7 of them.
-    expect(ambiguous).toEqual([])
-    expect(canonical.filter((n) => resolveAppIcon(n.toLowerCase()) !== resolveAppIcon(n))).toEqual([])
+    // Why the fold compares values rather than counting names: most case-only name collisions
+    // (`Grid2x2Check`/`Grid2X2Check`, `Move3d`/`Move3D`, …) are one component under two spellings,
+    // and the first version of this fix dropped on the name collision alone and silently refused 7
+    // of them. A collision whose names are DIFFERENT components (lucide 1.64's `LetterS`/`Letters`
+    // was the first) is genuinely ambiguous. Every such spelling group is derived here from the
+    // library's own exports, so a group a later release adds is held with no edit: the fold refuses
+    // it, and each of its exact spellings still resolves to its own icon.
+    const exports = Lucide as unknown as Record<string, unknown>
+    const spellings = new Map<string, string[]>()
+    for (const [key, value] of Object.entries(exports)) {
+      if (!iconValues.has(value)) continue
+      const lower = key.toLowerCase()
+      spellings.set(lower, [...(spellings.get(lower) ?? []), key])
+    }
+    const ambiguous = [...spellings].filter(([lower]) => byLower.get(lower)!.size > 1)
+    expect(ambiguous.length, 'FLOOR 4: lucide ships a case-only group of different icons, so the refusal below runs').toBeGreaterThan(0)
+    for (const [lower, names] of ambiguous) {
+      expect(resolveAppIcon(lower), `${lower}: the fold refuses to choose`).toBe(Blocks)
+      for (const n of names) expect(resolveAppIcon(n), `${n}: its exact spelling`).toBe(exports[n])
+    }
+    const refused = new Set(ambiguous.map(([lower]) => lower))
+    expect(canonical.filter((n) => !refused.has(n.toLowerCase()) && resolveAppIcon(n.toLowerCase()) !== resolveAppIcon(n))).toEqual([])
   })
 
   it('refuses to choose when two lowercase-equal names are DIFFERENT components', () => {
-    // The guard above is a measurement of today's lucide, so this cell drives the branch it
-    // protects directly — a future release that made such a pair value-distinct must fall back
-    // rather than coin-flip. Asserted on the resolver's own contract: a spelling it cannot
-    // decide degrades to Blocks, which is the same direction every other refusal fails in.
-    expect(resolveAppIcon('NotArealIconEither')).toBe(Blocks)
+    // The loop above drives the refusal with every such group lucide ships. This cell names the
+    // first, LetterS/Letters (since lucide 1.64), so the branch keeps a real case if a release
+    // drops it: the lowercase spelling falls back to Blocks, and each exact spelling resolves.
+    expect(resolveAppIcon('letters')).toBe(Blocks)
+    expect(resolveAppIcon('LetterS')).toBe(Lucide.LetterS)
+    expect(resolveAppIcon('Letters')).toBe(Lucide.Letters)
     // and the exact spelling of every colliding name works regardless, since the fold is only
     // consulted after an exact-name miss — so a conflict can never cost a working name.
     for (const n of ['Grid2x2Check', 'Grid2X2Check', 'Move3d', 'Move3D', 'Grid3x3', 'Grid3X3']) {

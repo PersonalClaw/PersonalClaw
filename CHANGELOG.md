@@ -21,6 +21,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow reads its secrets from Settings → Secrets alone, never from the gateway's own environment. A `{{secret:NAME}}` whose name only that environment holds (the shell or app that launched the gateway, a container's `env_file`) is a secret that is not set: run start says so, and so does the step, and an automation, a hook or a step that would start a run handed it is refused before the run starts. A name both hold is read from Settings → Secrets.**
 - **The first sign-in password a container sets with `PERSONALCLAW_LOGIN_PASSWORD` is taken out of the gateway's environment once it has been read, and out of the one its Restart or an applied update starts it with, so nothing the gateway starts inherits it.**
 - **The command line and the gateway's log show each character a terminal would act on as a visible escape, whatever wrote the text, and a folder's `.env` names are checked before they're used.**
+- **The gateway image's agent CLIs install fast-uri 3.1.9, which fixes URI scheme spoofing through a percent-encoded scheme and host confusion through an unchecked WHATWG host (GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr, moderate), and two low-severity flaws in how it resolves and normalizes references (GHSA-333x-w4r6-6crp, GHSA-xhq7-xmqj-769h).**
 
 ### Added
 
