@@ -957,14 +957,24 @@ def client_problems(release_text: str, artifacts_text: str) -> list[str]:
 def test_the_client_is_built_smoked_and_recorded_with_the_release() -> None:
     release, artifacts, _ = _texts()
     assert client_problems(release, artifacts) == []
+    # The client's publish step as release.yml pins it today, so a bump of the action leaves the
+    # plant below able to find it.
+    match = re.search(
+        r"      - uses: pypa/gh-action-pypi-publish@[0-9a-f]{40} # v[0-9.]+\n"
+        r"        with:\n          packages-dir: dist-client/",
+        release,
+    )
+    assert match, (
+        "release.yml's pypi-client step is not uses: pypa/gh-action-pypi-publish@<sha> # vX.Y.Z"
+        " with packages-dir: dist-client/, so the plant below has nothing to edit"
+    )
+    publish = match.group(0)
     for planted_release, planted_artifacts, said in [
         (
             release.replace(
-                "      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33"
-                " # v1.14.2\n        with:\n          packages-dir: dist-client/",
+                publish,
                 "      - run: uv build packages/personalclaw-client-py --out-dir dist-client\n"
-                "      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33"
-                " # v1.14.2\n        with:\n          packages-dir: dist-client/",
+                + publish,
                 1,
             ),
             artifacts,
