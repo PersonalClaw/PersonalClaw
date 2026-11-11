@@ -36,8 +36,10 @@ record. It is the results job's last step, held back by nothing but a cancelled 
 runs it as GitHub does. The programs step is off unless a tier workflow names programs; it refuses
 every name outside tmux, shellcheck, dash, ffmpeg and docker before it installs anything, and
 installs each one PATH lacks, docker aside, which it only checks for, from apt-get on Linux or brew
-on macOS, nothing elsewhere. apt-get retries each fetch, and an install that still fails is an
-`infrastructure` failure of the step.
+on macOS, nothing elsewhere. apt-get retries each fetch and is cut off at 180 s; once a job, one
+that times out or fails moves the apt sources off the runner's mirror (to archive.ubuntu.com, or
+ports.ubuntu.com on arm) with a warning and tries again under 300 s, and an install that still
+fails is an `infrastructure` failure of the step.
 """
 
 from __future__ import annotations
@@ -1303,6 +1305,58 @@ exit 0
 """
 
 
+#: `timeout` as the runner has it, logging its bound and command. The calls numbered in
+#: "$STUB/hang-at" hang: each is cut off at its bound (exit 124), as the runner's mirror hung.
+_TIMEOUT = """#!/bin/sh
+printf '%s\\n' "$*" >> "$STUB/timeouts"
+n=1
+[ -f "$STUB/calls" ] && read -r n < "$STUB/calls" && n=$((n + 1))
+printf '%s\\n' "$n" > "$STUB/calls"
+shift
+if [ -f "$STUB/hang-at" ]; then
+  read -r at < "$STUB/hang-at"
+  case " $at " in *" $n "*) exit 124 ;; esac
+fi
+exec "$@"
+"""
+
+#: The x64 runner's apt sources as GitHub's image writes them: each ubuntu.sources stanza reads its
+#: hosts from apt-mirrors.txt, the runner's own mirror first, and sources.list holds only 24.04's
+#: comment.
+_SOURCES = {
+    "sources.list.d/ubuntu.sources": (
+        "Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\n"
+        "Suites: noble noble-updates noble-backports\nComponents: main universe\n\n"
+        "Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\n"
+        "Suites: noble-security\nComponents: main universe\n"
+    ),
+    "sources.list": "# Ubuntu sources have moved to /etc/apt/sources.list.d/ubuntu.sources\n",
+    "apt-mirrors.txt": (
+        "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+        "http://archive.ubuntu.com/ubuntu/\tpriority:2\n"
+    ),
+}
+
+#: Ubuntu's own layout, the hosts in the sources themselves, as 24.04 writes ubuntu.sources and as
+#: an older image's sources.list does.
+_STOCK_SOURCES = {
+    "sources.list.d/ubuntu.sources": (
+        "Types: deb\nURIs: http://azure.archive.ubuntu.com/ubuntu/\nSuites: noble noble-updates\n"
+        "Components: main universe\n"
+    ),
+    "sources.list": "deb http://azure.archive.ubuntu.com/ubuntu/ noble main universe\n",
+}
+
+#: The arm runner's apt sources: the ports mirror, under a comment that names another host first.
+_PORTS_SOURCES = {
+    "sources.list.d/ubuntu.sources": (
+        "## See http://help.ubuntu.com/community/UpgradeNotes for how to upgrade\n"
+        "Types: deb\nURIs: http://azure.ports.ubuntu.com/ubuntu-ports/\n"
+        "Suites: noble noble-updates\nComponents: main universe\n"
+    ),
+}
+
+
 def _setup_action() -> dict:
     return yaml.safe_load(_SETUP.read_text(encoding="utf-8"))
 
@@ -1321,6 +1375,9 @@ def _run_programs(
     present: tuple[str, ...] = (),
     install_fails: bool = False,
     install_puts_nothing: bool = False,
+    hang_at: tuple[int, ...] = (),
+    with_timeout: bool = True,
+    sources: dict[str, str] = _SOURCES,
 ) -> tuple[int, list[str], str]:
     """Run the action's programs step as written, under the `shell: bash` GitHub runs it with,
     with PATH the stub folder alone. The working folder holds a file named for each listed
@@ -1328,9 +1385,18 @@ def _run_programs(
     stub, bin_, cwd = tmp / "stub", tmp / "bin", tmp / "cwd"
     for folder in (stub, bin_, cwd):
         folder.mkdir(parents=True)
-    for name in ("apt-get", "brew"):
+    for name in ("apt-get", "brew", "dpkg"):
         (bin_ / name).write_text(_INSTALLER)
         (bin_ / name).chmod(0o755)
+    if with_timeout:
+        (bin_ / "timeout").write_text(_TIMEOUT)
+        (bin_ / "timeout").chmod(0o755)
+    tee = shutil.which("tee") or "/usr/bin/tee"
+    (bin_ / "tee").symlink_to(tee)
+    apt = tmp / "etc" / "apt"
+    for rel, text in sources.items():
+        (apt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (apt / rel).write_text(text)
     (bin_ / "sudo").write_text('#!/bin/sh\nexec "$@"\n')
     (bin_ / "sudo").chmod(0o755)
     for name in present:
@@ -1342,9 +1408,12 @@ def _run_programs(
         (stub / "install-fails").write_text("")
     if install_puts_nothing:
         (stub / "install-puts-nothing").write_text("")
+    if hang_at:
+        (stub / "hang-at").write_text(" ".join(map(str, hang_at)) + "\n")
     step = _programs_step()
     script = tmp / "step.sh"
-    script.write_text(step["run"], encoding="utf-8")
+    # The step's sources, read and rewritten in this run's own folder rather than the machine's.
+    script.write_text(step["run"].replace("/etc/apt/", f"{apt}/"), encoding="utf-8")
     env = {
         "PATH": str(bin_),
         "HOME": str(tmp),
@@ -1473,7 +1542,7 @@ def test_a_program_still_missing_after_its_install_fails_the_step(tmp_path: Path
 @pytest.mark.parametrize(
     ("runner_os", "programs", "attempted"),
     [
-        ("Linux", "ffmpeg", [f"{_APT} update -qq"]),
+        ("Linux", "ffmpeg", [f"{_APT} update -qq", "dpkg --configure -a", f"{_APT} update -qq"]),
         ("macOS", "ffmpeg dash", ["brew install ffmpeg"]),
     ],
 )
@@ -1481,7 +1550,124 @@ def test_a_package_manager_that_fails_after_its_retries_is_an_infrastructure_fai
     tmp_path: Path, runner_os: str, programs: str, attempted: list[str]
 ) -> None:
     """A flaky mirror must not read as a red in the job's tests: the step fails at the first
-    install that fails, under an `infrastructure` title, and installs nothing after it."""
+    install that fails (on Linux, once more from archive.ubuntu.com first), under an
+    `infrastructure` title, and installs nothing after it."""
     rc, installs, log = _run_programs(tmp_path, programs, runner_os=runner_os, install_fails=True)
     assert rc != 0 and installs == attempted, log
     assert "::error title=infrastructure::" in log, log
+
+
+def _timeouts(tmp: Path) -> list[str]:
+    log = tmp / "stub" / "timeouts"
+    return log.read_text().splitlines() if log.exists() else []
+
+
+_SUDO_APT = f"sudo {_APT}"
+
+
+@pytest.mark.parametrize(
+    "sources", [_SOURCES, _STOCK_SOURCES], ids=["github-s-mirror-list", "ubuntu-s-own"]
+)
+def test_a_mirror_that_hangs_is_left_once_for_archive_ubuntu_com(
+    tmp_path: Path, sources: dict[str, str]
+) -> None:
+    """The runner's mirror hung an update for 55 min where the whole step takes under 30 s: each
+    apt-get is cut off at 180 s, and then, once a job, the step finishes what the cut left half
+    done, moves every source to archive.ubuntu.com, says so in a warning, and tries again."""
+    rc, installs, log = _run_programs(tmp_path, "ffmpeg", hang_at=(1,), sources=sources)
+    assert rc == 0, log
+    assert installs == [
+        "dpkg --configure -a",
+        f"{_APT} update -qq",
+        f"{_APT} install -y --no-install-recommends ffmpeg",
+    ]
+    assert _timeouts(tmp_path) == [
+        f"180 {_SUDO_APT} update -qq",
+        "300 sudo dpkg --configure -a",
+        f"300 {_SUDO_APT} update -qq",
+        f"300 {_SUDO_APT} install -y --no-install-recommends ffmpeg",
+    ]
+    for rel, text in sources.items():
+        moved = text.replace("azure.archive.ubuntu.com", "archive.ubuntu.com")
+        assert (tmp_path / "etc" / "apt" / rel).read_text() == moved, rel
+    if "apt-mirrors.txt" in sources:
+        first = (tmp_path / "etc" / "apt" / "apt-mirrors.txt").read_text().splitlines()[0]
+        assert first == "http://archive.ubuntu.com/ubuntu/\tpriority:1", first
+    assert _warnings(log) == [
+        "::warning title=infrastructure::the runner's package mirror (azure.archive.ubuntu.com)"
+        " did not answer: installing from archive.ubuntu.com"
+    ], log
+
+
+def _warnings(log: str) -> list[str]:
+    return [line for line in log.splitlines() if line.startswith("::warning")]
+
+
+def test_an_arm_runner_s_mirror_is_left_for_ports_ubuntu_com(tmp_path: Path) -> None:
+    """The arm runner reads the ports mirror, which archive.ubuntu.com does not serve: a hang
+    there moves its sources to ports.ubuntu.com, and the warning names the host the sources were
+    read from and the one they are read from now, past any comment."""
+    rc, installs, log = _run_programs(tmp_path, "ffmpeg", hang_at=(1,), sources=_PORTS_SOURCES)
+    assert rc == 0, log
+    assert installs[-1] == f"{_APT} install -y --no-install-recommends ffmpeg", installs
+    [rel] = _PORTS_SOURCES
+    text = (tmp_path / "etc" / "apt" / rel).read_text()
+    assert text == _PORTS_SOURCES[rel].replace("azure.ports.", "ports."), text
+    assert not (tmp_path / "etc" / "apt" / "sources.list").exists()
+    assert _warnings(log) == [
+        "::warning title=infrastructure::the runner's package mirror (azure.ports.ubuntu.com)"
+        " did not answer: installing from ports.ubuntu.com"
+    ], log
+
+
+@pytest.mark.parametrize(
+    ("programs", "hang_at", "why"),
+    [
+        pytest.param("ffmpeg", (1, 3), "apt-get update", id="its-update-hangs-too"),
+        pytest.param("ffmpeg dash", (1, 5), "could not install dash", id="a-later-install-hangs"),
+    ],
+)
+def test_the_mirror_is_left_once_a_job_and_then_a_hang_is_an_infrastructure_failure(
+    tmp_path: Path, programs: str, hang_at: tuple[int, ...], why: str
+) -> None:
+    """A second cut-off after the move fails the step under the `infrastructure` title, in
+    minutes, with no second move."""
+    rc, _installs, log = _run_programs(tmp_path, programs, hang_at=hang_at)
+    assert rc != 0, log
+    assert log.count("::warning title=infrastructure::") == 1, log
+    errors = [
+        line for line in log.splitlines() if line.startswith("::error title=infrastructure::")
+    ]
+    assert len(errors) == 1 and why in errors[0], log
+    assert [t.split(" ", 1)[0] for t in _timeouts(tmp_path)][1:] == ["300"] * (
+        len(_timeouts(tmp_path)) - 1
+    )
+
+
+def test_macos_installs_with_brew_and_no_timeout(tmp_path: Path) -> None:
+    rc, installs, log = _run_programs(tmp_path, "ffmpeg", runner_os="macOS", hang_at=(1,))
+    assert (rc, installs) == (0, ["brew install ffmpeg"]), log
+    assert _timeouts(tmp_path) == [] and "::warning" not in log, log
+
+
+@pytest.mark.parametrize("install_fails", [False, True], ids=["installs", "mirror-fails"])
+def test_a_runner_with_no_timeout_installs_as_before_the_bound(
+    tmp_path: Path, install_fails: bool
+) -> None:
+    """Every GitHub image has coreutils' timeout. One without it installs unbounded and, on a
+    failure, fails under the infrastructure title at once, with no move of its sources."""
+    rc, installs, log = _run_programs(
+        tmp_path, "ffmpeg", with_timeout=False, install_fails=install_fails
+    )
+    if install_fails:
+        assert rc != 0 and installs == [f"{_APT} update -qq"], log
+        assert "::error title=infrastructure::" in log, log
+    else:
+        assert rc == 0, log
+        assert installs == [
+            f"{_APT} update -qq",
+            f"{_APT} install -y --no-install-recommends ffmpeg",
+        ]
+    assert "::warning" not in log, log
+    for rel, text in _SOURCES.items():
+        assert (tmp_path / "etc" / "apt" / rel).read_text() == text, rel

@@ -68,11 +68,73 @@ runs:
             *) echo "the setup action installs tmux, shellcheck, dash and ffmpeg, and checks docker, not $tool" >&2; exit 1 ;;
           esac
         done
-        # Each apt-get fetch is retried, and an install that still fails is the runner's package
-        # mirror, not the job's code: it fails this step under an `infrastructure` title, before
-        # any test runs, so a flaky mirror never reads as a test red.
-        apt_get() { sudo apt-get -o Acquire::Retries=3 "$@"; }
+        # Each apt-get fetch is retried, and each apt-get is cut off at its bound: the runner's own
+        # mirror once hung for 55 min, where this whole step takes under 30 s. Once a job,
+        # an update or install that times out or fails finishes what the cut left half done, moves
+        # every source off the runner's mirror (azure.archive.ubuntu.com to archive.ubuntu.com, and
+        # the arm runner's azure.ports.ubuntu.com to ports.ubuntu.com), warns which host it left
+        # for which, and tries again. GitHub's x64 image names no host in ubuntu.sources: it reads
+        # them from apt-mirrors.txt, the runner's own first, so the move rewrites that list too,
+        # and a file the image lacks is passed over. One that still fails is the package mirror,
+        # not the job's code: it fails this step under an `infrastructure` title, before any test
+        # runs, so a flaky mirror never reads as a test red.
+        # A runner with no coreutils `timeout` (every GitHub image has it) installs as it did before
+        # the bound: unbounded, and with no move.
+        bound=180
+        bounded=""
+        if command -v timeout >/dev/null 2>&1; then bounded=yes; fi
+        apt_get() {
+          if [ -n "$bounded" ]; then
+            timeout "$bound" sudo apt-get -o Acquire::Retries=3 "$@"
+          else
+            sudo apt-get -o Acquire::Retries=3 "$@"
+          fi
+        }
         infra() { echo "::error title=infrastructure::$1"; exit 1; }
+        moved=""
+        sources="/etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list"
+        sources="$sources /etc/apt/apt-mirrors.txt"
+        # mirror: the host the first URI of the apt sources names, past any comment.
+        mirror() {
+          for f in $sources; do
+            if [ -f "$f" ]; then
+              while read -r line; do
+                case $line in '#'*) continue ;; esac
+                if [[ $line =~ ://([^/[:space:]]+) ]]; then echo "${BASH_REMATCH[1]}"; return 0; fi
+              done < "$f"
+            fi
+          done
+          echo unnamed
+        }
+        leave_the_mirror() {
+          from=$(mirror)
+          bound=300
+          timeout "$bound" sudo dpkg --configure -a || true
+          for f in $sources; do
+            if [ -f "$f" ]; then
+              text=$(< "$f")
+              text=${text//azure.archive.ubuntu.com/archive.ubuntu.com}
+              text=${text//azure.ports.ubuntu.com/ports.ubuntu.com}
+              printf '%s\n' "$text" | sudo tee "$f" >/dev/null
+            fi
+          done
+          to=$(mirror)
+          echo "::warning title=infrastructure::the runner's package mirror ($from)" \
+            "did not answer: installing from $to"
+          moved=yes
+        }
+        # apt_or_leave <what failed> <apt-get arguments>: once a job, off the runner's mirror first.
+        apt_or_leave() {
+          what=$1
+          shift
+          apt_get "$@" && return 0
+          if [ -z "$bounded" ] || [ -n "$moved" ]; then infra "$what"; fi
+          leave_the_mirror
+          if [ "$1" != update ]; then
+            apt_get update -qq || infra "apt-get update failed from $to: $what"
+          fi
+          apt_get "$@" || infra "$what"
+        }
         updated=""
         for tool in $PROGRAMS; do
           if command -v "$tool" >/dev/null 2>&1; then continue; fi
@@ -81,11 +143,12 @@ runs:
           case "$RUNNER_OS" in
             Linux)
               if [ -z "$updated" ]; then
-                apt_get update -qq || infra "apt-get update failed after its retries: $tool is not installed"
+                apt_or_leave "apt-get update failed after its retries: $tool is not installed" \
+                  update -qq
                 updated=yes
               fi
-              apt_get install -y --no-install-recommends "$tool" ||
-                infra "apt-get could not install $tool after its retries" ;;
+              apt_or_leave "apt-get could not install $tool after its retries" \
+                install -y --no-install-recommends "$tool" ;;
             macOS) brew install "$tool" || infra "brew could not install $tool" ;;
             *) echo "no installer known for $tool on RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
           esac
