@@ -731,3 +731,62 @@ class TestTheStopEndsWithItsFanout:
             following = mgr.spawn("chat y's next helper", parent_session_key=y)
             assert following is not None and not following.done, following.error
             assert y not in mgr._fanout_stops, mgr._fanout_stops.get(y)
+
+    @pytest.mark.parametrize("state", ["breaker", "run_total"])
+    @pytest.mark.asyncio
+    async def test_a_start_refused_as_its_fanouts_last_helper_ends_the_fanouts_state(
+        self, state: str
+    ) -> None:
+        """A chat's last helper is still asking to start when its fan-out's state is set: its
+        breaker trips, or, with no stop at all, a finished sibling's tokens sit on the chat's run
+        total. The start is denied. Nothing of the chat runs or waits, so its next helper starts
+        clean: not refused, and not part-spent."""
+        from personalclaw.approval_grants import YOU, ToolDecision
+        from personalclaw.guardrails.budgets import Budget, get_meter, reset_meter
+
+        reset_meter()
+        answer = asyncio.Event()
+
+        async def owner(_event, _key=""):
+            await answer.wait()
+            return ToolDecision(False, "rejected", YOU)
+
+        sessions = _completing_sessions()
+        sessions.get_approval_policy = MagicMock(return_value="")
+        ctx = _mock_ctx_builder()
+        ctx.hooks.auto_approve_subagent_spawn = False
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=ctx,
+            on_done=AsyncMock(),
+            is_yolo=lambda: False,
+            on_spawn_approval=owner,
+        )
+        chat = "dashboard:a-chat-whose-start-is-denied"
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch(
+                "personalclaw.guardrails.budgets.run_budget_from_config",
+                return_value=Budget(max_tokens=100_000),
+            ),
+        ):
+            asking = mgr.spawn("the helper asking to start", parent_session_key=chat)
+            assert asking is not None and not asking.done and not asking.queued
+            start = mgr._tasks[asking.id]
+            if state == "breaker":
+                _trip(mgr, chat)
+            else:
+                get_meter().charge_run(chat, 1500, 0.0)
+                assert get_meter().run_totals(chat).tokens == 1500
+            answer.set()
+            await start
+            assert asking.done and asking.never_ran and asking.declined, asking.error
+            assert mgr._lane_count(chat) == 0
+            if state == "breaker":
+                following = mgr.spawn("the next helper", parent_session_key=chat)
+                assert following is not None and not following.done, following.error
+                assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+            else:
+                assert get_meter().run_totals(chat).tokens == 0, "the next fan-out starts at 0"
+        reset_meter()

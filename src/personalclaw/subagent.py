@@ -1769,6 +1769,10 @@ class SubagentManager:
             subagent_waiting.forget(info.id)
             self._dec_running(info)
             self._drain_queue()
+            # A start refused as its fan-out's last helper ends the fan-out's stop, breaker streak
+            # and run total, as a helper that ran does when it ends: it counted in the lane while
+            # it asked, so a sibling that ended meanwhile could not.
+            self._maybe_clear_fanout(_fanout_key(info))
             self._tasks.pop(info.id, None)
             await sel_log_async(
                 sel().log_tool_invocation,
