@@ -200,6 +200,9 @@ command = [
 
 # Its step gets BASE_SHA as {base}: each site baseline is compared with the base commit's copy
 # (tests/site_baseline.py), so a recorded pass is keyed by the base as well as the tree.
+# Its cap gives each leg twice its slowest green run and more: a slow hosted runner runs every
+# rail 1.1 to 1.8 times as long, and a leg its budget cuts off reds a green head
+# (tests/rails/test_the_rails_budget_is_twice_each_legs_slowest_green_run.py).
 [[job]]
 id = "rails"
 tiers = ["change", "merge"]
@@ -210,7 +213,7 @@ cache = ["uv", "npm"]
 security = "ordinary"
 python = "3.12.15"
 reuse = "tree"
-timeout_min = 10
+timeout_min = 20
 workers = 4
 shards = 3
 needs_node = true
