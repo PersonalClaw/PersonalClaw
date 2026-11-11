@@ -17,6 +17,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.subagent import _CIRCUIT_BREAKER_THRESHOLD, SubagentInfo, SubagentManager
@@ -40,9 +41,49 @@ async def _stop(mgr: SubagentManager) -> None:
     is cancelled there, and its teardown starts a queued one in a task the close never cancels;
     once collected, that task runs *mgr*'s teardown in whichever test's loop is running then, and
     ends its fan-out's run on the one spend meter the process has: a fan-out with the same key in
-    that test loses its run's total."""
+    that test loses its run's total. A delivery still waiting out its window is sent here too,
+    rather than left pending when the loop closes."""
     with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
         await mgr.cancel_all()
+        await mgr.flush_deliveries()
+
+
+async def _settle() -> None:
+    """Let every task this test's loop still holds run to its end: the run budget's cancel of
+    its fan-out is one, started with nothing awaiting it, and so is a reap's tail."""
+    me = asyncio.current_task()
+    rest = [t for t in asyncio.all_tasks() if t is not me and not t.done()]
+    if rest:
+        await asyncio.wait(rest, timeout=_HANG_SECS)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _every_manager_is_stopped(monkeypatch):
+    """Stop every manager a test made, even one that failed before its own ``_stop``, then hold
+    the test to leaving nothing behind: no helper, delivery or reap of its managers may still be
+    pending once they are stopped. A helper left running or waiting here is what reached the next
+    test's loop and its spend meter (``_stop``)."""
+    made: list[SubagentManager] = []
+    build = SubagentManager.__init__
+
+    def _recording(self, *args, **kwargs):
+        build(self, *args, **kwargs)
+        made.append(self)
+
+    monkeypatch.setattr(SubagentManager, "__init__", _recording)
+    yield
+    for mgr in made:
+        await _stop(mgr)
+    await _settle()
+    left = [
+        f"{type(mgr).__name__}: {name}"
+        for mgr in made
+        for name, task in [*mgr._tasks.items(), *mgr._delivery_tasks.items()]
+        if not task.done()
+    ]
+    me = asyncio.current_task()
+    pending = [repr(t.get_coro()) for t in asyncio.all_tasks() if t is not me and not t.done()]
+    assert not left and not pending, f"left behind: {left} {pending}"
 
 
 def _completing_sessions(*, text: str = "result", cost: float = 0.0) -> MagicMock:
@@ -457,15 +498,6 @@ def _hanging_sessions() -> MagicMock:
 
     provider.stream = MagicMock(side_effect=lambda *a, **kw: _stream())
     return sessions
-
-
-async def _settle() -> None:
-    """Let every task this test's loop still holds run to its end: the run budget's cancel of
-    its fan-out is one, started with nothing awaiting it."""
-    me = asyncio.current_task()
-    rest = [t for t in asyncio.all_tasks() if t is not me and not t.done()]
-    if rest:
-        await asyncio.wait(rest, timeout=_HANG_SECS)
 
 
 class TestTheStopEndsWithItsFanout:
