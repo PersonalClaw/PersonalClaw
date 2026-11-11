@@ -1142,10 +1142,7 @@ def scan_exfiltration_urls(text: str) -> list[str]:
             # S3 presigned URLs on amazonaws.com have long queries but are safe
             if _is_safe_presigned(domain, query):
                 continue
-            warnings.append(
-                f"Suspicious URL with long query params ({len(query)} chars): "
-                f"{domain}{path_and_query[:60]}..."
-            )
+            warnings.append(f"Suspicious URL with long query params ({len(query)} chars): {domain}")
         elif _EXFIL_PATTERNS.search(query):
             # S3 presigned URLs on amazonaws.com match the blob pattern but are safe
             if _is_safe_presigned(domain, query):
@@ -1386,8 +1383,10 @@ def redact_credentials(text: str) -> tuple[str, list[str]]:
     #     exactly that, seeding tag-lookalike filler on purpose.
     # Verified differentially over 200,000 generated documents (35% deliberate repeats): zero
     # divergence. `sub` with a callback keeps the warning order the old loop produced.
+    # A warning names the kind of value it masked, never any of that value: callers log warnings
+    # and count them.
     def _tag_credential(m: "re.Match[str]") -> str:
-        warnings.append(f"Redacted credential pattern: {m.group()[:20]}...")
+        warnings.append("Redacted credential pattern")
         return "[REDACTED: credential]"
 
     result = _CREDENTIAL_PATTERNS.sub(_tag_credential, result)

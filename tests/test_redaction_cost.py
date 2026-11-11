@@ -191,7 +191,7 @@ def _reference_redact_credentials(text: str) -> tuple[str, list[str]]:
     for m in S._CREDENTIAL_PATTERNS.finditer(result):
         matched = m.group()
         result = result.replace(matched, "[REDACTED: credential]", 1)
-        warnings.append(f"Redacted credential pattern: {matched[:20]}...")
+        warnings.append("Redacted credential pattern")
     result, quoted_warnings = quoted_credentials.redact(result)
     warnings += quoted_warnings
     for m in S._B64_CHUNK_RE.finditer(text):
