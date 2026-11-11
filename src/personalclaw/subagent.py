@@ -2643,8 +2643,10 @@ class SubagentManager:
             *(self.cancel(info.id, reason=f"Cancelled because {because}") for info in victims),
             return_exceptions=True,
         )
+        # Belt and braces: each victim's own ending clears its fan-out's stop (a waiting one in
+        # cancel(), a running one in its reap); this covers a cancel that raised before it did.
         for fkey in {_fanout_key(info) for info in victims}:
-            self._maybe_clear_fanout(fkey)  # the mark ends once its fan-out has drained
+            self._maybe_clear_fanout(fkey)
         stopped = sum(1 for r in results if r is True)
         logger.info("Stopped %d/%d subagent(s): %s", stopped, len(victims), because)
         return stopped
@@ -2663,9 +2665,9 @@ class SubagentManager:
         fan-out is running or waiting (:meth:`_maybe_clear_fanout`), here too: the run budget's
         cancel runs after the child that crossed it has ended, which may be the fan-out's last, and
         a Stop fan-out may find nothing running at all. A mark left there would refuse every later
-        helper of the chat until a restart. Idempotent: a second call finds nothing to cancel.
-        Unlike ``cancel_all`` (the shutdown switch) this touches ONE fan-out and leaves other runs
-        untouched.
+        helper of the chat, or every later agent step of the workflow run, until a restart.
+        Idempotent: a second call finds nothing to cancel. Unlike ``cancel_all`` (the shutdown
+        switch) this touches ONE fan-out and leaves other runs untouched.
         """
         if not fanout_key:
             return 0
