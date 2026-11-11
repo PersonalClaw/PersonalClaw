@@ -97,7 +97,7 @@ jobs:
       - name: Verify the built SPA's asset licences
         run: python3 scripts/check_asset_licenses.py --built-web
       - name: Install uv + build backend
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.13.1"
           python-version: "3.12.15"
@@ -379,8 +379,12 @@ jobs:
           # `smoke` is the per-image liveness command run INSIDE the container on
           # BOTH arches. It differs per image because the
           # images differ: gateway ships the `personalclaw` CLI; web is nginx and
-          # has no such binary, so it proves its own server binary instead. A
-          # single hardcoded `personalclaw --version` would fail on web.
+          # has no such binary, so it proves its own server binary, then loads its
+          # config as compose starts it: the image's entrypoint runs its hooks (the
+          # cert, the resolvers, the template's envsubst) and `nginx -T` tests the
+          # result and prints each file it loaded. Its `expect` is the rendered
+          # template's file, so a run that rendered nothing (an empty conf.d tests
+          # clean) is red. A single hardcoded `personalclaw --version` would fail on web.
           #
           # Each leg names what the smoke's own output must carry, because an exit
           # status alone is a weak claim about a version command: exit 0 with no
@@ -402,8 +406,10 @@ jobs:
             expect_version: ${{ needs.build.outputs.version }}
           - name: web
             dockerfile: deploy/docker/Dockerfile.web
-            smoke: nginx -v
-            expect: 'nginx version:'
+            smoke: >-
+              nginx -v && NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
+              NGINX_ENVSUBST_FILTER=NGINX_LOCAL_RESOLVERS /docker-entrypoint.sh nginx -T
+            expect: '# configuration file /etc/nginx/conf.d/default.conf:'
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -598,7 +604,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - name: Install uv + the venv the Makefile's pyinstaller target expects
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.13.1"
           python-version: "3.12.15"
@@ -800,7 +806,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - name: Install uv + the venv the Makefile's pyinstaller target expects
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.13.1"
           python-version: "3.12.15"

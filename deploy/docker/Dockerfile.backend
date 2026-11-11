@@ -4,9 +4,9 @@
 # ── Base image (single pull, reused across stages) ──────────────────────────
 # python:3.13.16-slim, the interpreter `.python-version` names, as its multi-arch index.
 # Platform manifests:
-#   linux/amd64 sha256:8fb4cfa1a2616d7b8e0c2175cc6ad68f5729c34ea8488c0b360d2934b7be9024
-#   linux/arm64 sha256:cf97c3b79da1c706532c7042f851654d97d3b88c8ca6520acda9cf4479ea9b14
-FROM mirror.gcr.io/library/python:3.13.16-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS base
+#   linux/amd64 sha256:08b493e9c2f92a0f84e45062338a1503d0f585d63ba8783baad5a24cdf200894
+#   linux/arm64 sha256:ff089de2ebe52f328c4834221097e20eae7f7e4148ea06ac42bd8440d3c79094
+FROM mirror.gcr.io/library/python:3.13.16-slim@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f AS base
 
 # ── Stage 1: install dependencies only (cached until pyproject.toml or uv.lock changes) ─
 FROM base AS deps
@@ -64,10 +64,10 @@ RUN uv export --locked --no-emit-project --emit-index-url \
 # It builds on the build platform for the same reason as there (`--platform=$BUILDPLATFORM`): the
 # files are the same on every architecture, so they are built once, natively, rather than for
 # arm64 under emulation. The builder stage copies them in for each target.
-# node:24.22.0-alpine, the Node `.nvmrc` names, as its multi-arch index. Platform manifests:
-#   linux/amd64 sha256:429bdfbc204b4eabc6438e6d34e4e9d8dd2ca1df8289bcd78cdd3c5db387b7a5
-#   linux/arm64 sha256:5b12456322560dcf9342f7339662bccf8c5665cf0732a8ec8363687aa93c5277
-FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f AS web
+# node:24.22.2-alpine, the Node `.nvmrc` names, as its multi-arch index. Platform manifests:
+#   linux/amd64 sha256:ec318aabf188af4e5488847eea4b24452650b9917140563e140762526a37f1df
+#   linux/arm64 sha256:1d9851811f111a340026bff10ecc075d51120788ef172c49337bf0f99e44a008
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/node:24.22.2-alpine@sha256:a34ab6d7f6f4813f4d0c5469d74685604b962fbdbf5793a7bc7b4998ecb867c8 AS web
 
 WORKDIR /app
 
@@ -116,10 +116,10 @@ RUN rm -rf build/ *.egg-info && \
 # own build, which links only glibc, libstdc++ and libgcc_s, all of which the base ships. The
 # runtime stage copies `node` and npm out of it, so the image runs a dated Node line rather than
 # Debian's packaged one, which is Node 20, past its end of life.
-# node:24.22.0-trixie-slim, as its multi-arch index. Platform manifests:
-#   linux/amd64 sha256:27526714fd6b7dc938f8cb1665bf1fe749efadadf0145d5bcc07f0fbd0370b60
-#   linux/arm64 sha256:74a6ed1058beb23dfb49fa05531f35421dc5d2b49b22972bbbb8041ab20588ad
-FROM mirror.gcr.io/library/node:24.22.0-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315 AS node-runtime
+# node:24.22.2-trixie-slim, as its multi-arch index. Platform manifests:
+#   linux/amd64 sha256:947528b072c170d980592b851c802155d84dcad60d3f550b8a0451b84d65dabd
+#   linux/arm64 sha256:6bf5010c9b37bcb8a580b99181dcc73344e15a2fb8d8345af13a81fd89d9db71
+FROM mirror.gcr.io/library/node:24.22.2-trixie-slim@sha256:0820eaa85e07d0490446dd01d14707e17e6108a36988cf374899cd057eb3812d AS node-runtime
 
 # ── Stage 4: runtime ─────────────────────────────────────────────────────────
 FROM base AS runtime
