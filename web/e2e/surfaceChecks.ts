@@ -64,7 +64,8 @@ const HOST_FOLDS: [RegExp, string][] = [
 //   2. reduced motion: emulate the preference, measure, emulate none again;
 //   3. 200% text zoom: the root font size doubled, measured and restored in one synchronous pass;
 //   4. the keyboard walk, with focus order and the rendered contrast of each focus indicator read
-//      off the same walk; then Escape and a blur, so nothing it opened stays open;
+//      off the same walk; then a blur, and on a route's row Escape, so nothing it opened stays open
+//      (an opener's row keeps its window: the visit is of that window);
 //   5. the widths LAST, and WIDEST FIRST: 1440, then 1024 down to 320. Overflow at each, 44 px
 //      targets at the compact ones, each read with every scroller back at its start.
 //
@@ -862,8 +863,12 @@ export async function runMatrix(page: Page, ctx: SurfaceContext, baselines: Base
   }, false)
   await baselined(STEPS.order, async () => focusOrderFindings(walk))
   await baselined(STEPS.contrast, async () => contrastFindings(walk))
-  // Close whatever the walk opened (a mode pill opens on focus) before anything is measured again.
-  await page.keyboard.press('Escape')
+  // Close whatever the walk opened (a mode pill opens on focus, and closes 120 ms after a blur)
+  // before anything is measured again. An opener's row takes no Escape: its visit is of the window
+  // it opened, and Escape closed that window too, so the widths read it part way out or the page
+  // behind it, by timing (Chat preferences' window, leaving on a spring, measured under 44 px at
+  // 768 on one run and was gone on the next). The page behind is its route's own row.
+  if (ctx.kind !== 'opener') await page.keyboard.press('Escape')
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.())
   await page.waitForTimeout(200)
   for (const w of WIDTHS) {

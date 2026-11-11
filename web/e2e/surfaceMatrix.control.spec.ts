@@ -160,6 +160,52 @@ for (const theme of THEMES) test.describe(`the UI quality check reports every pl
     }
   })
 
+  // An opener's visit is of its opened window, so the widths are the window's. The tidy-up after the
+  // keyboard walk pressed Escape, which closed the window itself, and the widths then read it part
+  // way out or the page behind it, by timing: Chat preferences' window, leaving on a spring, was
+  // under 44 px at 768 on one run and gone on the next. Planted: a window that Escape closes and
+  // that leaves 300 ms later, as an animated exit does, holding a 40 px button the walk never
+  // reaches. On a route's row the Escape still closes it.
+  const plantWindow = (page: Page) =>
+    page.evaluate(() => {
+      const win = document.createElement('div')
+      win.id = 'probe-window'
+      win.setAttribute('role', 'dialog')
+      win.setAttribute('aria-label', 'probe window')
+      win.style.cssText = 'position:fixed;right:0;bottom:0;z-index:2147483647;width:120px;background:#ffffff'
+      win.innerHTML = '<button tabindex="-1" style="width:40px;height:40px">probe-window-40</button>'
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') setTimeout(() => win.remove(), 300)
+      })
+      document.body.append(win)
+    })
+  const targetsAt = async (page: Page, ctx: Parameters<typeof runMatrix>[1]) => {
+    const found = new Map<string, string[]>()
+    await runMatrix(
+      page,
+      ctx,
+      { tree: null, targets: Object.fromEntries(COMPACT_WIDTHS.map((w) => [String(w), []])), known: {}, adopt: true },
+      async (name, findings) => {
+        found.set(name, await findings())
+      },
+    )
+    return (w: number) => (found.get(`44 px targets at ${w}px`) ?? []).join('\n')
+  }
+
+  test(`an opener's window is measured open at every compact width, never as it closes (${theme})`, async ({ page }) => {
+    await loadClean(page, theme)
+    await plantWindow(page)
+    const at = await targetsAt(page, { where: `probe window [opened] (${theme})`, theme, kind: 'opener', route: 'dashboard', opener: 'probe window' })
+    for (const w of COMPACT_WIDTHS) expect(at(w), `the opened window at ${w} px`).toContain('probe-window-#')
+  })
+
+  test(`on a route's row the walk's Escape still closes what is open before the widths (${theme})`, async ({ page }) => {
+    await loadClean(page, theme)
+    await plantWindow(page)
+    const at = await targetsAt(page, { where: `#/dashboard (${theme}, a window open)`, theme, kind: 'route', route: 'dashboard' })
+    for (const w of COMPACT_WIDTHS) expect(at(w), `the closed window at ${w} px`).not.toContain('probe-window-#')
+  })
+
   test(`a baselined finding passes, a new one fails, and a fixed one fails until its entry goes (${theme})`, async () => {
     const raw = ['focus indicator at 1.11:1 against its backdrop: <button> "New chat"']
     const base = raw.map(findingKey)
