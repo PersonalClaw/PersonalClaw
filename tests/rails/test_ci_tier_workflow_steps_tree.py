@@ -1460,6 +1460,41 @@ def test_the_programs_step_is_off_by_default_so_no_other_call_changes() -> None:
                     assert given is None, (path.name, job_id)
 
 
+#: breadth.yml's legs that run the real-daemon tmux tests.
+_BREADTH_TMUX_LEGS = ("ubuntu", "macos", "arm", "canary", "random-order")
+
+
+def _jobs(path: Path) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]
+
+
+def test_breadth_s_tmux_legs_install_it_through_the_setup_action() -> None:
+    """A leg of the release's breadth installs tmux the way a tier job does, so a hung runner
+    mirror is left within minutes rather than sat in until the job's timeout."""
+    action = "./.github/actions/setup"
+    calls = {
+        job_id: [s.get("with") for s in job.get("steps") or [] if s.get("uses") == action]
+        for job_id, job in _jobs(_WORKFLOWS / "breadth.yml").items()
+    }
+    assert {j: c for j, c in calls.items() if c} == {
+        leg: [{"programs": "tmux"}] for leg in _BREADTH_TMUX_LEGS
+    }
+
+
+def test_no_job_installs_from_the_runner_s_mirror_but_through_the_setup_action() -> None:
+    """Only the setup action leaves a hung runner mirror. A job in a container reads the image's
+    own sources, not the runner's, so its apt-get is its own."""
+    raw = [
+        f"{path.name} job {job_id}: {s.get('name') or s['run'].splitlines()[0]}"
+        for path in sorted(_WORKFLOWS.glob("*.yml"))
+        for job_id, job in _jobs(path).items()
+        if "container" not in job
+        for s in job.get("steps") or []
+        if "apt-get" in str(s.get("run", ""))
+    ]
+    assert raw == []
+
+
 #: The programs the setup action installs when the path lacks one; docker it only checks for.
 _INSTALLED = [p for p in planner.SETUP_PROGRAMS if p != "docker"]
 

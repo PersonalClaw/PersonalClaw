@@ -8862,17 +8862,6 @@ _NOT_COMMANDS: dict[str, str] = {
     "breadth's: the uv-managed interpreter {python} finds, made present before it is found": r"""
 uv venv "$RUNNER_TEMP/shard-python"
 """,  # noqa: E501
-    "breadth's: the tmux install, by runner": r"""
-if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
-case "$RUNNER_OS" in
-  Linux) sudo apt-get update -qq &&
-         sudo apt-get install -y --no-install-recommends tmux ;;
-  macOS) brew install tmux ;;
-  *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
-esac
-tmux -V
-
-""",  # noqa: E501
     "breadth's: a leg's inputs, as its runner reports them": r"""
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
   --tree "$(git rev-parse 'HEAD^{tree}')" \
@@ -9048,15 +9037,6 @@ fi
 
 _NOT_COMMAND_LINES = frozenset(
     tuple(words) for text in _NOT_COMMANDS.values() for _, words in _run_lines(text) if words
-)
-
-#: The listed lines a mapped job may run or leave out. A line a row names leaves in two merges
-#: (#4584 step 4): these rows first, with the line here, then the workflow, which takes it out of
-#: both. breadth.yml's tmux install waits: its legs install tmux through the setup action next.
-_NOT_COMMANDS_LEAVING = frozenset(
-    tuple(words)
-    for _, words in _run_lines(_NOT_COMMANDS["breadth's: the tmux install, by runner"])
-    if words
 )
 
 
@@ -9349,7 +9329,7 @@ def _catalogue_check(root: Path) -> list[str]:
         for _, words in _run_lines(str(step["run"]))
         if words
     }
-    for words in sorted(_NOT_COMMAND_LINES - ran - _NOT_COMMANDS_LEAVING):
+    for words in sorted(_NOT_COMMAND_LINES - ran):
         bad.append(
             f"this row lists {shlex.join(words)} as a line that validates nothing, and no mapped"
             " workflow job runs it"
