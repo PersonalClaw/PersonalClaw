@@ -53,7 +53,7 @@ PULL_EVENTS: tuple[str, ...] = ("pull_request", "pull_request_target", "merge_gr
 @dataclass(frozen=True)
 class Gate:
     """A workflow of its own that a pull request's paths start, whose runs on a head gate its merge
-    verdict: its file, its ``name:`` (what a ``workflow_run`` wake names it by), the jobs
+    verdict: its file, its ``name:`` (what merge-verdict.yml's ``workflow_run`` follows), the jobs
     each run must pass on every attempt, the steps that fetch only outside inputs before any of the
     head's code runs (a red there, like a cancelled job, is flake-class), and what the verdict
     calls it."""
