@@ -630,3 +630,56 @@ class TestTheStopEndsWithItsFanout:
             later = mgr.spawn("a later helper", parent_session_key="dashboard:a-third-chat")
             assert later is not None and later.queued, "it waits behind the one that waited"
         await _stop(mgr)
+
+    @pytest.mark.asyncio
+    async def test_the_run_budget_stops_a_sibling_still_working_and_then_lets_go(self) -> None:
+        """When a child crosses Max Tokens / Run while a sibling still works, the budget's cancel
+        ends that sibling with the typed reason, and once the sibling's reap has drained the
+        fan-out, the chat can start helpers again."""
+        from personalclaw.guardrails.budgets import Budget, reset_meter
+
+        reset_meter()
+        sessions = _completing_sessions()
+        provider = sessions.get_or_create.return_value[0]
+        answers = iter(("complete", "hang"))
+        complete = provider.stream.side_effect
+
+        async def _hang(*_a, **_kw):
+            await asyncio.sleep(_HANG_SECS)
+            yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="late")
+
+        provider.stream = MagicMock(
+            side_effect=lambda *a, **kw: (
+                complete(*a, **kw) if next(answers, "hang") == "complete" else _hang()
+            )
+        )
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=2,
+        )
+        chat = "dashboard:a-chat-with-two-helpers"
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch(
+                "personalclaw.guardrails.budgets.run_budget_from_config",
+                return_value=Budget(max_tokens=1500),
+            ),
+        ):
+            first = mgr.spawn("the one that finishes", parent_session_key=chat)
+            sibling = mgr.spawn("the one still working", parent_session_key=chat)
+            assert first is not None and sibling is not None
+            assert not first.queued and not sibling.queued
+            await mgr._tasks[first.id]
+            await mgr.flush_deliveries()
+            await _settle()
+            assert first.done and not first.error, first.error
+            assert sibling.done and sibling.reaped, (sibling.done, sibling.error)
+            assert sibling.error.startswith("run budget exceeded ("), sibling.error
+            following = mgr.spawn("the next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+        await _stop(mgr)
+        reset_meter()
