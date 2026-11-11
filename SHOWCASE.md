@@ -18,8 +18,9 @@ one gateway and one dashboard you own.
 Your day at a glance. Home opens on Overview: what your agents are doing, what you've pinned,
 ideas to start from and what ran lately. Attention, beside it, is what needs you, what is
 running and what finished lately. The sidebar keeps its shortcuts fixed at the top and the
-bottom, with your chat history between them, grouped by your folders or your tags, and the
-PersonalClaw icon and name open Home. All of it is live over one WebSocket.
+bottom, with your chats in one list between them. A small menu at the end of its search sorts
+and filters them, and Open Chat history sits beside New chat. The PersonalClaw icon and name
+open Home. All of it is live over one WebSocket.
 
 | Light | Dark |
 |---|---|
