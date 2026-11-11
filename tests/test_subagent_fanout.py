@@ -500,6 +500,20 @@ def _hanging_sessions() -> MagicMock:
     return sessions
 
 
+BREAKER = "spawn refused: fan-out breaker tripped"
+
+
+def _trip(mgr: SubagentManager, chat: str) -> None:
+    """Five failed helpers of *chat* trip its breaker, as
+    ``test_record_failure_breaker_trips_at_five`` does. The stop it sets cancels nothing, so
+    whatever of *chat* still waits ends in a drain."""
+    for i in range(_CIRCUIT_BREAKER_THRESHOLD):
+        failed = SubagentInfo(id=f"f{i}", task="t", parent_session_key=chat)
+        failed.error = "boom"
+        mgr._note_child_outcome(failed)
+    assert chat in mgr._fanout_stops
+
+
 class TestTheStopEndsWithItsFanout:
     """A fan-out's stop refuses what is still on its way into it, and ends once nothing of it is
     running or waiting. One that outlives its fan-out refuses every later helper of the same chat
@@ -683,3 +697,37 @@ class TestTheStopEndsWithItsFanout:
             assert following is not None and not following.done, following.error
         await _stop(mgr)
         reset_meter()
+
+    @pytest.mark.parametrize("other_ends", ["on_its_own", "stopped"])
+    @pytest.mark.asyncio
+    async def test_a_waiting_helper_refused_in_another_chats_drain_ends_its_chats_stop(
+        self, other_ends: str
+    ) -> None:
+        """Chat Y's last helper waits behind chat X's, and Y's breaker trips. X's helper ends, on
+        its own or stopped, and the drain that follows refuses Y's helper with the breaker's
+        reason. Nothing of Y is left, so Y's next helper must not be refused: by then the chat's
+        Stop fan-out is gone too, and only a restart would free it."""
+        sessions = _completing_sessions() if other_ends == "on_its_own" else _hanging_sessions()
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        y = "dashboard:chat-y"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            busy = mgr.spawn("chat x's helper", parent_session_key="dashboard:chat-x")
+            last = mgr.spawn("chat y's last helper", parent_session_key=y)
+            assert busy is not None and not busy.queued
+            assert last is not None and last.queued
+            _trip(mgr, y)
+            if other_ends == "on_its_own":
+                await mgr._tasks[busy.id]
+            else:
+                assert await mgr.cancel(busy.id) is True
+            await mgr.flush_deliveries()
+            assert last.done and last.never_ran and last.error.startswith(BREAKER), last.error
+            following = mgr.spawn("chat y's next helper", parent_session_key=y)
+            assert following is not None and not following.done, following.error
+            assert y not in mgr._fanout_stops, mgr._fanout_stops.get(y)

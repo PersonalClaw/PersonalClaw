@@ -1734,6 +1734,9 @@ class SubagentManager:
             info.done, info.never_ran = True, True
             info.error = f"spawn refused: {stop_reason}"
             subagent_waiting.forget(info.id)
+            # Its fan-out's stop ends with its last helper, as it does in cancel()'s queued
+            # branch: the drain may be another fan-out's, whose clear covers only its own key.
+            self._maybe_clear_fanout(_fanout_key(info))
             # It said it waited: it says how its wait ended, as one that ran says how it ended.
             self._fire_soon("subagent_done", info, subagent_endings.done_event(info))
             self._drain_queue()
