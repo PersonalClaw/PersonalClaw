@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qs
 
-from personalclaw import address_logins
+from personalclaw import address_logins, private_key_blocks
 from personalclaw.command_paths import (
     HOME_PATTERNS,
     glob_forms,
@@ -1034,7 +1034,7 @@ _EXFIL_PATTERNS = re.compile(
     r"|%[0-9A-Fa-f]{2}(?:%[0-9A-Fa-f]{2}){20,}"  # heavy URL-encoding (20+ encoded chars)
     r"|(?:AKIA|ASIA)[A-Z0-9]{16}"  # AWS access key ID
     r"|(?:ssh-rsa|ssh-ed25519)[\s+%]"  # SSH public key
-    r"|BEGIN[\s+%](?:RSA|DSA|EC|OPENSSH)[\s+%]PRIVATE[\s+%]KEY"  # private key header
+    rf"|{private_key_blocks.URL_HEADER}"  # private key header
     r"|xox[bpas]-[0-9a-zA-Z-]+"  # Slack token
     r")",
     re.IGNORECASE,
@@ -1208,10 +1208,10 @@ _ASSIGNED_VALUE = r"(?=[^\s,;'\"]{8})" + _escaped_run_unit(r",;'\"") + "+"
 _CREDENTIAL_PATTERNS = re.compile(
     r"(?:"
     r"(?:AKIA|ASIA)[A-Z0-9]{16}"  # AWS access key ID
-    rf"|(?:SecretAccessKey|aws_secret_access_key)\s*[:=]\s*{_TOKEN_VALUE}"
-    rf"|(?:SessionToken|aws_session_token)\s*[:=]\s*{_TOKEN_VALUE}"
-    rf"|(?:AccessKeyId|aws_access_key_id)\s*[:=]\s*{_TOKEN_VALUE}"
-    r"|BEGIN[\s](?:RSA|DSA|EC|OPENSSH)[\s]PRIVATE[\s]KEY"
+    rf"|(?:SecretAccessKey|aws_secret_access_key)\s*[:=]\s*(?!\[REDACTED:){_TOKEN_VALUE}"
+    rf"|(?:SessionToken|aws_session_token)\s*[:=]\s*(?!\[REDACTED:){_TOKEN_VALUE}"
+    rf"|(?:AccessKeyId|aws_access_key_id)\s*[:=]\s*(?!\[REDACTED:){_TOKEN_VALUE}"
+    rf"|{private_key_blocks.HEADER_WORDS}"  # a key's header words, where no block is left
     r"|xox[bpas]-[0-9a-zA-Z-]{10,}"  # Slack token
     # LLM provider API keys. These are the credentials THIS project's users actually
     # hold — an Anthropic or OpenAI key pasted into a chat was previously invisible to
@@ -1242,11 +1242,12 @@ _CREDENTIAL_PATTERNS = re.compile(
     # does not take it for one (`(?!\[REDACTED:)`). Without that, a second pass over
     # `password: [REDACTED: credential]` read `[REDACTED:` as the password and wrote
     # `[REDACTED: credential] credential]`, losing the field name; and an editor's save that
-    # restored masks from such a view put the stored value back without its label. It is the
-    # only alternative here that could match a mask, so a second pass of `redact_credentials`,
+    # restored masks from such a view put the stored value back without its label. Each name a
+    # mask can follow carries it (`pwd=`, the AWS names), so a second pass of `redact_credentials`,
     # or of `redact_for_display` and `redact_field` built on it, changes nothing.
     r"|(?i:api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret"
     rf"|password|passwd|private[_-]?key)\s*[:=]\s*(?!\[REDACTED:){_ASSIGNED_VALUE}"
+    rf"|(?:[Pp]wd=(?![/~])|PWD=(?![/~$]))(?!\[REDACTED:){_ASSIGNED_VALUE}"  # never a folder
     # `Authorization: Bearer <token>` / a bare bearer token.
     r"|(?i:bearer)\s+[A-Za-z0-9._~+/-]{16,}=*"
     r")",
@@ -1352,12 +1353,11 @@ def redact_credentials(text: str) -> tuple[str, list[str]]:
 
     Returns (cleaned_text, list_of_warnings).
     """
-    warnings: list[str] = []
-
-    # 0. The login an address carries (`address_logins`), FIRST, so a credential in a URL redacts
-    #    the same way whatever its shape: a URL's userinfo, then an scp-style login, which has no
-    #    `://`. Then a webhook URL, whose path is the credential.
-    result, url_warnings = address_logins.redact_url_userinfo(text)
+    # 0. A whole private key block, then the login an address carries (`address_logins`), FIRST, so
+    #    no pass takes part of a key, and a credential in a URL redacts the same way whatever its
+    #    shape: its userinfo, then an scp-style login. Then a webhook URL, whose path is the secret.
+    result, warnings = private_key_blocks.redact(text)
+    result, url_warnings = address_logins.redact_url_userinfo(result)
     warnings.extend(url_warnings)
     result, scp_warnings = address_logins.redact_scp_logins(result)
     warnings.extend(scp_warnings)
@@ -1716,9 +1716,9 @@ def _mask_pairs(masked: str, stored: str) -> list[tuple[str, str]] | None:
             return None
         pos += len(prefix)
         following = literals[i + 1]
-        # The masked span runs up to where the next unchanged literal resumes; for a mask at
-        # the very end of the content, to the end of the stored text.
-        end = stored.find(following, pos) if following else len(stored)
+        # The masked span runs up to where the next unchanged literal resumes (a key block's, by its
+        # own pattern); for a mask at the very end of the content, to the end of the stored text.
+        end = private_key_blocks.masked_span_end(mask, stored, pos, following)
         if end < pos:
             return None
         pairs.append((mask, stored[pos:end]))

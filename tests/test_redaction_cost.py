@@ -59,6 +59,7 @@ import pytest
 from table_rows import row
 
 from personalclaw import address_logins as A
+from personalclaw import private_key_blocks
 from personalclaw import security as S
 
 pytestmark = pytest.mark.security
@@ -67,9 +68,10 @@ pytestmark = pytest.mark.security
 # ── the reference: the rule, said as plainly as it can be ──
 # Plain loops over the text, no memo and no possessive run, so the fast scan's shortcuts are what
 # is under test. It shares only leaf grammars with `address_logins.py` and `security.py` (what a
-# host is, the tag, the shape-based patterns), never the scanning. The shape-based pass is spelled
-# as it stood before #2717, a fresh leftmost `replace` per match, which the splice tests below hold
-# the fast one to.
+# host is, the tag, the shape-based patterns), never the scanning, but for two passes it runs as
+# production does: the key block pass, held by its own tests and by `TestTheBlockPassStaysLinear`,
+# and the webhook pass. The shape-based pass is spelled as it stood before #2717, a fresh leftmost
+# `replace` per match, which the splice tests below hold the fast one to.
 
 _SCHEME_CHAR = set(string.ascii_letters + string.digits + "+.-")
 #: What ends an authority, besides whitespace and a `:` that begins another `://`.
@@ -172,7 +174,9 @@ def _reference_scp_spans(text: str) -> list[tuple[int, int]]:
 
 
 def _reference_redact_credentials(text: str) -> tuple[str, list[str]]:
-    result, warnings = _reference_redact_url_userinfo(text)
+    result, warnings = private_key_blocks.redact(text)
+    result, url_warnings = _reference_redact_url_userinfo(result)
+    warnings += url_warnings
     spans = _reference_scp_spans(result)
     if spans:
         out, pos = [], 0
@@ -718,6 +722,45 @@ class TestTheReadingsPastTheAuthorityStayLinear:
         assert 3.9 < ratio < 4.1, f"a linear cost read ×{ratio:.2f} on a {tick * 1000} ms clock"
 
 
+class TestTheBlockPassStaysLinear:
+    """The key block pass runs first on every text, so its costliest shapes are held to linear
+    cost: each runs a part of the block pattern over a long run that ends in nothing it can take."""
+
+    HEADER = "-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5
+    #: The text before the run, the unit it repeats, and how many units the smaller input holds.
+    SHAPES = {
+        "breaks after a header": (HEADER, " ", 64_000),
+        "a header on every line": ("", HEADER + "\n", 2_000),
+        "legacy header lines": (HEADER, "\nProc-Type: 4,X", 4_000),
+        "one header value of many words, on one line": (HEADER + " Proc-Type: 4,", " x", 32_000),
+        "a body with no END": (HEADER + "\n", "A", 64_000),
+        "quotes and spaces": (HEADER, '" ', 32_000),
+        "marks after a line break": (HEADER + "\n", "-", 64_000),
+    }
+
+    def _text(self, shape: str, units: int) -> str:
+        lead, unit, _ = self.SHAPES[shape]
+        return lead + unit * units + "\n."
+
+    def test_each_shape_reaches_the_block_pass(self, subtests) -> None:
+        """Vacuity floor: a shape the block pass never read would pass the bound below on a tree
+        without that pass."""
+        assert len(self.SHAPES) == 7, "a shape was added or dropped: pin the new count"
+        for shape in self.SHAPES:
+            with row(subtests, shape=shape):
+                masked, _ = S.redact_credentials(self._text(shape, 3))
+                assert masked.startswith(private_key_blocks.TAG), masked
+
+    @pytest.mark.parametrize("shape", sorted(SHAPES))
+    def test_quadrupling_the_input_does_not_multiply_the_cost_by_sixteen(self, shape: str) -> None:
+        units = self.SHAPES[shape][2]
+        small, large = self._text(shape, units), self._text(shape, 4 * units)
+        ratio = _growth(S.redact_credentials, small, large)
+        assert (
+            ratio < _NOT_LINEAR
+        ), f"{shape}: cost grew ×{ratio:.1f} for ×4 input — that is not linear"
+
+
 # ── #2717: the per-match rebuild ────────────────────────────────────────────────────────────────
 #
 # Pass 1 used to be `finditer` with `result = result.replace(matched, tag, 1)` INSIDE the loop —
@@ -801,6 +844,7 @@ class TestTheSpliceIsEquivalentUnderFuzzing:
         "key=hunter2hunter2hunter2",
         "api_key: abcdef1234567890abcdef",
         "sk-ant-api03-" + "y" * 30,
+        "pwd=hunter2hunter",
     ]
     _FILLER = [
         " ",

@@ -571,6 +571,7 @@ FOUNDATION_UNITS: dict[str, str] = {
     "filled_secrets": "measured: what a filled secret keeps, masked; imported by 5, imports 1",
     "address_logins": "measured: the login an address carries, found; imported by 5, imports none",
     "known_value_forms": "role: the forms security's mask by value matches; imports none",
+    "private_key_blocks": "role: the whole private key block security's mask takes; imports none",
 }
 
 

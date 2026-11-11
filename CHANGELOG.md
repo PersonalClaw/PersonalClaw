@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Security
+
+- **The credential mask covers a whole private key block, header to END line: RSA, DSA, EC, OpenSSH, PKCS#8, encrypted and OpenPGP keys, with their lines broken, escaped as JSON writes them, run onto one line, indented, marked as a diff, a quote or a `#` comment marks them, or written as string literals in code. A connection string's `Pwd=` or `PWD=` is masked as a password.**
+
 ### Changed
 
 - **The Nix flake installs 0.3.8.**
