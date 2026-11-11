@@ -844,3 +844,43 @@ class TestTheStopEndsWithItsFanout:
                 mgr._running_count,
                 waiting.done,
             )
+
+    @pytest.mark.asyncio
+    async def test_the_run_budgets_late_cancel_spares_a_helper_of_the_next_fanout(self) -> None:
+        """The run budget's cancel runs after the child that crossed the ceiling has ended. When
+        that child was its fan-out's last, the fan-out has drained and its stop has ended, and a
+        helper the same chat starts before the cancel runs belongs to a new fan-out: the late
+        cancel must spare it, not end it with the old fan-out's reason."""
+        from personalclaw.guardrails.budgets import Budget, reset_meter
+
+        reset_meter()
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        chat = "dashboard:a-chat-between-two-fanouts"
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch(
+                "personalclaw.guardrails.budgets.run_budget_from_config",
+                return_value=Budget(max_tokens=1500),
+            ),
+        ):
+            # The last child of the first fan-out ends: its run's total crosses the ceiling, which
+            # schedules the late cancel, and its ending then drains the fan-out, as `_run` does.
+            crossed = SubagentInfo(id="crossed", task="t", parent_session_key=chat)
+            crossed.input_tokens, crossed.output_tokens = 1000, 500
+            mgr._charge_child_and_check_budget(crossed)
+            assert chat in mgr._fanout_stops
+            mgr._maybe_clear_fanout(chat)
+            # Before the late cancel has run, the chat starts its next helper.
+            fresh = mgr.spawn("a helper of the next fan-out", parent_session_key=chat)
+            assert fresh is not None and not fresh.done, fresh.error
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert not fresh.done and not fresh.cancelled, fresh.error
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+        reset_meter()

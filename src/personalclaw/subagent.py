@@ -1664,10 +1664,21 @@ class SubagentManager:
                 except Exception:
                     logger.debug("SEL audit failed for budget stop %s", fkey, exc_info=True)
                 # Kill the in-flight children of this fan-out so "stops mid-flight"
-                # is literal, not just "refuses the next one".
-                asyncio.ensure_future(self.cancel_fanout(fkey, reason=typed))
+                # is literal, not just "refuses the next one". Later, and only while this stop
+                # still stands: the child that crossed the ceiling may be the fan-out's last.
+                asyncio.ensure_future(self._cancel_if_still_stopped(fkey, typed))
         except Exception:
             logger.debug("fan-out budget check failed (fail-open)", exc_info=True)
+
+    async def _cancel_if_still_stopped(self, fkey: str, reason: str) -> int:
+        """The run budget's cancel of *fkey*, which runs after the child that crossed the ceiling
+        has ended. It stops the fan-out only while the stop that scheduled it, *reason*, still
+        stands. When that child was the fan-out's last, its ending has drained the fan-out and
+        ended the stop, and a helper the same chat started since belongs to a new fan-out, which
+        the old ceiling must not end."""
+        if self._fanout_stops.get(fkey) != reason:
+            return 0
+        return await self.cancel_fanout(fkey, reason=reason)
 
     def _maybe_clear_fanout(self, fkey: str) -> None:
         """Drop a fan-out's breaker/budget/stop state once it is fully drained.
