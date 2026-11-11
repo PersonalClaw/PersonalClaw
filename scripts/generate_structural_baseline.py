@@ -572,6 +572,7 @@ FOUNDATION_UNITS: dict[str, str] = {
     "address_logins": "measured: the login an address carries, found; imported by 5, imports none",
     "known_value_forms": "role: the forms security's mask by value matches; imports none",
     "private_key_blocks": "role: the whole private key block security's mask takes; imports none",
+    "quoted_credentials": "role: the quoted value security's mask takes by its name; imports none",
 }
 
 

@@ -59,7 +59,7 @@ import pytest
 from table_rows import row
 
 from personalclaw import address_logins as A
-from personalclaw import private_key_blocks
+from personalclaw import private_key_blocks, quoted_credentials
 from personalclaw import security as S
 
 pytestmark = pytest.mark.security
@@ -68,10 +68,11 @@ pytestmark = pytest.mark.security
 # ── the reference: the rule, said as plainly as it can be ──
 # Plain loops over the text, no memo and no possessive run, so the fast scan's shortcuts are what
 # is under test. It shares only leaf grammars with `address_logins.py` and `security.py` (what a
-# host is, the tag, the shape-based patterns), never the scanning, but for two passes it runs as
+# host is, the tag, the shape-based patterns), never the scanning, but for three passes it runs as
 # production does: the key block pass, held by its own tests and by `TestTheBlockPassStaysLinear`,
-# and the webhook pass. The shape-based pass is spelled as it stood before #2717, a fresh leftmost
-# `replace` per match, which the splice tests below hold the fast one to.
+# the webhook pass, and the quoted value pass, held by its own tests and by
+# `TestTheQuotedPassStaysLinear`. The shape-based pass is spelled as it stood before #2717, a fresh
+# leftmost `replace` per match, which the splice tests below hold the fast one to.
 
 _SCHEME_CHAR = set(string.ascii_letters + string.digits + "+.-")
 #: What ends an authority, besides whitespace and a `:` that begins another `://`.
@@ -191,6 +192,8 @@ def _reference_redact_credentials(text: str) -> tuple[str, list[str]]:
         matched = m.group()
         result = result.replace(matched, "[REDACTED: credential]", 1)
         warnings.append(f"Redacted credential pattern: {matched[:20]}...")
+    result, quoted_warnings = quoted_credentials.redact(result)
+    warnings += quoted_warnings
     for m in S._B64_CHUNK_RE.finditer(text):
         chunk = m.group()
         if S._decode_b64_safe(chunk):
@@ -750,6 +753,49 @@ class TestTheBlockPassStaysLinear:
             with row(subtests, shape=shape):
                 masked, _ = S.redact_credentials(self._text(shape, 3))
                 assert masked.startswith(private_key_blocks.TAG), masked
+
+    @pytest.mark.parametrize("shape", sorted(SHAPES))
+    def test_quadrupling_the_input_does_not_multiply_the_cost_by_sixteen(self, shape: str) -> None:
+        units = self.SHAPES[shape][2]
+        small, large = self._text(shape, units), self._text(shape, 4 * units)
+        ratio = _growth(S.redact_credentials, small, large)
+        assert (
+            ratio < _NOT_LINEAR
+        ), f"{shape}: cost grew ×{ratio:.1f} for ×4 input — that is not linear"
+
+
+class TestTheQuotedPassStaysLinear:
+    """The quoted value pass runs on every text, so its costliest shapes are held to linear cost:
+    each runs a part of its pattern over a long run that ends in nothing it can take, after a
+    quoted value the pass does take, and no pass masks any of the run."""
+
+    LEAD = 'password="hunter2hunter" '
+    #: The text before the run, the unit it repeats, and how many units the smaller input holds.
+    SHAPES = {
+        "a value that is never closed": ('password="', "a", 64_000),
+        "a value of escapes that is never closed": ('password="', "\\a", 32_000),
+        "spaces before a separator that never comes": ("password", " ", 64_000),
+        "backslashes after a name that no separator follows": ("password", "\\", 64_000),
+        "blanks after a separator that no quote follows": ("password=", " ", 64_000),
+        "backslashes before a quote that never comes": ('"password": ', "\\", 64_000),
+        "a value in every unit that the other quote closes": ("", "password=\"abcdefgh'", 1_000),
+    }
+
+    def _text(self, shape: str, units: int) -> str:
+        lead, unit, _ = self.SHAPES[shape]
+        return self.LEAD + lead + unit * units + "\n."
+
+    def test_each_shape_reaches_the_quoted_pass(self, subtests) -> None:
+        """Vacuity floor: each shape, at the size the bound below measures, comes out whole but for
+        the lead's value. A shape the quoted pass never read, or one a pass masks part of, would
+        pass the bound below on a tree without the quoted pass."""
+        assert len(self.SHAPES) == 7, "a shape was added or dropped: pin the new count"
+        for shape, (_lead, _unit, units) in self.SHAPES.items():
+            with row(subtests, shape=shape):
+                text = self._text(shape, units)
+                masked, _ = S.redact_credentials(text)
+                kept = f'password="{quoted_credentials.TAG}" ' + text[len(self.LEAD) :]
+                assert masked == kept, masked[-80:]
 
     @pytest.mark.parametrize("shape", sorted(SHAPES))
     def test_quadrupling_the_input_does_not_multiply_the_cost_by_sixteen(self, shape: str) -> None:

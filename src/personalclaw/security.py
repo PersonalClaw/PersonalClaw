@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qs
 
-from personalclaw import address_logins, private_key_blocks
+from personalclaw import address_logins, private_key_blocks, quoted_credentials
 from personalclaw.command_paths import (
     HOME_PATTERNS,
     glob_forms,
@@ -1234,9 +1234,7 @@ _CREDENTIAL_PATTERNS = re.compile(
     # `Authorization: Bearer <jwt>` both survived into a redacted preview. A preview is the
     # single most likely place for a fetched credential to reach an inbox row.
     r"|sk-[A-Za-z0-9][A-Za-z0-9_-]{20,}"  # provider keys with hyphens/underscores in the body
-    # Generic `key = value` credential assignment. Keyed on the NAME so the value's shape does
-    # not have to be guessed — an unknown provider's key format is exactly what a shape-based
-    # pattern misses.
+    # A `name = value` credential by its NAME; `quoted_credentials` takes one in quotes after this.
     #
     # A value that is already one of this module's masks is not a credential, so the pattern
     # does not take it for one (`(?!\[REDACTED:)`). Without that, a second pass over
@@ -1245,8 +1243,7 @@ _CREDENTIAL_PATTERNS = re.compile(
     # restored masks from such a view put the stored value back without its label. Each name a
     # mask can follow carries it (`pwd=`, the AWS names), so a second pass of `redact_credentials`,
     # or of `redact_for_display` and `redact_field` built on it, changes nothing.
-    r"|(?i:api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret"
-    rf"|password|passwd|private[_-]?key)\s*[:=]\s*(?!\[REDACTED:){_ASSIGNED_VALUE}"
+    rf"|(?i:{quoted_credentials.NAMES})\s*[:=]\s*(?!\[REDACTED:){_ASSIGNED_VALUE}"
     rf"|(?:[Pp]wd=(?![/~])|PWD=(?![/~$]))(?!\[REDACTED:){_ASSIGNED_VALUE}"  # never a folder
     # `Authorization: Bearer <token>` / a bare bearer token.
     r"|(?i:bearer)\s+[A-Za-z0-9._~+/-]{16,}=*"
@@ -1272,7 +1269,8 @@ def _b64_credential(chunk: str) -> str:
         decoded = base64.b64decode(chunk, validate=True).decode("utf-8", errors="ignore")
     except Exception:
         return ""
-    return decoded if _CREDENTIAL_PATTERNS.search(decoded) else ""
+    found = _CREDENTIAL_PATTERNS.search(decoded) or quoted_credentials.QUOTED_RE.search(decoded)
+    return decoded if found else ""
 
 
 def _decode_b64_safe(text: str) -> str:
@@ -1393,6 +1391,8 @@ def redact_credentials(text: str) -> tuple[str, list[str]]:
         return "[REDACTED: credential]"
 
     result = _CREDENTIAL_PATTERNS.sub(_tag_credential, result)
+    result, quoted_warnings = quoted_credentials.redact(result)
+    warnings.extend(quoted_warnings)
 
     # 2. Detect and redact base64-encoded credentials.
     #

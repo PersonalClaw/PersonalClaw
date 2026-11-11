@@ -16,6 +16,7 @@ from personalclaw import (
     memory_reads,
     memory_writes,
     pre_tool_hooks,
+    quoted_credentials,
     run_bounds,
     secret_file_grants,
     subagent_endings,
@@ -891,7 +892,8 @@ def _redact_tool_input_obj(tool_input: object) -> dict | None:
 
     Returns ``None`` for non-dict input (ACP passes a string) so the UI falls back
     to the string ``input_preview`` exactly as before. The same redaction the
-    string preview gets is applied per value, so shipping the object never leaks
+    string preview gets is applied per value, and a value under a credential's name
+    is masked as the preview masks its ``"name": "value"``, so the object never shows
     what the string path would have stripped. Each value is bounded rather than the
     whole object dropped past a size: the row keeps this object (``input_obj``), and a
     call whose input ran long (a command carrying a script, a file write) was stored
@@ -900,17 +902,20 @@ def _redact_tool_input_obj(tool_input: object) -> dict | None:
     if not isinstance(tool_input, dict):
         return None
 
-    def _red(v: object) -> object:
+    def _red(v: object, key: str = "") -> object:
         if isinstance(v, str):
-            return _bounded(_redact_text(v))
+            shown = _redact_text(v)
+            if key and quoted_credentials.redact(json.dumps({key: shown}))[1]:
+                shown = quoted_credentials.TAG
+            return _bounded(shown)
         if isinstance(v, dict):
-            return {k: _red(x) for k, x in v.items()}
+            return {k: _red(x, str(k)) for k, x in v.items()}
         if isinstance(v, list):
             return [_red(x) for x in v]
         return v
 
     try:
-        obj = {str(k): _red(v) for k, v in tool_input.items()}
+        obj = {str(k): _red(v, str(k)) for k, v in tool_input.items()}
         return obj if len(json.dumps(obj, default=str)) <= _TOOL_INPUT_OBJ_MAX else None
     except Exception:
         return None
