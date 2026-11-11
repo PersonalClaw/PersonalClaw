@@ -1444,7 +1444,8 @@ def test_the_programs_step_is_off_by_default_so_no_other_call_changes() -> None:
     assert step["shell"] == "bash"
     assert step["env"] == {"PROGRAMS": "${{ inputs.programs }}"}
     assert "${{" not in step["run"], "an expression pasted into the shell"
-    # Only the tier workflows' stage jobs name programs; every other call leaves the default.
+    # Only the tier workflows' stage jobs name programs, and breadth.yml's legs tmux alone; every
+    # other call leaves the default.
     for path in sorted(_WORKFLOWS.glob("*.yml")):
         for job_id, job in (yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]).items():
             for s in job.get("steps") or []:
@@ -1453,6 +1454,8 @@ def test_the_programs_step_is_off_by_default_so_no_other_call_changes() -> None:
                 given = (s.get("with") or {}).get("programs")
                 if path.name in _TIERS:
                     assert given == "${{ join(matrix.programs, ' ') }}", (path.name, job_id)
+                elif path.name == "breadth.yml":
+                    assert given in (None, "tmux"), (path.name, job_id)
                 else:
                     assert given is None, (path.name, job_id)
 

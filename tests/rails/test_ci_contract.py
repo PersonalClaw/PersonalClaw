@@ -9031,6 +9031,15 @@ _NOT_COMMAND_LINES = frozenset(
     tuple(words) for text in _NOT_COMMANDS.values() for _, words in _run_lines(text) if words
 )
 
+#: The listed lines a mapped job may run or leave out. A line a row names leaves in two merges
+#: (#4584 step 4): these rows first, with the line here, then the workflow, which takes it out of
+#: both. breadth.yml's tmux install waits: its legs install tmux through the setup action next.
+_NOT_COMMANDS_LEAVING = frozenset(
+    tuple(words)
+    for _, words in _run_lines(_NOT_COMMANDS["breadth's: the tmux install, by runner"])
+    if words
+)
+
 
 @dataclass(frozen=True)
 class _Line:
@@ -9321,7 +9330,7 @@ def _catalogue_check(root: Path) -> list[str]:
         for _, words in _run_lines(str(step["run"]))
         if words
     }
-    for words in sorted(_NOT_COMMAND_LINES - ran):
+    for words in sorted(_NOT_COMMAND_LINES - ran - _NOT_COMMANDS_LEAVING):
         bad.append(
             f"this row lists {shlex.join(words)} as a line that validates nothing, and no mapped"
             " workflow job runs it"
