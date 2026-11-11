@@ -834,12 +834,20 @@ class TestTheStopEndsWithItsFanout:
     async def test_a_next_start_that_fails_in_the_reap_leaves_the_reap_whole(self) -> None:
         """A running helper is stopped, and the start of the helper waiting for its slot raises in
         the reap (the audit log refusing its row, as a full disk makes it). The stopped helper
-        still ends reaped with its stop's reason, and its slot is given back once, not twice."""
+        still ends reaped with its stop's reason, its slot is given back once, not twice, and the
+        rest of its reap runs: its Activity row hears that it ended."""
         sessions, began = _sessions_that_say_they_started()
+        ended: list[str] = []
+
+        async def on_event(etype: str, info: SubagentInfo, _extra: dict) -> None:
+            if etype == "subagent_done":
+                ended.append(info.id)
+
         mgr = SubagentManager(
             sessions=sessions,
             ctx_builder=_mock_ctx_builder(),
             on_done=AsyncMock(),
+            on_event=on_event,
             is_yolo=lambda: True,
             max_concurrent=1,
         )
@@ -867,6 +875,7 @@ class TestTheStopEndsWithItsFanout:
                 mgr._running_count,
                 waiting.done,
             )
+            assert running.id in ended, "the reap's tail ran to its end"
 
     @pytest.mark.asyncio
     async def test_the_run_budgets_late_cancel_spares_a_helper_of_the_next_fanout(self) -> None:
