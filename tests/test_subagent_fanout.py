@@ -574,3 +574,27 @@ class TestTheStopEndsWithItsFanout:
             assert following.queued, "it waits behind the other chat's helper"
             assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
         await _stop(mgr)
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_helper_hands_its_slot_to_the_one_waiting(self) -> None:
+        """A helper stopped while it runs (Stop, Stop fan-out, the run budget's cancel, the
+        reaper) frees its slot, and the helper waiting for that slot starts in it, as it does
+        when a helper ends on its own: a spawn that comes later waits behind it."""
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            running = mgr.spawn("the running helper", parent_session_key="dashboard:one-chat")
+            waiting = mgr.spawn("the waiting helper", parent_session_key="dashboard:other-chat")
+            assert running is not None and not running.queued
+            assert waiting is not None and waiting.queued
+            assert await mgr.cancel(running.id) is True
+            assert running.done and running.reaped
+            assert not waiting.queued and waiting.id in mgr._tasks, "it starts in the freed slot"
+            later = mgr.spawn("a later helper", parent_session_key="dashboard:a-third-chat")
+            assert later is not None and later.queued, "it waits behind the one that waited"
+        await _stop(mgr)

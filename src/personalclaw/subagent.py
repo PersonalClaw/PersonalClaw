@@ -933,6 +933,10 @@ class SubagentManager:
                 info.never_ran = True
                 subagent_waiting.forget(agent_id)
             self._note_child_outcome(info)
+            # Its slot goes to the helper waiting for it, as when a helper ends on its own: a
+            # reaped run skips its own drain, so without this the waiting one stayed queued until
+            # some other helper ended, and a later spawn took the slot first.
+            self._drain_queue()
         info.reaped = True
         self._maybe_clear_fanout(_fanout_key(info))
 
