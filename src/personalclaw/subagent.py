@@ -1670,8 +1670,8 @@ class SubagentManager:
         """The run budget's cancel of *fkey*, which runs after the child that crossed the ceiling
         has ended. It stops the fan-out only while the stop that scheduled it, *reason*, still
         stands. When that child was the fan-out's last, its ending has drained the fan-out and
-        ended the stop, and a helper the same chat started since belongs to a new fan-out, which
-        the old ceiling must not end."""
+        ended the stop, and a helper started under *fkey* since (the chat's next helper, or the
+        workflow run's next agent step) must not be ended by a stop that is gone."""
         if self._fanout_stops.get(fkey) != reason:
             return 0
         return await self.cancel_fanout(fkey, reason=reason)
@@ -2643,8 +2643,8 @@ class SubagentManager:
             *(self.cancel(info.id, reason=f"Cancelled because {because}") for info in victims),
             return_exceptions=True,
         )
-        # Belt and braces: each victim's own ending clears its fan-out's stop (a waiting one in
-        # cancel(), a running one in its reap); this covers a cancel that raised before it did.
+        # Belt and braces: each victim's own ending clears its fan-out's stop (a queued one in
+        # cancel(), a running or asking one in its reap); this covers a cancel that raised first.
         for fkey in {_fanout_key(info) for info in victims}:
             self._maybe_clear_fanout(fkey)
         stopped = sum(1 for r in results if r is True)
@@ -2662,10 +2662,10 @@ class SubagentManager:
         fan-out stopped so a spawn already in flight to the queue is refused too,
         then cancels each child concurrently, each ending with *reason* (the run budget it ran
         past, or her Stop fan-out, *by_you*: :meth:`cancel`). The mark ends once nothing of the
-        fan-out is running or waiting (:meth:`_maybe_clear_fanout`), here too: the run budget's
-        cancel runs after the child that crossed it has ended, which may be the fan-out's last, and
-        a Stop fan-out may find nothing running at all. A mark left there would refuse every later
-        helper of the chat, or every later agent step of the workflow run, until a restart.
+        fan-out is running or waiting (:meth:`_maybe_clear_fanout`), here too: a Stop fan-out may
+        find nothing running at all, and a cancel that raised before its own clear leaves the mark
+        to this one. A mark left there would refuse every later helper of the chat, or every later
+        agent step of the workflow run, until a restart.
         Idempotent: a second call finds nothing to cancel. Unlike ``cancel_all`` (the shutdown
         switch) this touches ONE fan-out and leaves other runs untouched.
         """

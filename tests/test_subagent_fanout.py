@@ -53,11 +53,11 @@ async def _stop(mgr: SubagentManager) -> None:
 
 
 async def _settle(*running: SubagentManager, strict: bool = True) -> list[asyncio.Task]:
-    """Let every task this test's loop holds run to its end, except the helpers still running in
-    *running*: the run budget's late cancel is one, started with nothing awaiting it, and so is a
-    reap's tail. Tasks may start others, so it looks again until none is left. Past ``_HANG_SECS``
-    something is stuck: *strict* fails the test there; otherwise what is still pending is returned.
-    """
+    """Let every task this test's loop holds run to its end, the run budget's late cancel and a
+    reap's tail among them (each started with nothing awaiting it), except the helpers still
+    running in *running*. Tasks may start others, so it looks again until none is left. Past
+    ``_HANG_SECS`` something is stuck: *strict* fails the test there; otherwise what is still
+    pending is returned."""
     loop = asyncio.get_running_loop()
     me = asyncio.current_task()
     deadline = loop.time() + _HANG_SECS
@@ -669,8 +669,8 @@ class TestTheStopEndsWithItsFanout:
     async def test_a_stopped_helper_hands_its_slot_to_the_one_waiting(self) -> None:
         """A helper stopped before its run has begun, here by its Stop, frees its slot, and the
         helper waiting for that slot starts in it, as it does when a helper ends on its own: a
-        spawn that comes later waits behind it. One stopped inside its model call is the next
-        test's."""
+        spawn that comes later waits behind it. One stopped inside its model call is
+        ``test_a_helper_stopped_inside_its_model_call_hands_its_slot_on``'s."""
         mgr = SubagentManager(
             sessions=_hanging_sessions(),
             ctx_builder=_mock_ctx_builder(),
@@ -1018,8 +1018,7 @@ class TestTheStopEndsWithItsFanout:
             # Before the late cancel has run, the chat starts its next helper.
             fresh = mgr.spawn("a helper of the next fan-out", parent_session_key=chat)
             assert fresh is not None and not fresh.done, fresh.error
-            for _ in range(5):
-                await asyncio.sleep(0)
+            await _settle(mgr)
             assert not fresh.done and not fresh.cancelled, fresh.error
             assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
         reset_meter()
