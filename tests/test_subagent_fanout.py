@@ -503,6 +503,22 @@ def _hanging_sessions() -> MagicMock:
 BREAKER = "spawn refused: fan-out breaker tripped"
 
 
+def _sessions_that_say_they_started() -> tuple[MagicMock, asyncio.Event]:
+    """The hanging sessions, and an event set once a helper's model call has begun: a helper
+    stopped after that point is one stopped while it runs."""
+    sessions = _hanging_sessions()
+    provider = sessions.get_or_create.return_value[0]
+    began = asyncio.Event()
+
+    async def _stream(*_a, **_kw):
+        began.set()
+        await asyncio.sleep(_HANG_SECS)
+        yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="late")
+
+    provider.stream = MagicMock(side_effect=lambda *a, **kw: _stream())
+    return sessions, began
+
+
 def _trip(mgr: SubagentManager, chat: str) -> None:
     """Five failed helpers of *chat* trip its breaker, as
     ``test_record_failure_breaker_trips_at_five`` does. The stop it sets cancels nothing, so
@@ -790,3 +806,41 @@ class TestTheStopEndsWithItsFanout:
             else:
                 assert get_meter().run_totals(chat).tokens == 0, "the next fan-out starts at 0"
         reset_meter()
+
+    @pytest.mark.asyncio
+    async def test_a_next_start_that_fails_in_the_reap_leaves_the_reap_whole(self) -> None:
+        """A running helper is stopped, and the start of the helper waiting for its slot raises in
+        the reap (the audit log refusing its row, as a full disk makes it). The stopped helper
+        still ends reaped with its stop's reason, and its slot is given back once, not twice."""
+        sessions, began = _sessions_that_say_they_started()
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel") as sel:
+            running = mgr.spawn("the running helper", parent_session_key="dashboard:one-chat")
+            waiting = mgr.spawn("the waiting helper", parent_session_key="dashboard:other-chat")
+            assert running is not None and waiting is not None and waiting.queued
+            await asyncio.wait_for(began.wait(), 5)
+
+            def full(**kw):
+                if kw.get("outcome") == "auto_approved_spawn":
+                    raise OSError(28, "No space left on device")
+
+            sel.return_value.log_tool_invocation.side_effect = full
+            try:
+                await mgr.cancel(running.id, reason="Cancelled by user")
+            except OSError:
+                pass
+            await _settle()
+            assert running.reaped and running.error == "Cancelled by user", (
+                running.reaped,
+                running.error,
+            )
+            assert mgr._running_count == (0 if waiting.done else 1), (
+                mgr._running_count,
+                waiting.done,
+            )
