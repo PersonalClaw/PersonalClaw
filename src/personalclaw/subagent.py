@@ -2572,6 +2572,9 @@ class SubagentManager:
             info.done, info.never_ran = True, True
             info.error = reason
             subagent_waiting.forget(agent_id)
+            # Its fan-out's stop ends with its last helper, waiting or running: a stopped turn
+            # whose helpers were all waiting marks the fan-out stopped and ends them here.
+            self._maybe_clear_fanout(_fanout_key(info))
             # It said it waited: it says how its wait ended, as one that ran says how it ended.
             await self._fire_event("subagent_done", info, subagent_endings.done_event(info))
             return True
@@ -2614,6 +2617,8 @@ class SubagentManager:
             *(self.cancel(info.id, reason=f"Cancelled because {because}") for info in victims),
             return_exceptions=True,
         )
+        for fkey in {_fanout_key(info) for info in victims}:
+            self._maybe_clear_fanout(fkey)  # the mark ends once its fan-out has drained
         stopped = sum(1 for r in results if r is True)
         logger.info("Stopped %d/%d subagent(s): %s", stopped, len(victims), because)
         return stopped

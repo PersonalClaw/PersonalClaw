@@ -547,3 +547,30 @@ class TestTheStopEndsWithItsFanout:
             assert following is not None and not following.done, following.error
             assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
         await _stop(mgr)
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_turn_whose_helpers_were_all_waiting_leaves_no_stop(self) -> None:
+        """A stopped turn whose helpers were all still waiting for a slot marks their fan-out
+        stopped and ends each one where it waits. A waiting helper's ending must clear that
+        stop as a running one's does, or the chat's next turn can start no helper."""
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        chat = "dashboard:a-chat-whose-helpers-wait"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            busy = mgr.spawn("another chat's helper", parent_session_key="dashboard:a-busy-chat")
+            assert busy is not None and not busy.queued, "it takes the one slot"
+            waiting = [mgr.spawn(f"helper {i}", parent_session_key=chat) for i in (1, 2)]
+            assert all(w is not None and w.queued for w in waiting)
+            stopped = await mgr.stop_agents([w.id for w in waiting], because="the turn was stopped")
+            assert stopped == 2
+            assert all(w.done and w.never_ran for w in waiting)
+            following = mgr.spawn("the next turn's helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+            assert following.queued, "it waits behind the other chat's helper"
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+        await _stop(mgr)
