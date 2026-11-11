@@ -549,11 +549,15 @@ Explanations, and a chat's own choice in Chat preferences wins over it: **Your d
 setting. It changes how things are explained, never a fact, a caveat or a refusal. It's sent as its
 own section after the reply style's, and the platform's safety rules still come last.
 
-**How should I explain things?** After setup, a new chat offers this once, as a card that never
-blocks the composer, and not while the quick tour is showing you around: **Briefly**, **Step by
-step**, **With the background** or **Skip**. Your answer becomes your Explanations default, and
-setting the default in Settings first answers the card too. Skip is remembered, so the card
-doesn't return.
+**How should I explain things?** After setup, your first new chat asks this once, in a small
+window: **Briefly**, **Step by step**, **With the background** or **Use the default**. It waits
+while the quick tour is showing you around, while you're writing a draft, while another window or
+menu is open over the page, while you're typing somewhere else and while the page is out of sight.
+It's recorded as asked just before it opens, so a reload, a closed tab or a second browser doesn't
+bring it back, and setting the default in Settings first answers it too. Your answer becomes your
+Explanations default; Use the default, ×, Escape or a click outside it leaves the default as it
+is. Change it any time in Settings → Agent → Agent defaults → Explanations, or for one chat in
+Chat preferences.
 
 **Editing a style.** Each bundled style's wording is a prompt in Settings → Agent → Prompts
 (`reply-style-plain`, `reply-style-terse`, `reply-style-conversational`). Its text is sent as

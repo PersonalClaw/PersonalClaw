@@ -2,10 +2,10 @@
 
 The owner's default is ``agent.explain``. Settings → Agent → Agent defaults carries its row,
 labelled Explanations, so the CHANGELOG's entries, the chat guide, the module, the config field's
-own description and the first-run card may send the owner there, and only while that row exists:
+own description and the one-time window may send the owner there, and only while that row exists:
 each text that names Agent defaults (or, in the CHANGELOG, Settings) is held to it, and a Settings
 path that ends at Explanations must be the path the dashboard has, page, section and row. The
-behaviour is held in ``tests/test_explanations.py`` and the card's own test.
+behaviour is held in ``tests/test_explanations.py`` and the window's own test.
 """
 
 from __future__ import annotations
@@ -71,14 +71,16 @@ def _texts() -> dict[str, str]:
         ),
         "explanations.py": (REPO / "src/personalclaw/explanations.py").read_text(encoding="utf-8"),
         "AgentConfig.explain": str(meta),
-        "the card": (REPO / "web/src/pages/chat/hero/ExplainCard.tsx").read_text(encoding="utf-8"),
+        "the window": (REPO / "web/src/pages/chat/hero/ExplainQuestion.tsx").read_text(
+            encoding="utf-8"
+        ),
     }
 
 
-def test_the_card_and_the_guide_name_the_rows_path():
+def test_the_window_and_the_guide_name_the_rows_path():
     """Held on its own so the rail below cannot pass by reading no path at all."""
     texts = _texts()
-    for where in ("the card", "chat guide", "CHANGELOG"):
+    for where in ("the window", "chat guide", "CHANGELOG"):
         assert _paths(texts[where]), f"{where} names no Settings path to Explanations"
 
 

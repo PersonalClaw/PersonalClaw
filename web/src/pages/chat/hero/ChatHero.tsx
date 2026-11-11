@@ -8,7 +8,7 @@ import { fadeEnter, spring } from '../../../design/motion'
 import { api, type SessionTemplate } from '../../../lib/api'
 import { refreshKinds, useChatSocket } from '../../../lib/useChatSocket'
 import { useQuery, invalidateKeys } from '../../../lib/data'
-import { ExplainCard } from './ExplainCard'
+import { ExplainQuestion } from './ExplainQuestion'
 
 // ── The new chat's hero ────────────────────────────────────────────────────────────────────────
 //
@@ -138,11 +138,16 @@ function StarterChips({ onPick }: { onPick: (t: SessionTemplate) => void }) {
   )
 }
 
-export function ChatHero({ name, stage, onPickStarter, onPickSuggestion }: {
+export function ChatHero({ name, stage, onPickStarter, onPickSuggestion, draftUnderWay, onExplainClosed }: {
   name: string
   stage: React.ReactNode
   onPickStarter: (t: SessionTemplate) => void
   onPickSuggestion: (s: string) => void
+  /** Whether the composer holds anything of a draft, which "How should I explain things?"
+   *  waits on. */
+  draftUnderWay: () => boolean
+  /** Runs once that window has gone: the composer's editor takes the focus. */
+  onExplainClosed: () => void
 }) {
   return (
     <div className="group/hero relative flex-1 flex flex-col items-center justify-center px-l">
@@ -154,10 +159,11 @@ export function ChatHero({ name, stage, onPickStarter, onPickSuggestion }: {
       </motion.div>
       <div className="flex w-full flex-col items-center gap-2xl">
         {stage}
-        <ExplainCard />
         <StarterChips onPick={onPickStarter} />
         <SuggestionChips onPick={onPickSuggestion} />
       </div>
+      {/* Asked once, after setup, in a window over the hero: it portals, so nothing here moves. */}
+      <ExplainQuestion draftUnderWay={draftUnderWay} onClosed={onExplainClosed} />
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { runState } from '../../test/runState'
 
@@ -31,6 +31,8 @@ const h = vi.hoisted(() => ({
   sendChat: vi.fn(),
   voiceSynthesize: vi.fn(),
   regenerate: vi.fn(),
+  onboarding: vi.fn(),
+  answerExplain: vi.fn(),
 }))
 
 vi.mock('../../lib/api', async () => {
@@ -47,6 +49,9 @@ vi.mock('../../lib/api', async () => {
     models: () => Promise.resolve([]),
     chatSessionTemplates: () => Promise.resolve([]),
     sessionCost: () => Promise.resolve({ turns: 0, cost_usd: 0, input_tokens: 0, output_tokens: 0 }),
+    // The new chat's explain question: setup done and the question open, and the claim answers.
+    onboarding: h.onboarding,
+    answerExplain: h.answerExplain,
   }
   // The page reads ~40 endpoints; anything not named above resolves to a shape-agnostic value.
   const api = new Proxy(base, {
@@ -94,6 +99,8 @@ beforeEach(async () => {
   h.sendChat.mockReset().mockResolvedValue({ ok: true, session: 'chat-7-x' })
   h.voiceSynthesize.mockReset().mockResolvedValue({ ok: true, chunks: 0 })
   h.regenerate.mockReset().mockResolvedValue({ ok: true })
+  h.onboarding.mockReset().mockResolvedValue({ step: 'done', explain_asked: false })
+  h.answerExplain.mockReset().mockResolvedValue({ ok: true, state: { step: 'done', explain_asked: true } })
   ;({ ChatPage } = await import('../ChatPage'))
   ;({ AppearanceProvider } = await import('../../app/appearance'))
 })
@@ -142,5 +149,47 @@ describe('a picked follow-up chip', () => {
     await waitFor(() => expect(h.sendChat).toHaveBeenCalledTimes(1))
     expect(h.sendChat.mock.calls[0][0]).toBe(CHIP)
     await waitFor(() => expect(chips(), 'sending is moving on: the chips go').toBeNull())
+  })
+})
+
+// The new chat's page hands the explain question its draft and its composer: it waits while the
+// composer holds a draft, and the editor has the focus once the window has gone.
+describe('the explain question on a new chat', () => {
+  beforeEach(async () => {
+    vi.resetModules()
+    ;({ ChatPage } = await import('../ChatPage'))
+    ;({ AppearanceProvider } = await import('../../app/appearance'))
+  })
+
+  it('asks nothing while the new chat opens with a draft in its composer', async () => {
+    render(
+      <AppearanceProvider>
+        <ChatPage sub="new" query={{ seed: 'half a thought' }} navigate={() => {}} setQuery={() => {}} />
+      </AppearanceProvider>,
+    )
+    await act(() => new Promise((r) => setTimeout(r, 1200)))
+    // The composer's model notice reads the onboarding state too: the claim is the question's own.
+    expect(h.answerExplain, 'claimed while the composer holds a draft').not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: 'How should I explain things?' })).toBeNull()
+  })
+
+  it("gives the composer's editor the focus once the window has gone", async () => {
+    const user = userEvent.setup()
+    const { container } = render(
+      <AppearanceProvider>
+        <ChatPage sub="new" query={{}} navigate={() => {}} setQuery={() => {}} />
+      </AppearanceProvider>,
+    )
+    const editor = await waitFor(() => {
+      const e = container.querySelector('.cm-content') as HTMLElement | null
+      expect(e, 'the composer mounted its editor').toBeTruthy()
+      return e!
+    })
+    // The trap gives the focus back to what held it: off the editor, only the page's own hand-back
+    // can put it there.
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    const win = await screen.findByRole('dialog', { name: 'How should I explain things?' })
+    await user.click(within(win).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(editor.contains(document.activeElement), 'the caret is in the composer').toBe(true))
   })
 })

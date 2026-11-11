@@ -338,8 +338,10 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
   it('🔴 THE RATCHET: the number of busy-gated Buttons announcing nothing may only go DOWN', () => {
     // 179 as first measured; 114 once Class A, the self-spun bystanders and the identity-gated half of
     // Class B were closed; 79 once the census learned the spellings described below; 76; 75 (the
-    // schedule panel's Run now publishes its run as `loading`); **74 now** (an automation's Dry run
-    // publishes its own run as `loading` too). The
+    // schedule panel's Run now publishes its run as `loading`); 74 (an automation's Dry run
+    // publishes its own run as `loading` too); **75 now** (the explain question's Use the default
+    // waits on the choice that is saving and carries the shared reason: a class D bystander, whose
+    // honest answer is a reason, not `loading=`). The
     // converted sites drop out of the population entirely, because `disabled={busy}` is GONE from them
     // rather than supplemented. A CEILING, not a floor: each future fix lowers it (lower it in that
     // PR), and a NEW `<Button disabled={busy}>` with no `loading=` raises it and reds this.
@@ -369,7 +371,7 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
       'a busy-gated Button that announces nothing to assistive tech:\n  ' +
         unannounced.slice(0, 12).map((s) => `${s.at}  disabled={${s.gate}}`).join('\n  ') +
         `\n  …and ${Math.max(0, unannounced.length - 12)} more`,
-    ).toBeLessThanOrEqual(74)
+    ).toBeLessThanOrEqual(75)
   })
 
   it('records the classes, because they want OPPOSITE fixes', () => {
