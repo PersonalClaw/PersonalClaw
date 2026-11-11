@@ -160,6 +160,105 @@ for (const theme of THEMES) test.describe(`the UI quality check reports every pl
     }
   })
 
+  // An opener's visit is of its opened window, so the widths are the window's. The tidy-up after the
+  // keyboard walk pressed Escape, which closed the window itself, and the widths then read it part
+  // way out or the page behind it, by timing: Chat preferences' window, leaving on a spring, was
+  // under 44 px at 768 on one run and gone on the next. Planted: a window that Escape closes and
+  // that leaves 300 ms later, as an animated exit does, holding a 40 px button the walk never
+  // reaches. On a route's row the Escape still closes it.
+  const plantWindow = (page: Page) =>
+    page.evaluate(() => {
+      const win = document.createElement('div')
+      win.id = 'probe-window'
+      win.setAttribute('role', 'dialog')
+      win.setAttribute('aria-label', 'probe window')
+      win.style.cssText = 'position:fixed;right:0;bottom:0;z-index:2147483647;width:120px;background:#ffffff'
+      win.innerHTML = '<button tabindex="-1" style="width:40px;height:40px">probe-window-40</button>'
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') setTimeout(() => win.remove(), 300)
+      })
+      document.body.append(win)
+    })
+  const targetsAt = async (page: Page, ctx: Parameters<typeof runMatrix>[1]) => {
+    const found = new Map<string, string[]>()
+    await runMatrix(
+      page,
+      ctx,
+      { tree: null, targets: Object.fromEntries(COMPACT_WIDTHS.map((w) => [String(w), []])), known: {}, adopt: true },
+      async (name, findings) => {
+        found.set(name, await findings())
+      },
+    )
+    return (w: number) => (found.get(`44 px targets at ${w}px`) ?? []).join('\n')
+  }
+
+  test(`an opener's window is measured open at every compact width, never as it closes (${theme})`, async ({ page }) => {
+    await loadClean(page, theme)
+    await plantWindow(page)
+    const at = await targetsAt(page, { where: `probe window [opened] (${theme})`, theme, kind: 'opener', route: 'dashboard', opener: 'probe window' })
+    for (const w of COMPACT_WIDTHS) expect(at(w), `the opened window at ${w} px`).toContain('probe-window-#')
+  })
+
+  test(`on a route's row the walk's Escape still closes what is open before the widths (${theme})`, async ({ page }) => {
+    await loadClean(page, theme)
+    await plantWindow(page)
+    const at = await targetsAt(page, { where: `#/dashboard (${theme}, a window open)`, theme, kind: 'route', route: 'dashboard' })
+    for (const w of COMPACT_WIDTHS) expect(at(w), `the closed window at ${w} px`).not.toContain('probe-window-#')
+  })
+
+  // A width is read once its controls hold still. The widths waited a fixed 150 ms after each
+  // resize, so a panel that springs to the new width (the chat's session inspector docks at 320 px
+  // on a spring) was read part way there on a slow runner and settled on a fast one. Planted: after
+  // each resize a 40 px control slides for 1.2 s, then rests at 48 px, as a spring does. Read mid
+  // slide it is under 44 px; at rest it is not. A control that never rests fails the row.
+  const plantSlider = (page: Page, forever: boolean) =>
+    page.evaluate((loop) => {
+      const box = document.createElement('div')
+      box.style.cssText = 'position:fixed;left:0;bottom:0;z-index:2147483647;width:300px;height:48px;background:#ffffff'
+      const b = document.createElement('button')
+      b.tabIndex = -1
+      b.textContent = loop ? 'probe-restless' : 'probe-sliding'
+      b.style.cssText = 'position:absolute;top:0;left:0;width:48px;height:48px'
+      box.append(b)
+      let start = 0
+      const frame = (now: number) => {
+        const t = now - start
+        if (loop || t < 1200) {
+          b.style.width = '40px'
+          b.style.left = `${Math.round((t / 6) % 200)}px`
+          requestAnimationFrame(frame)
+        } else {
+          b.style.width = '48px'
+          b.style.left = '200px'
+        }
+      }
+      window.addEventListener('resize', () => {
+        start = performance.now()
+        requestAnimationFrame(frame)
+      })
+      document.body.append(box)
+    }, forever)
+
+  test(`a width is read once its controls hold still, never while a panel still springs to it (${theme})`, async ({ page }) => {
+    await loadClean(page, theme)
+    await plantSlider(page, false)
+    const at = await targetsAt(page, { where: `#/dashboard (${theme}, sliding)`, theme, kind: 'route', route: 'dashboard' })
+    for (const w of COMPACT_WIDTHS) expect(at(w), `the control at rest at ${w} px`).not.toContain('probe-sliding')
+  })
+
+  test(`a row whose controls never hold still fails, naming the row and what moved (${theme})`, async ({ page }) => {
+    await loadClean(page, theme)
+    await plantSlider(page, true)
+    const where = `#/dashboard (${theme}, restless)`
+    const failed = await targetsAt(page, { where, theme, kind: 'route', route: 'dashboard' }).then(
+      () => null,
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    )
+    expect(failed, 'a row whose controls never hold still fails').not.toBeNull()
+    expect(failed).toContain(`${where} at 1440px: the controls did not hold still`)
+    expect(failed).toContain('probe-restless')
+  })
+
   test(`a baselined finding passes, a new one fails, and a fixed one fails until its entry goes (${theme})`, async () => {
     const raw = ['focus indicator at 1.11:1 against its backdrop: <button> "New chat"']
     const base = raw.map(findingKey)

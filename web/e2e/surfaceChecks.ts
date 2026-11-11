@@ -64,9 +64,11 @@ const HOST_FOLDS: [RegExp, string][] = [
 //   2. reduced motion: emulate the preference, measure, emulate none again;
 //   3. 200% text zoom: the root font size doubled, measured and restored in one synchronous pass;
 //   4. the keyboard walk, with focus order and the rendered contrast of each focus indicator read
-//      off the same walk; then Escape and a blur, so nothing it opened stays open;
+//      off the same walk; then a blur, and on a route's row Escape, so nothing it opened stays open
+//      (an opener's row keeps its window: the visit is of that window);
 //   5. the widths LAST, and WIDEST FIRST: 1440, then 1024 down to 320. Overflow at each, 44 px
-//      targets at the compact ones, each read with every scroller back at its start.
+//      targets at the compact ones, each read with every scroller back at its start and once the
+//      controls hold still (`settleControls`).
 //
 // 🪤 WHY THE WIDTHS ONLY EVER STEP DOWN. A width reached by resizing must measure what a load at
 // that width measures, and the responsive header does not promise that in both directions: it
@@ -485,16 +487,18 @@ export async function overflowFindings(page: Page): Promise<string[]> {
   })
 }
 
+/** The controls a width's checks read: what takes a click or a tab stop. */
+const CONTROLS = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),' +
+  'textarea:not([disabled]),summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=switch],' +
+  '[role=checkbox],[role=radio],[role=option],[tabindex]:not([tabindex="-1"])'
+
 /** Every visible control whose hit area is under 44 px in either dimension, keyed for a baseline.
  *  The hit area is the control's box, or its nearest `label` / `[role=row]` / list-row wrapper when
  *  that wrapper is what takes the click, so a 16 px checkbox in a 48 px row is not a finding. */
 export async function smallTargets(page: Page): Promise<string[]> {
   await page.evaluate(install)
-  return page.evaluate((min) => {
+  return page.evaluate(([min, SEL]) => {
     const q = (window as unknown as { __pcq: Pcq }).__pcq
-    const SEL = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),' +
-      'textarea:not([disabled]),summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=switch],' +
-      '[role=checkbox],[role=radio],[role=option],[tabindex]:not([tabindex="-1"])'
     const out = new Set<string>()
     for (const el of document.querySelectorAll(SEL)) {
       if (!q.shown(el)) continue
@@ -505,7 +509,7 @@ export async function smallTargets(page: Page): Promise<string[]> {
       if (r.width < min - 0.5 || r.height < min - 0.5) out.add(q.key(el))
     }
     return [...out].sort()
-  }, MIN_TARGET_PX)
+  }, [MIN_TARGET_PX, CONTROLS] as const)
 }
 
 /** Findings for one compact width: a small target the baseline does not name, and a baseline entry
@@ -803,10 +807,56 @@ export async function hideToasts(page: Page): Promise<void> {
 
 async function resize(page: Page, width: number, height: number): Promise<void> {
   await page.setViewportSize({ width, height })
-  // Two frames for layout and `matchMedia` listeners (`useIsMobile`), then a beat for the render
-  // they schedule.
+  // Two frames for layout and `matchMedia` listeners (`useIsMobile`). What they render, and any
+  // panel that springs to the new width, is waited out by `settleControls`, not by a fixed beat.
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
-  await page.waitForTimeout(150)
+}
+
+/** How long apart two reads of the controls are, and how long a width may take to hold still. */
+export const SETTLE_POLL_MS = 100
+export const SETTLE_LIMIT_MS = 3_000
+
+/** Every shown control with its box, rounded to the pixel: what a width's checks read. */
+async function controlLayout(page: Page): Promise<string[]> {
+  await page.evaluate(install)
+  return page.evaluate((SEL) => {
+    const q = (window as unknown as { __pcq: Pcq }).__pcq
+    const out: string[] = []
+    for (const el of document.querySelectorAll(SEL)) {
+      if (!q.shown(el)) continue
+      const r = el.getBoundingClientRect()
+      out.push(`${q.key(el)} ${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`)
+    }
+    return out
+  }, CONTROLS)
+}
+
+/** Wait until the controls hold still: two reads in a row, two frames and SETTLE_POLL_MS apart,
+ *  that agree on every control and its box. A width read while a panel still springs to it, or
+ *  before the render a `matchMedia` listener scheduled, measured a layout no user rests on, and
+ *  which one depended on the runner's speed: the chat's session inspector, docked at 320 px,
+ *  squeezes the thread to nothing, and its "Worked for" fold counted on one run and not the next.
+ *  A page that never holds still within SETTLE_LIMIT_MS fails, naming where and what moved. */
+export async function settleControls(page: Page, where: string): Promise<void> {
+  const until = Date.now() + SETTLE_LIMIT_MS
+  let before = await controlLayout(page)
+  for (;;) {
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+    await page.waitForTimeout(SETTLE_POLL_MS)
+    const now = await controlLayout(page)
+    if (now.length === before.length && now.every((c, i) => c === before[i])) return
+    if (Date.now() >= until) {
+      const was = new Set(before)
+      const is = new Set(now)
+      const gone = before.filter((c) => !is.has(c)).slice(0, 10)
+      const came = now.filter((c) => !was.has(c)).slice(0, 10)
+      throw new Error(
+        `${where}: the controls did not hold still within ${SETTLE_LIMIT_MS} ms; two reads in a row differ:\n` +
+          `  only in the first: ${gone.join('; ') || '(none)'}\n  only in the second: ${came.join('; ') || '(none)'}`,
+      )
+    }
+    before = now
+  }
 }
 
 /** Every scroller, and the window, back at its start. The keyboard walk scrolls whatever holds the
@@ -862,13 +912,18 @@ export async function runMatrix(page: Page, ctx: SurfaceContext, baselines: Base
   }, false)
   await baselined(STEPS.order, async () => focusOrderFindings(walk))
   await baselined(STEPS.contrast, async () => contrastFindings(walk))
-  // Close whatever the walk opened (a mode pill opens on focus) before anything is measured again.
-  await page.keyboard.press('Escape')
+  // Close whatever the walk opened (a mode pill opens on focus, and closes 120 ms after a blur)
+  // before anything is measured again. An opener's row takes no Escape: its visit is of the window
+  // it opened, and Escape closed that window too, so the widths read it part way out or the page
+  // behind it, by timing (Chat preferences' window, leaving on a spring, measured under 44 px at
+  // 768 on one run and was gone on the next). The page behind is its route's own row.
+  if (ctx.kind !== 'opener') await page.keyboard.press('Escape')
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.())
   await page.waitForTimeout(200)
   for (const w of WIDTHS) {
     await resize(page, w, isCompact(w) ? PHONE_HEIGHT : REST_VIEWPORT.height)
     await scrollToStart(page)
+    await settleControls(page, `${ctx.where} at ${w}px`)
     await baselined(overflowStep(w), () => overflowFindings(page))
     if (isCompact(w)) {
       await step(targetStep(w), async () => {
