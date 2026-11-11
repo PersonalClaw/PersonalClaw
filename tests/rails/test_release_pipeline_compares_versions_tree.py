@@ -146,10 +146,16 @@ def test_an_image_that_is_not_the_tagged_release_fails_its_smoke(
 
 
 def test_the_web_image_keeps_its_banner_check(tmp_path) -> None:
-    ok = _smoke(tmp_path, "web", "v0.3.0-rc.1", "nginx version: nginx/1.27.3")
+    rendered = "# configuration file /etc/nginx/conf.d/default.conf:"
+    ok = _smoke(tmp_path, "web", "v0.3.0-rc.1", f"nginx version: nginx/1.31.8\n{rendered}")
     assert ok.returncode == 0, ok.stdout + ok.stderr
-    bad = _smoke(tmp_path, "web", "v0.3.0-rc.1", "sh: nginx: not found")
-    assert bad.returncode != 0 and "did not report 'nginx version:'" in bad.stdout
+    # A config test that rendered no template passes too, with no server in it at all.
+    for banner in (
+        "sh: nginx: not found",
+        "nginx: configuration file /etc/nginx/nginx.conf test is successful",
+    ):
+        bad = _smoke(tmp_path, "web", "v0.3.0-rc.1", banner)
+        assert bad.returncode != 0 and f"did not report '{rendered}'" in bad.stdout
 
 
 def test_the_build_job_requires_the_wheel_to_be_the_tagged_release() -> None:

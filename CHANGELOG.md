@@ -22,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The first sign-in password a container sets with `PERSONALCLAW_LOGIN_PASSWORD` is taken out of the gateway's environment once it has been read, and out of the one its Restart or an applied update starts it with, so nothing the gateway starts inherits it.**
 - **The command line and the gateway's log show each character a terminal would act on as a visible escape, whatever wrote the text, and a folder's `.env` names are checked before they're used.**
 - **The gateway image's agent CLIs install fast-uri 3.1.9, which fixes URI scheme spoofing through a percent-encoded scheme and host confusion through an unchecked WHATWG host (GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr, moderate), and two low-severity flaws in how it resolves and normalizes references (GHSA-333x-w4r6-6crp, GHSA-xhq7-xmqj-769h).**
+- **The web image, the container install's HTTPS front, runs nginx 1.31.8, where it shipped 1.27.5, a line nginx stopped fixing in April 2025, and the gateway image runs its agent CLIs on Node 24.22.2, which carries 24.22.1's security fixes.**
 
 ### Added
 
