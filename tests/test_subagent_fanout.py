@@ -440,3 +440,110 @@ class TestRunBudget:
             await mgr.flush_deliveries()
         assert seen.get("cost_usd") == pytest.approx(0.42)
         assert seen.get("tokens") == 1500  # 1000 in + 500 out
+
+
+# ── a fan-out's stop ends with its fan-out ───────────────────────────
+
+
+def _hanging_sessions() -> MagicMock:
+    """The completing sessions, except each answer waits ``_HANG_SECS`` first: a child stays
+    running until something stops it."""
+    sessions = _completing_sessions()
+    provider = sessions.get_or_create.return_value[0]
+
+    async def _stream(*_a, **_kw):
+        await asyncio.sleep(_HANG_SECS)
+        yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="late")
+
+    provider.stream = MagicMock(side_effect=lambda *a, **kw: _stream())
+    return sessions
+
+
+async def _settle() -> None:
+    """Let every task this test's loop still holds run to its end: the run budget's cancel of
+    its fan-out is one, started with nothing awaiting it."""
+    me = asyncio.current_task()
+    rest = [t for t in asyncio.all_tasks() if t is not me and not t.done()]
+    if rest:
+        await asyncio.wait(rest, timeout=_HANG_SECS)
+
+
+class TestTheStopEndsWithItsFanout:
+    """A fan-out's stop refuses what is still on its way into it, and ends once nothing of it is
+    running or waiting. One that outlives its fan-out refuses every later helper of the same chat
+    (a chat's helpers share the chat's session key) until the gateway restarts."""
+
+    @pytest.mark.asyncio
+    async def test_a_chat_whose_last_helper_crossed_its_run_budget_can_start_another(
+        self,
+    ) -> None:
+        """The chat's last running helper crosses Max Tokens / Run. Its own ending clears the
+        drained fan-out's stop, and the budget's cancel, which runs after that, finds nothing to
+        stop: it must not leave the stop behind."""
+        from personalclaw.guardrails.budgets import Budget, reset_meter
+
+        reset_meter()
+        mgr = SubagentManager(
+            sessions=_completing_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        chat = "dashboard:a-chat-past-its-budget"
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch(
+                "personalclaw.guardrails.budgets.run_budget_from_config",
+                return_value=Budget(max_tokens=1500),
+            ),
+        ):
+            last = mgr.spawn("the only helper", parent_session_key=chat)
+            assert last is not None and not last.queued
+            await mgr._tasks[last.id]
+            await mgr.flush_deliveries()
+            await _settle()
+            assert last.done and not last.error, last.error
+            following = mgr.spawn("the next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+        await _stop(mgr)
+        reset_meter()
+
+    @pytest.mark.asyncio
+    async def test_stop_fanout_on_a_chat_with_nothing_running_leaves_no_stop(self) -> None:
+        """Stop fan-out (``POST /api/spawn/cancel-fanout``) on a chat whose helpers have all
+        ended stops nothing, and must not leave its "Cancelled by user" behind."""
+        from types import SimpleNamespace
+
+        from aiohttp import web
+        from aiohttp.test_utils import make_mocked_request
+
+        from personalclaw.dashboard.handlers.messaging import api_spawn_cancel_fanout
+
+        mgr = SubagentManager(
+            sessions=_completing_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        chat = "dashboard:a-chat-at-rest"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            earlier = mgr.spawn("an earlier helper", parent_session_key=chat)
+            assert earlier is not None
+            await mgr._tasks[earlier.id]
+            await mgr.flush_deliveries()
+            app = web.Application()
+            app["state"] = SimpleNamespace(subagents=mgr)
+            request = make_mocked_request("POST", "/api/spawn/cancel-fanout", app=app)
+
+            async def _body() -> dict:
+                return {"parent_session": chat}
+
+            request.json = _body  # type: ignore[method-assign]
+            answer = await api_spawn_cancel_fanout(request)
+            assert answer.status == 200 and b'"cancelled": 0' in answer.body
+            following = mgr.spawn("the next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+        await _stop(mgr)

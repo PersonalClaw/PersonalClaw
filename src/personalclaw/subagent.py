@@ -2628,9 +2628,13 @@ class SubagentManager:
         fan-out (``workflow:<run_id>``) are each addressable as a unit. Marks the
         fan-out stopped so a spawn already in flight to the queue is refused too,
         then cancels each child concurrently, each ending with *reason* (the run budget it ran
-        past, or her Stop fan-out, *by_you*: :meth:`cancel`). Idempotent: a second call finds
-        nothing to cancel. Unlike ``cancel_all`` (the shutdown switch) this touches
-        ONE fan-out and leaves other runs untouched.
+        past, or her Stop fan-out, *by_you*: :meth:`cancel`). The mark ends once nothing of the
+        fan-out is running or waiting (:meth:`_maybe_clear_fanout`), here too: the run budget's
+        cancel runs after the child that crossed it has ended, which may be the fan-out's last, and
+        a Stop fan-out may find nothing running at all. A mark left there would refuse every later
+        helper of the chat until a restart. Idempotent: a second call finds nothing to cancel.
+        Unlike ``cancel_all`` (the shutdown switch) this touches ONE fan-out and leaves other runs
+        untouched.
         """
         if not fanout_key:
             return 0
@@ -2647,6 +2651,7 @@ class SubagentManager:
             *(self.cancel(info.id, by_you=by_you, **ended) for info in victims),
             return_exceptions=True,
         )
+        self._maybe_clear_fanout(fanout_key)
         logger.info("Cancelled fan-out %s (%d child(ren))", fanout_key, len(victims))
         return len(victims)
 
