@@ -31,7 +31,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from personalclaw.workflows.models import TERMINAL_RUN_STATUSES, OriginKind, RunStatus
+from personalclaw.workflows.models import (
+    TERMINAL_RUN_STATUSES,
+    OriginKind,
+    RunStatus,
+    stamp_epoch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -375,6 +380,12 @@ class BoardRow:
     #: A loop row's kind (`code` opens in Code, every other kind in the loop cockpit). Empty for
     #: runs and tasks.
     kind: str = ""
+    #: When the work last changed, in the `%Y-%m-%dT%H:%M:%SZ` spelling the run and task stores
+    #: write: the newest of when a run completed, started or was created (:func:`run_changed_at`),
+    #: or a run started as a loop's newest cycle; a loop's newest cycle, else the newest of when it
+    #: completed, started or was created; a task's own `updated_at`. `""` when the source keeps
+    #: none, never "now", which would sort a row as the newest.
+    updated_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -390,6 +401,7 @@ class BoardRow:
             "attention": self.attention,
             "resumable": self.resumable,
             "outcome": self.outcome.value if self.outcome else "",
+            "updated_at": self.updated_at,
         }
 
 
@@ -413,7 +425,21 @@ def board_row(run: Any, *, claim_record: Claim | None = None, now: float = 0.0) 
         attention=(state is BoardState.NEEDS_INPUT and origin not in UNATTENDED_ORIGINS),
         resumable=state is BoardState.SUSPENDED,
         outcome=run_outcome(run),
+        updated_at=run_changed_at(run),
     )
+
+
+def run_changed_at(run: Any) -> str:
+    """When a run last changed, as its own stamps say: the newest of when it completed, started
+    or was created, in the spelling it stores them in. A stamp not in that spelling is passed
+    over (`models.stamp_epoch`, the one parser of it), and none at all reads ``""``."""
+    newest, at = "", 0.0
+    for name in ("completed_at", "started_at", "created_at"):
+        text = str(getattr(run, name, None) or "").strip()
+        when = stamp_epoch(text)
+        if when > at:
+            newest, at = text, when
+    return newest
 
 
 def _origin_kind(run: Any) -> str:

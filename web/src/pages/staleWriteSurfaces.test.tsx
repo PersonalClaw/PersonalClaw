@@ -630,7 +630,7 @@ const SURFACES: Surface[] = [
       answer({
         alwaysOn: async () => ({
           items: [OVERVIEW], project_id: 'p-1', counts: { total: 1, always_skills: 0, project_instructions: 1 },
-          always_skill_mechanism: 'always: true in a skill’s SKILL.md frontmatter',
+          always_skill_mechanism: 'always: true in a skill’s SKILL.md frontmatter', project_block: null,
         }),
         alwaysOnDoc: vi.fn(async () => (++reads === 1 ? { ...OVERVIEW, body: OVERVIEW_OPENED, revision: 'o1' } : { ...OVERVIEW, body: OVERVIEW_AFTER_RUN, revision: 'o2' })),
         saveAlwaysOnDoc: save,

@@ -94,6 +94,7 @@ _SHAPE_TESTS = frozenset(
         "tests/smoke_sandbox.sh",
         "tests/test_a_fan_out_records_what_its_items_produced.py",
         "tests/test_a_masked_value_never_overwrites_the_real_one.py",
+        "tests/test_always_on_returns_the_project_block.py",
         "tests/test_approval_path_tool_input_shapes.py",
         "tests/test_approval_read_only_supply.py",
         "tests/test_channel_approvals_show_what_will_run.py",

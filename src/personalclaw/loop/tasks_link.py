@@ -122,6 +122,28 @@ def ensure_phase_lists(loop: Loop, tasks_project_id: str) -> dict:
     return links
 
 
+def phase_list_loops() -> dict[str, str]:
+    """``{task_list_id: loop_id}`` for every phase list a loop keeps as its own, the lists
+    :func:`ensure_phase_lists` made, as each loop records them (``task_list_ids``).
+
+    Not the goal loops' Sub-goals list: :func:`decompose_sub_goals` finds it by name in the
+    project, so every goal loop of one project shares it, and a goal loop's sub-goals are its
+    linked tasks (:func:`loop_steps`). Read over every loop, not one project's, because a list
+    keeps its loop when it is moved to another project. ``{}`` when the loops cannot be read."""
+    try:
+        loops = store.list_all()
+    except Exception:  # noqa: BLE001 - a read that labels rows must never fail the read it labels
+        logger.warning("phase lists unreadable; no list is labelled with its loop", exc_info=True)
+        return {}
+    owners: dict[str, str] = {}
+    for loop in loops:
+        ids = loop.task_list_ids if isinstance(loop.task_list_ids, dict) else {}
+        for key, list_id in ids.items():
+            if key != _SUB_GOALS_KEY and isinstance(list_id, str) and list_id:
+                owners.setdefault(list_id, loop.id)
+    return owners
+
+
 async def decompose_sub_goals(loop_id: str) -> list[str]:
     """Turn a goal loop's approved sub-goals into linked, trackable Tasks — the modern
     replacement for the dropped ``/decompose`` endpoint, run from the goal walkthrough's
@@ -264,7 +286,7 @@ async def ready_queued_tasks(loop: Loop, phase_key: str) -> list:
 _SUB_GOALS_KEY = "sub_goals"
 
 
-def _owned(loops: list[Loop]) -> tuple[set[str], set[str]]:
+def loop_steps(loops: list[Loop]) -> tuple[set[str], set[str]]:
     """``(list ids, task ids)`` whose tasks belong to *loops*: each loop's own phase lists, and
     its linked tasks (the shared sub-goals list is never counted whole)."""
     lists = {
@@ -282,7 +304,7 @@ async def _release(loops: list[Loop], task_ids: set[str] | None = None) -> int:
     given). One read of the tasks in progress, however many loops. Never raises."""
     from personalclaw.tasks import registry
 
-    lists, linked = _owned(loops)
+    lists, linked = loop_steps(loops)
     try:
         in_progress, _ = await registry.collect_tasks(
             status="in_progress", provider_filter="native"
@@ -352,7 +374,7 @@ async def task_titles(loop: Loop) -> dict[str, str]:
     from personalclaw.tasks import registry
 
     titles: dict[str, str] = {}
-    lists, linked = _owned([loop])
+    lists, linked = loop_steps([loop])
     try:
         tasks, _ = await registry.collect_tasks(provider_filter="native")
         titles = {t.id: t.title for t in tasks if t.task_list_id in lists or t.id in linked}

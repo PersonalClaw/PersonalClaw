@@ -17,7 +17,7 @@ const PROJECT_ID = 'p-work'
 function row(over: Partial<WorkRow>): WorkRow {
   return {
     run_id: 'x', title: 'x', state: 'suspended', source: 'run', kind: '', origin: 'manual', project_id: PROJECT_ID,
-    claim: null, collapsed: false, attention: false, resumable: true, outcome: '', ...over,
+    claim: null, collapsed: false, attention: false, resumable: true, outcome: '', updated_at: '', ...over,
   }
 }
 

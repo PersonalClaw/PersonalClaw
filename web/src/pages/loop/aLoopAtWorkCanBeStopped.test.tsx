@@ -125,7 +125,8 @@ describe('the Code list', () => {
 describe('a project\'s Work board', () => {
   const row = (over: Partial<WorkRow>): WorkRow => ({
     run_id: 'c0ffee01', title: 'Digest titles', state: 'working', source: 'loop', kind: 'code', origin: 'manual',
-    project_id: 'p-1', claim: null, collapsed: false, attention: false, resumable: false, outcome: '', ...over,
+    project_id: 'p-1', claim: null, collapsed: false, attention: false, resumable: false, outcome: '',
+    updated_at: '', ...over,
   })
   const board = (rows: WorkRow[]): WorkBoard => ({
     board: [{ state: 'working', count: rows.length, attention: 0, rows }],

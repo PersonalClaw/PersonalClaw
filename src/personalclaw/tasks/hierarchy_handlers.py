@@ -158,6 +158,40 @@ def _project_payload(store: HierarchyStore, project, *, list_counts: dict | None
     return d
 
 
+def _project_folder(project) -> dict:
+    """``{"folder": …}``, what one project's own read (`GET` and `PUT /api/projects/{id}`) adds to
+    its payload, built at each call site so the body's shape reads there.
+
+    ``folder`` is ``{resolved, trust}`` for the bound folder, ``None`` for none: the folder's real
+    path and the decision recorded for it, judged by the two functions the guardrail itself uses
+    (`project_trust.resolve_dir`, `project_trust.project_decision`), so ``~/code/garden``, a symlink
+    to it and its real path read one decision. A page matching the decisions list by string would
+    show a trusted folder as undecided. One project's read only: the list stays one pass over the
+    projects, with no trust-store read per row.
+
+    An app's own read carries no ``folder``: what automations may do in a folder is the owner's
+    to read, as the decisions route is (``/api/guardrails/project-trust``, refused to every app).
+    A decision that cannot be read reads ``unknown``, and the rest of the project still answers."""
+    from personalclaw.apps.permissions import request_app
+    from personalclaw.guardrails import project_trust
+
+    if request_app():
+        return {}
+    bound = str(project.workspace_dir or "").strip()
+    if not bound:
+        return {"folder": None}
+    try:
+        return {
+            "folder": {
+                "resolved": project_trust.resolve_dir(bound),
+                "trust": project_trust.project_decision(bound),
+            }
+        }
+    except Exception:  # noqa: BLE001 - one unreadable decision must not fail the project read
+        logger.debug("folder decision unreadable for project %s", project.id, exc_info=True)
+        return {"folder": {"resolved": bound, "trust": project_trust.DECISION_UNKNOWN}}
+
+
 # ── Projects ──
 
 
@@ -237,7 +271,7 @@ async def api_projects_get(request: web.Request) -> web.Response:
     project = store.get_project(request.match_info["project_id"])
     if not project:
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response(_project_payload(store, project))
+    return web.json_response({**_project_payload(store, project), **_project_folder(project)})
 
 
 # ── Project settings (the user's default project) ──
@@ -523,29 +557,67 @@ def _as_board_row(d: dict) -> containers.BoardRow:
         outcome=outcome,
         source=str(d.get("source", "") or "run"),
         kind=str(d.get("kind", "") or ""),
+        updated_at=str(d.get("updated_at", "") or ""),
     )
 
 
+def _stamp(epoch: float | None) -> str:
+    """An epoch time in the spelling the run and task stores write; `""` for none."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch)) if epoch else ""
+
+
+def _loop_changed_at(lp: Any) -> str:
+    """When a loop last did something: its newest cycle, else the newest of when it completed,
+    started or was created. The times the sidebar starts from for the same loop (`useThreads`,
+    `activeAt`); before a first cycle the sidebar also counts its workers' turns, which this
+    does not read."""
+    from personalclaw.loop import files as loop_files
+
+    try:
+        _, last_cycle = loop_files.findings_and_last_cycle(lp.id)
+    except Exception:  # noqa: BLE001 - a ledger that cannot be read leaves the stored times
+        logger.debug("loop ledger unreadable for %s", lp.id, exc_info=True)
+        last_cycle = None
+    stored = [t for t in (lp.completed_at, lp.started_at, lp.created_at) if t]
+    return _stamp(last_cycle or (max(stored) if stored else None))
+
+
 def _run_rows(pid: str, now: float) -> list[dict]:
-    """Workflow runs bound to this project, as board-row dicts with their live claim."""
+    """Workflow runs bound to this project, as board-row dicts with their live claim.
+
+    A run started as a loop says when its newest cycle ended, as a loop's row does
+    (:func:`_loop_changed_at`, `loop_view.last_cycle_at`), else when its stamps say."""
+    from personalclaw.workflows import loop_view
+
     runs, _ = run_store.list_runs(project_id=pid, limit=500)
-    return [
-        containers.board_row(r, claim_record=leases.read_claim(r.id), now=now).to_dict()
-        for r in runs
-    ]
+    rows: list[dict] = []
+    for r in runs:
+        row = containers.board_row(r, claim_record=leases.read_claim(r.id), now=now).to_dict()
+        if r.loop_kind:
+            try:
+                cycled = loop_view.last_cycle_at(r)
+            except Exception:  # noqa: BLE001 - a ledger that cannot be read leaves the stamps
+                logger.debug("run ledger unreadable for %s", r.id, exc_info=True)
+                cycled = None
+            if cycled:
+                row["updated_at"] = _stamp(cycled)
+        rows.append(row)
+    return rows
 
 
-def _loop_rows(pid: str) -> list[dict]:
+def _loop_rows(pid: str, listed: list | None = None) -> list[dict]:
     """Legacy Goal/Code loops under this project, adapted to the board-row shape.
 
     Loops predate the run engine and have their own store; they are still work the user
     is running, so they share the board. Origin `manual` (a user launched them) so they
-    are never collapsed as machine noise.
+    are never collapsed as machine noise. The loops go into *listed* once every row is made,
+    so the tasks source leaves out only the steps of loops whose rows are on the board.
     """
     from personalclaw.loop import store as loop_store
 
+    loops = loop_store.list_for_project(pid)
     rows: list[dict] = []
-    for lp in loop_store.list_for_project(pid):
+    for lp in loops:
         state = _LOOP_STATE.get(str(lp.status), containers.BoardState.WORKING)
         # Masked as the Loops page masks the same name and task (`loop.store._redact_loop`), and
         # before the task is cut short, so a cut cannot leave half a key the screen misses.
@@ -562,20 +634,28 @@ def _loop_rows(pid: str) -> list[dict]:
                 outcome=_loop_outcome(str(lp.status), str(lp.stop_reason or "")),
                 source="loop",
                 kind=str(lp.kind or ""),
+                updated_at=_loop_changed_at(lp),
             ).to_dict()
         )
+    if listed is not None:
+        listed.extend(loops)
     return rows
 
 
-def _task_rows(tasks: list, pid: str) -> list[dict]:
+def _task_rows(tasks: list, pid: str, steps: tuple[set[str], set[str]] | None = None) -> list[dict]:
     """Standalone tasks under this project, adapted to the board-row shape.
 
     A task bound to a run (`workflow_binding`) is already surfaced by the run source, so it
-    is skipped here — two rows for one unit of work is a board that double-counts.
+    is skipped here — two rows for one unit of work is a board that double-counts. So is a step
+    of a loop on this board (``steps``, `tasks_link.loop_steps`: a task in one of its phase lists,
+    or one of its linked sub-goals): the loop's row stands for it.
     """
+    lists, linked = steps or (set(), set())
     rows: list[dict] = []
     for t in tasks:
         if getattr(t, "workflow_binding", None) is not None:
+            continue
+        if (getattr(t, "task_list_id", "") or "") in lists or getattr(t, "id", "") in linked:
             continue
         status = getattr(getattr(t, "status", None), "value", "") or ""
         state = _TASK_STATE.get(status, containers.BoardState.QUEUED)
@@ -589,6 +669,7 @@ def _task_rows(tasks: list, pid: str) -> list[dict]:
                 attention=state is containers.BoardState.NEEDS_INPUT,
                 outcome=_TASK_OUTCOME.get(status),
                 source="task",
+                updated_at=str(getattr(t, "updated_at", "") or ""),
             ).to_dict()
         )
     return rows
@@ -626,17 +707,25 @@ async def api_projects_work(request: web.Request) -> web.Response:
     except Exception as exc:  # noqa: BLE001 — recorded as the tasks section's failure
         task_error = exc
 
+    # The loops the loops source listed: only their steps leave the task rows, so a failed loops
+    # section leaves its steps listed, and a list moved here keeps its tasks on this board.
+    listed: list = []
+
     def _tasks_source() -> list[dict]:
         if task_error is not None:
             raise task_error
-        return _task_rows(tasks, pid)
+        from personalclaw.loop import tasks_link
+
+        return _task_rows(tasks, pid, tasks_link.loop_steps(listed))
 
     sources = {
         "runs": lambda: _run_rows(pid, now),
-        "loops": lambda: _loop_rows(pid),
+        "loops": lambda: _loop_rows(pid, listed),
         "tasks": _tasks_source,
     }
-    sections, completeness = containers.collect_sections(sources, now=now)
+    # Off the event loop, as GET /api/loops reads the same stores and ledgers: the sources are
+    # disk reads (the run and loop stores, a ledger per loop) that would hold every other request.
+    sections, completeness = await asyncio.to_thread(containers.collect_sections, sources, now=now)
 
     ok_rows: list[containers.BoardRow] = []
     for section in sections:
@@ -757,7 +846,7 @@ async def api_projects_update(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=400)
     if not project:
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response(_project_payload(store, project))
+    return web.json_response({**_project_payload(store, project), **_project_folder(project)})
 
 
 def _bound_work_counts(pid: str) -> tuple[int, int]:
@@ -932,25 +1021,35 @@ async def _task_list_task_counts() -> dict[str, int] | None:
     return counts
 
 
-def _task_list_payload(tl, counts: dict[str, int] | None) -> dict:
-    """Serialize a task list, enriched with ``task_count`` when it is known.
+def _task_list_payload(tl, counts: dict[str, int] | None, loop_lists: dict[str, str]) -> dict:
+    """Serialize a task list, enriched with ``task_count`` when it is known, and ``loop_id``.
 
     The hub's badge has read ``task_count`` since the initial public commit while NO endpoint ever
     emitted it, so it could never render (#514) — the sibling project row does the same thing
     correctly with ``task_list_count``. This is the missing emitter, not a new field.
+
+    ``loop_id`` names the loop whose phase list this is (`tasks_link.phase_list_loops`), ``""``
+    for any other list, the goal loops' shared Sub-goals list included, so a project can show a
+    loop's steps inside the loop rather than as its own tasks.
     """
     d = tl.to_dict()
     if counts is not None:
         d["task_count"] = counts.get(tl.id, 0)
+    d["loop_id"] = loop_lists.get(tl.id, "")
     return d
 
 
 async def api_task_lists_list(request: web.Request) -> web.Response:
     """GET /api/task-lists?project_id=…"""
+    from personalclaw.loop import tasks_link
+
     project_id = request.query.get("project_id")
     lists = _store().list_task_lists(project_id=project_id)
     counts = await _task_list_task_counts()
-    return web.json_response({"task_lists": [_task_list_payload(tl, counts) for tl in lists]})
+    loop_lists = await asyncio.to_thread(tasks_link.phase_list_loops)
+    return web.json_response(
+        {"task_lists": [_task_list_payload(tl, counts, loop_lists) for tl in lists]}
+    )
 
 
 async def api_task_lists_create(request: web.Request) -> web.Response:
