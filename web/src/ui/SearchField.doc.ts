@@ -25,6 +25,7 @@ const doc: UiDoc = {
     { name: 'variant', description: "'overlay' (default): absolute-pinned icon + clear over a solid field. 'inline': transparent input as a flex child of a caller-styled row." },
     { name: 'size', description: "Field scale (overlay: height/text/radius — sm h-8, md h-9, lg h-10 pill DEFAULT; inline: text step only). Off-ramp sizes normalize onto these blessed steps." },
     { name: 'surface', description: "Overlay fill token — 'high' (default), 'container', or 'base'. Overlay-only (the inline row's background is the caller's)." },
+    { name: 'edge', description: "The overlay field's 1 px at-rest edge, `border-on-surface-low/70` (`EDGE`), 3:1 or more against the rail and the panel's surface in both modes. Off by default: the chat list's field passes it, and an edge on every field is a product-wide call." },
     { name: 'inlineIconSize', description: 'Leading magnifier size for the inline variant (palettes ship 13–17px to match row density; default 14). Ignored by overlay (fixed 14).' },
     { name: 'clearOnEscape', description: 'Enable Escape-to-clear on the inline variant (overlay always clears on Escape). Opt in only where clearing beats the palette owning its own Escape (close the modal).' },
     { name: 'inputRef', description: 'Ref to the underlying <input> — palettes focus/select it on a shortcut.' },

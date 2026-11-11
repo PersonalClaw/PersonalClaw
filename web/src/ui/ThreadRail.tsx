@@ -1,31 +1,28 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronRight, Code2, Edit3, Folder, Repeat, Tag, type LucideIcon } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Archive, Blocks, Code2, Edit3, Maximize2, Pin, Repeat, type LucideIcon } from 'lucide-react'
 import type { Thread, ThreadKind, ThreadPip } from '../lib/useThreads'
-import type { GroupBy, HistoryGroup } from '../app/chatHistoryGroups'
 import type { PhaseFamily } from '../lib/workPhase'
 import { bindingLabel } from '../app/keymap'
 import { withWeight } from '../design/fontWeight'
 import { prefersReducedMotion } from '../design/motion'
+import { startedByName, startedByTitle } from '../pages/chat/StartedByApp'
 import { Button } from './Button'
-import { MenuRow, Popover } from './Popover'
+import { FilterMenu, type FilterSectionDef } from './FilterMenu'
+import { headerFilterLabel } from './HeaderFilter'
 import { ResultAnnouncement } from './ListControls'
 import { SearchField } from './SearchField'
 import { WindowedList } from './WindowedList'
 import { cx } from './cx'
-import { RING_REACH } from './NavRail'
+import { RING_REACH, SELECTED_PILL } from './NavRail'
 
-/** One group of the chat history: its key (a folder's or a tag's, `chatHistoryGroups.ts`), the name
- *  it is shown under, and its rows in order. */
-export type ThreadRailGroup = HistoryGroup
-
-/** `loading`: nothing read yet. `failed`: the last read failed, and the groups are what the last
- *  good read said (none when no read has succeeded). `offline`: the gateway is not answering at
- *  all, so the groups are what it said before it stopped, and no read is worth blaming. */
+/** `loading`: nothing read yet. `failed`: the last read failed, and the rows are what the last good
+ *  read said (none when no read has succeeded). `offline`: the gateway is not answering at all, so
+ *  the rows are what it said before it stopped, and no read is worth blaming. */
 export type ThreadRailStatus = 'loading' | 'ready' | 'failed' | 'offline'
 
-/** Which groups the owner opened or closed, by group key. A group with no entry is open while it
- *  holds a row and closed while it holds none. */
-const OPEN_KEY = 'chat-history-groups-open'
+/** Where the list is drawn: the sidebar, on the rail's own ground, or the Chat history panel, on
+ *  the dock's. */
+export type ThreadRailSurface = 'rail' | 'panel'
 
 /** What a goal loop's or code session's row says it is, in words and by its mark. A chat's row says
  *  nothing: a chat is what the chat history is. */
@@ -33,11 +30,6 @@ const KIND_MARK: Partial<Record<ThreadKind, { word: string; icon: LucideIcon }>>
   loop: { word: 'Goal loop', icon: Repeat },
   code: { word: 'Code session', icon: Code2 },
 }
-
-/** The two ways the chat history groups, as the Group by control names them. */
-const GROUP_BY_WORD: Record<GroupBy, string> = { folder: 'Folders', tag: 'Tags' }
-/** The Group by control's face: the grouping it shows, as the field's row has room for. */
-const GROUP_BY_ICON: Record<GroupBy, LucideIcon> = { folder: Folder, tag: Tag }
 
 /** Each pip's state family (the shared state tokens the orb and the buddy read) and its words. A
  *  project's page lists its chats with the same marks (`pages/projects/ProjectThreads.tsx`). */
@@ -48,33 +40,25 @@ export const PIP: Record<ThreadPip, { family: PhaseFamily; word: string }> = {
   unread: { family: 'quiet', word: 'unread' },
 }
 
-/** Which groups the owner opened or closed, as stored: what the rail starts from, and what ⌘1 to ⌘9
- *  count by while no rail is mounted. */
-export function readGroupsOpen(): Record<string, boolean> {
-  try {
-    const v: unknown = JSON.parse(localStorage.getItem(OPEN_KEY) ?? '{}')
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
-    return Object.fromEntries(Object.entries(v).filter(([, b]) => typeof b === 'boolean')) as Record<string, boolean>
-  } catch {
-    return {}
-  }
+/** Each surface's ground, which the pinned bar paints so no row shows through it, and its search
+ *  field's name, which is the field's id: both lists are on screen on the New chat page with the
+ *  panel open. */
+const SURFACE: Record<ThreadRailSurface, { ground: string; field: string }> = {
+  rail: { ground: 'var(--color-rail)', field: 'chat-search' },
+  panel: { ground: 'var(--color-surface)', field: 'chat-panel-search' },
 }
 
-function writeOpen(open: Record<string, boolean>): Record<string, boolean> {
-  try { localStorage.setItem(OPEN_KEY, JSON.stringify(open)) } catch { /* storage full or off: the choice lasts this session */ }
-  return open
-}
-
-/** The rail's scroll area: *el*'s nearest scrolling ancestor (the sidebar, `NavRail`). */
+/** The list's scroll area: *el*'s nearest scrolling ancestor (the sidebar, `NavRail`, or the Chat
+ *  history panel's body, `SidePanel`). */
 function scrollerOf(el: HTMLElement): HTMLElement | null {
   let sc = el.parentElement
   while (sc && !/(auto|scroll)/.test(getComputedStyle(sc).overflowY)) sc = sc.parentElement
   return sc
 }
 
-/** Scroll the rail just far enough to show *el*, clear of the top the scroller keeps clear (its
- *  `scroll-padding-top`, the pinned bar's height: see `PINNED_BAR`). Never `scrollIntoView`, which
- *  may scroll the page as well, and would for a drawer parked off-screen. */
+/** Scroll the list's scroller just far enough to show *el*, clear of the top the scroller keeps
+ *  clear (its `scroll-padding-top`, the pinned bar's height: see `pinnedBar`). Never
+ *  `scrollIntoView`, which may scroll the page as well, and would for a drawer parked off-screen. */
 function reveal(el: HTMLElement) {
   const sc = scrollerOf(el)
   if (!sc) return
@@ -90,179 +74,181 @@ function reveal(el: HTMLElement) {
 /** A row's label and mark, raised over its selected fill. */
 const ROW_LABEL_Z = 10
 
-/** The pinned bar: New chat, and the search with its Group by control, stuck to the
- *  top of the rail's scroll area (the chat history, between the sidebar's two blocks: `NavRail`)
- *  while the rows scroll under it, on the rail's own solid surface and above the rows' labels, so no
- *  row shows through it.
+/** The pinned bar: New chat and Open Chat history (the sidebar's), then the search with its Sort
+ *  and filter menu, stuck to the top of the list's scroll area while the rows scroll under it, on
+ *  its surface's own ground (`SURFACE`) and above the rows' labels, so no row shows through it.
  *
- *  The scroll area pads nothing at its top, so the bar sticks flush with its top edge, and pads its
+ *  The sidebar's scroll area pads nothing at its top; the panel's body pads its top, and a sticky box
+ *  sticks inside a scroller's padding, so the bar's `top` is minus that padding (`fit`). In both it
+ *  sticks flush with the scrollport's top edge, which `scroll-padding-top` counts from, and pads its
  *  own top by a focus ring's reach (`RING_REACH`) so a control's ring is not cut by that edge.
  *
- *  While the rail shows the bar, the scroller's `scroll-padding-top` is the bar's height and a focus
+ *  While the list shows the bar, the scroller's `scroll-padding-top` is the bar's height and a focus
  *  ring's reach (`RING_REACH`): the top the browser keeps clear when focus moves to a row (Tab,
  *  Shift+Tab, the arrow keys), and that `reveal` and `WindowedList` keep clear when they scroll one
  *  into view, so a row never takes the focus behind the bar, nor its ring under it (WCAG 2.4.11). */
-const PINNED_BAR = {
-  position: 'sticky', top: 0, zIndex: ROW_LABEL_Z + 1,
-  background: 'var(--color-rail)', paddingTop: RING_REACH,
-} as const
-
-const countLabel = (n: number) => (n === 0 ? 'no chats' : `${n} chat${n === 1 ? '' : 's'}`)
-
-/** A group as the rail draws it: the threads it shows (all of them, or a search's matches) and
- *  whether it is open. */
-export interface RailSection {
-  group: ThreadRailGroup
-  threads: Thread[]
-  open: boolean
-}
+const pinnedBar = (ground: string) => ({
+  position: 'sticky', top: 0, zIndex: ROW_LABEL_Z + 1, background: ground, paddingTop: RING_REACH,
+} as const)
 
 /** The search's words, as rows are matched against them: trimmed, in any case. */
 const searchWords = (query: string) => query.trim().toLocaleLowerCase()
 
-/** The groups the rail draws, in order. With no search, every group with all its threads, open as
- *  the owner left it (`open`), or, never toggled, while it holds a thread. While a search is typed,
- *  only the groups holding a thread whose name matches, each with just its matches and open unless
- *  closed during this search (`searchOpen`): the stored disclosure is left as it was. */
-export function railSections(
-  groups: readonly ThreadRailGroup[], open: Record<string, boolean>, query: string, searchOpen: Record<string, boolean> = {},
-): RailSection[] {
+/** The rows a search shows: those whose title holds its words, in the list's order. */
+export function searched(rows: readonly Thread[], query: string): Thread[] {
   const words = searchWords(query)
-  if (words === '') return groups.map((g) => ({ group: g, threads: g.threads, open: open[g.id] ?? g.threads.length > 0 }))
-  return groups.flatMap((g) => {
-    const threads = g.threads.filter((t) => t.title.toLocaleLowerCase().includes(words))
-    return threads.length > 0 ? [{ group: g, threads, open: searchOpen[g.id] ?? true }] : []
-  })
+  return words === '' ? [...rows] : rows.filter((t) => t.title.toLocaleLowerCase().includes(words))
 }
 
-/** The rows the rail shows, top to bottom: the rows of every open section. What ⌘1 to ⌘9 count, a
- *  chat listed under two tags once (`chatHistoryGroups.numberedRows`). */
-export function shownThreads(sections: readonly RailSection[]): Thread[] {
-  return sections.flatMap((s) => (s.open ? s.threads : []))
+/** The sidebar's first row: New chat, and Open Chat history at its end. */
+export interface ThreadRailTop {
+  onNewChat: () => void
+  onOpenHistory: () => void
+  /** The Chat history page is the page: Open Chat history is lit. */
+  historyLit: boolean
 }
 
-/** The sidebar's chat history (#5877): New chat and a search with the Group by control at the end
- *  of its row, at the top, then each folder (or tag) a disclosure group and each chat, goal loop or
- *  code session a dense row that opens it.
+/** The chat list (#5877, one list for the sidebar and the Chat history panel): at the top, the
+ *  sidebar's New chat and Open Chat history (`top`), then a search with the Sort and filter menu at
+ *  the end of its row; under them every chat, goal loop and code session the view lists, one flat
+ *  list of dense rows that each open one.
  *
- *  New chat and the search row sit above every group whatever the read says, one bar that
- *  stays at the top of the chat history while the rows scroll under it. The Group by control
- *  switches between the owner's folders and tags (`groupBy`, `onGroupBy`). The search filters the
- *  rows by name as the owner types, over what the rail has read (`railSections`), and nothing
- *  matching has a row of its own. The rail says which rows it shows, top to bottom (`onShown`): the
- *  rows ⌘1 to ⌘9 open.
+ *  The bar stays at the top of the list whatever the read says, while the rows scroll under it. The
+ *  menu orders and filters the rows (`menu`, from `useChatList`); the search filters them by name as
+ *  the owner types, over the rows in hand, and nothing matching has a row of its own. The list says
+ *  which rows it shows, top to bottom (`onShown`): the rows ⌘1 to ⌘9 open.
  *
- *  A row says its state in words beside one static mark (running, waiting on you, failed) and in its
- *  accessible name; a goal loop's or code session's row also says its kind. Nothing in the rail
- *  moves. The open row (`selectedKey`, which the shell reads from the address) carries
- *  `aria-current="page"` and the rail's selected fill, under every group it is listed in, and its
- *  group opens so its row can be seen. A long name is cut short on screen, whole in the row's name
- *  and tooltip, and wraps while the row has keyboard focus. Loading, a failed read and an empty list
- *  each have a row of their own. A group's rows window past the shared threshold (`WindowedList`),
- *  so hundreds of chats keep the rail fast and keep their keyboard order. */
-export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRetry, onNewThread, onShown, search, onSearch, groupBy = 'folder', onGroupBy }: {
-  /** The groups in the order they show, each with its rows in order. */
-  groups: ThreadRailGroup[]
-  /** The key of the open thread, or '' when the page is no thread. */
+ *  A row says its state with one static mark (running, waiting on you, failed, unread) and in its
+ *  accessible name; a goal loop's or code session's row also says its kind, a pinned chat its pin,
+ *  an archived one (while the view lists both) its archive, and an app's chat the app's name. Nothing
+ *  in the list moves. The open row (`selectedKey`, which the shell reads from the address) carries
+ *  `aria-current="page"` and the selected fill. A long name is cut short on screen, whole in the
+ *  row's name and tooltip, and wraps while the row has keyboard focus. Loading, a failed read, an
+ *  empty list and an empty view each have a row of their own. The rows window past the shared
+ *  threshold (`WindowedList`), so hundreds of chats keep the list fast and keep their keyboard order. */
+export function ThreadRail({
+  rows, selectedKey, status, failure, onOpen, onRetry, top, surface = 'rail', label = 'Chat history',
+  onShown, search, onSearch, menu, filtered = false, onClearFilters, markArchived = false,
+}: {
+  /** The rows the view lists, in its order, before the search (`useChatList`). */
+  rows: Thread[]
+  /** The key of the open row, or '' when the page is no chat (always '' in the panel). */
   selectedKey: string
   status: ThreadRailStatus
   /** The sentence a failed read shows, beside Retry. */
   failure?: string
-  /** Opens a thread at its route (no leading `#/`). */
+  /** Opens a row at its route (no leading `#/`). */
   onOpen: (route: string) => void
-  /** Reads the threads again after a failed read. */
+  /** Reads the rows again after a failed read. */
   onRetry: () => void
-  /** Opens a new chat, from New chat at the top. */
-  onNewThread: () => void
-  /** Told the rows the rail shows, top to bottom, whenever they change; `null` while it shows none it
+  /** The sidebar's first row; the panel passes none. */
+  top?: ThreadRailTop
+  /** Where the list is drawn: the bar's ground and the search field's name (`SURFACE`). */
+  surface?: ThreadRailSurface
+  /** The list's name. The panel passes "Chats": its region is already named Chat history. */
+  label?: string
+  /** Told the rows the list shows, top to bottom, whenever they change; `null` while it shows none it
    *  has read (loading, or a failed first read). Keep it stable. */
   onShown?: (threads: Thread[] | null) => void
   /** The search, when the caller keeps it: the shell does, so a collapse, which unmounts the rail,
-   *  gives it back as it was typed. Unset, the rail keeps its own. */
+   *  gives it back as it was typed. Unset, the list keeps its own. */
   search?: string
   onSearch?: (query: string) => void
-  /** How the groups are made, which the search row's Group by control says and changes. */
-  groupBy?: GroupBy
-  /** Called with the grouping the owner picks. Unset, the control is not drawn. */
-  onGroupBy?: (by: GroupBy) => void
+  /** The Sort and filter menu's sections (`chatListView.viewSections`). Unset, no menu is drawn. */
+  menu?: FilterSectionDef[]
+  /** A filter is off its default, so an empty view says so and offers Clear filters. */
+  filtered?: boolean
+  /** Puts every filter back at its default, keeping the sort. */
+  onClearFilters?: () => void
+  /** The view lists archived chats beside active ones, so an archived row says it is. */
+  markArchived?: boolean
 }) {
-  const base = useId()
   const rootRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState<Record<string, boolean>>(readGroupsOpen)
   const [ownQuery, setOwnQuery] = useState('')
   const query = search ?? ownQuery
-  // The groups closed during this search, which the next change of the search forgets.
-  const [searchOpen, setSearchOpen] = useState<Record<string, boolean>>({})
   const searching = searchWords(query) !== ''
-  const changeQuery = (v: string) => { (onSearch ?? setOwnQuery)(v); setSearchOpen({}) }
-  const sections = useMemo(() => railSections(groups, open, query, searchOpen), [groups, open, query, searchOpen])
-  const toggle = (s: RailSection) => {
-    const id = s.group.id
-    if (searching) setSearchOpen((prev) => ({ ...prev, [id]: !s.open }))
-    else setOpen((prev) => writeOpen({ ...prev, [id]: !(prev[id] ?? s.group.threads.length > 0) }))
-  }
+  const changeQuery = (v: string) => { (onSearch ?? setOwnQuery)(v) }
+  const matches = useMemo(() => searched(rows, query), [rows, query])
+  const { ground, field } = SURFACE[surface]
 
-  // What the rail draws: nothing while loading; the last good read's groups after a failed one.
-  const knows = status === 'ready' || (status === 'failed' && groups.length > 0)
-  const shown = useMemo(() => (knows ? shownThreads(sections) : null), [knows, sections])
+  // What the list draws: nothing while loading; the last good read's rows after a failed one.
+  const knows = status === 'ready' || (status === 'failed' && rows.length > 0)
+  const shown = useMemo(() => (knows ? matches : null), [knows, matches])
   useEffect(() => { onShown?.(shown) }, [shown, onShown])
 
-  // The open thread's group opens when the open thread changes (an arrival, a reload, Back), so its
-  // row can be seen. Only then: closing that group afterwards keeps it closed.
-  const selectedGroup = groups.find((g) => g.threads.some((t) => t.key === selectedKey))
-  const selectedGroupId = selectedGroup?.id
-  useLayoutEffect(() => {
-    if (selectedGroupId === undefined) return
-    setOpen((prev) => (prev[selectedGroupId] === false ? writeOpen({ ...prev, [selectedGroupId]: true }) : prev))
-  }, [selectedKey, selectedGroupId])
-
-  // The scroller keeps the bar's height clear at its top (`PINNED_BAR`), as long as the bar is there.
+  // The scroller keeps the bar's height clear at its top (`pinnedBar`), as long as the bar is there,
+  // and knows that height (`--chat-list-bar`), which the sidebar's floor for the list follows
+  // (NavRail's `HISTORY_FLOOR`) as the bar grows at large text.
   useEffect(() => {
     const bar = barRef.current
     const sc = bar && scrollerOf(bar)
     if (!bar || !sc) return
-    const fit = () => { sc.style.scrollPaddingTop = `${bar.offsetHeight + RING_REACH}px` }
+    const fit = () => {
+      sc.style.scrollPaddingTop = `${bar.offsetHeight + RING_REACH}px`
+      sc.style.setProperty('--chat-list-bar', `${bar.offsetHeight}px`)
+      bar.style.top = `${-(parseFloat(getComputedStyle(sc).paddingTop) || 0)}px`
+    }
+    const unfit = () => { sc.style.scrollPaddingTop = ''; sc.style.removeProperty('--chat-list-bar') }
     fit()
-    if (typeof ResizeObserver === 'undefined') return () => { sc.style.scrollPaddingTop = '' }
+    if (typeof ResizeObserver === 'undefined') return unfit
     const watch = new ResizeObserver(fit)
     watch.observe(bar)
-    return () => { watch.disconnect(); sc.style.scrollPaddingTop = '' }
+    return () => { watch.disconnect(); unfit() }
   }, [])
 
-  const selectedShown = sections.some((s) => s.open && s.threads.some((t) => t.key === selectedKey))
+  const selectedShown = matches.some((t) => t.key === selectedKey)
   useEffect(() => {
     if (!selectedKey || !selectedShown) return
-    const rows = rootRef.current?.querySelectorAll<HTMLElement>('[data-thread-key]') ?? []
-    const row = [...rows].find((r) => r.dataset.threadKey === selectedKey)
+    const found = rootRef.current?.querySelectorAll<HTMLElement>('[data-thread-key]') ?? []
+    const row = [...found].find((r) => r.dataset.threadKey === selectedKey)
     if (row) reveal(row)
   }, [selectedKey, selectedShown])
 
-  const matches = sections.reduce((n, sec) => n + sec.threads.length, 0)
   const noMatch = `No chats match “${query.trim()}”`
+  const menuLabel = menu ? headerFilterLabel(menu, 'Sort and filter') : ''
   return (
     // Named, not labelled by a heading on screen: the list's rows say what it holds, and a label row
     // above them cost the sidebar a row's height for the word a screen reader still hears here.
-    <div ref={rootRef} role="group" aria-label="Chat history" className="flex flex-col">
-      <div ref={barRef} className="flex flex-col" style={PINNED_BAR}>
-        <button
-          type="button" onClick={onNewThread} title={`New chat (${bindingLabel('new-chat')})`}
-          data-type="body-m"
-          className="mt-s flex w-full items-center gap-s rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
-          style={withWeight({ minHeight: 32 }, 400)}>
-          <Edit3 size={16} strokeWidth={2} aria-hidden className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate">New chat</span>
-        </button>
-        {/* The search, and at its end how the list is grouped: after the field in tab order. */}
-        <div className="flex items-center gap-xs py-1">
+    <div ref={rootRef} role="group" aria-label={label} data-chat-list={surface} className="flex flex-col">
+      <div ref={barRef} data-chat-list-bar className="flex flex-col" style={pinnedBar(ground)}>
+        {top && (
+          // New chat is never cut short. At large text its label wraps to two lines beside Open
+          // Chat history, and where even one word has no room there (the narrowest rail at 200%),
+          // the row wraps and Open Chat history takes a line of its own, at the row's end. New chat
+          // has no min-w-0, so it never narrows below its longest word. One line at 100%.
+          <div className="mt-s flex flex-wrap items-center gap-xs">
+            <button
+              type="button" onClick={top.onNewChat} title={`New chat (${bindingLabel('new-chat')})`}
+              data-type="body-m"
+              className="flex flex-1 items-center gap-s rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
+              style={withWeight({ minHeight: 32 }, 400)}>
+              <Edit3 size={16} strokeWidth={2} aria-hidden className="shrink-0" />
+              <span className="min-w-0 flex-1">New chat</span>
+            </button>
+            {/* The full page, beside New chat: the glyph the panel's own way there uses. */}
+            <button
+              type="button" onClick={top.onOpenHistory} aria-label="Open Chat history" title="Open Chat history"
+              aria-current={top.historyLit ? 'page' : undefined}
+              className={cx(
+                'relative ml-auto inline-flex size-8 shrink-0 items-center justify-center rounded-pill transition-colors duration-(--duration-short)',
+                top.historyLit ? 'text-on-surface' : 'text-on-surface-var hover:bg-surface-low/60 hover:text-on-surface',
+              )}>
+              {top.historyLit && <span aria-hidden className={SELECTED_PILL} />}
+              <Maximize2 size={16} strokeWidth={2} aria-hidden className="relative" style={{ zIndex: ROW_LABEL_Z }} />
+            </button>
+          </div>
+        )}
+        {/* The search, and at its end the Sort and filter menu: after the field in tab order. */}
+        <div className={cx('flex items-center gap-xs py-1', !top && 'mt-s')}>
           <div className="min-w-0 flex-1">
             <SearchField size="sm" surface="container" value={query} onChange={changeQuery}
-              placeholder="Search" ariaLabel="Search chats" name="chat-search" />
+              placeholder="Search" ariaLabel="Search chats" name={field} edge />
           </div>
-          {onGroupBy && <GroupByControl value={groupBy} onChange={onGroupBy} />}
+          {menu && <FilterMenu size="sm" sections={menu} label={menuLabel} />}
         </div>
       </div>
-      <ResultAnnouncement count={matches} noun="chats" active={searching && status !== 'loading'} empty={noMatch} />
+      <ResultAnnouncement count={matches.length} noun="chats" active={searching && status !== 'loading'} empty={noMatch} />
       {status === 'loading' && (
         <div role="status" data-type="body-s" className="px-s py-1 text-on-surface-low">Loading chats…</div>
       )}
@@ -277,104 +263,72 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
         // the last ones it listed, or none yet, and they come back with it.
         <div data-type="body-s" className="flex items-center gap-s px-s py-1">
           <span className="min-w-0 flex-1 text-on-surface-var">
-            {groups.length ? 'Offline. These are the chats from before the gateway stopped answering.' : 'Offline. Your chats show when the gateway answers again.'}
+            {rows.length ? 'Offline. These are the chats from before the gateway stopped answering.'
+              : filtered ? 'Offline. No chats in this view.' : 'Offline. Your chats show when the gateway answers again.'}
           </span>
           <Button variant="ghost" size="xs" onClick={onRetry}>Retry</Button>
         </div>
       )}
-      {status === 'ready' && groups.length === 0 && (
+      {status === 'ready' && rows.length === 0 && !filtered && (
         <div data-type="body-s" className="px-s py-1 text-on-surface-low">No chats yet</div>
       )}
-      {status !== 'loading' && searching && groups.length > 0 && sections.length === 0 && (
+      {status === 'ready' && rows.length === 0 && filtered && (
+        // The row wraps: where the sentence and Clear filters do not fit on one line, Clear filters
+        // drops below it, and the sentence keeps a line of its own rather than a narrow column.
+        <div data-type="body-s" className="flex flex-wrap items-center gap-x-s px-s py-1">
+          <span className="min-w-fit flex-1 text-on-surface-low">No chats in this view</span>
+          {/* The button goes with the empty view it sits in, so the focus goes to the search. */}
+          {onClearFilters && <Button variant="ghost" size="xs" onClick={() => { onClearFilters(); document.getElementById(field)?.focus() }}>Clear filters</Button>}
+        </div>
+      )}
+      {status !== 'loading' && searching && rows.length > 0 && matches.length === 0 && (
         // Said aloud by the announcement above; this is the row a sighted owner reads.
         <div data-type="body-s" className="px-s py-1 text-on-surface-low">{noMatch}</div>
       )}
-      {status !== 'loading' && sections.map((section, i) => {
-        const { group: g, threads, open: opened } = section
-        const listId = `${base}-group-${i}`
-        const total = g.threads.length
-        return (
-          <div key={`group:${g.id}`} className="flex flex-col">
-            <button
-              type="button" onClick={() => toggle(section)}
-              aria-expanded={opened} aria-controls={opened ? listId : undefined}
-              aria-label={searching ? `${g.name}, ${threads.length} of ${total} chat${total === 1 ? '' : 's'}` : `${g.name}, ${countLabel(total)}`}
-              title={g.name}
-              data-type="body-s"
-              className="group flex w-full items-center gap-xs rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
-              style={withWeight({ minHeight: 32 }, 470)}>
-              <ChevronRight size={16} strokeWidth={2} aria-hidden className={cx('shrink-0', opened && 'rotate-90')} />
-              <span className="min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words">{g.name}</span>
-              <span data-type="caption" className="shrink-0 tabular-nums">{threads.length}</span>
-            </button>
-            {opened && (
-              <div id={listId}>
-                {threads.length === 0
-                  ? <div data-type="body-s" className="px-s py-1 text-on-surface-low">No chats yet</div>
-                  : (
-                    <WindowedList
-                      items={threads} rowKey={(t) => t.key}
-                      // Variable: a row is 32 px, and grows while it has focus to show its whole name.
-                      rowHeights="variable" estimateRowHeight={32}
-                      // The open row, however far from the drawn window, in the first group that
-                      // lists it: the address lights it, so it is brought into view.
-                      revealKey={g.id === selectedGroupId ? selectedKey : undefined}
-                      noun={`chats in ${g.name}`}
-                      findHint="use Search chats at the top of the chat history, which searches every chat by name."
-                      className="flex flex-col">
-                      {(t) => <ThreadRow thread={t} selected={t.key === selectedKey} onOpen={onOpen} />}
-                    </WindowedList>
-                  )}
-              </div>
-            )}
-          </div>
-        )
-      })}
+      {status !== 'loading' && matches.length > 0 && (
+        <WindowedList
+          items={matches} rowKey={(t) => t.key}
+          // Variable: a row is 32 px, and grows while it has focus to show its whole name.
+          rowHeights="variable" estimateRowHeight={32}
+          // The open row, however far from the drawn window: the address lights it, so it is
+          // brought into view.
+          revealKey={selectedKey || undefined}
+          noun="chats"
+          findHint="use Search chats at the top of the list, which searches every chat by name."
+          className="flex flex-col">
+          {(t) => <ThreadRow thread={t} selected={t.key === selectedKey} archivedMark={markArchived && !!t.archived} onOpen={onOpen} />}
+        </WindowedList>
+      )}
     </div>
   )
 }
 
-/** The Group by control at the end of the search row: which of the two groupings shows, and the
- *  menu that picks the other. Named by its value ("Group by: Folders"), and the field's height. Its
- *  face is the grouping's icon, not its word: beside the word the field kept too little room to say
- *  what it is for. */
-function GroupByControl({ value, onChange }: { value: GroupBy; onChange: (by: GroupBy) => void }) {
-  const Icon = GROUP_BY_ICON[value]
-  return (
-    <Popover align="right" placement="bottom" width={168} portal
-      trigger={(open, toggle) => (
-        <button type="button" onClick={toggle} aria-expanded={open} aria-label={`Group by: ${GROUP_BY_WORD[value]}`}
-          title={`Grouped by ${GROUP_BY_WORD[value].toLowerCase()}: group the chat history by your folders or your tags`}
-          className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-md bg-surface-container px-1.5 text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-high hover:text-on-surface">
-          <Icon size={16} strokeWidth={2} aria-hidden />
-          <ChevronDown size={12} strokeWidth={2} aria-hidden />
-        </button>
-      )}>
-      {(close) => (['folder', 'tag'] as const).map((by) => (
-        <MenuRow key={by} label={GROUP_BY_WORD[by]} nameIsLabel selected={by === value}
-          icon={by === value ? <Check size={15} aria-hidden /> : <span className="inline-block w-[15px]" aria-hidden />}
-          onClick={() => { onChange(by); close() }} />
-      ))}
-    </Popover>
-  )
-}
-
-/** One chat in the sidebar. Its title starts flush with the rail's other rows (`px-s`, as New chat,
- *  the group headers and the destinations above them), not indented under its group: the rail is
- *  narrow, a chat's title needs a few words to make sense, and the group header already says which
- *  group a row is in. A row's state dot sits at its right end, so a dot pushes no title right and a
- *  row with no state keeps no room for one. */
-function ThreadRow({ thread, selected, onOpen }: { thread: Thread; selected: boolean; onOpen: (route: string) => void }) {
+/** One row of the list. Its title starts flush with the bar's rows (`px-s`, as New chat). A row's
+ *  marks sit before its title in the kind icon's slot (a kind, a pin, an archive), an app's chat
+ *  names the app at its end, and its state dot sits at its right end, so a dot pushes no title right
+ *  and a row with no state keeps no room for one. */
+function ThreadRow({ thread, selected, archivedMark, onOpen }: {
+  thread: Thread; selected: boolean; archivedMark: boolean; onOpen: (route: string) => void
+}) {
   const pip = thread.pip ? PIP[thread.pip] : null
   const kind = KIND_MARK[thread.kind]
-  const name = kind ? `${kind.word}: ${thread.title}` : thread.title
-  const KindIcon = kind?.icon
+  const app = thread.startedBy ? startedByName(thread.startedBy) : ''
+  const said = [
+    kind ? `${kind.word}: ${thread.title}` : thread.title,
+    thread.pinned && 'pinned',
+    archivedMark && 'archived',
+    app && `started by ${app}`,
+  ].filter(Boolean).join(', ')
+  const name = pip ? `${said}, ${pip.word}` : said
+  const tip = [said, app && startedByTitle(app), thread.pipNote].filter(Boolean).join(' — ')
+  const marks: LucideIcon[] = [kind?.icon, thread.pinned ? Pin : undefined, archivedMark ? Archive : undefined]
+    .filter((m): m is LucideIcon => !!m)
   return (
     <button
       type="button" onClick={() => onOpen(thread.route)}
       data-thread-key={thread.key}
-      aria-label={pip ? `${name}, ${pip.word}` : name}
-      title={thread.pipNote ? `${name} — ${thread.pipNote}` : name}
+      aria-label={name}
+      title={tip}
       aria-current={selected ? 'page' : undefined}
       data-type="body-m"
       className={cx(
@@ -382,13 +336,17 @@ function ThreadRow({ thread, selected, onOpen }: { thread: Thread; selected: boo
         selected ? 'text-on-surface' : 'text-on-surface-var hover:bg-surface-low/60 hover:text-on-surface',
       )}
       style={withWeight({ minHeight: 32 }, selected ? 470 : 400)}>
-      {/* The selected fill, the rail's own: quiet, and distinct from hover (a lighter fill) and from
-          keyboard focus (the focus ring). */}
-      {selected && <span aria-hidden className="absolute inset-0 rounded-pill bg-surface-low" />}
-      {KindIcon && (
-        <KindIcon size={14} strokeWidth={2} aria-hidden className="relative shrink-0 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }} />
-      )}
+      {selected && <span aria-hidden className={SELECTED_PILL} />}
+      {marks.map((Mark, i) => (
+        <Mark key={i} size={14} strokeWidth={2} aria-hidden data-row-mark className="relative shrink-0 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }} />
+      ))}
       <span className="relative min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words" style={{ zIndex: ROW_LABEL_Z }}>{thread.title}</span>
+      {app && (
+        <span data-type="caption" data-started-by className="relative inline-flex min-w-0 max-w-[40%] shrink items-center gap-0.5 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }}>
+          <Blocks size={12} strokeWidth={2} aria-hidden className="shrink-0" />
+          <span className="min-w-0 truncate">{app}</span>
+        </span>
+      )}
       {pip && <StateDot family={pip.family} word={pip.word} />}
     </button>
   )

@@ -78,7 +78,7 @@ describe('NavRail announces which item is current', () => {
     const src = strip(readFileSync(join(SRC, 'ui/NavRail.tsx'), 'utf8'))
     expect(src).toMatch(/const active = item\.id === activeId/)
     expect(src).toMatch(/aria-current=\{active \? 'page' : undefined\}/)
-    expect(src).toMatch(/withWeight\(\{ height: 32 \}, active \? 470 : 400\)/)
+    expect(src).toMatch(/withWeight\(\{ minHeight: 32 \}, active \? 470 : 400\)/)
   })
 
   it('the nav uses aria-current, NOT aria-selected', () => {

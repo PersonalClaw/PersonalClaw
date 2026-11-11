@@ -25,20 +25,24 @@ How often the owner needs a thing decides how much room it gets:
 
 The sidebar is a shell of three parts (#5878). The top and bottom blocks keep their height; only
 the chat history between them scrolls, so a long list never carries a shortcut out of view. Below
-the chat history's floor (its heading bar and one row) the sidebar scrolls as one column instead.
+the chat history's floor (its pinned bar and one row) the sidebar scrolls as one column instead.
 
 1. **The top block:** the PersonalClaw icon and name, which is Home's link (#5880), then the leading
    destinations. Home opens on Overview; its View control switches to Attention, which the
    top-right needs-you shortcut also opens.
-2. **The chat history** (#5877): its heading with a Group by control (Folders or Tags), New chat
-   and a search, pinned at its top. Then every chat, goal loop and code session under the folder
-   Chat history keeps it in, No folder last, or under each of its tags, No tag last. A folder or
-   tag that holds nothing is left out. A row's kind changes its layout, never its address, and a
-   goal loop or code session says its kind on its row. Rows are about 32 px high, and each carries
-   a static pip (running, waiting on you, failed) that reads the same rule as Home's groups. Within
-   a group, pinned rows come first, then the most recently active; a status change never moves a
-   row. Nothing in the sidebar animates. The chats by project moved to the Projects page's Chats
-   by project view, and a project's own page lists its chats beside its detail.
+2. **The chat history** (#5877): New chat with Open Chat history (lit on the Chat history page) at
+   its end, then a search with a small Sort and filter menu, pinned at its top. Then every chat,
+   goal loop and code session as one list, in the view the menu picks: Recent activity (the
+   default), Date created or Title, with pinned rows first under every sort; Active (the default),
+   Archived or All; and a kind, or one or more folders or tags. The view is kept on the device, and
+   ⌘1 to ⌘9 follow it. A row's kind changes its layout, never its address, and a goal loop or code
+   session says its kind on its row, a pinned chat its pin, an archived chat its archive while the
+   view lists both, and an app's chat the app. Rows are about 32 px high, and each carries a static
+   pip (running, waiting on you, failed) that reads the same rule as Home's groups; a status change
+   never moves a row. Nothing in the sidebar animates. The new chat's Chat history panel draws the
+   same list, with its own view and no New chat, and its expand control opens the Chat history page.
+   The chats by project moved to the Projects page's Chats by project view, and a project's own page
+   lists its chats beside its detail.
 3. **The bottom block:** Inbox (#3818), Automations (#3816) and Capabilities (#3817), the pinned
    app pages, then the phone's Companion and Settings.
 
@@ -60,10 +64,10 @@ only a typed address opens. It is generated (`npm run docs:feature-map`), and a 
 and the app differ.
 
 The rail toggles from the toolbar, ⌘B and the palette, and comes back as it was: its open state,
-its width, how the chat history is grouped, each group's disclosure and how far it was scrolled
-are kept on the device, and the row it lights is the address's. Opening it puts focus on the row
-that last had it, else the lit row; closing it puts focus back on the toggle. Hiding it changes
-chrome only: the address, the open chat and running work are untouched.
+its width, its chat list's view and how far it was scrolled are kept on the device, and the row it
+lights is the address's. Opening it puts focus on the row that last had it, else the lit row;
+closing it puts focus back on the toggle. Hiding it changes chrome only: the address, the open chat
+and running work are untouched.
 
 ## Where the rest goes
 

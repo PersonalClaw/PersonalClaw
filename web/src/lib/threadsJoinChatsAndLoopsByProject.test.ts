@@ -152,3 +152,13 @@ describe('an approval marks the thread it waits in', () => {
     expect(pips(sources({ loops: [loop()], items: [question('')] }))['loop:a1b2c3d4']).toBeNull()
   })
 })
+
+describe('when a chat was made', () => {
+  const createdOf = (created: string) => toThreads(sources({ sessions: [chat({ created } as Partial<ThreadChat>)] }))[0].threads[0].createdAt
+  it('is read by the one parser: a time with its zone is a moment, in ms', () => {
+    expect(createdOf('2026-10-01T01:22:09+00:00')).toBe(Date.UTC(2026, 9, 1, 1, 22, 9))
+  })
+  it('is left out for a time with no zone, which names no moment', () => {
+    expect(createdOf('2026-10-01T01:22:09')).toBeUndefined()
+  })
+})

@@ -120,13 +120,14 @@ export function ChatPanes({ panes, stream, transcript, started, setQuery, naviga
         )}
       </AnimatePresence>
       {/* New-chat page: a right-docked chat-history panel via the SHARED SidePanel
-          primitive (matches Activity/File panels app-wide). Lists recent chats to
-          resume + a "View all" link to the full history page. */}
+          primitive (matches Activity/File panels app-wide). The sidebar's chat list, its own
+          view; its expand control opens the full Chat history page. */}
       <AnimatePresence>
         {historyOpen && !started && (
           <SidePanel title="Chat history" icon={<History size={18} className="text-primary" />} storeKey="chat-history-w"
-            fillHeight urlKey={{ key: 'history', setQuery }} onClose={() => setHistoryOpen(false)}>
-            <ChatHistorySidePanelBody navigate={navigate} onOpen={(key) => navigate(`chat/${key}`)} />
+            fillHeight urlKey={{ key: 'history', setQuery }} onClose={() => setHistoryOpen(false)}
+            onExpand={() => navigate('chat/history')}>
+            <ChatHistorySidePanelBody onOpen={navigate} />
           </SidePanel>
         )}
       </AnimatePresence>

@@ -18,7 +18,11 @@ import { idleRunState } from '../src/lib/workPhase'
 // moved up a row by the keyboard, and a chat the address opens above the bar, each land below the
 // bar, whole and topmost, the ring clear of it too (WCAG 2.4.11); focus moved down to a row at the
 // fold lands with its ring clear of the fold. In a 720 px window Settings, in the bottom block,
-// keeps its whole ring. The chats and projects are route stubs, so the layout is the only variable.
+// keeps its whole ring. At 200% text, in the default and the narrowest rail, New chat's label shows
+// whole, and the chat history keeps at least one whole row below its bar; at 100% the bar is one
+// line and the floor 136 px, as before. An empty view's sentence takes at most two lines, with Clear
+// filters whole beside or below it. The chats and projects are route stubs, so the layout is the only
+// variable.
 
 /** How far a focus ring reaches past its control (`RING_REACH`, `ui/NavRail.tsx`). */
 const RING = 4
@@ -44,7 +48,7 @@ async function stubThreads(page: Page): Promise<void> {
     route.request().method() === 'GET' ? route.fulfill(json({ loops: [] })) : route.fallback())
   await page.route('**/api/chat/sessions', (route) =>
     route.request().method() === 'GET' ? route.fulfill(json(SESSIONS)) : route.fallback())
-  // No folders and no tags, so every chat is under No folder and no other group moves the layout.
+  // No folders and no tags, so the Sort and filter menu has no section that could move the layout.
   await page.route('**/api/projects', (route) =>
     route.request().method() === 'GET' ? route.fulfill(json({ projects: [] })) : route.fallback())
   await page.route('**/api/chat/folders', (route) =>
@@ -84,7 +88,7 @@ async function readRail(page: Page): Promise<RailGeometry> {
   return page.evaluate((scroller) => {
     const area = document.querySelector<HTMLElement>(scroller)
     const newThread = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New chat')
-    const bar = newThread?.parentElement
+    const bar = newThread?.closest<HTMLElement>('[data-chat-list-bar]')
     const group = bar?.closest('[role="group"]')
     if (!area || !bar || !group) throw new Error('no sidebar scroll area, New chat bar or Chat history group')
     const n = area.getBoundingClientRect()
@@ -304,4 +308,107 @@ test.describe('the top of the chat history', () => {
     const box = await read()
     expect(box.top, `the row starts at or below the bar (row ${box.top}-${box.bottom}, bar to ${box.barBottom})`).toBeGreaterThanOrEqual(box.barBottom - 1)
   })
+})
+
+/** The rail's stored width (`NavRail`'s `W_KEY`): its default, and the narrowest it can be dragged to. */
+const RAIL_WIDTH_KEY = 'nav-width-v2'
+
+test.describe('by text size', () => {
+  test.use({ viewport: { width: 1280, height: 720 } })
+
+  for (const width of [196, 172]) {
+    test(`New chat's label shows whole, and the chat history keeps a whole row, in a ${width} px rail`, async ({ page }) => {
+      await page.addInitScript(([k, w]) => { localStorage.setItem(k, w) }, [RAIL_WIDTH_KEY, String(width)])
+      await stubThreads(page)
+      await gotoRoute(page, 'dashboard')
+      // Text zoom as the visual matrix's text-200 axis sets it: the root font doubled.
+      await page.evaluate(() => {
+        const root = document.documentElement
+        root.style.fontSize = `${(parseFloat(getComputedStyle(root).fontSize) || 16) * 2}px`
+        root.dataset.pcTextZoom = '200'
+      })
+      await expect(page.getByRole('button', { name: /Rail chat 00/ })).toBeAttached()
+      await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>('nav[data-tour="rail"]')!.getBoundingClientRect().width)).toBe(width)
+      // The floor follows the bar's height as the list's ResizeObserver reports it (`--chat-list-bar`),
+      // a frame after the text grows: read once the scroller knows the bar's new height.
+      await expect.poll(() => page.evaluate((scroller) => {
+        const area = document.querySelector<HTMLElement>(scroller)!
+        const bar = area.querySelector<HTMLElement>('[data-chat-list-bar]')!
+        return Math.abs(parseFloat(area.style.getPropertyValue('--chat-list-bar')) - bar.offsetHeight)
+      }, SCROLLER), 'the scroller knows the bar\'s height at 200%').toBeLessThanOrEqual(0.5)
+      const read = () => page.evaluate((scroller) => {
+        const area = document.querySelector<HTMLElement>(scroller)!
+        const button = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New chat')!
+        const label = [...button.querySelectorAll('span')].find((s) => s.textContent?.trim() === 'New chat')!
+        const bar = button.closest<HTMLElement>('[data-chat-list-bar]')!
+        const row = area.querySelector<HTMLElement>('[data-thread-key]')!
+        const [l, bt, b, n, r] = [label, button, bar, area, row].map((e) => e.getBoundingClientRect())
+        return {
+          cut: label.scrollWidth - label.clientWidth, labelRight: l.right, buttonRight: bt.right,
+          // The scroll area as it stands, from the bar's foot to its own: room for a whole row?
+          room: n.bottom - b.bottom, rowHeight: r.height,
+        }
+      }, SCROLLER)
+      const got = await read()
+      expect(got.cut, 'New chat\'s label is cut short (it reads "Ne…")').toBeLessThanOrEqual(0)
+      expect(got.labelRight, 'New chat\'s label runs past its button').toBeLessThanOrEqual(got.buttonRight + 0.5)
+      expect(got.room, `the chat history keeps a whole row (${got.rowHeight} px) below its bar`).toBeGreaterThanOrEqual(got.rowHeight - 0.5)
+    })
+  }
+
+  // The guard: at 100% nothing moves. New chat and Open Chat history share one line, New chat on
+  // one line of its own, and the list's floor is the 136 px it was.
+  for (const width of [196, 172]) {
+    test(`at 100% the bar is one line and the floor is 136 px, in a ${width} px rail`, async ({ page }) => {
+      await page.addInitScript(([k, w]) => { localStorage.setItem(k, w) }, [RAIL_WIDTH_KEY, String(width)])
+      await stubThreads(page)
+      await gotoRoute(page, 'dashboard')
+      await expect(page.getByRole('button', { name: /Rail chat 00/ })).toBeAttached()
+      await expect.poll(() => page.evaluate(() => document.querySelector<HTMLElement>('nav[data-tour="rail"]')!.getBoundingClientRect().width)).toBe(width)
+      const got = await page.evaluate((scroller) => {
+        const area = document.querySelector<HTMLElement>(scroller)!
+        const button = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New chat')!
+        const label = [...button.querySelectorAll('span')].find((s) => s.textContent?.trim() === 'New chat')!
+        const open = document.querySelector<HTMLElement>('nav[data-tour="rail"] button[aria-label="Open Chat history"]')!
+        const [bt, o] = [button, open].map((e) => e.getBoundingClientRect())
+        const lineHeight = parseFloat(getComputedStyle(label).lineHeight)
+        return { lines: Math.round(label.getBoundingClientRect().height / lineHeight), sameLine: Math.abs((bt.top + bt.bottom) / 2 - (o.top + o.bottom) / 2), floor: getComputedStyle(area).minHeight }
+      }, SCROLLER)
+      expect(got.lines, 'New chat takes one line').toBe(1)
+      expect(got.sameLine, 'Open Chat history sits beside New chat').toBeLessThanOrEqual(0.5)
+      expect(got.floor, 'the chat history\'s floor').toBe('136px')
+    })
+  }
+})
+
+test.describe('an empty view', () => {
+  test.use({ viewport: { width: 1280, height: 720 } })
+
+  // Goal loops only, and no loop: the view is empty, so the list says so and offers Clear filters.
+  for (const width of [196, 172]) {
+    test(`says so on at most two lines, with Clear filters whole, in a ${width} px rail`, async ({ page }) => {
+      await page.addInitScript(([k, w, view]) => { localStorage.setItem(k, w); localStorage.setItem('chat-list-view', view) },
+        [RAIL_WIDTH_KEY, String(width), JSON.stringify({ sort: 'activity', status: 'active', kind: 'loop', folders: [], tags: [] })])
+      await stubThreads(page)
+      await gotoRoute(page, 'dashboard')
+      const rail = page.locator('nav[data-tour="rail"]')
+      await expect(rail.getByText('No chats in this view')).toBeVisible()
+      const got = await page.evaluate(() => {
+        const nav = document.querySelector<HTMLElement>('nav[data-tour="rail"]')!
+        const said = [...nav.querySelectorAll<HTMLElement>('span')].find((e) => e.textContent?.trim() === 'No chats in this view')!
+        const clear = [...nav.querySelectorAll<HTMLElement>('button')].find((e) => e.textContent?.trim() === 'Clear filters')!
+        const [s, c, n] = [said, clear, nav].map((e) => e.getBoundingClientRect())
+        return {
+          lines: Math.round(s.height / parseFloat(getComputedStyle(said).lineHeight)),
+          clearLeft: c.left, clearRight: c.right, navLeft: n.left, navRight: n.right,
+          clearCut: clear.scrollWidth - clear.clientWidth,
+          widths: { row: said.parentElement!.getBoundingClientRect().width, said: s.width, clear: c.width, saidTop: s.top, clearTop: c.top, minWidth: getComputedStyle(said).minWidth },
+        }
+      })
+      expect(got.lines, `the sentence's lines (${JSON.stringify(got.widths)})`).toBeLessThanOrEqual(2)
+      expect(got.clearCut, 'Clear filters\' label is cut').toBeLessThanOrEqual(0)
+      expect(got.clearLeft, 'Clear filters starts inside the rail').toBeGreaterThanOrEqual(got.navLeft)
+      expect(got.clearRight, 'Clear filters ends inside the rail').toBeLessThanOrEqual(got.navRight)
+    })
+  }
 })

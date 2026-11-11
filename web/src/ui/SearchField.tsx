@@ -149,14 +149,22 @@ interface SearchFieldProps {
   autoCorrect?: string
   /** Called on focus (CodeCockpit reopens its result list). */
   onFocus?: () => void
+  /** The overlay field's 1 px at-rest edge (`border-on-surface-low/70`), where the field is a list's
+   *  own control on a ground its fill barely differs from (the chat list's search). No field has
+   *  one by default: an edge on every field is a product-wide decision. */
+  edge?: boolean
 }
+
+/** A list control's at-rest edge, 3:1 or more against the rail and the panel's grounds
+ *  (`design/sidebarContrast.test.ts`). The Sort and filter trigger and the lit pill carry it too. */
+export const EDGE = 'border border-on-surface-low/70'
 
 /** The one compound-search field. See the module header for the two variants. */
 export function SearchField({
   value, onChange, placeholder, ariaLabel, autoFocus, name, onKeyDown, trailingSlot, clearable = true,
   variant = 'overlay', size = 'lg', surface = 'high',
   inlineIconSize = 14, clearOnEscape, inputRef, spellCheck, autoCapitalize, autoCorrect, onFocus,
-  ariaHasPopup, ariaControls, ariaActiveDescendant, ariaExpanded,
+  ariaHasPopup, ariaControls, ariaActiveDescendant, ariaExpanded, edge = false,
 }: SearchFieldProps) {
   const autoName = useId()
   const fieldName = name ?? `search-${autoName}`
@@ -204,7 +212,7 @@ export function SearchField({
   return (
     <div className="relative w-full">
       <Search size={14} className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-on-surface-low" />
-      <input {...inputProps} className={cx('w-full pl-9', endRoom, INPUT_CHROME, OVERLAY_FOCUS, OVERLAY_SIZE[size], SEARCH_SURFACE[surface])} />
+      <input {...inputProps} className={cx('w-full pl-9', endRoom, INPUT_CHROME, OVERLAY_FOCUS, OVERLAY_SIZE[size], SEARCH_SURFACE[surface], edge && EDGE)} />
       <div className="absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center gap-1">
         {clearable && <ClearButton show={!!value} onClear={() => onChange('')} label={clearLabel} />}
         {trailingSlot}

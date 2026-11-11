@@ -4,11 +4,12 @@ import { gotoRoute } from './helpers'
 // ── A CHAT'S TITLE IN THE SIDEBAR STARTS FLUSH WITH THE RAIL'S OTHER ROWS ────────────────────────
 //
 // The rail is narrow and a chat's title needs a few words to make sense, so none of its width goes
-// to an indent: a row's title starts at the left edge New chat's icon and the group headers'
-// chevrons start at, under a group header or not, with a state dot or without (the dot sits at the
-// row's right end). jsdom lays nothing out, so `aChatTitleStartsFlushWithTheRail.test.tsx` reads the
-// padding classes; this measures the edge in a real browser, at the rail's narrowest width and at
-// its default one. The chats are route stubs, so the layout is the only variable.
+// to an indent: a row's title starts at the left edge New chat's icon starts at, with a state dot or
+// without (the dot sits at the row's right end). New chat's label reads whole beside Open Chat
+// history, which stays inside the rail. jsdom lays nothing out, so
+// `aChatTitleStartsFlushWithTheRail.test.tsx` reads the padding classes; this measures the edges in
+// a real browser, at the rail's narrowest width and at its default one. The chats are route stubs,
+// so the layout is the only variable.
 
 const LONG = 'Plan the venue walkthrough for the November meetup and confirm the AV list'
 
@@ -34,10 +35,13 @@ async function stubThreads(page: Page): Promise<void> {
 interface Edges {
   /** New chat's icon: the rail's own left edge for its rows' content. */
   newChat: number
-  /** The group header's chevron. */
-  header: number
   /** Each row's title text, by key. */
   titles: Record<string, number>
+  /** Whether New chat's label is cut short. */
+  newChatCut: boolean
+  /** Open Chat history's right edge, and the rail's. */
+  historyRight: number
+  railRight: number
 }
 
 async function readEdges(page: Page): Promise<Edges> {
@@ -45,10 +49,12 @@ async function readEdges(page: Page): Promise<Edges> {
     const group = document.querySelector('nav[data-tour="rail"] [role="group"][aria-label="Chat history"]')
     if (!group) throw new Error('no Chat history group')
     const newChat = [...group.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New chat')
-    // The open group's header: it names the list it controls. The search row's Group by button
-    // opens a menu (`aria-expanded` too) and comes first, so `aria-expanded` alone finds it.
-    const header = group.querySelector('button[aria-expanded="true"][aria-controls]')
-    if (!newChat || !header) throw new Error('no New chat button or group header')
+    if (!newChat) throw new Error('no New chat button')
+    const history = group.querySelector('button[aria-label="Open Chat history"]')
+    if (!history) throw new Error('no Open Chat history button')
+    const label = [...newChat.querySelectorAll('span')].find((s) => s.textContent?.trim() === 'New chat')
+    if (!label) throw new Error("no New chat label")
+    const nav = document.querySelector('nav[data-tour="rail"]')!
     const left = (el: Element | null | undefined) => {
       if (!el) throw new Error('missing element')
       return el.getBoundingClientRect().left
@@ -59,7 +65,11 @@ async function readEdges(page: Page): Promise<Edges> {
       const span = [...row.querySelectorAll('span')].find((s) => s.classList.contains('truncate'))
       titles[row.getAttribute('data-thread-key') ?? ''] = left(span)
     }
-    return { newChat: left(newChat.querySelector('svg')), header: left(header.querySelector('svg')), titles }
+    return {
+      newChat: left(newChat.querySelector('svg')), titles,
+      newChatCut: label.scrollWidth > label.clientWidth + 1,
+      historyRight: history.getBoundingClientRect().right, railRight: nav.getBoundingClientRect().right,
+    }
   })
 }
 
@@ -90,12 +100,13 @@ for (const narrowest of [false, true]) {
       expect(fits.text, `"Search" (${fits.text.toFixed(1)} px) fits the field's ${fits.room.toFixed(1)} px`).toBeLessThanOrEqual(fits.room)
 
       const edges = await readEdges(page)
-      expect(Math.abs(edges.header - edges.newChat), 'the group header starts at the rail edge').toBeLessThanOrEqual(1)
       // A chat's row is keyed by its thread, `chat:<session key>`.
       expect(Object.keys(edges.titles).sort()).toEqual(['chat:e2e-flush-calm', 'chat:e2e-flush-long'])
       for (const [key, x] of Object.entries(edges.titles)) {
         expect(Math.abs(x - edges.newChat), `${key}'s title is flush with the rail`).toBeLessThanOrEqual(1)
       }
+      expect(edges.newChatCut, "New chat's label reads whole").toBe(false)
+      expect(edges.historyRight, 'Open Chat history sits inside the rail').toBeLessThanOrEqual(edges.railRight)
     })
   })
 }

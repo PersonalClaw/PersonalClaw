@@ -1302,8 +1302,9 @@ change to one region touches that region's files:
   the retag run, and every row action (pin, folder, tags, archive, export,
   share, delete). `ChatHistoryPage.tsx` draws the list and the board
   (`TagBoard.tsx`), with a row's folder and tag menu, and `SessionPeek.tsx` is
-  the peek panel a row opens. `ChatHistorySidePanel.tsx` is the recent-chats
-  panel a new chat opens.
+  the peek panel a row opens. `ChatHistorySidePanel.tsx` is the Chat history
+  panel a new chat opens: the sidebar's chat list (`ui/ThreadRail.tsx`, read through
+  `app/useChatList.ts`), with its own view.
 - **The panes** — `web/src/pages/chat/panes/`. `useChatPanes.ts` keeps the
   panels docked beside the chat, each on the URL so Back closes it and a reload
   reopens it: the Activity rail (`?activity`), the chat's session inspector

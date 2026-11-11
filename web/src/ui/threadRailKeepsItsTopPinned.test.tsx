@@ -1,16 +1,17 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import type { Thread } from '../lib/useThreads'
-import { ThreadRail, type ThreadRailGroup } from './ThreadRail'
+import { ThreadRail } from './ThreadRail'
 
 // ── New chat and the search stay pinned at the top of the chat history while it scrolls (#3814) ───
 //
-// They are one bar at the top of the chat history, with its heading, pinned to the top of the rail's
-// scroll area while the rows scroll under it, so a long list never takes away the way to start a
-// chat or find one.
-// The bar paints the rail's solid surface and sits above the rows, so no row shows through it.
+// They are one bar at the top of the chat history, pinned to the top of the list's scroll area while
+// the rows scroll under it, so a long list never takes away the way to start a chat or find one.
+// The bar paints its host's solid surface and sits above the rows, so no row shows through it.
 //
-// The rail's scroll area is the sidebar itself (`NavRail`), whose surface is `--color-rail`. While
+// The sidebar's scroll area is the sidebar itself (`NavRail`), whose surface is `--color-rail`; the
+// Chat history panel's is the panel's body (`SidePanel`), on `--color-surface`, which pads its top,
+// so the bar there sticks that padding higher, flush with the scrollport's edge. While
 // the bar is there, the scroll area keeps the bar's height clear at its top (`scroll-padding-top`),
 // the room the browser leaves when focus moves to a row; and a row the address opens is scrolled just
 // far enough to show it below the bar, not under it.
@@ -23,18 +24,19 @@ function thread(key: string, title: string): Thread {
   return { kind: 'chat', id, projectId: 'p-garden', route: `chat/${id}`, pip: null, pinned: false, activeAt: 0, folderId: '', tagIds: [], key, title }
 }
 
-const GARDEN: ThreadRailGroup = {
-  id: 'folder:f-garden',
-  name: 'Garden',
-  threads: Array.from({ length: 30 }, (_, i) => thread(`chat:chat-${i}`, `Garden chat ${i}`)),
-}
+const GARDEN: Thread[] = Array.from({ length: 30 }, (_, i) => thread(`chat:chat-${i}`, `Garden chat ${i}`))
+const TOP = { onNewChat: () => {}, onOpenHistory: () => {}, historyLit: false }
 
 const rect = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 240, width: 240, height: bottom - top, x: 0, y: top, toJSON() {} }) as DOMRect
 
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 /** The bar New chat sits in. */
-const bar = () => screen.getByRole('button', { name: 'New chat' }).parentElement as HTMLElement
+const bar = () => {
+  const el = screen.getByRole('button', { name: 'New chat' }).closest('[data-chat-list-bar]')
+  if (!(el instanceof HTMLElement)) throw new Error('New chat is in no bar')
+  return el
+}
 /** Whether *el* is the bar: it holds New chat and the search, and no row. */
 const isBar = (el: Element) => el instanceof HTMLElement && !!el.querySelector('input[type="search"]')
   && !!el.querySelector('button') && !el.querySelector('[data-thread-key]') && el.parentElement?.getAttribute('role') === 'group'
@@ -46,7 +48,7 @@ function barIs72() {
 
 describe('the top of the chat history', () => {
   it('New chat and the search are one bar, pinned to the top of the scroll area', () => {
-    render(<ThreadRail groups={[GARDEN]} selectedKey="" status="ready" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}} />)
+    render(<ThreadRail rows={GARDEN} selectedKey="" status="ready" onOpen={() => {}} onRetry={() => {}} top={TOP} />)
     const top = bar()
     expect(top.contains(screen.getByRole('searchbox', { name: 'Search chats' })), 'the search is in the bar').toBe(true)
     const style = getComputedStyle(top)
@@ -62,7 +64,7 @@ describe('the top of the chat history', () => {
     // value, so the paint is read from the bar's own declaration.
     document.documentElement.style.setProperty('--color-rail', 'rgb(1, 2, 3)')
     onTestFinished(() => { document.documentElement.style.removeProperty('--color-rail') })
-    render(<ThreadRail groups={[GARDEN]} selectedKey="chat:chat-3" status="ready" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}} />)
+    render(<ThreadRail rows={GARDEN} selectedKey="chat:chat-3" status="ready" onOpen={() => {}} onRetry={() => {}} top={TOP} />)
     const style = getComputedStyle(bar())
     expect(style.getPropertyValue('--color-rail'), 'the token reaches the bar').toBe('rgb(1, 2, 3)')
     expect(bar().style.background, 'the bar paints the token').toBe('var(--color-rail)')
@@ -73,11 +75,31 @@ describe('the top of the chat history', () => {
     expect(Number(style.zIndex)).toBeGreaterThan(Math.max(...raised))
   })
 
+  it('paints the panel\'s surface in the Chat history panel', () => {
+    // As above: the token reaches the bar, and the bar's own declaration paints it.
+    document.documentElement.style.setProperty('--color-surface', 'rgb(4, 5, 6)')
+    onTestFinished(() => { document.documentElement.style.removeProperty('--color-surface') })
+    render(<ThreadRail rows={GARDEN} selectedKey="" status="ready" onOpen={() => {}} onRetry={() => {}} surface="panel" label="Chats" />)
+    const top = document.querySelector<HTMLElement>('[data-chat-list-bar]')!
+    expect(getComputedStyle(top).getPropertyValue('--color-surface'), 'the token reaches the bar').toBe('rgb(4, 5, 6)')
+    expect(top.style.background, 'the bar paints the token').toBe('var(--color-surface)')
+    expect(getComputedStyle(top).position).toBe('sticky')
+  })
+
+  it('sticks flush with a padded scroller\'s edge, as the panel\'s body pads its top', () => {
+    render(
+      <div style={{ overflowY: 'auto', height: 600, paddingTop: 16 }}>
+        <ThreadRail rows={GARDEN} selectedKey="" status="ready" onOpen={() => {}} onRetry={() => {}} surface="panel" label="Chats" />
+      </div>,
+    )
+    expect(document.querySelector<HTMLElement>('[data-chat-list-bar]')!.style.top).toBe('-16px')
+  })
+
   it('keeps the bar\'s height clear at the top of the scroll area while the rail shows it', () => {
     barIs72()
     const { unmount } = render(
       <div data-test-scroller="" style={{ overflowY: 'auto', height: 600 }}>
-        <ThreadRail groups={[GARDEN]} selectedKey="" status="ready" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}} />
+        <ThreadRail rows={GARDEN} selectedKey="" status="ready" onOpen={() => {}} onRetry={() => {}} top={TOP} />
       </div>,
     )
     const scroller = document.querySelector<HTMLElement>('[data-test-scroller]')!
@@ -100,7 +122,7 @@ describe('the top of the chat history', () => {
     })
     render(
       <div ref={scroller} data-test-scroller="" style={{ overflowY: 'auto', height: 600 }}>
-        <ThreadRail groups={[GARDEN]} selectedKey="chat:chat-12" status="ready" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}} />
+        <ThreadRail rows={GARDEN} selectedKey="chat:chat-12" status="ready" onOpen={() => {}} onRetry={() => {}} top={TOP} />
       </div>,
     )
     // The row's top was 20 px above the scroll area, so 96 px above the 72 px the bar covers and the

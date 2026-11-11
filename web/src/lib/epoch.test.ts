@@ -141,13 +141,14 @@ describe('sessionActivitySeconds — the field choice, in one place', () => {
   })
 
   it('#/chat reads both through lib/epoch, with no local parse left', () => {
-    // The recent-chats panel, which moved out of ChatPage with the history region.
+    // The Chat history panel draws the sidebar's chat list, which shows no time: its order is the
+    // rows' activity, which `useThreads` reads through lib/epoch. Nothing in the panel parses one.
     const src = readSource(join(process.cwd(), 'src/pages/chat/history/ChatHistorySidePanel.tsx'))
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
-    expect(code, 'the label takes the shared field choice').toMatch(/relTimeShort\(sessionActivitySeconds\(s\)\)/)
-    expect(code, 'the formatter parses through epochSeconds').toMatch(/const at_s = epochSeconds\(at\)/)
+    expect(code, 'no time label of its own').not.toMatch(/relTimeShort|epochSeconds|Date\.parse/)
     expect(code, 'no hand-rolled fallback chain remains').not.toMatch(/last_activity_ts \|\| s\.last_ts/)
-    expect(code, 'no local Date.parse in the formatter').not.toMatch(/function relTimeShort[\s\S]{0,300}?Date\.parse/)
+    const threads = readSource(join(process.cwd(), 'src/lib/useThreads.ts'))
+    expect(threads, 'the order takes the shared field choice').toMatch(/activeAt: sessionRecencyMs\(s\)/)
   })
 })
 

@@ -84,12 +84,13 @@ describe('all three call sites share it now', () => {
   })
 
   it('both chat sites use the helper too, so there is one spelling left', () => {
-    // The recent-chats panel and the history page, which moved out of ChatPage to `chat/history/`.
-    const panel = read('pages/chat/history/ChatHistorySidePanel.tsx')
+    // The Chat history panel is the sidebar's chat list now: its rows' order is `Thread.activeAt`,
+    // which `useThreads` takes from the helper. The history page sorts by it itself.
+    const threads = read('lib/useThreads.ts')
     const history = read('pages/chat/history/useChatHistory.ts')
-    expect(panel).toContain('.sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))')
+    expect(threads).toContain('activeAt: sessionRecencyMs(s)')
     expect(history).toContain('const recency = sessionRecencyMs')
-    for (const src of [read('pages/ChatPage.tsx'), panel, history]) {
+    for (const src of [read('pages/ChatPage.tsx'), threads, history]) {
       expect(src, 'no hand-rolled Date.parse fallback chain should remain')
         .not.toMatch(/Date\.parse\(\w+\.last_activity_ts \|\| /)
     }

@@ -25,8 +25,8 @@ const STATES: Array<[ThreadPip, string, string]> = [
 
 function rail() {
   const threads = [...STATES.map(([pip]) => t(pip, pip)), t('calm', null)]
-  return render(<ThreadRail groups={[{ id: 'folder:', name: 'No folder', threads }]} selectedKey="" status="ready"
-    onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}} />)
+  return render(<ThreadRail rows={threads} selectedKey="" status="ready"
+    onOpen={() => {}} onRetry={() => {}} />)
 }
 const row = (pip: string, word: string) => screen.getByRole('button', { name: `Chat ${pip}, ${word}` })
 const dotOf = (el: HTMLElement) => el.querySelector<HTMLElement>('[data-state-family]')

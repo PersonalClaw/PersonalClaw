@@ -1,81 +1,31 @@
-import { useMemo } from 'react'
-import { motion } from 'framer-motion'
-import { MessageSquare, ArrowRight } from 'lucide-react'
-import { StartedByApp } from '../StartedByApp'
-import { Button } from '../../../ui/Button'
+import { useChatList } from '../../../app/useChatList'
 import { LoadError } from '../../../ui/ListScaffold'
-import { fadeEnter } from '../../../design/motion'
-import { api, type ChatSessionSummary } from '../../../lib/api'
-import { useQuery } from '../../../lib/data'
-import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../../../lib/epoch'
-import { sessionTitle } from '../../../lib/sessionTitle'
+import { ThreadRail } from '../../../ui/ThreadRail'
 
-/** Relative-time label for the history list (compact: "2m", "3h", "5d", "1w").
+/** Body of the new chat's Chat history panel: the sidebar's chat list (`ThreadRail`, one list for
+ *  both), with its own search and its own Sort and filter view, opening at the defaults and kept
+ *  nowhere, so a filter used here once never changes the sidebar or ⌘1 to ⌘9. It reads what the
+ *  sidebar reads (`useChatList`), so the two never say different things about the same chats, and
+ *  it lists goal loops, code sessions and channel chats as the sidebar does, kept live by the same
+ *  frames. No New chat: the page it opens on is one. Its expand control opens the Chat history page
+ *  (`ChatPanes`).
  *
- *  Parses through `lib/epoch`'s `epochSeconds` rather than its own `Date.parse`, which makes it
- *  the last time formatter in the tree to converge on that parser (`lib/epoch.test.ts` carried
- *  it as a NAMED EXEMPTION until now — see the correction there: the reason recorded for the
- *  exemption did not hold). Two consequences beyond the de-duplication:
- *
- *    · it accepts a NUMBER as well as an ISO string, so a numeric wire field renders instead of
- *      silently blanking — the failure the exemption was worried about, now impossible
- *    · `epochSeconds` guards on READABILITY, so the epoch itself (0) formats instead of being
- *      discarded by the old `if (!t)` truthiness test
- */
-function relTimeShort(at?: string | number): string {
-  const at_s = epochSeconds(at)
-  if (at_s == null) return ''
-  const s = Math.max(0, Date.now() / 1000 - at_s)
-  if (s < 60) return 'now'
-  if (s < 3600) return `${Math.floor(s / 60)}m`
-  if (s < 86400) return `${Math.floor(s / 3600)}h`
-  if (s < 604800) return `${Math.floor(s / 86400)}d`
-  return `${Math.floor(s / 604800)}w`
-}
-
-/** Body of the new-chat "Chat history" SidePanel: the most-recent manual sessions
- *  (title + when), each opening its session; a "View all" row deep-links to the
- *  full chat-history page. Reuses the same `chat:sessions` cache the history page
- *  paints from (instant, no extra fetch). */
-export function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) => void; onOpen: (key: string) => void }) {
-  // No `.catch(() => [])`: swallowing the rejection makes a 500 indistinguishable from
-  // "you have no chats", and this panel then says exactly that. The error rides through so
-  // the ladder below can tell the two apart.
-  const { data, error: sessionsError, refresh: refreshSessions } = useQuery<ChatSessionSummary[]>('chat:sessions', () => api.chatSessions(), { persist: false })
-  const recent = useMemo(() => {
-    const all = data ?? []
-    return all
-      .filter((s) => (s.origin ?? 'manual') === 'manual')
-      .sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))
-      .slice(0, 20)
-  }, [data])
+ *  Connected with nothing in hand, a failed chats read is the honest-state `LoadError`, with the
+ *  archive's reader still mounted; a failed archive read is the list's own failure row, "Couldn't
+ *  load your archived chats.", beside Retry and the menu. Otherwise the list says Offline, or shows
+ *  the failure row over the rows it has. */
+export function ChatHistorySidePanelBody({ onOpen }: { onOpen: (route: string) => void }) {
+  const list = useChatList('panel')
+  if (list.status === 'failed' && list.all.length === 0 && list.chatsError) {
+    return <>{list.archive}<LoadError what="chats" error={list.chatsError} onRetry={list.retry} /></>
+  }
   return (
-    <div className="flex flex-col gap-1">
-      {data === undefined && sessionsError ? (
-        <LoadError what="chats" error={sessionsError} onRetry={refreshSessions} />
-      ) : data === undefined ? (
-        <div className="px-2 py-6 text-center text-on-surface-low text-[0.8125rem]">Loading…</div>
-      ) : recent.length === 0 ? (
-        <div className="px-2 py-6 text-center text-on-surface-low text-[0.8125rem]">No chats yet.</div>
-      ) : (
-        // The rows arrive together and stay put under the pointer: the owner opens this list many
-        // times an hour, so a cascade and a hover nudge would only stand between her and the chat.
-        <motion.div initial="initial" animate="animate" className="flex flex-col gap-0.5">
-          {recent.map((s) => (
-            <motion.button key={s.key} type="button" variants={fadeEnter} onClick={() => onOpen(s.key)}
-              className="group flex items-center gap-s rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-high">
-              <MessageSquare size={14} className="shrink-0 text-on-surface-low group-hover:text-primary transition-colors" />
-              <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem] group-hover:text-on-surface">{sessionTitle(s)}</span>
-              <StartedByApp s={s} />
-              <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{relTimeShort(sessionActivitySeconds(s))}</span>
-            </motion.button>
-          ))}
-        </motion.div>
-      )}
-      {/* deep-link to the full, filterable/organizable chat-history page */}
-      <Button variant="ghost" size="sm" onClick={() => navigate('chat/history')} className="mt-1 border border-outline-variant/40">
-        View all chats <ArrowRight size={13} className="shrink-0" />
-      </Button>
-    </div>
+    <>
+      {list.archive}
+      <ThreadRail surface="panel" label="Chats" rows={list.rows} selectedKey="" status={list.status}
+        failure={list.failure} onOpen={onOpen} onRetry={list.retry}
+        menu={list.sections} filtered={list.filtered} onClearFilters={list.clearFilters}
+        markArchived={list.view.status === 'all'} />
+    </>
   )
 }

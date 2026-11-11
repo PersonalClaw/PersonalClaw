@@ -3,12 +3,12 @@ import { toThreads, type ThreadChat, type ThreadLoop, type ThreadSources } from 
 import type { ApprovalInput } from '../lib/attentionLanes'
 import { runState, runningState } from '../test/runState'
 import { projectGroups, type GroupedProject } from '../pages/projects/projectChatGroups'
-import { historyGroups } from './chatHistoryGroups'
+import { DEFAULT_VIEW, applyView } from './chatListView'
 
 // ── The sidebar lists its chat history in one named order (#3814, #5877) ──────────────────────────
 //
-// One order serves chats, goal loops and code sessions alike, in every group of the sidebar's chat
-// history and of the Projects page's chats by project: pinned first, then the latest activity,
+// One order serves chats, goal loops and code sessions alike, in the sidebar's chat list by default
+// and in every group of the Projects page's chats by project: pinned first, then the latest activity,
 // newest first, with ties broken by the row's key. A chat's activity is the time its
 // list row says it last did something (`sessionRecencyMs`); a loop's is its newest cycle's, which
 // its row says (`last_cycle_at`). A row with no cycle time falls back to its workers' latest
@@ -50,9 +50,9 @@ function order(src: ThreadSources): Record<string, string[]> {
   return Object.fromEntries(projectGroups(toThreads(src), PROJECTS).map((g) => [g.id.replace(/^project:/, ''), g.threads.map((t) => t.key)]))
 }
 
-/** The keys the sidebar lists while no row has a folder: its one group, No folder. */
+/** The keys the sidebar lists in its default view. */
 function sidebarOrder(src: ThreadSources): string[] {
-  return historyGroups(toThreads(src), 'folder', [], []).flatMap((g) => g.threads.map((t) => t.key))
+  return applyView(toThreads(src).flatMap((g) => g.threads), DEFAULT_VIEW, [], []).map((t) => t.key)
 }
 
 // Shuffled on purpose: chats, then loops, neither in the order they show.
