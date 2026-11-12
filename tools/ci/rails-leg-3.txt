@@ -27,6 +27,7 @@ tests/rails/test_shared_contracts_doc_tree.py
 tests/rails/test_spawn_env_audit_tree.py
 tests/rails/test_structural_baseline_tree.py
 tests/rails/test_the_page_signs_addresses_in_requests_the_route_takes.py
+tests/rails/test_the_rails_budget_is_twice_each_legs_slowest_green_run.py
 tests/rails/test_the_release_publishes_the_names_the_app_updater_takes.py
 tests/rails/test_wire_error_envelope_census.py
 tests/rails/test_workflow_definition_writer_census_tree.py
