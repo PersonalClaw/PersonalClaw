@@ -435,9 +435,19 @@ verdict says all it must fix:
 - **Up to date:** a head behind `main` is red, so the squash lands the tree the run tested. Its
   definitions are not compared (against `main`'s tip it would read as changing every definition
   `main` changed since), so no contract runs for it until it updates.
-- **The run's verdict:** merge.yml's `results` job, which judges the run with main's
-  `verdict.py`, concluded `success` on every attempt. Missing, cancelled, skipped or red on any
-  attempt is red, and a rerun never turns a red into a green.
+- **The run's verdict:** merge.yml's `results` job, which judges the run with main's `verdict.py`,
+  concluded `success` on every attempt. Missing, cancelled, skipped or red on any attempt is red,
+  and a rerun never turns a red into a green. One red is excused, on a pull request's or a
+  dispatch's run, never a queue commit's: attempt 1's `failure`, on a rerun, when attempt 1's jobs
+  show every job but `results` passed, was skipped or was one no runner took (at least one, read
+  as the verdict reads a job, `verdict.listed_job` and `never_acquired`), and only then are
+  `results`' annotations read, and they must hold the one notice titled "red only for jobs no
+  runner took" naming exactly those jobs. The listing is the proof, and the notice main's
+  verdict's word that nothing else was red (`--attempt` below). The later attempts' verdicts judge
+  those jobs, each attempt held to `success`, and the green says attempt 1 was red only for them.
+  A listed job `verdict.listed_job` refuses, two such notices, or annotations that can't be read
+  are unread, so red. A queue commit's run excuses nothing: its attempt-1 red is its posted
+  verdict, so its entry is queued again.
 - **The dependency review (#4585 step 6):** the newest `pull_request_target` run of
   `dependency-review.yml` on the head, `main`'s copy, concluded `success`. One that has not run,
   is still running or did not pass is red. The poster also follows Dependency review: when one
@@ -1258,10 +1268,12 @@ while attempt 1's listing shows nothing else red), `decide` also writes one `::n
 only for jobs no runner took" that names those keys; `decide_main_push` writes none, since nothing
 reads a push run's notice. The flake rule passes nothing on a run a rerun filled this way. The
 rule holds on a push to `main` too, and on any run it fills a job still queued when its run was
-cancelled. The tier workflows' results step does not pass `--first-jobs` yet, and the merge
-controller's rule 4 still holds a rerun's attempt-1 red: a rerun's green verdict does not count
-toward a merge yet. The CI contract lists the results step that passes it, and either step passes
-until the workflows take it.
+cancelled. Each tier workflow's results step lists attempt 1's jobs on every attempt and passes
+them as `--first-jobs` (on attempt 1 the listing is the run's own, taken once the jobs it judges
+are done). A listing it can't take is passed as none, with a warning, and the verdict then reads
+no job as one no runner took. On a pull request's or a dispatch's run, the merge controller reads
+attempt 1's listing and the notice (rule 4, "The run's verdict" above), so a rerun that fills
+those jobs green counts toward a merge.
 
 **The failed tests the records name.** A record read with `from_job_records` carries its failed
 tests: on a failure, each test `run-job`'s diagnostic rerun classified `flake` or `repeated
@@ -1469,11 +1481,10 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   lines of one step the row lists for its job, in their order, each spelled exactly, its
   indentation too (a blank line or a comment aside), so a step that keeps its lines and moves
   one (publishing a plan before the check that refuses it) fails as an extra line does, and a
-  listed step no job of either workflow runs fails too, unless the row lists it as waiting for
-  the workflows (today the results job's two verdict steps, of which each results job runs
-  exactly one); a stage job runs its runner's identity and the run-job line and nothing else, its
-  other steps use only the checkout, the setup action and the artifact actions, and every stage
-  job's steps are the same.
+  listed step no job of either workflow runs fails too, and so does a results job that runs its
+  verdict step twice or not at all; a stage job runs its runner's identity and the run-job line
+  and nothing else, its other steps use only the checkout, the setup action and the artifact
+  actions, and every stage job's steps are the same.
 - "a-merge-tier-run-holds-at-most-14-jobs-at-once": a merge-tier run holds at most 14 jobs at
   once (#3915), so concurrent pull requests share the account's runners. Each of `merge.yml`'s
   stage jobs caps its entries with `max-parallel` (`test` 10; `build`, `test-2` and `test-3` 4

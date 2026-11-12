@@ -49,9 +49,16 @@ what it writes to the Actions cache is that branch's, never ``main``'s: it runs 
 tip runs again. Once the head's verdict is posted its branch is deleted, and every completed
 run also sweeps away each contract branch no longer at ``main``'s tip (and, after a day, any
 trusted-run branch the old path left).
-4. The ``results`` job, which judges the run with ``main``'s ``verdict.py``, concluded
-   ``success`` on every attempt, by the API's job list. Missing, cancelled, skipped or red on any
-   attempt is red: a rerun never turns a red into a green.
+4. The ``results`` job, which judges the run with ``main``'s ``verdict.py``, concluded ``success``
+   on every attempt, by the API's job list. Missing, cancelled, skipped or red on any attempt is
+   red: a rerun never turns a red into a green. One red is excused, on a pull request's or a
+   dispatch's run, never a queue commit's: attempt 1's ``failure``, on a rerun, when attempt 1's
+   jobs show every job but ``results`` passed, was skipped or was one no runner took (at least
+   one), and ``results``' annotations then hold the one notice titled
+   ``verdict.NOT_ACQUIRED_NOTICE`` naming exactly those jobs. The listing is the proof, and the
+   notice main's verdict's word for it. Attempt 2's record alone fills those jobs (``verdict.py``),
+   and every later attempt must be ``success``. The green says attempt 1 was red only for those
+   jobs. A queue commit's run excuses nothing: its attempt-1 red is its posted verdict.
 5. The head's dependency review passed (#4585 step 6), and so did its sign-off check (#3908):
    the newest ``pull_request_target`` run of ``dependency-review.yml``, and of ``dco.yml``, on the
    head, main's copy of each, concluded ``success``. One that has not run, is still running or
@@ -356,11 +363,18 @@ def read_run(get: Get, repo: str, run_id: int) -> Run | str:
     return Run(run_id, attempt, head, event, url, branch, pull)
 
 
-def results_reasons(get: Get, repo: str, run: Run) -> tuple[list[str], list[str]]:
-    """Why the run's ``results`` are not green on every attempt (rule 4), and the labels of the
-    last attempt's ``results`` runner."""
+def results_reasons(
+    get: Get, repo: str, run: Run, *, excuse: bool = False
+) -> tuple[list[str], list[str], list[str]]:
+    """Why the run's ``results`` are not green on every attempt (rule 4), the labels of the last
+    attempt's ``results`` runner, and the jobs no runner took that excused attempt 1's red. Only
+    with *excuse* (:func:`decide`'s runs: a pull request's or a dispatch's), and only on a rerun,
+    attempt 1's ``failure`` gives no reason when attempt 1's jobs show it was red for jobs no
+    runner took alone (:func:`untaken_only`): a later attempt's verdict judges those jobs, and
+    every later attempt is held to ``success``."""
     reasons: list[str] = []
     labels: list[str] = []
+    excused: list[str] = []
     for attempt in range(1, run.attempt + 1):
         jobs = _pages(get, f"/repos/{repo}/actions/runs/{run.id}/attempts/{attempt}/jobs", "jobs")
         found = [j for j in jobs if j.get("name") == RESULTS_JOB]
@@ -371,10 +385,65 @@ def results_reasons(get: Get, repo: str, run: Run) -> tuple[list[str], list[str]
         if job.get("status") != "completed":
             reasons.append(f"attempt {attempt}'s `{RESULTS_JOB}` is {job.get('status')!r}")
         elif job.get("conclusion") != "success":
-            reasons.append(f"attempt {attempt}'s `{RESULTS_JOB}` is {job.get('conclusion')!r}")
+            untaken = (
+                untaken_only(get, repo, run, jobs, job)
+                if excuse and attempt == 1 < run.attempt and job.get("conclusion") == "failure"
+                else []
+            )
+            if untaken:
+                excused = untaken
+            else:
+                reasons.append(f"attempt {attempt}'s `{RESULTS_JOB}` is {job.get('conclusion')!r}")
         raw = job.get("labels")
         labels = [str(x) for x in raw] if isinstance(raw, list) else []
-    return reasons, labels
+    return reasons, labels, excused
+
+
+def untaken_only(
+    get: Get, repo: str, run: Run, jobs: list[Mapping[str, Any]], results: Mapping[str, Any]
+) -> list[str]:
+    """The names of attempt 1's jobs no runner took, when they are the whole of why attempt 1's
+    ``results`` is red; empty otherwise. Attempt 1's listing is the proof: every job but
+    ``results`` completed ``success`` or ``skipped``, or no runner took it
+    (``verdict.never_acquired``, each job read by ``verdict.listed_job`` as the verdict reads it),
+    at least one. Only then are ``results``' annotations read, and they must hold one notice titled
+    ``verdict.NOT_ACQUIRED_NOTICE`` whose names, split on ``", "``, are exactly those jobs: the
+    notice is main's verdict's word that nothing else was red. A listed job ``verdict.listed_job``
+    refuses, two such notices, or annotations that cannot be read, are unread."""
+    untaken: list[str] = []
+    for item in jobs:
+        if item is results:
+            continue
+        try:
+            job = verdict.listed_job(dict(item), run_id=run.id, attempt=1, where="attempt 1's jobs")
+        except verdict.Refused as exc:
+            raise Unread(str(exc)) from None
+        if job.status == "completed" and job.conclusion in ("success", "skipped"):
+            continue
+        if not verdict.never_acquired(job):
+            return []
+        untaken.append(job.name)
+    if not untaken:
+        return []
+    job_id = _int(results.get("id"))
+    if job_id is None:
+        raise Unread(f"attempt 1's `{RESULTS_JOB}` job has no id to read its notices from")
+    notes = _all_pages(get, f"/repos/{repo}/check-runs/{job_id}/annotations")
+    these = [
+        n.get("message")
+        for n in notes
+        if n.get("title") == verdict.NOT_ACQUIRED_NOTICE and n.get("annotation_level") == "notice"
+    ]
+    if len(these) > 1:
+        raise Unread(
+            f"attempt 1's `{RESULTS_JOB}` writes {len(these)} notices of jobs no runner took,"
+            " where main's verdict writes one"
+        )
+    if not these or not isinstance(these[0], str):
+        return []
+    if set(these[0].split(", ")) != set(untaken):
+        return []
+    return sorted(set(untaken))
 
 
 def passed_flakes(get: Get, repo: str, run: Run) -> list[str]:
@@ -1803,6 +1872,8 @@ def decide(
     reasons: list[str] = []
     moved: list[Moved] = []
     gates = Gates([], [], {}, [])
+    # Attempt 1's jobs no runner took, when they alone were why its results was red (rule 4).
+    untaken: list[str] = []
     try:
         base = main_tip(get, repo)
         tree_oid, head_tree = api_tree(get, repo, head)
@@ -1836,7 +1907,7 @@ def decide(
                     "own pull_request run, so main's contract is not run from it"
                 )
             )
-        failing, labels = results_reasons(get, repo, run)
+        failing, labels, untaken = results_reasons(get, repo, run, excuse=True)
         reasons += failing
         reasons += dependency_review_reasons(get, repo, head)
         reasons += sign_off_reasons(get, repo, head)
@@ -1905,10 +1976,16 @@ def decide(
         "toolchain": toolchain,
         "evidence_digests": records,
     }
+    opening = (
+        f"Judged by its own Merge run: every attempt of Merge run {run.url or run.id} was green."
+        if not untaken
+        else f"Judged by its own Merge run: attempt 1 of Merge run {run.url or run.id} was red"
+        f" only for jobs no runner took ({', '.join(f'`{n}`' for n in untaken)}), and every"
+        " later attempt was green."
+    )
     summary = "\n".join(
         [
-            f"Judged by its own Merge run: every attempt of Merge run {run.url or run.id} "
-            "was green.",
+            opening,
             *ran,
             (
                 "- the head is up to date with main"
@@ -2519,7 +2596,7 @@ def decide_queue(
         _, base_tree = api_tree(get, repo, base)
         comparison = trust.compare_trees(base_tree, queue_tree, base=base, head=sha)
         changed = [] if comparison.trusted else [c.path for c in comparison.changes]
-        failing, labels = results_reasons(get, repo, run)
+        failing, labels, _ = results_reasons(get, repo, run)
         reasons += failing
         if changed:
             contract = contract_run(get, repo, sha, base)

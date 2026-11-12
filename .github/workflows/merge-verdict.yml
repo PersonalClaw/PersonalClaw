@@ -11,7 +11,9 @@
 # request's head; it names nothing of the candidate anywhere else.
 #
 # The verdict is green only when the head is up to date with main, merge.yml's `results` job,
-# which judges the run with main's verdict.py, passed on every attempt, the head's dependency
+# which judges the run with main's verdict.py, passed on every attempt, but for the one red the
+# controller's rule 4 excuses (attempt 1's, on a rerun of a pull request's or a dispatch's run,
+# red only for jobs no runner took), the head's dependency
 # review (dependency-review.yml, main's copy) passed (#4585 step 6), its sign-off check (dco.yml,
 # main's copy) passed (#3908), and CodeQL analysed the head in every language main's analyses
 # name, with no alert of the pull request's own; and, for a head that changes a CI definition

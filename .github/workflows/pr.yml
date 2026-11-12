@@ -385,10 +385,19 @@ jobs:
               echo "::warning title=no jobs list::this run's jobs could not be listed, so the flake rule passes no flake"
             fi
           fi
+          first=()
+          if gh api --paginate --slurp \
+               "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/1/jobs?per_page=100" \
+               > "$RUNNER_TEMP/first-jobs.json"; then
+            first=(--first-jobs "$RUNNER_TEMP/first-jobs.json")
+          else
+            echo "::warning title=no attempt 1 jobs::attempt 1's jobs could not be listed, so the verdict reads no job as one no runner took"
+          fi
           python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
             --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \
             --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
             --key-partners "$RUNNER_TEMP/key-partners.json" \
             ${proof:+--superseded "$proof"} \
             ${flakes[@]+"${flakes[@]}"} \
+            ${first[@]+"${first[@]}"} \
             --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"

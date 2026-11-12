@@ -445,6 +445,68 @@ def never_acquired(job: JobRun) -> bool:
     )
 
 
+def listed_job(job: object, *, run_id: int, attempt: int, where: str = "the run's jobs") -> JobRun:
+    """One job of the run's ``attempt``, as the Actions API lists it (one item of a page's
+    ``jobs``), held as :func:`read_jobs` holds each: refused when it is no object, names no name,
+    status or conclusion string, is of another run or attempt (or one that is not a whole
+    number), lists no steps or a step with no name or conclusion string, or gives a runner name
+    that is not a string or a runner id that is not a whole number. The merge controller reads
+    attempt 1's jobs through it too, so :func:`never_acquired` reads one job one way."""
+    if not isinstance(job, dict):
+        raise Refused(f"{where}: a job must be an object")
+    name, status, conclusion = job.get("name"), job.get("status"), job.get("conclusion")
+    if (
+        not isinstance(name, str)
+        or not name
+        or not isinstance(status, str)
+        or (conclusion is not None and not isinstance(conclusion, str))
+    ):
+        raise Refused(f"{where}: a job names no name, status or conclusion")
+    if (
+        not _whole(job.get("run_id"))
+        or not _whole(job.get("run_attempt"))
+        or job.get("run_id") != run_id
+        or job.get("run_attempt") != attempt
+    ):
+        raise Refused(
+            f"{where}: {name!r} is of run {job.get('run_id')!r} attempt"
+            f" {job.get('run_attempt')!r}, not run {run_id} attempt {attempt}"
+        )
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        raise Refused(f"{where}: {name!r} lists no steps")
+    runner: str | None = None
+    if "runner_name" in job:
+        runner = job["runner_name"]
+        if runner is not None and not isinstance(runner, str):
+            raise Refused(f"{where}: {name!r} has a runner name that is not a string")
+        runner = runner or ""
+    runner_id = job.get("runner_id")
+    if runner_id is not None and (isinstance(runner_id, bool) or not _whole(runner_id)):
+        raise Refused(f"{where}: {name!r} has a runner id that is not a whole number")
+    failed: list[tuple[str, str]] = []
+    for step in steps:
+        if not isinstance(step, dict) or not isinstance(step.get("name"), str):
+            raise Refused(f"{where}: a step of {name!r} names no name")
+        word = step.get("conclusion")
+        if word is not None and not isinstance(word, str):
+            raise Refused(f"{where}: a step of {name!r} has no conclusion string")
+        if word not in _CLEAN:
+            failed.append((step["name"], str(word)))
+    return JobRun(
+        name,
+        status,
+        conclusion,
+        tuple(failed),
+        steps=len(steps),
+        runner=runner,
+        runner_id=runner_id,
+        runner_id_listed="runner_id" in job,
+        run_id=run_id,
+        run_attempt=attempt,
+    )
+
+
 def read_jobs(
     text: str,
     *,
@@ -491,67 +553,15 @@ def read_jobs(
         elif page["total_count"] != total:
             raise Refused(f"{where}: the pages count {total} and {page['total_count']} jobs")
         for job in page["jobs"]:
-            if not isinstance(job, dict):
-                raise Refused(f"{where}: a job must be an object")
-            name, status, conclusion = job.get("name"), job.get("status"), job.get("conclusion")
-            if (
-                not isinstance(name, str)
-                or not name
-                or not isinstance(status, str)
-                or (conclusion is not None and not isinstance(conclusion, str))
-            ):
-                raise Refused(f"{where}: a job names no name, status or conclusion")
-            if (
-                not _whole(job.get("run_id"))
-                or not _whole(job.get("run_attempt"))
-                or job.get("run_id") != run_id
-                or job.get("run_attempt") != attempt
-            ):
-                raise Refused(
-                    f"{where}: {name!r} is of run {job.get('run_id')!r} attempt"
-                    f" {job.get('run_attempt')!r}, not run {run_id} attempt {attempt}"
-                )
-            skipped = status == "completed" and conclusion == SKIPPED
+            found = listed_job(job, run_id=run_id, attempt=attempt, where=where)
+            name = found.name
+            skipped = found.status == "completed" and found.conclusion == SKIPPED
             if planned is not None:
                 if name in planned and any(j.name == name for j in out):
                     raise Refused(f"{where} name the planned job {name!r} twice")
             elif any(j.name == name and not (skipped and _skipped(j)) for j in out):
                 raise Refused(f"{where} name {name!r} twice")
-            steps = job.get("steps")
-            if not isinstance(steps, list):
-                raise Refused(f"{where}: {name!r} lists no steps")
-            runner: str | None = None
-            if "runner_name" in job:
-                runner = job["runner_name"]
-                if runner is not None and not isinstance(runner, str):
-                    raise Refused(f"{where}: {name!r} has a runner name that is not a string")
-                runner = runner or ""
-            runner_id = job.get("runner_id")
-            if runner_id is not None and (isinstance(runner_id, bool) or not _whole(runner_id)):
-                raise Refused(f"{where}: {name!r} has a runner id that is not a whole number")
-            failed: list[tuple[str, str]] = []
-            for step in steps:
-                if not isinstance(step, dict) or not isinstance(step.get("name"), str):
-                    raise Refused(f"{where}: a step of {name!r} names no name")
-                word = step.get("conclusion")
-                if word is not None and not isinstance(word, str):
-                    raise Refused(f"{where}: a step of {name!r} has no conclusion string")
-                if word not in _CLEAN:
-                    failed.append((step["name"], str(word)))
-            out.append(
-                JobRun(
-                    name,
-                    status,
-                    conclusion,
-                    tuple(failed),
-                    steps=len(steps),
-                    runner=runner,
-                    runner_id=runner_id,
-                    runner_id_listed="runner_id" in job,
-                    run_id=run_id,
-                    run_attempt=attempt,
-                )
-            )
+            out.append(found)
     if len(out) != total:
         raise Refused(f"{where} list {len(out)} jobs of {total}, so a job may be unseen")
     return out
