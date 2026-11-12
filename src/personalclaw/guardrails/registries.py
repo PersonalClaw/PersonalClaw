@@ -109,6 +109,15 @@ def _tidy(value: str, *, glued_before: bool = False, glued_after: str = "") -> s
     return lead + tidy + tail
 
 
+@lru_cache(maxsize=512)
+def _named_home(head: str) -> str:
+    """``~name``'s home, read from the password database once: unlike ``HOME`` it does not change
+    while the process runs, and a name that is no user costs a directory-service lookup. A name
+    that is no user is kept as one for the life of the process too. A bare ``~`` is read from
+    ``HOME`` at every match."""
+    return os.path.expanduser(head)
+
+
 def _glued(piece: str) -> str:
     """How the pattern text *piece* that follows an expansion meets it: ``""`` when it starts with
     a ``/`` or there is none, ``"wild"`` when it starts with a ``*`` or ``?``, else ``"text"``."""
@@ -134,7 +143,7 @@ def expand_pattern(pattern: str) -> str:
     pieces: list[tuple[str, bool]] = []  # (text, whether it is an expansion)
     if pat.startswith("~"):
         head = pat.split("/", 1)[0]
-        home = os.path.expanduser(head)
+        home = os.path.expanduser(head) if head == "~" else _named_home(head)
         if home != head:
             # The home's own `$VAR`s expand too, as they do in the queried path.
             pieces.append((os.path.expandvars(home), True))

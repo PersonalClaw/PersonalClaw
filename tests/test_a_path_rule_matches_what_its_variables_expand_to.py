@@ -270,3 +270,31 @@ def test_a_path_or_a_rule_starting_with_two_slashes_is_read_from_the_root(monkey
     )
     assert denylist.check_action("file", {"path": "//srv/secret/k"}).blocked is True
     assert denylist.check_action("file", {"path": "//srv/other/k"}).blocked is False
+
+
+def test_a_named_home_is_looked_up_once(monkeypatch):
+    """``~name`` is read from the password database once, not at every match; ``~`` follows
+    ``HOME`` at every match."""
+    import pwd
+
+    from personalclaw.guardrails import registries
+
+    looked: list[str] = []
+    real = pwd.getpwnam
+
+    def counted(name):
+        looked.append(name)
+        return real(name)
+
+    def clear() -> None:
+        cached = getattr(registries, "_named_home", None)
+        if cached is not None:
+            cached.cache_clear()
+
+    monkeypatch.setattr(pwd, "getpwnam", counted)
+    clear()
+    home = real("root").pw_dir
+    for _ in range(3):
+        assert path_glob(f"{home}/notes/a", "~root/notes/**") is True
+    clear()
+    assert looked == ["root"]
