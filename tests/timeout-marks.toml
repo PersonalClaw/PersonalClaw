@@ -883,3 +883,8 @@ reason = "follows each poller to its handler through the whole-file census's wal
 site = "tests/test_destructive_toggle_guard.py::test_no_boolean_toggle_irreversibly_deletes_state"
 cap = 60
 reason = "every boolean toggle in the editable config, each off and on again by two awaited PATCH round trips; 27.8 s on CI at worst when it passed, and 30.04 s past the 30 s cap (breadth's coverage leg, 2026-11-10)"
+
+[[mark]]
+site = "tests/rails/test_the_candidate_workflows_are_named_in_one_place_tree.py::test_no_reader_names_the_deleted_workflow"
+cap = 60
+reason = "a census of every tracked file under tools/, scripts/, src/ and .github/ that parses each Python one; over 30 s on CI at worst (breadth's rails-macos leg, 2026-11-11), 8 s on a merge leg"

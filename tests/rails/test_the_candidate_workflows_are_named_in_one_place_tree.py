@@ -111,6 +111,7 @@ def sites(root: Path = REPO) -> list[str]:
     return found
 
 
+@pytest.mark.timeout(60)
 def test_no_reader_names_the_deleted_workflow() -> None:
     """The tree reads the deleted workflow nowhere, and the scan reads the tree."""
     assert len(_tracked(REPO)) > 1000, "the scan read too few files: the walk is broken"
