@@ -20,7 +20,7 @@ import pytest
 
 from personalclaw.guardrails import ceiling as C
 from personalclaw.guardrails import denylist
-from personalclaw.guardrails.registries import path_glob
+from personalclaw.guardrails.registries import expand_pattern, path_glob
 from personalclaw.workflows.supervisor_policy import (
     SupervisorPolicy,
     WriteScope,
@@ -130,6 +130,34 @@ ROWS = [
         "/srv/data/notes/a.txt",
         "/srv/database/a.txt",
         id="two-slashes-joined-mid-rule",
+    ),
+    pytest.param(
+        ("var", "."),
+        f"**/${{{VAR}}}*/**",
+        "/srv/proj/.hidden/notes.txt",
+        "/srv/proj/hidden/notes.txt",
+        id="a-value-of-a-dot-before-a-wildcard",
+    ),
+    pytest.param(
+        ("var", "./data"),
+        f"/srv/${{{VAR}}}x/**",
+        "/srv/datax/k",
+        "/srv/data/k",
+        id="a-dot-segment-before-text-glued-after-a-relative-value",
+    ),
+    pytest.param(
+        ("var", "/srv/other/../data"),
+        f"${{{VAR}}}x/**",
+        "/srv/datax/a",
+        "/srv/data/a",
+        id="text-glued-after-a-value-holding-a-dot-dot-segment",
+    ),
+    pytest.param(
+        ("var", "./sub/../data"),
+        f"/srv/pre${VAR}/**",
+        "/srv/pre./data/x",
+        "/srv/predata/x",
+        id="text-glued-before-a-value-holding-a-dot-dot-segment",
     ),
 ]
 
@@ -358,3 +386,71 @@ def test_a_padded_rule_and_a_relative_value_read_as_before(monkeypatch):
     assert path_glob("/etc/passwd", " /etc/** ") is True
     monkeypatch.setenv(VAR, "build/")
     assert path_glob("/elsewhere/build/a.o", f"${VAR}**") is True
+
+
+def test_a_value_that_climbs_above_its_own_start_after_rule_text_is_kept_as_written(monkeypatch):
+    """A ``..`` in a value that follows other text of the rule and climbs above where the value
+    starts keeps the value as written, as main read it."""
+    monkeypatch.setenv(VAR, "a/../b")
+    assert path_glob("/srv/prea/b/x", f"/srv/pre${VAR}/**") is False
+    assert path_glob("/srv/preb/x", f"/srv/pre${VAR}/**") is False
+    monkeypatch.setenv(VAR, "/../conf")
+    assert path_glob("/srv/data/conf/x", f"/srv/data/${VAR}/**") is False
+    assert path_glob("/srv/conf/x", f"/srv/data/${VAR}/**") is False
+    monkeypatch.setenv(VAR, "/../srv/data")
+    assert path_glob("/srv/data/a", f"${VAR}/**") is True
+    assert path_glob("/srv/data/a", f"/${VAR}/**") is True
+
+
+def test_a_value_takes_what_follows_it_from_the_next_text_that_is_not_empty(monkeypatch):
+    """Text glued after a value can be the next variable's, and a ``?`` after a value ending in
+    ``/.`` matches inside its folder, as a ``*`` does."""
+    monkeypatch.setenv("PC_RULE_A", "/srv/data/.")
+    monkeypatch.setenv("PC_RULE_B", "x")
+    assert path_glob("/srv/data/.x/a", "$PC_RULE_A$PC_RULE_B/**") is True
+    assert path_glob("/srv/datax/a", "$PC_RULE_A$PC_RULE_B/**") is False
+    monkeypatch.setenv(VAR, "/srv/data/.")
+    assert path_glob("/srv/data/a", f"${VAR}?") is True
+    assert path_glob("/srv/datab", f"${VAR}?") is False
+
+
+def test_only_a_variable_that_ends_the_rule_gives_up_its_slash(monkeypatch):
+    """The ``/`` a variable ends with goes only where the variable ends the rule: a ``/`` the rule
+    writes itself stays, after a variable, at its own end, or before a variable set to nothing."""
+    monkeypatch.setenv(VAR, "/srv/data")
+    assert expand_pattern(f"${VAR}/") == "/srv/data/"
+    assert expand_pattern("/srv/ws/*/") == "/srv/ws/*/"
+    monkeypatch.setenv(VAR, "/srv/data/")
+    assert expand_pattern(f"${VAR}/") == "/srv/data/"
+    monkeypatch.setenv("PC_RULE_A", "/srv/data/")
+    for after in ("", "/"):
+        monkeypatch.setenv("PC_RULE_B", after)
+        assert expand_pattern("$PC_RULE_A/$PC_RULE_B") == "/srv/data/"
+    monkeypatch.setenv(VAR, "/srv/ws/**/")
+    policy = SupervisorPolicy(write_scope=WriteScope(allowed_paths=(f"${VAR}/",)))
+    assert write_scope_allows(policy, "/srv/ws/x") is False
+    monkeypatch.setenv(VAR, "")
+    assert expand_pattern(f"/srv/ws/**/${VAR}") == "/srv/ws/**/"
+    monkeypatch.setenv(VAR, "/")
+    assert expand_pattern(f"/srv/ws/**/${VAR}") == "/srv/ws/**/"
+    monkeypatch.setenv(VAR, "/srv/data/")
+    assert expand_pattern(f"${VAR}") == "/srv/data"
+    monkeypatch.setenv(VAR, "/data/")
+    assert expand_pattern(f"/srv${VAR}") == "/srv/data"
+    monkeypatch.setenv("PC_RULE_A", "/srv/data/")
+    monkeypatch.setenv("PC_RULE_B", "/")
+    assert expand_pattern("$PC_RULE_A$PC_RULE_B") == "/srv/data"
+
+
+def test_a_value_of_dot_dot_before_a_wildcard_names_the_names_that_start_with_it(monkeypatch):
+    monkeypatch.setenv(VAR, "..")
+    assert path_glob("/srv/proj/..x", f"**/${{{VAR}}}*") is True
+    assert path_glob("/srv/proj/x", f"**/${{{VAR}}}*") is False
+
+
+def test_a_wildcard_a_value_holds_still_matches_and_a_bracket_is_literal(monkeypatch):
+    monkeypatch.setenv(VAR, "/srv/*")
+    assert path_glob("/srv/other/x", f"${VAR}/**") is True
+    monkeypatch.setenv(VAR, "/srv/[d]ata")
+    assert path_glob("/srv/[d]ata/x", f"${VAR}/**") is True
+    assert path_glob("/srv/data/x", f"${VAR}/**") is False

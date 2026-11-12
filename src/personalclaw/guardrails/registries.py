@@ -81,7 +81,21 @@ def _one_root(path: str) -> str:
 _VAR_REF = re.compile(r"\$(\w+|\{[^}]*\}?)", re.ASCII)
 
 
-def _tidy(value: str, *, glued_before: bool = False, glued_after: str = "") -> str:
+def _climbs_out(body: str) -> bool:
+    """Whether a ``..`` in *body* climbs above where *body* starts."""
+    depth = 0
+    for segment in body.split("/"):
+        if segment in ("", "."):
+            continue
+        depth += -1 if segment == ".." else 1
+        if depth < 0:
+            return True
+    return False
+
+
+def _tidy(
+    value: str, *, glued_before: bool = False, glued_after: str = "", follows: bool = False
+) -> str:
     """What one ``~`` or ``$VAR`` expanded to, collapsed lexically as the queried path is: a
     ``//``, ``/./`` or ``/../`` inside it goes. Text of the pattern's own that is glued to it, with
     no ``/`` between, stays on the segment it was glued to: the value's first segment is kept as
@@ -89,7 +103,13 @@ def _tidy(value: str, *, glued_before: bool = False, glued_after: str = "") -> s
     (*glued_after* ``"text"``). A trailing ``/`` it ended with stays, since it marks where the
     folder ends for text that follows, and so does a last ``.`` or ``..`` segment when a ``*`` or
     ``?`` follows (*glued_after* ``"wild"``): ``$VAR**`` with ``/srv/data/`` or ``/srv/data/.`` is
-    the tree under ``/srv/data``, not every name that starts ``/srv/data``."""
+    the tree under ``/srv/data``, not every name that starts ``/srv/data``.
+
+    A value whose part before the glued text comes to ``.`` adds no segment there, and a value of
+    ``.`` before a ``*`` or ``?`` stays ``.``, which names the dot names there. A value
+    that follows other text of the pattern (*follows*) and whose ``..`` climbs above where it
+    starts is kept as written, as main read it, so an allow never admits a path the pattern never
+    spells."""
     if not value:
         return value
     lead, body, tail = "", value, ""
@@ -103,7 +123,13 @@ def _tidy(value: str, *, glued_before: bool = False, glued_after: str = "") -> s
         if cut < 0:
             return value
         lead, body = body[:cut], body[cut:]
+    if follows and body.startswith("/") and _climbs_out(body):
+        return value
     tidy = _one_root(os.path.normpath(body))
+    if tidy == "." and glued_after == "text":
+        return tail
+    if tidy in (".", "..") and glued_after == "wild":
+        return value
     marks_folder = body.endswith("/") or (
         glued_after == "wild" and os.path.basename(body) in (".", "..")
     )
@@ -159,13 +185,22 @@ def expand_pattern(pattern: str) -> str:
         pieces.append((value, value != ref.group(0)))
         at = ref.end()
     pieces.append((pat[at:], False))
+    # The text that follows each piece: the next piece that is not empty.
+    following = [""] * len(pieces)
+    nxt = ""
+    for k in range(len(pieces) - 1, -1, -1):
+        following[k] = nxt
+        nxt = pieces[k][0] or nxt
     out = ""
     joined_expansion = False
+    ends_in_its_slash = False  # the last text added is an expansion's, and ends in its `/`
     for i, (text, is_expansion) in enumerate(pieces):
         if is_expansion:
-            after = next((t for t, _ in pieces[i + 1 :] if t), "")
             text = _tidy(
-                text, glued_before=bool(out) and not out.endswith("/"), glued_after=_glued(after)
+                text,
+                glued_before=bool(out) and not out.endswith("/"),
+                glued_after=_glued(following[i]),
+                follows=bool(out.strip("/")),
             )
         if not text:
             joined_expansion = joined_expansion or is_expansion
@@ -174,7 +209,11 @@ def expand_pattern(pattern: str) -> str:
             text = text[1:]
         out += text
         joined_expansion = is_expansion
-    if joined_expansion and len(out) > 1 and out.endswith("/"):
+        if text:  # only a `/` the expansion itself added, not the pattern's own one it joined
+            ends_in_its_slash = is_expansion and text.endswith("/")
+        elif not is_expansion:  # the rule's own `/`, merged into the one before it, ends it
+            ends_in_its_slash = False
+    if ends_in_its_slash and len(out) > 1:
         out = out[:-1]
     return _one_root(out)
 
