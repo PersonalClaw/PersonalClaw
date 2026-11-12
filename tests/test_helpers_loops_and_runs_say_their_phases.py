@@ -205,16 +205,28 @@ async def test_a_helper_names_a_chat_only_when_a_chat_started_it(subtests, tmp_p
                 assert {f["session"] for f in frames} == {chat}
 
 
+async def _heard(mgr: Any) -> None:
+    """Every event *mgr* fired from code that could not await it has been heard: its handler ran
+    to its end. Waited on, not polled for, so a loaded machine only makes it later."""
+    from personalclaw.cancellation import settle
+
+    await settle(mgr._events_in_flight)
+
+
 async def _a_spawn_stopped_while_it_waits(w: _World, *, in_the_tick_it_queued: bool) -> str:
     """The real manager, its events fed to the gateway's real handler: a spawn that waits for the
-    one slot is stopped, *in_the_tick_it_queued* or once its wait was said. Its id."""
-    from test_subagent_fanout import _completing_sessions, _mock_ctx_builder
+    one slot is stopped, *in_the_tick_it_queued* or once its wait was said. Its id.
+
+    The helper holding the slot runs until the manager is stopped at the end, so the spawn waits
+    for it throughout: a helper that completed on its own handed the slot on, and the spawn the
+    test went to stop had started."""
+    from test_subagent_fanout import _hanging_sessions, _mock_ctx_builder, _stop
 
     from personalclaw.subagent import SubagentManager
 
     gateway_on_event, _manager = _gateway_events(w.state)
     mgr = SubagentManager(
-        sessions=_completing_sessions(),
+        sessions=_hanging_sessions(),
         ctx_builder=_mock_ctx_builder(),
         on_done=AsyncMock(),
         on_event=gateway_on_event,
@@ -225,13 +237,12 @@ async def _a_spawn_stopped_while_it_waits(w: _World, *, in_the_tick_it_queued: b
         mgr.spawn("first", parent_session_key=f"dashboard:{CHAT}")
         waiting = mgr.spawn("second", parent_session_key=f"dashboard:{CHAT}")
         assert waiting is not None and waiting.queued is True
-        for _ in range(0 if in_the_tick_it_queued else 100):
-            if _said(w, f"subagent:{waiting.id}"):
-                break
-            await asyncio.sleep(0.01)
+        if not in_the_tick_it_queued:
+            await _heard(mgr)
+            assert _said(w, f"subagent:{waiting.id}"), "its wait was said before it was stopped"
         assert await mgr.cancel(waiting.id) is True
-        for _ in range(20):  # every event the manager fired from code that could not await it
-            await asyncio.sleep(0.01)
+        await _heard(mgr)
+    await _stop(mgr)
     return waiting.id
 
 
@@ -527,8 +538,9 @@ async def test_the_running_lists_ring_only_reads_the_approval_it_rings_for(
 @pytest.mark.asyncio
 async def test_the_manager_says_when_a_spawn_waits_for_a_slot_and_when_it_ends_waiting():
     """The real queue: a spawn that waits for a slot is said to, and one stopped while it waits
-    ends with its own last event, as one that ran does."""
-    from test_subagent_fanout import _completing_sessions, _mock_ctx_builder
+    ends with its own last event, as one that ran does. The helper holding the slot runs until the
+    manager is stopped, so the spawn waits for it throughout."""
+    from test_subagent_fanout import _hanging_sessions, _mock_ctx_builder, _stop
 
     from personalclaw.subagent import SubagentManager
 
@@ -538,7 +550,7 @@ async def test_the_manager_says_when_a_spawn_waits_for_a_slot_and_when_it_ends_w
         events.append((etype, info.id))
 
     mgr = SubagentManager(
-        sessions=_completing_sessions(),
+        sessions=_hanging_sessions(),
         ctx_builder=_mock_ctx_builder(),
         on_done=AsyncMock(),
         on_event=on_event,
@@ -549,11 +561,9 @@ async def test_the_manager_says_when_a_spawn_waits_for_a_slot_and_when_it_ends_w
         mgr.spawn("first", parent_session_key=f"dashboard:{CHAT}")
         waiting = mgr.spawn("second", parent_session_key=f"dashboard:{CHAT}")
         assert waiting is not None and waiting.queued is True
-        for _ in range(100):
-            if ("subagent_queued", waiting.id) in events:
-                break
-            await asyncio.sleep(0.01)
+        await _heard(mgr)
         assert await mgr.cancel(waiting.id) is True
+    await _stop(mgr)
     assert ("subagent_queued", waiting.id) in events
     assert ("subagent_done", waiting.id) in events
     assert events.index(("subagent_queued", waiting.id)) < events.index(
