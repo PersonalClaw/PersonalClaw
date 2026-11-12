@@ -1193,7 +1193,17 @@ the ceiling did not bound.
 - **Path matching** normalizes only the queried item (`~`/`$VAR`, then
   `abspath`) and **never** runs a pattern through `normpath`, which would
   collapse `/a/**/../b` to `/a/b` and silently drop the `**`
-  (`tests/test_guardrails_path_matcher.py` is the table).
+  (`tests/test_guardrails_path_matcher.py` is the table). What a pattern's `~`
+  and `$VAR` expand to is tidied as a path, as the item is: a `//` (a leading one
+  included), `/./` or `/../` inside it goes, a trailing `/` keeps the boundary it
+  marks where text follows it, and text glued to it stays on the segment it was
+  glued to (`registries.expand_pattern`). A `*` or `?` it holds still matches as
+  a wildcard, and a `[` is literal. A relative value that starts a pattern is
+  read at any depth, as a pattern that starts with neither `/` nor `*` is. A
+  queried path or a pattern that starts with two or more slashes is read from
+  `/`, as the filesystem reads it. A pattern is compiled for the home and the
+  variables it is asked with
+  (`tests/test_a_path_rule_matches_what_its_variables_expand_to.py`).
 - **What the layer buys**: no HTTP write surface (absent from the
   `_EDITABLE_CONFIG` PATCH allowlist, no PUT of its own); agent write paths
   refuse it (`governance/` is in the built-in sensitive-path denylist); no

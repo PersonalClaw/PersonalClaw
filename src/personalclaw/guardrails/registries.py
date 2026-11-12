@@ -11,7 +11,12 @@ the QUERIED ITEM (expand ``~``/``$VAR``, then ``abspath``, which anchors a relat
 and collapses ``.``/``..``). NEVER run the *pattern* through ``normpath``: ``normpath``
 treats ``*``/``**`` as ordinary path segments and collapses an adjacent ``..`` against
 them, so ``/a/**/../b`` becomes ``/a/b`` — silently dropping the ``**`` and widening an
-allow (or shrinking a deny). Two properties this buys:
+allow (or shrinking a deny). What a pattern's ``~`` and ``$VAR`` expand to is tidied as a
+path, as the item is (:func:`expand_pattern`); a ``*`` or ``?`` it holds still matches as a
+wildcard, and a ``[`` is literal. A relative value that starts a pattern is read at any depth, as
+a pattern that starts with neither ``/`` nor ``*`` is. A queried path or a pattern that starts
+with two or more slashes is read from ``/``. The rest of the pattern is kept as written.
+Two properties this buys:
 
 1. ``~/ws/../.bashrc`` collapses to ``~/.bashrc`` and no longer matches an allow of
    ``~/ws/**``;
@@ -61,19 +66,175 @@ def normalize_item(item: str) -> str:
     exist yet, e.g. a write destination).
     """
     expanded = os.path.expandvars(os.path.expanduser((item or "").strip()))
-    return os.path.abspath(expanded)
+    return _one_root(os.path.abspath(expanded))
+
+
+def _one_root(path: str) -> str:
+    """*path* read from ``/`` when it starts with two or more slashes, as the filesystem reads it.
+    Applied to the queried path and to a rule alike, so the two agree."""
+    return "/" + path.lstrip("/") if path.startswith("//") else path
+
+
+#: A ``$VAR``, ``${VAR}`` or unclosed ``${...`` reference, read as :func:`os.path.expandvars`
+#: reads one (the stdlib's ``posixpath._varpattern``, ``\$(\w+|\{[^}]*\}?)``), so a rule's
+#: variables are the ones the queried path's are.
+_VAR_REF = re.compile(r"\$(\w+|\{[^}]*\}?)", re.ASCII)
+
+
+def _climbs_out(body: str) -> bool:
+    """Whether a ``..`` in *body* climbs above where *body* starts."""
+    depth = 0
+    for segment in body.split("/"):
+        if segment in ("", "."):
+            continue
+        depth += -1 if segment == ".." else 1
+        if depth < 0:
+            return True
+    return False
+
+
+def _tidy(
+    value: str, *, glued_before: bool = False, glued_after: str = "", follows: bool = False
+) -> str:
+    """What one ``~`` or ``$VAR`` expanded to, collapsed lexically as the queried path is: a
+    ``//``, ``/./`` or ``/../`` inside it goes. Text of the pattern's own that is glued to it, with
+    no ``/`` between, stays on the segment it was glued to: the value's first segment is kept as
+    written when text comes before it (*glued_before*), and its last when text comes after it
+    (*glued_after* ``"text"``). A trailing ``/`` it ended with stays, since it marks where the
+    folder ends for text that follows, and so does a last ``.`` or ``..`` segment when a ``*`` or
+    ``?`` follows (*glued_after* ``"wild"``): ``$VAR**`` with ``/srv/data/`` or ``/srv/data/.`` is
+    the tree under ``/srv/data``, not every name that starts ``/srv/data``.
+
+    A value whose part before the glued text comes to ``.`` adds no segment there, and a value of
+    ``.`` before a ``*`` or ``?`` stays ``.``, which names the dot names there. A value
+    that follows other text of the pattern (*follows*) and whose ``..`` climbs above where it
+    starts is kept as written, as main read it, so an allow never admits a path the pattern never
+    spells."""
+    if not value:
+        return value
+    lead, body, tail = "", value, ""
+    if glued_after == "text":
+        cut = body.rfind("/") + 1
+        if cut == 0:
+            return value
+        body, tail = body[:cut], body[cut:]
+    if glued_before:
+        cut = body.find("/")
+        if cut < 0:
+            return value
+        lead, body = body[:cut], body[cut:]
+    if follows and body.startswith("/") and _climbs_out(body):
+        return value
+    tidy = _one_root(os.path.normpath(body))
+    if tidy == "." and glued_after == "text":
+        return tail
+    if tidy in (".", "..") and glued_after == "wild":
+        return value
+    marks_folder = body.endswith("/") or (
+        glued_after == "wild" and os.path.basename(body) in (".", "..")
+    )
+    if marks_folder and not tidy.endswith("/"):
+        tidy += "/"
+    return lead + tidy + tail
 
 
 @lru_cache(maxsize=512)
-def _pattern_regex(pattern: str) -> re.Pattern[str]:
-    """Compile a path glob to a regex WITHOUT ever normpath-ing the pattern.
+def _named_home(head: str) -> str:
+    """``~name``'s home, read from the password database once: unlike ``HOME`` it does not change
+    while the process runs, and a name that is no user costs a directory-service lookup. A name
+    that is no user is kept as one for the life of the process too. A bare ``~`` is read from
+    ``HOME`` at every match."""
+    return os.path.expanduser(head)
 
-    ``**`` crosses separators, ``*``/``?`` do not. A pattern that is not anchored
-    (``/``, ``~``, ``$VAR`` or a leading wildcard) is treated as matching at any depth —
-    i.e. implicitly ``**/``-prefixed — so an operator's ``id_rsa`` deny cannot be dodged
-    by depth. That direction fails CLOSED for a deny, which is why it is the default.
+
+def _glued(piece: str) -> str:
+    """How the pattern text *piece* that follows an expansion meets it: ``""`` when it starts with
+    a ``/`` or there is none, ``"wild"`` when it starts with a ``*`` or ``?``, else ``"text"``."""
+    if not piece or piece.startswith("/"):
+        return ""
+    return "wild" if piece[0] in "*?" else "text"
+
+
+def expand_pattern(pattern: str) -> str:
+    """*pattern* with its leading ``~`` (or ``~user``) and each ``$VAR`` replaced by what it
+    expands to, each expansion tidied (:func:`_tidy`) and joined to the text beside it with one
+    ``/`` where both bring one.
+
+    Only the expansions change, and two or more leading slashes are read as ``/``. The pattern's
+    own text, its glob tokens and any ``..`` it spells included, is otherwise kept as written: it
+    is never put through ``normpath`` (the rule above).
+    Without the tidying, an expansion holding ``//``, ``/./`` or ``/../``, or a variable ending
+    in ``/`` as macOS's ``TMPDIR`` does, spelled the pattern one way and the normalized path
+    another, and the rule matched nothing. A variable that ends the rule names its folder, so the
+    ``/`` it ended with goes there; a variable set to nothing leaves one ``/`` between the text
+    around it; and a variable that is not set is left spelled out, as ``expandvars`` leaves it.
     """
-    pat = os.path.expandvars(os.path.expanduser((pattern or "").strip()))
+    pat = (pattern or "").strip()
+    pieces: list[tuple[str, bool]] = []  # (text, whether it is an expansion)
+    if pat.startswith("~"):
+        head = pat.split("/", 1)[0]
+        home = os.path.expanduser(head) if head == "~" else _named_home(head)
+        if home != head:
+            # The home's own `$VAR`s expand too, as they do in the queried path.
+            pieces.append((os.path.expandvars(home), True))
+            pat = pat[len(head) :]
+    at = 0
+    for ref in _VAR_REF.finditer(pat):
+        pieces.append((pat[at : ref.start()], False))
+        value = os.path.expandvars(ref.group(0))
+        pieces.append((value, value != ref.group(0)))
+        at = ref.end()
+    pieces.append((pat[at:], False))
+    # The text that follows each piece: the next piece that is not empty.
+    following = [""] * len(pieces)
+    nxt = ""
+    for k in range(len(pieces) - 1, -1, -1):
+        following[k] = nxt
+        nxt = pieces[k][0] or nxt
+    out = ""
+    joined_expansion = False
+    ends_in_its_slash = False  # the last text added is an expansion's, and ends in its `/`
+    for i, (text, is_expansion) in enumerate(pieces):
+        if is_expansion:
+            text = _tidy(
+                text,
+                glued_before=bool(out) and not out.endswith("/"),
+                glued_after=_glued(following[i]),
+                follows=bool(out.strip("/")),
+            )
+        if not text:
+            joined_expansion = joined_expansion or is_expansion
+            continue
+        if (is_expansion or joined_expansion) and out.endswith("/") and text.startswith("/"):
+            text = text[1:]
+        out += text
+        joined_expansion = is_expansion
+        if text:  # only a `/` the expansion itself added, not the pattern's own one it joined
+            ends_in_its_slash = is_expansion and text.endswith("/")
+        elif not is_expansion:  # the rule's own `/`, merged into the one before it, ends it
+            ends_in_its_slash = False
+    if ends_in_its_slash and len(out) > 1:
+        out = out[:-1]
+    return _one_root(out)
+
+
+def _pattern_regex(pattern: str) -> re.Pattern[str]:
+    """*pattern*'s regex, for the environment it is asked in: the cache is keyed on the expanded
+    pattern (:func:`expand_pattern`), so a home or a variable that changes after a first match is
+    read as it is now."""
+    return _compiled(expand_pattern(pattern))
+
+
+@lru_cache(maxsize=512)
+def _compiled(pat: str) -> re.Pattern[str]:
+    """Compile an expanded path glob to a regex WITHOUT ever normpath-ing the pattern.
+
+    ``**`` crosses separators, ``*``/``?`` do not. An expanded pattern that starts with neither
+    ``/`` nor ``*`` (a relative one, a relative value of ``~`` or ``$VAR``, a ``$VAR`` that is not
+    set, a ``~name`` that names no user) is treated as matching at any depth — i.e. implicitly
+    ``**/``-prefixed — so an operator's ``id_rsa`` deny holds at every depth. That direction
+    fails CLOSED for a deny, which is why it is the default.
+    """
     if not pat.startswith(("/", "*")):
         pat = f"**/{pat}"
     out: list[str] = []
