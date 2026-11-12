@@ -352,21 +352,49 @@ async def test_cancel_stops_pip_and_the_next_install_resumes(tmp_path, one_insta
     assert [s["status"] for s in status["steps"]] == ["skipped", "done", "skipped"]
 
 
-def test_a_pip_past_its_budget_is_stopped_and_says_so(tmp_path, monkeypatch):
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@pytest.mark.parametrize("first_line", ["", "sleep 2\n"], ids=["as-run", "a-slow-start"])
+def test_a_pip_past_its_budget_is_stopped_and_says_so(tmp_path, monkeypatch, first_line):
     """The budget is hours, because an engine is torch-sized; past it, pip is killed with its
-    children, not left running behind a failed step."""
+    children, not left running behind a failed step.
+
+    The pip is known by the process group the install started, not by a pid file the stub
+    writes: on a loaded machine the 1 second budget can run out before the stub gets to its first
+    line. The second case makes the stub that slow to start."""
     assert sidecar.DEPS_TIMEOUT_SECS >= 60 * 60
     monkeypatch.setattr(sidecar, "DEPS_TIMEOUT_SECS", 1)
+    started: list[int] = []
+
+    class _Started(subprocess.Popen):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            started.append(self.pid)
+
+    monkeypatch.setattr(sidecar.subprocess, "Popen", _Started)
     pidfile = tmp_path / "pip.pid"
     venv = tmp_path / "venv"
-    _stub_python(venv, f"echo $$ > {pidfile}\nsleep 60\n")
+    _stub_python(venv, f"{first_line}echo $$ > {pidfile}\nsleep 60\n")
     install = sidecar.SidecarInstall(APP, requirements=["omnivoice>=0.2"], venv=venv)
 
     assert install.run_one("deps") is False
 
     assert install.reason == "timeout"
     assert install.error == "pip was still running after 1 second and was stopped (timed out)"
-    _wait(lambda: not _alive(int(pidfile.read_text())), timeout=10, what="the timed-out pip gone")
+    assert len(started) == 1, started
+    # pip ran in a session of its own, behind the sandbox's shim, so the process the install
+    # started leads its group: none of the group is left, the stub and its children among them.
+    _wait(lambda: not _group_alive(started[0]), timeout=10, what="the timed-out pip's group gone")
+    if pidfile.exists() and pidfile.read_text().strip().isdigit():
+        assert not _alive(int(pidfile.read_text())), "the stub pip is still running"
 
 
 @pytest.mark.asyncio
