@@ -41,6 +41,10 @@ from tests.test_a_loop_that_ends_keeps_the_work_nobody_merged import (  # noqa: 
     _tmp_home,
 )
 
+#: The cap of each test here that drives a loop over real git repositories: 10 to 21 s alone
+#: on a Mac under load (tests/timeout-marks.toml), past the suite's 30 s in a loaded set.
+_GIT_LOOP_CAP = pytest.mark.timeout(60)
+
 HER_LINE = "- Feed titles keep their case. (#20)\n"
 
 
@@ -146,6 +150,7 @@ def test_a_conflict_keeps_the_finished_work_on_its_branch_and_asks(repo):
         assert choice in question
 
 
+@_GIT_LOOP_CAP
 def test_work_she_approved_is_kept_when_its_merge_conflicts(repo):
     loop, tid, wt, _state, tip = _approved_then_conflicted(repo)
 
@@ -155,6 +160,7 @@ def test_work_she_approved_is_kept_when_its_merge_conflicts(repo):
     assert _status(tid) == "done" and _edit_in(wt)
 
 
+@_GIT_LOOP_CAP
 def test_the_page_reads_the_conflict_and_the_work_from_git(repo):
     loop, tid, wt, state = _conflicted(repo)
 
@@ -170,6 +176,7 @@ def test_the_page_reads_the_conflict_and_the_work_from_git(repo):
     assert body["cut"] is False
 
 
+@_GIT_LOOP_CAP
 def test_once_she_resolved_it_the_page_says_nothing_conflicts(repo):
     """What conflicts is read from git each time, not from what the loop's folder says."""
     loop, tid, wt, state = _conflicted(repo)
@@ -217,6 +224,7 @@ def _she_merges_it_by_hand(repo, tid):
     _git(repo, repo.parent, "commit", "-q", "-am", "merge the digest titles fix")
 
 
+@_GIT_LOOP_CAP
 def test_resume_after_she_resolves_it_lands_the_work_on_an_attended_loop(repo):
     """Her question is the scheduler's, so Resume tries the merge again rather than stopping on
     the same question."""
@@ -236,6 +244,7 @@ def test_resume_after_she_resolves_it_lands_the_work_on_an_attended_loop(repo):
     assert LINE in _her_branch(repo) and HER_LINE in _her_branch(repo)
 
 
+@_GIT_LOOP_CAP
 def test_resume_while_it_still_conflicts_asks_again(repo):
     loop, tid, wt, state = _conflicted(repo)
     tip = worktree.branch_tip(str(repo), tid)
@@ -253,6 +262,7 @@ def test_resume_while_it_still_conflicts_asks_again(repo):
 # ── redo and drop ────────────────────────────────────────────────────────────
 
 
+@_GIT_LOOP_CAP
 def test_redo_runs_the_task_again_on_top_of_her_branch(repo):
     loop, tid, wt, state = _conflicted(repo)
     tip = worktree.branch_tip(str(repo), tid)
@@ -275,6 +285,7 @@ def test_redo_runs_the_task_again_on_top_of_her_branch(repo):
     assert _status(tid) == "in_progress"
 
 
+@_GIT_LOOP_CAP
 def test_drop_discards_the_work_and_the_loop_carries_on_without_it(repo):
     loop, tid, wt, state = _conflicted(repo)
     before = _her_branch(repo)
@@ -295,6 +306,7 @@ def test_drop_discards_the_work_and_the_loop_carries_on_without_it(repo):
     assert SVC.get_by_session(task_session_key(loop.id, tid)) is None, "a dropped task ran again"
 
 
+@_GIT_LOOP_CAP
 def test_a_choice_is_made_only_on_the_work_she_read(repo):
     loop, tid, wt, state = _conflicted(repo)
     tip = worktree.branch_tip(str(repo), tid)
@@ -318,6 +330,7 @@ def test_a_choice_is_made_only_on_the_work_she_read(repo):
     assert worktree.branch_tip(str(repo), tid) == tip and _edit_in(wt) and _status(tid) == "done"
 
 
+@_GIT_LOOP_CAP
 def test_a_question_naming_a_task_the_loop_never_queued_moves_nothing(repo):
     """The loop's folder is its workers' to write: a conflict question there is acted on only for a
     task the loop has queued."""
@@ -352,6 +365,7 @@ def test_a_loop_not_paused_on_a_conflict_has_none_to_show_or_resolve(repo):
 # ── a Stop while she decides, and a merge git refuses ────────────────────────
 
 
+@_GIT_LOOP_CAP
 def test_a_stop_while_she_decides_keeps_the_work_for_the_end_screen(repo):
     loop, tid, _wt, state = _conflicted(repo)
     tip = worktree.branch_tip(str(repo), tid)
@@ -363,6 +377,7 @@ def test_a_stop_while_she_decides_keeps_the_work_for_the_end_screen(repo):
     assert (kept["task_id"], kept["tip"]) == (tid, tip)
 
 
+@_GIT_LOOP_CAP
 def test_a_merge_git_refuses_asks_as_the_scheduler_so_resume_tries_again(repo):
     """Not a conflict: a file of hers that git does not track sits where the task adds one. She is
     asked to check the workspace's git state, and on an Attended loop Resume used to stop on that

@@ -908,3 +908,13 @@ reason = "a loop's end over a real git repository whose merge conflicts and is u
 site = "tests/test_an_attended_loop_merges_only_what_its_owner_approves.py::test_resume_after_setting_an_identity_does_not_stop_on_the_settled_question"
 cap = 60
 reason = "an attended loop resumed after a commit identity is set, over a real git repository; 8.9 to 19.5 s alone on a Mac (six runs, 2026-11-12), and past 30 s inside a loaded local set at load 38 to 46"
+
+[[mark]]
+site = "tests/test_a_task_whose_work_conflicts_keeps_it_and_asks.py::_GIT_LOOP_CAP"
+cap = 60
+reason = "11 tests that each drive a loop over real git repositories, its merges and their conflicts; 10.6 to 20.7 s alone on a Mac at worst over three runs at loads 26 to 48 (2026-11-12), and the conflict page's past 30 s in a loaded set at load 30 to 41"
+
+[[mark]]
+site = "tests/test_a_loop_that_ends_keeps_the_work_nobody_merged.py::_GIT_LOOP_CAP"
+cap = 60
+reason = "3 tests that each drive a loop's end over real git repositories; 13.5 to 15.8 s alone on a Mac at worst over three runs at loads 34 to 44 (2026-11-12), the file's slowest after the conflicting merge's own 60 s"
