@@ -14,8 +14,8 @@ const SEEN = 'Skip model_calls in export_digest() in published.py'
 
 const row = (over: Partial<WorkRow> = {}): WorkRow => ({
   run_id: 'r1', title: MD_LINE, state: 'working', source: 'run', kind: '', origin: 'manual', project_id: 'p1',
-  claim: null, collapsed: false, attention: false, resumable: false, outcome: '', ...over,
-} as WorkRow)
+  claim: null, collapsed: false, attention: false, resumable: false, outcome: '', updated_at: '', ...over,
+})
 const group = (state: WorkGroup['state'], rows: WorkRow[]): WorkGroup => ({ state, count: rows.length, attention: 0, rows })
 const board = (rows: WorkRow[]): WorkBoard => ({
   board: [group('working', rows)],

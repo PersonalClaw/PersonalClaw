@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -861,19 +862,48 @@ def _cached_persona(theme: str) -> str:
     return render_snippet_block(f"persona-{theme}")
 
 
+#: The owner's parts a project block can carry, each counted by the code that writes it.
+PROJECT_BLOCK_PARTS: tuple[str, ...] = (
+    "brief",
+    "overview",
+    "decisions",
+    "open_questions",
+    "out_of_scope",
+)
+
+
+@dataclass(frozen=True)
+class ProjectBlock:
+    """What a new chat in a project is told on its first turn (``text``), and how many of the
+    owner's parts it carries (``parts``: the brief, the overview, the decisions it carries, the
+    open questions and the out-of-scope items). One writer, so a page that says what a new chat
+    is told reads the text the chat gets and counts what is in it, never a second rendering."""
+
+    text: str = ""
+    parts: dict[str, int] = field(default_factory=lambda: dict.fromkeys(PROJECT_BLOCK_PARTS, 0))
+
+
 def _project_context_preamble(project_id: str) -> str:
+    """First-turn context block for a project-bound chat (:func:`project_context_block`'s text).
+    Empty on any failure or unknown project (best-effort, never blocks the turn)."""
+    return project_context_block(project_id).text
+
+
+def project_context_block(project_id: str) -> ProjectBlock:
     """First-turn context block for a project-bound chat: tells the
     agent which Project it's scoped to, its workspace, the loop history run on it, and
     the additional-context dir — so a project chat shares the project's cohesive
     context (every loop + chat under a project can read the others' outcomes). Empty on
-    any failure or unknown project (best-effort, never blocks the turn)."""
+    any failure or unknown project (best-effort, never blocks the turn). ``parts`` is counted
+    here, beside each line it counts, so it counts the lines this function writes into the block."""
+    parts = dict.fromkeys(PROJECT_BLOCK_PARTS, 0)
     try:
         from personalclaw.tasks.hierarchy import HierarchyStore
 
         store = HierarchyStore()
         proj = store.get_project(project_id)
         if proj is None:
-            return ""
+            return ProjectBlock()
         # The framing ([PROJECT CONTEXT] … [END PROJECT CONTEXT]) lives in the
         # prompt system (bundled ``project-context`` snippet); we assemble only the
         # dynamic detail lines here and render them into it below.
@@ -886,6 +916,7 @@ def _project_context_preamble(project_id: str) -> str:
             lines.append(
                 f"- Project brief (the goal/scope/background of this project — treat as foundational context): {brief}"  # noqa: E501
             )
+            parts["brief"] = 1
         # The LIVING overview and the wayfinder ledgers, appended to
         # THIS composer rather than a second one. A parallel project-context builder would drift,
         # and an agent that sees a different project description in chat than in a run gives
@@ -900,11 +931,13 @@ def _project_context_preamble(project_id: str) -> str:
                     "- Project overview (CURRENT state — what this project now knows; revised as "
                     f"runs complete, distinct from the append-only history below): {overview}"
                 )
+                parts["overview"] = 1
             decisions = _pctx.read_ledger(project_id, "decisions")
             if decisions:
                 lines.append(f"- Decisions so far ({len(decisions)}, newest last):")
                 for entry in decisions[-8:]:
                     lines.append(f"    • {entry}")
+                    parts["decisions"] += 1
             fog = _pctx.read_ledger(project_id, "fog")
             if fog:
                 lines.append(
@@ -913,6 +946,7 @@ def _project_context_preamble(project_id: str) -> str:
                 )
                 for entry in fog[:8]:
                     lines.append(f"    • {entry}")
+                    parts["open_questions"] += 1
             out_of_scope = _pctx.read_ledger(project_id, "out_of_scope")
             if out_of_scope:
                 lines.append(
@@ -921,6 +955,7 @@ def _project_context_preamble(project_id: str) -> str:
                 )
                 for entry in out_of_scope[:8]:
                     lines.append(f"    • {entry}")
+                    parts["out_of_scope"] += 1
         except Exception:
             logger.debug("project living context for preamble failed", exc_info=True)
         ws = str(getattr(proj, "workspace_dir", "") or "").strip()
@@ -982,16 +1017,17 @@ def _project_context_preamble(project_id: str) -> str:
             logger.debug("project loop history for preamble failed", exc_info=True)
         from personalclaw.prompt_providers.runtime import render_snippet_block
 
-        return render_snippet_block(
+        text = render_snippet_block(
             "project-context",
             {
                 "project_name": str(getattr(proj, "name", project_id)),
                 "project_details": "\n".join(lines),
             },
         )
+        return ProjectBlock(text=text, parts=parts) if text else ProjectBlock()
     except Exception:
         logger.debug("project context preamble failed for %s", project_id, exc_info=True)
-        return ""
+        return ProjectBlock()
 
 
 def _maybe_consolidate(state, session) -> None:

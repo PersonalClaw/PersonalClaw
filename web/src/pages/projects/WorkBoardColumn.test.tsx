@@ -16,7 +16,7 @@ import type { WorkBoard, WorkGroup, WorkRow } from '../../lib/api'
 function row(over: Partial<WorkRow> = {}): WorkRow {
   return {
     run_id: 'r1', title: 'A run', state: 'working', source: 'run', kind: '', origin: 'manual', project_id: 'p1',
-    claim: null, collapsed: false, attention: false, resumable: false, outcome: '', ...over,
+    claim: null, collapsed: false, attention: false, resumable: false, outcome: '', updated_at: '', ...over,
   }
 }
 function group(state: WorkGroup['state'], rows: WorkRow[]): WorkGroup {

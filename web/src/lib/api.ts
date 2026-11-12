@@ -2281,7 +2281,17 @@ export interface ProjectItem {
   /** The revision of each field a write replaces as a whole document — the agent-instructions
    *  text — taken from this same read (`lib/staleWrite.ts`). */
   revisions?: { agent_instructions_template?: string }
+  /** The bound folder's real path and the trust decision recorded for it, judged on the gateway
+   *  by the guardrail's own rule, so `~/code/garden`, a symlink to it and its real path read one
+   *  decision; `null` with no folder. Served by one project's read (`GET` and `PUT
+   *  /api/projects/{id}`); absent on the list, on the create and import answers, and on a read an
+   *  app makes with its own token. */
+  folder?: ProjectFolder | null
 }
+/** `trusted`: automations may change files and run commands in it; `preview`: they read, change
+ *  only the files a run's Allow names, and run no commands; `unknown`: nothing is decided yet (or
+ *  the decision could not be read), so they are held as in `preview` until the owner decides. */
+export interface ProjectFolder { resolved: string; trust: 'trusted' | 'preview' | 'unknown' }
 export interface ProjectLinkedItem { id: string; name: string; status: string; error_message?: string | null }
 /** How far a run-written knowledge item travels. CLOSED — the two
  *  values the backend can send; a view that renders these must handle both explicitly. */
@@ -2321,6 +2331,11 @@ export interface WorkRow {
   source: 'run' | 'loop' | 'task'
   /** A loop row's kind (a `code` loop opens in Code); empty for runs and tasks. */
   kind: string
+  /** When the work last changed (`%Y-%m-%dT%H:%M:%SZ`): the newest of a run's completed, started
+   *  and created stamps, or a run started as a loop's newest cycle; a loop's newest cycle, else the
+   *  newest of when it completed, started or was created; a task's own `updated_at`. `''` when
+   *  the source keeps none. */
+  updated_at: string
 }
 export interface WorkGroup { state: WorkState; count: number; attention: number; rows: WorkRow[] }
 export interface WorkSection { name: string; items: WorkRow[]; status: 'ok' | 'loading' | 'error'; error: string; loadedAt: number }
@@ -2342,6 +2357,11 @@ export interface TaskListItem {
   /** Tasks in this list. ABSENT when the count could not be computed — the hub renders the badge
    *  only for a number, so a missing reading hides it rather than claiming zero. */
   task_count?: number
+  /** The loop whose phase list this is, `''` for any other list, the goal loops' shared
+   *  Sub-goals list included. Served by `GET /api/task-lists`; the single-list reads and a list
+   *  just created carry none. A loop's steps belong to the loop, so a project can show them inside
+   *  it rather than as its own tasks. */
+  loop_id?: string
 }
 export interface BlockReason { is_blocked?: boolean; blocking_task_ids?: string[]; blocking_task_titles?: string[]; message?: string }
 export interface TaskItem {
@@ -3300,6 +3320,17 @@ export interface AlwaysOnResponse {
   counts: { total: number; always_skills: number; project_instructions: number }
   /** How a user opts a skill INTO the always-on tier — so an empty tier can explain itself. */
   always_skill_mechanism: string
+  /** What a new chat in the project is told on its first turn; `null` with no `project_id`. */
+  project_block: ProjectBlock | null
+}
+/** The block a new chat in a project is given, word for word (the producer's own text, masked
+ *  as the chat's first turn masks it), and how many of the owner's parts it carries, counted by
+ *  the code that writes it: the brief and the overview (0 or 1), the decisions it carries (the
+ *  newest 8), and the open questions and out-of-scope items it carries (the first 8 of each). An
+ *  unknown project's block is empty. */
+export interface ProjectBlock {
+  text: string
+  parts: { brief: number; overview: number; decisions: number; open_questions: number; out_of_scope: number }
 }
 /** How PersonalClaw reaches an MCP server: it starts a command (`stdio`), or connects to a URL over
  *  Streamable HTTP (`http`) or the older HTTP+SSE transport (`sse`). */

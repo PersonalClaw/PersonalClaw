@@ -37,9 +37,9 @@ current state, revised in place, so it is editable; the **ledgers** are append-o
 are read-only here. Rewriting history through a viewer would silently destroy the one tier whose
 value is that it is not rewritten.
 
-List responses carry a credential-redacted ``preview``; the editor round-trip (single-doc GET and
-PUT) carries the body verbatim, because redacting a body the user is about to save back would write
-the redaction over their real text.
+List responses carry a ``preview`` under the display mask (``redact_for_display``); the editor
+round-trip (single-doc GET and PUT) carries the body verbatim, because redacting a body the user is
+about to save back would write the redaction over their real text.
 """
 
 from __future__ import annotations
@@ -88,9 +88,9 @@ class AlwaysOnItem:
     project_id: str = ""
 
     def to_dict(self, *, include_body: bool = False) -> dict[str, Any]:
-        from personalclaw.security import redact_credentials
+        from personalclaw.security import redact_for_display
 
-        preview, _found = redact_credentials(self.body[:PREVIEW_CHARS])
+        preview = redact_for_display(self.body[:PREVIEW_CHARS])
         row: dict[str, Any] = {
             "id": self.id,
             "kind": self.kind,
@@ -118,6 +118,9 @@ class AlwaysOnInventory:
     #: The exact producer strings this inventory was sliced out of. Kept so the divergence rail
     #: can assert the SAME text lands in a really-assembled prompt.
     sources: dict[str, str] = field(default_factory=dict)
+    #: How many of the owner's parts the project block carries (``chat_utils.ProjectBlock``),
+    #: counted by the code that wrote ``sources["project_preamble"]``. Empty with no project.
+    project_parts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         skills = [i for i in self.items if i.kind == "always_skill"]
@@ -134,7 +137,20 @@ class AlwaysOnInventory:
             # a blank panel: no bundled skill ships always:true, so on a fresh home this
             # tier is legitimately empty and the user has to opt a skill in.
             "always_skill_mechanism": "always: true in a skill's SKILL.md frontmatter",
+            "project_block": self._project_block(),
         }
+
+    def _project_block(self) -> dict[str, Any] | None:
+        """What a new chat in the project is told, word for word, and what it carries; ``None``
+        with no project. The producer's own text, masked as the chat's first turn masks it where
+        the block joins the request (`chat_runner._ahead_of_the_request`), so a page shows the
+        block the chat gets rather than a second rendering of it."""
+        if not self.project_id:
+            return None
+        from personalclaw.security import redact_for_model
+
+        text = redact_for_model(self.sources.get("project_preamble", ""))
+        return {"text": text, "parts": dict(self.project_parts)}
 
     def by_id(self, item_id: str) -> AlwaysOnItem | None:
         for item in self.items:
@@ -283,12 +299,16 @@ def collect_always_on(
                 )
             )
         try:
-            from personalclaw.dashboard.chat_utils import _project_context_preamble
+            from personalclaw.dashboard.chat_utils import PROJECT_BLOCK_PARTS, project_context_block
 
-            # The private name is deliberate: this IS the single function chat_runner calls to
-            # build the project block. Reaching for a public near-equivalent would mean a second
-            # project-context composer, which is the drift this module exists to prevent.
-            inventory.sources["project_preamble"] = _project_context_preamble(project_id) or ""
+            # This IS the writer chat_runner's `_project_context_preamble` returns the text of, so
+            # the block and its counts come from the one project-context composer. Reaching for a
+            # near-equivalent would be a second composer, the drift this module exists to prevent.
+            # One import of it, so this module's one upward edge stays one (the direction ratchet).
+            inventory.project_parts = dict.fromkeys(PROJECT_BLOCK_PARTS, 0)
+            block = project_context_block(project_id)
+            inventory.sources["project_preamble"] = block.text
+            inventory.project_parts.update(block.parts)
         except Exception:
             logger.debug("always-on: project preamble read failed", exc_info=True)
             inventory.sources["project_preamble"] = ""

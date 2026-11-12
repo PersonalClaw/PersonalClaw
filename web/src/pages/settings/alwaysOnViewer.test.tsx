@@ -61,6 +61,7 @@ const response = (items: AlwaysOnItem[]): AlwaysOnResponse => ({
     project_instructions: items.filter((i) => i.kind === 'project_instruction').length,
   },
   always_skill_mechanism: 'always: true in a skill’s SKILL.md frontmatter',
+  project_block: null,
 })
 
 beforeEach(() => {

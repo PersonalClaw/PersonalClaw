@@ -183,6 +183,14 @@ def _cycles(run_id: str, loop_path: str) -> tuple[int, float | None]:
     return len({r["iteration"] for r in mine}), max(times, default=None)
 
 
+def last_cycle_at(run: WorkflowRun) -> float | None:
+    """When the newest cycle of ``run``, a run started as a loop, ended (epoch seconds), as its
+    loop row says it (:func:`run_loop_view`'s ``last_cycle_at``); ``None`` before the first, and
+    for a run whose spec has no loop at its root."""
+    loop = _loop_root(store.read_spec(run.id))
+    return _cycles(run.id, loop[0])[1] if loop is not None else None
+
+
 def run_loop_view(run: WorkflowRun) -> dict[str, Any]:
     """``run`` in the loop wire shape (`web/src/lib/api.ts:Loop`), plus the ``run_id`` marker.
 

@@ -38,6 +38,13 @@ a monitor keeps `MONITOR_LOG.md`; code has no document — the code itself is
 the deliverable), and readiness prerequisites (a brownfield code loop with no
 bound workspace cannot start).
 
+Those per-phase TaskLists are the loop's own, as its `task_list_ids` records them
+(`loop/tasks_link.py`, `phase_list_loops`); a goal loop's sub-goals are its linked tasks
+(`linked_task_ids`), in a Sub-goals list its project's goal loops share. `GET /api/task-lists`
+names the loop on each phase list (`loop_id`, `""` for any other list, the shared Sub-goals list
+included), and `GET /api/projects/{id}/work` lists neither the phase tasks nor the sub-goals of a
+loop it lists: the loop's row stands for its steps there.
+
 **The supervisor is NOT part of that plugin seam.** How a loop
 converges is *declared*, not coded: `workflows/supervisor_policy.py` holds the
 `ConvergenceSpec` type, the closed `DONE_SIGNALS` vocabulary
