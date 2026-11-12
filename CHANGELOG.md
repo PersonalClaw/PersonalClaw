@@ -11,6 +11,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Security
 
 - **The credential mask covers a whole private key block, header to END line: RSA, DSA, EC, OpenSSH, PKCS#8, encrypted and OpenPGP keys, with their lines broken, escaped as JSON writes them, run onto one line, indented, marked as a diff, a quote or a `#` comment marks them, or written as string literals in code. A connection string's `Pwd=` or `PWD=` is masked as a password.**
+- **A credential's value written in quotes is masked by its name, as one without quotes is: `"password": "…"` in JSON, a quoted value in YAML, `DB_PASSWORD="…"` in an env file, and a keyword argument or a JavaScript object's field, a line break after its `:` or `=` included, for `api_key`, `secret_key`, `access_token`, `refresh_token`, `client_secret`, `password`, `passwd` and `private_key`, and for the `SecretAccessKey` and `SessionToken` the AWS CLI writes. The mask replaces what the quotes hold, so the name and the quotes stay and a JSON document still parses, and a tool call's card masks such a value in the call's input as its preview does.**
+- **A redaction warning names what kind of text it masked, and at most its length or a scheme or host the masked text keeps, never any of the value: a credential pattern's warning and a long URL query's warning held the first characters of what they matched.**
 
 ### Changed
 

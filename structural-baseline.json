@@ -272,6 +272,7 @@
       "provider_registry",
       "proxy_signature",
       "python_support",
+      "quoted_credentials",
       "record_ids",
       "reference",
       "request_validation",
@@ -333,6 +334,7 @@
       "net": "role: the one outbound network chokepoint (imported by 39; 5 upward imports are debt)",
       "notification_kinds": "measured: the notification kind registry; imported by 25, imports none",
       "private_key_blocks": "role: the whole private key block security's mask takes; imports none",
+      "quoted_credentials": "role: the quoted value security's mask takes by its name; imports none",
       "record_files": "measured: a JSON record file with one lock; imported by 28 units, imports 3",
       "record_ids": "measured: an untrusted record id to a path in its store; imported by 15, none",
       "safety_flags": "measured: strict booleans for safety controls; imported by 28, imports none",
@@ -746,7 +748,8 @@
           "filled_secrets",
           "address_logins",
           "known_value_forms",
-          "private_key_blocks"
+          "private_key_blocks",
+          "quoted_credentials"
         ],
         "name": "foundation-imports-only-foundation",
         "rationale": "The foundation is what every layer stands on, so it may import only itself. A foundation unit that imports a domain unit puts the whole domain under everything that imports it, which is how one import cycle came to hold 268 of the 358 units: config, imported by 159 units, imports apps, agents, providers and workflows. Measured 73 edges across 17 files on 2026-10-31, grandfathered as a floor; each one cut is a cheap first cut of that cycle.",
