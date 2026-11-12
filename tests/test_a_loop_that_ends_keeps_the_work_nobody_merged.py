@@ -705,6 +705,7 @@ def test_merge_waits_for_a_workspace_with_nothing_uncommitted(repo):
     assert _edit_in(wt) and "her own edit" in (repo / "CHANGELOG.md").read_text()
 
 
+@pytest.mark.timeout(60)
 def test_a_merge_that_conflicts_is_undone_and_keeps_the_work(repo):
     loop, tid, wt, state = _budget_spent(repo)
     (repo / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n\n### Fixed\n- Other.\n")

@@ -504,6 +504,7 @@ class TestTruncatedDownloadFailsClosed:
         )
         assert calls[0][1].strip() == DISPATCH
 
+    @pytest.mark.timeout(60)
     def test_every_truncation_prefix_installs_nothing(
         self, installer_text: str, sandbox_env: dict[str, str]
     ) -> None:

@@ -557,6 +557,7 @@ def test_a_code_loops_workers_are_told_to_commit_as_git_is_configured(tmp_path):
     assert "Never set a name or email for a commit yourself" in brief and "stop and say so" in brief
 
 
+@pytest.mark.timeout(60)
 def test_resume_after_setting_an_identity_does_not_stop_on_the_settled_question(tmp_path, code):
     """The scheduler asks its questions again while they hold, so a Resume carries on once the
     identity is set, instead of stopping on the question it already answered. A worker's own

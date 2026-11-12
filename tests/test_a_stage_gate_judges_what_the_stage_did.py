@@ -767,6 +767,7 @@ def test_a_criterion_held_from_outside_the_stage_asks_its_owner_at_once(tmp_path
     assert rows.get_by_session(session_key(loop.id)).active is False
 
 
+@pytest.mark.timeout(60)
 def test_the_owners_word_reaches_the_gate_and_the_loop_finishes(tmp_path, monkeypatch):
     """Paused on what the record cannot show, she looks and steers: her words are the owner's,
     not a worker's claim, so the gate reads them as such and the loop goes on."""
