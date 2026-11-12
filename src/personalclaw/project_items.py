@@ -4,7 +4,8 @@ and by the library's read, ``GET /api/library``.
 - A loop is in the one project :func:`personalclaw.loop.store.loop_project_id` names.
 - An artifact is in its own ``project_id`` when that names a project. Otherwise it is in the
   project of the loop its ``loop:<id>`` tag names: a loop's deliverables carry the tag and an
-  empty ``project_id``. The explicit id wins over the tag.
+  empty ``project_id``. The explicit id wins over the tag, and an artifact the owner took out of
+  its project (``project_cleared``) is in none, whatever its tag.
 - A knowledge item is in the project :mod:`personalclaw.knowledge.project_scope` files it under,
   and shows in another project only when it is shared.
 
@@ -73,6 +74,8 @@ def artifact_project_id(art: Any, projects: Projects) -> str:
     own = str(getattr(art, "project_id", "") or "")
     if projects.exists(own):
         return own
+    if getattr(art, "project_cleared", False):
+        return ""  # the owner took it out of its project: its loop's tag no longer files it
     for loop_id in loop_ids_in_tags(getattr(art, "tags", ()) or ()):
         pid = projects.loops.get(loop_id, "")
         if pid:
@@ -98,6 +101,17 @@ def project_artifacts(prov: Any, project_id: str, projects: Projects) -> list[An
         seen.add(art.slug)
         out.append(art)
     return out
+
+
+def requested_project(value: Any) -> tuple[str, str]:
+    """A request's ``project_id``, checked: ``(id, "")`` for "" (no project) or a project that
+    exists; ``("", why)`` for anything else, which the route refuses with nothing written."""
+    if not isinstance(value, str):
+        return "", "project_id must be a string"
+    pid = value.strip()
+    if pid and not read_projects().exists(pid):
+        return "", f"no project has the id {pid!r}"
+    return pid, ""
 
 
 def project_exists_test() -> Callable[[str], bool]:

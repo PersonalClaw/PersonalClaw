@@ -14,6 +14,8 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from personalclaw.safety_flags import strict_bool
+
 # ── Caps (bound LLM-authored content + on-disk growth) ──
 MAX_VERSIONS = 50  # FIFO prune older numbered snapshots beyond this
 MAX_CONTENT_BYTES = 1 * 1024 * 1024  # 1 MiB per TEXT artifact body
@@ -294,6 +296,13 @@ class Artifact:
     # redaction. Delete is deliberately still allowed: read-only is not undeletable, and
     # trapping the owner's own artifact in their library would be a worse bargain.
     readonly: bool = False
+    # The library's own flags (``GET /api/library``): pinned, archived, and taken out of its
+    # project by the owner, which a loop's ``loop:<id>`` tag then no longer overrides
+    # (``project_items``). Kept in meta.json only, and only when set, so the agent's artifact
+    # tools and ``GET /api/artifacts`` answer as before. Tolerant read, like ``folder_id``.
+    pinned: bool = False
+    archived: bool = False
+    project_cleared: bool = False
 
     def to_dict(self, *, persist: bool = False) -> dict[str, Any]:
         """Serialize. ``persist=True`` (meta.json) drops the transient/derived
@@ -323,6 +332,10 @@ class Artifact:
         if not persist:
             d["content"] = self.content
             d["live_dirty"] = self.live_dirty
+        else:
+            for flag in ("pinned", "archived", "project_cleared"):
+                if getattr(self, flag):
+                    d[flag] = True
         return d
 
     @classmethod
@@ -346,6 +359,9 @@ class Artifact:
             folder_id=str(d.get("folder_id", "")),
             mime=str(d.get("mime", "")),
             readonly=bool(d.get("readonly", False)),
+            pinned=strict_bool(d.get("pinned"), field="artifact pinned"),
+            archived=strict_bool(d.get("archived"), field="artifact archived"),
+            project_cleared=strict_bool(d.get("project_cleared"), field="artifact project_cleared"),
         )
 
 

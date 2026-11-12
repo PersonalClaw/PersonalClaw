@@ -178,9 +178,11 @@ class TestLogDecision:
         assert meta["confidence"] == 0.7
         assert meta["expectation"].startswith("I will earn more")
         # The decision block is NESTED under the item's metadata column, not spread across it,
-        # so a future writer of `also_seen_in` cannot collide with a decision field.
+        # so a future writer of `also_seen_in` cannot collide with a decision field. Beside it is
+        # only who made it: a chat, through its tool (`project_scope.origin_scope`).
         raw = json.loads(json.dumps(item["file_metadata"]))
-        assert set(raw) == {"decision"}
+        assert set(raw) == {"decision", "origin"}
+        assert raw["origin"] == "chat"
 
     def test_it_mints_exactly_one_review_trigger_at_a_deterministic_id(
         self, store, triggers

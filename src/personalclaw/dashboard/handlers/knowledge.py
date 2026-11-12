@@ -18,6 +18,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import json_error
+from personalclaw.knowledge import project_scope
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime
@@ -119,6 +120,16 @@ async def list_tags(request: web.Request) -> web.Response:
 # payload win for libraries with large documents/transcripts. The detail view fetches
 # full content via GET /items/{id}.
 _LIST_CONTENT_PREVIEW = 280
+
+
+def _requested_project(where: Any) -> tuple[str, str]:
+    """The ``project_id`` a request names (its JSON body or its query), checked: ``("", "")``
+    when it names none; see :func:`personalclaw.project_items.requested_project`."""
+    from personalclaw import project_items
+
+    if "project_id" not in where:
+        return "", ""
+    return project_items.requested_project(where.get("project_id"))
 
 
 def _list_item(store, row) -> dict:
@@ -360,8 +371,12 @@ async def create_item(request: web.Request) -> web.Response:
         else:
             title = url or content[:60].strip() or "Untitled"
 
-    tags = body.get("tags") if isinstance(body.get("tags"), list) else []
+    raw_tags = body.get("tags")
+    tags: list[Any] = raw_tags if isinstance(raw_tags, list) else []
     summary = str(body.get("summary") or "")
+    project_id, why = _requested_project(body)
+    if why:
+        return json_error("unknown_project", message=why, status=404)
     refused = await _app_text_refusal(title if title_given else "", summary, content)
     if refused is not None:
         return refused.response(refused.nothing_made)
@@ -379,15 +394,20 @@ async def create_item(request: web.Request) -> web.Response:
     # replaces the old create-fast/_schedule_intelligence path (the graph's terminal
     # stages now own insights + embed).
     provider = request.app["state"].knowledge_provider()
+    # You made it, here: and filed under the project the request names, private by default.
+    made, filed_by = project_scope.origin_scope(project_scope.ORIGIN_OWNER, project_id=project_id)
+    extra: dict[str, Any] = {"file_metadata": made}
+    if title_given:
+        extra["title_source"] = "user"
     item_id = provider.create_typed(
         item_type=item_type,
         title=title,
         content=content,
-        tags=tags,
+        tags=[*tags, *[t for t in filed_by if t not in tags]],
         url=url,
         summary=summary,
         gist_language=str(body.get("gist_language") or "") if item_type == "gist" else "",
-        extra={"title_source": "user"} if title_given else None,
+        extra=extra,
     )
     await _sel_log_async("item.create", item_id=item_id, type=item_type)
     item = store.get_item(item_id)
@@ -766,7 +786,10 @@ async def update_item(request: web.Request) -> web.Response:
     # The client may opt OUT of re-running the ingestion graph on a content/url edit with
     # reingest=false (a quick typo-fix that should not burn a model pass).
     reingest_requested = bool_field(body, "reingest", default=True)
-    if not fields and not tag_edits:
+    project_move, refused_move = _project_move(body)
+    if refused_move is not None:
+        return refused_move
+    if not fields and not tag_edits and project_move is None:
         return web.json_response({"error": "no valid fields"}, status=400)
     # Before the item is read for the write below, which awaits nothing.
     said = ("title", "summary", "url_title", "url_description", "content")
@@ -790,18 +813,12 @@ async def update_item(request: web.Request) -> web.Response:
         if stale is not None:
             await _sel_log_async("item.update", item_id=item_id, outcome=refusal_outcome(stale))
             return stale
-    if tag_edits:
-        dropped = {n.strip() for n in tag_edits.get("remove_tags", [])}
-        kept = [t for t in current.get("tags") or [] if t not in dropped]
-        added: list[str] = []
-        for raw_name in tag_edits.get("add_tags", []):
-            name = raw_name.strip()
-            if name and name not in kept and name not in added:
-                added.append(name)
-        if kept + added != (current.get("tags") or []):
-            fields["tags"] = kept + added
+    if tag_edits and (tags := _tags_after(current.get("tags") or [], tag_edits)) is not None:
+        fields["tags"] = tags
     if fields:
         store.update_item(item_id, **fields)
+    if project_move is not None:
+        store.move_item_project(item_id, project_move)
     # Editing the text/url re-runs the ingestion node-graph so insights, entities, the
     # embedding, and intent outcomes stay consistent with the new content — matching
     # the agent knowledge_update tool and the create→enrich contract. Curation-only
@@ -822,6 +839,31 @@ async def update_item(request: web.Request) -> web.Response:
     return web.json_response(
         {"ok": True, "reenriching": reenrich, "content_revision": _content_revision(saved)}
     )
+
+
+def _project_move(body: dict) -> tuple[str | None, web.Response | None]:
+    """The project a PATCH moves its item into (``""`` out of its project), None for no move, and
+    the refusal of a project that is not there. A move is one filing write that moves no
+    activity (`KnowledgeStore.move_item_project`)."""
+    if "project_id" not in body:
+        return None, None
+    pid, why = _requested_project(body)
+    if why:
+        return None, json_error("unknown_project", message=why, status=404)
+    return pid, None
+
+
+def _tags_after(stored: list[str], edits: dict[str, list[str]]) -> list[str] | None:
+    """The tags an item keeps after a PATCH's ``add_tags`` and ``remove_tags`` land on *stored*,
+    one name at a time, or None when they change nothing."""
+    dropped = {n.strip() for n in edits.get("remove_tags", [])}
+    kept = [t for t in stored if t not in dropped]
+    added: list[str] = []
+    for raw_name in edits.get("add_tags", []):
+        name = raw_name.strip()
+        if name and name not in kept and name not in added:
+            added.append(name)
+    return None if kept + added == stored else kept + added
 
 
 async def delete_item(request: web.Request) -> web.Response:
@@ -1705,6 +1747,9 @@ async def ingest_file(request: web.Request) -> web.Response:
     (:mod:`personalclaw.uploads.content_scan`) has passed it."""
     # A non-multipart body (wrong/absent Content-Type) makes multipart()/next() raise —
     # that's a malformed request (400), not a server fault (500).
+    project_id, why = _requested_project(request.query)
+    if why:
+        return json_error("unknown_project", message=why, status=404)
     try:
         reader = await request.multipart()
         field = await reader.next()
@@ -1777,6 +1822,10 @@ async def ingest_file(request: web.Request) -> web.Response:
         Path(tmp.name).unlink(missing_ok=True)
         if item is None:
             return web.json_response({"error": "failed to store item"}, status=500)
+        if project_id and (is_new or not item.get("file_metadata", {}).get("project_id")):
+            # Filed under the project the upload names, private; a file already in another
+            # project stays where it is.
+            store.move_item_project(item["id"], project_id)
         if is_new:
             # Only a freshly-stored file needs ingestion; a dedup hit is already enriched.
             try:

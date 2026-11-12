@@ -89,6 +89,20 @@ class ArtifactProvider(ABC):
         """
         return None
 
+    def set_library_flags(
+        self,
+        slug: str,
+        *,
+        project_id: str | None = None,
+        pinned: bool | None = None,
+        archived: bool | None = None,
+    ) -> Artifact | None:
+        """File *slug* into a project (``""`` takes it out of its project, whatever its loop's tag
+        says), pin it or archive it in the library. Metadata only, like :meth:`set_folder`, and
+        for the same reason: it bumps no ``updated_at``. ``None`` leaves a flag as it is. Default
+        returns None (a backend opts in)."""
+        return None
+
     @abstractmethod
     def get(self, slug: str, *, version: int | None = None) -> Artifact | None:
         """Return one artifact with ``content`` populated, or None.

@@ -34,6 +34,8 @@ _BODY_PARAMS = {"body", "payload"}
 #: ``not isinstance(value, bool)`` refusal that names the field; each of those carries a contract
 #: of its own, a security-log row or a message saying what the switch does).
 BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
+    ("artifacts/handlers.py", "_library_flags", "archived"): "optional",
+    ("artifacts/handlers.py", "_library_flags", "pinned"): "optional",
     ("artifacts/handlers.py", "api_artifact_update", "snapshot"): False,
     ("artifacts/handlers.py", "api_artifacts_pin", "pinned"): True,
     ("dashboard/chat_folders.py", "api_chat_folder_update", "collapsed"): "optional",

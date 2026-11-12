@@ -14,6 +14,8 @@ store. Here they are one list:
 - an intent with at least one finding is one ``findings:<id>`` row, and an intent with none is no
   row.
 
+An archived thing is a row the read leaves out until its filter asks for ``state=archived``.
+
 Every row has one shape (:func:`_row`). The read answers with every row the filter leaves (up to
 :data:`MAX_ROWS`), a true ``total``, the count of each filter value, and ``failed``: each store it
 couldn't read, by its ``store`` value. A store that fails leaves the other store's rows and counts.
@@ -267,6 +269,8 @@ def _row(**fields: Any) -> dict:
         "created_at": "",
         "activity_at": "",
         "read": None,
+        "pinned": False,
+        "archived": False,
         "state": "",
         "excerpt": "",
         "size": None,
@@ -341,9 +345,9 @@ def knowledge_rows(store: Any, ctx: _Context) -> list[dict]:
     rows: list[dict] = []
     for r in store.db.execute(
         "SELECT id, title, item_type, kind, provider, source_id, file_metadata, created_at, "
-        "updated_at, read_state, processing_status, content, mime_type, file_size, thumbnail_path "
-        "FROM items WHERE item_type != ? AND COALESCE(kind, '') != ? "
-        "AND COALESCE(is_archived, 0) = 0",
+        "updated_at, read_state, processing_status, content, mime_type, file_size, thumbnail_path, "
+        "is_pinned, favorited, is_archived "
+        "FROM items WHERE item_type != ? AND COALESCE(kind, '') != ?",
         (ARTIFACT_ITEM_TYPE, RESEARCH_FINDING_KIND),
     ):
         item_id = str(r["id"])
@@ -381,6 +385,9 @@ def knowledge_rows(store: Any, ctx: _Context) -> list[dict]:
                 created_at=stamp(r["created_at"]),
                 activity_at=stamp(r["updated_at"]),
                 read=str(r["read_state"] or "unread"),
+                # Pin merges the star: either one keeps a note at the top.
+                pinned=bool(r["is_pinned"]) or bool(r["favorited"]),
+                archived=bool(r["is_archived"]),
                 state=_knowledge_state(str(r["processing_status"] or "")),
                 excerpt=_excerpt(r["content"]),
                 size=int(size) if isinstance(size, (int, float)) and size else None,
@@ -536,6 +543,8 @@ def artifact_rows(prov: Any, ctx: _Context, collection_ids: dict[str, str]) -> l
                 excerpt=_excerpt(art.description),
                 size=_body_size(root, art),
                 version=int(art.version or 1),
+                pinned=bool(getattr(art, "pinned", False)),
+                archived=bool(getattr(art, "archived", False)),
                 thumb=f"/api/artifacts/{art.slug}/raw" if art.kind == "image" else None,
                 _tags=list(art.tags or ()),
                 _projects={pid} if pid else set(),
@@ -583,10 +592,18 @@ class Query:
         )
 
 
+#: The ``state`` values that are flags rather than reading states.
+STATE_PINNED, STATE_ARCHIVED = "pinned", "archived"
+
+
 def _states(row: dict) -> set[str]:
     out = {row["state"]} if row["state"] else set()
     if row["read"]:
         out.add(row["read"])
+    if row["pinned"]:
+        out.add(STATE_PINNED)
+    if row["archived"]:
+        out.add(STATE_ARCHIVED)
     return out
 
 
@@ -604,7 +621,8 @@ def _facet_values(row: dict, facet: str) -> Iterable[str]:
     if facet == "tag":
         return tuple(row["_tags"])
     if facet == "state":
-        return tuple(_states(row))
+        # An archived row is listed only under Archived, so it is counted only there.
+        return (STATE_ARCHIVED,) if row["archived"] else tuple(_states(row))
     return ()
 
 
@@ -628,8 +646,13 @@ def _keeps(row: dict, query: Query, *, but: str = "", entity_refs: frozenset[str
             return False
     if but != "tag" and query.tag and not query.tag & set(row["_tags"]):
         return False
-    if but != "state" and query.state and not query.state & _states(row):
-        return False
+    if but != "state":
+        # An archived thing is listed only when the filter asks for Archived, as the stores'
+        # own lists hide it until asked.
+        if row["archived"] and STATE_ARCHIVED not in query.state:
+            return False
+        if query.state and not query.state & _states(row):
+            return False
     if entity_refs is not None and row["ref"] not in entity_refs:
         return False
     return True

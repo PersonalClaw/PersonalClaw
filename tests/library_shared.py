@@ -164,8 +164,17 @@ async def client(home: Path, *, knowledge: Any | None = None) -> AsyncIterator[T
         patch("personalclaw.tasks.native.config_dir", return_value=home),
         patch("personalclaw.tasks.hierarchy.config_dir", return_value=home),
     ):
+        from personalclaw.knowledge_providers.native import create_native_provider
+
+        store = knowledge or knowledge_store()
+        queued: list[str] = []
         app = web.Application()
-        app["state"] = SimpleNamespace(knowledge_store=knowledge or knowledge_store(), _sessions={})
+        app["state"] = SimpleNamespace(
+            knowledge_store=store,
+            _sessions={},
+            knowledge_ingest_queue=lambda: SimpleNamespace(enqueue=queued.append),
+            knowledge_provider=lambda: create_native_provider(store, enqueue=queued.append),
+        )
         register_task_routes(app)
         register_artifact_routes(app)
         setup_knowledge_routes(app)

@@ -1196,6 +1196,33 @@ class NativeArtifactProvider(ArtifactProvider):
             self._write_meta(art)
             return self.get(slug)
 
+    def set_library_flags(
+        self,
+        slug: str,
+        *,
+        project_id: str | None = None,
+        pinned: bool | None = None,
+        archived: bool | None = None,
+    ) -> Artifact | None:
+        """The library's flags (:meth:`ArtifactProvider.set_library_flags`): written as
+        :meth:`set_folder` files a folder, with no ``updated_at`` bump, so moving ten artifacts
+        into a project reorders nothing. ``project_id=""`` stores the empty id with
+        ``project_cleared``, so a loop's ``loop:<id>`` tag no longer files the artifact; a later
+        project id clears that again."""
+        with self._lock:
+            art = self._read_meta(slug)
+            if art is None:
+                return None
+            if project_id is not None:
+                art.project_id = project_id.strip()
+                art.project_cleared = not art.project_id
+            if pinned is not None:
+                art.pinned = bool(pinned)
+            if archived is not None:
+                art.archived = bool(archived)
+            self._write_meta(art)
+            return self.get(slug)
+
     def delete(self, slug: str) -> bool:
         """Delete *slug* and everything under it, after taking its deployed page down.
 

@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 PROJECT_ID_KEY = "project_id"
 RUN_ID_KEY = "run_id"
 SHARING_POLICY_KEY = "sharing_policy"
+#: Who made an item, when it says: ``chat`` (an agent in a chat) or ``owner`` (you, in the app).
+ORIGIN_KEY = "origin"
+ORIGIN_CHAT, ORIGIN_OWNER = "chat", "owner"
+#: The chat an item was made in, by its session key.
+SESSION_KEY_KEY = "session_key"
 
 
 class SharingPolicy(str, Enum):
@@ -94,6 +99,20 @@ def write_scope(
     if rid:
         out[RUN_ID_KEY] = rid
     return out
+
+
+def origin_scope(
+    origin: str, *, session_key: str = "", project_id: str = ""
+) -> tuple[dict[str, str], list[str]]:
+    """What an item made by *origin* (:data:`ORIGIN_CHAT` or :data:`ORIGIN_OWNER`) records in its
+    metadata, and the tags that file it: the chat it was made in, by its session key, and the
+    project it was made in, private by default (:func:`write_scope`, :func:`scope_tags`). A note
+    an agent saves in a project's chat is then that project's, as a run's is."""
+    meta: dict[str, str] = {ORIGIN_KEY: origin}
+    if session_key:
+        meta[SESSION_KEY_KEY] = session_key
+    meta.update(write_scope(project_id=project_id))
+    return meta, scope_tags(project_id)
 
 
 def scope_tags(project_id: str) -> list[str]:
