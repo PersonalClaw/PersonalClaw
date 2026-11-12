@@ -1,11 +1,11 @@
 """``.github/workflows/merge-verdict.yml``: the merge verdict's poster keeps its trust shape.
 
 It runs only as a ``workflow_run`` listener of Merge and of the runs that judge a head again
-(Dependency review, CodeQL, Contract and DCO) and a listener of completed check runs, so GitHub
-runs main's copy, and, beside a head's Merge run (the shape ``beside``), also on a pull request's
-Merge run's start, to start the head's contract with it (``decide --start``, which posts nothing),
-and on a dispatch on main alone, which a contract run's ``wake`` job sends for its head (``decide
---head``). It names nothing of the candidate but in its
+(Dependency review, CodeQL, Contract, DCO and each gate's) and a listener of completed check runs,
+so GitHub runs main's copy, and, beside a head's Merge run (the shape ``beside``), also on a pull
+request's Merge run's start, to start the head's contract with it (``decide --start``, which posts
+nothing), and on a dispatch on main alone, which a contract run's ``wake`` job sends for its head
+(``decide --head``). It names nothing of the candidate but in its
 jobs' one condition, which reads the triggering run's event and branch only to spare the queue
 the runs that can judge no pull request's head (each case below a planted event), checks out
 only the default branch and keeps no credential. ``post`` reads with its own token
@@ -253,12 +253,16 @@ def _problems(text: str) -> list[str]:
     return found
 
 
-#: The runs the poster wakes on: Merge and the four that judge a head again, and those five with
-#: each gate's (tools/ci/workflows.py's GATES). Either list is the beside shape's: the change that
-#: puts the gates in the wake lands after the one that reads them, and until it does, a head judged
-#: while a gate's run was going is judged again by the sweep or at the head's next wake.
-_WAKES_BEFORE = [workflows.NAMES[workflows.MERGE], "Dependency review", "CodeQL", "Contract", "DCO"]
-_WAKES = [*_WAKES_BEFORE, *(gate.name for gate in workflows.GATES)]
+#: The runs the poster wakes on: Merge, the four that judge a head again, and each gate's
+#: (tools/ci/workflows.py's GATES), whose completion judges its head again.
+_WAKES = [
+    workflows.NAMES[workflows.MERGE],
+    "Dependency review",
+    "CodeQL",
+    "Contract",
+    "DCO",
+    *(gate.name for gate in workflows.GATES),
+]
 
 
 def _shape(on: object) -> str | None:
@@ -271,11 +275,7 @@ def _shape(on: object) -> str | None:
     head = inputs.get("head") if isinstance(inputs, dict) else None
     if (
         all(on[k] == v for k, v in both.items())
-        and on["workflow_run"]
-        in (
-            {"workflows": names, "types": ["in_progress", "completed"]}
-            for names in (_WAKES_BEFORE, _WAKES)
-        )
+        and on["workflow_run"] == {"workflows": _WAKES, "types": ["in_progress", "completed"]}
         and set(dispatch) == {"inputs"}
         and set(inputs) == {"head"}
         and isinstance(head, dict)
@@ -408,6 +408,11 @@ def _anchored(text: str, old: str, new: str) -> tuple[str, str]:
         ),
         (
             _WAKE_LIST,
+            'workflows: ["Merge", "Dependency review", "CodeQL", "Contract", "DCO"]',
+            "runs on",
+        ),
+        (
+            _WAKE_LIST,
             'workflows: ["Merge", "Dependency review", "CodeQL", "Contract", "DCO", "Action pins",'
             ' "Release image tooling"]',
             "runs on",
@@ -508,13 +513,10 @@ def _spelled(names: list[str], *, block: bool) -> str:
     return "workflows: [" + ", ".join(f'"{name}"' for name in names) + "]"
 
 
-@pytest.mark.parametrize("names", [_WAKES_BEFORE, _WAKES], ids=["the five", "with the gates"])
 @pytest.mark.parametrize("block", [False, True], ids=["on one line", "one name a line"])
-def test_either_wake_list_in_either_spelling_keeps_the_trust_shape(
-    names: list[str], block: bool
-) -> None:
+def test_the_wake_list_in_either_spelling_keeps_the_trust_shape(block: bool) -> None:
     text = _WORKFLOW.read_text(encoding="utf-8")
-    old, new = _anchored(text, _WAKE_LIST, _spelled(names, block=block))
+    old, new = _anchored(text, _WAKE_LIST, _spelled(_WAKES, block=block))
     assert text.count(old) == 1, f"the wake's list is not once: {old!r}"
     assert _problems(text.replace(old, new)) == []
 

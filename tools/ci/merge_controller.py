@@ -77,11 +77,11 @@ trusted-run branch the old path left).
    it names none) timed out. Main's copy of the gate's filter decides only whether no run is red: a
    head that changes a path it names needs one, and a filter this does not read (a pattern beyond
    ``*``, a last ``**`` and plain paths, or a ``pull_request`` filtered by more than its paths) is
-   unread. A run still going is a red that waits; a gate run's completion, once the poster wakes on
-   it, judges the head again. A gate's red is flake-class only when each of its red jobs was
-   cancelled or failed at a step that fetches only outside inputs (GitHub's set-up, the checkout,
-   the Nix installer), and not then for a head that changes the gate's workflow or a local action,
-   whose run takes those steps from the head; a timeout is the change's own.
+   unread. A run still going is a red that waits; its completion judges the head again. A gate's red
+   is flake-class only when each of its red jobs was cancelled or failed at a step that fetches only
+   outside inputs (GitHub's set-up, the checkout, the Nix installer), and not then for a head that
+   changes the gate's workflow or a local action, whose run takes those steps from the head; a
+   timeout is the change's own.
 6. CodeQL analysed the head in every language ``main``'s CodeQL analyses name, and the pull
    request brings no alert of its own: the newest run of GitHub's dynamic CodeQL workflow on the
    head finished, with an ``Analyze (<language>)`` job that concluded ``success`` for each of
@@ -1538,8 +1538,7 @@ def judge(
     get: Get, repo: str, run_id: int, controller_revision: str, queue: Queue | None = None
 ) -> Outcome:
     """What a completed run of a workflow the poster follows does: a Merge run is judged; a
-    Dependency review, DCO, CodeQL or contract run judges its head again, and so does a gate run
-    (rule 5b) once the poster follows it."""
+    Dependency review, DCO, CodeQL, gate (rule 5b) or contract run judges its head again."""
     run = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
     if not isinstance(run, Mapping):
         raise Unread(f"run {run_id} is not an object")

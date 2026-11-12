@@ -289,7 +289,8 @@ no workflow calls it yet.
 ### The merge controller's poster
 
 `.github/workflows/merge-verdict.yml` posts `merge-verdict` on a head each time a Merge run
-(`merge.yml`), a Dependency review run or a DCO run completes, or code scanning's CodeQL check
+(`merge.yml`), a Dependency review run, a DCO run or a run of a gate (`nix.yml`,
+`action-pins.yml`, `release-image-tooling.yml`) completes, or code scanning's CodeQL check
 does. It is a `workflow_run` listener, so GitHub
 runs main's copy of it and of
 the `tools/ci` it runs, whatever the candidate brings. `python -m tools.ci merge-controller
@@ -473,10 +474,9 @@ verdict says all it must fix:
   cap, needs one, and one that has none is red without waiting (a diff of more than 300 files starts
   none). The filter is read as GitHub reads it (`workflows.filter_matches`), and one with a pattern
   beyond `*`, a last `**` and plain paths, or a `pull_request` filtered by more than its paths, is
-  unread, so red. A run still going is a red that waits, its fence word the gate's file. The poster
-  does not wake on a gate's run yet, so a head judged while its gate's run was going stays red until
-  it is judged again, by the sweep (below) or at the head's next wake (its next Merge-run
-  completion, say). A gate's red is flake-class only when each of its red jobs was cancelled before
+  unread, so red. A run still going is a red that waits, its fence word the gate's file. Its
+  completion wakes the poster, which judges the head again from its Merge run, as a DCO run's
+  does. A gate's red is flake-class only when each of its red jobs was cancelled before
   its bound or failed at a step that fetches only outside inputs (GitHub's set-up, the checkout, the
   Nix installer), so the retry note (above) reads it as one a retry may clear; not so for a head
   that changes the gate's workflow or a local action, since its run takes those steps from the head;
@@ -544,8 +544,9 @@ verdict says all it must fix:
   request's head. The schedule, a dispatch of the poster on `main` (a contract run's wake, never
   off `main`) and a completed dispatch off `main` (a contract run, a dispatch proof) always do. A
   pull request's wakes, code scanning's CodeQL check, a completed run of a pull request (its own
-  Merge run, its dependency review, CodeQL's on `refs/pull/*`) and a pull request's own Merge run
-  starting do only while the repository variable `MERGE_VERDICT_LIVE` is `true`. It is `false` until #3915's flip
+  Merge run, its dependency review, its sign-off check, a gate's, CodeQL's on `refs/pull/*`) and a
+  pull request's own Merge run starting do only while the repository variable `MERGE_VERDICT_LIVE`
+  is `true`. It is `false` until #3915's flip
   runs merge.yml on pull requests, because until then a head has no Merge run to judge, and the
   flip sets it: forgotten, nothing posts on a pull request and `merge-verdict` cannot be
   required, so it fails closed. A push run, a dispatch on `main`, CodeQL on `main` and any other
