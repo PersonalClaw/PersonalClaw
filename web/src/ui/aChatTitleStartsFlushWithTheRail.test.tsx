@@ -9,7 +9,7 @@ import type { Thread, ThreadPip } from '../lib/useThreads'
 // to an indent. A row was padded `pl-3xl` on the left, so its title started well inside the rail,
 // under its group header's name, while New chat and the destinations above all start at the rail's
 // own edge padding (`px-s`). Now a row is padded as they are: its title starts at the same left
-// edge, with a state dot or without (the dot sits at the row's
+// edge, with a state mark or without (the mark sits at the row's
 // right end, so it pushes nothing right, and a row with no state keeps no room for one).
 //
 // jsdom lays nothing out, so this reads the rows' padding classes; `aChatTitleStartsFlushWithTheRail
@@ -49,7 +49,7 @@ describe("a sidebar row's title", () => {
     }
   })
 
-  it('keeps its title first in the row whatever its state, the dot after it', () => {
+  it('keeps its title first in the row whatever its state, the mark after it', () => {
     rail()
     for (const key of ['running', 'waiting', 'unread']) {
       const row = document.querySelector(`[data-thread-key="${key}"]`)!

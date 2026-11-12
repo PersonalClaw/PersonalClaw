@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   detail: vi.fn(),
   sendChat: vi.fn(),
   socket: null as null | { onMessage: (m: WsMessage) => void; onReconnect: (() => void) | null },
+  blooms: [] as Array<[string | undefined, boolean]>,
 }))
 
 vi.mock('../../../lib/api', async (importOriginal) => {
@@ -36,6 +37,14 @@ vi.mock('../../../lib/useChatSocket', async (importOriginal) => {
       h.socket = { onMessage, onReconnect }
     },
   }
+})
+
+// The head's orb as it is, recording whether it may bloom: jsdom draws no canvas, so the bloom
+// itself is not seen here (`ui/theLiveLineShowsHowTheTurnEnded.test.tsx` watches it play).
+vi.mock('../../../ui/AgentOrb', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../ui/AgentOrb')>()
+  const Recorded = (p: Parameters<typeof real.AgentOrb>[0]) => { h.blooms.push([p.phase ?? undefined, p.bloom ?? true]); return <real.AgentOrb {...p} /> }
+  return { ...real, AgentOrb: Recorded }
 })
 
 let SessionPeekBody: typeof import('./SessionPeek')['SessionPeekBody']
@@ -60,7 +69,7 @@ async function peek(rs: RunState) {
 beforeEach(async () => {
   // The panel keeps its tail in view; jsdom lays nothing out, so it has no scrolling to do.
   Element.prototype.scrollIntoView = vi.fn()
-  h.detail.mockReset(); h.sendChat.mockReset(); h.socket = null
+  h.detail.mockReset(); h.sendChat.mockReset(); h.socket = null; h.blooms = []
   h.sendChat.mockResolvedValue({ ok: true, session: KEY })
   ;({ SessionPeekBody } = await import('./SessionPeek'))
 })
@@ -144,6 +153,19 @@ describe('a turn that runs in the peeked chat', () => {
     expect(line()).toBe('Done in 3 seconds')
     await waitFor(() => expect(head()).toBeNull())
   })
+
+  it.each([
+    ['complete', 'Done in 3 seconds', true],
+    ['stopped', 'Stopped', false],
+    ['error', 'Claude stopped after you denied shell.', false],
+  ] as const)('a turn that ended %s (“%s”) gives its head’s orb leave to bloom: %s', async (outcome, words, blooms) => {
+    await peek(runningState({ session: KEY, phase: 'streaming', line: 'Writing', seq: 2 }))
+    await waitFor(() => expect(orb()?.dataset.orbPhase).toBe('streaming'))
+    expect(h.blooms.at(-1)?.[1], 'the control: a running turn’s orb has its own rule').toBe(true)
+    frame(endedState(outcome, { session: KEY, phase: 'done', line: words, seq: 3 }))
+    expect(line()).toBe(words)
+    expect(h.blooms.at(-1)?.[1]).toBe(blooms)
+  })
 })
 
 describe('a message sent from the peek', () => {
@@ -158,6 +180,25 @@ describe('a message sent from the peek', () => {
     expect(screen.queryByText(/Thinking…/)).toBeNull()
     frame(runningState({ session: KEY, phase: 'thinking', line: 'Thinking', seq: 2 }))
     expect(orb()!.dataset.orbPhase).toBe('thinking')
+  })
+
+  it.each([
+    ['complete', 'Done in 3 seconds', true],
+    ['stopped', 'Stopped', false],
+    ['error', 'Claude stopped after you denied shell.', false],
+  ] as const)('a turn it sent that ended %s (“%s”), before its chat_done, gives its head’s orb leave to bloom: %s', async (outcome, words, blooms) => {
+    await peek(runState({ session: KEY }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Quick reply' }), { target: { value: 'And the upgrade steps' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(orb()?.dataset.orbPhase).toBe('queued'))
+    frame(runningState({ session: KEY, phase: 'streaming', line: 'Writing', seq: 2 }))
+    // The ending lands while the peek still waits on its own send's chat_done.
+    frame(endedState(outcome, { session: KEY, phase: 'done', line: words, seq: 3 }))
+    expect(line()).toBe(words)
+    const atDone = h.blooms.find(([phase]) => phase === 'done')
+    expect(atDone, 'the control: the head showed the ending').toBeDefined()
+    expect(atDone![1]).toBe(blooms)
+    act(() => { h.socket!.onMessage({ type: 'chat_done', data: { session: KEY, outcome } }) })
   })
 })
 

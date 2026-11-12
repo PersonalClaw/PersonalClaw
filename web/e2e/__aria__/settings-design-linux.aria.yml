@@ -79,7 +79,7 @@
     - heading "Preview" [level=#]
     - text: Chat Tasks Triggers Knowledge Primary action Secondary
     - heading "Agent orb" [level=#]
-    - paragraph: "What the agent shows while it works, in this scheme's colours: each state at # px, as at the head of a reply, and at # px, as in an empty chat."
+    - paragraph: "What the agent shows while it works, in this scheme's colours: each state at # px, as in an empty chat, at # px, as in a turn's live line, and at # px, as a list row's still mark."
     - button "Show its states"
     - heading "Typography & scale" [level=#]
     - paragraph: Whole-UI zoom, text size, and the interface typeface.

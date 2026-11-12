@@ -21,7 +21,7 @@ import { applyQuestionFrame, applyQuestionResolved, graftPendingQuestions } from
 import { withRowRuns, withRunEnded } from './turnRuns'
 import type { RoutingSuggestion } from './RoutingChip'
 import type { TurnPaste } from './PasteChip'
-import type { TurnEnding } from './transcript/TurnHead'
+import type { TurnEnding } from '../../ui/turnEnding'
 import { type ChatTurn, type Segment, type ApprovalSegment, type QuestionSegment, appendThinking, type SubagentCard, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, foldStepLine, noteOf, rowText, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText, servedModelOf, imageDeliveryOf, noticeSegment } from './chatTypes'
 
 // ── The chat's stream: the open session as the gateway tells it ───────────────────────────────
@@ -444,7 +444,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     // this view watched, so it leaves the ending as the frame said it.
     if (from === 'frame') {
       const ended = running ? null : workPhaseOf(rs.phase)
-      setTurnEnding(ended === 'done' || ended === 'error' ? { phase: ended, line: String(rs.line ?? '') } : null)
+      setTurnEnding(ended === 'done' || ended === 'error' ? { phase: ended, line: String(rs.line ?? ''), outcome: turnOutcomeOf(rs.last_outcome) } : null)
     }
     // The turn's own start, and its end once its last frame says it ended (`since`, when that frame
     // started being said): the time its answer's folded work says.

@@ -1,15 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 
 import type { ComposerProps } from './types'
 import { voiceOrbPhase } from './voiceOrb'
+import { MIN_HOLD_MS } from '../turnEnding'
 
 // ── Voice mode shows the 64 px orb, listening while it hears you (#4963) ─────────────────────
 //
 // `docs/design/agent-orb.md` puts the 64 px orb in three places; voice mode is the composer's.
 // While hands-free is on, the orb is `listening` while the microphone hears the owner, and the
 // turn's own phase the rest of the time: muted while a reply is spoken, transcribing, or between
-// segments. With hands-free off there is no 64 px orb. Under reduced motion it is one still frame.
+// segments. With hands-free off there is no 64 px orb. Listening is the claw ring's ready form, so it
+// holds still while the owner speaks and the words say Listening (#6117); a turn's own phase moves
+// only while it thinks or works, and under reduced motion that is one still frame.
 
 let REDUCE = false
 Object.defineProperty(window, 'matchMedia', {
@@ -38,6 +41,15 @@ vi.mock('../../lib/api', async (orig) => {
         : (target as Record<string | symbol, unknown>)[key]),
     }),
   }
+})
+
+/** The voice orb as it is, recording whether it may bloom (jsdom draws no canvas, so the bloom
+ *  itself is watched in `ui/theLiveLineShowsHowTheTurnEnded.test.tsx`). */
+const blooms = vi.hoisted(() => [] as boolean[])
+vi.mock('../AgentOrb', async (orig) => {
+  const real = await orig<typeof import('../AgentOrb')>()
+  const Recorded = (p: Parameters<typeof real.AgentOrb>[0]) => { if (p.size === 64) blooms.push(p.bloom ?? true); return <real.AgentOrb {...p} /> }
+  return { ...real, AgentOrb: Recorded }
 })
 
 const { Composer } = await import('../Composer')
@@ -76,6 +88,14 @@ describe('the phase voice mode shows', () => {
     expect(voiceOrbPhase({ heard: false, phase: 'approval' })).toBe('approval')
     expect(voiceOrbPhase({ heard: false, phase: null })).toBe('idle')
   })
+
+  it('shows how the turn ended while that is held, unless it hears you', () => {
+    const ending = { phase: 'done' as const, line: 'Done in 3 seconds', outcome: 'complete' as const }
+    expect(voiceOrbPhase({ heard: false, phase: null, ending })).toBe('done')
+    expect(voiceOrbPhase({ heard: false, phase: null, ending: { phase: 'error', line: '', outcome: 'error' } })).toBe('error')
+    expect(voiceOrbPhase({ heard: true, phase: null, ending })).toBe('listening')
+    expect(voiceOrbPhase({ heard: false, phase: 'thinking', ending })).toBe('thinking')
+  })
 })
 
 describe('voice mode', () => {
@@ -111,6 +131,35 @@ describe('voice mode', () => {
     expect(voiceOrb()!.getAttribute('data-orb-phase')).toBe('idle')
   })
 
+  it('shows the turn’s ending once it ends, holds it, and then is idle', () => {
+    vi.useFakeTimers()
+    try {
+      const { rerender } = render(composer({ phase: 'streaming', streaming: true }))
+      fireEvent.click(handsFree())
+      expect(voiceOrb()!.getAttribute('data-orb-phase'), 'the control: the turn’s phase').toBe('streaming')
+      rerender(composer({ phase: null, ending: { phase: 'done', line: 'Done in 3 seconds', outcome: 'complete' } }))
+      expect(voiceOrb()!.getAttribute('data-orb-phase'), 'the ending is not shown').toBe('done')
+      act(() => { vi.advanceTimersByTime(MIN_HOLD_MS - 50) })
+      expect(voiceOrb()!.getAttribute('data-orb-phase'), 'the ending was not held').toBe('done')
+      act(() => { vi.advanceTimersByTime(100) })
+      expect(voiceOrb()!.getAttribute('data-orb-phase'), 'the ending stayed').toBe('idle')
+    } finally { vi.useRealTimers() }
+  })
+
+  it.each([
+    ['complete', 'Done in 3 seconds', true],
+    ['stopped', 'Stopped', false],
+    ['error', 'Claude stopped after you denied shell.', false],
+  ] as const)('a turn that ended %s (“%s”) gives the voice orb leave to bloom: %s', (outcome, words, may) => {
+    blooms.length = 0
+    const { rerender } = render(composer({ phase: 'streaming', streaming: true }))
+    fireEvent.click(handsFree())
+    expect(blooms.at(-1), 'the control: a running turn’s orb has its own rule').toBe(true)
+    rerender(composer({ phase: null, ending: { phase: 'done', line: words, outcome } }))
+    expect(voiceOrb()!.getAttribute('data-orb-phase')).toBe('done')
+    expect(blooms.at(-1)).toBe(may)
+  })
+
   it('goes when hands-free goes off', () => {
     render(composer())
     fireEvent.click(handsFree())
@@ -119,19 +168,21 @@ describe('voice mode', () => {
     expect(voiceOrb()).toBeNull()
   })
 
-  it('is one still frame under reduced motion', () => {
-    REDUCE = true
+  it.each([false, true])('holds still while it listens (reduced motion: %s)', (reduce) => {
+    REDUCE = reduce
     const { rerender } = render(composer())
     fireEvent.click(handsFree())
     hears(rerender, composer())
-    // `listening` moves; under reduced motion the orb draws its still instant and never runs.
-    expect(voiceOrb()!.getAttribute('data-agent-orb')).toBe('instant')
+    expect(voiceOrb()!.getAttribute('data-orb-state')).toBe('ready')
+    expect(voiceOrb()!.getAttribute('data-agent-orb')).toBe('still')
   })
 
-  it('moves while it listens, with motion allowed', () => {
-    const { rerender } = render(composer())
+  it('a turn thinking between segments moves, and is one still frame under reduced motion', () => {
+    const { rerender } = render(composer({ phase: 'thinking', processing: true }))
     fireEvent.click(handsFree())
-    hears(rerender, composer())
     expect(voiceOrb()!.getAttribute('data-agent-orb')).toBe('animated')
+    REDUCE = true
+    rerender(composer({ phase: 'planning', processing: true }))
+    expect(voiceOrb()!.getAttribute('data-agent-orb')).toBe('instant')
   })
 })

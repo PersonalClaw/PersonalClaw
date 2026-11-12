@@ -89,6 +89,11 @@ describe('the card, top to bottom', () => {
   it('a helper batch is a row of orbs, one per member', () => {
     card({ steps: steps({ type: 'begin', step: { id: 'h', kind: 'step', label: 'Handing off', helpers: ['thinking', 'tool', 'done'] } }) })
     expect(within(screen.getByRole('group', { name: '3 helpers' })).getAllByRole('img')).toHaveLength(3)
+    // A list's orbs are the still 12 px mark: nothing in the card's lists moves.
+    for (const orb of screen.getByRole('group', { name: '3 helpers' }).querySelectorAll<HTMLElement>('[data-agent-orb]')) {
+      expect(orb.dataset.orbSize).toBe('12')
+      expect(orb.dataset.agentOrb).toBe('still')
+    }
   })
 })
 
@@ -101,6 +106,10 @@ describe('in sight', () => {
       expect(row, k).not.toBeNull()
       expect(row.querySelector(`[data-kind-glyph="${k}"]`), `${k}'s glyph`).not.toBeNull()
       expect(row.querySelector('[data-work-line]')?.textContent, `${k}'s line`).toMatch(new RegExp(`^${k} work`))
+      // A row's orb is the still 12 px mark: nothing in the list moves.
+      const orb = row.querySelector<HTMLElement>('[data-agent-orb]')!
+      expect(orb.dataset.orbSize, `${k}'s orb`).toBe('12')
+      expect(orb.dataset.agentOrb, `${k}'s orb`).toBe('still')
     }
   })
 

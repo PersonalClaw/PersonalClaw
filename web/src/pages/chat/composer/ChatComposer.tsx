@@ -94,7 +94,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
   speakingTurn: number | null
 }) {
   const { acpFor, activatePlanMode, startGoalLoop, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, focusComposerSoon, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion, widgetDraft, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft, sendWithPrompt } = composer
-  const { sessionRef, turns, streaming, turnPhase, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, contextParts, sessionCost, autoChain, startedBy, workingDir } = stream
+  const { sessionRef, turns, streaming, turnPhase, turnEnding, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, contextParts, sessionCost, autoChain, startedBy, workingDir } = stream
   // The status-line pin is the owner's; the reading it shows is this chat's, live, and goes with it.
   const contextPinned = useContextPinned()
   // What runs once Chat preferences has gone: Optimize this draft puts the caret back in the editor
@@ -323,7 +323,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
             false on every home that has bound anything. */}
         <BundledFloorNotice />
         <ComposerStage ref={composerRef} settled={!started} value={input} onChange={(v) => { editInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
-          streaming={streaming} phase={turnPhase} onStop={stop} controls={CHAT_CONTROLS} data={data}
+          streaming={streaming} phase={turnPhase} ending={turnEnding} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
           onOpenPrompts={() => setPromptPaletteOpen(true)}
           plusMenuExtra={(close) => (

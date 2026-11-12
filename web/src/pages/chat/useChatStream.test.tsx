@@ -205,6 +205,19 @@ describe('useChatStream folds the session’s frames', () => {
     expect(result.current.turnLastStep, 'a turn that ended has no latest step to be quiet since').toBeNull()
   })
 
+  it.each([
+    ['complete', 'Done in 40 seconds'],
+    ['stopped', 'Stopped'],
+    ['error', 'Claude stopped after you denied shell.'],
+  ] as const)('hands the turn its ending with how it ended (%s), so only a completed turn blooms', async (outcome, words) => {
+    const { result } = await opened()
+    frame('chat_user_message', { content: 'and the cache?', ts: '2026-10-01T09:01:00Z' })
+    frame('work_phase', { ...runningState({ session: SESSION, phase: 'tool', line: 'Reading fetch.py', seq: 5 }) })
+    expect(result.current.turnEnding, 'the control: a running turn has no ending').toBeNull()
+    frame('work_phase', { ...runState({ session: SESSION, phase: 'done', line: words, last_outcome: outcome, seq: 6 }) })
+    expect(result.current.turnEnding).toEqual({ phase: 'done', line: words, outcome })
+  })
+
   it("takes no helper's phase for the chat's own, though it names the chat it works for", async () => {
     const { result } = await opened()
     frame('chat_user_message', { content: 'and the cache?', ts: '2026-10-01T09:01:00Z' })

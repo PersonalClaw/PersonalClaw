@@ -3,6 +3,7 @@ import { AgentOrb } from '../../../ui/AgentOrb'
 import { cx } from '../../../ui/cx'
 import { prefersReducedMotion } from '../../../design/motion'
 import { phaseLabel, type WorkPhase } from '../../../lib/workPhase'
+import { MIN_HOLD_MS, bloomsFor, fadeMs, useHeldEnding, type TurnEnding } from '../../../ui/turnEnding'
 
 // ── The head of the running turn's reply: the agent orb and one static line ─────────────────────
 //
@@ -10,18 +11,14 @@ import { phaseLabel, type WorkPhase } from '../../../lib/workPhase'
 // runs and while it waits on her. The orb takes the turn's phase and the line is the gateway's own
 // (`work_phase`'s `line`), or the phase's word when it says none, so the words always name the exact
 // phase. It shows after `SHOW_DELAY_MS` and holds at least `MIN_HOLD_MS`, so a fast reply never
-// flashes it, and when the turn ends it settles to the ending's still mark and fades within
-// `FADE_MS` (`docs/design/agent-orb.md`).
+// flashes it. When the turn ends it shows the ending, done (blooming only for a completed turn) or a
+// failure's ×, until its orb has settled and `MIN_HOLD_MS` more (`ui/turnEnding.ts`), so it is
+// fully formed before it fades over the Medium length, `fadeMs()` (`docs/design/agent-orb.md`).
 
 export const SHOW_DELAY_MS = 150
-export const MIN_HOLD_MS = 300
-export const FADE_MS = 300
-
-/** How the turn ended, from its last `work_phase` frame: `done` or `error`, and its ending line. */
-export interface TurnEnding { phase: WorkPhase; line: string }
 
 type Stage = 'hidden' | 'shown' | 'leaving'
-const WAITING_TO_START: TurnEnding = { phase: 'queued', line: '' }
+const WAITING_TO_START: TurnEnding = { phase: 'queued', line: '', outcome: null }
 
 export function TurnHead({ running, phase, line, ending, onShown, className }: {
   /** Whether this page holds a running turn (the stream's claim). */
@@ -40,10 +37,11 @@ export function TurnHead({ running, phase, line, ending, onShown, className }: {
   const shownAt = useRef(0)
   // What it shows: the running phase, else the ending, else (sent, not described yet) waiting to
   // start. A turn that ended without its last frame keeps what it showed last while it goes.
-  const now = running ? (phase ? { phase, line } : ending ?? WAITING_TO_START) : ending
+  const now = running ? (phase ? { phase, line, outcome: null } : ending ?? WAITING_TO_START) : ending
   const last = useRef<TurnEnding>(WAITING_TO_START)
   useEffect(() => { if (now) last.current = now })
   const shows = now ?? last.current
+  const { held, onSettled } = useHeldEnding(ending, stage === 'shown')
 
   useEffect(() => {
     if (running) {
@@ -53,14 +51,17 @@ export function TurnHead({ running, phase, line, ending, onShown, className }: {
       return () => window.clearTimeout(t)
     }
     if (stage === 'shown') {
-      const t = window.setTimeout(() => setStage('leaving'), Math.max(0, shownAt.current + MIN_HOLD_MS - Date.now()))
+      if (held) return
+      const wait = shownAt.current + MIN_HOLD_MS - Date.now()
+      if (wait <= 0) { setStage('leaving'); return }
+      const t = window.setTimeout(() => setStage('leaving'), wait)
       return () => window.clearTimeout(t)
     }
     if (stage === 'leaving') {
-      const t = window.setTimeout(() => setStage('hidden'), prefersReducedMotion() ? 0 : FADE_MS)
+      const t = window.setTimeout(() => setStage('hidden'), prefersReducedMotion() ? 0 : fadeMs())
       return () => window.clearTimeout(t)
     }
-  }, [running, stage])
+  }, [running, stage, held])
 
   const shown = stage !== 'hidden'
   // In the commit that shows it, before the browser paints: a passive effect ran after the paint,
@@ -76,7 +77,7 @@ export function TurnHead({ running, phase, line, ending, onShown, className }: {
     <div data-turn-head data-turn-head-stage={stage}
       className={cx('flex min-w-0 items-center gap-s transition-opacity duration-(--duration-medium) ease-out motion-reduce:transition-none', className)}
       style={{ opacity: stage === 'leaving' ? 0 : 1 }}>
-      <AgentOrb phase={shows.phase} />
+      <AgentOrb phase={shows.phase} onSettled={onSettled} bloom={bloomsFor(running && phase ? null : ending)} />
       <p data-turn-line data-type="body-m" aria-live={saying ? 'polite' : 'off'} className="min-w-0 truncate text-on-surface-var">
         {shows.line.trim() || phaseLabel(shows.phase)}
       </p>

@@ -37,7 +37,7 @@ that move the buddy between its four families.
 | Answer: no | Deny, Dismiss | a small side shake | `snappy`, amplitude by `expr()` | ~300 ms | no | instant |
 | Error | work fails | the orb droops, its dots sinking toward the lower edge and settling there as they take the neutral; the danger wash rises | `smooth`, then the effects curve | ~600 ms | only by listening | the error pose |
 | Done | the focused work finishes | the badge turns to a check, and the dots flourish once (a swirl around the orb) and come to rest, soft, in the neutral | `playful`, scaled by `expr()` | ~700 ms, then held for `finishedHold` | yes, by an alert or listening | the done pose |
-| Listening | push-to-talk starts | the orb swells a little toward the owner and its dots take the agent orb's listening state; the microphone badge pops | `snappy` | ~200 ms | no | instant |
+| Listening | push-to-talk starts | the orb swells a little toward the owner and its dots settle still, as the agent orb's ready state is while it listens; the microphone badge pops | `snappy` | ~200 ms | no | instant |
 | Dock and undock | a drop at or away from the top edge | only the drag moves the orb, and it stays where it is dropped; nothing fades in or out around it, and no shape melts or forms from another | the drag itself; on release, `smooth` to the drop point | ~300 ms | no | instant |
 | Doze and wake | sleep, absence, return | the dots slow to a stop and the orb dims; on wake, it brightens and its dots move again | the effects curve | ~600 ms | yes | instant |
 | Badge unfolds | pointer on the badge | the badge widens into the state's words, and folds back | `snappy` open, the effects curve close | ~200 ms | yes | instant |

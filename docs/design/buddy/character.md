@@ -1,9 +1,9 @@
 # Buddy character
 
-The buddy is one orb of dots, drawn the way the chat's agent orb is
+The buddy is one orb of dots that shows what the chat's agent orb shows
 ([`agent-orb.md`](../agent-orb.md), which [#3807] builds): the same phases in the same four
-families, the active family in the same orb states, and the agent orb's colour while an agent is
-alive. Its whole job is to make the agents' state readable at a glance, at any size, while staying
+families, each as the same one of the agent orb's five states, and the agent orb's colour while an
+agent is alive. Its whole job is to make the agents' state readable at a glance, at any size, while staying
 good company ([#3830]). The maintainer chose it over three character directions on 2026-10-18
 ([the choice](#the-choice)).
 
@@ -15,13 +15,16 @@ buddy's stills stand in on the tray and the dock only to show its state, while B
 
 ## Constraints
 
-- **One orb of dots, drawn the way the agent orb is.** Where the two show the same phase, they show
-  it in the same family, and in the active family in the same orb state: breathing, searching,
-  working, solving, connecting, composing or listening
-  ([`agent-orb.md`](../agent-orb.md#phase-to-state)). The quiet, waiting and blocked poses are the
-  buddy's own variants of the agent orb's still frames ([the poses](#the-poses)), and the quiet and
-  blocked ones are drawn in the neutral, since nothing in them is alive. Everything the buddy adds
-  to the agent orb's drawing, these variants among them, is listed once, with the rig's candidates
+- **One orb of dots, in the agent orb's states.** Where the two show the same phase, they show
+  it in the same family and as the same one of the agent orb's five states, read from the one
+  mapping (`web/src/lib/orbState.ts`, [`agent-orb.md`](../agent-orb.md#phase-to-state)): the dots
+  move exactly where the agent orb does, in the breathing drawing while it thinks and the working
+  one while it works, and hold the breathing drawing's still frame while it is ready, waits on you
+  or is done. The agent orb draws the claw ring and the buddy still draws dots, until the buddy
+  moves to the claw ring too. The quiet, waiting and blocked poses are the buddy's own variants of
+  the dots' still frames ([the poses](#the-poses)), and the quiet and blocked ones are drawn in the
+  neutral, since nothing in them is alive. Everything the buddy adds to the dots' drawing, these
+  variants among them, is listed once, with the rig's candidates
   ([`rig.md`](rig.md#candidates)). Its outline is round at every size, and the ClawMark's
   silhouette is no part of it.
 - **State through the orb's motion, density and badge.** Everything a family means survives with
@@ -53,13 +56,15 @@ buddy's stills stand in on the tray and the dock only to show its state, while B
   never squashes, stretches or turns into another shape, and it has no face to turn: no eyes, no
   mouth, no limb.
 - **Reads at 18, 24, 48 and 96 px**, in light and dark, in every colour scheme, with a still frame
-  for every pose under reduced motion. The agent orb tunes each of its two sizes as a drawing of its
-  own rather than scaling one; which of the buddy's sizes share those drawings and which need their
-  own is the rig's to settle ([`rig.md`](rig.md#starting-position)).
-- **Original:** the dots and their states are the agent orb's licensed base, shared on purpose
-  ([`agent-orb.md`](../agent-orb.md#the-component), [#3807]). What the buddy adds (its outline,
-  badge, wash, poses, gestures, presence and, later, its sound) and the whole orb are checked side
-  by side with other products' status indicators and assistant orbs, from public material. They
+  for every pose under reduced motion. The `thinking-orbs` drawing its dots use is tuned at two
+  sizes, 20 and 64 px, each a drawing of its own rather than one scaled; which of the buddy's sizes
+  share those drawings and which need their own is the rig's to settle
+  ([`rig.md`](rig.md#starting-position)).
+- **Original:** the dots are the `thinking-orbs` package's licensed base and their states the agent
+  orb's, shared on purpose ([`agent-orb.md`](../agent-orb.md#the-component), [#3807]). What the
+  buddy adds (its outline, badge, wash, poses, gestures, presence and, later, its sound) and the
+  whole orb are checked side by side with other products' status indicators and assistant orbs,
+  from public material. They
   pass if a viewer would recognise no drawn form, choreography or sound in them as another
   product's ([#4570]), and the record names none of those products.
 - **Drawn in parts a renderer can move:** the dots, the badge and the wash, each separate, with the
@@ -98,7 +103,7 @@ streaming (writing), listening, approval, question, error, done, idle, restartin
 | Family | Phases | The orb | Its badge |
 |---|---|---|---|
 | Quiet | done, idle | at rest: sparse and still, in the neutral | none at idle; after done, the check in the ok tone |
-| Active | queued, thinking, searching, tool, planning, delegating, streaming, listening, restarting | full, its dots moving in the agent orb's state for the phase (restarting takes working's), in the primary; its still is full and even | the working mark; the microphone while listening |
+| Active | queued, thinking, searching, tool, planning, delegating, streaming, listening, restarting | full, in the primary, its dots moving as the agent orb's state for the phase does: breathing while it thinks, working while it works (restarting takes working's), and still while it listens, which is the agent orb's ready state; its still is full and even | the working mark; the microphone while listening |
 | Waiting | approval, input | full and still, in the primary: drawn in tight for an approval, lifted a little for a question, with the alert's wash | "!" in the warn tone for an approval, "?" in the info tone for a question |
 | Blocked | error, offline | settled low and still, in the neutral: with the danger wash for an error, dimmed while offline | a mark in the danger tone for an error; the offline mark |
 
@@ -134,9 +139,9 @@ Nothing else; a motion never means two things.
 
 ## The drawn poses
 
-Every pose of the v0.3.0 set, and every still the tray and the dock show, is drawn on the agent
-orb's drawing the way the rig's in-place candidate draws it ([#3887],
-[`decisions/rig.md`](decisions/rig.md)): the dots are the agent orb's engine's, moved by the rig's
+Every pose of the v0.3.0 set, and every still the tray and the dock show, is drawn on the
+`thinking-orbs` drawing the way the rig's in-place candidate draws it ([#3887],
+[`decisions/rig.md`](decisions/rig.md)): the dots are that package's engine's, moved by the rig's
 poses (their density, how far they spread, how far they sink and their swirl), and the badge and the
 wash are drawn as dots in the alert's tone. The layered candidate reads the same table of poses and
 the parts stay apart, so whichever extension the rig settles on draws these sources without rework.
@@ -154,7 +159,7 @@ them, and a test holds the committed files to what the table draws.
   holding its dots, its wash and its badge as separate groups, and the whole orb only moves, turns
   or scales by one factor. Every colour is a token set in a style (`--color-orb-alive`,
   `--color-orb-rest` and the alert tones), so one file is the pose in light, in dark and in every
-  scheme. A dot's depth is its opacity, which is how the agent orb's painter shades a tinted dot
+  scheme. A dot's depth is its opacity, which is how the `thinking-orbs` painter shades a tinted dot
   toward the canvas.
 - **Sizes.** A pose is drawn at the room its surface gives the orb
   ([`surfaces.md`](surfaces.md#the-room-budget)): the buddy's one orb at 48 in every state, docked
@@ -223,9 +228,9 @@ PC_WRITE_BUDDY_POSES=1 npx vitest run src/buddyRig/poseSources.test.ts
 ## The component
 
 `web/src/ui/BuddyOrb.tsx` draws the orb in the app ([#3891]), on the in-place rig
-[`decisions/rig.md`](decisions/rig.md) chose: one canvas, painted with the agent orb's engine and
-painter, in the pose the table above gives each state, with the state's exact line beside it so the
-art never carries the state alone. The buddy's window, the playground, the focused card and the
+[`decisions/rig.md`](decisions/rig.md) chose: one canvas, painted with the `thinking-orbs`
+package's engine and painter, in the pose the table above gives each state, with the state's exact
+line beside it so the art never carries the state alone. The buddy's window, the playground, the focused card and the
 phone's views all draw this one component.
 
 - **Poses and transitions.** `web/src/ui/buddy/orbPoses.ts` is the transitions table: each entry

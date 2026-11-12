@@ -184,7 +184,7 @@ for (const theme of THEMES) {
   })
 }
 
-// ── The agent orb's states: every phase at 20 and 64 px ─────────────────────
+// ── The agent orb's states: every phase at 64, 20 and 12 px ─────────────────
 // Settings → Design shows them on request (`pages/settings/AgentOrbStates.tsx`), and this
 // photographs that gallery alone, in both themes, with motion and under reduced motion. The
 // orb is a canvas drawn from the page's clock, so a moving state is a new picture every frame:
@@ -206,7 +206,7 @@ for (const { key, theme, reducedMotion } of ORB_STATE_SHOTS) {
     // Tall enough for the whole gallery: the settings pane scrolls inside its own container, so
     // an element screenshot of anything below the viewport comes back blank.
     test.use({ reducedMotion, viewport: { width: 1280, height: 2400 } })
-    test('every phase at 20 and 64 px', async ({ page }) => {
+    test('every phase at 64, 20 and 12 px', async ({ page }) => {
       await seedTheme(page, theme)
       await page.clock.install({ time: ORB_CLOCK_START })
       const settle = await gotoRoute(page, 'settings/design', BUDGET)
@@ -214,7 +214,7 @@ for (const { key, theme, reducedMotion } of ORB_STATE_SHOTS) {
       await page.clock.pauseAt(ORB_CLOCK_PAUSE)
       await page.getByRole('button', { name: 'Show its states' }).click()
       const gallery = page.locator('[data-orb-gallery]')
-      await expect(gallery.locator('[data-agent-orb]')).toHaveCount(30)
+      await expect(gallery.locator('[data-agent-orb]')).toHaveCount(45)
       await expect(gallery).toHaveScreenshot(`${key}.png`, { animations: 'disabled', maxDiffPixels: 0 })
     })
   })

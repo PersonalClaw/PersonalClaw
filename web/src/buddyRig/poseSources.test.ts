@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SYSTEM_STATE_FAMILIES, WORK_PHASE_LOOKS } from '../lib/workPhase'
-import { FAMILIES, FAMILY_STATES, TRAY_STATES, familyOf, poseSet, stillOf, type Frame } from './poseSet'
+import { FAMILIES, FAMILY_STATES, TRAY_STATES, familyOf, movesOf, poseSet, stillOf, type Frame } from './poseSet'
 import { contactSheets, poseSources } from './poseSources'
 
 const WRITE_ENV = 'PC_WRITE_BUDDY_POSES'
@@ -74,7 +74,10 @@ describe('the pose set keeps to the phase contract', () => {
 
   it("queued is drawn alive in the scheme's primary, and listening's microphone keeps the warn tone", () => {
     expect(stillOf('queued')).toMatchObject({ ink: 'alive', tone: 'primary', mark: 'working' })
-    expect(stillOf('listening')).toMatchObject({ ink: 'alive', tone: 'warn', mark: 'listening', drawing: 'listening' })
+    // Listening is the agent orb's ready state (`lib/orbState.ts`): the still dots, alive.
+    // A still is never moving (`stillOf` draws the still frame); whether listening moves is movesOf's.
+    expect(stillOf('listening')).toMatchObject({ ink: 'alive', tone: 'warn', mark: 'listening', drawing: 'breathing' })
+    expect(movesOf('listening')).toBe(false)
     expect(WORK_PHASE_LOOKS.listening.tone).toBe('warn')
   })
 

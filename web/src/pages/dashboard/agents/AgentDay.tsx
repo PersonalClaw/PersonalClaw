@@ -10,7 +10,8 @@ import { MarkdownLine } from '../../../ui/MarkdownLine'
 import { ButtonLink } from '../../../ui/ButtonLink'
 import { FilterMenu } from '../../../ui/FilterMenu'
 import { TextLink } from '../../../ui/TextLink'
-import { StateMark } from '../../../ui/StateMark'
+import { OrbMark } from '../../../ui/orb/OrbMark'
+import { ORB_STATE_OF_AGENT_ROW } from '../../../lib/orbState'
 import { TOUCH_TARGET } from '../../../ui/Toggle'
 import { fvs } from '../../../design/fontWeight'
 import type { PhaseFamily } from '../../../lib/workPhase'
@@ -354,9 +355,11 @@ function NameCell({ row, strong = false }: { row: DayRow; strong?: boolean }) {
       {row.key === 'scheduled'
         ? <span data-type="body-s" className="text-on-surface-var">Agent not named</span>
         : (
-          <StateMark family={FAMILY[row.state]} className={strong ? 'text-on-surface' : 'text-on-surface-var'}>
-            <span data-type="body-s" style={strong ? fvs(600) : undefined}>{STATE_WORD[row.state]}{row.asks > 1 ? ` · ${row.asks} asks` : ''}</span>
-          </StateMark>
+          <span className={strong ? 'text-on-surface' : 'text-on-surface-var'}>
+            <OrbMark state={ORB_STATE_OF_AGENT_ROW[row.state].state} badge={ORB_STATE_OF_AGENT_ROW[row.state].badge} tone={`--color-state-${FAMILY[row.state]}`} family={FAMILY[row.state]}>
+              <span data-type="body-s" style={strong ? fvs(600) : undefined}>{STATE_WORD[row.state]}{row.asks > 1 ? ` · ${row.asks} asks` : ''}</span>
+            </OrbMark>
+          </span>
         )}
     </div>
   )

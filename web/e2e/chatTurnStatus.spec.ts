@@ -12,7 +12,8 @@ import { idleRunState } from '../src/lib/workPhase'
 // this spec asks a real browser, on a planted turn of 120 rows: the line sits under the turn's last
 // row and inside the transcript, it has no box of its own, it scrolls away with the transcript
 // scrolled to its top, while the composer's Stop stays in view, its orb is the transcript's one
-// live orb, Stop and Esc stop the turn, and the line goes when the turn ends.
+// live orb, Stop and Esc stop the turn, and when the turn ends the line shows how it ended, then
+// goes.
 //
 // The chat is planted rather than driven: its read is a route stub that says a turn runs, and the
 // socket is the spec's own, so the frames that move the turn are the ones sent here and nothing
@@ -99,7 +100,7 @@ async function boxes(page: Page) {
 const composerStop = (page: Page) => page.locator('[data-composer-stage]').getByRole('button', { name: 'Stop this turn' })
 
 test.describe("a running turn's activity line sits bare at the end of the conversation", () => {
-  test('under the last of 120 rows, inside the transcript and bare; it scrolls with the thread, and goes when the turn ends', async ({ page }) => {
+  test('under the last of 120 rows, inside the transcript and bare; it scrolls with the thread, and shows how the turn ended before it goes', async ({ page }) => {
     const turn = await plantTheTurn(page)
     await gotoRoute(page, `chat/${KEY}`)
     await expect(statusRow(page), 'the planted turn runs, so its line shows').toBeVisible({ timeout: 15_000 })
@@ -134,9 +135,10 @@ test.describe("a running turn's activity line sits bare at the end of the conver
 
     // The turn ends: its last frame, then `chat_done`.
     turn.end()
-    turn.send('work_phase', { ...idleRunState(KEY), phase: 'done', since: new Date().toISOString(), seq: 3 })
+    turn.send('work_phase', { ...idleRunState(KEY), phase: 'done', last_outcome: 'complete', since: new Date().toISOString(), seq: 3 })
+    await expect(statusRow(page), 'the line shows how the turn ended').toHaveAttribute('data-phase', 'done')
     turn.send('chat_done', { content: ROWS.join('\n') })
-    await expect(statusRow(page), 'the turn ended, so its line goes').toHaveCount(0)
+    await expect(statusRow(page), 'then the line goes').toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible()
   })
 

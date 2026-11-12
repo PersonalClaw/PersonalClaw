@@ -1,7 +1,9 @@
 // @module-tag tree-scan
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import { TurnHead, MIN_HOLD_MS, SHOW_DELAY_MS, FADE_MS } from './TurnHead'
+import { TurnHead, SHOW_DELAY_MS } from './TurnHead'
+import { MIN_HOLD_MS, fadeMs } from '../../../ui/turnEnding'
+import { runtime } from '../../../design/runtime'
 import { WORK_PHASES, WORK_PHASE_LOOKS, phaseFamily, phaseLabel, type WorkPhase } from '../../../lib/workPhase'
 import { join } from 'node:path'
 import { filesUnder, readSource } from '../../../test/sourceTree'
@@ -14,7 +16,7 @@ import { filesUnder, readSource } from '../../../test/sourceTree'
 // whole turn. The line is the gateway's own (`work_phase`'s `line`), or the phase's word when it says
 // none, so it always names the exact phase with the orb hidden. The orb shows after 150 ms and holds
 // at least 300 ms, so a fast reply never flashes it, and when the turn ends it settles to the
-// ending's still mark and fades within 300 ms.
+// ending, holds it 300 ms once its orb has settled, and fades over the Medium length.
 
 type Props = Parameters<typeof TurnHead>[0]
 const running = (phase: WorkPhase | null, line = ''): Props => ({ running: true, phase, line, ending: null })
@@ -67,10 +69,10 @@ describe('the line names the exact phase', () => {
 })
 
 describe('the settled rows', () => {
-  it('queued breathes, in the active family', () => {
+  it('queued is thinking, and moves, in the active family', () => {
     render(<TurnHead {...running('queued', 'Waiting to start')} />)
     pass(SHOW_DELAY_MS)
-    expect(orb().dataset.orbDrawing).toBe('breathing')
+    expect(orb().dataset.orbState).toBe('thinking')
     expect(orb().dataset.orbFamily).toBe('active')
     expect(orb().dataset.agentOrb).toBe('animated')
   })
@@ -90,7 +92,7 @@ describe('the settled rows', () => {
     render(<TurnHead {...running('streaming')} />)
     pass(SHOW_DELAY_MS)
     expect(lineOf().textContent).toBe('Writing')
-    expect(orb().dataset.orbDrawing).toBe('composing')
+    expect(orb().dataset.orbState).toBe('thinking')
   })
 
   it.each([
@@ -100,7 +102,7 @@ describe('the settled rows', () => {
     const { rerender } = render(<TurnHead {...running('streaming')} />)
     pass(SHOW_DELAY_MS + MIN_HOLD_MS)
     // The turn's last frame names no turn, and says how it ended.
-    rerender(<TurnHead running phase={null} line="" ending={{ phase, line }} />)
+    rerender(<TurnHead running phase={null} line="" ending={{ phase, line, outcome: phase === 'done' ? 'complete' : 'error' }} />)
     expect(lineOf().textContent).toBe(line)
     expect(orb().dataset.orbPhase).toBe(phase)
     expect(orb().dataset.orbFamily).toBe(family)
@@ -109,36 +111,65 @@ describe('the settled rows', () => {
   })
 })
 
-describe('timing: shown after 150 ms, held at least 300 ms, faded within 300 ms', () => {
+describe('timing: shown after 150 ms, held at least 300 ms, faded over the Medium length', () => {
   it('a turn that ends before 150 ms never shows the orb', () => {
     const { rerender } = render(<TurnHead {...running('thinking')} />)
     pass(SHOW_DELAY_MS - 50)
     expect(head()).toBeNull()
-    rerender(<TurnHead running={false} phase={null} line="" ending={{ phase: 'done', line: 'Done in 1 second' }} />)
+    rerender(<TurnHead running={false} phase={null} line="" ending={{ phase: 'done', line: 'Done in 1 second', outcome: 'complete' }} />)
     pass(2_000)
     expect(head()).toBeNull()
   })
 
-  it('a shown orb stays at least 300 ms, then settles and fades out', () => {
+  it('a shown orb stays at least 300 ms, holds its ending 300 ms once settled, then fades out', () => {
     const { rerender } = render(<TurnHead {...running('thinking')} />)
     pass(SHOW_DELAY_MS)
     expect(head()).not.toBeNull()
     pass(100)
-    rerender(<TurnHead running={false} phase={null} line="" ending={{ phase: 'done', line: 'Done in 1 second' }} />)
-    pass(MIN_HOLD_MS - 100 - 1)
+    // Here the orb has no canvas to morph on, so it settles on the ending at once.
+    rerender(<TurnHead running={false} phase={null} line="" ending={{ phase: 'done', line: 'Done in 1 second', outcome: 'complete' }} />)
+    pass(MIN_HOLD_MS - 1)
     expect(head()!.dataset.turnHeadStage).toBe('shown')
     expect(lineOf().textContent).toBe('Done in 1 second')
     pass(1)
     expect(head()!.dataset.turnHeadStage).toBe('leaving')
     expect(head()!.style.opacity).toBe('0')
-    pass(FADE_MS)
+    pass(fadeMs())
     expect(head()).toBeNull()
   })
 
-  it('fades within 300 ms', () => {
-    expect(FADE_MS).toBeLessThanOrEqual(300)
+  it('a turn that ends with no ending said, 100 ms after its head shows, still holds the head 300 ms from when it showed', () => {
+    const { rerender } = render(<TurnHead {...running('thinking')} />)
+    pass(SHOW_DELAY_MS)
+    expect(head(), 'the control: the head shows').not.toBeNull()
+    pass(100)
+    // The stream ends before any frame says how the turn ended.
+    rerender(<TurnHead running={false} phase={null} line="" ending={null} />)
+    pass(MIN_HOLD_MS - 100 - 1)
+    expect(head()!.dataset.turnHeadStage, 'the head went before 300 ms').toBe('shown')
+    pass(1)
+    expect(head()!.dataset.turnHeadStage).toBe('leaving')
+  })
+
+  it('fades on the Medium length, 300 ms by default', () => {
+    expect(fadeMs()).toBe(300)
     expect(SHOW_DELAY_MS).toBe(150)
     expect(MIN_HOLD_MS).toBe(300)
+  })
+
+  it('the fade lasts the Medium length the owner set, not a fixed one', () => {
+    runtime.durationMedium = 800
+    try {
+      const { rerender } = render(<TurnHead {...running('thinking')} />)
+      pass(SHOW_DELAY_MS + MIN_HOLD_MS)
+      rerender(<TurnHead running={false} phase={null} line="" ending={{ phase: 'done', line: 'Done in 1 second', outcome: 'complete' }} />)
+      pass(MIN_HOLD_MS)
+      expect(head()!.dataset.turnHeadStage).toBe('leaving')
+      pass(700)
+      expect(head(), 'the head went before its fade ended').not.toBeNull()
+      pass(100)
+      expect(head(), 'the head stayed after its fade').toBeNull()
+    } finally { runtime.durationMedium = 300 }
   })
 
   it('a turn that comes back while the head fades shows it again at once', () => {
@@ -183,7 +214,7 @@ describe('what a screen reader hears', () => {
   it('the ending is not said by the line: the transcript’s turn narration says it, once', () => {
     const { rerender } = render(<TurnHead {...running('streaming')} />)
     pass(SHOW_DELAY_MS)
-    rerender(<TurnHead running phase={null} line="" ending={{ phase: 'done', line: 'Done in 4 seconds' }} />)
+    rerender(<TurnHead running phase={null} line="" ending={{ phase: 'done', line: 'Done in 4 seconds', outcome: 'complete' }} />)
     expect(lineOf().getAttribute('aria-live')).toBe('off')
   })
 })

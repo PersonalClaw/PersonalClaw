@@ -1,10 +1,11 @@
-/** The buddy orb (#3891): the agent orb's drawing extended in place, the rig #3887 chose
- *  (`docs/design/buddy/decisions/rig.md`), for every state the buddy shows, with its exact line
- *  beside it so the art never carries the state alone.
+/** The buddy orb (#3891): the thinking-orbs drawing extended in place, the rig #3887 chose
+ *  (`docs/design/buddy/decisions/rig.md`), for every state the buddy shows, in the agent orb's
+ *  state for it (`lib/orbState.ts`), with its exact line beside it so the art never carries the
+ *  state alone.
  *
- *  Everything is drawn into one canvas with the agent orb's own engine and painter: the state's
- *  drawing with its pose's density and arrangement, the whole orb's rise and fall, and the badge
- *  and the wash drawn as dots in the alert's tone (`ui/buddy/orbPoses.ts`, #3830's poses). The dots
+ *  Everything is drawn into one canvas with the thinking-orbs package's engine and painter: the
+ *  state's drawing with its pose's density and arrangement, the whole orb's rise and fall, and the
+ *  badge and the wash drawn as dots in the alert's tone (`ui/buddy/orbPoses.ts`, #3830's poses). The dots
  *  take the alive ink while an agent works or waits on the owner and the rest ink where nothing is,
  *  both tokens, so a scheme change retints within a frame. One loop paints all of it, at most at the
  *  buddy's frame rate (`ui/orbDots.ts`), and only while the dots or the pose move: a pose that holds
@@ -22,7 +23,7 @@ import { modeOf, poseFrame } from '../buddyRig/arrange'
 import { PAD } from '../buddyRig/inPlaceParts'
 import { tunedDrawingFor, type BuddySize } from '../buddyRig/poses'
 import { inkOf, onOrbMediaChange, orbContrast, useInk } from './AgentOrb'
-import { familyOf, poseOf, stillOf, transitionOf, wordsOf, type BuddyState } from './buddy/orbPoses'
+import { familyOf, movesOf, poseOf, stillOf, transitionOf, wordsOf, type BuddyState } from './buddy/orbPoses'
 import { paintOrb } from './buddy/paintOrb'
 import { useOrbPose } from './buddy/useOrbPose'
 import { runDots, tintOf, useOnScreen } from './orbDots'
@@ -41,7 +42,7 @@ export interface BuddyOrbProps {
   state: BuddyState
   /** The state's exact line (`lib/buddy/copy.ts`), shown beside the orb. */
   line: string
-  /** 18 and 24 px draw from the agent orb's 20 px drawing, 48 and 96 px from its 64 px one. */
+  /** 18 and 24 px draw from the thinking-orbs package's 20 px drawing, 48 and 96 px from its 64 px one. */
   size?: BuddySize
   /** Hold even a moving state still: a contact sheet's frames. */
   still?: boolean
@@ -68,7 +69,7 @@ export function BuddyOrb({ state, line, size = 48, still = false }: BuddyOrbProp
   const { mode } = useMode()
   const canvas = useRef<HTMLCanvasElement>(null)
   const onScreen = useOnScreen(canvas)
-  const dotsMove = family === 'active' && !still && mayMove
+  const dotsMove = movesOf(state) && !still && mayMove
   const running = (dotsMove || (pose.moving && mayMove)) && onScreen
   const { values } = pose
 

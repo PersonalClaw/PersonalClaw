@@ -5,6 +5,7 @@ import { SCHEMES } from './schemes'
 import { tokenValue } from './tokenSheet'
 import { readSource } from '../test/sourceTree'
 import { SELECTED_PILL } from '../ui/NavRail'
+import { MARK_TONE } from '../ui/ThreadRail'
 import { EDGE } from '../ui/SearchField'
 
 // ── The chat list's controls are told from their ground at 3:1 or more (one list for both hosts) ──
@@ -15,7 +16,8 @@ import { EDGE } from '../ui/SearchField'
 // `border-on-surface-low/70`, which this file measures against both grounds, in both modes, with the
 // edge composited over the control's own fill as it renders. The list's text and icons are measured
 // too: the app's name and the row marks in `on-surface-low`, the rows in `on-surface-var`, the
-// sidebar's section heading (`on-surface` at 0.65), the unread dot, and the open menu's text and
+// sidebar's section heading (`on-surface` at 0.65), each row's state mark in each of its four tones,
+// and the open menu's text and
 // icons on its glass (`surface-container` at 0.72 over the ground).
 //
 // No colour scheme overrides a surface or an ink token (a test below pins that), so the default
@@ -91,9 +93,13 @@ describe('the chat list on its grounds', () => {
       const rail = token('rail', mode)
       expect(contrast(overlay(token('on-surface', mode), rail, 0.65), rail)).toBeGreaterThanOrEqual(4.5)
     })
-    it(`the unread dot (icon) is 3:1 or more on both grounds and on the lit pill, in ${mode}`, () => {
-      for (const ground of ['rail', 'surface', 'surface-low']) {
-        expect(contrast(token('state-quiet', mode), token(ground, mode)), `on ${ground} (${mode})`).toBeGreaterThanOrEqual(3)
+    it(`each row's state mark (icon) is 3:1 or more on both grounds and on the lit pill, in each of its tones, in ${mode}`, () => {
+      const tones = Object.entries(MARK_TONE)
+      expect(tones.map(([family]) => family).sort(), 'the control: the rail draws four tones').toEqual(['active', 'blocked', 'quiet', 'waiting'])
+      for (const [family, tone] of tones) {
+        for (const ground of ['rail', 'surface', 'surface-low']) {
+          expect(contrast(tokenValue(tone, mode), token(ground, mode)), `${family} (${tone}) on ${ground} (${mode})`).toBeGreaterThanOrEqual(3)
+        }
       }
     })
     for (const [host, ground] of Object.entries(GROUNDS)) {
@@ -130,7 +136,10 @@ describe('the chat list on its grounds', () => {
   })
 
   it('no colour scheme overrides a surface or an ink this file measures, so the numbers hold in all', () => {
-    const measured = new Set(['rail', 'surface', 'on-surface', 'on-surface-low', 'on-surface-var', 'state-quiet', ...Object.values(BOUNDARIES)].map((n) => `--color-${n}`))
+    const measured = new Set([
+      'rail', 'surface', 'on-surface', 'on-surface-low', 'on-surface-var', 'ok', 'warn', 'danger',
+      ...Object.values(MARK_TONE).map((t) => t.replace('--color-', '')), ...Object.values(BOUNDARIES),
+    ].map((n) => `--color-${n}`))
     expect(SCHEMES.length).toBeGreaterThanOrEqual(12)
     for (const s of SCHEMES) {
       const overrides = Object.keys(s.colors).filter((k) => measured.has(k))

@@ -12,7 +12,7 @@ import type { Transition } from 'framer-motion'
 import type { OrbState } from 'thinking-orbs'
 import { expr, physics, spring } from '../design/motion'
 import { WORK_PHASE_LOOKS, phaseLabel, type PhaseFamily, type PhaseTone } from '../lib/workPhase'
-import { ORB_LOOKS, type AgentOrbSize } from '../ui/AgentOrb'
+import { ORB_LOOKS, type TunedDrawing } from './orbLooks'
 import { ORB_FPS } from '../ui/orbDots'
 import type { Pose, PoseKey } from '../ui/buddy/useOrbPose'
 
@@ -26,9 +26,9 @@ export const BADGE_GLYPHS: Record<BadgeMark, string> = { working: '•••', a
 
 export interface RigLook {
   family: PhaseFamily
-  /** The agent orb's drawing for the phase. */
+  /** The thinking-orbs drawing for the phase. */
   drawing: OrbState
-  /** Whether the dots move: only in the active family, as the agent orb's do. */
+  /** Whether the dots move: only in the active family, where the agent orb's state moves too. */
   moves: boolean
   ink: 'alive' | 'rest'
   badge: BadgeMark | null
@@ -102,11 +102,11 @@ export const RIG_LOOP: readonly RigStep[] = [
 export type BuddySize = 18 | 24 | 48 | 96
 export const BUDDY_SIZES: readonly BuddySize[] = [18, 24, 48, 96]
 
-/** Which of the agent orb's two tuned drawings a buddy size shares: 18 and 24 px draw from the
+/** Which of the thinking-orbs package's two tuned drawings a buddy size shares: 18 and 24 px draw from the
  *  20 px drawing's dot counts and radii, 48 and 96 px from the 64 px drawing's, each at its own size
  *  (`docs/design/buddy/decisions/rig.md`, "Sizes"). The tray's stills and the presence poses' own
  *  sizes (16 to 22 px, and 56) follow the same line. */
-export function tunedDrawingFor(size: number): AgentOrbSize {
+export function tunedDrawingFor(size: number): TunedDrawing {
   return size < 32 ? 20 : 64
 }
 

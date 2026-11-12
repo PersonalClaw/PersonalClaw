@@ -5,8 +5,9 @@
  * Both candidates read this one table, so the spike compares two ways of drawing the same poses
  * rather than two sets of poses. What it holds:
  *
- *  - each family's look follows the agent orb's (`ORB_LOOKS`): the same drawing, the alive ink while
- *    an agent works or waits on the owner, the rest ink where nothing is alive, and a badge whose
+ *  - each family's look follows the agent orb's mapping (`ORB_LOOKS`, from `lib/orbState.ts`): its
+ *    dots move where the agent orb moves, the alive ink while an agent works or waits on the
+ *    owner, the rest ink where nothing is alive, and a badge whose
  *    mark, not its colour, says which waiting or failed state it is;
  *  - every move is one of the four presets or the effects curve, chosen by the transitions table,
  *    so `--bounciness` reaches the overshoot and reduced motion makes every change instant;
@@ -16,8 +17,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Transition } from 'framer-motion'
 import { runtime } from '../design/runtime'
-import { ORB_LOOKS } from '../ui/AgentOrb'
-import { phaseFamily } from '../lib/workPhase'
+import { ORB_LOOKS } from './orbLooks'
+import { WORK_PHASES, phaseFamily } from '../lib/workPhase'
+import { ORB_STATE_OF } from '../lib/orbState'
+import { MOVES } from '../ui/orb/clawRing'
+import { movesOf } from './poseSet'
 import {
   BUDDY_SIZES, POSE_KEYS, RIG_LOOP, RIG_PHASES, cardTransition, poseOf, poseTransition, rigLook, tunedDrawingFor,
   type PoseKey, type RigPhase,
@@ -58,12 +62,16 @@ describe('the looks follow the agent orb', () => {
     expect(new Set(RIG_PHASES.map((p) => rigLook(p).family))).toEqual(new Set(['quiet', 'active', 'waiting', 'blocked']))
   })
 
-  it.each([...RIG_PHASES])('%s keeps the agent orb’s drawing, motion and ink', (phase) => {
+  it.each([...RIG_PHASES])('%s keeps the thinking-orbs drawing, motion and ink the mapping gives it', (phase) => {
     const look = rigLook(phase)
     expect(look.family).toBe(phaseFamily(phase))
     expect(look.drawing).toBe(ORB_LOOKS[phase].drawing)
     expect(look.moves).toBe(ORB_LOOKS[phase].moves)
     expect(look.ink).toBe(ORB_LOOKS[phase].ink)
+  })
+
+  it.each([...WORK_PHASES])('%s’s dots move exactly where the agent orb’s state for it moves', (phase) => {
+    expect(movesOf(phase)).toBe(MOVES[ORB_STATE_OF[phase].state])
   })
 
   it('a badge’s mark tells the states apart without its colour', () => {
@@ -153,7 +161,7 @@ describe('the loop the measurement plays', () => {
 })
 
 describe('the buddy’s sizes', () => {
-  it('each shares one of the agent orb’s two tuned drawings', () => {
+  it('each shares one of the thinking-orbs package’s two tuned drawings', () => {
     expect(BUDDY_SIZES.map((s) => [s, tunedDrawingFor(s)])).toEqual([[18, 20], [24, 20], [48, 64], [96, 64]])
   })
 })

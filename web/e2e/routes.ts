@@ -277,7 +277,7 @@ export const THEMES = ['light', 'dark'] as const
 export type Theme = (typeof THEMES)[number]
 
 // ── The agent orb's states — one element, photographed per variant ─────────
-// Settings → Design shows every phase of the orb at 20 and 64 px on request
+// Settings → Design shows every phase of the orb at 64, 20 and 12 px on request
 // (`pages/settings/AgentOrbStates.tsx`), and `visual.spec.ts` photographs that gallery alone, in
 // each theme with motion and under reduced motion. Each shot's `key` is its baseline's name, as a
 // route's `<id>-<theme>` is, so `visualBaselineCoverage.test.ts` holds the goldens to this list

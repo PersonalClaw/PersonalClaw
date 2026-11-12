@@ -28,6 +28,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The Nix flake installs 0.3.8.**
 - **Home's Needs you and Running now say which project each piece of work is in, and a running card says what kind of work it is. A code session that made its own project is listed under it and reads its brief.**
+- **The agent orb shows each state in a form of its own: ready holds still, thinking swells, working turns two rings, waiting on you locks into a clasp, and done closes into the claw mark, with one bloom when the turn completed; a finished turn's line now shows it before it goes. A row's state in the sidebar, a project's chats and Home's agents is the orb's still mark.**
 
 ## [0.3.8] — 2026-11-11
 

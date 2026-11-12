@@ -5,7 +5,9 @@ import { Button } from '../../../ui/Button'
 import { ListSkeleton } from '../../../ui/ListScaffold'
 import { Markdown } from '../../../ui/Markdown'
 import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
-import { TurnHead, type TurnEnding } from '../transcript/TurnHead'
+import { TurnHead } from '../transcript/TurnHead'
+import { turnOutcomeOf } from '../turnOutcome'
+import type { TurnEnding } from '../../../ui/turnEnding'
 import { notify } from '../../../app/appSdk'
 import { api, type ChatHistoryMsg, type RunState } from '../../../lib/api'
 import { isAChatsPhase, livePhaseOf, workPhaseOf, type WorkPhase } from '../../../lib/workPhase'
@@ -39,7 +41,7 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
     setLive(livePhaseOf(rs))
     if (from === 'frame') {
       const ended = rs.turn ? null : workPhaseOf(rs.phase)
-      setEnding(ended === 'done' || ended === 'error' ? { phase: ended, line: String(rs.line ?? '') } : null)
+      setEnding(ended === 'done' || ended === 'error' ? { phase: ended, line: String(rs.line ?? ''), outcome: turnOutcomeOf(rs.last_outcome) } : null)
     }
   }
 

@@ -27,7 +27,7 @@ Only a test keeps the two from drifting, and this is it. It holds the record's o
 * **What the buddy shares with the agent orb, and what it adds, each have one home.** The agent
   orb's design says what the two share, and the rig's candidates list what the buddy adds. The
   brief's first constraint links both, and the originality checks in the brief and in the test
-  plan link the agent orb's component, whose dots the buddy shares on purpose. None of them keeps
+  plan link the agent orb's component, whose states the buddy shares on purpose. None of them keeps
   a list of its own, which would drift from the one it copies.
 * **Every pose is drawn, and only the poses the brief names.** The census reads the v0.3.0 set
   from the brief's own words (the family table's phases, the focused card's orb for each family,
@@ -196,7 +196,7 @@ COMPARISONS = (
     (
         "character.md",
         "Constraints",
-        "drawn the way the agent orb is",
+        "in the agent orb's states",
         ("../agent-orb.md#phase-to-state", "rig.md#candidates"),
     ),
     ("character.md", "Constraints", "**original:**", ("../agent-orb.md#the-component",)),
@@ -204,9 +204,9 @@ COMPARISONS = (
 )
 
 #: The drawn poses: a source for every pose and still the brief's v0.3.0 set names, rendered from
-#: the pose table (``web/src/buddyRig/poseSet.ts``) on the agent orb's drawing, with the contact
-#: sheets in ``sheets/`` beside them. A pose's ``.svg`` is its reduced-motion still, and a pose
-#: that moves has a ``.motion.svg`` too, the instant its motion is drawn at.
+#: the pose table (``web/src/buddyRig/poseSet.ts``) on the ``thinking-orbs`` drawing, with the
+#: contact sheets in ``sheets/`` beside them. A pose's ``.svg`` is its reduced-motion still, and a
+#: pose that moves has a ``.motion.svg`` too, the instant its motion is drawn at.
 POSES = FOLDER / "poses"
 CHARACTER = FOLDER / "character.md"
 POSES_HEADING = "The poses"
@@ -1242,7 +1242,7 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
             lambda: comparison_problems(
                 _record_texts_with("character.md", "(rig.md#candidates)", "(rig.md)")
             ),
-            "character.md: the entry that says 'drawn the way the agent orb is' does not link"
+            'character.md: the entry that says "in the agent orb\'s states" does not link'
             " rig.md#candidates",
         ),
     ]

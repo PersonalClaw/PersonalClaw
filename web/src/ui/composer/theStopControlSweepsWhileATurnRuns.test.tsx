@@ -50,7 +50,8 @@ vi.mock('../../lib/api', async (orig) => {
 
 const { Composer } = await import('../Composer')
 const { runtime } = await import('../../design/runtime')
-const { ORB_LOOKS } = await import('../AgentOrb')
+const { ORB_STATE_OF } = await import('../../lib/orbState')
+const { MOVES } = await import('../orb/clawRing')
 const { WORK_PHASES } = await import('../../lib/workPhase')
 
 const CONTROLS = { agent: false, model: false, approval: false, reasoning: false, attach: false, mic: false, optimize: false }
@@ -212,20 +213,20 @@ describe('the sweep never remounts the button', () => {
 //
 // The agent orb goes still the moment the owner is needed: an approval or a question is a still
 // frame, so the card that needs her holds her attention (`docs/design/agent-orb.md`). The Stop
-// control reads the turn's phase the same way, from the orb's own table (`ORB_LOOKS`): its sweep
+// control reads the turn's phase the same way, from the orb's own table (`ORB_STATE_OF`): its sweep
 // turns exactly while the orb moves, and while the turn waits on her the arc holds still where it
 // is, still drawn, and turns on from there once the turn runs again, so it never jumps to the top.
 describe('while the turn waits on her, the sweep holds still, as the orb does', () => {
   it('an approval and a question are still frames of the orb', () => {
     // Positive control for the rows below, which read the same table: both waits are in it, still.
-    expect(ORB_LOOKS.approval.moves).toBe(false)
-    expect(ORB_LOOKS.input.moves).toBe(false)
-    expect(ORB_LOOKS.tool.moves).toBe(true)
+    expect(MOVES[ORB_STATE_OF.approval.state]).toBe(false)
+    expect(MOVES[ORB_STATE_OF.input.state]).toBe(false)
+    expect(MOVES[ORB_STATE_OF.tool.state]).toBe(true)
   })
 
   it.each([...WORK_PHASES])('%s: the sweep turns exactly when the orb moves, and the arc is drawn either way', (phase) => {
     render(composer({ streaming: true, phase }))
-    expect(sweepOf()).toBe(ORB_LOOKS[phase].moves ? 'animated' : 'still')
+    expect(sweepOf()).toBe(MOVES[ORB_STATE_OF[phase].state] ? 'animated' : 'still')
     expect(arcs(), 'holding still took the arc away').toHaveLength(1)
   })
 

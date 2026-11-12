@@ -14,9 +14,9 @@ import { ExplainQuestion } from './ExplainQuestion'
 //
 // What a new chat opens on: the agent orb and a greeting, the composer, and two strips beneath it —
 // the owner's saved starters and suggestions drawn from memory and recent activity. Picking one
-// fills the composer; nothing is sent until the owner sends it. The orb is its 64 px drawing, still
-// and in the rest colour: nothing runs in a new chat, so nothing on it moves
-// (`docs/design/agent-orb.md`, "Placement").
+// fills the composer; nothing is sent until the owner sends it. The orb is its 64 px ready form,
+// still and in the rest colour: nothing runs in a new chat, so nothing on it moves
+// (`docs/design/agent-orb.md`, "Sizes and places").
 
 function greeting(name: string): string {
   const h = new Date().getHours()

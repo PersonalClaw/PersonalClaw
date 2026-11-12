@@ -1,5 +1,8 @@
+import { ORB_STATE_OF_AGENT_ROW } from '../../../lib/orbState'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
+import { restForm } from '../../../ui/orb/clawRing'
+import { paintRing } from '../../../ui/orb/paintRing'
 import userEvent from '@testing-library/user-event'
 import { needsYou } from '../../../lib/needsYou'
 import type { AgentActivityEntity } from '../../../lib/useAgentActivity'
@@ -49,6 +52,79 @@ function show(input: DayInput, props: Partial<Parameters<typeof AgentDayView>[0]
 }
 
 afterEach(() => vi.restoreAllMocks())
+
+/** A day with a failed helper beside the evening's work, so every row state is drawn. */
+const failing = { helpers: [{ id: 'h1', task: 'cut the release', done: true, agent: 'Release helper',
+  started: at(16, 10) / 1000, ended: at(16, 12) / 1000, error: 'Couldn’t reach api.github.com' } as never] }
+
+type Entry = (string | number | boolean | undefined)[]
+/** A 2D context that keeps everything it is told, in order. */
+function recorder(log: Entry[]): CanvasRenderingContext2D {
+  const state: Record<string, unknown> = { fillStyle: '', strokeStyle: '', lineWidth: 1, lineCap: 'butt', lineJoin: 'miter', globalAlpha: 1 }
+  return new Proxy(state, {
+    get(target, key: string) {
+      if (key in target) return target[key]
+      if (key === 'getImageData') return () => ({ data: [0, 0, 0, 0] })
+      return (...args: (string | number | boolean)[]) => { log.push([key, ...args]) }
+    },
+    set(target, key: string, value) { target[key] = value; log.push(['=', key, value]); return true },
+  }) as unknown as CanvasRenderingContext2D
+}
+const TONES: Record<string, string> = {
+  '--color-state-active': '#3366cc', '--color-state-waiting': '#e08a1e', '--color-state-quiet': '#8a8f98', '--color-state-blocked': '#d0453a',
+}
+const rgb = (h: string) => { const n = parseInt(h.slice(1), 16); return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 } }
+
+describe('a row’s state is the orb’s still mark', () => {
+  it('each row paints its state’s mark in its family’s shared token, the failed one with its ×, and asks for no frame', async () => {
+    const logs = new WeakMap<HTMLCanvasElement, Entry[]>()
+    const original = { getContext: HTMLCanvasElement.prototype.getContext, raf: window.requestAnimationFrame }
+    let asked = 0
+    HTMLCanvasElement.prototype.getContext = function getContext(this: HTMLCanvasElement) {
+      let log = logs.get(this)
+      if (!log) { log = []; logs.set(this, log) }
+      return recorder(log)
+    } as never
+    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, writable: true, value: () => { asked += 1; return asked } })
+    for (const [k, v] of Object.entries(TONES)) document.documentElement.style.setProperty(k, v)
+    try {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      show(evening(failing))
+      await act(async () => { vi.advanceTimersByTime(1000) })
+      vi.useRealTimers()
+      const list = screen.getByRole('list', { name: 'Your agents' })
+      const rows = within(list).getAllByRole('listitem')
+      const FAMILY: Record<string, string> = { waiting: 'waiting', failed: 'blocked', working: 'active', idle: 'quiet' }
+      const built = buildDay(evening(failing)).rows
+      expect(built.map((r) => r.state), 'the control: the day holds a failed row').toContain('failed')
+      let marked = 0
+      rows.forEach((li, i) => {
+        const r = built[i]
+        const mark = li.querySelector<HTMLElement>('[data-orb-mark]')
+        if (r.key === 'scheduled') { expect(mark, 'a scheduled row has a mark').toBeNull(); return }
+        expect(mark, `${r.name} has no mark`).not.toBeNull()
+        const look = ORB_STATE_OF_AGENT_ROW[r.state]
+        const token = `--color-state-${FAMILY[r.state]}`
+        expect(mark!.dataset.orbMark, r.name).toBe(look.state)
+        expect(mark!.dataset.orbInkToken, r.name).toBe(token)
+        const log = logs.get(mark!.querySelector('canvas')!) ?? []
+        const at = log.flatMap((e, j) => (e[0] === 'setTransform' ? [j] : [])).at(-1)
+        const want: Entry[] = []
+        paintRing(recorder(want), restForm(look.state), { size: 12, dpr: 1, ink: rgb(TONES[token]), scale: 1 })
+        expect(at === undefined ? [] : log.slice(at), `${r.name}: its mark is not its state's form in its tone`).toEqual(want)
+        expect(mark!.querySelector('[data-orb-badge]')?.textContent ?? null, `${r.name}'s badge`).toBe(r.state === 'failed' ? '×' : null)
+        expect(li.querySelector('[data-state-family] > span.size-2'), 'the old dot is drawn').toBeNull()
+        marked += 1
+      })
+      expect(marked, 'the control: rows were marked').toBeGreaterThan(2)
+      expect(asked, 'a still mark asked for a frame').toBe(0)
+    } finally {
+      HTMLCanvasElement.prototype.getContext = original.getContext
+      Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, writable: true, value: original.raf })
+      for (const k of Object.keys(TONES)) document.documentElement.style.removeProperty(k)
+    }
+  })
+})
 
 describe('a row', () => {
   it('reads as its one sentence, with the track hidden from a screen reader', () => {
@@ -101,8 +177,6 @@ describe('a row', () => {
 })
 
 describe('what you act on comes first', () => {
-  const failing = { helpers: [{ id: 'h1', task: 'cut the release', done: true, agent: 'Release helper',
-    started: at(16, 10) / 1000, ended: at(16, 12) / 1000, error: 'Couldn’t reach api.github.com' } as never] }
 
   it('puts the rows that wait on you and the rows that failed on top, under a count of them', () => {
     show(evening(failing))

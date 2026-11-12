@@ -195,7 +195,8 @@ new chrome.
 12. **Live state sits at the bottom.** What a running turn is doing now is one bare line at the
     end of the conversation, under the latest message in the turn column, with no border,
     background or pill. It scrolls with the thread like the turn it belongs to, shows whenever a
-    turn runs, and goes when the turn ends. Nothing at the head of the turn animates: this line is
+    turn runs, and when the turn ends shows how it ended, done or a failure, and then goes. Nothing
+    at the head of the turn animates: this line is
     the turn's one live indicator. It holds the orb in the turn's own state (thinking, running a
     tool by name, writing, or waiting on the owner), a short word that turns over while the turn
     works, the time since it began, and the tokens the model reported for it (in and out, and
@@ -204,6 +205,12 @@ new chrome.
     state belongs.
     - The state is said once per change, politely. The turning word is decoration and is never
       said, and under reduced motion it does not turn and the orb holds still.
+    - When the turn's last frame says how it ended, the line keeps it: the orb closes into done's
+      mark (with its one bloom only when the turn completed), or a failure's × with no bloom, beside
+      the ending's line. The clock stops, the turning word goes, Esc no longer presses Stop, and
+      nothing new is said, since the transcript says how the turn ended. It holds until the orb has
+      settled and 300 ms more, then fades and goes, with no fade under reduced motion. A turn that
+      starts meanwhile takes the line back.
     - Stop stays in reach without a scroll: while a turn runs, the composer's send button is
       "Stop this turn", its tooltip shows Esc, and it is a 44 px target at compact widths. Once a
       draft is typed the send button steers or queues it, and a secondary "Stop this turn" sits

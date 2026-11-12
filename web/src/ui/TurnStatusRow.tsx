@@ -3,14 +3,17 @@ import { matchBinding } from '../app/keymap'
 import { prefersReducedMotion } from '../design/motion'
 import { WORK_PHASE_LOOKS, phaseLabel, type WorkPhase } from '../lib/workPhase'
 import { AgentOrb } from './AgentOrb'
+import { Tooltip } from './Tooltip'
 import { cx } from './cx'
+import { bloomsFor, fadeMs, useHeldEnding, type TurnEnding } from './turnEnding'
 
 // ── The running turn's live status, one bare line at the end of the conversation ───────────────
 //
 // What a running turn is doing now is the last thing in the conversation: one bare line, with no
 // border, background or pill, under the latest message in the turn column, scrolling with the
-// thread like the turn it belongs to, shown whenever a turn runs and gone when it ends (#5867;
-// `web/REDESIGN.md`, "Live state sits at the bottom"). It holds, in order:
+// thread like the turn it belongs to, shown whenever a turn runs and, once it ends, for as long as it
+// takes to show how it ended (#5867; `web/REDESIGN.md`, "Live state sits at the bottom"). It holds,
+// in order:
 //
 // - the agent orb in the turn's own phase (`docs/design/agent-orb.md`);
 // - what the turn is doing, in the gateway's own words for the phase (the tool by name), else the
@@ -28,6 +31,15 @@ import { cx } from './cx'
 //
 // It shows `SHOW_DELAY_MS` after the turn starts, so a fast reply never flashes it. Under reduced
 // motion no word turns over and the orb draws one static frame.
+//
+// When the turn's last frame says how it ended, the line keeps showing it: the orb takes the
+// ending, done (with its one bloom only when the turn completed) or a failure with its ×, and the
+// words its line. The clock stops, the turning word goes, Esc no longer presses Stop, and the live
+// region empties, since the transcript's narration says how the turn ended. It holds until the orb
+// has settled and `MIN_HOLD_MS` more (`ui/turnEnding.ts`), then fades over the Medium length
+// (`fadeMs()`) and goes; under reduced motion
+// it goes with no fade. A turn that starts meanwhile takes the line back. A turn that ends with no
+// ending said goes at once.
 
 /** PersonalClaw's own words for a turn at work, one at a time, in this order. */
 export const STATUS_WORDS = [
@@ -81,8 +93,10 @@ const onMotionChange = (cb: () => void) => {
   return () => q.removeEventListener?.('change', cb)
 }
 
-export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = null, usage, onStop, stopShortcut = true, onShown, className }: {
-  /** Whether a turn runs: the row shows a moment after it starts and goes when it ends. */
+type Stage = 'hidden' | 'shown' | 'ending' | 'leaving'
+
+export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = null, usage, onStop, stopShortcut = true, onShown, ending = null, className }: {
+  /** Whether a turn runs: the row shows a moment after it starts and, once it ends, goes, or holds its `ending` first. */
   running: boolean
   /** The turn's phase, `null` until the gateway has said one (waiting to start). */
   phase: WorkPhase | null
@@ -103,24 +117,45 @@ export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = nu
   /** Called when the row appears, so a transcript that follows its end can keep its end in view
    *  above the row's height. */
   onShown?: () => void
+  /** How the turn ended, once its last frame said so: the line shows it until its orb has settled
+   *  and `MIN_HOLD_MS` more, then fades and goes. */
+  ending?: TurnEnding | null
   className?: string
 }) {
-  const [shown, setShown] = useState(false)
+  const [stage, setStage] = useState<Stage>('hidden')
+  const shown = stage !== 'hidden'
+  const ticking = running && shown
   const [now, setNow] = useState(() => Date.now())
   const [turn, setTurn] = useState(0)
   const seenAt = useRef<number | null>(null)
   const reduced = useSyncExternalStore(onMotionChange, prefersReducedMotion, () => false)
-  const shows = phase ?? 'queued'
-  const works = WORK_PHASE_LOOKS[shows].family === 'active'
+  const ends = !running && ending !== null
+  const { held, onSettled } = useHeldEnding(running ? null : ending, shown)
+  const shows = ends ? ending.phase : phase ?? 'queued'
+  const works = !ends && WORK_PHASE_LOOKS[shows].family === 'active'
   const stop = useRef(onStop)
   stop.current = onStop
 
+  // Shown a moment after a turn starts, and at once when one starts while the last one's ending
+  // still shows. Once it ends, it goes at once, or holds its ending and then fades.
   useEffect(() => {
-    if (!running) { setShown(false); seenAt.current = null; return }
-    seenAt.current ??= Date.now()
-    const t = window.setTimeout(() => setShown(true), SHOW_DELAY_MS)
-    return () => window.clearTimeout(t)
-  }, [running])
+    if (running) {
+      if (stage === 'ending' || stage === 'leaving') { seenAt.current = Date.now(); setStage('shown'); return }
+      if (stage === 'shown') return
+      seenAt.current ??= Date.now()
+      const t = window.setTimeout(() => setStage('shown'), SHOW_DELAY_MS)
+      return () => window.clearTimeout(t)
+    }
+    // The turn is over: the next one counts from when it is seen.
+    seenAt.current = null
+    if (!ends) { if (stage !== 'hidden') setStage('hidden'); return }
+    if (stage === 'shown') { setStage('ending'); return }
+    if (stage === 'ending' && !held) { setStage('leaving'); return }
+    if (stage === 'leaving') {
+      const t = window.setTimeout(() => setStage('hidden'), reduced ? 0 : fadeMs())
+      return () => window.clearTimeout(t)
+    }
+  }, [running, stage, ends, held, reduced])
 
   const shownCb = useRef(onShown)
   shownCb.current = onShown
@@ -129,16 +164,16 @@ export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = nu
   // made room for it (the history peek's head did the same, #5619's and #5651's web-unit red).
   useLayoutEffect(() => { if (shown) shownCb.current?.() }, [shown])
 
-  // The clock, once a second while it shows.
+  // The clock, once a second while the turn runs; it stops where the turn ended.
   useEffect(() => {
-    if (!shown) return
+    if (!ticking) return
     setNow(Date.now())
     const t = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(t)
-  }, [shown])
+    return () => { window.clearInterval(t); setNow(Date.now()) }
+  }, [ticking])
 
   // The word, while it works and motion is welcome.
-  const turns = shown && works && !reduced
+  const turns = ticking && works && !reduced
   useEffect(() => {
     if (!turns) return
     const t = window.setInterval(() => setTurn((n) => n + 1), WORD_MS)
@@ -149,7 +184,7 @@ export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = nu
   // field of its own (a rename): the composer, marked `data-turn-stop-scope`, is the one field it
   // stops from.
   useEffect(() => {
-    if (!shown || !stopShortcut) return
+    if (!ticking || !stopShortcut) return
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.repeat || !matchBinding(e, 'stop-turn')) return
       if (document.querySelector('[aria-modal=true]')) return
@@ -159,19 +194,29 @@ export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = nu
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [shown, stopShortcut])
+  }, [ticking, stopShortcut])
 
-  if (!running || !shown) return null
-  const said = stateWords(shows, line)
-  const began = startedAt ?? seenAt.current ?? now
+  const words = stateWords(shows, ends ? ending.line : line)
+  // The turn's start and its tokens, as they were while it ran: its last frame names no turn, so
+  // the chat hands the ending no start and no usage, and the ending keeps the running turn's.
+  const kept = useRef<{ began: number | null; usage: TurnUsage | null }>({ began: null, usage: null })
+  if (running) kept.current = { began: startedAt ?? seenAt.current ?? now, usage }
+  if (!shown || (!running && !ends)) return null
+  // What the live region says: the running turn's words. An ending is said by the transcript's
+  // narration, so while it holds the region is empty: removing words says nothing, and nothing
+  // stale is left for a screen reader to read as still running.
+  const said = running ? words : ''
+  const began = (running ? startedAt ?? seenAt.current : kept.current.began) ?? now
   const quietFor = now - (lastStepAt ?? began)
   const quiet = works && !SAYS_ITS_WAIT.includes(shows) && quietFor >= STALL_AFTER_MS
-  const reported = usage && (usage.input > 0 || usage.output > 0) ? usage : null
+  const used = running ? usage : kept.current.usage
+  const reported = used && (used.input > 0 || used.output > 0) ? used : null
   return (
-    <div data-turn-status="" data-phase={shows}
-      className={cx('flex min-w-0 items-center gap-s', className)}>
-      <AgentOrb phase={shows} size={20} />
-      <span data-turn-state="" data-type="body-s" className="min-w-0 truncate text-on-surface">{said}</span>
+    <div data-turn-status="" data-phase={shows} data-turn-stage={stage}
+      className={cx('flex min-w-0 items-center gap-s transition-opacity duration-(--duration-medium) ease-out motion-reduce:transition-none', className)}
+      style={stage === 'leaving' && !reduced ? { opacity: 0 } : undefined}>
+      <AgentOrb phase={shows} size={20} onSettled={onSettled} bloom={bloomsFor(ends ? ending : null)} />
+      <span data-turn-state="" data-type="body-s" className="min-w-0 truncate text-on-surface">{words}</span>
       {turns ? (
         <span data-turn-word="" aria-hidden="true" data-type="body-s" className="shrink-0 text-on-surface-var">
           {STATUS_WORDS[turn % STATUS_WORDS.length]}
@@ -184,9 +229,16 @@ export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = nu
         </span>
       ) : null}
       {reported ? (
-        <span data-turn-tokens="" data-type="label-s" title="Tokens the model reported for this turn" className="shrink-0 tabular-nums text-on-surface-var">
-          {reported.input.toLocaleString('en-US')} in · {reported.output.toLocaleString('en-US')} out
-        </span>
+        <>
+          {/* The words before the numbers, for a screen reader; the tooltip says the same to a
+              pointer, so it adds no description. */}
+          <span className="sr-only">Tokens the model reported for this turn:</span>
+          <Tooltip text="Tokens the model reported for this turn" describes={false}>{(trigger) => (
+            <span {...trigger} data-turn-tokens="" data-type="label-s" className="shrink-0 tabular-nums text-on-surface-var">
+              {reported.input.toLocaleString('en-US')} in · {reported.output.toLocaleString('en-US')} out
+            </span>
+          )}</Tooltip>
+        </>
       ) : null}
       {/* The row's one live region: what the turn is doing, said once each time it changes. */}
       <span role="status" aria-live="polite" className="sr-only">{said}</span>
