@@ -537,6 +537,7 @@ def _git(ws, home, *args):
     )  # fmt: skip
 
 
+@pytest.mark.timeout(60)
 @pytest.mark.parametrize("attended", [False, True], ids=["unattended", "attended"])
 def test_a_stage_is_judged_when_its_last_task_worker_is_done_and_the_loop_ends(
     tmp_path, monkeypatch, attended
