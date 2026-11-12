@@ -646,6 +646,25 @@ def _rails_macos_cap() -> str:
     return caps[0]
 
 
+def _rails_cap() -> str:
+    """The rails job's ``timeout_min`` as this tree's catalogue holds it.
+
+    Two plants edit that entry's cap and the line after it, and their text names the cap, so a
+    head that moves it would leave main's text finding nothing, as :func:`_rails_macos_cap` says
+    of rails-macos. Anything but exactly one rails entry with exactly one cap is refused here.
+    """
+    text = (REPO / catalogue.CATALOGUE).read_text(encoding="utf-8")
+    entries = [e for e in text.split("\n[[job]]\n") if '\nid = "rails"\n' in f"\n{e}"]
+    caps = re.findall(r"^timeout_min = (\d+)$", entries[0], re.M) if len(entries) == 1 else []
+    if len(entries) != 1 or len(caps) != 1:
+        raise AssertionError(
+            f"{catalogue.CATALOGUE}: {len(entries)} rails entries, {len(caps)} caps in them"
+        )
+    return caps[0]
+
+
+#: The rails entry's cap and its workers, as the tree holds them: no other entry has both.
+_RAILS_CAP_LINES = f"timeout_min = {_rails_cap()}\nworkers = 4\n"
 _RAILS_MACOS_CAP = _rails_macos_cap()
 #: The rails-macos lines the three plants edit, as the tree holds them.
 _RAILS_MACOS_LINES = (
@@ -9634,8 +9653,8 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "an entry without timeout_min",
             catalogue.CATALOGUE,
-            'reuse = "tree"\ntimeout_min = 10\n',
-            'reuse = "tree"\n',
+            'reuse = "tree"\n' + _RAILS_CAP_LINES,
+            'reuse = "tree"\nworkers = 4\n',
             expect="rails: missing timeout_min",
         ),
         _plant(
@@ -9860,8 +9879,8 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a pytest -n with no workers declared",
             catalogue.CATALOGUE,
-            "timeout_min = 10\nworkers = 4\n",
-            "timeout_min = 10\n",
+            _RAILS_CAP_LINES,
+            _RAILS_CAP_LINES.replace("workers = 4\n", "", 1),
             expect="rails: a step passes pytest -n, so workers is required",
         ),
         _plant(
