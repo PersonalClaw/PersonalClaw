@@ -105,6 +105,27 @@ ROWS = [
         "/srv/builds/a.txt",
         id="a-relative-variable-is-read-at-any-depth",
     ),
+    pytest.param(
+        ("var", "//srv/data"),
+        f"${VAR}/**",
+        "/srv/data/notes/a.txt",
+        "/srv/database/a.txt",
+        id="a-variable-starting-with-two-slashes",
+    ),
+    pytest.param(
+        ("home", "//srv/home/alice"),
+        "~/ws/**",
+        "/srv/home/alice/ws/src/a.py",
+        "/srv/home/alice/wsx/a.py",
+        id="a-home-starting-with-two-slashes",
+    ),
+    pytest.param(
+        ("var", "//data"),
+        f"/srv/${VAR}/**",
+        "/srv/data/notes/a.txt",
+        "/srv/database/a.txt",
+        id="two-slashes-joined-mid-rule",
+    ),
 ]
 
 
@@ -231,3 +252,21 @@ def test_a_rule_reads_its_variables_as_the_queried_path_does(monkeypatch):
     monkeypatch.delenv("PC_RULE_X", raising=False)
     monkeypatch.setenv(VAR, "v")
     assert path_glob(f"/x/${{PC_RULE_X/${VAR}/a", f"/x/${{PC_RULE_X/${VAR}/**") is True
+
+
+def test_a_path_or_a_rule_starting_with_two_slashes_is_read_from_the_root(monkeypatch):
+    """A path or a rule that starts with ``//`` is read from ``/``, as the filesystem reads it."""
+    assert path_glob("//srv/data/a", "/srv/data/**") is True
+    assert path_glob("/srv/data/a", "//srv/data/**") is True
+    assert path_glob("//srv/data/a", "//srv/data/**") is True
+    assert path_glob("///srv/data/a", "/srv/data/**") is True
+    assert path_glob("/srv/data/a", "///srv/data/**") is True
+    monkeypatch.setenv("HOME", "/srv/home/alice")
+    assert path_glob("//srv/home/alice/ws/a", "~/ws/**") is True
+    monkeypatch.setenv(VAR, "//srv/data")
+    assert path_glob(f"${VAR}/notes/a.txt", f"${VAR}/**") is True
+    monkeypatch.setattr(
+        denylist, "_load_config_rules", lambda: [denylist.DenyRule(paths=("/srv/secret/**",))]
+    )
+    assert denylist.check_action("file", {"path": "//srv/secret/k"}).blocked is True
+    assert denylist.check_action("file", {"path": "//srv/other/k"}).blocked is False

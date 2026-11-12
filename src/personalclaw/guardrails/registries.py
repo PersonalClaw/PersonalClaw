@@ -63,7 +63,13 @@ def normalize_item(item: str) -> str:
     exist yet, e.g. a write destination).
     """
     expanded = os.path.expandvars(os.path.expanduser((item or "").strip()))
-    return os.path.abspath(expanded)
+    return _one_root(os.path.abspath(expanded))
+
+
+def _one_root(path: str) -> str:
+    """*path* read from ``/`` when it starts with two or more slashes, as the filesystem reads it.
+    Applied to the queried path and to a rule alike, so the two agree."""
+    return "/" + path.lstrip("/") if path.startswith("//") else path
 
 
 #: A ``$VAR``, ``${VAR}`` or unclosed ``${...`` reference, read as :func:`os.path.expandvars`
@@ -94,7 +100,7 @@ def _tidy(value: str, *, glued_before: bool = False, glued_after: str = "") -> s
         if cut < 0:
             return value
         lead, body = body[:cut], body[cut:]
-    tidy = os.path.normpath(body)
+    tidy = _one_root(os.path.normpath(body))
     marks_folder = body.endswith("/") or (
         glued_after == "wild" and os.path.basename(body) in (".", "..")
     )
@@ -157,7 +163,7 @@ def expand_pattern(pattern: str) -> str:
         joined_expansion = is_expansion
     if joined_expansion and len(out) > 1 and out.endswith("/"):
         out = out[:-1]
-    return out
+    return _one_root(out)
 
 
 def _pattern_regex(pattern: str) -> re.Pattern[str]:
