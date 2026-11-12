@@ -35,6 +35,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A redaction warning names what kind of text it masked, and at most its length or a scheme or host the masked text keeps, never any of the value: a credential pattern's warning and a long URL query's warning held the first characters of what they matched.**
 - **A path rule written with `~` or a `$VAR` names the paths its home or variable names: a trailing `/`, a doubled `/`, a `/./` or `/../` inside it, or text glued to it, and a path or a rule that starts with two or more slashes is read from `/`.**
 - **The credential guard, the refusal of a change to what runs as you, and the question before a delete of your home folder, the filesystem root or the working folder compare a path in one Unicode form, so each is caught whether a letter in its path is written composed or decomposed.**
+- **The credential mask reads an AWS secret key's or session token's name in any case, the session token's older `AWS_SECURITY_TOKEN` included, and an access key id's before a value without quotes, so `AWS_SECRET_ACCESS_KEY=…` as an env file, `printenv` or the AWS CLI's env export writes it is masked as `aws_secret_access_key = …` is, with or without quotes. After an AWS name, a value that starts with `$` and names where a secret is kept, such as a CI workflow's `${{ secrets.X }}`, a shell's `$(…)`, `$VAR` or an empty default, stays as it is, while `$'…'` and a literal default are masked, and an empty value never takes the next line's key as its value.**
 
 ### Added
 
