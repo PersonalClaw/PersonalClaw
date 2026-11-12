@@ -33,7 +33,7 @@ the area, so the orb is the same size at every zoom ([#5216]).
 
 | Surface | Size | Shows | Drops |
 |---|---|---|---|
-| **The orb** | 48, in a 56 by 56 target, where the owner put it (until the first move, centred just below the menu bar or the notch) | its state in its dots, its badge and its wash, the same size and place in every state | words, counts: they are on its card |
+| **The orb** | 48, in a 56 by 56 target, where the owner put it (until the first move, centred just below the menu bar or the notch) | its state in its strokes, its badge and its wash, the same size and place in every state | words, counts: they are on its card |
 | **The line card** | one line, up to 360 wide, beside the orb | while work runs, the focused work's one line and `+N` for other live work; on an alert away from the top edge, the alert's one line | steps, controls |
 | **The card** | 420 wide, as tall as its content up to 560, beside the orb; less where the display has less, scrolling inside past that | the focused work's name and its state, its run as one step flow, the alert's brief and its answer controls, then every other live piece of work as an orb (20) and one line | history, settings |
 | **Tray or menu-bar icon** | 18 (template image on macOS) | a still orb per state: idle, working, needs you, error, listening, offline; the exact state in words in its tooltip and as the menu's first line | animation, a count standing alone |
@@ -147,7 +147,7 @@ shape, and never joined to the notch, the menu bar or the screen's edge as one s
 
 ## How a state change travels
 
-A state change moves through every surface at once, each in its own room: the orb's dots, badge
+A state change moves through every surface at once, each in its own room: the orb's strokes, badge
 and wash change where it stands and its card's line follows, the tray icon swaps its still orb, the
 dock icon changes only while something needs the owner, and a notification is sent only for an
 alert (and only when the interruption rules allow it). The phone companion follows the same change.

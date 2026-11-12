@@ -13,6 +13,13 @@ The renderer ([#3891]) starts from in place. Two rows are not this spike's to fi
 is measured on the buddy window's own bundle once it exists ([#3831], [#3891]), and the Linux
 column is taken with the buddy's acceptance in CI ([#3902]).
 
+**Retired 2026-11-12.** The spike's harness, its two candidates, its probe, its route and its
+build flag are gone, with the script and the window that measured them, and the buddy draws the
+agent orb's claw ring, as the chat's orb does (#6117,
+[`../../agent-orb.md`](../../agent-orb.md#the-five-states)). What this record measured stays as
+the buddy's: the one capped clock both orbs paint on, at 30 frames a second, and the pose's values
+stepping on it. The numbers below are the dots' and stay as the record of the choice.
+
 ## What the spike drew
 
 The list in [`../rig.md`](../rig.md#candidates) holds: each candidate is the agent orb's drawing
@@ -176,7 +183,7 @@ Each candidate, with the measure it lost on:
   pass. Its dots cost what in place's do; what it adds is the SVG layer, which the motion library
   renders on its own frames: its loop ran 1,434 to 1,437 frames to in place's 936.
 
-`node docs/design/buddy/decisions/rig-measure.mjs --summary` reads `rig-runs/` and names the same.
+The measuring script's summary of `rig-runs/` named the same.
 
 ## Before the pose was capped
 
@@ -258,19 +265,11 @@ build without it emits no part of it (`web/src/buddyRig/route.test.ts` holds the
 
 ## The method
 
-[`rig-measure.mjs`](rig-measure.mjs) runs one candidate at a time in a scratch Electron window,
-[`rig-window.cjs`](rig-window.cjs), signed in to the scratch home's gateway the way the desktop
-app's windows are (`desktop/localSignIn.js`), and writes each run to `rig-runs/`:
+A script ran one candidate at a time in a scratch Electron window, signed in to the scratch home's
+gateway the way the desktop app's windows are (`desktop/localSignIn.js`), and wrote each run to
+`rig-runs/`. Both went with the spike (#6117); the runs stay as the record.
 
-```bash
-node docs/design/buddy/decisions/rig-measure.mjs --home <scratch home> --runs 2
-node docs/design/buddy/decisions/rig-measure.mjs --home <scratch home> --runs 2 --hz 60
-node docs/design/buddy/decisions/rig-measure.mjs --home <scratch home> --runs 1 --size 24
-node docs/design/buddy/decisions/rig-measure.mjs --home <scratch home> --runs 1 --fps 0
-node docs/design/buddy/decisions/rig-measure.mjs --summary
-```
-
-For each candidate the window measures, in this order:
+For each candidate the window measured, in this order:
 
 - **The chunks**: it loads the harness with no candidate, then with the candidate. The chunks the
   second load fetched that the first did not are the candidate's own, gzipped at level 9 from the

@@ -235,7 +235,7 @@ then the truth, then play, then idle and sleep.
   instant pose, and the gaze does not follow ([#3894]).
 - **The greeting:** the first peek of a session plays the greeting. It is play: it never blocks an
   input, and it yields like any other reaction.
-- **Follow:** the orb's lean, the side its dots crowd to, turns toward the pointer on the `gaze`
+- **Follow:** the orb's lean, the side its ring leans to, turns toward the pointer on the `gaze`
   spring: a short lag, one small overshoot, then still. The gaze moves in proportion to the
   pointer's distance with no dead zone, and stops at the edge of `followRange`; after `followIdle`
   without pointer movement it returns to centre. The pointer is sampled only while visible and the
@@ -251,7 +251,7 @@ then the truth, then play, then idle and sleep.
   holds the lean, the gaze does not follow; control passes back to the gaze by fading over
   `gazeHandback`, never in a jump.
 - **Drag:** the orb dangles behind the pointer on a spring and settles on release.
-- **File:** a file held over it opens the drop target (the orb's dots spread wide); leaving closes
+- **File:** a file held over it opens the drop target (the orb's strokes open wide); leaving closes
   it; a drop plays the swallow and opens the choice. The choice is the only play outcome that shows
   controls, and every choice still needs a click.
 - **Glance:** when a review opens in the app, it glances toward the app's window for one beat;
@@ -269,7 +269,7 @@ then the truth, then play, then idle and sleep.
 
 Settled for their return on 2026-10-14: the hit chain ends at annoyed, with no dizzy, and after
 annoyed further hits only blink for `playCooldown`; and the drop is a catch that holds the file up
-while the choice opens, never a swallow ([#4570]), which for the orb means its spread dots close
+while the choice opens, never a swallow ([#4570]), which for the orb means its opened strokes close
 around the file. [#3894] and [#3895] rewrite these rules when they resume.
 
 ### Play timing names

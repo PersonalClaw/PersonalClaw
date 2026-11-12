@@ -1103,7 +1103,7 @@ code names outside them: `src/`, which the web parity tests read, the design doc
 guides the tests hold the app to, and the scripts they run. The web, desktop and mobile tests are
 three jobs, each on its own workspace's reads: a desktop change plans no web suite, a backend
 change no desktop or mobile tests, and only a mobile change (or the npm manifests) plans the
-mobile tests. `desktop-unit` still reads `web/src/` (its rig-measure script walks it) and
+mobile tests. `desktop-unit` still reads `web/src/` (several of its tests read the web app's own sources) and
 `tools/ci/` (its Electron install test). One run of each job's steps under a file-read recorder found no read of a tracked
 path outside those lists but `mobile/package.json`, now listed, and `web-build`'s licence check,
 whose whole-tree half is `static`'s on every change. `tests/rails/test_ci_job_inputs_tree.py` holds

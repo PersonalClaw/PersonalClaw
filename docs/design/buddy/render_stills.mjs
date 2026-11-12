@@ -75,7 +75,8 @@ const TOKENS = Object.fromEntries(MODES.map((mode) => {
 }));
 
 /** A template drawing painted in the mode's own ink, in place of the black the system recolours. */
-const inked = (markup) => markup.replaceAll('fill: black', 'fill: var(--sheet-template)');
+// A template's strokes and its solid badge are both drawn in black: each takes the mode's ink.
+const inked = (markup) => markup.replaceAll(': black', ': var(--sheet-template)');
 
 function html(markup, size, mode) {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -94,7 +95,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: out.size, height: out.size }, deviceScaleFactor: 1 });
     const page = await ctx.newPage();
     const markup = sources.get(out.source).toString('utf8');
-    if (out.ink && !markup.includes('fill: black')) throw new Error(`${out.source} has no black to paint in the mode's ink`);
+    if (out.ink && !markup.includes(': black')) throw new Error(`${out.source} has no black to paint in the mode's ink`);
     await page.setContent(html(out.ink ? inked(markup) : markup, out.size, out.mode), { waitUntil: 'load' });
     const png = await page.screenshot({ omitBackground: true });
     await ctx.close();

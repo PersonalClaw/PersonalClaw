@@ -365,3 +365,35 @@ describe('a morph into working keeps each stroke’s way round', () => {
     expect(checked, 'the control: the morphs were painted').toBeGreaterThan(12 * 6 * 5)
   })
 })
+
+describe('done blooms only for the turn whose ending lets it, through the shared morph', () => {
+  // `bloom` is the caller's word on the turn's ending (`ui/turnEnding.ts`'s `bloomsFor`): a turn that
+  // completed blooms, and a stopped or declined one closes to done's form with no bloom. The orb
+  // passes it to the morph both orbs change state through (`orb/useMorph.ts`).
+  it('a completed turn’s done blooms, swelling above scale 1, and settles on the mark: the control', async () => {
+    const { container, rerender } = render(<AgentOrb phase="tool" />)
+    displayFor(200)
+    const at = scales.length
+    rerender(<AgentOrb phase="done" bloom />)
+    displayFor(100)
+    expect(orbOf(container).dataset.orbChange).toBe('bloom')
+    await settle()
+    expect(Math.max(...scales.slice(at)), 'the bloom swelled').toBeGreaterThan(1.05)
+    expect(orbOf(container).dataset.orbChange).toBe('none')
+    expect(lastPaint()).toEqual(restPaint('done', { r: 0x8a, g: 0x8f, b: 0x98 }))
+  })
+
+  it.each(['stopped', 'declined'])('a %s turn’s done morphs to the mark with no bloom, never above scale 1', async () => {
+    const { container, rerender } = render(<AgentOrb phase="tool" />)
+    displayFor(200)
+    const at = scales.length
+    rerender(<AgentOrb phase="done" bloom={false} />)
+    displayFor(100)
+    expect(orbOf(container).dataset.orbChange).toBe('morph')
+    await settle()
+    expect(Math.max(...scales.slice(at)), 'a held-back bloom swelled').toBeLessThanOrEqual(1)
+    expect(orbOf(container).dataset.orbChange).toBe('none')
+    expect(lastPaint()).toEqual(restPaint('done', { r: 0x8a, g: 0x8f, b: 0x98 }))
+    expect(displayFor(1000)).toBe(0)
+  })
+})

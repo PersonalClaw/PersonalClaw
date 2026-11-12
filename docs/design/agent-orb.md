@@ -37,9 +37,9 @@ with no turn running, nothing on the page animates.
 - Under a request for more contrast (`prefers-contrast: more`) the strokes take the words' ink,
   `--color-on-surface`, and in forced colours the system's text colour. The badge is ringed, so in
   forced colours its ring and its glyph stay, and every state keeps its own shape.
-- The form and its painter are the project's own code: no package draws the chat's orb. The
-  desktop buddy's orb (`web/src/ui/BuddyOrb.tsx`) still draws the `thinking-orbs` package's dots
-  (MIT, credited in the web build's third-party notices) until it moves to the claw ring too.
+- The form and its painter are the project's own code, and no package draws either orb: the
+  desktop buddy's orb (`web/src/ui/BuddyOrb.tsx`) draws the same claw ring, as its pose moves it
+  ([`buddy/character.md`](buddy/character.md#the-poses)).
 
 ## The five states
 

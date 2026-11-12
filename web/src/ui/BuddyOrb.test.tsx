@@ -11,7 +11,7 @@ import { WORK_PHASES } from '../lib/workPhase'
 // ── The buddy orb (#3891) ───────────────────────────────────────────────────────────────────────
 //
 // Every family's pose, and the focused card's, carries its exact line beside the art, so the art
-// never carries the state alone. Its dots and its badge are tokens, so a scheme change recolours
+// never carries the state alone. Its strokes and its badge are tokens, so a scheme change recolours
 // it in the paint that change causes. Reduced motion swaps the moving pose for its still in place:
 // the same orb, the same state and line, nothing started again.
 
@@ -23,7 +23,8 @@ const getContext = HTMLCanvasElement.prototype.getContext
 const ctx = new Proxy({} as Record<string, unknown>, {
   get: (target, key: string) => (key in target ? target[key] : () => {}),
   set: (target, key: string, value) => {
-    if (key === 'fillStyle') fills.push(String(value))
+    // The strokes are painted in their stroke colour, a solid badge in its fill.
+    if (key === 'fillStyle' || key === 'strokeStyle') fills.push(String(value))
     target[key] = value
     return true
   },
@@ -124,7 +125,7 @@ describe('its colour is the orb tokens', () => {
     }
   })
 
-  it('under more contrast the dots take the words’ ink, and under forced colours the system’s', () => {
+  it('under more contrast the strokes take the words’ ink, and under forced colours the system’s', () => {
     setMedia('prefers-contrast: more', true)
     const { container, unmount } = render(<BuddyOrb state="tool" line="Working" />)
     expect(orbOf(container).dataset.buddyInkToken).toBe('--color-on-surface')

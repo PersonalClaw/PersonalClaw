@@ -15,14 +15,14 @@ agent orb's three (the working mark, the check, the microphone and the offline m
 unfolding into words; the wash; the neutral it takes where nothing is alive; the system states
 (idle, restarting and offline); its own still frames for the quiet, waiting and blocked families;
 the presence poses; the answers' nod and shake; the gesture vocabulary; and the still frames the
-tray and the dock show. The poses and gestures move the dots as well as the whole orb: quiet's dots
-are sparse, an approval's draw in tight, an error's sink toward the lower edge, and done's swirl
+tray and the dock show. The poses and gestures move the strokes as well as the whole orb: quiet's
+are thin, an approval's draw in tight, an error's sag and settle low, and done's open ring turns
 once ([`character.md`](character.md#the-poses)). Each candidate is a way to add all of it:
 
 1. **The drawing extended in place:** the buddy's poses, sizes and moves join the agent orb's own
-   states inside the drawing, and the badge and the wash are drawn with the dots.
+   states inside the drawing, and the badge and the wash are drawn with the strokes.
 2. **The drawing inside a code-drawn layer:** the agent orb's drawing gains only parameters for its
-   dots' density and arrangement, which the motion presets drive, and the badge, the wash and the
+   strokes' weight and arrangement, which the motion presets drive, and the badge, the wash and the
    whole-orb moves sit in an SVG layer around it, moved by the same presets.
 
 ## What is measured

@@ -164,14 +164,14 @@ describe(`while it works, it asks for at most ${CAP} frames a second, and none b
     }
   })
 
-  it('the chat’s orb and the buddy draw through one loop', () => {
+  it('the chat’s orb and the buddy draw through one loop, and change state through one morph', () => {
     const read = (path: string) => readFileSync(join(process.cwd(), 'src', path), 'utf8')
-    expect(read('ui/AgentOrb.tsx'), 'the orb does not draw through the shared loop').toMatch(/\brunDots\(/)
-    // Its morph and bloom move on the same capped clock, not on every frame the display draws.
-    expect(read('ui/AgentOrb.tsx'), 'the morph runs off the capped clock').toMatch(/\bcappedDriver\(\)/)
-    for (const candidate of ['buddyRig/CandidateInPlace.tsx', 'buddyRig/CandidateLayered.tsx']) {
-      expect(read(candidate), `${candidate} draws through another loop`).toMatch(/import \{[^}]*\brunDots\b[^}]*\} from '\.\.\/ui\/orbDots'/)
+    for (const orb of ['ui/AgentOrb.tsx', 'ui/BuddyOrb.tsx']) {
+      expect(read(orb), `${orb} does not draw through the shared loop`).toMatch(/\brunDots\(/)
+      expect(read(orb), `${orb} does not change state through the shared morph`).toMatch(/\buseMorph\(/)
     }
+    // The morph and the bloom move on the same capped clock, not on every frame the display draws.
+    expect(read('ui/orb/useMorph.ts'), 'the morph runs off the capped clock').toMatch(/\bcappedDriver\(\)/)
   })
 })
 

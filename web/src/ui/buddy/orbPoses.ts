@@ -1,6 +1,6 @@
 /** The buddy orb's poses and transitions (#3891), as one table.
  *
- *  A pose is #3830's still for a state (`buddyRig/poseSet.ts`: the thinking-orbs drawing for it, its
+ *  A pose is #3830's still for a state (`buddyRig/poseSet.ts`: the agent orb's drawing for it, its
  *  dots' density, spread, droop and turn, the whole orb's rise or fall, the badge and the wash), so
  *  the orb the app draws is the one the pose sources record. A transition names the preset that
  *  moves it, one of `design/motion.ts`'s, so the dials and reduced motion reach every one, and the
@@ -10,12 +10,12 @@
 
 import type { Transition } from 'framer-motion'
 import { physics, spring } from '../../design/motion'
-import { familyOf, movesOf, stillOf, wordsOf, type BuddyState, type Frame } from '../../buddyRig/poseSet'
+import { familyOf, movesOf, orbLookOf, stillOf, wordsOf, type BuddyState, type Frame } from '../../buddyRig/poseSet'
 import type { Truth } from '../../lib/buddy/machine'
 import type { TimerName } from '../../lib/buddy/timing'
 import type { Pose, PoseKey } from './useOrbPose'
 
-export { familyOf, movesOf, stillOf, wordsOf, type BuddyState, type Frame }
+export { familyOf, movesOf, orbLookOf, stillOf, wordsOf, type BuddyState, type Frame }
 
 /** The presets a transition may name: the four physics presets and the effects curve. */
 export type Preset = 'snappy' | 'smooth' | 'fluid' | 'playful' | 'effects'
@@ -30,12 +30,12 @@ export interface OrbTransition {
 
 /** The renderer's transitions: what moves the orb from one pose to the next. */
 export const ORB_TRANSITIONS = {
-  phase: { preset: 'snappy', token: 'beat', does: 'a phase change: the dots take the new phase, the badge pops' },
-  alert: { preset: 'snappy', token: 'beat', does: 'an alert arrives: an approval draws the dots in, a question lifts the orb' },
+  phase: { preset: 'snappy', token: 'beat', does: 'a phase change: the strokes morph into the new state, the badge pops' },
+  alert: { preset: 'snappy', token: 'beat', does: 'an alert arrives: an approval draws the strokes in, a question lifts the orb' },
   wash: { preset: 'effects', token: 'beat', does: "the alert's wash rises or falls" },
-  error: { preset: 'smooth', token: 'beat', does: 'an error: the dots sink toward the lower edge' },
-  done: { preset: 'playful', token: 'finishedHold', does: 'done: the sparse dots swirl once, scaled by expressiveness' },
-  listening: { preset: 'snappy', token: 'beat', does: 'listening: the dots settle still and the microphone badge pops' },
+  error: { preset: 'smooth', token: 'beat', does: 'an error: the strokes sag and the orb settles low' },
+  done: { preset: 'playful', token: 'finishedHold', does: 'done: the thin open ring turns once and lands upright, scaled by expressiveness' },
+  listening: { preset: 'snappy', token: 'beat', does: 'listening: the strokes settle still and the microphone pops' },
 } as const satisfies Record<string, OrbTransition>
 
 export type OrbTransitionName = keyof typeof ORB_TRANSITIONS

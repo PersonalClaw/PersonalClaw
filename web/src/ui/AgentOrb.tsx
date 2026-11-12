@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { animate, motionValue } from 'framer-motion'
 import { computedToken, onEditorTokensChange } from '../design/editorTheme'
-import { physics, prefersReducedMotion } from '../design/motion'
-import { ORB_STATE_OF, type OrbBadge, type OrbState, type OrbStateName } from '../lib/orbState'
+import { prefersReducedMotion } from '../design/motion'
+import { ORB_STATE_OF, type OrbBadge, type OrbStateName } from '../lib/orbState'
 import { WORK_PHASE_LOOKS, phaseLabel, type WorkPhase } from '../lib/workPhase'
 import { cx } from './cx'
-import { MOVES, formAt, mixToward, restForm, transitionOf, type Form } from './orb/clawRing'
+import { MOVES, formAt, restForm } from './orb/clawRing'
 import { paintRing } from './orb/paintRing'
-import { cappedDriver, runDots, tintOf, useOnScreen } from './orbDots'
+import { useMorph } from './orb/useMorph'
+import { runDots, tintOf, useOnScreen } from './orbDots'
 
 /** AgentOrb — what an agent's turn is doing, as the claw ring (`docs/design/agent-orb.md`).
  *
@@ -117,50 +117,11 @@ export function AgentOrb({ phase, size = 20, className, onSettled, bloom = true 
   const reduced = motion === 'reduced'
   const moves = MOVES[look.state] && !mark && !reduced && !hidden
 
-  // The morph: from the form last painted to this state's, on the smooth spring; and done's bloom.
-  // Both run on the capped clock, so they step in the frame the ring is painted in. It is keyed on
-  // the state, so a phase that changes inside one state is no change; and a change cut short, by a
-  // hidden tab, by reduced motion or by the orb leaving the screen, settles at its target.
-  const lastForm = useRef<Form | null>(null)
-  const prevLook = useRef<OrbState>(look)
-  const morph = useRef<{ from: Form | null; kept: Form | null }>({ from: null, kept: null })
-  const [k] = useState(() => motionValue(1))
-  const [scale] = useState(() => motionValue(1))
-  const [changing, setChanging] = useState<'none' | 'morph' | 'bloom'>('none')
-  // A change under way, set in the effect that starts it: the render that changed the state still
-  // reads `changing` as 'none', and must not say it has settled.
-  const inFlight = useRef(false)
-  const blooms = useRef(bloom)
-  blooms.current = bloom
-  useEffect(() => {
-    const from = prevLook.current
-    prevLook.current = look
-    const settle = () => { inFlight.current = false; morph.current.from = null; morph.current.kept = null; k.set(1); scale.set(1); setChanging('none') }
-    // No change of state (the platform or the screen changed, or a phase changed inside one state):
-    // finish any change in flight at its target, so nothing is left half-formed or painting.
-    if (from.state === look.state) { if (morph.current.from || scale.get() !== 1) settle(); return }
-    const planned = transitionOf(from, look, { reduced: reduced || mark || hidden || !onScreen })
-    const plan = { ...planned, bloom: planned.bloom && blooms.current }
-    if (plan.instant || !lastForm.current) { settle(); return }
-    morph.current.from = lastForm.current
-    morph.current.kept = null
-    inFlight.current = true
-    k.set(0)
-    setChanging(plan.bloom ? 'bloom' : 'morph')
-    const driver = cappedDriver()
-    const runs = [animate(k, 1, { ...physics.smooth, driver })]
-    if (plan.bloom) runs.push(animate(scale, 1, { ...physics.playful, velocity: 2.4, driver }))
-    // A bloom cut short by this change: its scale comes home on the morph's spring, never in a jump.
-    else if (scale.get() !== 1) runs.push(animate(scale, 1, { ...physics.smooth, driver }))
-    let live = true
-    Promise.all(runs.map((r) => r.finished)).then(() => { if (live) settle() })
-    return () => { live = false; for (const r of runs) r.stop() }
-  }, [look.state, reduced, mark, hidden, onScreen]) // eslint-disable-line react-hooks/exhaustive-deps -- keyed on the state; the ink and the badge follow the look in the paint and the render
-
-  // Settled: the change has ended, or the state was swapped at once.
-  const settledRef = useRef(onSettled)
-  settledRef.current = onSettled
-  useEffect(() => { if (changing === 'none' && !inFlight.current) settledRef.current?.(look.state) }, [changing, look.state])
+  // The morph to each new state, and done's bloom (`orb/useMorph.ts`), which `bloom` can hold back. A
+  // change nobody can see, in a hidden tab or off screen, is an instant swap, and a change cut short
+  // settles at its target.
+  const morph = useMorph(look, reduced || mark || hidden || !onScreen, onSettled, bloom)
+  const { changing } = morph
 
   const running = (moves || changing !== 'none') && onScreen
 
@@ -173,16 +134,8 @@ export function AgentOrb({ phase, size = 20, className, onSettled, bloom = true 
     el.height = Math.round(size * dpr)
     let tint = tintOf(ink)
     const paint = (t: number) => {
-      const target = moves ? formAt(look.state, t) : restForm(look.state)
-      const from = morph.current.from
-      let form = target
-      if (from) {
-        // Each stroke's way round is chosen once, from the target as the morph's first frame found it.
-        morph.current.kept ??= target
-        form = mixToward(from, target, morph.current.kept, Math.min(1, Math.max(0, k.get())))
-      }
-      lastForm.current = form
-      paintRing(ctx, form, { size, dpr, ink: tint, scale: scale.get() })
+      const form = morph.formOf(moves ? formAt(look.state, t) : restForm(look.state))
+      paintRing(ctx, form, { size, dpr, ink: tint, scale: morph.scale() })
     }
     return runDots(paint, { running, speed: 1, retint: () => { tint = tintOf(inkOf(token)) } })
   }, [look, size, ink, token, running, moves, changing]) // eslint-disable-line react-hooks/exhaustive-deps -- the morph is read through its refs at each paint

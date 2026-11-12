@@ -99,7 +99,7 @@ file always goes through the same scan as any other upload.
 When the drop returns, a dropped file is never sent without a separate explicit click, and before
 anything runs each choice shows where it goes, the permission it acts under and how to undo it
 ([#3895]). Settled for its return: the drop is a catch, never a swallow ([#4570]). For the orb, its
-spread dots close around the file and hold it up while the choice opens.
+opened strokes close around the file and hold it up while the choice opens.
 
 ### Quick ask
 
