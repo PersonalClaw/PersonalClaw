@@ -277,6 +277,18 @@ async def _wait_for(predicate, *, timeout: float = 10.0, what: str = "condition"
     raise AssertionError(f"timed out waiting for {what}")
 
 
+#: A worker's opening lines that hold it until the test writes `go` in its workspace, for 60 s at
+#: most. Under load the spawn's own check can come more than a second after the worker starts, so
+#: a worker that sleeps a set time may be gone before it is asked; this one is alive when asked,
+#: however late, and gone when the test lets it go.
+_UNTIL_GO = (
+    "import os, time\n"
+    "end = time.monotonic() + 60\n"
+    "while not os.path.exists('go') and time.monotonic() < end:\n"
+    "    time.sleep(0.02)\n"
+)
+
+
 # ── the spawn function itself ────────────────────────────────────────────────────────────
 
 
@@ -509,33 +521,52 @@ class TestDurableStepSeam:
         assert (ws / "done.txt").exists()
 
     async def test_a_surviving_step_from_a_previous_life_is_adopted_not_doubled(
-        self, tmux_shim, durable_on, tmp_path
+        self, tmux_shim, durable_on, tmp_path, monkeypatch
     ):
         """Adopt-before-spawn: a session already holding this run's name is a previous
         gateway life's step still executing. The new life must WAIT for it — two copies of
         one `npm install` interleaving in a single tree is the corruption the workspace
-        lock exists to prevent — and the survivor must finish, not be killed."""
+        lock exists to prevent — and the survivor must finish, not be killed.
+
+        No clock decides it. The survivor writes `first` only once the test lets it go, and
+        the test lets it go only after run_step has found it alive twice, so run_step was
+        waiting for it. The step exits non-zero when `first` is missing: a run_step that ran
+        the step beside the survivor never lets it go, and its step finds no `first`."""
         ws = tmp_path / "ws"
         ws.mkdir()
         name = "pclaw-proj-r6-ei6ds"
         assert await tmux_substrate.new_session(
             name,
             workspace=str(ws),
-            command=[
-                sys.executable,
-                "-c",
-                "import time; time.sleep(0.6); open('first', 'w').write('1')",
-            ],
+            command=[sys.executable, "-c", _UNTIL_GO + "open('first', 'w').write('1')\n"],
         )
-        started = time.monotonic()
-        step = _write_step(ws, "open('second', 'w').write('2')\n")
-        ok, _ = await provisioning.run_step(step, ws, env={}, durable_session=name)
-        assert ok
+        has_session = tmux_substrate.has_session
+        found_alive = 0
+
+        async def watched(asked: str) -> bool:
+            nonlocal found_alive
+            alive = await has_session(asked)
+            if alive and asked == name and not (ws / "go").exists():
+                found_alive += 1
+                if found_alive == 2:
+                    (ws / "go").write_text("", encoding="utf-8")
+            return alive
+
+        monkeypatch.setattr(tmux_substrate, "has_session", watched)
+        step = _write_step(
+            ws,
+            "import os, sys\n"
+            "if not os.path.exists('first'):\n"
+            "    sys.exit('the step ran beside the survivor')\n"
+            "open('second', 'w').write('2')\n",
+        )
+        ok, detail = await provisioning.run_step(step, ws, env={}, durable_session=name)
+        assert ok, (
+            "run_step ran its step before the survivor finished, beside it or after cutting it"
+            f" down: {detail}"
+        )
         assert (ws / "first").exists(), "the surviving worker was cut down instead of adopted"
         assert (ws / "second").exists()
-        assert (
-            time.monotonic() - started >= 0.5
-        ), "run_step did not wait for the survivor — the two ran concurrently"
 
 
 # ── End to end: the spawn side produces the session the sweep reattaches to ─────────
@@ -601,10 +632,11 @@ class TestSpawnToReattach:
         name = containers.durable_worker_name(run)
         ws = tmp_path / "ws"
         ws.mkdir()
-        # Alive when `new_session` asks, gone a moment later.
+        # Alive when `new_session` asks, and gone once the test lets it go.
         assert await tmux_substrate.new_session(
-            name, workspace=str(ws), command=[sys.executable, "-c", "import time; time.sleep(1)"]
+            name, workspace=str(ws), command=[sys.executable, "-c", _UNTIL_GO]
         )
+        (ws / "go").write_text("", encoding="utf-8")
         await _wait_for(lambda: not tmux_substrate.has_session_sync(name), what="the worker to die")
         wd = WorkflowWatchdog(None, EngineServices())
         await wd._poll_once()

@@ -440,6 +440,11 @@ cap = 40
 reason = "a real snapshot of a home whose stores are held open; 18 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
+site = "tests/test_harness_validate.py::test_the_web_profile_passes_on_an_uncommitted_tree"
+cap = 60
+reason = "the web profile's three run-job processes over a planted checkout, with a stub npm, npx and node; 3.4 to 9.1 s alone on a Mac at loads 36 to 49, and past 30 s once inside a loaded local set (loads 30 to 50, the disk busy, 2026-11-12)"
+
+[[mark]]
 site = "tests/test_import_scan_answers_before_reading_a_long_history.py::test_a_history_imports_as_a_job_within_a_generous_ceiling"
 cap = 50
 reason = "a long generated history scanned and imported for real; 20 s on CI at worst (a merge leg, 2026-10-24)"

@@ -274,6 +274,7 @@ def _planted_web_checkout(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     return root, asked
 
 
+@pytest.mark.timeout(60)
 def test_the_web_profile_passes_on_an_uncommitted_tree(tmp_path: Path, monkeypatch) -> None:
     # `harness run --diff` runs before the executor commits, so the web gate must pass on a
     # checkout with uncommitted changes, on either platform. It is a local gate: the suite runs
