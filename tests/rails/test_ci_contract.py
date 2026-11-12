@@ -10773,6 +10773,791 @@ ROWS = (
 )
 
 
+# ── No test file sets a retry of its own (#5852, under #5809) ──────────────────────────────────
+#
+# The retry budget (#5809, at most two retries before a person looks) holds only if a retry can't
+# be added inside a test file, where the runner rows above never read. A Playwright spec can set
+# its own retries through `test.describe.configure({ retries })`, and a Vitest test or suite
+# through its options object, `it(name, { retry })`, `describe(name, { repeats }, fn)` or the
+# options after the function. So every spec under web/e2e and every file Vitest's projects take
+# is read for them. A Playwright `retries: 0` is no retry and passes; any Vitest `retry` or
+# `repeats` key is red, a zero included. `configure({ timeout })` and `({ mode })` are left
+# alone, since the timeout is the configs' and the steps' rule. Calls are
+# found with comments and the contents of strings, template text and regex literals blanked, and
+# only the top-level keys of an object passed straight to the call are read, so a `{ retry: 3 }` a
+# test body hands to app code is not a retry. The reader fails closed: a file it cannot follow to
+# its end as code is red, never skipped, and the scan must read at least a floor of files.
+
+_E2E_DIR = "web/e2e"
+_VITEST_SRC = "web/src"
+#: The files Vitest's projects take: the dom project's include, which the node and forks projects'
+#: lists (a census of web/src, and src/lib/tab.test.ts) fall inside.
+_VITEST_INCLUDE = "include: ['src/**/*.{test,spec}.{ts,tsx}'],"
+_VITEST_TEST_FILE = re.compile(r"\.(?:test|spec)\.tsx?$")
+#: Vitest's test and suite functions, and the keys their options retry or repeat a test by.
+_VITEST_CALLS = re.compile(r"(?<![\w$.])(?:it|test|describe|suite|bench)\b")
+_VITEST_RETRY_KEYS = frozenset({"retry", "repeats"})
+#: Playwright's per-file configuration, and the keys red in it: `retries` other than 0, and a
+#: `repeatEach`, though configure takes none.
+_PLAYWRIGHT_CONFIGURE = re.compile(r"\.describe\s*\.\s*configure\s*\(")
+#: The files read under web/e2e: every script Playwright's default test match could take
+#: (`*.spec.ts` today, but `.mts`, `.js` and the like too), helpers included.
+_E2E_SCRIPT = re.compile(r"\.[cm]?[jt]sx?$")
+_PLAYWRIGHT_RETRY_KEYS = frozenset({"retries", "repeatEach"})
+#: Today's tree reads 1,707 Vitest files and 72 scripts under web/e2e (1,779 in all). A scan that
+#: finds far fewer has stopped reading the tree (a folder moved, a pattern that matches nothing),
+#: so it is red.
+_FILES_READ_FLOOR = {"vitest": 1_500, "playwright": 60}
+#: The scaffold's own floor: one file of each.
+_SCAFFOLD_FILES_READ_FLOOR = {"vitest": 1, "playwright": 1}
+_OPEN = {"(": ")", "[": "]", "{": "}"}
+_CLOSE = frozenset(_OPEN.values())
+#: The keywords after which a `/` starts a regex literal, not a division.
+_REGEX_AFTER = frozenset(
+    "return typeof case do else in of new delete void throw yield await instanceof".split()
+)
+_WORD = re.compile(r"[^\W\d][\w$]*|\$[\w$]*")
+_NUMBER = re.compile(
+    r"0[xXbBoO][\da-fA-F_]+n?|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?\d+)?n?"
+)
+
+
+class _Unreadable(Exception):
+    """A file the reader cannot follow to its end as code."""
+
+
+def _line(text: str, i: int) -> int:
+    """The line ``text[i]`` is on, from 1."""
+    return text.count("\n", 0, i) + 1
+
+
+def _blanked(text: str, jsx: bool) -> str:
+    """The text with each comment, and the contents of each string, template text and regex
+    literal, turned to spaces (the quotes, the line breaks and every offset kept), so a call is
+    found only in code. A template's ``${...}`` stays code, nested to any depth.
+
+    A ' or " string ends at its closing quote or at an unescaped line break, which is where an
+    apostrophe in a .tsx file's JSX text ends. A `/` starts a regex literal after a punctuator, a
+    keyword or the start, and never at `</` in a .tsx or .jsx file. Raises :class:`_Unreadable` for
+    a file that ends inside a string, template, comment or regex, or whose brackets do not balance,
+    naming the line where what it cannot close opened, or a stray closer's own line.
+    """
+    out = list(text)
+    n = len(text)
+    #: What came last, deciding what a `/` starts: "punct" (a punctuator, or the start) and
+    #: "keyword" start a regex; "word" (a name, number, string or regex) and "close" divide.
+    last, last_char = "punct", ""
+    #: The open brackets' closers, and "`" for a template's ${...}; and where each opened.
+    stack: list[str] = []
+    opened: list[int] = []
+    #: Where each template whose ${...} is open began, for the line one that never closes names.
+    templates: list[int] = []
+
+    def blank(a: int, b: int) -> None:
+        out[a:b] = [ch if ch == "\n" else " " for ch in text[a:b]]
+
+    def template(j: int, at: int) -> tuple[int, bool]:
+        """Blank a template's text from just after its ` or }, up to its closing ` or its next
+        ${; where code resumes, and whether that is inside a ${...}. *at* is where the template
+        opened, for the line a template that never closes names."""
+        start = j
+        while j < n:
+            if text[j] == "\\":
+                j += 2
+            elif text[j] == "`":
+                blank(start, j)
+                return j + 1, False
+            elif text.startswith("${", j):
+                blank(start, j)
+                stack.append("`")
+                opened.append(j)
+                templates.append(at)
+                return j + 2, True
+            else:
+                j += 1
+        raise _Unreadable(f"it ends inside a template opened at line {_line(text, at)}")
+
+    i = 0
+    while i < n:
+        c = text[i]
+        if c.isspace() or c == "\ufeff":
+            i += 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            blank(i, j)
+            i = j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            if j < 0:
+                raise _Unreadable(f"it ends inside a comment opened at line {_line(text, i)}")
+            blank(i, j + 2)
+            i = j + 2
+        elif c in "'\"":
+            j = i + 1
+            while j < n and text[j] not in (c, "\n"):
+                j += 2 if text[j] == "\\" else 1
+            if j >= n:
+                raise _Unreadable(f"it ends inside a string opened at line {_line(text, i)}")
+            blank(i + 1, j)
+            i = j + 1 if text[j] == c else j
+            last, last_char = "word", c
+        elif c == "`" or (c == "}" and stack and stack[-1] == "`"):
+            at = i
+            if c == "}":
+                stack.pop()
+                opened.pop()
+                at = templates.pop()
+            i, in_code = template(i + 1, at)
+            last, last_char = ("punct", "{") if in_code else ("word", "`")
+        elif c == "/" and last in ("punct", "keyword") and not (jsx and last_char == "<"):
+            j, in_class = i + 1, False
+            while j < n and (in_class or text[j] != "/"):
+                if text[j] == "\n":
+                    raise _Unreadable(f"a regex runs past its line (line {_line(text, i)})")
+                if text[j] == "\\":
+                    j += 1
+                elif text[j] in "[]":
+                    in_class = text[j] == "["
+                j += 1
+            if j >= n:
+                raise _Unreadable(f"it ends inside a regex opened at line {_line(text, i)}")
+            blank(i + 1, j)
+            i = j + 1
+            while i < n and (text[i].isalnum() or text[i] in "_$"):
+                i += 1
+            last, last_char = "word", "/"
+        elif word := _WORD.match(text, i):
+            i = word.end()
+            last = "keyword" if word.group() in _REGEX_AFTER else "word"
+            last_char = text[i - 1]
+        elif c.isdecimal() or (c == "." and text[i + 1 : i + 2].isdecimal()):
+            i = _NUMBER.match(text, i).end()
+            last, last_char = "word", text[i - 1]
+        elif c in _OPEN:
+            stack.append(_OPEN[c])
+            opened.append(i)
+            i += 1
+            last, last_char = "punct", c
+        elif c in _CLOSE:
+            if not stack or stack.pop() != c:
+                unclosed = (
+                    f", the one opened at line {_line(text, opened[-1])} unclosed" if opened else ""
+                )
+                raise _Unreadable(
+                    f"its brackets do not balance (a {c!r} at line {_line(text, i)}{unclosed})"
+                )
+            opened.pop()
+            i += 1
+            last, last_char = "close", c
+        else:
+            i += 1
+            last, last_char = "punct", c
+    if stack:
+        raise _Unreadable(
+            f"its brackets do not balance (one opened at line {_line(text, opened[-1])} is never"
+            " closed)"
+        )
+    return "".join(out)
+
+
+def _close(code: str, i: int) -> int:
+    """Where the bracket opened at ``code[i]`` closes, in blanked code (len(code) when it never
+    does)."""
+    stack = [_OPEN[code[i]]]
+    for j in range(i + 1, len(code)):
+        if code[j] in _OPEN:
+            stack.append(_OPEN[code[j]])
+        elif code[j] in ")]}":
+            if stack.pop() != code[j] or not stack:
+                return j
+    return len(code)
+
+
+def _top_level(code: str, start: int, end: int) -> list[tuple[int, int]]:
+    """The spans of ``code[start:end]``'s parts at its own depth, split at commas."""
+    parts, depth, begin = [], 0, start
+    for j in range(start, end):
+        if code[j] in _OPEN:
+            depth += 1
+        elif code[j] in ")]}":
+            depth -= 1
+        elif code[j] == "," and depth == 0:
+            parts.append((begin, j))
+            begin = j + 1
+    if code[begin:end].strip():
+        parts.append((begin, end))
+    return parts
+
+
+def _keys(text: str, code: str, start: int, end: int) -> dict[str, tuple[str, str]]:
+    """An object literal's top-level keys, ``code[start]`` being its ``{``, each with its value
+    in the blanked code and as the text writes it (a shorthand key's value is its own name).
+    Each is read in the blanked code, so a comment before, inside or after it is read past; a
+    quoted key's name is read from the text."""
+    keys = {}
+    for a, b in _top_level(code, start + 1, _close(code, start)):
+        lead = a + len(code[a:b]) - len(code[a:b].lstrip())
+        part = code[lead:b].rstrip()
+        found = re.match(r"""(['"] *['"]|[\w$]+)\s*(:|\(|$)""", part)
+        if found:
+            key = text[lead : lead + found.end(1)]
+            name = key[1:-1] if key[0] in "'\"" else key
+            if found.group(2) == ":":
+                keys[name] = (part[found.end() :].strip(), text[lead + found.end() : b].strip())
+            else:
+                keys[name] = (name, name)
+    return keys
+
+
+def _call_args(code: str, i: int) -> list[list[tuple[int, int]]]:
+    """From a name at ``code[i:]``, each argument list of its chain (``.each(rows)(name, ...)``
+    gives two), each as its arguments' spans. A name's type arguments (``it.each<[string,
+    Partial<P>]>(rows)``) and a tagged-template table (``it.each`a ${1}`(name, ...)``) are stepped
+    over to the call after them."""
+    groups = []
+    j, named = i, False
+    while j < len(code):
+        while j < len(code) and (code[j].isspace() or code[j] == "\ufeff"):
+            j += 1
+        if j < len(code) and code[j] == "(":
+            end = _close(code, j)
+            groups.append(_top_level(code, j + 1, end))
+            j, named = end + 1, False
+        elif j < len(code) and code[j] == ".":
+            word = re.match(r"\.\s*[\w$]+", code[j:])
+            if not word:
+                break
+            j, named = j + word.end(), True
+        elif j == i:
+            word = re.match(r"[\w$]+", code[j:])
+            if not word:
+                break
+            j, named = j + word.end(), True
+        elif named and j < len(code) and code[j] in "<`":
+            past = _type_arguments_end(code, j) if code[j] == "<" else _template_end(code, j)
+            if past is None:
+                break
+            j, named = past, False
+        else:
+            break
+    return groups
+
+
+def _type_arguments_end(code: str, j: int) -> int | None:
+    """Just past the type arguments the ``<`` at ``code[j]`` opens, nested ``<...>``, brackets and
+    an arrow's ``=>`` inside them included; None when they are no type arguments (a ``)``, ``]``,
+    ``}`` or ``;`` before they close)."""
+    depth, k = 0, j
+    while k < len(code):
+        ch = code[k]
+        if ch == "<":
+            depth += 1
+        elif ch == ">" and code[k - 1] != "=":
+            depth -= 1
+            if depth == 0:
+                return k + 1
+        elif ch in _OPEN:
+            k = _close(code, k)
+        elif ch in ")]};":
+            return None
+        k += 1
+    return None
+
+
+def _template_end(code: str, j: int) -> int | None:
+    """Just past the template the backtick at ``code[j]`` opens, each ``${...}`` in it stepped
+    over; None when it never closes."""
+    k = j + 1
+    while k < len(code):
+        if code[k] == "`":
+            return k + 1
+        if code.startswith("${", k):
+            k = _close(code, k + 1) + 1
+            continue
+        k += 1
+    return None
+
+
+def _vitest_file_retries(text: str, jsx: bool) -> list[str]:
+    code = _blanked(text, jsx)
+    found = []
+    for call in _VITEST_CALLS.finditer(code):
+        for group in _call_args(code, call.start()):
+            for a, b in group[1:]:
+                head = a + len(code[a:b]) - len(code[a:b].lstrip())
+                if head < b and code[head] == "{":
+                    for key in sorted(set(_keys(text, code, head, b)) & _VITEST_RETRY_KEYS):
+                        line = text.count("\n", 0, head) + 1
+                        found.append(f"{key} at line {line}")
+    return found
+
+
+def _playwright_file_retries(text: str, jsx: bool) -> list[str]:
+    code = _blanked(text, jsx)
+    found = []
+    for call in _PLAYWRIGHT_CONFIGURE.finditer(code):
+        group = _top_level(code, call.end(), _close(code, call.end() - 1))
+        for a, b in group:
+            head = a + len(code[a:b]) - len(code[a:b].lstrip())
+            if head < b and code[head] == "{":
+                for key, (value, written) in sorted(_keys(text, code, head, b).items()):
+                    if key in _PLAYWRIGHT_RETRY_KEYS and not (key == "retries" and value == "0"):
+                        line = text.count("\n", 0, head) + 1
+                        found.append(f"{key} {written} at line {line}")
+    return found
+
+
+def _files_read_floor(root: Path) -> dict[str, int]:
+    """How many files the scan must read under each runner: the tree's floors on the tree, one
+    file of each on a scaffold."""
+    return _FILES_READ_FLOOR if root == REPO else _SCAFFOLD_FILES_READ_FLOOR
+
+
+def _test_file_retry_check(root: Path) -> list[str]:
+    bad: list[str] = []
+    config = root / _VITEST_CONFIG
+    if not config.is_file() or _VITEST_INCLUDE not in config.read_text(encoding="utf-8"):
+        bad.append(
+            f"vitest: its config's test files are not {_VITEST_INCLUDE!r}, so the scan of"
+            f" {_VITEST_SRC} may miss a file it runs"
+        )
+    floor = _files_read_floor(root)
+    # A screenshot folder is named after its spec (web/e2e/__screenshots__/visual.spec.ts/).
+    for runner, top, wanted, retries in (
+        ("vitest", _VITEST_SRC, _VITEST_TEST_FILE, _vitest_file_retries),
+        ("playwright", _E2E_DIR, _E2E_SCRIPT, _playwright_file_retries),
+    ):
+        read = 0
+        for path in sorted((root / top).rglob("*")):
+            if "node_modules" in path.parts or not wanted.search(path.name) or not path.is_file():
+                continue
+            rel = path.relative_to(root)
+            try:
+                hits = retries(path.read_text(encoding="utf-8"), path.suffix in (".tsx", ".jsx"))
+            except _Unreadable as exc:
+                bad.append(f"{runner}: cannot read {rel}: {exc}, so a retry in it would go unseen")
+                continue
+            read += 1
+            bad += [f"{runner}: {rel} sets {hit}, a retry of its own" for hit in hits]
+        if read < floor[runner]:
+            bad.append(
+                f"{runner}: the scan read {read} files under {top}, under its floor of"
+                f" {floor[runner]}, so it no longer reads the tree"
+            )
+    return bad
+
+
+_FILE_SPEC = "web/e2e/sample.spec.ts"
+_FILE_TEST = "web/src/sample.test.ts"
+
+
+def _test_files_scaffold(root: Path) -> None:
+    _write(
+        root, _VITEST_CONFIG, f"export default {{\n  test: {{\n    {_VITEST_INCLUDE}\n  }},\n}}\n"
+    )
+    _write(
+        root,
+        _FILE_SPEC,
+        "import { test } from '@playwright/test'\n\n"
+        "test.describe('a group', () => {\n"
+        "  test.describe.configure({ timeout: 180_000 })\n"
+        "  test.describe.configure({ mode: 'serial', retries: 0 })\n"
+        "  // test.describe.configure({ retries: 2 }) in a comment is no retry\n"
+        "  test('a case', async () => {})\n"
+        "})\n",
+    )
+    _write(
+        root,
+        _FILE_TEST,
+        "import { describe, it } from 'vitest'\n\n"
+        "describe('a suite', () => {\n"
+        "  it('hands a retry to app code', async () => {\n"
+        "    await fetchWith({ retry: 3, repeats: 2 })\n"
+        "  })\n"
+        "  it('names a retry in its title: it(x, { retry: 2 })', () => {})\n"
+        "})\n",
+    )
+
+
+def _add_case(rel: str, case: str) -> Callable[[Path], None]:
+    return _append(rel, "\n" + case + "\n")
+
+
+#: The scaffold test file's and spec's line counts: a case _add_case adds starts two lines on, at
+#: LINES + 2; one _cannot_read appends as it is starts at LINES + 1.
+_FILE_TEST_LINES = 8
+_FILE_SPEC_LINES = 8
+_VISUAL_SPEC = "web/e2e/visual.spec.ts"
+
+
+def _tree_visual_spec(root: Path) -> None:
+    """The tree's own visual.spec.ts, which sets `retries: 0` (no retry) through configure."""
+    text = (REPO / _VISUAL_SPEC).read_text(encoding="utf-8")
+    no_retry = "test.describe.configure({ retries: 0 })"
+    assert no_retry in text, f"premise: {_VISUAL_SPEC} holds {no_retry}"
+    _write(root, _VISUAL_SPEC, text)
+
+
+def _before_a_retry(name: str, case: str) -> Control:
+    """A case the reader must read past, then a test that sets a retry on the next line."""
+    retry_at = _FILE_TEST_LINES + 2 + case.count("\n") + 1
+    return Control(
+        name + ", before a retry",
+        _add_case(_FILE_TEST, case + "\nit('a case', { retry: 2 }, () => {})"),
+        expect=f"{_FILE_TEST} sets retry at line {retry_at}",
+    )
+
+
+def _cannot_read(name: str, rel: str, case: str, why: str) -> Control:
+    return Control(name, _append(rel, case), expect=f"cannot read {rel}: {why}")
+
+
+NO_TEST_FILE_SETS_A_RETRY_OF_ITS_OWN = Row(
+    name="no-test-file-sets-a-retry-of-its-own",
+    check=_test_file_retry_check,
+    scaffold=_test_files_scaffold,
+    controls=(
+        Control(
+            "a spec sets two retries",
+            _add_case(_FILE_SPEC, "test.describe.configure({ retries: 2 })"),
+            expect="sets retries 2 at line",
+        ),
+        Control(
+            "a spec sets a retry beside its mode",
+            _add_case(_FILE_SPEC, "test.describe.configure({ mode: 'serial', retries: 1 })"),
+            expect="sets retries 1 at line",
+        ),
+        Control(
+            "a spec sets its retries from a name",
+            _add_case(_FILE_SPEC, "const retries = 2\ntest.describe.configure({ retries })"),
+            expect="sets retries retries at line",
+        ),
+        Control(
+            "a spec repeats each test",
+            _add_case(_FILE_SPEC, "test.describe.configure({ repeatEach: 3 })"),
+            expect="sets repeatEach 3 at line",
+        ),
+        Control(
+            "a spec of another script kind",
+            lambda root: _write(
+                root, "web/e2e/later.spec.mts", "test.describe.configure({ retries: 1 })\n"
+            ),
+            expect="web/e2e/later.spec.mts sets retries 1 at line 1",
+        ),
+        Control(
+            "a test sets a retry in its options",
+            _add_case(_FILE_TEST, "it('a case', { retry: 2 }, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a suite sets a retry",
+            _add_case(_FILE_TEST, "describe('a suite', { retry: 1 }, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a test repeats",
+            _add_case(_FILE_TEST, "test('a case', { repeats: 3 }, () => {})"),
+            expect="sets repeats at line",
+        ),
+        Control(
+            "a test sets a retry of zero",
+            _add_case(_FILE_TEST, "it('a case', { retry: 0 }, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a test repeats zero times",
+            _add_case(_FILE_TEST, "test('a case', { repeats: 0 }, () => {})"),
+            expect="sets repeats at line",
+        ),
+        Control(
+            "a suite() sets a retry",
+            _add_case(_FILE_TEST, "suite('a suite', { retry: 1 }, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a bench sets a retry after its function",
+            _add_case(_FILE_TEST, "bench('a bench', () => {}, { retry: 1 })"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a test sets a retry after its function",
+            _add_case(_FILE_TEST, "it('a case', () => {}, { retry: 2 })"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a concurrent test sets a retry by shorthand",
+            _add_case(
+                _FILE_TEST, "const retry = 2\nit.concurrent('a case', { retry }, async () => {})"
+            ),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a table of tests repeats",
+            _add_case(_FILE_TEST, "test.each([[1], [2]])('case %i', { repeats: 2 }, () => {})"),
+            expect="sets repeats at line",
+        ),
+        Control(
+            "a test file under a folder, with a quoted key",
+            lambda root: _write(
+                root, "web/src/deep/other.spec.tsx", "it('a case', { 'retry': 2 }, () => {})\n"
+            ),
+            expect="web/src/deep/other.spec.tsx sets retry at line 1",
+        ),
+        Control(
+            "the config takes other test files",
+            _edit(_VITEST_CONFIG, "src/**/*.{test,spec}.{ts,tsx}", "src/**/*.check.ts"),
+            expect="its config's test files are not",
+        ),
+        _before_a_retry("a regex holding a quote", "const quote = /['\"]/"),
+        _before_a_retry("a regex holding a backtick", "const tick = /`/"),
+        _before_a_retry("a regex in a template's code", "const s = `a ${/'/.source} b`"),
+        _before_a_retry("a regex after a keyword", 'const f = () => { return /"/ }'),
+        Control(
+            "a .tsx whose JSX text holds an apostrophe, before a retry",
+            lambda root: _write(
+                root,
+                "web/src/view.test.tsx",
+                "const view = <p>Don't wait</p>\nit('a case', { retry: 2 }, () => {})\n",
+            ),
+            expect="web/src/view.test.tsx sets retry at line 2",
+        ),
+        Control(
+            "a .tsx closing tag, before a retry",
+            lambda root: _write(
+                root,
+                "web/src/view.test.tsx",
+                "const view = <p>Wait</p>\nit('a case', { retry: 2 }, () => {})\n",
+            ),
+            expect="web/src/view.test.tsx sets retry at line 2",
+        ),
+        Control(
+            "a .tsx whose JSX text holds a superscript digit after a dot, before a retry",
+            lambda root: _write(
+                root,
+                "web/src/view.test.tsx",
+                "const view = <p>As noted.¹</p>\nit('a case', { retry: 2 }, () => {})\n",
+            ),
+            expect="web/src/view.test.tsx sets retry at line 2",
+        ),
+        # Comments inside an options object are read past (M1).
+        Control(
+            "a test sets a retry after a line comment in its options",
+            _add_case(_FILE_TEST, "it('a case', {\n  // why\n  retry: 2,\n}, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a test sets a retry after a block comment in its options",
+            _add_case(_FILE_TEST, "it('a case', { /* why */ retry: 2 }, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a test sets a retry after a comment after a comma",
+            _add_case(_FILE_TEST, "it('a case', { timeout: 1, // why\n  retry: 2 }, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a test sets a retry with a comment before its colon",
+            _add_case(_FILE_TEST, "it('a case', { retry /* why */: 2 }, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a spec sets retries after a line comment",
+            _add_case(_FILE_SPEC, "test.describe.configure({\n  // why\n  retries: 2,\n})"),
+            expect="sets retries 2 at line",
+        ),
+        Control(
+            "a spec's retries are named as written",
+            _add_case(_FILE_SPEC, "test.describe.configure({ retries: '2' })"),
+            expect="sets retries '2' at line",
+        ),
+        Control(
+            "a spec sets retries after a block comment",
+            _add_case(_FILE_SPEC, "test.describe.configure({ /* why */ retries: 2 })"),
+            expect="sets retries 2 at line",
+        ),
+        # Typed and tagged-template tables are read (M2, X1).
+        Control(
+            "a typed table of tests sets a retry",
+            _add_case(
+                _FILE_TEST,
+                "it.each<[string, Partial<Record<string, () => void>>]>([['a', {}]])"
+                "('case %s', { retry: 2 }, () => {})",
+            ),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a table typed by a function type sets a retry",
+            _add_case(
+                _FILE_TEST, "it.each<() => void>([[() => {}]])('case %#', { retry: 2 }, () => {})"
+            ),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a table whose call follows a zero-width no-break space sets a retry",
+            _add_case(_FILE_TEST, "test.each([[1]])\ufeff('case %i', { retry: 2 }, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a table whose call follows a no-break space sets a retry",
+            _add_case(_FILE_TEST, "test.each([[1]])\u00a0('case %i', { retry: 2 }, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a tagged table of tests sets a retry",
+            _add_case(_FILE_TEST, "it.each`\n  a\n  ${1}\n`('case $a', { retry: 2 }, () => {})"),
+            expect="sets retry at line",
+        ),
+        Control(
+            "a tagged table of suites repeats",
+            _add_case(
+                _FILE_TEST, "describe.each`\n  a\n  ${1}\n`('suite $a', { repeats: 2 }, () => {})"
+            ),
+            expect="sets repeats at line",
+        ),
+        # A cannot-read names the line where what it cannot close opened (S4).
+        _cannot_read(
+            "a .tsx's unclosed bracket is named by its line",
+            "web/src/view.test.tsx",
+            "const a = 1\nrender(<p>Don't wait</p>)\n",
+            "its brackets do not balance (one opened at line 2 is never closed)",
+        ),
+        _cannot_read(
+            "a test file ends inside a template",
+            _FILE_TEST,
+            "const s = `open\n",
+            f"it ends inside a template opened at line {_FILE_TEST_LINES + 1}",
+        ),
+        _cannot_read(
+            "a template that resumes after its code and never closes names where it opened",
+            _FILE_TEST,
+            "const s = `a\n${b}\nc\n",
+            f"it ends inside a template opened at line {_FILE_TEST_LINES + 1}",
+        ),
+        _cannot_read(
+            "a test file ends inside a comment",
+            _FILE_TEST,
+            "/* open\n",
+            f"it ends inside a comment opened at line {_FILE_TEST_LINES + 1}",
+        ),
+        _cannot_read(
+            "a test file ends inside a string",
+            _FILE_TEST,
+            "const s = 'open",
+            f"it ends inside a string opened at line {_FILE_TEST_LINES + 1}",
+        ),
+        _cannot_read(
+            "a test file's regex runs past its line",
+            _FILE_TEST,
+            "const r = /open\n",
+            f"a regex runs past its line (line {_FILE_TEST_LINES + 1})",
+        ),
+        _cannot_read(
+            "a test file's brackets do not balance",
+            _FILE_TEST,
+            "it('a case', () => {\n",
+            f"its brackets do not balance (one opened at line {_FILE_TEST_LINES + 1} is never"
+            " closed)",
+        ),
+        _cannot_read(
+            "a spec's brackets do not balance",
+            _FILE_SPEC,
+            "test.describe.configure({ retries: 2 }\n",
+            f"its brackets do not balance (one opened at line {_FILE_SPEC_LINES + 1} is never"
+            " closed)",
+        ),
+        # A closer with nothing open, or the wrong one, names its own line (and the open one's).
+        _cannot_read(
+            "a test file closes a bracket it never opened",
+            "web/src/close.test.ts",
+            "})\n",
+            "its brackets do not balance (a '}' at line 1)",
+        ),
+        _cannot_read(
+            "a .tsx closes a bracket its JSX text never opened",
+            "web/src/view.test.tsx",
+            "const a = 1\nconst v = <p>Thanks :)</p>\n",
+            "its brackets do not balance (a ')' at line 2)",
+        ),
+        _cannot_read(
+            "a test file closes the wrong bracket",
+            "web/src/wrong.test.ts",
+            "f(\n  [1, 2)\n",
+            "its brackets do not balance (a ')' at line 2, the one opened at line 2 unclosed)",
+        ),
+        _cannot_read(
+            "a template's code that never closes is named by its own line",
+            "web/src/template.test.ts",
+            "const s = `a\n${ b\n",
+            "its brackets do not balance (one opened at line 2 is never closed)",
+        ),
+        Control(
+            "the scan reads no test file",
+            _remove(_FILE_TEST),
+            expect="vitest: the scan read 0 files under web/src, under its floor of 1",
+        ),
+        Control(
+            "the scan reads no spec",
+            _remove(_FILE_SPEC),
+            expect="playwright: the scan read 0 files under web/e2e, under its floor of 1",
+        ),
+        Control(
+            "a spec with no retry",
+            _add_case(_FILE_SPEC, "test.describe.configure({ timeout: 60_000 })"),
+            fails=False,
+        ),
+        Control(
+            "a test whose body hands a retry to app code",
+            _add_case(_FILE_TEST, "it('a case', async () => { await load({ retry: 5 }) })"),
+            fails=False,
+        ),
+        Control(
+            "a spec that sets no retries again",
+            _add_case(_FILE_SPEC, "test.describe.configure({ retries: 0 })"),
+            fails=False,
+        ),
+        Control(
+            "a spec that sets no retries, with a comment after the 0",
+            _add_case(
+                _FILE_SPEC,
+                "test.describe.configure({ retries: 0 /* none */ })\n"
+                "test.describe.configure({\n  retries: 0 // none\n})",
+            ),
+            fails=False,
+        ),
+        Control(
+            "a division after a zero-width no-break space is no regex",
+            _add_case(_FILE_TEST, "const half = total\ufeff/ 2\nconst third = total / 3"),
+            fails=False,
+        ),
+        Control(
+            "a typed table with no options, whose body hands a retry to app code",
+            _add_case(
+                _FILE_TEST, "it.each<[number]>([[1]])('case %i', () => { load({ retry: 2 }) })"
+            ),
+            fails=False,
+        ),
+        Control(
+            "the tree's web/e2e/visual.spec.ts, whose configure sets retries: 0",
+            _tree_visual_spec,
+            fails=False,
+        ),
+        Control(
+            "a test file with divisions, closing tags and a regex whose class holds a slash",
+            lambda root: _write(
+                root,
+                "web/src/view.test.tsx",
+                "const half = total / 2 / count\nconst slash = /[/'\"`]/g\n"
+                'const view = <a href="/x">it\'s <b>here</b></a>\n',
+            ),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, NO_TEST_FILE_SETS_A_RETRY_OF_ITS_OWN)
+
+
 # ── No candidate job posts the merge verdict (#3915) ──────────────────────────────────────────
 #
 # `merge-verdict` is the one check a pull request is to be required to pass, and only the default
@@ -16961,6 +17746,30 @@ def table_params(rows: Sequence[Row], timeouts: dict[str, Any]) -> list[Any]:
     unknown = sorted(set(timeouts) - {row.name for row in rows})
     assert not unknown, f"a timeout is keyed by no row of the table: {unknown}"
     return [pytest.param(row, marks=timeouts.get(row.name, ()), id=row.name) for row in rows]
+
+
+def test_the_retry_scan_holds_the_tree_to_its_real_floors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The row's floor plants run on its scaffold, whose floor is one file of each, so they stay
+    green whatever the tree's floors say. Here the check runs as it does on the tree, with REPO
+    pointed at a tree one Vitest file and one e2e script short of 1,500 and 60, which is red under
+    both floors, and then at them, which is green."""
+    monkeypatch.setattr(sys.modules[__name__], "REPO", tmp_path)
+    _test_files_scaffold(tmp_path)
+    for n in range(1_498):
+        _write(tmp_path, f"web/src/floor/case{n}.test.ts", "")
+    for n in range(58):
+        _write(tmp_path, f"web/e2e/floor/case{n}.spec.ts", "")
+    assert _test_file_retry_check(tmp_path) == [
+        "vitest: the scan read 1499 files under web/src, under its floor of 1500, so it no longer"
+        " reads the tree",
+        "playwright: the scan read 59 files under web/e2e, under its floor of 60, so it no longer"
+        " reads the tree",
+    ]
+    _write(tmp_path, "web/src/floor/last.test.ts", "")
+    _write(tmp_path, "web/e2e/floor/last.spec.ts", "")
+    assert _test_file_retry_check(tmp_path) == []
 
 
 @pytest.mark.parametrize("row", table_params(ROWS, ROW_TIMEOUTS))

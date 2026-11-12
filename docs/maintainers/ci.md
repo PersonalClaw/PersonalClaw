@@ -3149,7 +3149,7 @@ budget, and red on a first failure the retry passes.
   the shape Playwright writes classifies nothing, and says so.
 
 Three contract rows, one per runner, hold what the tree must not add, each rule with a planted
-break, each listed option, plugin and key its own:
+break, each listed option, plugin and key its own, and a fourth holds the test files themselves:
 
 - `pytest-retries-once-in-a-fresh-process-on-the-same-budget`: no option in `addopts` (the
   root's, or a package's own under `packages/`) or a catalogue step that retries in the same
@@ -3167,6 +3167,24 @@ break, each listed option, plugin and key its own:
   `--repeat-each`, `--timeout` or `--fail-on-flaky-tests` in the step; `retries` one under CI and
   set once (a project's own `retries` is refused); `failOnFlakyTests` set; no `repeatEach`; no
   test timeout of the config's own; and the step's JSON report named.
+- `no-test-file-sets-a-retry-of-its-own` (#5852, under #5809's budget): no spec under `web/e2e` sets
+  `retries` other than `0` through `test.describe.configure`, or a `repeatEach` there, though
+  configure takes none, and no file Vitest's projects take (`src/**/*.{test,spec}.{ts,tsx}`, which the config is held to) passes `retry` or
+  `repeats`, a zero included, in a test's or a suite's options object, before or after its function,
+  a table's (`each(rows)`, a typed `each<...>(rows)` and a tagged-template `` each`...` ``) or a
+  shorthand key's included. Calls are found with comments and the contents of strings, template text
+  and regex literals blanked, and only the top-level keys of an object passed straight to the call
+  are read, comments before, inside or after a key read past. So a `{ retry: 3 }` a test body hands
+  to app code is no retry, and a Playwright `retries: 0 /* none */` is none.
+  `configure({ timeout })` and `({ mode })` are left alone. It reads a literal object only: options
+  passed by a name or a spread (`configure(o)`, `{ ...o }`), and the test functions under other
+  names (an aliased or namespace import, an `.extend()` result), are not read. The reader fails
+  closed: a file that ends inside a string, template, comment or regex, or whose brackets don't
+  balance, is red as one it cannot read, naming the line where what it cannot close opened, or a
+  stray closer's own line, and a scan that reads fewer than 1,500 Vitest files or 60 scripts under
+  `web/e2e` is red too. The usual cause in a `.tsx` test is JSX text holding an apostrophe, `//`, a
+  URL, an unbalanced bracket (`1)`, `:)`), a backtick or `/*` (`render(<p>Don't wait</p>)`): write
+  the character as a string in braces (`{"'"}`) or an entity (`&apos;`), or the text as a string.
 
 `tests/test_ci_jobs_web_rerun.py` runs both web runners through `run-job`'s step path with
 stand-in `npm` and `npx` that play a planted suite, the rerun's name filter applied as Vitest
