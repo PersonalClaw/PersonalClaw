@@ -11,7 +11,9 @@ the QUERIED ITEM (expand ``~``/``$VAR``, then ``abspath``, which anchors a relat
 and collapses ``.``/``..``). NEVER run the *pattern* through ``normpath``: ``normpath``
 treats ``*``/``**`` as ordinary path segments and collapses an adjacent ``..`` against
 them, so ``/a/**/../b`` becomes ``/a/b`` — silently dropping the ``**`` and widening an
-allow (or shrinking a deny). Two properties this buys:
+allow (or shrinking a deny). What a pattern's ``~`` and ``$VAR`` expand to is not glob text, so
+it is tidied as the item is (:func:`expand_pattern`); the rest of the pattern is never touched.
+Two properties this buys:
 
 1. ``~/ws/../.bashrc`` collapses to ``~/.bashrc`` and no longer matches an allow of
    ``~/ws/**``;
@@ -64,16 +66,77 @@ def normalize_item(item: str) -> str:
     return os.path.abspath(expanded)
 
 
-@lru_cache(maxsize=512)
+#: A ``$VAR`` or ``${VAR}`` reference, read as :func:`os.path.expandvars` reads one.
+_VAR_REF = re.compile(r"\$(\w+|\{[^}]*\})", re.ASCII)
+
+
+def _tidy(value: str) -> str:
+    """What one ``~`` or ``$VAR`` expanded to, collapsed lexically as the queried path is: a
+    ``//``, ``/./`` or ``/../`` inside it goes. A trailing ``/`` it ended with stays, since it
+    marked a boundary (``$VAR**`` with ``/srv/data/`` is the tree under ``/srv/data``)."""
+    if not value:
+        return value
+    tidy = os.path.normpath(value)
+    if value.endswith("/") and not tidy.endswith("/"):
+        tidy += "/"
+    return tidy
+
+
+def expand_pattern(pattern: str) -> str:
+    """*pattern* with its leading ``~`` (or ``~user``) and each ``$VAR`` replaced by what it
+    expands to, each expansion tidied (:func:`_tidy`) and joined to the text beside it with one
+    ``/`` where both bring one.
+
+    Only the expansions change. The pattern's own text, its glob tokens and any ``..`` it spells
+    included, is kept exactly as written: it is never put through ``normpath`` (the rule above).
+    Without the tidying, an expansion holding ``//``, ``/./`` or ``/../``, or a variable ending
+    in ``/`` as macOS's ``TMPDIR`` does, spelled the pattern one way and the normalized path
+    another, and the rule matched nothing. A variable that is not set is left spelled out, as
+    ``expandvars`` leaves it.
+    """
+    pat = (pattern or "").strip()
+    pieces: list[tuple[str, bool]] = []  # (text, whether it is an expansion)
+    if pat.startswith("~"):
+        head = pat.split("/", 1)[0]
+        home = os.path.expanduser(head)
+        if home != head:
+            pieces.append((_tidy(home), True))
+            pat = pat[len(head) :]
+    at = 0
+    for ref in _VAR_REF.finditer(pat):
+        pieces.append((pat[at : ref.start()], False))
+        value = os.path.expandvars(ref.group(0))
+        pieces.append((value, False) if value == ref.group(0) else (_tidy(value), True))
+        at = ref.end()
+    pieces.append((pat[at:], False))
+    out = ""
+    joined_expansion = False
+    for text, is_expansion in pieces:
+        if not text:
+            continue
+        if (is_expansion or joined_expansion) and out.endswith("/") and text.startswith("/"):
+            text = text[1:]
+        out += text
+        joined_expansion = is_expansion
+    return out
+
+
 def _pattern_regex(pattern: str) -> re.Pattern[str]:
-    """Compile a path glob to a regex WITHOUT ever normpath-ing the pattern.
+    """*pattern*'s regex, for the environment it is asked in: the cache is keyed on the expanded
+    pattern (:func:`expand_pattern`), so a home or a variable that changes after a first match is
+    read as it is now."""
+    return _compiled(expand_pattern(pattern))
+
+
+@lru_cache(maxsize=512)
+def _compiled(pat: str) -> re.Pattern[str]:
+    """Compile an expanded path glob to a regex WITHOUT ever normpath-ing the pattern.
 
     ``**`` crosses separators, ``*``/``?`` do not. A pattern that is not anchored
     (``/``, ``~``, ``$VAR`` or a leading wildcard) is treated as matching at any depth —
     i.e. implicitly ``**/``-prefixed — so an operator's ``id_rsa`` deny cannot be dodged
     by depth. That direction fails CLOSED for a deny, which is why it is the default.
     """
-    pat = os.path.expandvars(os.path.expanduser((pattern or "").strip()))
     if not pat.startswith(("/", "*")):
         pat = f"**/{pat}"
     out: list[str] = []
