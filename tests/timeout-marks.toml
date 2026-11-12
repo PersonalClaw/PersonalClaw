@@ -888,3 +888,8 @@ reason = "every boolean toggle in the editable config, each off and on again by 
 site = "tests/rails/test_the_candidate_workflows_are_named_in_one_place_tree.py::test_no_reader_names_the_deleted_workflow"
 cap = 60
 reason = "a census of every tracked file under tools/, scripts/, src/ and .github/ that parses each Python one; over 30 s on CI at worst (breadth's rails-macos leg, 2026-11-11), 8 s on a merge leg"
+
+[[mark]]
+site = "tests/test_website_installer.py::TestTruncatedDownloadFailsClosed.test_every_truncation_prefix_installs_nothing"
+cap = 60
+reason = "the installer fed to /bin/sh once for each line-prefix, about 224 shells; 0.2 s on CI (static, on Linux's dash), but on a Mac, where /bin/sh is bash, 6.7 and 12.6 s inside a loaded local set (loads 37 to 46) and past 30 s once (loads 27 to 34, 2026-11-12)"
