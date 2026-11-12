@@ -35,12 +35,24 @@ one thing: on a pull request's run, given its changed paths and the run's jobs, 
 (:func:`_pass_flakes`) passes a run whose only failures are at most :data:`MAX_FLAKES` tests that
 each passed alone in a new process, in a file the pull request does not change, and names each
 one (:func:`flake_notices`). A red is still never rerun into green: the rule reads the one
-attempt's records, and a later attempt fills nothing attempt 1 left.
+attempt's records, and it passes nothing on a run where a rerun filled a planned job attempt 1
+never ran (below).
 
 Given the run's id (``run_id``, when the results are one run's own records, :func:`read_records`),
 :func:`decide` reads two more reds: a result of another run (``another run``) or of none (``no
 run``: a local record), and a planned key with no result on attempt 1 (``missing on attempt 1``),
 so a rerun carries only what attempt 1 recorded and never fills a record attempt 1 left empty.
+But for one kind of job: given attempt 1's jobs (``first_jobs``, as the API lists them, each of
+the run and attempt 1), a planned key whose attempt-1 job no runner took (:func:`never_acquired`:
+completed and cancelled, with no step, no runner name and no runner id, as GitHub ends a job no
+runner took) may be filled by attempt 2's record alone, held as any record is, and reads
+``missing on attempt 2`` without one. That job ran nothing, so it left no result for a rerun to
+hide. A job a runner took, or one the listing describes any other way, stays ``missing on
+attempt 1``. On attempt 1 itself, such a key reads ``not acquired``, still red, and a verdict red
+for nothing else (aside from a stage job whose ``needs`` result is ``abandoned`` while attempt 1's
+listing shows nothing else red) names those keys in :data:`NOT_ACQUIRED_NOTICE`'s notice
+(:func:`not_acquired_notices`), for the merge controller to read, so it knows a rerun may fill
+them.
 
 Planned keys are opaque strings: a job id from ``needs``, a matrix entry from a per-job verdict
 file, or a job the controller read from the API all mean the same thing here.
@@ -63,7 +75,9 @@ appended to it. ``--records`` adds one run's per-job records (:func:`read_record
 key to partner names, with --records only), and ``--attempt`` names the run's attempt. On a pull
 request's run, ``--changed`` (its changed paths, NUL-separated) and ``--jobs`` (the run's jobs on
 the attempt, as the API lists them) give the flake rule what it reads; it passes nothing without
-them, and they are refused on a push.
+them, and they are refused on a push. ``--first-jobs`` (attempt 1's jobs, as the API lists
+them, with --records only) names the planned jobs no runner took on attempt 1, on attempt 1 and
+on a rerun alike.
 
 :func:`job_record` writes, and :func:`from_job_records` reads, the per-job record a run of a
 catalogue job leaves (``python -m tools.ci run-job``): its key, result, identity, the GitHub run
@@ -94,6 +108,17 @@ CANCELLED = "cancelled"
 MISSING = "missing"
 SKIPPED = "skipped"
 WORDS = frozenset({SUCCESS, FAILURE, CANCELLED, SKIPPED})
+#: The reason a planned key reads on attempt 1 when attempt 1's own listing shows no runner took
+#: its job: red, and a rerun's attempt-2 record may fill it.
+NOT_ACQUIRED = "not acquired"
+#: The result GitHub's ``needs`` gave a stage job whose matrix entry no runner took, in the red
+#: runs this rule was built from. GitHub documents only success, failure, cancelled and skipped,
+#: so this is the one more word read, and only beside attempt 1's listing.
+ABANDONED = "abandoned"
+#: The title of the notice an attempt-1 verdict writes when it is red only for planned jobs no
+#: runner took (:func:`not_acquired_notices`), for the merge controller to read from attempt 1's
+#: ``results`` job, so it knows a rerun may fill them.
+NOT_ACQUIRED_NOTICE = "red only for jobs no runner took"
 
 #: A full object id, SHA-1 or SHA-256, as ``tools/ci/trust.py``'s receipts carry. Matched with
 #: ``fullmatch``, so nothing may follow the id, not even a newline.
@@ -202,6 +227,9 @@ class Verdict:
     flakes: tuple[FailedTest, ...] = ()
     #: Why the flake rule passed none, said when the records name a flake and the verdict is red.
     flake_rule: str = ""
+    #: On attempt 1, the planned keys no runner took, when they are the whole of why it is red (a
+    #: stage job ``needs`` calls ``abandoned`` aside). Empty everywhere else. Never green.
+    not_acquired: tuple[str, ...] = ()
 
 
 def _fault(
@@ -263,14 +291,27 @@ def _planned(
     candidate: Identity,
     run_id: int | None = None,
     reads: frozenset[str] | None = None,
+    unpicked: bool = False,
+    first_attempt: bool = False,
 ) -> tuple[str, str] | None:
-    """The fault of one planned key's results, or None when every attempt was green here."""
+    """The fault of one planned key's results, or None when every attempt was green here.
+    ``unpicked`` says attempt 1's listing shows no runner took the key's job, and
+    ``first_attempt`` that the run is on attempt 1."""
     if not results:
+        if unpicked and first_attempt:
+            return NOT_ACQUIRED, "no runner took its job, so a rerun's attempt-2 record may fill it"
         return MISSING, "no result for a planned job"
     if run_id is not None and all(r.attempt != 1 for r in results):
         # Every planned entry ran on attempt 1, so its record is attempt 1's: a later attempt's
-        # result alone is a rerun filling a record attempt 1 never wrote.
-        return "missing on attempt 1", "a rerun carries only what attempt 1 recorded"
+        # result alone is a rerun filling a record attempt 1 never wrote. Unless no runner took
+        # attempt 1's job: then it ran nothing and left no result to hide, and attempt 2's record
+        # stands for it. One a runner took on attempt 2 and that left none stays red.
+        if not unpicked:
+            return "missing on attempt 1", "a rerun carries only what attempt 1 recorded"
+        if all(r.attempt != 2 for r in results):
+            return "missing on attempt 2", (
+                "no runner took its job on attempt 1, and only attempt 2's record fills it"
+            )
     latest = max(r.attempt for r in results)
     for r in results:
         if r.attempt == latest:
@@ -331,8 +372,10 @@ FLAKE_NOTICE = "flake passed"
 #: controller's retry note (0.4.0 A5): its message is one JSON object, the test's ``key``,
 #: ``attempt``, ``test`` and ``standing``; the first notice counts them (``failed``).
 FAILED_NOTICE = "failed test"
-#: At most this many failed tests are named, after the count: GitHub keeps ten notices a step, so
-#: a reader that finds fewer than the count knows it did not read them all.
+#: At most this many failed tests are named, after the count, and a reader that finds fewer than
+#: the count knows it did not read them all. GitHub keeps ten notices a step: on a red, the
+#: not-acquired notice, the count and these eight fill them (:func:`notices`), so a new notice
+#: needs its place here first.
 FAILED_NOTICES = 8
 #: What every pytest test's run reads besides its own file and the conftests above it.
 PYTEST_CONFIG = ("pyproject.toml",)
@@ -366,19 +409,56 @@ class JobRun:
     status: str
     conclusion: str | None
     failed_steps: tuple[tuple[str, str], ...] = ()
+    #: How many steps the API lists for the job, the runner name it gives (empty when it names
+    #: none) and the runner id (None or 0 when it names none, with ``runner_id_listed`` saying
+    #: whether the listing gave one); None for a field the listing did not give, which
+    #: :func:`never_acquired` never reads as none.
+    steps: int | None = None
+    runner: str | None = None
+    runner_id: int | None = None
+    runner_id_listed: bool = False
+    #: The run and attempt the listing gave the job, as :func:`read_jobs` held them.
+    run_id: int | None = None
+    run_attempt: int | None = None
 
 
-def read_jobs(text: str, *, run_id: int, attempt: int) -> list[JobRun]:
+def never_acquired(job: JobRun) -> bool:
+    """Whether GitHub ended ``job`` before any runner took it: completed and cancelled, with no
+    step, no runner name and no runner id, as "The job was not acquired by Runner" leaves a job.
+    Such a job ran nothing, so it wrote no record. A field the listing did not give is never read
+    as none, and a step count or runner id that is not a whole number (``False``, ``0.0``) is no
+    zero."""
+    return (
+        job.status == "completed"
+        and job.conclusion == CANCELLED
+        and _whole(job.steps)
+        and job.steps == 0
+        and job.runner == ""
+        and job.runner_id_listed
+        and (job.runner_id is None or (_whole(job.runner_id) and job.runner_id == 0))
+    )
+
+
+def read_jobs(
+    text: str,
+    *,
+    run_id: int,
+    attempt: int,
+    where: str = "the run's jobs",
+    planned: frozenset[str] | None = None,
+) -> list[JobRun]:
     """The run's jobs on ``attempt``, as ``gh api --paginate --slurp
     repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs`` writes them: a list of pages,
     each holding ``total_count`` and ``jobs``.
 
     Refused: anything else; a page whose count is not the first page's; a listing holding more
-    or fewer jobs than its count, so a job may be unseen; a job of another run or attempt; a job
-    named twice, unless every job of that name was skipped; and a job or a step whose name or
-    words are not strings. GitHub lists a skipped matrix job under its unexpanded name, so the
-    stages a plan leaves empty are each ``matrix.key``, with no step and no runner."""
-    where = "the run's jobs"
+    or fewer jobs than its count, so a job may be unseen; a job of another run or attempt, or
+    whose run or attempt is not a whole number (``true``, ``1.0``); a job
+    named twice, unless every job of that name was skipped (or, given ``planned``, unless the name
+    is no planned key); a job or a step whose name or words are not strings; a runner name that
+    is not a string; and a runner id that is not a whole number. GitHub lists a skipped matrix job
+    under its unexpanded name, so the stages a plan leaves empty are each ``matrix.key``, with no
+    step and no runner. ``where`` names the listing in a refusal."""
     try:
         pages = json.loads(
             text, object_pairs_hook=_no_repeats_in(where), parse_constant=_no_constant_in(where)
@@ -415,17 +495,34 @@ def read_jobs(text: str, *, run_id: int, attempt: int) -> list[JobRun]:
                 or (conclusion is not None and not isinstance(conclusion, str))
             ):
                 raise Refused(f"{where}: a job names no name, status or conclusion")
-            if job.get("run_id") != run_id or job.get("run_attempt") != attempt:
+            if (
+                not _whole(job.get("run_id"))
+                or not _whole(job.get("run_attempt"))
+                or job.get("run_id") != run_id
+                or job.get("run_attempt") != attempt
+            ):
                 raise Refused(
                     f"{where}: {name!r} is of run {job.get('run_id')!r} attempt"
                     f" {job.get('run_attempt')!r}, not run {run_id} attempt {attempt}"
                 )
             skipped = status == "completed" and conclusion == SKIPPED
-            if any(j.name == name and not (skipped and _skipped(j)) for j in out):
+            if planned is not None:
+                if name in planned and any(j.name == name for j in out):
+                    raise Refused(f"{where} name the planned job {name!r} twice")
+            elif any(j.name == name and not (skipped and _skipped(j)) for j in out):
                 raise Refused(f"{where} name {name!r} twice")
             steps = job.get("steps")
             if not isinstance(steps, list):
                 raise Refused(f"{where}: {name!r} lists no steps")
+            runner: str | None = None
+            if "runner_name" in job:
+                runner = job["runner_name"]
+                if runner is not None and not isinstance(runner, str):
+                    raise Refused(f"{where}: {name!r} has a runner name that is not a string")
+                runner = runner or ""
+            runner_id = job.get("runner_id")
+            if runner_id is not None and (isinstance(runner_id, bool) or not _whole(runner_id)):
+                raise Refused(f"{where}: {name!r} has a runner id that is not a whole number")
             failed: list[tuple[str, str]] = []
             for step in steps:
                 if not isinstance(step, dict) or not isinstance(step.get("name"), str):
@@ -435,7 +532,20 @@ def read_jobs(text: str, *, run_id: int, attempt: int) -> list[JobRun]:
                     raise Refused(f"{where}: a step of {name!r} has no conclusion string")
                 if word not in _CLEAN:
                     failed.append((step["name"], str(word)))
-            out.append(JobRun(name, status, conclusion, tuple(failed)))
+            out.append(
+                JobRun(
+                    name,
+                    status,
+                    conclusion,
+                    tuple(failed),
+                    steps=len(steps),
+                    runner=runner,
+                    runner_id=runner_id,
+                    runner_id_listed="runner_id" in job,
+                    run_id=run_id,
+                    run_attempt=attempt,
+                )
+            )
     if len(out) != total:
         raise Refused(f"{where} list {len(out)} jobs of {total}, so a job may be unseen")
     return out
@@ -664,11 +774,18 @@ def decide(
     changed: Iterable[str] | None = None,
     jobs: Sequence[JobRun] | None = None,
     change_run: bool = False,
+    first_jobs: Sequence[JobRun] | None = None,
+    attempt: int | None = None,
 ) -> Verdict:
     """The verdict on ``candidate``: green only when every planned job did its work on it.
 
     ``run_id`` is given when ``results`` are one run's own: each planned result must then name
-    that run, and each planned key must have a result on attempt 1. ``key_partners`` names, for
+    that run, and each planned key must have a result on attempt 1, but for a key whose job
+    ``first_jobs`` (attempt 1's jobs, each of run ``run_id`` and attempt 1, and no planned job
+    twice) shows no runner took (:func:`never_acquired`): attempt 2's record alone stands for it.
+    ``attempt`` is the run's own, and a result of a later attempt is refused: on attempt 1 such a
+    key reads ``not acquired``, and a verdict red for those keys alone, by attempt 1's listing too,
+    names them (``Verdict.not_acquired``, :func:`_only_not_acquired`). ``key_partners`` names, for
     every planned key and no other, the partners its own job reads: each record of that key must
     name exactly those, at the candidate's revisions. Without it, a record is held to the
     candidate's partners exactly.
@@ -678,9 +795,12 @@ def decide(
     reads a changed file is red (:func:`_unwaived`); ``change_run`` says the run is a pull
     request's or a queue commit's, where with no ``changed`` every quarantined failure is red.
     With both, a run whose only failures are flakes the flake rule passes (:func:`_pass_flakes`)
-    is green, and names them; without them it passes none."""
+    is green, and names them; without them it passes none, and it passes none either when a rerun
+    filled a planned job attempt 1 never ran."""
     if run_id is not None and (not _whole(run_id) or run_id < 1):
         raise Refused(f"run_id must be a whole number from 1, got {run_id!r}")
+    if attempt is not None and (not _whole(attempt) or attempt < 1):
+        raise Refused(f"attempt must be a whole number from 1, got {attempt!r}")
     plan: list[str] = []
     for key in planned:
         if not isinstance(key, str) or not key:
@@ -696,17 +816,32 @@ def decide(
     by_key: dict[str, list[JobResult]] = {}
     tests: list[FailedTest] = []
     for r in results:
+        if attempt is not None and r.attempt > attempt:
+            raise Refused(
+                f"the result of {r.key!r} is of attempt {r.attempt}, after the run's attempt"
+                f" {attempt}"
+            )
         by_key.setdefault(r.key, []).append(r)
         tests += r.tests
     reasons: list[Reason] = []
     if not plan:
         reasons.append(Reason("", "empty plan", "a plan with no jobs proves nothing"))
+    unpicked = _unpicked(first_jobs, plan, run_id)
+    filled: list[str] = []
     for key in plan:
+        mine = by_key.get(key, [])
         fault = _planned(
-            by_key.get(key, []), candidate, run_id, None if reads is None else reads[key]
+            mine,
+            candidate,
+            run_id,
+            None if reads is None else reads[key],
+            key in unpicked,
+            attempt == 1,
         )
         if fault:
             reasons.append(Reason(key, *fault))
+        elif key in unpicked and mine and all(r.attempt != 1 for r in mine):
+            filled.append(key)
     for key in sorted(set(by_key) - set(plan)):
         fault = _unplanned(by_key[key])
         if fault:
@@ -722,11 +857,89 @@ def decide(
         and jobs is not None
         and any(t.standing == FLAKE for t in listed)
     ):
+        if filled:
+            # The flake rule reads one attempt's records against that attempt's jobs: a run a
+            # rerun filled holds records of two attempts, so it passes none.
+            why = (
+                "a rerun filled a planned job no runner took on attempt 1"
+                f" ({', '.join(filled)}), and the rule reads one attempt's records"
+            )
+            return Verdict(green=False, reasons=tuple(reasons), tests=listed, flake_rule=why)
         flakes, why = _pass_flakes(plan, by_key, reasons, candidate, run_id, reads, paths, jobs)
         if flakes:
             return Verdict(green=True, tests=listed, flakes=flakes)
         return Verdict(green=False, reasons=tuple(reasons), tests=listed, flake_rule=why)
-    return Verdict(green=not reasons, reasons=tuple(reasons), tests=listed)
+    return Verdict(
+        green=not reasons,
+        reasons=tuple(reasons),
+        tests=listed,
+        not_acquired=_only_not_acquired(reasons, by_key, first_jobs),
+    )
+
+
+def _unpicked(
+    first_jobs: Sequence[JobRun] | None, plan: Sequence[str], run_id: int | None
+) -> frozenset[str]:
+    """The planned keys whose attempt-1 job no runner took, by ``first_jobs``. Refused: a listing
+    given without the run's id, a job of another run or of an attempt but 1 (or whose run or
+    attempt is not a whole number), and a planned job named twice."""
+    if first_jobs is None:
+        return frozenset()
+    if run_id is None:
+        raise Refused("attempt 1's jobs are read only with the run's own results (its run id)")
+    seen: set[str] = set()
+    for job in first_jobs:
+        if (
+            not _whole(job.run_id)
+            or not _whole(job.run_attempt)
+            or job.run_id != run_id
+            or job.run_attempt != 1
+        ):
+            raise Refused(
+                f"attempt 1's jobs: {job.name!r} is of run {job.run_id!r} attempt"
+                f" {job.run_attempt!r}, not run {run_id} attempt 1"
+            )
+        if job.name in plan:
+            if job.name in seen:
+                raise Refused(f"attempt 1's jobs name the planned job {job.name!r} twice")
+            seen.add(job.name)
+    return frozenset(j.name for j in first_jobs if j.name in plan and never_acquired(j))
+
+
+def _only_not_acquired(
+    reasons: Sequence[Reason],
+    by_key: Mapping[str, Sequence[JobResult]],
+    first_jobs: Sequence[JobRun] | None,
+) -> tuple[str, ...]:
+    """The keys of the ``not acquired`` reasons, when they are the whole of why the verdict is red;
+    empty otherwise. Attempt 1's listing must show every job but :data:`RESULTS_JOB` completed
+    ``success`` or ``skipped``, or no runner took it and it is one of those keys. One other reason
+    is set aside: a stage job the listing names no job of, whose ``needs`` result is
+    :data:`ABANDONED` (and otherwise ``success`` or ``skipped``). Any other word, from GitHub or
+    the listing, writes no notice."""
+    keys = tuple(r.key for r in reasons if r.kind == NOT_ACQUIRED)
+    if not keys or first_jobs is None:
+        return ()
+    for job in first_jobs:
+        if job.name == RESULTS_JOB:
+            continue
+        clean = job.status == "completed" and job.conclusion in (SUCCESS, SKIPPED)
+        if not clean and not (never_acquired(job) and job.name in keys):
+            return ()
+    listed = {job.name for job in first_jobs}
+    for r in reasons:
+        if r.kind == NOT_ACQUIRED:
+            continue
+        stage = by_key.get(r.key, ())
+        if not (
+            r.kind.startswith("unplanned ")
+            and r.key not in listed
+            and stage
+            and all(x.result in (ABANDONED, SUCCESS, SKIPPED) for x in stage)
+            and any(x.result == ABANDONED for x in stage)
+        ):
+            return ()
+    return keys
 
 
 #: The reason a push to main's planned job reads red when a newer push's run replaced it.
@@ -747,6 +960,8 @@ def decide_main_push(
     ref: str,
     run_id: int | None = None,
     key_partners: Mapping[str, Iterable[str]] | None = None,
+    first_jobs: Sequence[JobRun] | None = None,
+    attempt: int | None = None,
 ) -> Verdict:
     """The verdict on a push to ``main``: :func:`decide`, with one more name for a red.
 
@@ -756,14 +971,16 @@ def decide_main_push(
     superseded. ``proven`` maps a planned key to the newer commit whose run replaced it, as
     ``tools/ci/superseded.py`` proved from the API. A key whose result is ``cancelled``, or that
     has none (a replaced job never started, so it left no record), and that ``proven`` names
-    reads ``superseded``. It is still red: #3915 leaves a commit in the middle of a burst
+    reads ``superseded``: ``missing``, or on attempt 1 given attempt 1's jobs, ``not acquired``,
+    since a replaced shard is one no runner took. It is still red: #3915 leaves a commit in the
+    middle of a burst
     unverified on its own. The stage job a replaced shard was a leg of reads ``cancelled`` in
     ``needs``; it reads ``superseded`` too when every planned key's fault is superseded, by one
     commit, and keeps ``cancelled`` otherwise. ``superseded_by`` names the newer commit only when
     every reason is superseded by that one commit. A failed or skipped job, and a missing one
     ``proven`` does not name, keeps its own reason. A candidate's reading is :func:`decide`,
-    which takes no proof, so a pull request's cancelled job is never superseded. ``run_id`` and
-    ``key_partners`` are :func:`decide`'s.
+    which takes no proof, so a pull request's cancelled job is never superseded. ``run_id``,
+    ``key_partners``, ``first_jobs`` and ``attempt`` are :func:`decide`'s.
     """
     if (event, ref) != MAIN_PUSH:
         raise Refused(
@@ -782,13 +999,21 @@ def decide_main_push(
             raise Refused(f"the commit that superseded {key} is the pushed commit")
         checked[key] = newer
     plan = list(planned)
-    base = decide(plan, results, pushed, run_id=run_id, key_partners=key_partners)
+    base = decide(
+        plan,
+        results,
+        pushed,
+        run_id=run_id,
+        key_partners=key_partners,
+        first_jobs=first_jobs,
+        attempt=attempt,
+    )
     if base.green:
         return base
     reasons = [
         (
             Reason(r.key, SUPERSEDED, f"by {checked[r.key]}")
-            if r.kind in (CANCELLED, MISSING) and r.key in checked
+            if r.kind in (CANCELLED, MISSING, NOT_ACQUIRED) and r.key in checked
             else r
         )
         for r in base.reasons
@@ -1389,6 +1614,23 @@ def flake_notices(verdict: Verdict) -> str:
     return "".join(out)
 
 
+def not_acquired_notices(verdict: Verdict) -> str:
+    """On an attempt-1 red for planned jobs no runner took alone (``Verdict.not_acquired``), one
+    ``::notice`` titled :data:`NOT_ACQUIRED_NOTICE` naming them, for the merge controller to read
+    from attempt 1's ``results`` job; nothing otherwise. :func:`_inline` writes a line break as its
+    escape, so of a workflow command's message only ``%`` is left to escape."""
+    if verdict.green or not verdict.not_acquired:
+        return ""
+    text = _inline(", ".join(verdict.not_acquired)).replace("%", "%25")
+    return f"::notice title={NOT_ACQUIRED_NOTICE}::{text}\n"
+
+
+def notices(verdict: Verdict) -> str:
+    """Every ``::notice`` the verdict step writes, in its order: the flakes passed, the jobs no
+    runner took, then the failed tests. GitHub keeps ten a step (:data:`FAILED_NOTICES`)."""
+    return flake_notices(verdict) + not_acquired_notices(verdict) + failed_notices(verdict)
+
+
 def failed_notices(verdict: Verdict) -> str:
     """On a red, one ``::notice`` titled :data:`FAILED_NOTICE` that counts the failed tests it
     lists, then one per test, at most :data:`FAILED_NOTICES`; none on a green. Each message is one
@@ -1547,6 +1789,12 @@ def main(argv: list[str] | None = None) -> int:
         " --changed)",
     )
     parser.add_argument(
+        "--first-jobs",
+        action=_Once,
+        help="attempt 1's jobs, as gh api --paginate --slurp lists them (with --records only): a"
+        " planned job no runner took on attempt 1 may be filled by attempt 2's record",
+    )
+    parser.add_argument(
         "--superseded",
         action=_Once,
         help="a JSON object of each cancelled key a newer push replaced and that push's commit, as"
@@ -1562,6 +1810,9 @@ def main(argv: list[str] | None = None) -> int:
         key_partners: dict[str, Iterable[str]] | None = None
         changed: frozenset[str] | None = None
         jobs: list[JobRun] | None = None
+        first_jobs: list[JobRun] | None = None
+        if args.first_jobs is not None and args.records is None:
+            raise Refused("--first-jobs is read only with --records")
         if (args.changed is None) != (args.jobs is None):
             raise Refused("--changed and --jobs are read together, or neither is")
         if args.changed is not None:
@@ -1607,6 +1858,14 @@ def main(argv: list[str] | None = None) -> int:
             if args.changed is not None:
                 changed = read_changed(_read(args.changed))
                 jobs = read_jobs(_read(args.jobs), run_id=own, attempt=attempt)
+            if args.first_jobs is not None:
+                first_jobs = read_jobs(
+                    _read(args.first_jobs),
+                    run_id=own,
+                    attempt=1,
+                    where="attempt 1's jobs (--first-jobs)",
+                    planned=frozenset(planned),
+                )
         if args.superseded is None:
             verdict = decide(
                 planned,
@@ -1618,6 +1877,8 @@ def main(argv: list[str] | None = None) -> int:
                 jobs=jobs,
                 # The runner sets it, and no step can overwrite a GITHUB_* default.
                 change_run=os.environ.get("GITHUB_EVENT_NAME", "") in CHANGE_EVENTS,
+                first_jobs=first_jobs,
+                attempt=attempt,
             )
         else:
             proven = _json_file(args.superseded, "--superseded")
@@ -1632,6 +1893,8 @@ def main(argv: list[str] | None = None) -> int:
                 ref=os.environ.get("GITHUB_REF", ""),
                 run_id=run_id,
                 key_partners=key_partners,
+                first_jobs=first_jobs,
+                attempt=attempt,
             )
     except Refused as exc:
         reason = _printable(str(exc))
@@ -1639,8 +1902,7 @@ def main(argv: list[str] | None = None) -> int:
         _to_summary(f"### Verdict: unreadable input\n\n{reason}\n")
         return 2
     print(_printable(summary(verdict)), end="")
-    print(flake_notices(verdict), end="")
-    print(failed_notices(verdict), end="")
+    print(notices(verdict), end="")
     _to_summary(_printable(summary(verdict, budget=SUMMARY_TESTS_BYTES)))
     return 0 if verdict.green else 1
 

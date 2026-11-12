@@ -1240,11 +1240,28 @@ names no run, `no run`.
 `--attempt <n>` is the run's own attempt (`github.run_attempt`, 1 to 999999 in ASCII digits, 1
 by default). The `needs` results are stamped with it. The records keep the attempt each names,
 and one naming a later attempt than the run's is refused, so a rerun's record never stands in
-an earlier attempt's reading. On a rerun, a planned key with no attempt-1 record reads
-`missing on attempt 1`: every planned entry ran on attempt 1, so a key attempt 1 left no record
-for (a runner that died, a cancelled entry) stays red, as a red on attempt 1 does, and a rerun
-carries only what attempt 1 recorded. Also refused: a link anywhere in the folder, a file beside
+an earlier attempt's reading. Also refused: a link anywhere in the folder, a file beside
 the artifact folders, a file over 1 MB, and any record the reader would refuse.
+
+On a rerun, a planned key with no attempt-1 record reads `missing on attempt 1`: a key attempt 1
+left no record for (a runner that died, a cancelled entry) stays red, as a red on attempt 1 does,
+and a rerun carries only what attempt 1 recorded. One kind of job is the exception. `--first-jobs
+<file>` gives attempt 1's jobs, as `gh api --paginate --slurp` lists them (with `--records` only,
+held to the run and attempt 1). A planned key whose attempt-1 job GitHub completed as cancelled with
+no step, no runner name and no runner id, as "The job was not acquired by Runner" leaves one, may be
+filled by attempt 2's record alone, held as any record is, and reads `missing on attempt 2` without
+one. That job ran nothing, so it left no result for a rerun to hide. A job a runner took, cancelled
+or not, a key the listing names no job of, and a job the listing describes any other way stay
+`missing on attempt 1`. On attempt 1 itself, such a key reads `not acquired`, still red. When that
+is the whole of why the run is red (aside from a stage job whose `needs` result is `abandoned`
+while attempt 1's listing shows nothing else red), `decide` also writes one `::notice` titled "red
+only for jobs no runner took" that names those keys; `decide_main_push` writes none, since nothing
+reads a push run's notice. The flake rule passes nothing on a run a rerun filled this way. The
+rule holds on a push to `main` too, and on any run it fills a job still queued when its run was
+cancelled. The tier workflows' results step does not pass `--first-jobs` yet, and the merge
+controller's rule 4 still holds a rerun's attempt-1 red: a rerun's green verdict does not count
+toward a merge yet. The CI contract lists the results step that passes it, and either step passes
+until the workflows take it.
 
 **The failed tests the records name.** A record read with `from_job_records` carries its failed
 tests: on a failure, each test `run-job`'s diagnostic rerun classified `flake` or `repeated
@@ -1311,6 +1328,11 @@ On a push to `main` only, `decide_main_push` takes one more input (`--superseded
 jobs `tools/ci/superseded.py` proved were replaced by a newer push. Such a job, cancelled or with
 no record (it never started), reads `superseded`, and is still red; so does the stage job it was a
 leg of, which `needs` reads cancelled, when every planned fault is superseded by one commit.
+A shard its concurrency group replaced before any runner took it is also a job no runner took, so
+given attempt 1's jobs a rerun's attempt-2 record may fill it, as on any run (`--attempt` above):
+a re-run to green counts as green, as the release runbook's tagging already reads it. On attempt
+1, a shard the proof names reads `superseded` whether `decide` called it missing or, given attempt
+1's jobs, not acquired.
 `decide`, the reading of every candidate, takes no such input, and the verdict refuses it on any
 other run. `merge.yml`'s `results` makes the proof in a step of its own on a push to `main` (see
 "A burst of merges" below). The verdict step, which `pr.yml` runs word for word, passes it when it
@@ -1444,9 +1466,11 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   lines of one step the row lists for its job, in their order, each spelled exactly, its
   indentation too (a blank line or a comment aside), so a step that keeps its lines and moves
   one (publishing a plan before the check that refuses it) fails as an extra line does, and a
-  listed step no job of either workflow runs fails too; a stage job runs its runner's identity
-  and the run-job line and nothing else, its other steps use only the checkout, the setup action
-  and the artifact actions, and every stage job's steps are the same.
+  listed step no job of either workflow runs fails too, unless the row lists it as waiting for
+  the workflows (today the results job's two verdict steps, of which each results job runs
+  exactly one); a stage job runs its runner's identity and the run-job line and nothing else, its
+  other steps use only the checkout, the setup action and the artifact actions, and every stage
+  job's steps are the same.
 - "a-merge-tier-run-holds-at-most-14-jobs-at-once": a merge-tier run holds at most 14 jobs at
   once (#3915), so concurrent pull requests share the account's runners. Each of `merge.yml`'s
   stage jobs caps its entries with `max-parallel` (`test` 10; `build`, `test-2` and `test-3` 4
