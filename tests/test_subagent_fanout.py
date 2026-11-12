@@ -11,14 +11,19 @@ Each test proves one of these properties:
   consecutive-child-failure breaker that trips at 5.
 - Run-scoped budget: re-checked mid-flight, stops a fan-out with a typed reason
   and per-child cost is surfaced on the completion event.
+- A fan-out's stop: it refuses what is on its way into the fan-out and ends once nothing of it
+  runs or waits, however its last helper ends (on its own, stopped, refused in a drain, or refused
+  at its start), and a stopped helper hands its slot to the one waiting for it.
 """
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
+from personalclaw.started_work import TURN_STOPPED
 from personalclaw.subagent import _CIRCUIT_BREAKER_THRESHOLD, SubagentInfo, SubagentManager
 
 # Bounded stand-in hang: long enough to outlast the cap under test, short enough that a
@@ -40,9 +45,72 @@ async def _stop(mgr: SubagentManager) -> None:
     is cancelled there, and its teardown starts a queued one in a task the close never cancels;
     once collected, that task runs *mgr*'s teardown in whichever test's loop is running then, and
     ends its fan-out's run on the one spend meter the process has: a fan-out with the same key in
-    that test loses its run's total."""
+    that test loses its run's total. A delivery still waiting out its window is sent here too,
+    rather than left pending when the loop closes."""
     with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
         await mgr.cancel_all()
+        await mgr.flush_deliveries()
+
+
+async def _settle(*running: SubagentManager, strict: bool = True) -> list[asyncio.Task]:
+    """Let every task this test's loop holds run to its end, the run budget's late cancel and a
+    reap's tail among them (each started with nothing awaiting it), except the helpers still
+    running in *running*. Tasks may start others, so it looks again until none is left. Past
+    ``_HANG_SECS`` something is stuck: *strict* fails the test there; otherwise what is still
+    pending is returned."""
+    loop = asyncio.get_running_loop()
+    me = asyncio.current_task()
+    deadline = loop.time() + _HANG_SECS
+    while True:
+        spared = {t for mgr in running for t in mgr._tasks.values()}
+        rest = [t for t in asyncio.all_tasks() if t is not me and not t.done() and t not in spared]
+        if not rest:
+            return []
+        if loop.time() >= deadline:
+            if strict:
+                raise AssertionError(f"still pending after {_HANG_SECS}s: {rest}")
+            return rest
+        await asyncio.wait(rest, timeout=deadline - loop.time())
+
+
+def _owner(task: asyncio.Task) -> object:
+    """The object whose method *task* runs, when it runs one."""
+    frame = getattr(task.get_coro(), "cr_frame", None)
+    return frame.f_locals.get("self") if frame is not None else None
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _every_manager_is_stopped(monkeypatch):
+    """Stop every manager a test made, even one whose test failed or never reached its own
+    ``_stop``, then hold the test to leaving nothing pending in its loop. A helper left running or
+    waiting is what reached the next test's loop and its spend meter (``_stop``). A task still
+    pending is named as this test's (one its managers held, or whose method is theirs) or as
+    another's: one left by an earlier test can be finalized into this test's loop."""
+    made: list[SubagentManager] = []
+    build = SubagentManager.__init__
+
+    def _recording(self, *args, **kwargs):
+        build(self, *args, **kwargs)
+        made.append(self)
+
+    monkeypatch.setattr(SubagentManager, "__init__", _recording)
+    yield
+    held = {
+        t
+        for mgr in made
+        for t in (
+            *mgr._tasks.values(),
+            *mgr._delivery_tasks.values(),
+            *mgr._reaps_finishing,
+            *mgr._events_in_flight,
+        )
+    }
+    for mgr in made:
+        await _stop(mgr)
+    pending = await _settle(strict=False)
+    ours = [t for t in pending if t in held or any(_owner(t) is mgr for mgr in made)]
+    others = [t for t in pending if t not in ours]
+    assert not pending, f"left behind by this test: {ours}; left by another test: {others}"
 
 
 def _completing_sessions(*, text: str = "result", cost: float = 0.0) -> MagicMock:
@@ -440,3 +508,688 @@ class TestRunBudget:
             await mgr.flush_deliveries()
         assert seen.get("cost_usd") == pytest.approx(0.42)
         assert seen.get("tokens") == 1500  # 1000 in + 500 out
+
+
+# ── a fan-out's stop ends with its fan-out ───────────────────────────
+
+
+def _hanging_sessions() -> MagicMock:
+    """The completing sessions, except no answer ever comes: a child stays running until
+    something stops it."""
+    sessions = _completing_sessions()
+    provider = sessions.get_or_create.return_value[0]
+
+    async def _stream(*_a, **_kw):
+        await asyncio.Event().wait()  # never set: it runs until it is stopped
+        yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="late")
+
+    provider.stream = MagicMock(side_effect=lambda *a, **kw: _stream())
+    return sessions
+
+
+BREAKER = "spawn refused: fan-out breaker tripped"
+
+
+def _sessions_that_say_they_started() -> tuple[MagicMock, asyncio.Event]:
+    """The hanging sessions, and an event set once a helper's model call has begun: a helper
+    stopped after that point is one stopped while it runs."""
+    sessions = _hanging_sessions()
+    provider = sessions.get_or_create.return_value[0]
+    began = asyncio.Event()
+
+    async def _stream(*_a, **_kw):
+        began.set()
+        await asyncio.Event().wait()  # never set: it runs until it is stopped
+        yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="late")
+
+    provider.stream = MagicMock(side_effect=lambda *a, **kw: _stream())
+    return sessions, began
+
+
+def _trip(mgr: SubagentManager, chat: str) -> None:
+    """Five failed helpers of *chat* trip its breaker, as
+    ``test_record_failure_breaker_trips_at_five`` does. The stop it sets cancels nothing, so
+    whatever of *chat* still waits ends in a drain."""
+    for i in range(_CIRCUIT_BREAKER_THRESHOLD):
+        failed = SubagentInfo(id=f"f{i}", task="t", parent_session_key=chat)
+        failed.error = "boom"
+        mgr._note_child_outcome(failed)
+    assert chat in mgr._fanout_stops
+
+
+class TestTheStopEndsWithItsFanout:
+    """A fan-out's stop refuses what is still on its way into it, and ends once nothing of it is
+    running or waiting. One that outlives its fan-out refuses every later helper of the same chat
+    (a chat's helpers share the chat's session key) until the gateway restarts."""
+
+    @pytest.mark.asyncio
+    async def test_a_chat_whose_last_helper_crossed_its_run_budget_can_start_another(
+        self,
+    ) -> None:
+        """The chat's last running helper crosses Max tokens / run. Its own ending clears the
+        drained fan-out's stop, and the budget's cancel, which runs after that, finds nothing to
+        stop: it must not leave the stop behind."""
+        from personalclaw.guardrails.budgets import Budget, reset_meter
+
+        reset_meter()
+        mgr = SubagentManager(
+            sessions=_completing_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        chat = "dashboard:a-chat-past-its-budget"
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch(
+                "personalclaw.guardrails.budgets.run_budget_from_config",
+                return_value=Budget(max_tokens=1500),
+            ),
+        ):
+            last = mgr.spawn("the only helper", parent_session_key=chat)
+            assert last is not None and not last.queued
+            await mgr._tasks[last.id]
+            await mgr.flush_deliveries()
+            await _settle()
+            assert last.done and not last.error, last.error
+            following = mgr.spawn("the next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+        await _stop(mgr)
+        reset_meter()
+
+    @pytest.mark.asyncio
+    async def test_stop_fanout_on_a_chat_with_nothing_running_leaves_no_stop(self) -> None:
+        """Stop fan-out (``POST /api/spawn/cancel-fanout``) on a chat whose helpers have all
+        ended stops nothing, and must not leave its "Cancelled by user" behind."""
+        from types import SimpleNamespace
+
+        from aiohttp import web
+        from aiohttp.test_utils import make_mocked_request
+
+        from personalclaw.dashboard.handlers.messaging import api_spawn_cancel_fanout
+
+        mgr = SubagentManager(
+            sessions=_completing_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        chat = "dashboard:a-chat-at-rest"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            earlier = mgr.spawn("an earlier helper", parent_session_key=chat)
+            assert earlier is not None
+            await mgr._tasks[earlier.id]
+            await mgr.flush_deliveries()
+            app = web.Application()
+            app["state"] = SimpleNamespace(subagents=mgr)
+            request = make_mocked_request("POST", "/api/spawn/cancel-fanout", app=app)
+
+            async def _body() -> dict:
+                return {"parent_session": chat}
+
+            request.json = _body  # type: ignore[method-assign]
+            answer = await api_spawn_cancel_fanout(request)
+            assert answer.status == 200 and b'"cancelled": 0' in answer.body
+            following = mgr.spawn("the next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+        await _stop(mgr)
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_turn_whose_helpers_were_all_waiting_leaves_no_stop(self) -> None:
+        """A stopped turn whose helpers were all still waiting for a slot marks their fan-out
+        stopped and ends each one where it waits. Once the last of them has ended, nothing of
+        the fan-out is left, so its stop must be gone, or the chat's next turn can start no
+        helper."""
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        chat = "dashboard:a-chat-whose-helpers-wait"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            busy = mgr.spawn("another chat's helper", parent_session_key="dashboard:a-busy-chat")
+            assert busy is not None and not busy.queued, "it takes the one slot"
+            waiting = [mgr.spawn(f"helper {i}", parent_session_key=chat) for i in (1, 2)]
+            assert all(w is not None and w.queued for w in waiting)
+            stopped = await mgr.stop_agents([w.id for w in waiting], because=TURN_STOPPED)
+            assert stopped == 2
+            assert all(w.done and w.never_ran for w in waiting)
+            following = mgr.spawn("the next turn's helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+            assert following.queued, "it waits behind the other chat's helper"
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+        await _stop(mgr)
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_helper_hands_its_slot_to_the_one_waiting(self) -> None:
+        """A helper stopped before its run has begun, here by its Stop, frees its slot, and the
+        helper waiting for that slot starts in it, as it does when a helper ends on its own: a
+        spawn that comes later waits behind it. One stopped inside its model call is
+        ``test_a_helper_stopped_inside_its_model_call_hands_its_slot_on``'s."""
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            running = mgr.spawn("the running helper", parent_session_key="dashboard:one-chat")
+            waiting = mgr.spawn("the waiting helper", parent_session_key="dashboard:other-chat")
+            assert running is not None and not running.queued
+            assert waiting is not None and waiting.queued
+            assert await mgr.cancel(running.id) is True
+            assert running.done and running.reaped
+            assert not waiting.queued and waiting.id in mgr._tasks, "it starts in the freed slot"
+            later = mgr.spawn("a later helper", parent_session_key="dashboard:a-third-chat")
+            assert later is not None and later.queued, "it waits behind the one that waited"
+        await _stop(mgr)
+
+    @pytest.mark.asyncio
+    async def test_the_run_budget_stops_a_sibling_still_working_and_then_lets_go(self) -> None:
+        """When a child crosses Max tokens / run while a sibling still works, the budget's cancel
+        ends that sibling with the typed reason, and once the sibling's reap has drained the
+        fan-out, the chat can start helpers again. Which helper finishes is chosen by its session
+        key: each builds its first prompt on a worker thread, so the order in which they reach
+        their model is a race."""
+        from personalclaw.guardrails.budgets import Budget, reset_meter
+
+        reset_meter()
+        sessions = _completing_sessions()
+        finishing = sessions.get_or_create.return_value
+        hanging = _hanging_sessions().get_or_create.return_value
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=2,
+        )
+        chat = "dashboard:a-chat-with-two-helpers"
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch(
+                "personalclaw.guardrails.budgets.run_budget_from_config",
+                return_value=Budget(max_tokens=1500),
+            ),
+        ):
+            first = mgr.spawn("the one that finishes", parent_session_key=chat)
+            sibling = mgr.spawn("the one still working", parent_session_key=chat)
+            assert first is not None and sibling is not None
+            assert not first.queued and not sibling.queued
+            sessions.get_or_create = AsyncMock(
+                side_effect=lambda key, **_kw: hanging if key.endswith(sibling.id) else finishing
+            )
+            await mgr._tasks[first.id]
+            await mgr.flush_deliveries()
+            await _settle()
+            assert first.done and not first.error, first.error
+            assert sibling.done and sibling.reaped, (sibling.done, sibling.error)
+            assert sibling.error.startswith("run budget exceeded ("), sibling.error
+            following = mgr.spawn("the next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+        await _stop(mgr)
+        reset_meter()
+
+    @pytest.mark.parametrize("other_ends", ["on_its_own", "stopped"])
+    @pytest.mark.asyncio
+    async def test_a_waiting_helper_refused_in_another_chats_drain_ends_its_chats_stop(
+        self, other_ends: str
+    ) -> None:
+        """Chat Y's last helper waits behind chat X's, and Y's breaker trips. X's helper ends, on
+        its own or stopped, and the drain that follows refuses Y's helper with the breaker's
+        reason. Nothing of Y is left, so Y's next helper must not be refused: by then the chat's
+        Stop fan-out is gone too, and only a restart would free it."""
+        sessions = _completing_sessions() if other_ends == "on_its_own" else _hanging_sessions()
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        y = "dashboard:chat-y"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            busy = mgr.spawn("chat x's helper", parent_session_key="dashboard:chat-x")
+            last = mgr.spawn("chat y's last helper", parent_session_key=y)
+            assert busy is not None and not busy.queued
+            assert last is not None and last.queued
+            _trip(mgr, y)
+            if other_ends == "on_its_own":
+                await mgr._tasks[busy.id]
+            else:
+                assert await mgr.cancel(busy.id) is True
+            await mgr.flush_deliveries()
+            assert last.done and last.never_ran and last.error.startswith(BREAKER), last.error
+            following = mgr.spawn("chat y's next helper", parent_session_key=y)
+            assert following is not None and not following.done, following.error
+            assert y not in mgr._fanout_stops, mgr._fanout_stops.get(y)
+
+    @pytest.mark.parametrize("state", ["breaker", "run_total"])
+    @pytest.mark.asyncio
+    async def test_a_start_refused_as_its_fanouts_last_helper_ends_the_fanouts_state(
+        self, state: str
+    ) -> None:
+        """A chat's last helper is still asking to start when its fan-out's state is set: its
+        breaker trips, or, with no stop at all, a finished sibling's tokens sit on the chat's run
+        total. The start is denied. Nothing of the chat runs or waits, so its next helper starts
+        clean: not refused, and not part-spent."""
+        from personalclaw.approval_grants import YOU, ToolDecision
+        from personalclaw.guardrails.budgets import Budget, get_meter, reset_meter
+
+        reset_meter()
+        answer = asyncio.Event()
+
+        async def owner(_event, _key=""):
+            await answer.wait()
+            return ToolDecision(False, "rejected", YOU)
+
+        sessions = _completing_sessions()
+        sessions.get_approval_policy = MagicMock(return_value="")
+        ctx = _mock_ctx_builder()
+        ctx.hooks.auto_approve_subagent_spawn = False
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=ctx,
+            on_done=AsyncMock(),
+            is_yolo=lambda: False,
+            on_spawn_approval=owner,
+        )
+        chat = "dashboard:a-chat-whose-start-is-denied"
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch(
+                "personalclaw.guardrails.budgets.run_budget_from_config",
+                return_value=Budget(max_tokens=100_000),
+            ),
+        ):
+            asking = mgr.spawn("the helper asking to start", parent_session_key=chat)
+            assert asking is not None and not asking.done and not asking.queued
+            start = mgr._tasks[asking.id]
+            if state == "breaker":
+                _trip(mgr, chat)
+            else:
+                get_meter().charge_run(chat, 1500, 0.0)
+                assert get_meter().run_totals(chat).tokens == 1500
+            answer.set()
+            await start
+            assert asking.done and asking.never_ran and asking.declined, asking.error
+            assert mgr._lane_count(chat) == 0
+            if state == "breaker":
+                following = mgr.spawn("the next helper", parent_session_key=chat)
+                assert following is not None and not following.done, following.error
+                assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+            else:
+                assert get_meter().run_totals(chat).tokens == 0, "the next fan-out starts at 0"
+        reset_meter()
+
+    @pytest.mark.asyncio
+    async def test_a_next_start_that_fails_in_the_reap_leaves_the_reap_whole(self) -> None:
+        """A running helper is stopped, and the start of the helper waiting for its slot raises in
+        the reap (the audit log refusing its row, as a full disk makes it). The stopped helper
+        still ends reaped with its stop's reason, and the Stop says it stopped it; its slot is
+        given back once, not twice, and the rest of its reap runs: its Activity row hears that it
+        ended."""
+        sessions, began = _sessions_that_say_they_started()
+        ended: list[str] = []
+
+        async def on_event(etype: str, info: SubagentInfo, _extra: dict) -> None:
+            if etype == "subagent_done":
+                ended.append(info.id)
+
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            on_event=on_event,
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel") as sel:
+            running = mgr.spawn("the running helper", parent_session_key="dashboard:one-chat")
+            waiting = mgr.spawn("the waiting helper", parent_session_key="dashboard:other-chat")
+            assert running is not None and waiting is not None and waiting.queued
+            await asyncio.wait_for(began.wait(), 5)
+
+            def full(**kw):
+                if kw.get("outcome") == "auto_approved_spawn":
+                    raise OSError(28, "No space left on device")
+
+            sel.return_value.log_tool_invocation.side_effect = full
+            assert await mgr.cancel(running.id, reason="Cancelled by user") is True
+            await _settle(mgr)
+            assert running.reaped and running.error == "Cancelled by user", (
+                running.reaped,
+                running.error,
+            )
+            assert mgr._running_count == (0 if waiting.done else 1), (
+                mgr._running_count,
+                waiting.done,
+            )
+            assert running.id in ended, "the reap's tail ran to its end"
+
+    @pytest.mark.asyncio
+    async def test_a_next_start_that_fails_after_a_denied_start_leaves_that_ending_whole(
+        self,
+    ) -> None:
+        """A chat's last helper asks to start under its tripped breaker, and another chat's
+        helper, started by its own grant, waits for the slot. The start is denied, and the waiting
+        helper's start raises in the drain that follows (the audit log refusing its row). The
+        refusal still ends its chat's stop and says the denied helper ended, so the chat's next
+        helper is not refused."""
+        from personalclaw.approval_grants import YOU, ToolDecision
+
+        answer = asyncio.Event()
+
+        async def owner(_event, _key=""):
+            await answer.wait()
+            return ToolDecision(False, "rejected", YOU)
+
+        ended: list[str] = []
+
+        async def on_event(etype: str, info: SubagentInfo, _extra: dict) -> None:
+            if etype == "subagent_done":
+                ended.append(info.id)
+
+        sessions = _hanging_sessions()
+        sessions.get_approval_policy = MagicMock(return_value="")
+        ctx = _mock_ctx_builder()
+        ctx.hooks.auto_approve_subagent_spawn = False
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=ctx,
+            on_done=AsyncMock(),
+            on_event=on_event,
+            is_yolo=lambda: False,
+            on_spawn_approval=owner,
+            max_concurrent=1,
+        )
+        chat = "dashboard:a-chat-whose-start-is-denied"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel") as sel:
+            asking = mgr.spawn("the helper asking to start", parent_session_key=chat)
+            granted = mgr.spawn(
+                "another chat's helper", parent_session_key="dashboard:b", approval_mode="auto"
+            )
+            assert asking is not None and not asking.queued
+            assert granted is not None and granted.queued
+            start = mgr._tasks[asking.id]
+            _trip(mgr, chat)
+
+            def full(**kw):
+                if kw.get("metadata", {}).get("subagent_id") == granted.id:
+                    raise OSError(28, "No space left on device")
+
+            sel.return_value.log_tool_invocation.side_effect = full
+            answer.set()
+            await asyncio.wait({start})
+            assert start.exception() is None, start.exception()
+            assert asking.done and asking.declined, asking.error
+            assert not granted.queued and not granted.never_ran, "the waiting helper started"
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+            assert asking.id in ended, "the denied helper's Activity row heard it ended"
+            following = mgr.spawn("the chat's next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+
+    @pytest.mark.asyncio
+    async def test_a_next_start_that_fails_after_a_helper_ends_on_its_own_leaves_that_ending_whole(
+        self,
+    ) -> None:
+        """A chat's last helper ends on its own under its tripped breaker, and the start of
+        another chat's helper waiting for the slot raises in the drain its ending makes (the
+        audit log refusing its row). The ending still runs to its end: the chat's stop ends, the
+        helper's session is reset and its report reaches its chat."""
+        delivered: list[str] = []
+
+        async def on_done(batch: list[SubagentInfo]) -> None:
+            delivered.extend(info.id for info in batch)
+
+        sessions = _completing_sessions()
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=on_done,
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        chat = "dashboard:a-chat-whose-last-helper-ends"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel") as sel:
+            last = mgr.spawn("the chat's last helper", parent_session_key=chat)
+            waiting = mgr.spawn("another chat's helper", parent_session_key="dashboard:b")
+            assert last is not None and not last.queued and waiting is not None and waiting.queued
+            ending = mgr._tasks[last.id]
+            _trip(mgr, chat)
+
+            def full(**kw):
+                if kw.get("metadata", {}).get("subagent_id") == waiting.id:
+                    raise OSError(28, "No space left on device")
+
+            sel.return_value.log_tool_invocation.side_effect = full
+            await asyncio.wait({ending})
+            assert ending.exception() is None, ending.exception()
+            await mgr.flush_deliveries()
+            assert last.done and not last.error, last.error
+            assert not waiting.queued and not waiting.never_ran, "the waiting helper started"
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+            assert any(
+                c.args and c.args[0].endswith(last.id) for c in sessions.reset.await_args_list
+            ), "its session was reset"
+            assert last.id in delivered, "its report reached its chat"
+            following = mgr.spawn("the chat's next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+
+    @pytest.mark.asyncio
+    async def test_the_run_budgets_late_cancel_spares_a_helper_of_the_next_fanout(self) -> None:
+        """The run budget's cancel runs after the child that crossed the ceiling has ended. When
+        that child was its fan-out's last, the fan-out has drained and its stop has ended, and a
+        helper the same chat starts before the cancel runs belongs to a new fan-out: the late
+        cancel must spare it, not end it with the old fan-out's reason."""
+        from personalclaw.guardrails.budgets import Budget, reset_meter
+
+        reset_meter()
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        chat = "dashboard:a-chat-between-two-fanouts"
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch(
+                "personalclaw.guardrails.budgets.run_budget_from_config",
+                return_value=Budget(max_tokens=1500),
+            ),
+        ):
+            # The last child of the first fan-out ends: its run's total crosses the ceiling, which
+            # schedules the late cancel, and its ending then drains the fan-out, as `_run` does.
+            crossed = SubagentInfo(id="crossed", task="t", parent_session_key=chat)
+            crossed.input_tokens, crossed.output_tokens = 1000, 500
+            mgr._charge_child_and_check_budget(crossed)
+            assert chat in mgr._fanout_stops
+            mgr._maybe_clear_fanout(chat)
+            # Before the late cancel has run, the chat starts its next helper.
+            fresh = mgr.spawn("a helper of the next fan-out", parent_session_key=chat)
+            assert fresh is not None and not fresh.done, fresh.error
+            await _settle(mgr)
+            assert not fresh.done and not fresh.cancelled, fresh.error
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+        reset_meter()
+
+    @pytest.mark.asyncio
+    async def test_stop_fanout_on_a_chat_whose_helpers_all_wait_leaves_no_stop(self) -> None:
+        """Stop fan-out on a chat whose helpers are all still waiting for a slot (the button
+        counts waiting helpers) ends each where it waits, and once the last has ended the chat's
+        next helper is not refused."""
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        chat = "dashboard:a-chat-whose-helpers-wait"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            busy = mgr.spawn("another chat's helper", parent_session_key="dashboard:a-busy-chat")
+            assert busy is not None and not busy.queued, "it takes the one slot"
+            waiting = [mgr.spawn(f"helper {i}", parent_session_key=chat) for i in (1, 2)]
+            assert all(w is not None and w.queued for w in waiting)
+            assert await mgr.cancel_fanout(chat, reason="Cancelled by user", by_you=True) == 2
+            assert all(w.done and w.never_ran for w in waiting)
+            following = mgr.spawn("the next helper", parent_session_key=chat)
+            assert following is not None and not following.done, following.error
+            assert following.queued, "it waits behind the other chat's helper"
+            assert chat not in mgr._fanout_stops, mgr._fanout_stops.get(chat)
+
+    @pytest.mark.asyncio
+    async def test_stopping_a_stopped_fanouts_last_waiting_helper_ends_its_stop(self) -> None:
+        """A helper card's Stop (``cancel(id, by_you=True)``) on a stopped chat's last waiting
+        helper ends the chat's stop: nothing else of the chat is left to end it."""
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        y = "dashboard:chat-y"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            busy = mgr.spawn("chat x's helper", parent_session_key="dashboard:chat-x")
+            last = mgr.spawn("chat y's last helper", parent_session_key=y)
+            assert busy is not None and last is not None and last.queued
+            _trip(mgr, y)
+            assert await mgr.cancel(last.id, by_you=True) is True
+            following = mgr.spawn("chat y's next helper", parent_session_key=y)
+            assert following is not None and not following.done, following.error
+            assert following.queued, "it waits behind chat x's helper"
+            assert y not in mgr._fanout_stops, mgr._fanout_stops.get(y)
+
+    @pytest.mark.asyncio
+    async def test_a_stop_holds_while_a_helper_of_its_fanout_still_runs(self) -> None:
+        """Chat Y's helper r runs, q waits, and Y's breaker trips. Stopping q leaves r running,
+        so Y's stop stands and its next spawn is refused. Stopping r drains Y and ends it."""
+        sessions, began = _sessions_that_say_they_started()
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        y = "dashboard:chat-y"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            r = mgr.spawn("y's running helper", parent_session_key=y)
+            q = mgr.spawn("y's waiting helper", parent_session_key=y)
+            assert r is not None and not r.queued and q is not None and q.queued
+            await asyncio.wait_for(began.wait(), 5)
+            _trip(mgr, y)
+            assert await mgr.cancel(q.id) is True
+            refused = mgr.spawn("refused while r runs", parent_session_key=y)
+            assert refused is not None and refused.done and refused.error.startswith(BREAKER)
+            assert await mgr.cancel(r.id) is True
+            following = mgr.spawn("y's next helper", parent_session_key=y)
+            assert following is not None and not following.done, following.error
+
+    @pytest.mark.asyncio
+    async def test_a_stop_holds_while_a_helper_of_its_fanout_still_waits(self) -> None:
+        """Chat Y's q1 and q2 wait behind chat X's helper, and Y's breaker trips. Stopping q2
+        leaves q1 waiting, so Y's stop stands and Y's next spawn is refused."""
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        y = "dashboard:chat-y"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            busy = mgr.spawn("chat x's helper", parent_session_key="dashboard:chat-x")
+            q1 = mgr.spawn("y's first waiting helper", parent_session_key=y)
+            q2 = mgr.spawn("y's second waiting helper", parent_session_key=y)
+            assert busy is not None and q1 is not None and q2 is not None
+            assert q1.queued and q2.queued
+            _trip(mgr, y)
+            assert await mgr.cancel(q2.id) is True
+            refused = mgr.spawn("refused while q1 waits", parent_session_key=y)
+            assert refused is not None and refused.done and refused.error.startswith(BREAKER)
+
+    @pytest.mark.parametrize("stopped_by", ["cancel", "reaper"])
+    @pytest.mark.asyncio
+    async def test_a_helper_stopped_inside_its_model_call_hands_its_slot_on(
+        self, stopped_by: str
+    ) -> None:
+        """A helper stopped while it runs, inside its model call, by its Stop or by the reaper's
+        deadline kill, frees its slot to the helper waiting for one."""
+        sessions, began = _sessions_that_say_they_started()
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            running = mgr.spawn("the running helper", parent_session_key="dashboard:one-chat")
+            waiting = mgr.spawn("the waiting helper", parent_session_key="dashboard:other-chat")
+            assert running is not None and waiting is not None and waiting.queued
+            await asyncio.wait_for(began.wait(), 5)
+            if stopped_by == "cancel":
+                assert await mgr.cancel(running.id) is True
+            else:
+                await mgr._force_reap(running.id, running, 0.0)
+            assert running.reaped and not running.never_ran
+            assert not waiting.queued and waiting.id in mgr._tasks, "it starts in the freed slot"
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_helper_whose_fanout_is_stopped_refuses_the_one_waiting(
+        self,
+    ) -> None:
+        """Chat Y's helper r runs and q waits under Y's tripped breaker. Stopping r: the drain
+        refuses q with the stop's reason, so q never starts, and then Y's stop ends."""
+        sessions, began = _sessions_that_say_they_started()
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        y = "dashboard:chat-y"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            r = mgr.spawn("y's running helper", parent_session_key=y)
+            q = mgr.spawn("y's waiting helper", parent_session_key=y)
+            assert r is not None and q is not None and q.queued
+            await asyncio.wait_for(began.wait(), 5)
+            _trip(mgr, y)
+            assert await mgr.cancel(r.id) is True
+            assert q.done and q.never_ran and q.error.startswith(BREAKER), q.error
+            assert q.id not in mgr._tasks
+            following = mgr.spawn("y's next helper", parent_session_key=y)
+            assert following is not None and not following.done, following.error
+
+    @pytest.mark.asyncio
+    async def test_stop_fanout_on_one_chat_leaves_another_chats_stop(self) -> None:
+        """Stop fan-out on a chat with nothing running ends that chat's stop only: chat X, whose
+        helper still runs under its tripped breaker, stays stopped."""
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        x = "dashboard:chat-x"
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            busy = mgr.spawn("chat x's helper", parent_session_key=x)
+            assert busy is not None and not busy.queued
+            _trip(mgr, x)
+            assert await mgr.cancel_fanout("dashboard:chat-y", reason="Cancelled by user") == 0
+            assert x in mgr._fanout_stops
+            refused = mgr.spawn("x's next helper", parent_session_key=x)
+            assert refused is not None and refused.done and refused.error.startswith(BREAKER)

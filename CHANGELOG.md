@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **A chat or a workflow run starts helpers again once the helpers it had are stopped or have ended: after Stop fan-out or a stopped turn found them all waiting to start, after its last helper reached Max tokens / run, after five of its helpers failed in a row, or after a helper's start was denied or went unanswered. Until the gateway restarted, it refused every later helper with the old reason. A helper stopped while it runs, or ended at its time limit, now lets the next helper waiting to start begin at once; before, that helper waited for another one to end, and one asked for later could start first.**
+
 ### Security
 
 - **The credential mask covers a whole private key block, header to END line: RSA, DSA, EC, OpenSSH, PKCS#8, encrypted and OpenPGP keys, with their lines broken, escaped as JSON writes them, run onto one line, indented, marked as a diff, a quote or a `#` comment marks them, or written as string literals in code. A connection string's `Pwd=` or `PWD=` is masked as a password.**

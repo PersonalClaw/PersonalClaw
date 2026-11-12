@@ -933,6 +933,10 @@ class SubagentManager:
                 info.never_ran = True
                 subagent_waiting.forget(agent_id)
             self._note_child_outcome(info)
+            # Its slot goes to the helper waiting for it, as when a helper ends on its own: a
+            # reaped run skips its own drain, so without this the waiting one stayed queued until
+            # some other helper ended, and a later spawn took the slot first.
+            self._drain_queue()
         info.reaped = True
         self._maybe_clear_fanout(_fanout_key(info))
 
@@ -1656,10 +1660,21 @@ class SubagentManager:
                 except Exception:
                     logger.debug("SEL audit failed for budget stop %s", fkey, exc_info=True)
                 # Kill the in-flight children of this fan-out so "stops mid-flight"
-                # is literal, not just "refuses the next one".
-                asyncio.ensure_future(self.cancel_fanout(fkey, reason=typed))
+                # is literal, not just "refuses the next one". Later, and only while this stop
+                # still stands: the child that crossed the ceiling may be the fan-out's last.
+                asyncio.ensure_future(self._cancel_if_still_stopped(fkey, typed))
         except Exception:
             logger.debug("fan-out budget check failed (fail-open)", exc_info=True)
+
+    async def _cancel_if_still_stopped(self, fkey: str, reason: str) -> int:
+        """The run budget's cancel of *fkey*, which runs after the child that crossed the ceiling
+        has ended. It stops the fan-out only while the stop that scheduled it, *reason*, still
+        stands. When that child was the fan-out's last, its ending has drained the fan-out and
+        ended the stop, and a helper started under *fkey* since (the chat's next helper, or the
+        workflow run's next agent step) must not be ended by a stop that is gone."""
+        if self._fanout_stops.get(fkey) != reason:
+            return 0
+        return await self.cancel_fanout(fkey, reason=reason)
 
     def _maybe_clear_fanout(self, fkey: str) -> None:
         """Drop a fan-out's breaker/budget/stop state once it is fully drained.
@@ -1730,12 +1745,19 @@ class SubagentManager:
             info.done, info.never_ran = True, True
             info.error = f"spawn refused: {stop_reason}"
             subagent_waiting.forget(info.id)
+            # Its fan-out's stop ends with its last helper, as it does in cancel()'s queued
+            # branch: the drain may be another fan-out's, whose clear covers only its own key.
+            self._maybe_clear_fanout(_fanout_key(info))
             # It said it waited: it says how its wait ended, as one that ran says how it ended.
             self._fire_soon("subagent_done", info, subagent_endings.done_event(info))
             self._drain_queue()
             return
         logger.info("Draining queue: dispatching %s (%d left)", info.id, len(self._queue))
-        self._dispatch_run(info)
+        try:
+            self._dispatch_run(info)
+        except Exception:
+            # A failed start (its audit row refused) must not cut short the ending that drained it.
+            logger.exception("Draining queue: the start of %s raised", info.id)
         if self._queue and self._running_count < self._max_concurrent:
             asyncio.get_event_loop().call_later(2.0, self._drain_queue)
 
@@ -1762,6 +1784,10 @@ class SubagentManager:
             subagent_waiting.forget(info.id)
             self._dec_running(info)
             self._drain_queue()
+            # A start refused as its fan-out's last helper ends the fan-out's stop, breaker streak
+            # and run total, as a helper that ran does when it ends: it counted in the lane while
+            # it asked, so a sibling that ended meanwhile could not.
+            self._maybe_clear_fanout(_fanout_key(info))
             self._tasks.pop(info.id, None)
             await sel_log_async(
                 sel().log_tool_invocation,
@@ -2572,6 +2598,9 @@ class SubagentManager:
             info.done, info.never_ran = True, True
             info.error = reason
             subagent_waiting.forget(agent_id)
+            # Its fan-out's stop ends with its last helper, waiting or running: a stopped turn
+            # whose helpers were all waiting marks the fan-out stopped and ends them here.
+            self._maybe_clear_fanout(_fanout_key(info))
             # It said it waited: it says how its wait ended, as one that ran says how it ended.
             await self._fire_event("subagent_done", info, subagent_endings.done_event(info))
             return True
@@ -2614,6 +2643,10 @@ class SubagentManager:
             *(self.cancel(info.id, reason=f"Cancelled because {because}") for info in victims),
             return_exceptions=True,
         )
+        # Belt and braces: each victim's own ending clears its fan-out's stop (a queued one in
+        # cancel(), a running or asking one in its reap); this covers a cancel that raised first.
+        for fkey in {_fanout_key(info) for info in victims}:
+            self._maybe_clear_fanout(fkey)
         stopped = sum(1 for r in results if r is True)
         logger.info("Stopped %d/%d subagent(s): %s", stopped, len(victims), because)
         return stopped
@@ -2628,9 +2661,13 @@ class SubagentManager:
         fan-out (``workflow:<run_id>``) are each addressable as a unit. Marks the
         fan-out stopped so a spawn already in flight to the queue is refused too,
         then cancels each child concurrently, each ending with *reason* (the run budget it ran
-        past, or her Stop fan-out, *by_you*: :meth:`cancel`). Idempotent: a second call finds
-        nothing to cancel. Unlike ``cancel_all`` (the shutdown switch) this touches
-        ONE fan-out and leaves other runs untouched.
+        past, or her Stop fan-out, *by_you*: :meth:`cancel`). The mark ends once nothing of the
+        fan-out is running or waiting (:meth:`_maybe_clear_fanout`), here too: a Stop fan-out may
+        find nothing running at all, and a cancel that raised before its own clear leaves the mark
+        to this one. A mark left there would refuse every later helper of the chat, or every later
+        agent step of the workflow run, until a restart.
+        Idempotent: a second call finds nothing to cancel. Unlike ``cancel_all`` (the shutdown
+        switch) this touches ONE fan-out and leaves other runs untouched.
         """
         if not fanout_key:
             return 0
@@ -2647,6 +2684,7 @@ class SubagentManager:
             *(self.cancel(info.id, by_you=by_you, **ended) for info in victims),
             return_exceptions=True,
         )
+        self._maybe_clear_fanout(fanout_key)
         logger.info("Cancelled fan-out %s (%d child(ren))", fanout_key, len(victims))
         return len(victims)
 
