@@ -509,6 +509,12 @@ class SubagentManager:
         # (breaker trip, run-budget exceeded, kill-fan-out). A queued or
         # new spawn for one of these is refused with that reason rather than started.
         self._fanout_stops: dict[str, str] = {}
+        # The fan-out keys workflow runs' agent steps share (their ``parent_run``,
+        # ``workflow:<run_id>``), and those whose run has ended (`end_run_fanout`). A run's steps
+        # run one after another as often as side by side, so a run's breaker streak, stop and run
+        # total last until the run ends, not only while one of its steps runs or waits.
+        self._run_fanouts: set[str] = set()
+        self._run_fanouts_ended: set[str] = set()
         self.hook_store: Any = None  # Optional ScriptHookStore, set by server.py
         # Whose work an agent's run is and which folder's memory it reads (`memory_reads.reach_of`,
         # `memory_locality.work_folder`), for its first prompt; set by the state that holds this.
@@ -1329,6 +1335,8 @@ class SubagentManager:
         # --- Fan-out stop (breaker / run budget / kill-fan-out): a stopped
         # fan-out refuses further spawns with the recorded TYPED reason. ---
         fkey = _fanout_key(info)
+        if info.parent_run:
+            self._run_fanouts.add(info.parent_run)
         stop_reason = self._fanout_stops.get(fkey)
         if stop_reason:
             info.done, info.never_ran = True, True
@@ -1604,9 +1612,10 @@ class SubagentManager:
     async def _cancel_if_still_stopped(self, fkey: str, reason: str) -> int:
         """The run budget's cancel of *fkey*, which runs after the child that crossed the ceiling
         has ended. It stops the fan-out only while the stop that scheduled it, *reason*, still
-        stands. When that child was the fan-out's last, its ending has drained the fan-out and
-        ended the stop, and a helper started under *fkey* since (the chat's next helper, or the
-        workflow run's next agent step) must not be ended by a stop that is gone."""
+        stands. When that child was a chat fan-out's last, its ending has drained the fan-out and
+        ended the stop, and the chat's next helper, started under *fkey* since, must not be ended
+        by a stop that is gone. A workflow run's stop stands until the run ends
+        (:meth:`_maybe_clear_fanout`), so its next agent step is refused, not started."""
         if self._fanout_stops.get(fkey) != reason:
             return 0
         return await self.cancel_fanout(fkey, reason=reason)
@@ -1614,15 +1623,20 @@ class SubagentManager:
     def _maybe_clear_fanout(self, fkey: str) -> None:
         """Drop a fan-out's breaker/budget/stop state once it is fully drained.
 
-        A later fan-out reusing the same key (a new workflow run rarely does; a
-        chat parent may) must start clean — otherwise a prior run's tripped breaker
-        would pre-stop it. Called after each child finishes; clears only when no
-        child of this key is running or queued.
+        A chat's later fan-out reuses its key and must start clean — otherwise a prior
+        fan-out's tripped breaker would pre-stop it. Called after each child finishes; clears
+        only when no child of this key is running or queued. A workflow run's key is kept until
+        its run has ended too (:meth:`end_run_fanout`): its agent steps share it one after another
+        as often as side by side, and its breaker and Max tokens / run count the whole run.
         """
         if self._lane_count(fkey) > 0:
             return
         if any(_fanout_key(qi) == fkey for qi in self._queue):
             return
+        if fkey in self._run_fanouts and fkey not in self._run_fanouts_ended:
+            return
+        self._run_fanouts.discard(fkey)
+        self._run_fanouts_ended.discard(fkey)
         self._fanout_failures.pop(fkey, None)
         self._fanout_stops.pop(fkey, None)
         try:
@@ -1631,6 +1645,15 @@ class SubagentManager:
             get_meter().end_run(fkey)
         except Exception:
             logger.debug("fan-out meter end_run failed for %s", fkey, exc_info=True)
+
+    def end_run_fanout(self, key: str) -> None:
+        """The workflow run whose fan-out *key* (``workflow:<run_id>``) this is has ended: the
+        breaker streak, stop and run total its agent steps shared end once nothing of it runs or
+        waits, at once when nothing does (``started_work.end_run``)."""
+        if not key:
+            return
+        self._run_fanouts_ended.add(key)
+        self._maybe_clear_fanout(key)
 
     async def _safe_announce(self, info: SubagentInfo) -> None:
         """Notify completion callback (single info, as a one-element batch) with
