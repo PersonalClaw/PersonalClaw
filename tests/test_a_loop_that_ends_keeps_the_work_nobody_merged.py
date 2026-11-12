@@ -37,6 +37,10 @@ from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
 from personalclaw.loop.manager import session_key, task_session_key
 from personalclaw.loop.plan_walkthrough import planner_session_key
 
+#: The cap of each test here that drives a loop over real git repositories: 10 to 21 s alone
+#: on a Mac under load (tests/timeout-marks.toml), past the suite's 30 s in a loaded set.
+_GIT_LOOP_CAP = pytest.mark.timeout(60)
+
 
 def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
@@ -457,6 +461,7 @@ def test_a_failed_loop_keeps_its_queue_for_resume(repo):
     assert store.get(loop.id).kind_config["queued_task_ids"] == [tid]
 
 
+@_GIT_LOOP_CAP
 def test_at_boot_a_loop_that_ended_with_tasks_queued_has_none(repo):
     """One that ended before its ending emptied the queue: the boot sweep empties it, and leaves a
     failed loop's for its Resume."""
@@ -473,6 +478,7 @@ def test_at_boot_a_loop_that_ended_with_tasks_queued_has_none(repo):
     assert store.get(failed.id).kind_config["queued_task_ids"] == ["t-feed"]
 
 
+@_GIT_LOOP_CAP
 def test_only_a_delete_discards_the_work_and_only_its_own(repo, tmp_path):
     from personalclaw import projects
 
@@ -591,6 +597,7 @@ def test_a_loop_at_work_names_no_kept_work_and_refuses_to_merge_it(repo):
     assert _edit_in(wt)
 
 
+@_GIT_LOOP_CAP
 def test_merge_puts_the_kept_work_in_the_workspace(repo):
     loop, tid, wt, state = _budget_spent(repo)
 
