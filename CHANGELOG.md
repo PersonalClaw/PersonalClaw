@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **The Nix flake installs 0.3.8.**
+
 ## [0.3.8] — 2026-11-11
 
 A workflow reads its secrets from Settings → Secrets alone now, so save any secret that only the gateway's starting environment held in Settings → Secrets before you update, then take it out of that environment. Chat preferences, the gear on the chat box, holds a chat's explanations, reply style and Optimize; how replies explain things is a setting in Agent defaults that reaches every chat, asked once in a small window; and the sidebar's chat history is one list, with a search and a Sort and filter menu. Home's Overview shows your agents and what they did today, and tasks, Home and notifications render what agents wrote. The desktop app updates an older gateway it found and uses one only at its own version or newer, its sidebar paints the web UI's colours, and a theme switch reaches the whole window at once. Hands-free voice explains itself, sends only when a confirmation phrase ends what you said, and keeps what you typed. Stopping a workflow run ends the agents and runs its steps started, and skipping a step inside a loop skips it in every cycle. The web image runs nginx 1.31.8, and the gateway image's agent CLIs run on Node 24.22.2.
