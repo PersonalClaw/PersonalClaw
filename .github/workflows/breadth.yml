@@ -206,15 +206,11 @@ jobs:
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: Install tmux (durable sessions — real-daemon test leg)
-        run: |
-          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
-          case "$RUNNER_OS" in
-            Linux) sudo apt-get update -qq &&
-                   sudo apt-get install -y --no-install-recommends tmux ;;
-            macOS) brew install tmux ;;
-            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
-          esac
-          tmux -V
+        # Through the setup action, as a tier job installs it: a hung runner mirror is left
+        # within minutes (tests/rails/test_ci_tier_workflow_steps_tree.py).
+        uses: ./.github/actions/setup
+        with:
+          programs: tmux
       - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
@@ -323,15 +319,11 @@ jobs:
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: Install tmux (durable sessions — real-daemon test leg)
-        run: |
-          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
-          case "$RUNNER_OS" in
-            Linux) sudo apt-get update -qq &&
-                   sudo apt-get install -y --no-install-recommends tmux ;;
-            macOS) brew install tmux ;;
-            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
-          esac
-          tmux -V
+        # Through the setup action, as a tier job installs it: a hung runner mirror is left
+        # within minutes (tests/rails/test_ci_tier_workflow_steps_tree.py).
+        uses: ./.github/actions/setup
+        with:
+          programs: tmux
       - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
@@ -639,15 +631,11 @@ jobs:
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: Install tmux (durable sessions — real-daemon test leg)
-        run: |
-          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
-          case "$RUNNER_OS" in
-            Linux) sudo apt-get update -qq &&
-                   sudo apt-get install -y --no-install-recommends tmux ;;
-            macOS) brew install tmux ;;
-            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
-          esac
-          tmux -V
+        # Through the setup action, as a tier job installs it: a hung runner mirror is left
+        # within minutes (tests/rails/test_ci_tier_workflow_steps_tree.py).
+        uses: ./.github/actions/setup
+        with:
+          programs: tmux
       - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
@@ -1096,15 +1084,11 @@ jobs:
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: Install tmux (durable sessions — real-daemon test leg)
-        run: |
-          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
-          case "$RUNNER_OS" in
-            Linux) sudo apt-get update -qq &&
-                   sudo apt-get install -y --no-install-recommends tmux ;;
-            macOS) brew install tmux ;;
-            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
-          esac
-          tmux -V
+        # Through the setup action, as a tier job installs it: a hung runner mirror is left
+        # within minutes (tests/rails/test_ci_tier_workflow_steps_tree.py).
+        uses: ./.github/actions/setup
+        with:
+          programs: tmux
       - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})
         id: pytest
         continue-on-error: true
@@ -1226,15 +1210,11 @@ jobs:
       - name: Install (locked)
         run: uv sync --locked --extra dev
       - name: Install tmux (durable sessions — real-daemon test leg)
-        run: |
-          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
-          case "$RUNNER_OS" in
-            Linux) sudo apt-get update -qq &&
-                   sudo apt-get install -y --no-install-recommends tmux ;;
-            macOS) brew install tmux ;;
-            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
-          esac
-          tmux -V
+        # Through the setup action, as a tier job installs it: a hung runner mirror is left
+        # within minutes (tests/rails/test_ci_tier_workflow_steps_tree.py).
+        uses: ./.github/actions/setup
+        with:
+          programs: tmux
       # Each order is its own step, so the second runs whatever the first did; the shard is red
       # when either order was. Each has its own basetemp, outside the runner's home: in pytest's
       # shared one, a nested pytest a test starts in the second order deletes the first order's
