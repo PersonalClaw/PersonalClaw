@@ -362,18 +362,24 @@ async def api_projects_linked(request: web.Request) -> web.Response:
     integration — everything the user does on one effort, in one place.
 
     Also carries the project's ARTIFACTS and its run-written KNOWLEDGE — the two "what did
-    work on this project leave behind" surfaces."""
+    work on this project leave behind" surfaces. What is in the project is the library's one
+    rule (:mod:`personalclaw.project_items`), so this and ``GET /api/library?project=`` list the
+    same things: a loop by its one project, an artifact by its own id before its loop's tag, and
+    every knowledge item, uncapped."""
     pid = request.match_info["project_id"]
     if _store().get_project(pid) is None:
         return web.json_response({"error": "not found"}, status=404)
 
+    from personalclaw import project_items
+
+    projects = project_items.read_projects()
     loops: list[dict] = []
     code: list[dict] = []
     try:
         from personalclaw.loop import store as loop_store
 
         for lp in loop_store.list_all():
-            if pid not in (lp.project_id, lp.tasks_project_id):
+            if projects.loops.get(lp.id, "") != pid:
                 continue
             # error_message lets the FE distinguish a genuine 'complete' from a
             # budget-exhausted finish (→ "Ended early"), matching the list + cockpit.
@@ -399,17 +405,8 @@ async def api_projects_linked(request: web.Request) -> web.Response:
             # deliverable convention predates that stamp: those artifacts carry a
             # `loop:<id>` tag and an EMPTY project_id — and they are exactly the
             # artifacts a project's inventory exists to show (the deliverables of
-            # its loops). Match both in ONE list() pass: project_id, or a loop tag
-            # naming a loop this handler just resolved as ours.
-            own_ids = {row["id"] for row in loops} | {row["id"] for row in code}
-            own_tags = {f"loop:{i}" for i in own_ids}
-            seen: set[str] = set()
-            for a in prov.list():
-                if a.project_id != pid and not (own_tags & set(a.tags)):
-                    continue
-                if a.slug in seen:
-                    continue
-                seen.add(a.slug)
+            # its loops). The rule reads both, and an artifact's own id wins over its tag.
+            for a in project_items.project_artifacts(prov, pid, projects):
                 artifacts.append({"slug": a.slug, "name": a.name, "kind": a.kind})
     except Exception:
         pass
@@ -425,7 +422,7 @@ async def api_projects_linked(request: web.Request) -> web.Response:
         from personalclaw.knowledge.store import KnowledgeStore, knowledge_db_path
 
         knowledge = project_scope.project_items(
-            KnowledgeStore(db_path=str(knowledge_db_path())), project_id=pid, limit=25
+            KnowledgeStore(db_path=str(knowledge_db_path())), project_id=pid, limit=None
         )
     except Exception:
         pass

@@ -465,6 +465,11 @@ cap = 50
 reason = "a hundred-item knowledge store built and checked for real; 21 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
+site = "tests/test_library_counts_are_true.py::test_the_total_and_every_count_are_true_over_5000_things"
+cap = 90
+reason = "a home of 5,000 things, 200 of them artifacts written through the provider, read twice whole; 7.5 s alone and 14.8 s beside a full local set at load 29 (2026-11-11), most of it the seed"
+
+[[mark]]
 site = "tests/test_mcp_import_from_claude_code_keeps_the_server.py::test_an_imported_server_is_kept_and_still_runs_after_a_restart"
 cap = 50
 reason = "a real MCP server imported, then started again after a restart; 21 s on CI at worst (breadth's coverage leg, 2026-10-24)"

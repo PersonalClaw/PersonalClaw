@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **960 registrations** over **779 distinct paths** — 953 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **961 registrations** over **780 distinct paths** — 954 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,7 +20,7 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 133 families the surface divides into, largest first.
+The 134 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
@@ -137,6 +137,7 @@ The 133 families the surface divides into, largest first.
 | `/api/hooks` | 1 | 1 |
 | `/api/images` | 1 | 1 |
 | `/api/investigate` | 1 | 1 |
+| `/api/library` | 1 | 1 |
 | `/api/logout` | 1 | 1 |
 | `/api/manifest` | 1 | 1 |
 | `/api/model-provider-types` | 1 | 1 |
@@ -160,7 +161,7 @@ The 133 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 953 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 954 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -637,6 +638,7 @@ The 953 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/lexicon/terms` | {canonical, aliases?} — add a manual term. |
 | `DELETE` | `/api/lexicon/terms/{id}` | remove a term you added, or one learned from a fix. |
 | `PATCH` | `/api/lexicon/terms/{id}` | {enabled?} — enable/disable (prune) a term. |
+| `GET` | `/api/library` | every thing in the library, one row per thing, in one read. |
 | `GET` | `/api/listening` | whether the microphone is live, and which sources hold it. |
 | `POST` | `/api/listening` | the shell's report: ``{"on": bool, "sources": [...]}``. |
 | `POST` | `/api/logout` | sign every dashboard session out, everywhere. |

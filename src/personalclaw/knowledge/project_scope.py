@@ -162,8 +162,8 @@ def visible_in_project(metadata: Any, *, project_id: str) -> bool:
     raise ValueError(f"unhandled sharing policy {policy!r}")
 
 
-def project_items(store: Any, *, project_id: str, limit: int = 50) -> list[dict[str, Any]]:
-    """The items a project's Knowledge view shows, newest first.
+def project_items(store: Any, *, project_id: str, limit: int | None = 50) -> list[dict[str, Any]]:
+    """The items a project's Knowledge view shows, newest first. *limit* None is every one.
 
     Two passes rather than one clever query: the project's own items come off the tag join
     (the same index the brief uses), and cross-container candidates come off a cheap
@@ -212,7 +212,7 @@ def project_items(store: Any, *, project_id: str, limit: int = 50) -> list[dict[
             "contributor": who if contributor_label(who, reader) else "",
         }
     ordered = sorted(rows.values(), key=lambda r: r["updated_at"], reverse=True)
-    return ordered[: max(1, limit)]
+    return ordered if limit is None else ordered[: max(1, limit)]
 
 
 # ── internals ───────────────────────────────────────────────────────────────
@@ -221,10 +221,11 @@ def project_items(store: Any, *, project_id: str, limit: int = 50) -> list[dict[
 _SELECT = "SELECT i.id, i.kind, i.title, i.summary, i.updated_at, i.file_metadata FROM items i "
 
 
-def _own_rows(store: Any, project_id: str, limit: int) -> list[dict[str, Any]]:
+def _own_rows(store: Any, project_id: str, limit: int | None) -> list[dict[str, Any]]:
     tag = project_tag(project_id)
     if not tag:
         return []
+    cap = "" if limit is None else f" LIMIT {max(1, int(limit))}"
     try:
         return [
             dict(r)
@@ -232,8 +233,8 @@ def _own_rows(store: Any, project_id: str, limit: int) -> list[dict[str, Any]]:
                 _SELECT + "JOIN item_tags it ON it.item_id = i.id "
                 "JOIN tags t ON t.id = it.tag_id "
                 "WHERE t.name = ? AND i.is_archived = 0 "
-                "ORDER BY i.updated_at DESC LIMIT ?",
-                (tag, max(1, limit)),
+                "ORDER BY i.updated_at DESC" + cap,  # noqa: S608 - cap is an int
+                (tag,),
             )
         ]
     except Exception:
@@ -241,20 +242,21 @@ def _own_rows(store: Any, project_id: str, limit: int) -> list[dict[str, Any]]:
         return []
 
 
-def _shared_candidates(store: Any, limit: int) -> list[dict[str, Any]]:
+def _shared_candidates(store: Any, limit: int | None) -> list[dict[str, Any]]:
     """Rows that carry ANY sharing policy — the prefilter, not the decision.
 
     Matches on the KEY, never on the serialized value: `json.dumps` spacing is a formatting
     detail, and a `LIKE '%"sharing_policy": "shared"%'` prefilter would silently miss every
     row written by a caller that dumped compactly.
     """
+    cap = "" if limit is None else f" LIMIT {max(1, int(limit)) * 4}"
     try:
         return [
             dict(r)
             for r in store.db.execute(
                 _SELECT + "WHERE i.is_archived = 0 AND i.file_metadata LIKE ? "
-                "ORDER BY i.updated_at DESC LIMIT ?",
-                ('%"sharing_policy"%', max(1, limit) * 4),
+                "ORDER BY i.updated_at DESC" + cap,  # noqa: S608 - cap is an int
+                ('%"sharing_policy"%',),
             )
         ]
     except Exception:

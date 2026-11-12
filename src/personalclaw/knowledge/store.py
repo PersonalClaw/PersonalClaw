@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from personalclaw import memory_writes
 from personalclaw.instants import backfill_zone_less, utc_now_iso
+from personalclaw.knowledge.library_tables import LibraryTables
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.sqlite_compat import FTS5_REMEDY, connect_shared, probe, sqlite3
 
@@ -449,7 +450,7 @@ def knowledge_db_path(home: "pathlib.Path | None" = None, *, create: bool = True
     return path
 
 
-class KnowledgeStore:
+class KnowledgeStore(LibraryTables):
     def __init__(self, db_path: str):
         # FTS5 is ESSENTIAL here: the schema creates the `items_fts` virtual table and
         # every knowledge search (store.search_items_fts, HybridRetriever, the agent
@@ -472,6 +473,7 @@ class KnowledgeStore:
         self._init_schema()
         self._init_embed_refusals()
         self._migrate()
+        self._init_library_revision()
         # The chunk ANN index lives in THIS database file, so a chunk write and its
         # vector write travel together instead of needing a sidecar's consistency story.
         # Construction loads nothing — the sqlite-vec extension is loaded lazily on first

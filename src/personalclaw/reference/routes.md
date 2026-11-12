@@ -479,6 +479,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/lexicon/terms` — {canonical, aliases?} — add a manual term.
 - `DELETE /api/lexicon/terms/{id}` — remove a term you added, or one learned from a fix.
 - `PATCH /api/lexicon/terms/{id}` — {enabled?} — enable/disable (prune) a term.
+- `GET /api/library` — every thing in the library, one row per thing, in one read.
 - `GET /api/listening` — whether the microphone is live, and which sources hold it.
 - `POST /api/listening` — the shell's report: ``{"on": bool, "sources": [...]}``.
 - `POST /api/logout` — sign every dashboard session out, everywhere.
