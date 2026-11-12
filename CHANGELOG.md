@@ -19,6 +19,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A credential's value written in quotes is masked by its name, as one without quotes is: `"password": "…"` in JSON, a quoted value in YAML, `DB_PASSWORD="…"` in an env file, and a keyword argument or a JavaScript object's field, a line break after its `:` or `=` included, for `api_key`, `secret_key`, `access_token`, `refresh_token`, `client_secret`, `password`, `passwd` and `private_key`, and for the `SecretAccessKey` and `SessionToken` the AWS CLI writes. The mask replaces what the quotes hold, so the name and the quotes stay and a JSON document still parses, and a tool call's card masks such a value in the call's input as its preview does.**
 - **A redaction warning names what kind of text it masked, and at most its length or a scheme or host the masked text keeps, never any of the value: a credential pattern's warning and a long URL query's warning held the first characters of what they matched.**
 
+### Added
+
+- **The gateway lists your whole library in one read, `GET /api/library`: notes, files, links, artifacts, report write-ups and what each intent found, one row per thing, with a true total and the name of any store it couldn't read. A note or an artifact can move into a project, which takes it out of the one it was in, or leave its project. A note or a decision saved in a project's chat is filed under that project. An intent can write a report on a schedule, and its check of what you already saved can run in the background, with its progress and a way to stop it. The run that answers when it is done still works. A feed can be removed or checked at once. You can record which of two items that disagree to go by, and both are kept. Renaming or merging a tag keeps the reports that read it on the same items, and a report whose tags were all deleted stops running on its schedule and says why.**
+
 ### Changed
 
 - **The Nix flake installs 0.3.8.**

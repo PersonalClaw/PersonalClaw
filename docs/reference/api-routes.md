@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **968 registrations** over **785 distinct paths** — 961 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **973 registrations** over **788 distinct paths** — 966 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -25,7 +25,7 @@ The 134 families the surface divides into, largest first.
 | Family | Registrations | Distinct paths |
 |---|---|---|
 | `/api/chat` | 91 | 78 |
-| `/api/knowledge` | 78 | 63 |
+| `/api/knowledge` | 80 | 64 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
 | `/api/models` | 38 | 30 |
@@ -76,6 +76,7 @@ The 134 families the surface divides into, largest first.
 | `/api/push` | 5 | 5 |
 | `/api/themes` | 5 | 2 |
 | `/api/autonomy` | 4 | 4 |
+| `/api/library` | 4 | 3 |
 | `/api/search` | 4 | 4 |
 | `/api/usage` | 4 | 4 |
 | `/api/agent-metadata` | 3 | 1 |
@@ -137,7 +138,6 @@ The 134 families the surface divides into, largest first.
 | `/api/hooks` | 1 | 1 |
 | `/api/images` | 1 | 1 |
 | `/api/investigate` | 1 | 1 |
-| `/api/library` | 1 | 1 |
 | `/api/logout` | 1 | 1 |
 | `/api/manifest` | 1 | 1 |
 | `/api/model-provider-types` | 1 | 1 |
@@ -161,7 +161,7 @@ The 134 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 961 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 966 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -610,7 +610,9 @@ The 961 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/knowledge/sources` | the watched sources, with health, plus the kind catalog. |
 | `POST` | `/api/knowledge/sources` | save a source, after its provider validates the spec. |
 | `POST` | `/api/knowledge/sources/preview` | the dry run for the paste-URL create flow. |
+| `DELETE` | `/api/knowledge/sources/{id}` | - stop following a feed, keeping what it added. |
 | `PATCH` | `/api/knowledge/sources/{id}` | apply a remediation, rename, or pause a source. |
+| `POST` | `/api/knowledge/sources/{id}/check` | - check a feed now, in the background. |
 | `GET` | `/api/knowledge/stats` | _(no summary)_ |
 | `GET` | `/api/knowledge/tag-tree` | every tag with its parent and live usage count. |
 | `GET` | `/api/knowledge/tags` | - distinct tags (frequency-ordered) for autocomplete. |
@@ -646,6 +648,9 @@ The 961 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/lexicon/terms/{id}` | remove a term you added, or one learned from a fix. |
 | `PATCH` | `/api/lexicon/terms/{id}` | {enabled?} — enable/disable (prune) a term. |
 | `GET` | `/api/library` | every thing in the library, one row per thing, in one read. |
+| `POST` | `/api/library/bulk` | one operation on many things, answered for each. |
+| `GET` | `/api/library/settings` | the library's own settings: ``power_user_view``. |
+| `PUT` | `/api/library/settings` | change the library's own settings. |
 | `GET` | `/api/listening` | whether the microphone is live, and which sources hold it. |
 | `POST` | `/api/listening` | the shell's report: ``{"on": bool, "sources": [...]}``. |
 | `POST` | `/api/logout` | sign every dashboard session out, everywhere. |

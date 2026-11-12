@@ -1504,6 +1504,14 @@ class KnowledgeStore(LibraryTables):
         row = self.db.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()
         return self._serialize_source(row) if row else None
 
+    def delete_source(self, source_id: str) -> bool:
+        """Remove a source and what it keeps to poll (its cursor and the guids it has seen, by
+        their foreign keys). Every item it added stays: an item's ``source_id`` then names a
+        source that is gone, as an item a merge brought in can. Answers whether it was there."""
+        cur = self.db.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+        self.db.commit()
+        return cur.rowcount > 0
+
     def list_sources(self, *, enabled_only: bool = False) -> list[dict]:
         sql = "SELECT * FROM sources"
         if enabled_only:

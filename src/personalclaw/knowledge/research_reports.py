@@ -171,6 +171,9 @@ class ReportDefinition:
     #: reports of one name keep one each. "" before its first write; ``None`` for a report saved
     #: before reports kept it, until :func:`migrate_write_ups` gives it the item of its name.
     finding_item_id: str | None = ""
+    #: The scope's tag names that were deleted while it read them (`record_deleted_tag`): a
+    #: report whose source tags are all missing and all among these does not run.
+    tags_deleted: tuple[str, ...] = ()
 
 
 # ── Serialization ──
@@ -265,6 +268,7 @@ def to_dict(defn: ReportDefinition) -> dict:
         "last_result": defn.last_result,
         "watermark_ts": defn.watermark_ts,
         "finding_item_id": defn.finding_item_id,
+        "tags_deleted": list(defn.tags_deleted),
     }
 
 
@@ -279,8 +283,9 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     "last_error",
     "last_result",
     "watermark_ts",
-    # The write-up is an item in this home's library.
+    # The write-up is an item in this home's library, and the deleted tags were this home's.
     "finding_item_id",
+    "tags_deleted",
 )
 
 
@@ -329,6 +334,11 @@ def from_dict(raw: dict) -> ReportDefinition:
         watermark_ts=_as_float(raw.get("watermark_ts")),
         finding_item_id=(
             raw["finding_item_id"] if isinstance(raw.get("finding_item_id"), str) else None
+        ),
+        tags_deleted=(
+            tuple(t for t in raw.get("tags_deleted") or () if isinstance(t, str) and t.strip())
+            if isinstance(raw.get("tags_deleted"), list)
+            else ()
         ),
     )
 
@@ -523,6 +533,83 @@ def record_run(
             target.last_status = "error"
             target.last_error = _redact(error)
         _write(defns)
+
+
+def record_stopped(report_id: str, *, status: str, result: str) -> None:
+    """Record that a run stopped before reading anything, and why: ``last_status`` *status* and
+    its sentence as ``last_result``. Nothing else moves: no run happened, so neither the last run's
+    time nor the watermark does."""
+    with record_files.locked(_store_path()):
+        defns = load_reports(strict=True)
+        target = next((d for d in defns if d.id == report_id), None)
+        if target is None:
+            return
+        target.last_status = status
+        target.last_error = ""
+        target.last_result = result[:_MAX_ERROR_CHARS]
+        _write(defns)
+
+
+def _fold(name: str) -> str:
+    return str(name or "").strip().casefold()
+
+
+def carry_scope_tag(old: str, new: str) -> list[str]:
+    """Add tag name *new* to each scope that names *old*, so it reads the same items once the tag
+    is called *new*. Answers the ids of the reports it changed. A scope already naming *new* is
+    left as it is."""
+    changed: list[str] = []
+    with record_files.locked(_store_path()):
+        defns = load_reports(strict=True)
+        for defn in defns:
+            for scope in (defn.source, defn.context):
+                if scope is None:
+                    continue
+                folded = [_fold(t) for t in scope.tags]
+                if _fold(old) in folded and _fold(new) not in folded:
+                    scope.tags = (*scope.tags, new)
+                    if defn.id not in changed:
+                        changed.append(defn.id)
+        if changed:
+            _write(defns)
+    return changed
+
+
+def record_deleted_tag(name: str) -> list[str]:
+    """Note on each report whose scope names tag *name* that the tag was deleted, so a report
+    left with none of its source tags says so in place of running. Answers the reports noted."""
+    noted: list[str] = []
+    with record_files.locked(_store_path()):
+        defns = load_reports(strict=True)
+        for defn in defns:
+            scopes = [s for s in (defn.source, defn.context) if s is not None]
+            if any(_fold(name) in [_fold(t) for t in s.tags] for s in scopes):
+                if _fold(name) not in [_fold(t) for t in defn.tags_deleted]:
+                    defn.tags_deleted = (*defn.tags_deleted, name.strip())
+                noted.append(defn.id)
+        if noted:
+            _write(defns)
+    return noted
+
+
+def drop_scope_tag(name: str, *, only: list[str] | None = None) -> list[str]:
+    """Take tag name *name* out of each scope that names it (of the reports *only* names, when
+    given). Answers the ids of the reports it changed."""
+    changed: list[str] = []
+    with record_files.locked(_store_path()):
+        defns = load_reports(strict=True)
+        for defn in defns:
+            if only is not None and defn.id not in only:
+                continue
+            for scope in (defn.source, defn.context):
+                if scope is None or _fold(name) not in [_fold(t) for t in scope.tags]:
+                    continue
+                scope.tags = tuple(t for t in scope.tags if _fold(t) != _fold(name))
+                if defn.id not in changed:
+                    changed.append(defn.id)
+        if changed:
+            _write(defns)
+    return changed
 
 
 def migrate_write_ups(store: Any) -> int:

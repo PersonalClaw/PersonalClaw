@@ -39,6 +39,7 @@ BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
     ("artifacts/handlers.py", "api_artifact_update", "snapshot"): False,
     ("artifacts/handlers.py", "api_artifacts_pin", "pinned"): True,
     ("dashboard/chat_folders.py", "api_chat_folder_update", "collapsed"): "optional",
+    ("dashboard/handlers/library_writes.py", "api_library_bulk", "value"): True,
     ("dashboard/chat_folders.py", "api_chat_session_pin", "pinned"): "required",
     ("dashboard/chat_handlers.py", "api_chat_session_context", "ephemeral"): True,
     ("dashboard/chat_questions.py", "api_chat_question_answer", "skip"): False,

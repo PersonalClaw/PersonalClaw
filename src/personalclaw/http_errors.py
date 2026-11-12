@@ -1602,6 +1602,19 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "bad_limit": "The page size is not a whole number in the allowed range.",
     "unknown_conflict": "No two items disagree under that id now.",
     "bad_choice": "The choice is neither of the two items that disagree, nor both.",
+    "unknown_op": "The bulk operation is not one the library has.",
+    "refs_required": "The bulk call names no library refs to act on.",
+    "too_many_refs": "The bulk call names more refs than one call takes.",
+    "unknown_collection": "No collection has that id.",
+    "smart_collection_immutable": "A smart collection holds what its search finds.",
+    "bad_state": "The read state is not one an item can have.",
+    "nothing_to_update": "The request names nothing to change.",
+    "unknown_setting": "The request names a setting the library does not have.",
+    "invalid_setting": "A setting's value is not of its type.",
+    "settings_unreadable": "The library's settings file cannot be read, so nothing changed.",
+    "artifacts_source": "The artifacts mirror is switched in Settings, not removed as a feed.",
+    "unknown_project": "No project has that id.",
+    "tags_missing": "Every tag the report reads was deleted, so it did not run.",
 }
 
 

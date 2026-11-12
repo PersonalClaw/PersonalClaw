@@ -68,6 +68,9 @@ from personalclaw.action_providers.knowledge_persist_provider import _open_store
 
 logger = logging.getLogger(__name__)
 
+#: The ``last_status`` and run word of a report that stopped because its tags are gone.
+TAGS_MISSING = "tags_missing"
+
 #: How many source items a single run will show the model. A scope is unbounded in principle
 #: (a quiet report resumed after a month can match thousands), and an unbounded prompt is the
 #: failure mode that turns one late run into a context-limit error. The NEWEST items survive
@@ -222,6 +225,19 @@ class KnowledgeReportActionProvider(ActionProvider):
                 error=f"knowledge-report: no report definition {report_id!r}",
             )
 
+        # A report whose source names tags none of which is there any more reads nothing: it
+        # says so in place of running, and calls no model (`knowledge.report_tags`).
+        stopped = tags_gone(defn)
+        if stopped:
+            rr.record_stopped(report_id, status=TAGS_MISSING, result=stopped)
+            return ActionResult(
+                success=True,
+                stdout=json.dumps({"report_id": report_id, "run": TAGS_MISSING, "model_calls": 0}),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                outcome="skip",
+                summary=stopped,
+            )
+
         # THE watermark. Read before the scope is resolved (see the module docstring) and
         # threaded unchanged to `record_run` — never re-read at the end.
         resolution_ts = time.time()
@@ -367,6 +383,20 @@ class KnowledgeReportActionProvider(ActionProvider):
             duration_ms=int((time.monotonic() - started) * 1000),
             summary=said,
         )
+
+
+def tags_gone(defn: Any, store: Any = None) -> str:
+    """The sentence a report says in place of running when every tag its source names is gone
+    (`report_tags.gone_sentence`), "" when it can run or the taxonomy cannot be read."""
+    from personalclaw.knowledge import report_tags
+
+    if not getattr(defn, "tags_deleted", ()) or not report_tags.gone_sentence(defn, set()):
+        return ""  # no tag of its scope was deleted: nothing to look up
+    try:
+        return report_tags.gone_sentence(defn, report_tags.tag_names(store or _open_store()))
+    except Exception:  # noqa: BLE001 — an unreadable taxonomy stops nothing here
+        logger.debug("knowledge-report: tag taxonomy unreadable", exc_info=True)
+        return ""
 
 
 # ── the report module seam ──

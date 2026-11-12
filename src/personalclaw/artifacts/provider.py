@@ -96,9 +96,11 @@ class ArtifactProvider(ABC):
         project_id: str | None = None,
         pinned: bool | None = None,
         archived: bool | None = None,
+        collection: str | None = None,
     ) -> Artifact | None:
         """File *slug* into a project (``""`` takes it out of its project, whatever its loop's tag
-        says), pin it or archive it in the library. Metadata only, like :meth:`set_folder`, and
+        says), pin it or archive it in the library, or label it with a collection's name (``""``
+        clears the label). Metadata only, like :meth:`set_folder`, and
         for the same reason: it bumps no ``updated_at``. ``None`` leaves a flag as it is. Default
         returns None (a backend opts in)."""
         return None

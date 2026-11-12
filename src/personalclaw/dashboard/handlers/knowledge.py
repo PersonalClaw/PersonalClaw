@@ -868,11 +868,19 @@ def _tags_after(stored: list[str], edits: dict[str, list[str]]) -> list[str] | N
 
 async def delete_item(request: web.Request) -> web.Response:
     """DELETE /api/knowledge/items/{id}."""
-    store = _store(request)
     item_id = request.match_info["id"]
+    if not delete_item_and_files(_store(request), item_id):
+        return web.json_response({"error": "not found"}, status=404)
+    await _sel_log_async("item.delete", item_id=item_id)
+    return web.json_response({"ok": True})
+
+
+def delete_item_and_files(store, item_id: str) -> bool:
+    """Delete knowledge item *item_id* and every file it owned: the one delete, which the
+    library's bulk delete goes through too. Answers whether the item was there."""
     item = store.get_item(item_id)
     if not item:
-        return web.json_response({"error": "not found"}, status=404)
+        return False
     store.delete_item(item_id)
     # Clean up every on-disk file this item owned — but only inside the knowledge files
     # dir (defense-in-depth, matching the serve guard) so a corrupt path can never unlink
@@ -898,8 +906,7 @@ async def delete_item(request: web.Request) -> web.Response:
                 resolved.unlink(missing_ok=True)
         except (OSError, ValueError):
             logger.debug("delete cleanup skipped for %s", raw, exc_info=True)
-    await _sel_log_async("item.delete", item_id=item_id)
-    return web.json_response({"ok": True})
+    return True
 
 
 async def get_item_content(request: web.Request) -> web.Response:
@@ -2880,19 +2887,44 @@ async def update_collection(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    before = store.get_collection(cid) or {}
     try:
         store.update_collection(cid, **fields)
     except ValueError as exc:
         clash = _collection_clash_response(str(exc))
         return clash or web.json_response({"error": str(exc)}, status=400)
+    if "name" in fields and fields["name"] != before.get("name"):
+        # An artifact sits in a collection by its label, the collection's name: a rename relabels.
+        _relabel_artifacts(str(before.get("name") or ""), str(fields["name"]))
     return web.json_response({"ok": True, "collection": store.get_collection(cid)})
 
 
+def _relabel_artifacts(old: str, new: str) -> int:
+    """Give every artifact labelled *old* the label *new* ("" clears it). Answers how many."""
+    from personalclaw.artifacts.registry import get_provider
+
+    if not old:
+        return 0
+    prov = get_provider()
+    if prov is None:
+        return 0
+    moved = 0
+    for art in prov.list():
+        if (art.collection or "") == old and prov.set_library_flags(art.slug, collection=new):
+            moved += 1
+    return moved
+
+
 async def delete_collection(request: web.Request) -> web.Response:
-    """DELETE /api/knowledge/collections/{id} — remove the shelf, keep the items."""
+    """DELETE /api/knowledge/collections/{id} — remove the shelf, keep the items.
+
+    The artifacts labelled with it keep everything but the label."""
     cid = request.match_info["id"]
-    if not _store(request).delete_collection(cid):
+    store = _store(request)
+    name = str((store.get_collection(cid) or {}).get("name") or "")
+    if not store.delete_collection(cid):
         return web.json_response({"error": "collection not found"}, status=404)
+    _relabel_artifacts(name, "")
     return web.json_response({"ok": True})
 
 
@@ -3028,9 +3060,34 @@ async def list_tag_taxonomy(request: web.Request) -> web.Response:
 
     Distinct from `GET /api/knowledge/tags`, which stays a flat frequency-ordered
     `list[str]` for the ChipInput autocomplete. This one is the management surface, so it
-    carries ids, parents and counts.
+    carries ids, parents and counts, and ``reports``: the reports whose scope reads the tag, by
+    naming it or one of its ancestors (`knowledge.report_tags`), which the rename, merge and delete
+    dialogs say before asking.
     """
-    return web.json_response({"tags": _store(request).list_tags()})
+    from personalclaw.knowledge import report_tags, research_reports
+
+    rows = _store(request).list_tags()
+    readers = report_tags.reports_by_tag(rows, research_reports.load_reports())
+    return web.json_response(
+        {"tags": [{**r, "reports": readers.get(int(r["id"]), [])} for r in rows]}
+    )
+
+
+def _tag_name(store, tag_id: int) -> str | None:
+    return next((str(t["name"]) for t in store.list_tags() if int(t["id"]) == tag_id), None)
+
+
+def _carry_reports(store, tag_id: int, new: str) -> tuple[str, list[str]]:
+    """Before tag *tag_id* takes the name *new* (a rename, or a merge into the tag of that name):
+    add *new* to each report scope that names the tag, so it reads the same items throughout.
+    Answers the tag's name now and the reports changed; nothing is carried for a change of case
+    (scopes match without it) or onto a name another tag holds (the rename will be refused)."""
+    from personalclaw.knowledge import report_tags, research_reports
+
+    old = _tag_name(store, tag_id)
+    if old is None or report_tags.fold(old) == report_tags.fold(new) or not report_tags.fold(new):
+        return old or "", []
+    return old, research_reports.carry_scope_tag(old, new)
 
 
 async def list_conflicts(request: web.Request) -> web.Response:
@@ -3265,10 +3322,27 @@ async def rename_tag(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    from personalclaw.knowledge import report_tags, research_reports
+
+    old, carried = "", list[str]()
+    if "name" in body:
+        new = str(body["name"] or "").strip()
+        held = any(
+            report_tags.fold(t["name"]) == report_tags.fold(new) and int(t["id"]) != tid
+            for t in store.list_tags()
+        )
+        # The reports reading the tag carry the new name first, then the tag is renamed, then the
+        # old name goes: in that order a crash leaves a scope naming both, never neither.
+        if not held:
+            old, carried = _carry_reports(store, tid, new)
     try:
         if "name" in body:
             if not store.rename_tag(tid, str(body["name"])):
+                research_reports.drop_scope_tag(str(body["name"]).strip(), only=carried)
                 return web.json_response({"error": "tag not found"}, status=404)
+            if carried:
+                research_reports.drop_scope_tag(old)
+                carried = []  # renamed: nothing to take back from here on
         if "parent_id" in body:
             raw = body["parent_id"]
             # null / "" both mean "make this a root tag".
@@ -3289,6 +3363,8 @@ async def rename_tag(request: web.Request) -> web.Response:
         # the message is human copy that gets reworded, the code is the registry key." So the code
         # goes in `code` and a sentence goes in `message`, composed HERE — one source for the
         # wording, rather than the same two sentences in the handler and the panel.
+        if carried:
+            research_reports.drop_scope_tag(str(body["name"]).strip(), only=carried)
         if raw.startswith("tag_cycle"):
             code = "tag_cycle"
             message = "That would make a tag its own ancestor. Pick a different parent."
@@ -3351,18 +3427,30 @@ async def merge_tag(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    from personalclaw.knowledge import research_reports
+
+    # As a rename does: the reports reading the folded tag carry the target's name first, and
+    # lose the folded tag's name once it is gone.
+    target = _tag_name(store, into)
+    old, carried = _carry_reports(store, tid, target) if target is not None else ("", [])
     try:
         result = store.merge_tags(tid, into)
     except LookupError as exc:
+        if carried and target:
+            research_reports.drop_scope_tag(target, only=carried)
         # A tag that is not there is a 404 — not a 200 carrying zeros, and not a 400: the request
         # was well-formed and no change to the body would make it succeed.
         return web.json_response(
             {"error": {"code": "tag_not_found", "message": str(exc)}}, status=404
         )
     except ValueError as exc:
+        if carried and target:
+            research_reports.drop_scope_tag(target, only=carried)
         return web.json_response(
             {"error": {"code": "invalid_merge", "message": str(exc)}}, status=400
         )
+    if carried:
+        research_reports.drop_scope_tag(old)
     await _sel_log_async("tag_merge", source=tid, target=body["into"], **result)
     return web.json_response({"ok": True, **result, "tags": store.list_tags()})
 
@@ -3376,7 +3464,18 @@ async def delete_tag(request: web.Request) -> web.Response:
     tid = _tag_id(request)
     if tid is None:
         return web.json_response({"error": "tag not found"}, status=404)
+    from personalclaw.knowledge import research_reports
+
     store = _store(request)
+    name = _tag_name(store, tid)
+    if name is None:
+        return web.json_response({"error": "tag not found"}, status=404)
+    # The reports that read it keep its name (a scope with no tags reads everything), and note
+    # that it was deleted, so one left reading none of its tags says so in place of running. The
+    # note comes first, so no delete goes unnoted: a note on a tag still there stops nothing,
+    # since a name is missing only while no tag matches it.
+    if name:
+        research_reports.record_deleted_tag(name)
     if not store.delete_tag(tid):
         return web.json_response({"error": "tag not found"}, status=404)
     await _sel_log_async("tag_delete", tag_id=tid)
@@ -3856,6 +3955,58 @@ async def create_watched_source(request: web.Request) -> web.Response:
     return web.json_response({"source": _serialize_source(created or {}, store)}, status=201)
 
 
+#: The sources a check-now is polling, by id, for this gateway: one at a time per source.
+SOURCE_CHECKS = web.AppKey("knowledge_source_checks", dict)
+
+
+async def delete_watched_source(request: web.Request) -> web.Response:
+    """DELETE /api/knowledge/sources/{id} -- stop following a feed, keeping what it added.
+
+    The source and its cursor go; every item it brought stays in the library. The artifacts
+    mirror is refused: its switch in Settings owns it."""
+    from personalclaw.knowledge import artifact_ingest
+
+    store = _store(request)
+    source_id = request.match_info["id"]
+    if store.get_source(source_id) is None:
+        return json_error("not_found", message="No source has that id.", status=404)
+    mirror = artifact_ingest.find_source(store)
+    if mirror is not None and mirror.get("id") == source_id:
+        return json_error(
+            "artifacts_source",
+            message="Your artifacts are indexed by a switch in Settings, not by a feed you remove.",
+            status=409,
+        )
+    store.delete_source(source_id)
+    await _sel_log_async("source.delete", source_id=source_id)
+    return web.json_response({"ok": True, "id": source_id})
+
+
+async def check_watched_source(request: web.Request) -> web.Response:
+    """POST /api/knowledge/sources/{id}/check -- check a feed now, in the background.
+
+    Answers 202 once one poll has started; a second while it runs answers 409 ``already_running``.
+    """
+    store = _store(request)
+    source_id = request.match_info["id"]
+    source = store.get_source(source_id)
+    if source is None:
+        return json_error("not_found", message="No source has that id.", status=404)
+    checks: dict = request.app[SOURCE_CHECKS]
+    if (running := checks.get(source_id)) is not None and not running.done():
+        return json_error(
+            "already_running", message="This source is being checked now.", status=409
+        )
+    engine = getattr(request.app["state"], "_source_engine", None)
+    if engine is None:
+        from personalclaw.knowledge.source_engine import SourceEngine
+
+        engine = SourceEngine(store, request.app["state"].knowledge_ingest_queue())
+    checks[source_id] = asyncio.ensure_future(engine.poll_source(source, engine._config_loader()))
+    await _sel_log_async("source.check", source_id=source_id)
+    return web.json_response({"ok": True, "id": source_id}, status=202)
+
+
 async def update_watched_source(request: web.Request) -> web.Response:
     """PATCH /api/knowledge/sources/{id} — apply a remediation, rename, or pause a source.
 
@@ -4291,6 +4442,10 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_post("/api/knowledge/sources", create_watched_source)
     app.router.add_post("/api/knowledge/sources/preview", preview_watched_source)
     app.router.add_patch("/api/knowledge/sources/{id}", update_watched_source)
+    app.router.add_delete("/api/knowledge/sources/{id}", delete_watched_source)
+    app.router.add_post("/api/knowledge/sources/{id}/check", check_watched_source)
+    if SOURCE_CHECKS not in app:
+        app[SOURCE_CHECKS] = {}
 
     # Pool lifecycle: lazy start on first request, shutdown on app exit
     async def _shutdown_pool(app: web.Application) -> None:

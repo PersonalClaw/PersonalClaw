@@ -1203,6 +1203,7 @@ class NativeArtifactProvider(ArtifactProvider):
         project_id: str | None = None,
         pinned: bool | None = None,
         archived: bool | None = None,
+        collection: str | None = None,
     ) -> Artifact | None:
         """The library's flags (:meth:`ArtifactProvider.set_library_flags`): written as
         :meth:`set_folder` files a folder, with no ``updated_at`` bump, so moving ten artifacts
@@ -1220,6 +1221,8 @@ class NativeArtifactProvider(ArtifactProvider):
                 art.pinned = bool(pinned)
             if archived is not None:
                 art.archived = bool(archived)
+            if collection is not None:
+                art.collection = collection.strip()
             self._write_meta(art)
             return self.get(slug)
 

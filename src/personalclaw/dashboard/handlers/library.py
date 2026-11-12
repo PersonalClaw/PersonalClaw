@@ -49,6 +49,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw import project_items
+from personalclaw.knowledge import report_tags
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE
 from personalclaw.knowledge.semantics import RESEARCH_FINDING_KIND
 
@@ -186,6 +187,8 @@ class _Context:
     runs_reader: Any = None
     #: The reports whose run holds its claim now.
     running_reports: frozenset[str] = frozenset()
+    #: Every tag name in the library now, folded (`knowledge.report_tags`).
+    tag_names: set[str] = field(default_factory=set)
 
     def chat_title(self, key: str) -> str:
         """The chat's title as the chat list shows it, "" once its transcript is gone. The list
@@ -275,6 +278,7 @@ def _row(**fields: Any) -> dict:
         "archived": False,
         "running": False,
         "conflicts": [],
+        "missing_tags": [],
         "state": "",
         "excerpt": "",
         "size": None,
@@ -436,6 +440,7 @@ def report_rows(store: Any, ctx: _Context) -> list[dict]:
                 activity_at=stamp(up["updated_at"]) if up else "",
                 excerpt=_excerpt(up["content"]) if up else "",
                 running=defn.id in ctx.running_reports,
+                missing_tags=report_tags.missing_tags(defn, ctx.tag_names),
                 _write_up=str(up["id"]) if up else "",
             )
         )
@@ -727,6 +732,7 @@ def read_library(sources: Sources, query: Query, *, runs_reader: Any = None) -> 
     try:
         store = sources.knowledge()
         ctx.sources = {str(s["id"]): str(s.get("name") or "") for s in store.list_sources()}
+        ctx.tag_names = report_tags.tag_names(store)
         intents = list(sources.intents())
         ctx.intents = {i.id: str(i.goal or getattr(i, "name", "") or "") for i in intents}
         collection_ids = {
@@ -764,6 +770,15 @@ def read_library(sources: Sources, query: Query, *, runs_reader: Any = None) -> 
         failed.append(STORE_ARTIFACTS)
     if STORE_KNOWLEDGE in found:
         _join_conflicts(found[STORE_KNOWLEDGE], rows)
+    smart = _smart_collection(found.get(STORE_KNOWLEDGE), query.collection)
+    if smart is not None:
+        # A smart collection holds what its search finds in both stores, worked out only when it
+        # is opened (its count too), as the store's own read of it is.
+        held = set(search(found, str(smart.get("query") or ""), reports)[0])
+        mark = {"id": str(smart["id"]), "name": str(smart.get("name") or "")}
+        for r in rows:
+            if r["ref"] in held:
+                r["collections"] = [*r["collections"], mark]
     searched: dict[str, Any] = {}
     if query.q:
         order, hits, searched = search(found, query.q, reports)
@@ -989,6 +1004,20 @@ def _join_conflicts(store: Any, rows: list[dict]) -> None:
             row["conflicts"] = sorted(waiting[ident])
 
 
+def _smart_collection(store: Any, collection_id: str) -> dict | None:
+    """The smart collection *collection_id* names, or None (a manual one, or none)."""
+    if store is None or not collection_id:
+        return None
+    try:
+        found = store.get_collection(collection_id)
+    except Exception:
+        logger.debug("library: collection %s unreadable", collection_id, exc_info=True)
+        return None
+    if not found or found.get("kind") != "smart" or not str(found.get("query") or "").strip():
+        return None
+    return dict(found)
+
+
 def running_reports() -> frozenset[str]:
     """The ids of the reports a run holds the claim of now (`_hold_claim`)."""
     from personalclaw.dashboard.handlers.research_reports import report_claim_id
@@ -1074,5 +1103,8 @@ async def api_library(request: web.Request) -> web.Response:
 
 
 def setup_library_routes(app: web.Application) -> None:
-    """Mount the library's routes."""
+    """Mount the library's routes: its read, and its writes and settings (`library_writes`)."""
+    from personalclaw.dashboard.handlers.library_writes import setup_library_write_routes
+
     app.router.add_get("/api/library", api_library)
+    setup_library_write_routes(app)
