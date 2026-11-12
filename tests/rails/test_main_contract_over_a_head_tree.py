@@ -27,7 +27,7 @@ from rails_repo import REPO
 from tools.ci import contract
 
 #: Each plant runs pytest over a whole tree laid out from git: listed in tests/timeout-marks.toml.
-_TREE = pytest.mark.timeout(150)
+_TREE = pytest.mark.timeout(300)
 
 #: The rail a head that drops a required job trips, and its one test that reads the tree.
 _SECURITY_RAIL = "tests/rails/test_ci_security_runs_in_its_own_job_tree.py"

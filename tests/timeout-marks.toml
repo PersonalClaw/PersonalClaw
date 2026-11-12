@@ -871,8 +871,8 @@ reason = "the select import graph over the whole tree (about 4,700 modules), par
 
 [[mark]]
 site = "tests/rails/test_main_contract_over_a_head_tree.py::_TREE"
-cap = 150
-reason = "each plant lays out the committed tree as a worktree (9,239 files) and runs one test of one of main's contract rails over it, before and after its edit; 5.5 s at a load of 9, and at a load of 22 the checkout alone took 28.7 s, 3.4 s of it CPU and the rest waiting on the disk, of a plant's ~36 s; a plant past 60 s timed out on a Mac at a load of about 25 (2026-10-27)"
+cap = 300
+reason = "each plant lays out the committed tree as a worktree (9,239 files) and runs one test of one of main's contract rails over it, before and after its edit; 5.5 s at a load of 9, and at a load of 22 the checkout alone took 28.7 s, 3.4 s of it CPU and the rest waiting on the disk, of a plant's ~36 s; a plant past 60 s timed out on a Mac at a load of about 25 (2026-10-27); alone on a Mac at loads 29 to 46 the slowest plant took 75 s and the dropped-job plant 37 to 73 s, and that plant went past 150 s once inside a loaded local set (2026-11-12)"
 
 [[mark]]
 site = "tests/test_a_test_left_failing_by_another_is_traced_to_it.py::test_a_planted_polluter_is_found_in_at_most_12_pytest_runs"
