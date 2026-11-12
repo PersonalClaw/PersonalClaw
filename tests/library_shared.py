@@ -96,6 +96,42 @@ def report(name: str, **kw: Any) -> Any:
     )
 
 
+class ScriptedModel:
+    """The model a report run calls, scripted: it answers *reply* and keeps each prompt."""
+
+    def __init__(self, reply: str) -> None:
+        self.reply = reply
+        self.prompts: list[str] = []
+
+    @property
+    def calls(self) -> int:
+        return len(self.prompts)
+
+    async def __call__(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self.reply
+
+
+def scripted_model(monkeypatch: Any, reply: str = "What changed [1].") -> ScriptedModel:
+    from personalclaw.action_providers import knowledge_report_provider as krp
+
+    model = ScriptedModel(reply)
+    monkeypatch.setattr(krp, "_one_shot", model)
+    return model
+
+
+async def report_run(report_id: str) -> dict:
+    """Run report *report_id* once, as its automation does, and answer what the run said."""
+    from personalclaw.action_providers import knowledge_report_provider as krp
+    from personalclaw.action_providers.base import ActionContext
+
+    result = await krp.KnowledgeReportActionProvider().execute(
+        {"report_id": report_id}, ActionContext(event="manual", payload={})
+    )
+    assert result.success, result.error
+    return json.loads(result.stdout)
+
+
 def write_up(name: str, content: str) -> str:
     """A report's write-up as its runs keep it: the research-finding item of the report's name."""
     from personalclaw.knowledge.semantics import RESEARCH_FINDING_KIND, logical_key
@@ -158,6 +194,7 @@ async def client(home: Path, *, knowledge: Any | None = None) -> AsyncIterator[T
     """A test client over the library's routes, on loopback, for this test only."""
     from personalclaw.artifacts.handlers import register_artifact_routes
     from personalclaw.dashboard.handlers.knowledge import setup_knowledge_routes
+    from personalclaw.dashboard.handlers.research_reports import setup_research_report_routes
     from personalclaw.tasks.handlers import register_task_routes
 
     with (
@@ -178,6 +215,7 @@ async def client(home: Path, *, knowledge: Any | None = None) -> AsyncIterator[T
         register_task_routes(app)
         register_artifact_routes(app)
         setup_knowledge_routes(app)
+        setup_research_report_routes(app)
         try:
             from personalclaw.dashboard.handlers.library import setup_library_routes
         except ImportError:  # main has no library read: the cases that need it are red there

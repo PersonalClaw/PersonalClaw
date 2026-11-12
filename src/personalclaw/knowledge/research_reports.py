@@ -49,6 +49,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from personalclaw import record_files
@@ -126,6 +127,9 @@ class Scope:
 
     tags: tuple[str, ...] = ()
     window_secs: int = 0
+    #: An intent whose findings this scope reads in place of tags: the findings it kept (since the
+    #: watermark, or in the window) and the items they name. "" for none.
+    intent: str = ""
 
 
 @dataclass
@@ -163,6 +167,10 @@ class ReportDefinition:
     #: your knowledge tagged perf since its previous run.").
     last_result: str = ""
     watermark_ts: float = 0.0
+    #: The knowledge item its runs keep as its one write-up, by id, so a rename keeps it and two
+    #: reports of one name keep one each. "" before its first write; ``None`` for a report saved
+    #: before reports kept it, until :func:`migrate_write_ups` gives it the item of its name.
+    finding_item_id: str | None = ""
 
 
 # ── Serialization ──
@@ -196,7 +204,10 @@ def _as_opt_float(raw: object) -> float | None:
 
 
 def _scope_to_dict(scope: Scope) -> dict:
-    return {"tags": list(scope.tags), "window_secs": scope.window_secs}
+    out: dict = {"tags": list(scope.tags), "window_secs": scope.window_secs}
+    if scope.intent:
+        out["intent"] = scope.intent
+    return out
 
 
 def _scope_from_dict(raw: object) -> Scope:
@@ -204,7 +215,11 @@ def _scope_from_dict(raw: object) -> Scope:
         return Scope()
     tags = raw.get("tags")
     clean = tuple(t for t in tags if isinstance(t, str) and t) if isinstance(tags, list) else ()
-    return Scope(tags=clean, window_secs=max(0, _as_int(raw.get("window_secs"))))
+    return Scope(
+        tags=clean,
+        window_secs=max(0, _as_int(raw.get("window_secs"))),
+        intent=_as_str(raw.get("intent")).strip(),
+    )
 
 
 def _schedule_to_dict(sched: ScheduleDefinition) -> dict:
@@ -249,6 +264,7 @@ def to_dict(defn: ReportDefinition) -> dict:
         "last_error": defn.last_error,
         "last_result": defn.last_result,
         "watermark_ts": defn.watermark_ts,
+        "finding_item_id": defn.finding_item_id,
     }
 
 
@@ -263,6 +279,8 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     "last_error",
     "last_result",
     "watermark_ts",
+    # The write-up is an item in this home's library.
+    "finding_item_id",
 )
 
 
@@ -309,6 +327,9 @@ def from_dict(raw: dict) -> ReportDefinition:
         last_error=_as_str(raw.get("last_error")),
         last_result=_as_str(raw.get("last_result")),
         watermark_ts=_as_float(raw.get("watermark_ts")),
+        finding_item_id=(
+            raw["finding_item_id"] if isinstance(raw.get("finding_item_id"), str) else None
+        ),
     )
 
 
@@ -380,7 +401,15 @@ def save_report(defn: ReportDefinition) -> ReportDefinition:
         defn.created_ts = time.time()
     defn.iteration_cap = _clamp_iteration_cap(defn.iteration_cap)
     with record_files.locked(_store_path()):
-        defns = [d for d in load_reports(strict=True) if d.id != defn.id]
+        current = load_reports(strict=True)
+        stored = next((d for d in current if d.id == defn.id), None)
+        # The write-up's id is its runs' to keep (:func:`record_run`): a save carries the stored
+        # one, so an edit read before a run wrote it cannot drop it. A new report has none yet.
+        if stored is not None:
+            defn.finding_item_id = stored.finding_item_id or defn.finding_item_id
+        elif defn.finding_item_id is None:
+            defn.finding_item_id = ""
+        defns = [d for d in current if d.id != defn.id]
         defns.append(defn)
         _write(defns)
     # The schedule is attached HERE rather than in the handler, because this is the one home
@@ -451,8 +480,11 @@ def record_run(
     nothing_new: bool = False,
     error: str = "",
     watermark_ts: float | None = None,
+    finding_item_id: str = "",
 ) -> None:
     """Persist the outcome of one run.
+
+    *finding_item_id* is the write-up a run wrote to, which the report keeps from then on.
 
     On success: advance ``last_run_ts`` to now and, when supplied, the watermark; record
     ``ok`` — or :data:`NOTHING_NEW` for a run that found nothing new — and the run's sentence
@@ -485,10 +517,45 @@ def record_run(
             target.last_result = result[:_MAX_ERROR_CHARS]
             if watermark_ts is not None:
                 target.watermark_ts = watermark_ts
+            if finding_item_id:
+                target.finding_item_id = finding_item_id
         else:
             target.last_status = "error"
             target.last_error = _redact(error)
         _write(defns)
+
+
+def migrate_write_ups(store: Any) -> int:
+    """Give each report saved before reports kept their write-up's id (``finding_item_id`` None)
+    the write-up of its name, once. Two such reports of one name shared that item: it goes to the
+    one whose last run is newest (ties by id), and the others keep none, so each writes its own on
+    its next run, and nothing is deleted. An item another report already keeps is not given again.
+    Answers how many reports it settled; 0 once every report has been."""
+    from personalclaw.knowledge.semantics import logical_key
+
+    with record_files.locked(_store_path()):
+        defns = load_reports(strict=True)
+        todo = [d for d in defns if d.finding_item_id is None]
+        if not todo:
+            return 0
+        kept = {d.finding_item_id for d in defns if d.finding_item_id}
+        by_name: dict[str, list[ReportDefinition]] = {}
+        for defn in todo:
+            by_name.setdefault(logical_key(FINDING_KIND, defn.name), []).append(defn)
+        for key, named in by_name.items():
+            row = store.db.execute(
+                "SELECT id FROM items WHERE kind = ? AND logical_key = ? "
+                "ORDER BY updated_at DESC, id LIMIT 1",
+                (FINDING_KIND, key),
+            ).fetchone()
+            item_id = str(row[0]) if row and str(row[0]) not in kept else ""
+            heir = min(named, key=lambda d: (-(d.last_run_ts or 0.0), d.id))
+            for defn in named:
+                defn.finding_item_id = item_id if defn is heir else ""
+            if item_id:
+                kept.add(item_id)
+        _write(defns)
+    return len(todo)
 
 
 # ── What a report says it reads, and what a run found ──
@@ -511,6 +578,24 @@ def _span(window_secs: int) -> str:
     return f"from the last {duration_words(window_secs)}"
 
 
+def intent_goal(intent_id: str) -> str:
+    """The goal of intent *intent_id*, as its card words it, or its id once it is gone."""
+    from personalclaw.knowledge.intents import IntentStore
+    from personalclaw.knowledge.store import knowledge_db_path
+
+    try:
+        found = IntentStore(Path(knowledge_db_path()).parent / "intents.json").get(intent_id)
+    except Exception:  # noqa: BLE001 — the sentence falls back to the id
+        logger.debug("report: intent %s unreadable", intent_id, exc_info=True)
+        found = None
+    return str(found.goal or intent_id) if found is not None else intent_id
+
+
+def _found_by(intent_id: str) -> str:
+    """``what your intent “…” found``."""
+    return f"what your intent “{intent_goal(intent_id)}” found"
+
+
 def sources_shown(defn: ReportDefinition) -> str:
     """What *defn* reads, in a sentence for its card: which part of your knowledge, over which
     window, what it may look at while writing, and that it does not search the web.
@@ -520,7 +605,11 @@ def sources_shown(defn: ReportDefinition) -> str:
     source brought into the library first.
     """
     source = defn.source
-    if source.window_secs > 0:
+    if getattr(source, "intent", "") and source.window_secs > 0:
+        parts = [f"Reads {_found_by(source.intent)} {_span(source.window_secs)} each time it runs."]
+    elif getattr(source, "intent", ""):
+        parts = [f"Reads {_found_by(source.intent)} since its previous run, each time it runs."]
+    elif source.window_secs > 0:
         parts = [f"Reads {_where(source.tags)} {_span(source.window_secs)} each time it runs."]
     else:
         parts = [f"Reads what is new in {_where(source.tags)} each time it runs."]
@@ -534,12 +623,21 @@ def sources_shown(defn: ReportDefinition) -> str:
 def wrote_words(defn: ReportDefinition, items: int) -> str:
     """The sentence of a run that wrote its finding from *items* source items."""
     noun = "item" if items == 1 else "items"
+    if getattr(defn.source, "intent", ""):
+        return f"Wrote a finding from {items} {noun} {_found_by(defn.source.intent)}."
     return f"Wrote a finding from {items} {noun} in {_where(defn.source.tags)}."
 
 
 def nothing_new_words(defn: ReportDefinition) -> str:
     """The sentence of a run that found no new material, for the window that run read: its rolling
     window, or what arrived since its previous run, or — before any run — everything so far."""
+    if getattr(defn.source, "intent", ""):
+        found = _found_by(defn.source.intent)
+        if defn.source.window_secs > 0:
+            return f"Found nothing in {found} {_span(defn.source.window_secs)}."
+        if defn.watermark_ts > 0:
+            return f"Found nothing new in {found} since its previous run."
+        return f"Found nothing in {found} to report on yet."
     where = _where(defn.source.tags)
     if defn.source.window_secs > 0:
         return f"Found no material in {where} {_span(defn.source.window_secs)}."

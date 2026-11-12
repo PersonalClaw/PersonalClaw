@@ -18,7 +18,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import json_error
-from personalclaw.knowledge import project_scope
+from personalclaw.knowledge import intent_runs, project_scope
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime
@@ -2013,18 +2013,40 @@ def _intent_store(request: web.Request):
 
 
 def _intents_payload(request: web.Request) -> list[dict]:
-    """Intent dicts decorated with their recorded-outcome counts (for list badges).
+    """Intent dicts decorated with their recorded-outcome counts (for list badges), when each last
+    kept a finding (``last_found_at``, "" for never), and its findings log's own state
+    (``log_archived``, ``log_read``, ``log_pinned``).
 
     Each carries ``revision``: of the intent RECORD (``Intent.to_dict``), which an edit replaces
-    whole and so names in ``If-Match`` (`personalclaw/stale_write.py`). ``outcome_count`` stays
-    out of it — ingest bumps it, and the record the page saves never holds it.
+    whole and so names in ``If-Match`` (`personalclaw/stale_write.py`). The rest stays out of it:
+    ingest bumps the count and the time, the log's state is set on its own, and the record the
+    page saves never holds them.
     """
+    from personalclaw.dashboard.handlers.library import stamp
+
+    store = _store(request)
     intents = _intent_store(request).load()
-    counts = _store(request).intent_outcome_counts()
+    counts = store.intent_outcome_counts()
+    found = store.intent_last_found()
+    logs = store.intent_log_states()
     return [
-        {**i.to_dict(), "revision": revision_of(i.to_dict()), "outcome_count": counts.get(i.id, 0)}
+        {
+            **i.to_dict(),
+            "revision": revision_of(i.to_dict()),
+            "outcome_count": counts.get(i.id, 0),
+            "last_found_at": stamp(found.get(i.id, "")),
+            **{f"log_{k}": logs.get(i.id, {}).get(k, False) for k in store.LOG_FLAGS},
+        }
         for i in intents
     ]
+
+
+#: The intents' background runs (`knowledge.intent_runs`), one per intent, for this gateway.
+INTENT_RUNS = web.AppKey("knowledge_intent_runs", intent_runs.IntentRuns)
+
+
+def _intent_runs(request: web.Request) -> intent_runs.IntentRuns:
+    return request.app[INTENT_RUNS]
 
 
 async def list_intents(request: web.Request) -> web.Response:
@@ -2099,30 +2121,102 @@ async def upsert_intent(request: web.Request) -> web.Response:
 
 
 async def delete_intent(request: web.Request) -> web.Response:
-    """DELETE /api/knowledge/intents/{id} -- removes the intent and its outcomes."""
+    """DELETE /api/knowledge/intents/{id} -- removes the intent and what it kept.
+
+    Its outcomes go with it, and its findings log's state. A run of it in the background is
+    stopped first."""
     store = _intent_store(request)
     intent_id = request.match_info["id"]
+    if store.get(intent_id) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    await _intent_runs(request).stop(intent_id)
     if not store.delete(intent_id):
         return web.json_response({"error": "not found"}, status=404)
+    _intent_runs(request).forget(intent_id)
     _store(request).delete_intent_outcomes(intent_id)
+    _store(request).delete_intent_log_state(intent_id)
     await _sel_log_async("intent.delete", intent_id=intent_id)
     return web.json_response({"intents": _intents_payload(request)})
+
+
+#: The findings a page holds when ``before`` is given without ``limit``, and the most one holds.
+OUTCOMES_PAGE, OUTCOMES_PAGE_MAX = 50, 500
 
 
 async def list_intent_outcomes(request: web.Request) -> web.Response:
     """GET /api/knowledge/intents/{id}/outcomes -- everything this intent has gathered,
     stored by value (survives source-item deletion). Each links back to its source
-    item by id when that item still exists."""
+    item by id when that item still exists.
+
+    With ``limit`` or ``before`` it answers one page, newest first, and the ``before`` of the next
+    ("" after the last); without either, every finding, as it always has."""
     intent_id = request.match_info["id"]
     intent = _intent_store(request).get(intent_id)
     if intent is None:
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response(
-        {
-            "intent": intent.to_dict(),
-            "outcomes": _store(request).outcomes_for_intent(intent_id),
-        }
-    )
+    raw_limit, before = request.query.get("limit"), request.query.get("before", "")
+    if raw_limit is None and not before:
+        return web.json_response(
+            {
+                "intent": intent.to_dict(),
+                "outcomes": _store(request).outcomes_for_intent(intent_id),
+            }
+        )
+    try:
+        limit = int(raw_limit) if raw_limit is not None else OUTCOMES_PAGE
+    except ValueError:
+        limit = 0
+    if not 1 <= limit <= OUTCOMES_PAGE_MAX:
+        return json_error(
+            "bad_limit", message=f"limit is a number from 1 to {OUTCOMES_PAGE_MAX}", status=400
+        )
+    page, after = _store(request).outcomes_page(intent_id, limit=limit, before=before)
+    return web.json_response({"intent": intent.to_dict(), "outcomes": page, "before": after})
+
+
+async def set_intent_log_state(request: web.Request) -> web.Response:
+    """PATCH /api/knowledge/intents/{id}/log -- set the findings log's own state.
+
+    Any of ``archived``, ``read`` and ``pinned``. Kept beside the intent, so the intent's record
+    and its ``revision`` stay as they were."""
+    intent_id = request.match_info["id"]
+    if _intent_store(request).get(intent_id) is None:
+        return json_error("not_found", message="No intent has that id.", status=404)
+    body = await json_object_body(request)
+    store = _store(request)
+    if not any(k in body for k in store.LOG_FLAGS):
+        return json_error(
+            "invalid_request",
+            message="Name at least one of archived, read and pinned.",
+            status=400,
+        )
+    flags = {k: body[k] for k in store.LOG_FLAGS if k in body}
+    if not all(isinstance(v, bool) for v in flags.values()):
+        return json_error(
+            "invalid_request", message="archived, read and pinned are true or false.", status=400
+        )
+    state = store.set_intent_log_state(intent_id, **flags)
+    await _sel_log_async("intent.log_state", intent_id=intent_id, **flags)
+    return web.json_response({"intent_id": intent_id, **state})
+
+
+async def clear_intent_outcomes(request: web.Request) -> web.Response:
+    """DELETE /api/knowledge/intents/{id}/outcomes -- clear the findings the intent kept.
+
+    The intent stays, and keeps looking, and its findings log keeps its state. Refused while a
+    run of it is checking saved items, whose matches would land after the clear."""
+    intent_id = request.match_info["id"]
+    if _intent_store(request).get(intent_id) is None:
+        return json_error("not_found", message="No intent has that id.", status=404)
+    if _intent_runs(request).running(intent_id):
+        return json_error(
+            "already_running",
+            message="This intent is checking your saved items. Stop it first.",
+            status=409,
+        )
+    cleared = _store(request).delete_intent_outcomes(intent_id)
+    await _sel_log_async("intent.clear", intent_id=intent_id, cleared=cleared)
+    return web.json_response({"cleared": cleared})
 
 
 async def list_item_intents(request: web.Request) -> web.Response:
@@ -2160,7 +2254,7 @@ async def _run_intent_retroactive(app: web.Application, intent_id: str) -> dict:
     (didn't already have an outcome for this intent) — so a re-run reports honestly."""
     from pathlib import Path
 
-    from personalclaw.knowledge.intents import IntentStore, match_intent
+    from personalclaw.knowledge.intents import IntentStore
 
     store = app["state"].knowledge_store
     db_path = getattr(store, "db_path", "") or ""
@@ -2171,54 +2265,40 @@ async def _run_intent_retroactive(app: web.Application, intent_id: str) -> dict:
     # Items that already have an outcome for this intent (to tell new from re-matched).
     prior = {o["item_id"] for o in store.outcomes_for_intent(intent_id) if o.get("item_id")}
     pool = app.get("knowledge_llm_pool")
-    rows = store.db.execute(
-        "SELECT * FROM items WHERE status = 'active' AND COALESCE(is_archived,0)=0"
-    ).fetchall()
-    candidates = [store._serialize_item(r) for r in rows]
-    candidates = [
-        it for it in candidates if intent.applies_to(it.get("item_type") or it.get("type") or "")
-    ]
+    # The candidates a background run checks too (`intent_runs.candidate_ids`); a paused intent
+    # checks none, as its matcher would refuse each.
+    candidates = (
+        [
+            it
+            for it in map(store.get_item, intent_runs.candidate_ids(store, intent.enabled_for))
+            if it
+        ]
+        if intent.enabled
+        else []
+    )
 
     # Match items concurrently (bounded) instead of one sequential LLM call per item —
     # a retroactive run over a large library would otherwise be O(N) round-trips.
-    sem = asyncio.Semaphore(6)
+    sem = asyncio.Semaphore(intent_runs.MATCH_AT_ONCE)
 
-    async def _match(it: dict):
+    async def _match(it: dict) -> intent_runs.Matched:
         async with sem:
-            # raise_on_error: a model failure (cold pool, timeout) must be counted as
-            # an error, not silently folded into "not relevant" → a misleading 0-match.
-            return it, await match_intent(
+            return await intent_runs.match_and_record(
+                store,
                 intent,
-                _consolidated_text(store, it),
+                it,
                 pool=pool,
-                raise_on_error=True,
+                text_of=lambda item: _consolidated_text(store, item),
+                prior=prior,
             )
 
-    results = await asyncio.gather(*(_match(it) for it in candidates), return_exceptions=True)
-
-    # Record sequentially — the store's single sqlite connection isn't concurrency-safe.
-    matched = 0
-    new = 0
-    errors = 0
-    for res in results:
-        if isinstance(res, BaseException):
-            errors += 1
-            continue
-        it, match = res
-        if match is None:
-            continue
-        store.record_intent_outcome(
-            intent.id,
-            intent_name=intent.goal,
-            item_id=it["id"],
-            item_title=it.get("title") or it.get("ai_title") or "",
-            takeaway=match.takeaway,
-            fields=match.fields,
-        )
-        matched += 1
-        if it["id"] not in prior:
-            new += 1
-    return {"matched": matched, "new": new, "errors": errors, "evaluated": len(candidates)}
+    results = await asyncio.gather(*(_match(it) for it in candidates))
+    return {
+        "matched": sum(r.matched for r in results),
+        "new": sum(r.new for r in results),
+        "errors": sum(r.error for r in results),
+        "evaluated": len(candidates),
+    }
 
 
 async def run_intent(request: web.Request) -> web.Response:
@@ -2242,6 +2322,79 @@ async def run_intent(request: web.Request) -> web.Response:
             "outcomes": _store(request).outcomes_for_intent(intent_id),
         }
     )
+
+
+async def start_intent_run(request: web.Request) -> web.Response:
+    """POST /api/knowledge/intents/{id}/runs -- check your saved items in the background.
+
+    Answers 202 with ``total``, the items it will check. One run per intent: a second start
+    answers 409 ``already_running``, and a paused intent starts none (409 ``paused``)."""
+    intent_id = request.match_info["id"]
+    intent = _intent_store(request).get(intent_id)
+    if intent is None:
+        return json_error("not_found", message="No intent has that id.", status=404)
+    runs = _intent_runs(request)
+    if runs.running(intent_id):
+        return json_error(
+            "already_running",
+            message="This intent is already checking your saved items.",
+            status=409,
+        )
+    if not intent.enabled:
+        return json_error(
+            "paused",
+            message="This intent is paused. Turn it on to check your saved items.",
+            status=409,
+        )
+    store = _store(request)
+    run = runs.start(
+        store,
+        intent,
+        pool=request.app.get("knowledge_llm_pool"),
+        text_of=lambda item: _consolidated_text(store, item),
+    )
+    await _sel_log_async("intent.run_start", intent_id=intent_id, total=run.total)
+    return web.json_response({"total": run.total}, status=202)
+
+
+async def current_intent_run(request: web.Request) -> web.Response:
+    """GET /api/knowledge/intents/{id}/runs/current -- the intent's latest background run.
+
+    ``{status, done, total, kept}``, ``status`` running, done, stopped or failed. 404 before its
+    first, and after a restart."""
+    intent_id = request.match_info["id"]
+    if _intent_store(request).get(intent_id) is None:
+        return json_error("not_found", message="No intent has that id.", status=404)
+    run = _intent_runs(request).current(intent_id)
+    if run is None:
+        return json_error("no_run", message="This intent has no run.", status=404)
+    return web.json_response(
+        {"status": run.status, "done": run.done, "total": run.total, "kept": run.kept}
+    )
+
+
+async def stop_intent_run(request: web.Request) -> web.Response:
+    """DELETE /api/knowledge/intents/{id}/runs/current -- stop the run, keeping what it found.
+    A run that already ended is answered as it ended."""
+    intent_id = request.match_info["id"]
+    if _intent_store(request).get(intent_id) is None:
+        return json_error("not_found", message="No intent has that id.", status=404)
+    run = await _intent_runs(request).stop(intent_id)
+    if run is None:
+        return json_error("no_run", message="This intent has no run.", status=404)
+    await _sel_log_async("intent.run_stop", intent_id=intent_id, done=run.done, kept=run.kept)
+    return web.json_response(
+        {"status": run.status, "done": run.done, "total": run.total, "kept": run.kept}
+    )
+
+
+async def intent_candidates(request: web.Request) -> web.Response:
+    """GET /api/knowledge/intents/candidates -- how many saved items a run would check.
+
+    ``?enabled_for=note,bookmark``: for an intent enabled for those types, every type when it
+    names none."""
+    kinds = [k.strip() for k in request.query.get("enabled_for", "").split(",") if k.strip()]
+    return web.json_response({"total": len(intent_runs.candidate_ids(_store(request), kinds))})
 
 
 def _slugify_intent(intent_id: str, goal: str) -> str:
@@ -4028,6 +4181,14 @@ def setup_knowledge_routes(app: web.Application) -> None:
         except Exception:
             logger.debug("knowledge ingest queue wiring skipped", exc_info=True)
 
+    if INTENT_RUNS not in app:
+        app[INTENT_RUNS] = intent_runs.IntentRuns()
+
+        async def _stop_intent_runs(app: web.Application) -> None:
+            await app[INTENT_RUNS].stop_all()
+
+        app.on_cleanup.append(_stop_intent_runs)
+
     app.router.add_get("/api/knowledge/library-home", library_home)
     app.router.add_get("/api/knowledge/collections", list_collections)
     app.router.add_post("/api/knowledge/collections", create_collection)
@@ -4086,8 +4247,14 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_get("/api/knowledge/intents", list_intents)
     app.router.add_post("/api/knowledge/intents", upsert_intent)
     app.router.add_delete("/api/knowledge/intents/{id}", delete_intent)
+    app.router.add_get("/api/knowledge/intents/candidates", intent_candidates)
     app.router.add_get("/api/knowledge/intents/{id}/outcomes", list_intent_outcomes)
+    app.router.add_delete("/api/knowledge/intents/{id}/outcomes", clear_intent_outcomes)
+    app.router.add_patch("/api/knowledge/intents/{id}/log", set_intent_log_state)
     app.router.add_post("/api/knowledge/intents/{id}/run", run_intent)
+    app.router.add_post("/api/knowledge/intents/{id}/runs", start_intent_run)
+    app.router.add_get("/api/knowledge/intents/{id}/runs/current", current_intent_run)
+    app.router.add_delete("/api/knowledge/intents/{id}/runs/current", stop_intent_run)
     app.router.add_post("/api/knowledge/intents/{id}/generate-skill", generate_skill_from_intent)
     app.router.add_get("/api/knowledge/items/{id}/intents", list_item_intents)
     app.router.add_get("/api/knowledge/items/{id}/related", get_related_items)

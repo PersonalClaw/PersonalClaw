@@ -400,10 +400,16 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/knowledge/ingest` — - multipart file upload. Each file becomes ONE
 - `GET /api/knowledge/intents` — - natural-language intents (Tier 3) + outcome counts.
 - `POST /api/knowledge/intents` — - create or update an intent.
-- `DELETE /api/knowledge/intents/{id}` — - removes the intent and its outcomes.
+- `GET /api/knowledge/intents/candidates` — - how many saved items a run would check.
+- `DELETE /api/knowledge/intents/{id}` — - removes the intent and what it kept.
 - `POST /api/knowledge/intents/{id}/generate-skill` — - synthesize a reusable skill
+- `PATCH /api/knowledge/intents/{id}/log` — - set the findings log's own state.
+- `DELETE /api/knowledge/intents/{id}/outcomes` — - clear the findings the intent kept.
 - `GET /api/knowledge/intents/{id}/outcomes` — - everything this intent has gathered,
 - `POST /api/knowledge/intents/{id}/run` — - retroactively run an intent against all
+- `POST /api/knowledge/intents/{id}/runs` — - check your saved items in the background.
+- `DELETE /api/knowledge/intents/{id}/runs/current` — - stop the run, keeping what it found.
+- `GET /api/knowledge/intents/{id}/runs/current` — - the intent's latest background run.
 - `GET /api/knowledge/items` — - list/search with pagination.
 - `POST /api/knowledge/items` — - author a typed item directly (note/gist/
 - `DELETE /api/knowledge/items/{id}` — _(no summary)_

@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **961 registrations** over **780 distinct paths** — 954 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **967 registrations** over **784 distinct paths** — 960 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -25,7 +25,7 @@ The 134 families the surface divides into, largest first.
 | Family | Registrations | Distinct paths |
 |---|---|---|
 | `/api/chat` | 91 | 78 |
-| `/api/knowledge` | 71 | 58 |
+| `/api/knowledge` | 77 | 62 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
 | `/api/models` | 38 | 30 |
@@ -161,7 +161,7 @@ The 134 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 954 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 960 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -559,10 +559,16 @@ The 954 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/knowledge/ingest` | - multipart file upload. Each file becomes ONE |
 | `GET` | `/api/knowledge/intents` | - natural-language intents (Tier 3) + outcome counts. |
 | `POST` | `/api/knowledge/intents` | - create or update an intent. |
-| `DELETE` | `/api/knowledge/intents/{id}` | - removes the intent and its outcomes. |
+| `GET` | `/api/knowledge/intents/candidates` | - how many saved items a run would check. |
+| `DELETE` | `/api/knowledge/intents/{id}` | - removes the intent and what it kept. |
 | `POST` | `/api/knowledge/intents/{id}/generate-skill` | - synthesize a reusable skill |
+| `PATCH` | `/api/knowledge/intents/{id}/log` | - set the findings log's own state. |
+| `DELETE` | `/api/knowledge/intents/{id}/outcomes` | - clear the findings the intent kept. |
 | `GET` | `/api/knowledge/intents/{id}/outcomes` | - everything this intent has gathered, |
 | `POST` | `/api/knowledge/intents/{id}/run` | - retroactively run an intent against all |
+| `POST` | `/api/knowledge/intents/{id}/runs` | - check your saved items in the background. |
+| `DELETE` | `/api/knowledge/intents/{id}/runs/current` | - stop the run, keeping what it found. |
+| `GET` | `/api/knowledge/intents/{id}/runs/current` | - the intent's latest background run. |
 | `GET` | `/api/knowledge/items` | - list/search with pagination. |
 | `POST` | `/api/knowledge/items` | - author a typed item directly (note/gist/ |
 | `DELETE` | `/api/knowledge/items/{id}` | _(no summary)_ |

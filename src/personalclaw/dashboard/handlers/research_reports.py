@@ -197,7 +197,35 @@ def _scope(raw: Any, label: str) -> tuple[dict[str, Any] | None, web.Response | 
             message=f"{label}.window_secs must be a non-negative integer",
             status=400,
         )
-    return {"tags": [str(t) for t in tags], "window_secs": int(window)}, None
+    intent = raw.get("intent", "")
+    if not isinstance(intent, str):
+        return None, json_error(
+            "invalid_request", message=f"{label}.intent must be a string", status=400
+        )
+    intent = intent.strip()
+    if intent and tags:
+        return None, json_error(
+            "invalid_request",
+            message=f"{label} reads an intent's findings or tags, not both",
+            status=400,
+        )
+    if intent and not _intent_exists(intent):
+        return None, json_error(
+            "invalid_request", message=f"{label}.intent names no intent", status=400
+        )
+    out: dict[str, Any] = {"tags": [str(t) for t in tags], "window_secs": int(window)}
+    if intent:
+        out["intent"] = intent
+    return out, None
+
+
+def _intent_exists(intent_id: str) -> bool:
+    from pathlib import Path
+
+    from personalclaw.knowledge.intents import IntentStore
+    from personalclaw.knowledge.store import knowledge_db_path
+
+    return IntentStore(Path(knowledge_db_path()).parent / "intents.json").get(intent_id) is not None
 
 
 def _fields(
@@ -293,11 +321,14 @@ def _served(rr: ModuleType, defn: Any) -> dict[str, Any]:
     states it (``knowledge.report_schedules.shown``) — in words, with its zone and next run — and
     what it reads, in the sentence its card shows (``research_reports.sources_shown``)."""
     from personalclaw.knowledge.report_schedules import shown
+    from personalclaw.triggers import claims as _claims
 
     return {
         **rr.to_dict(defn),
         "schedule_shown": shown(defn),
         "sources_shown": rr.sources_shown(defn),
+        # A run holds the report's claim now (`knowledge_report_provider._hold_claim`).
+        "running": _claims.is_running(report_claim_id(defn.id)),
     }
 
 

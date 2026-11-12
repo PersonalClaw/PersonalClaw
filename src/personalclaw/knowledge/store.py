@@ -3204,6 +3204,37 @@ class KnowledgeStore(LibraryTables):
         ).fetchall()
         return [self._serialize_outcome(r) for r in rows]
 
+    def outcomes_page(
+        self, intent_id: str, *, limit: int, before: str = ""
+    ) -> tuple[list[dict], str]:
+        """One page of an intent's findings, newest first: at most *limit*, older than the finding
+        *before* names when it is given. Answers the page and the ``before`` of the next, "" when
+        this page is the last. A *before* that names no finding of the intent answers no page."""
+        where, args = "intent_id = ?", [intent_id]
+        if before:
+            at = self.db.execute(
+                "SELECT created_at, rowid FROM intent_outcomes WHERE id = ? AND intent_id = ?",
+                (before, intent_id),
+            ).fetchone()
+            if at is None:
+                return [], ""
+            where += " AND (created_at < ? OR (created_at = ? AND rowid < ?))"
+            args += [at[0], at[0], at[1]]
+        rows = self.db.execute(
+            f"SELECT * FROM intent_outcomes WHERE {where} "  # noqa: S608 - fixed clauses
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (*args, limit + 1),
+        ).fetchall()
+        page = [self._serialize_outcome(r) for r in rows[:limit]]
+        return page, (str(page[-1]["id"]) if len(rows) > limit else "")
+
+    def intent_last_found(self) -> dict[str, str]:
+        """Map of intent_id → when it last kept a finding (its newest ``created_at``)."""
+        rows = self.db.execute(
+            "SELECT intent_id, MAX(created_at) AS at FROM intent_outcomes GROUP BY intent_id"
+        ).fetchall()
+        return {r["intent_id"]: str(r["at"] or "") for r in rows}
+
     def intent_outcome_counts(self) -> dict[str, int]:
         """Map of intent_id → number of recorded outcomes (for list badges)."""
         rows = self.db.execute(

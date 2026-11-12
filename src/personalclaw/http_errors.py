@@ -1594,6 +1594,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # 403: an address was sent to be signed (`dashboard/signed_urls.py`) by something other than a
     # browser's own page on its sign-in, so there's no cookie a signature could stand beside.
     "signed_urls_need_a_page": "Only a browser's own PersonalClaw page can have addresses signed.",
+    # ── the library (dashboard/handlers/library.py, library_writes.py) and the knowledge
+    # routes it reads: intents, conflicts, sources ──
+    "already_running": "That work is running now, and starts again only once it ends.",
+    "paused": "The intent is paused, so it checks nothing until it is switched on.",
+    "no_run": "The intent has not checked your saved items since the gateway started.",
+    "bad_limit": "The page size is not a whole number in the allowed range.",
 }
 
 

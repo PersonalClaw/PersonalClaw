@@ -1,5 +1,5 @@
 """What the knowledge store keeps for the library (`dashboard/handlers/library.py`): its revision
-counter and a knowledge item's move between projects.
+counter, a knowledge item's move between projects and a findings log's own state.
 
 Mixed into :class:`~personalclaw.knowledge.store.KnowledgeStore`, which opens them after its own
 schema and migrations, so the store module keeps to its size and the library's parts sit
@@ -30,8 +30,22 @@ class LibraryTables:
         "collections",
         "collection_items",
         "intent_outcomes",
+        "intent_log_state",
         "sources",
     )
+
+    _LIBRARY_SQL = """
+            -- A findings log's own state, beside its intent rather than on the intent's record:
+            -- reading, pinning or archiving the log then never makes an open Edit intent's save
+            -- stale. Deleting the intent deletes its row; clearing its findings leaves it.
+            CREATE TABLE IF NOT EXISTS intent_log_state (
+                intent_id TEXT PRIMARY KEY,
+                archived INTEGER NOT NULL DEFAULT 0,
+                read INTEGER NOT NULL DEFAULT 0,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+    """
 
     def _init_library_revision(self) -> None:
         """A one-row counter that SQLite triggers move after any insert, update or delete on the
@@ -43,6 +57,8 @@ class LibraryTables:
         EXISTS`` is the migration for a library written before it. Its one row is keyed by name,
         not numbered, so a merge of another home's library keeps this home's counter (and the
         rows the merge brings in move it, through the same triggers)."""
+        # The library's own tables first, so the triggers below have them to follow.
+        self.db.executescript(self._LIBRARY_SQL)
         statements = [
             "CREATE TABLE IF NOT EXISTS library_revision (name TEXT PRIMARY KEY,"
             " n INTEGER NOT NULL)",
@@ -132,3 +148,44 @@ class LibraryTables:
 
         maintenance.mark_dirty(reason="update tags")
         return True
+
+    #: A findings log's flags, as :meth:`intent_log_states` answers them.
+    LOG_FLAGS: tuple[str, ...] = ("archived", "read", "pinned")
+
+    def intent_log_states(self) -> dict[str, dict[str, bool]]:
+        """Map of intent_id → its findings log's ``archived``, ``read`` and ``pinned``. An intent
+        with no row has all three off."""
+        rows = self.db.execute("SELECT intent_id, archived, read, pinned FROM intent_log_state")
+        return {r["intent_id"]: {k: bool(r[k]) for k in self.LOG_FLAGS} for r in rows}
+
+    def set_intent_log_state(self, intent_id: str, **flags: bool) -> dict[str, bool]:
+        """Set the findings log flags *flags* names (any of :data:`LOG_FLAGS`) for *intent_id*,
+        leaving the others. Answers the log's state as it now is."""
+        unknown = set(flags) - set(self.LOG_FLAGS)
+        if unknown:
+            raise ValueError(f"unknown findings log flags: {sorted(unknown)}")
+        state = {
+            **dict.fromkeys(self.LOG_FLAGS, False),
+            **self.intent_log_states().get(intent_id, {}),
+        }
+        state.update({k: bool(v) for k, v in flags.items()})
+        self.db.execute(
+            "INSERT INTO intent_log_state (intent_id, archived, read, pinned, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(intent_id) DO UPDATE SET "
+            "archived = excluded.archived, read = excluded.read, pinned = excluded.pinned, "
+            "updated_at = excluded.updated_at",
+            (
+                intent_id,
+                int(state["archived"]),
+                int(state["read"]),
+                int(state["pinned"]),
+                utc_now_iso(),
+            ),
+        )
+        self.db.commit()
+        return state
+
+    def delete_intent_log_state(self, intent_id: str) -> None:
+        """Drop an intent's findings log state (when the intent itself is deleted)."""
+        self.db.execute("DELETE FROM intent_log_state WHERE intent_id = ?", (intent_id,))
+        self.db.commit()

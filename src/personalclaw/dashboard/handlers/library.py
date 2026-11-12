@@ -184,6 +184,8 @@ class _Context:
     #: Who reads the library (`subagent_reach.reader_of`): a workflow run another chat holds as
     #: its own is no run to them (`workflows.chat_runs`), so a row names it with no title.
     runs_reader: Any = None
+    #: The reports whose run holds its claim now.
+    running_reports: frozenset[str] = frozenset()
 
     def chat_title(self, key: str) -> str:
         """The chat's title as the chat list shows it, "" once its transcript is gone. The list
@@ -271,6 +273,7 @@ def _row(**fields: Any) -> dict:
         "read": None,
         "pinned": False,
         "archived": False,
+        "running": False,
         "state": "",
         "excerpt": "",
         "size": None,
@@ -405,17 +408,21 @@ def report_rows(store: Any, ctx: _Context) -> list[dict]:
     from personalclaw.knowledge.research_reports import load_reports
     from personalclaw.knowledge.semantics import logical_key
 
-    write_ups = {
-        str(r["logical_key"] or ""): r
-        for r in store.db.execute(
+    found = list(
+        store.db.execute(
             "SELECT id, logical_key, content, created_at, updated_at FROM items WHERE kind = ?",
             (RESEARCH_FINDING_KIND,),
         )
-    }
+    )
+    by_id = {str(r["id"]): r for r in found}
+    by_key = {str(r["logical_key"] or ""): r for r in found}
     rows: list[dict] = []
     for defn in load_reports():
         key = logical_key(RESEARCH_FINDING_KIND, defn.name)
-        up = write_ups.get(key)
+        # Its own write-up, by id; a report saved before reports kept it reads the item of its
+        # name until the migration gives it one (`research_reports.migrate_write_ups`).
+        kept = defn.finding_item_id
+        up = by_key.get(key) if kept is None else by_id.get(kept)
         rows.append(
             _row(
                 ref=f"report:{defn.id}",
@@ -427,7 +434,8 @@ def report_rows(store: Any, ctx: _Context) -> list[dict]:
                 created_at=stamp(defn.created_ts),
                 activity_at=stamp(up["updated_at"]) if up else "",
                 excerpt=_excerpt(up["content"]) if up else "",
-                _logical_key=key,
+                running=defn.id in ctx.running_reports,
+                _write_up=str(up["id"]) if up else "",
             )
         )
     return rows
@@ -445,10 +453,12 @@ def findings_rows(store: Any, ctx: _Context, intents: Iterable[Any]) -> list[dic
         first.setdefault(intent_id, created_at)
         last[intent_id] = created_at
         newest[intent_id] = takeaway
+    logs = store.intent_log_states()
     rows: list[dict] = []
     for intent in intents:
         if intent.id not in last:
             continue
+        log = logs.get(intent.id, {})
         rows.append(
             _row(
                 ref=f"findings:{intent.id}",
@@ -461,6 +471,9 @@ def findings_rows(store: Any, ctx: _Context, intents: Iterable[Any]) -> list[dic
                 created_at=stamp(first[intent.id]),
                 activity_at=stamp(last[intent.id]),
                 excerpt=_excerpt(newest[intent.id]),
+                read="read" if log.get("read") else "unread",
+                pinned=bool(log.get("pinned")),
+                archived=bool(log.get("archived")),
             )
         )
     return rows
@@ -697,6 +710,7 @@ def read_library(sources: Sources, query: Query, *, runs_reader: Any = None) -> 
         runs_reader=runs_reader,
         projects=projects,
         project_tags=frozenset(project_tag(pid) for pid in projects.names),
+        running_reports=running_reports(),
     )
     try:
         ctx.reader = current_username()
@@ -721,7 +735,13 @@ def read_library(sources: Sources, query: Query, *, runs_reader: Any = None) -> 
         rows += knowledge_rows(store, ctx)
         reported = report_rows(store, ctx)
         rows += reported
-        reports = {row.pop("_logical_key"): row["ref"].partition(":")[2] for row in reported}
+        # A hit on a report's write-up is its report's row: by the write-up's id, since two
+        # reports of one name keep one each.
+        reports = {
+            write_up: row["ref"].partition(":")[2]
+            for row in reported
+            if (write_up := row.pop("_write_up"))
+        }
         rows += findings_rows(store, ctx, intents)
         found[STORE_KNOWLEDGE] = store
         if query.entity:
@@ -818,7 +838,7 @@ def _knowledge_arm(store: Any, q: str, reports: dict[str, str]) -> tuple[list[st
         if row["item_type"] == ARTIFACT_ITEM_TYPE:
             ref = f"artifact:{row['guid']}" if row["guid"] else ""
         elif row["kind"] == RESEARCH_FINDING_KIND:
-            ref = f"report:{reports[row['logical_key']]}" if row["logical_key"] in reports else ""
+            ref = f"report:{reports[row['id']]}" if row["id"] in reports else ""
         else:
             ref = f"knowledge:{row['id']}"
         if not ref or ref in hits:
@@ -950,6 +970,19 @@ def _mtime_ns(path: Any) -> int:
         return 0
 
 
+def running_reports() -> frozenset[str]:
+    """The ids of the reports a run holds the claim of now (`_hold_claim`)."""
+    from personalclaw.dashboard.handlers.research_reports import report_claim_id
+    from personalclaw.knowledge.research_reports import load_reports
+    from personalclaw.triggers import claims
+
+    try:
+        return frozenset(d.id for d in load_reports() if claims.is_running(report_claim_id(d.id)))
+    except Exception:
+        logger.debug("library: report claims unreadable", exc_info=True)
+        return frozenset()
+
+
 def revision(sources: Sources, *, intents_path: Any, reports_path: Any, reader: str = "") -> str:
     """The library's revision: it changes when anything a row is read from changes, and when the
     minute turns. Read without reading a row."""
@@ -963,7 +996,7 @@ def revision(sources: Sources, *, intents_path: Any, reports_path: Any, reader: 
         parts.append(_artifact_stat(prov) if prov is not None else "artifacts?")
     except Exception:
         parts.append("artifacts?")
-    parts += [_mtime_ns(intents_path), _mtime_ns(reports_path)]
+    parts += [_mtime_ns(intents_path), _mtime_ns(reports_path), sorted(running_reports())]
     projects = project_items.read_projects()
     parts.append(sorted(projects.names.items()))
     parts.append(sorted(projects.loops.items()))
