@@ -31,6 +31,7 @@
 {"site": "GET /api/knowledge/collections/{id}/items", "reason": "get_collection resolves the collection before resolving its items"}
 {"site": "GET /api/knowledge/entities/{id}/graph", "reason": "the graph must contain the entity node"}
 {"site": "GET /api/knowledge/intents/{id}/outcomes", "reason": "the intent store resolves the intent first"}
+{"site": "GET /api/knowledge/intents/{id}/runs/current", "reason": "a ghost intent answers 404 not_found and a real one that has not checked your saved items since the gateway started answers 404 no_run, so the two never read alike", "added": "2026-11-11"}
 {"site": "GET /api/knowledge/items/{id}", "reason": "plain item detail; get_item rejects absence"}
 {"site": "GET /api/knowledge/items/{id}/annotations", "reason": "get_item resolves the item before annotations"}
 {"site": "GET /api/knowledge/items/{id}/content", "reason": "get_item resolves the item before returning content"}

@@ -18,6 +18,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import json_error
+from personalclaw.knowledge import conflict_calls, intent_runs, project_scope
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime
@@ -119,6 +120,16 @@ async def list_tags(request: web.Request) -> web.Response:
 # payload win for libraries with large documents/transcripts. The detail view fetches
 # full content via GET /items/{id}.
 _LIST_CONTENT_PREVIEW = 280
+
+
+def _requested_project(where: Any) -> tuple[str, str]:
+    """The ``project_id`` a request names (its JSON body or its query), checked: ``("", "")``
+    when it names none; see :func:`personalclaw.project_items.requested_project`."""
+    from personalclaw import project_items
+
+    if "project_id" not in where:
+        return "", ""
+    return project_items.requested_project(where.get("project_id"))
 
 
 def _list_item(store, row) -> dict:
@@ -360,8 +371,12 @@ async def create_item(request: web.Request) -> web.Response:
         else:
             title = url or content[:60].strip() or "Untitled"
 
-    tags = body.get("tags") if isinstance(body.get("tags"), list) else []
+    raw_tags = body.get("tags")
+    tags: list[Any] = raw_tags if isinstance(raw_tags, list) else []
     summary = str(body.get("summary") or "")
+    project_id, why = _requested_project(body)
+    if why:
+        return json_error("unknown_project", message=why, status=404)
     refused = await _app_text_refusal(title if title_given else "", summary, content)
     if refused is not None:
         return refused.response(refused.nothing_made)
@@ -379,15 +394,20 @@ async def create_item(request: web.Request) -> web.Response:
     # replaces the old create-fast/_schedule_intelligence path (the graph's terminal
     # stages now own insights + embed).
     provider = request.app["state"].knowledge_provider()
+    # You made it, here: and filed under the project the request names, private by default.
+    made, filed_by = project_scope.origin_scope(project_scope.ORIGIN_OWNER, project_id=project_id)
+    extra: dict[str, Any] = {"file_metadata": made}
+    if title_given:
+        extra["title_source"] = "user"
     item_id = provider.create_typed(
         item_type=item_type,
         title=title,
         content=content,
-        tags=tags,
+        tags=[*tags, *[t for t in filed_by if t not in tags]],
         url=url,
         summary=summary,
         gist_language=str(body.get("gist_language") or "") if item_type == "gist" else "",
-        extra={"title_source": "user"} if title_given else None,
+        extra=extra,
     )
     await _sel_log_async("item.create", item_id=item_id, type=item_type)
     item = store.get_item(item_id)
@@ -766,7 +786,10 @@ async def update_item(request: web.Request) -> web.Response:
     # The client may opt OUT of re-running the ingestion graph on a content/url edit with
     # reingest=false (a quick typo-fix that should not burn a model pass).
     reingest_requested = bool_field(body, "reingest", default=True)
-    if not fields and not tag_edits:
+    project_move, refused_move = _project_move(body)
+    if refused_move is not None:
+        return refused_move
+    if not fields and not tag_edits and project_move is None:
         return web.json_response({"error": "no valid fields"}, status=400)
     # Before the item is read for the write below, which awaits nothing.
     said = ("title", "summary", "url_title", "url_description", "content")
@@ -790,18 +813,12 @@ async def update_item(request: web.Request) -> web.Response:
         if stale is not None:
             await _sel_log_async("item.update", item_id=item_id, outcome=refusal_outcome(stale))
             return stale
-    if tag_edits:
-        dropped = {n.strip() for n in tag_edits.get("remove_tags", [])}
-        kept = [t for t in current.get("tags") or [] if t not in dropped]
-        added: list[str] = []
-        for raw_name in tag_edits.get("add_tags", []):
-            name = raw_name.strip()
-            if name and name not in kept and name not in added:
-                added.append(name)
-        if kept + added != (current.get("tags") or []):
-            fields["tags"] = kept + added
+    if tag_edits and (tags := _tags_after(current.get("tags") or [], tag_edits)) is not None:
+        fields["tags"] = tags
     if fields:
         store.update_item(item_id, **fields)
+    if project_move is not None:
+        store.move_item_project(item_id, project_move)
     # Editing the text/url re-runs the ingestion node-graph so insights, entities, the
     # embedding, and intent outcomes stay consistent with the new content — matching
     # the agent knowledge_update tool and the create→enrich contract. Curation-only
@@ -824,13 +841,46 @@ async def update_item(request: web.Request) -> web.Response:
     )
 
 
+def _project_move(body: dict) -> tuple[str | None, web.Response | None]:
+    """The project a PATCH moves its item into (``""`` out of its project), None for no move, and
+    the refusal of a project that is not there. A move is one filing write that moves no
+    activity (`KnowledgeStore.move_item_project`)."""
+    if "project_id" not in body:
+        return None, None
+    pid, why = _requested_project(body)
+    if why:
+        return None, json_error("unknown_project", message=why, status=404)
+    return pid, None
+
+
+def _tags_after(stored: list[str], edits: dict[str, list[str]]) -> list[str] | None:
+    """The tags an item keeps after a PATCH's ``add_tags`` and ``remove_tags`` land on *stored*,
+    one name at a time, or None when they change nothing."""
+    dropped = {n.strip() for n in edits.get("remove_tags", [])}
+    kept = [t for t in stored if t not in dropped]
+    added: list[str] = []
+    for raw_name in edits.get("add_tags", []):
+        name = raw_name.strip()
+        if name and name not in kept and name not in added:
+            added.append(name)
+    return None if kept + added == stored else kept + added
+
+
 async def delete_item(request: web.Request) -> web.Response:
     """DELETE /api/knowledge/items/{id}."""
-    store = _store(request)
     item_id = request.match_info["id"]
+    if not delete_item_and_files(_store(request), item_id):
+        return web.json_response({"error": "not found"}, status=404)
+    await _sel_log_async("item.delete", item_id=item_id)
+    return web.json_response({"ok": True})
+
+
+def delete_item_and_files(store, item_id: str) -> bool:
+    """Delete knowledge item *item_id* and every file it owned: the one delete, which the
+    library's bulk delete goes through too. Answers whether the item was there."""
     item = store.get_item(item_id)
     if not item:
-        return web.json_response({"error": "not found"}, status=404)
+        return False
     store.delete_item(item_id)
     # Clean up every on-disk file this item owned — but only inside the knowledge files
     # dir (defense-in-depth, matching the serve guard) so a corrupt path can never unlink
@@ -856,8 +906,7 @@ async def delete_item(request: web.Request) -> web.Response:
                 resolved.unlink(missing_ok=True)
         except (OSError, ValueError):
             logger.debug("delete cleanup skipped for %s", raw, exc_info=True)
-    await _sel_log_async("item.delete", item_id=item_id)
-    return web.json_response({"ok": True})
+    return True
 
 
 async def get_item_content(request: web.Request) -> web.Response:
@@ -1705,6 +1754,9 @@ async def ingest_file(request: web.Request) -> web.Response:
     (:mod:`personalclaw.uploads.content_scan`) has passed it."""
     # A non-multipart body (wrong/absent Content-Type) makes multipart()/next() raise —
     # that's a malformed request (400), not a server fault (500).
+    project_id, why = _requested_project(request.query)
+    if why:
+        return json_error("unknown_project", message=why, status=404)
     try:
         reader = await request.multipart()
         field = await reader.next()
@@ -1777,6 +1829,10 @@ async def ingest_file(request: web.Request) -> web.Response:
         Path(tmp.name).unlink(missing_ok=True)
         if item is None:
             return web.json_response({"error": "failed to store item"}, status=500)
+        if project_id and (is_new or not item.get("file_metadata", {}).get("project_id")):
+            # Filed under the project the upload names, private; a file already in another
+            # project stays where it is.
+            store.move_item_project(item["id"], project_id)
         if is_new:
             # Only a freshly-stored file needs ingestion; a dedup hit is already enriched.
             try:
@@ -1964,18 +2020,40 @@ def _intent_store(request: web.Request):
 
 
 def _intents_payload(request: web.Request) -> list[dict]:
-    """Intent dicts decorated with their recorded-outcome counts (for list badges).
+    """Intent dicts decorated with their recorded-outcome counts (for list badges), when each last
+    kept a finding (``last_found_at``, "" for never), and its findings log's own state
+    (``log_archived``, ``log_read``, ``log_pinned``).
 
     Each carries ``revision``: of the intent RECORD (``Intent.to_dict``), which an edit replaces
-    whole and so names in ``If-Match`` (`personalclaw/stale_write.py`). ``outcome_count`` stays
-    out of it — ingest bumps it, and the record the page saves never holds it.
+    whole and so names in ``If-Match`` (`personalclaw/stale_write.py`). The rest stays out of it:
+    ingest bumps the count and the time, the log's state is set on its own, and the record the
+    page saves never holds them.
     """
+    from personalclaw.dashboard.handlers.library import stamp
+
+    store = _store(request)
     intents = _intent_store(request).load()
-    counts = _store(request).intent_outcome_counts()
+    counts = store.intent_outcome_counts()
+    found = store.intent_last_found()
+    logs = store.intent_log_states()
     return [
-        {**i.to_dict(), "revision": revision_of(i.to_dict()), "outcome_count": counts.get(i.id, 0)}
+        {
+            **i.to_dict(),
+            "revision": revision_of(i.to_dict()),
+            "outcome_count": counts.get(i.id, 0),
+            "last_found_at": stamp(found.get(i.id, "")),
+            **{f"log_{k}": logs.get(i.id, {}).get(k, False) for k in store.LOG_FLAGS},
+        }
         for i in intents
     ]
+
+
+#: The intents' background runs (`knowledge.intent_runs`), one per intent, for this gateway.
+INTENT_RUNS = web.AppKey("knowledge_intent_runs", intent_runs.IntentRuns)
+
+
+def _intent_runs(request: web.Request) -> intent_runs.IntentRuns:
+    return request.app[INTENT_RUNS]
 
 
 async def list_intents(request: web.Request) -> web.Response:
@@ -2050,30 +2128,102 @@ async def upsert_intent(request: web.Request) -> web.Response:
 
 
 async def delete_intent(request: web.Request) -> web.Response:
-    """DELETE /api/knowledge/intents/{id} -- removes the intent and its outcomes."""
+    """DELETE /api/knowledge/intents/{id} -- removes the intent and what it kept.
+
+    Its outcomes go with it, and its findings log's state. A run of it in the background is
+    stopped first."""
     store = _intent_store(request)
     intent_id = request.match_info["id"]
+    if store.get(intent_id) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    await _intent_runs(request).stop(intent_id)
     if not store.delete(intent_id):
         return web.json_response({"error": "not found"}, status=404)
+    _intent_runs(request).forget(intent_id)
     _store(request).delete_intent_outcomes(intent_id)
+    _store(request).delete_intent_log_state(intent_id)
     await _sel_log_async("intent.delete", intent_id=intent_id)
     return web.json_response({"intents": _intents_payload(request)})
+
+
+#: The findings a page holds when ``before`` is given without ``limit``, and the most one holds.
+OUTCOMES_PAGE, OUTCOMES_PAGE_MAX = 50, 500
 
 
 async def list_intent_outcomes(request: web.Request) -> web.Response:
     """GET /api/knowledge/intents/{id}/outcomes -- everything this intent has gathered,
     stored by value (survives source-item deletion). Each links back to its source
-    item by id when that item still exists."""
+    item by id when that item still exists.
+
+    With ``limit`` or ``before`` it answers one page, newest first, and the ``before`` of the next
+    ("" after the last); without either, every finding, as it always has."""
     intent_id = request.match_info["id"]
     intent = _intent_store(request).get(intent_id)
     if intent is None:
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response(
-        {
-            "intent": intent.to_dict(),
-            "outcomes": _store(request).outcomes_for_intent(intent_id),
-        }
-    )
+    raw_limit, before = request.query.get("limit"), request.query.get("before", "")
+    if raw_limit is None and not before:
+        return web.json_response(
+            {
+                "intent": intent.to_dict(),
+                "outcomes": _store(request).outcomes_for_intent(intent_id),
+            }
+        )
+    try:
+        limit = int(raw_limit) if raw_limit is not None else OUTCOMES_PAGE
+    except ValueError:
+        limit = 0
+    if not 1 <= limit <= OUTCOMES_PAGE_MAX:
+        return json_error(
+            "bad_limit", message=f"limit is a number from 1 to {OUTCOMES_PAGE_MAX}", status=400
+        )
+    page, after = _store(request).outcomes_page(intent_id, limit=limit, before=before)
+    return web.json_response({"intent": intent.to_dict(), "outcomes": page, "before": after})
+
+
+async def set_intent_log_state(request: web.Request) -> web.Response:
+    """PATCH /api/knowledge/intents/{id}/log -- set the findings log's own state.
+
+    Any of ``archived``, ``read`` and ``pinned``. Kept beside the intent, so the intent's record
+    and its ``revision`` stay as they were."""
+    intent_id = request.match_info["id"]
+    if _intent_store(request).get(intent_id) is None:
+        return json_error("not_found", message="No intent has that id.", status=404)
+    body = await json_object_body(request)
+    store = _store(request)
+    if not any(k in body for k in store.LOG_FLAGS):
+        return json_error(
+            "invalid_request",
+            message="Name at least one of archived, read and pinned.",
+            status=400,
+        )
+    flags = {k: body[k] for k in store.LOG_FLAGS if k in body}
+    if not all(isinstance(v, bool) for v in flags.values()):
+        return json_error(
+            "invalid_request", message="archived, read and pinned are true or false.", status=400
+        )
+    state = store.set_intent_log_state(intent_id, **flags)
+    await _sel_log_async("intent.log_state", intent_id=intent_id, **flags)
+    return web.json_response({"intent_id": intent_id, **state})
+
+
+async def clear_intent_outcomes(request: web.Request) -> web.Response:
+    """DELETE /api/knowledge/intents/{id}/outcomes -- clear the findings the intent kept.
+
+    The intent stays, and keeps looking, and its findings log keeps its state. Refused while a
+    run of it is checking saved items, whose matches would land after the clear."""
+    intent_id = request.match_info["id"]
+    if _intent_store(request).get(intent_id) is None:
+        return json_error("not_found", message="No intent has that id.", status=404)
+    if _intent_runs(request).running(intent_id):
+        return json_error(
+            "already_running",
+            message="This intent is checking your saved items. Stop it first.",
+            status=409,
+        )
+    cleared = _store(request).delete_intent_outcomes(intent_id)
+    await _sel_log_async("intent.clear", intent_id=intent_id, cleared=cleared)
+    return web.json_response({"cleared": cleared})
 
 
 async def list_item_intents(request: web.Request) -> web.Response:
@@ -2111,7 +2261,7 @@ async def _run_intent_retroactive(app: web.Application, intent_id: str) -> dict:
     (didn't already have an outcome for this intent) — so a re-run reports honestly."""
     from pathlib import Path
 
-    from personalclaw.knowledge.intents import IntentStore, match_intent
+    from personalclaw.knowledge.intents import IntentStore
 
     store = app["state"].knowledge_store
     db_path = getattr(store, "db_path", "") or ""
@@ -2122,54 +2272,40 @@ async def _run_intent_retroactive(app: web.Application, intent_id: str) -> dict:
     # Items that already have an outcome for this intent (to tell new from re-matched).
     prior = {o["item_id"] for o in store.outcomes_for_intent(intent_id) if o.get("item_id")}
     pool = app.get("knowledge_llm_pool")
-    rows = store.db.execute(
-        "SELECT * FROM items WHERE status = 'active' AND COALESCE(is_archived,0)=0"
-    ).fetchall()
-    candidates = [store._serialize_item(r) for r in rows]
-    candidates = [
-        it for it in candidates if intent.applies_to(it.get("item_type") or it.get("type") or "")
-    ]
+    # The candidates a background run checks too (`intent_runs.candidate_ids`); a paused intent
+    # checks none, as its matcher would refuse each.
+    candidates = (
+        [
+            it
+            for it in map(store.get_item, intent_runs.candidate_ids(store, intent.enabled_for))
+            if it
+        ]
+        if intent.enabled
+        else []
+    )
 
     # Match items concurrently (bounded) instead of one sequential LLM call per item —
     # a retroactive run over a large library would otherwise be O(N) round-trips.
-    sem = asyncio.Semaphore(6)
+    sem = asyncio.Semaphore(intent_runs.MATCH_AT_ONCE)
 
-    async def _match(it: dict):
+    async def _match(it: dict) -> intent_runs.Matched:
         async with sem:
-            # raise_on_error: a model failure (cold pool, timeout) must be counted as
-            # an error, not silently folded into "not relevant" → a misleading 0-match.
-            return it, await match_intent(
+            return await intent_runs.match_and_record(
+                store,
                 intent,
-                _consolidated_text(store, it),
+                it,
                 pool=pool,
-                raise_on_error=True,
+                text_of=lambda item: _consolidated_text(store, item),
+                prior=prior,
             )
 
-    results = await asyncio.gather(*(_match(it) for it in candidates), return_exceptions=True)
-
-    # Record sequentially — the store's single sqlite connection isn't concurrency-safe.
-    matched = 0
-    new = 0
-    errors = 0
-    for res in results:
-        if isinstance(res, BaseException):
-            errors += 1
-            continue
-        it, match = res
-        if match is None:
-            continue
-        store.record_intent_outcome(
-            intent.id,
-            intent_name=intent.goal,
-            item_id=it["id"],
-            item_title=it.get("title") or it.get("ai_title") or "",
-            takeaway=match.takeaway,
-            fields=match.fields,
-        )
-        matched += 1
-        if it["id"] not in prior:
-            new += 1
-    return {"matched": matched, "new": new, "errors": errors, "evaluated": len(candidates)}
+    results = await asyncio.gather(*(_match(it) for it in candidates))
+    return {
+        "matched": sum(r.matched for r in results),
+        "new": sum(r.new for r in results),
+        "errors": sum(r.error for r in results),
+        "evaluated": len(candidates),
+    }
 
 
 async def run_intent(request: web.Request) -> web.Response:
@@ -2193,6 +2329,79 @@ async def run_intent(request: web.Request) -> web.Response:
             "outcomes": _store(request).outcomes_for_intent(intent_id),
         }
     )
+
+
+async def start_intent_run(request: web.Request) -> web.Response:
+    """POST /api/knowledge/intents/{id}/runs -- check your saved items in the background.
+
+    Answers 202 with ``total``, the items it will check. One run per intent: a second start
+    answers 409 ``already_running``, and a paused intent starts none (409 ``paused``)."""
+    intent_id = request.match_info["id"]
+    intent = _intent_store(request).get(intent_id)
+    if intent is None:
+        return json_error("not_found", message="No intent has that id.", status=404)
+    runs = _intent_runs(request)
+    if runs.running(intent_id):
+        return json_error(
+            "already_running",
+            message="This intent is already checking your saved items.",
+            status=409,
+        )
+    if not intent.enabled:
+        return json_error(
+            "paused",
+            message="This intent is paused. Turn it on to check your saved items.",
+            status=409,
+        )
+    store = _store(request)
+    run = runs.start(
+        store,
+        intent,
+        pool=request.app.get("knowledge_llm_pool"),
+        text_of=lambda item: _consolidated_text(store, item),
+    )
+    await _sel_log_async("intent.run_start", intent_id=intent_id, total=run.total)
+    return web.json_response({"total": run.total}, status=202)
+
+
+async def current_intent_run(request: web.Request) -> web.Response:
+    """GET /api/knowledge/intents/{id}/runs/current -- the intent's latest background run.
+
+    ``{status, done, total, kept}``, ``status`` running, done, stopped or failed. 404 before its
+    first, and after a restart."""
+    intent_id = request.match_info["id"]
+    if _intent_store(request).get(intent_id) is None:
+        return json_error("not_found", message="No intent has that id.", status=404)
+    run = _intent_runs(request).current(intent_id)
+    if run is None:
+        return json_error("no_run", message="This intent has no run.", status=404)
+    return web.json_response(
+        {"status": run.status, "done": run.done, "total": run.total, "kept": run.kept}
+    )
+
+
+async def stop_intent_run(request: web.Request) -> web.Response:
+    """DELETE /api/knowledge/intents/{id}/runs/current -- stop the run, keeping what it found.
+    A run that already ended is answered as it ended."""
+    intent_id = request.match_info["id"]
+    if _intent_store(request).get(intent_id) is None:
+        return json_error("not_found", message="No intent has that id.", status=404)
+    run = await _intent_runs(request).stop(intent_id)
+    if run is None:
+        return json_error("no_run", message="This intent has no run.", status=404)
+    await _sel_log_async("intent.run_stop", intent_id=intent_id, done=run.done, kept=run.kept)
+    return web.json_response(
+        {"status": run.status, "done": run.done, "total": run.total, "kept": run.kept}
+    )
+
+
+async def intent_candidates(request: web.Request) -> web.Response:
+    """GET /api/knowledge/intents/candidates -- how many saved items a run would check.
+
+    ``?enabled_for=note,bookmark``: for an intent enabled for those types, every type when it
+    names none."""
+    kinds = [k.strip() for k in request.query.get("enabled_for", "").split(",") if k.strip()]
+    return web.json_response({"total": len(intent_runs.candidate_ids(_store(request), kinds))})
 
 
 def _slugify_intent(intent_id: str, goal: str) -> str:
@@ -2678,19 +2887,44 @@ async def update_collection(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    before = store.get_collection(cid) or {}
     try:
         store.update_collection(cid, **fields)
     except ValueError as exc:
         clash = _collection_clash_response(str(exc))
         return clash or web.json_response({"error": str(exc)}, status=400)
+    if "name" in fields and fields["name"] != before.get("name"):
+        # An artifact sits in a collection by its label, the collection's name: a rename relabels.
+        _relabel_artifacts(str(before.get("name") or ""), str(fields["name"]))
     return web.json_response({"ok": True, "collection": store.get_collection(cid)})
 
 
+def _relabel_artifacts(old: str, new: str) -> int:
+    """Give every artifact labelled *old* the label *new* ("" clears it). Answers how many."""
+    from personalclaw.artifacts.registry import get_provider
+
+    if not old:
+        return 0
+    prov = get_provider()
+    if prov is None:
+        return 0
+    moved = 0
+    for art in prov.list():
+        if (art.collection or "") == old and prov.set_library_flags(art.slug, collection=new):
+            moved += 1
+    return moved
+
+
 async def delete_collection(request: web.Request) -> web.Response:
-    """DELETE /api/knowledge/collections/{id} — remove the shelf, keep the items."""
+    """DELETE /api/knowledge/collections/{id} — remove the shelf, keep the items.
+
+    The artifacts labelled with it keep everything but the label."""
     cid = request.match_info["id"]
-    if not _store(request).delete_collection(cid):
+    store = _store(request)
+    name = str((store.get_collection(cid) or {}).get("name") or "")
+    if not store.delete_collection(cid):
         return web.json_response({"error": "collection not found"}, status=404)
+    _relabel_artifacts(name, "")
     return web.json_response({"ok": True})
 
 
@@ -2826,9 +3060,34 @@ async def list_tag_taxonomy(request: web.Request) -> web.Response:
 
     Distinct from `GET /api/knowledge/tags`, which stays a flat frequency-ordered
     `list[str]` for the ChipInput autocomplete. This one is the management surface, so it
-    carries ids, parents and counts.
+    carries ids, parents and counts, and ``reports``: the reports whose scope reads the tag, by
+    naming it or one of its ancestors (`knowledge.report_tags`), which the rename, merge and delete
+    dialogs say before asking.
     """
-    return web.json_response({"tags": _store(request).list_tags()})
+    from personalclaw.knowledge import report_tags, research_reports
+
+    rows = _store(request).list_tags()
+    readers = report_tags.reports_by_tag(rows, research_reports.load_reports())
+    return web.json_response(
+        {"tags": [{**r, "reports": readers.get(int(r["id"]), [])} for r in rows]}
+    )
+
+
+def _tag_name(store, tag_id: int) -> str | None:
+    return next((str(t["name"]) for t in store.list_tags() if int(t["id"]) == tag_id), None)
+
+
+def _carry_reports(store, tag_id: int, new: str) -> tuple[str, list[str]]:
+    """Before tag *tag_id* takes the name *new* (a rename, or a merge into the tag of that name):
+    add *new* to each report scope that names the tag, so it reads the same items throughout.
+    Answers the tag's name now and the reports changed; nothing is carried for a change of case
+    (scopes match without it) or onto a name another tag holds (the rename will be refused)."""
+    from personalclaw.knowledge import report_tags, research_reports
+
+    old = _tag_name(store, tag_id)
+    if old is None or report_tags.fold(old) == report_tags.fold(new) or not report_tags.fold(new):
+        return old or "", []
+    return old, research_reports.carry_scope_tag(old, new)
 
 
 async def list_conflicts(request: web.Request) -> web.Response:
@@ -2842,35 +3101,48 @@ async def list_conflicts(request: web.Request) -> web.Response:
 
     Every row is a deterministic finding, so no row carries a tier label: `find_conflicts` is the
     only writer, and a field whose value is the same on every row tells a reader nothing.
+
+    The owner's call is the one write, and it never removes a claim: each row carries its pair's
+    ``id``, the ``choice`` made on it ("" for none) and ``prefer`` worked out from it
+    (`knowledge.conflict_calls`).
     """
     store = _store(request)
     limit = _int_param(request, "limit", 100, low=1, high=500)
-    rows: list[dict] = []
     try:
-        # A LIKE prefilter before parsing: `file_metadata` is a JSON blob on every row, and
-        # json-loading the whole store to find the few items with conflicts would make this route
-        # scale with library size rather than with the number of conflicts.
-        candidates = store.db.execute(
-            "SELECT id, title, kind, file_metadata FROM items "
-            "WHERE is_archived = 0 AND file_metadata LIKE '%\"conflicts\"%' "
-            "ORDER BY updated_at DESC LIMIT ?",
-            (limit,),
-        )
-        for row in candidates:
-            try:
-                meta = json.loads(row["file_metadata"] or "{}")
-            except (TypeError, ValueError):
-                continue
-            entries = meta.get("conflicts") if isinstance(meta, dict) else None
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                if isinstance(entry, dict):
-                    rows.append({"item_id": row["id"], "item_title": row["title"], **entry})
+        choices = store.conflict_choices()
+        rows = [
+            conflict_calls.served(r, choices) for r in conflict_calls.entries(store, limit=limit)
+        ]
     except Exception:
         logger.warning("could not read knowledge conflicts", exc_info=True)
         return web.json_response({"conflicts": [], "count": 0, "error": "unreadable"})
     return web.json_response({"conflicts": rows[:limit], "count": len(rows)})
+
+
+async def decide_conflict(request: web.Request) -> web.Response:
+    """POST /api/knowledge/conflicts/{id}/decision -- record which of two items to go by.
+
+    ``{choice}``: the id of one of the pair's two items, or ``both``. Kept by the pair's id, so it
+    holds when either item is read again, and it covers every claim the two disagree on. An id
+    that names no pair in disagreement now, or a choice that is neither item nor ``both``, is
+    refused with nothing written. Both claims stay."""
+    store = _store(request)
+    cid = request.match_info["id"]
+    pair = conflict_calls.pair_items(store, cid)
+    if pair is None:
+        return json_error(
+            "unknown_conflict", message="No two items disagree under that id now.", status=404
+        )
+    choice = (await json_object_body(request)).get("choice")
+    if not isinstance(choice, str) or choice not in (*pair, conflict_calls.BOTH):
+        return json_error(
+            "bad_choice",
+            message="The choice is the id of one of the two items, or both.",
+            status=400,
+        )
+    store.decide_conflict(cid, choice)
+    await _sel_log_async("conflict.decide", conflict_id=cid, choice=choice)
+    return web.json_response({"id": cid, "choice": choice})
 
 
 async def list_item_relations(request: web.Request) -> web.Response:
@@ -3050,10 +3322,27 @@ async def rename_tag(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    from personalclaw.knowledge import report_tags, research_reports
+
+    old, carried = "", list[str]()
+    if "name" in body:
+        new = str(body["name"] or "").strip()
+        held = any(
+            report_tags.fold(t["name"]) == report_tags.fold(new) and int(t["id"]) != tid
+            for t in store.list_tags()
+        )
+        # The reports reading the tag carry the new name first, then the tag is renamed, then the
+        # old name goes: in that order a crash leaves a scope naming both, never neither.
+        if not held:
+            old, carried = _carry_reports(store, tid, new)
     try:
         if "name" in body:
             if not store.rename_tag(tid, str(body["name"])):
+                research_reports.drop_scope_tag(str(body["name"]).strip(), only=carried)
                 return web.json_response({"error": "tag not found"}, status=404)
+            if carried:
+                research_reports.drop_scope_tag(old)
+                carried = []  # renamed: nothing to take back from here on
         if "parent_id" in body:
             raw = body["parent_id"]
             # null / "" both mean "make this a root tag".
@@ -3074,6 +3363,8 @@ async def rename_tag(request: web.Request) -> web.Response:
         # the message is human copy that gets reworded, the code is the registry key." So the code
         # goes in `code` and a sentence goes in `message`, composed HERE — one source for the
         # wording, rather than the same two sentences in the handler and the panel.
+        if carried:
+            research_reports.drop_scope_tag(str(body["name"]).strip(), only=carried)
         if raw.startswith("tag_cycle"):
             code = "tag_cycle"
             message = "That would make a tag its own ancestor. Pick a different parent."
@@ -3136,18 +3427,30 @@ async def merge_tag(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    from personalclaw.knowledge import research_reports
+
+    # As a rename does: the reports reading the folded tag carry the target's name first, and
+    # lose the folded tag's name once it is gone.
+    target = _tag_name(store, into)
+    old, carried = _carry_reports(store, tid, target) if target is not None else ("", [])
     try:
         result = store.merge_tags(tid, into)
     except LookupError as exc:
+        if carried and target:
+            research_reports.drop_scope_tag(target, only=carried)
         # A tag that is not there is a 404 — not a 200 carrying zeros, and not a 400: the request
         # was well-formed and no change to the body would make it succeed.
         return web.json_response(
             {"error": {"code": "tag_not_found", "message": str(exc)}}, status=404
         )
     except ValueError as exc:
+        if carried and target:
+            research_reports.drop_scope_tag(target, only=carried)
         return web.json_response(
             {"error": {"code": "invalid_merge", "message": str(exc)}}, status=400
         )
+    if carried:
+        research_reports.drop_scope_tag(old)
     await _sel_log_async("tag_merge", source=tid, target=body["into"], **result)
     return web.json_response({"ok": True, **result, "tags": store.list_tags()})
 
@@ -3161,7 +3464,18 @@ async def delete_tag(request: web.Request) -> web.Response:
     tid = _tag_id(request)
     if tid is None:
         return web.json_response({"error": "tag not found"}, status=404)
+    from personalclaw.knowledge import research_reports
+
     store = _store(request)
+    name = _tag_name(store, tid)
+    if name is None:
+        return web.json_response({"error": "tag not found"}, status=404)
+    # The reports that read it keep its name (a scope with no tags reads everything), and note
+    # that it was deleted, so one left reading none of its tags says so in place of running. The
+    # note comes first, so no delete goes unnoted: a note on a tag still there stops nothing,
+    # since a name is missing only while no tag matches it.
+    if name:
+        research_reports.record_deleted_tag(name)
     if not store.delete_tag(tid):
         return web.json_response({"error": "tag not found"}, status=404)
     await _sel_log_async("tag_delete", tag_id=tid)
@@ -3641,6 +3955,58 @@ async def create_watched_source(request: web.Request) -> web.Response:
     return web.json_response({"source": _serialize_source(created or {}, store)}, status=201)
 
 
+#: The sources a check-now is polling, by id, for this gateway: one at a time per source.
+SOURCE_CHECKS = web.AppKey("knowledge_source_checks", dict)
+
+
+async def delete_watched_source(request: web.Request) -> web.Response:
+    """DELETE /api/knowledge/sources/{id} -- stop following a feed, keeping what it added.
+
+    The source and its cursor go; every item it brought stays in the library. The artifacts
+    mirror is refused: its switch in Settings owns it."""
+    from personalclaw.knowledge import artifact_ingest
+
+    store = _store(request)
+    source_id = request.match_info["id"]
+    if store.get_source(source_id) is None:
+        return json_error("not_found", message="No source has that id.", status=404)
+    mirror = artifact_ingest.find_source(store)
+    if mirror is not None and mirror.get("id") == source_id:
+        return json_error(
+            "artifacts_source",
+            message="Your artifacts are indexed by a switch in Settings, not by a feed you remove.",
+            status=409,
+        )
+    store.delete_source(source_id)
+    await _sel_log_async("source.delete", source_id=source_id)
+    return web.json_response({"ok": True, "id": source_id})
+
+
+async def check_watched_source(request: web.Request) -> web.Response:
+    """POST /api/knowledge/sources/{id}/check -- check a feed now, in the background.
+
+    Answers 202 once one poll has started; a second while it runs answers 409 ``already_running``.
+    """
+    store = _store(request)
+    source_id = request.match_info["id"]
+    source = store.get_source(source_id)
+    if source is None:
+        return json_error("not_found", message="No source has that id.", status=404)
+    checks: dict = request.app[SOURCE_CHECKS]
+    if (running := checks.get(source_id)) is not None and not running.done():
+        return json_error(
+            "already_running", message="This source is being checked now.", status=409
+        )
+    engine = getattr(request.app["state"], "_source_engine", None)
+    if engine is None:
+        from personalclaw.knowledge.source_engine import SourceEngine
+
+        engine = SourceEngine(store, request.app["state"].knowledge_ingest_queue())
+    checks[source_id] = asyncio.ensure_future(engine.poll_source(source, engine._config_loader()))
+    await _sel_log_async("source.check", source_id=source_id)
+    return web.json_response({"ok": True, "id": source_id}, status=202)
+
+
 async def update_watched_source(request: web.Request) -> web.Response:
     """PATCH /api/knowledge/sources/{id} — apply a remediation, rename, or pause a source.
 
@@ -3979,6 +4345,14 @@ def setup_knowledge_routes(app: web.Application) -> None:
         except Exception:
             logger.debug("knowledge ingest queue wiring skipped", exc_info=True)
 
+    if INTENT_RUNS not in app:
+        app[INTENT_RUNS] = intent_runs.IntentRuns()
+
+        async def _stop_intent_runs(app: web.Application) -> None:
+            await app[INTENT_RUNS].stop_all()
+
+        app.on_cleanup.append(_stop_intent_runs)
+
     app.router.add_get("/api/knowledge/library-home", library_home)
     app.router.add_get("/api/knowledge/collections", list_collections)
     app.router.add_post("/api/knowledge/collections", create_collection)
@@ -3998,6 +4372,7 @@ def setup_knowledge_routes(app: web.Application) -> None:
     # flag needs a place a human can see it. Read-only by design — deciding which source to trust
     # is the owner's judgement, not something an endpoint should let the system settle.
     app.router.add_get("/api/knowledge/conflicts", list_conflicts)
+    app.router.add_post("/api/knowledge/conflicts/{id}/decision", decide_conflict)
     app.router.add_get("/api/knowledge/items/{id}/relations", list_item_relations)
     app.router.add_get("/api/knowledge/items/{id}/staleness", get_item_staleness)
     # The structural editing verbs. Registered BEFORE the `/items/{id}` catch-alls for
@@ -4037,8 +4412,14 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_get("/api/knowledge/intents", list_intents)
     app.router.add_post("/api/knowledge/intents", upsert_intent)
     app.router.add_delete("/api/knowledge/intents/{id}", delete_intent)
+    app.router.add_get("/api/knowledge/intents/candidates", intent_candidates)
     app.router.add_get("/api/knowledge/intents/{id}/outcomes", list_intent_outcomes)
+    app.router.add_delete("/api/knowledge/intents/{id}/outcomes", clear_intent_outcomes)
+    app.router.add_patch("/api/knowledge/intents/{id}/log", set_intent_log_state)
     app.router.add_post("/api/knowledge/intents/{id}/run", run_intent)
+    app.router.add_post("/api/knowledge/intents/{id}/runs", start_intent_run)
+    app.router.add_get("/api/knowledge/intents/{id}/runs/current", current_intent_run)
+    app.router.add_delete("/api/knowledge/intents/{id}/runs/current", stop_intent_run)
     app.router.add_post("/api/knowledge/intents/{id}/generate-skill", generate_skill_from_intent)
     app.router.add_get("/api/knowledge/items/{id}/intents", list_item_intents)
     app.router.add_get("/api/knowledge/items/{id}/related", get_related_items)
@@ -4061,6 +4442,10 @@ def setup_knowledge_routes(app: web.Application) -> None:
     app.router.add_post("/api/knowledge/sources", create_watched_source)
     app.router.add_post("/api/knowledge/sources/preview", preview_watched_source)
     app.router.add_patch("/api/knowledge/sources/{id}", update_watched_source)
+    app.router.add_delete("/api/knowledge/sources/{id}", delete_watched_source)
+    app.router.add_post("/api/knowledge/sources/{id}/check", check_watched_source)
+    if SOURCE_CHECKS not in app:
+        app[SOURCE_CHECKS] = {}
 
     # Pool lifecycle: lazy start on first request, shutdown on app exit
     async def _shutdown_pool(app: web.Application) -> None:

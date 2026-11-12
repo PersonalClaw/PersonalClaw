@@ -115,8 +115,11 @@ class FakeReports:
         nothing_new: bool = False,
         error: str = "",
         watermark_ts: float | None = None,
+        finding_item_id: str = "",
     ) -> None:
         self.runs.append(RunRecord(report_id, ok, error, watermark_ts, result, nothing_new))
+        if finding_item_id and report_id in self.reports:
+            self.reports[report_id].finding_item_id = finding_item_id
 
 
 # ── stubs for the two expensive seams ──

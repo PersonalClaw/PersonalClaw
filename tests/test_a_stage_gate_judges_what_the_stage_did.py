@@ -729,6 +729,7 @@ def test_a_verifiable_goals_check_asks_its_runner_to_name_each_test(tmp_path, mo
 LINT = "ruff reports no findings in src/newsfold"
 
 
+@pytest.mark.timeout(60)
 def test_a_criterion_held_from_outside_the_stage_asks_its_owner_at_once(tmp_path, monkeypatch):
     """The lint findings were there before the loop started, in lines its changes did not touch:
     no cycle of its workers will clear them. The gate says so at once instead of the stage's

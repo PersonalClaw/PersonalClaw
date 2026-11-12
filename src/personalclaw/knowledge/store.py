@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from personalclaw import memory_writes
 from personalclaw.instants import backfill_zone_less, utc_now_iso
+from personalclaw.knowledge.library_tables import LibraryTables
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.sqlite_compat import FTS5_REMEDY, connect_shared, probe, sqlite3
 
@@ -449,7 +450,7 @@ def knowledge_db_path(home: "pathlib.Path | None" = None, *, create: bool = True
     return path
 
 
-class KnowledgeStore:
+class KnowledgeStore(LibraryTables):
     def __init__(self, db_path: str):
         # FTS5 is ESSENTIAL here: the schema creates the `items_fts` virtual table and
         # every knowledge search (store.search_items_fts, HybridRetriever, the agent
@@ -472,6 +473,7 @@ class KnowledgeStore:
         self._init_schema()
         self._init_embed_refusals()
         self._migrate()
+        self._init_library_revision()
         # The chunk ANN index lives in THIS database file, so a chunk write and its
         # vector write travel together instead of needing a sidecar's consistency story.
         # Construction loads nothing — the sqlite-vec extension is loaded lazily on first
@@ -1501,6 +1503,14 @@ class KnowledgeStore:
     def get_source(self, source_id: str) -> dict | None:
         row = self.db.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()
         return self._serialize_source(row) if row else None
+
+    def delete_source(self, source_id: str) -> bool:
+        """Remove a source and what it keeps to poll (its cursor and the guids it has seen, by
+        their foreign keys). Every item it added stays: an item's ``source_id`` then names a
+        source that is gone, as an item a merge brought in can. Answers whether it was there."""
+        cur = self.db.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+        self.db.commit()
+        return cur.rowcount > 0
 
     def list_sources(self, *, enabled_only: bool = False) -> list[dict]:
         sql = "SELECT * FROM sources"
@@ -3201,6 +3211,37 @@ class KnowledgeStore:
             (item_id,),
         ).fetchall()
         return [self._serialize_outcome(r) for r in rows]
+
+    def outcomes_page(
+        self, intent_id: str, *, limit: int, before: str = ""
+    ) -> tuple[list[dict], str]:
+        """One page of an intent's findings, newest first: at most *limit*, older than the finding
+        *before* names when it is given. Answers the page and the ``before`` of the next, "" when
+        this page is the last. A *before* that names no finding of the intent answers no page."""
+        where, args = "intent_id = ?", [intent_id]
+        if before:
+            at = self.db.execute(
+                "SELECT created_at, rowid FROM intent_outcomes WHERE id = ? AND intent_id = ?",
+                (before, intent_id),
+            ).fetchone()
+            if at is None:
+                return [], ""
+            where += " AND (created_at < ? OR (created_at = ? AND rowid < ?))"
+            args += [at[0], at[0], at[1]]
+        rows = self.db.execute(
+            f"SELECT * FROM intent_outcomes WHERE {where} "  # noqa: S608 - fixed clauses
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (*args, limit + 1),
+        ).fetchall()
+        page = [self._serialize_outcome(r) for r in rows[:limit]]
+        return page, (str(page[-1]["id"]) if len(rows) > limit else "")
+
+    def intent_last_found(self) -> dict[str, str]:
+        """Map of intent_id → when it last kept a finding (its newest ``created_at``)."""
+        rows = self.db.execute(
+            "SELECT intent_id, MAX(created_at) AS at FROM intent_outcomes GROUP BY intent_id"
+        ).fetchall()
+        return {r["intent_id"]: str(r["at"] or "") for r in rows}
 
     def intent_outcome_counts(self) -> dict[str, int]:
         """Map of intent_id → number of recorded outcomes (for list badges)."""

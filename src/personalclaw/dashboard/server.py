@@ -14,6 +14,7 @@ from personalclaw.config import config_dir
 from personalclaw.dashboard import chat, handlers, housekeeping
 from personalclaw.dashboard.fallbacks import api_fallback, spa_fallback
 from personalclaw.dashboard.handlers.knowledge import setup_knowledge_routes
+from personalclaw.dashboard.handlers.library import setup_library_routes
 from personalclaw.dashboard.handlers.research_reports import setup_research_report_routes
 from personalclaw.dashboard.origin import build_allowed_origins, check_origin, gateway_bind_host
 from personalclaw.dashboard.state import _DEFAULT_PORT, DashboardState
@@ -741,8 +742,8 @@ async def start_dashboard(
     register_instance_routes(app)
     register_entity_routes(app)
 
-    # Knowledge Library
     setup_knowledge_routes(app)
+    setup_library_routes(app)
     setup_research_report_routes(app)
 
     # The gateway's start and stop hooks, in the order they run (`dashboard/lifecycle_hooks.py`),

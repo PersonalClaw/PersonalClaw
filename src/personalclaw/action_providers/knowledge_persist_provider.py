@@ -188,7 +188,7 @@ class KnowledgePersistActionProvider(ActionProvider):
             return ActionResult(success=False, error=f"knowledge store unavailable: {exc}")
 
         mode = str(cfg.get("mode", "upsert") or "upsert")
-        existing_id, existing_hash, existing_meta = _lookup(store, check.logical_key)
+        existing_id, existing_hash, existing_meta = _existing(store, cfg, check.logical_key)
         decision = decide_write(
             logical_key=check.logical_key,
             content_hash=check.content_hash,
@@ -542,6 +542,33 @@ def _lookup(store, logical_key: str) -> tuple[str, str, dict[str, Any]]:
     if not rows:
         return "", "", {}
     row = rows[0]
+    try:
+        meta = json.loads(row["file_metadata"] or "{}")
+    except (TypeError, ValueError):
+        meta = {}
+    return str(row["id"]), str(row["content_hash"] or ""), meta if isinstance(meta, dict) else {}
+
+
+def _existing(store, cfg: dict[str, Any], logical_key: str) -> tuple[str, str, dict[str, Any]]:
+    """The item a write lands on. A caller that keeps its item by id names it
+    (``target_item_id``, "" before its first write), so a write lands there whatever the title's
+    key now is, and never on another item that happens to share the key; else the item at the
+    title's logical key."""
+    if "target_item_id" in cfg:
+        return _lookup_id(store, str(cfg.get("target_item_id") or ""))
+    return _lookup(store, logical_key)
+
+
+def _lookup_id(store, item_id: str) -> tuple[str, str, dict[str, Any]]:
+    """Lookup-before-write by the item's id: (id, content_hash, file_metadata), or empty when
+    *item_id* is "" or names no item now."""
+    if not item_id:
+        return "", "", {}
+    row = store.db.execute(
+        "SELECT id, content_hash, file_metadata FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    if row is None:
+        return "", "", {}
     try:
         meta = json.loads(row["file_metadata"] or "{}")
     except (TypeError, ValueError):

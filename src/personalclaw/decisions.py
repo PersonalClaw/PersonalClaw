@@ -374,8 +374,13 @@ def log_decision(
     trigger_store: Any = None,
     enqueue: Any = None,
     now: datetime | None = None,
+    session_key: str = "",
+    project_id: str = "",
 ) -> dict:
     """Record a decision and arm its single review. Returns the created row's projection.
+
+    *session_key* is the chat it was logged in, and *project_id* that chat's project: a decision
+    logged in a project's chat is filed under the project, private, as a note saved there is.
 
     The knowledge item is created BEFORE the trigger and the trigger is minted against the
     item's real id, because the id is what makes the trigger deterministic. If arming
@@ -412,6 +417,12 @@ def log_decision(
     _reminders_writable(trigger_store)
 
     ks = _knowledge_store(store)
+    from personalclaw.knowledge import project_scope
+
+    # A decision is logged by a chat's tool, so a chat made it.
+    made, filed_by = project_scope.origin_scope(
+        project_scope.ORIGIN_CHAT, session_key=session_key, project_id=project_id
+    )
     # The ONE true create path: the same call the native provider makes, so a decision is
     # an ordinary library item — FTS-indexed at insert, embeddable, @-pickable, and visible
     # in the knowledge graph through entity extraction.
@@ -419,11 +430,12 @@ def log_decision(
         item_type=DECISION_TYPE,
         title=title,
         content=content or "",
-        tags=[str(t) for t in (tags or [])],
+        tags=[*[str(t) for t in (tags or [])], *filed_by],
         provider="native",
         extra={
             "processing_status": "queued",
             "file_metadata": {
+                **made,
                 "decision": {
                     "status": "pending",
                     "domain": dom,
@@ -437,7 +449,7 @@ def log_decision(
                     "outcome_grade": None,
                     "outcome_captured_at": None,
                     "lesson_memory_key": None,
-                }
+                },
             },
         },
     )

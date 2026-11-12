@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -456,8 +457,9 @@ def list_for_project(project_id: str) -> list[Loop]:
     (the auto-provisioned backing project a project-less launch / a task-provisioning
     Code loop gets) — both mean "this loop lives under the project". Without the
     tasks_project_id arm, such loops were missing from the project's loop history (the
-    detail page, the chat preamble's loop list, the sibling-loops brief footer), an
-    inconsistency with /api/projects/{id}/linked which already matches both."""
+    detail page, the chat preamble's loop list, the sibling-loops brief footer). The
+    library and ``GET /api/projects/{id}/linked`` read one project per loop instead
+    (:func:`loop_project_id`)."""
     if not project_id:
         return []
     conn = _connect()
@@ -470,6 +472,21 @@ def list_for_project(project_id: str) -> list[Loop]:
         return [_row_to_loop(r) for r in rows if files.valid_loop_id(r["id"])]
     finally:
         conn.close()
+
+
+def loop_project_id(loop: Loop, project_exists: Callable[[str], bool]) -> str:
+    """The one project *loop* is in: its own ``project_id`` when that names a project that
+    exists, else the ``tasks_project_id`` a project-less launch was given when that one does,
+    else "" (no project).
+
+    Either key used to place a loop, so a loop holding both was listed under two projects, and
+    an artifact its ``loop:<id>`` tag files had two projects too. The library's project rule
+    (:mod:`personalclaw.project_items`), ``GET /api/projects/{id}/linked`` and the loop manager
+    read this one answer."""
+    for pid in (loop.project_id, loop.tasks_project_id):
+        if pid and project_exists(pid):
+            return pid
+    return ""
 
 
 def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:

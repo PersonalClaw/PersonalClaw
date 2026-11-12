@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **960 registrations** over **779 distinct paths** — 953 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **973 registrations** over **788 distinct paths** — 966 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,12 +20,12 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 133 families the surface divides into, largest first.
+The 134 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
 | `/api/chat` | 91 | 78 |
-| `/api/knowledge` | 71 | 58 |
+| `/api/knowledge` | 80 | 64 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
 | `/api/models` | 38 | 30 |
@@ -76,6 +76,7 @@ The 133 families the surface divides into, largest first.
 | `/api/push` | 5 | 5 |
 | `/api/themes` | 5 | 2 |
 | `/api/autonomy` | 4 | 4 |
+| `/api/library` | 4 | 3 |
 | `/api/search` | 4 | 4 |
 | `/api/usage` | 4 | 4 |
 | `/api/agent-metadata` | 3 | 1 |
@@ -160,7 +161,7 @@ The 133 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 953 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 966 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -548,6 +549,7 @@ The 953 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/knowledge/collections/{id}/items` | shelve one or many items. |
 | `DELETE` | `/api/knowledge/collections/{id}/items/{item_id}` | unshelve one item. |
 | `GET` | `/api/knowledge/conflicts` | every recorded disagreement in the store. |
+| `POST` | `/api/knowledge/conflicts/{id}/decision` | - record which of two items to go by. |
 | `GET` | `/api/knowledge/decisions` | the journal view and the calibration strip. |
 | `GET` | `/api/knowledge/embedding/status` | - embedding config and progress. |
 | `GET` | `/api/knowledge/entities` | _(no summary)_ |
@@ -558,10 +560,16 @@ The 953 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/knowledge/ingest` | - multipart file upload. Each file becomes ONE |
 | `GET` | `/api/knowledge/intents` | - natural-language intents (Tier 3) + outcome counts. |
 | `POST` | `/api/knowledge/intents` | - create or update an intent. |
-| `DELETE` | `/api/knowledge/intents/{id}` | - removes the intent and its outcomes. |
+| `GET` | `/api/knowledge/intents/candidates` | - how many saved items a run would check. |
+| `DELETE` | `/api/knowledge/intents/{id}` | - removes the intent and what it kept. |
 | `POST` | `/api/knowledge/intents/{id}/generate-skill` | - synthesize a reusable skill |
+| `PATCH` | `/api/knowledge/intents/{id}/log` | - set the findings log's own state. |
+| `DELETE` | `/api/knowledge/intents/{id}/outcomes` | - clear the findings the intent kept. |
 | `GET` | `/api/knowledge/intents/{id}/outcomes` | - everything this intent has gathered, |
 | `POST` | `/api/knowledge/intents/{id}/run` | - retroactively run an intent against all |
+| `POST` | `/api/knowledge/intents/{id}/runs` | - check your saved items in the background. |
+| `DELETE` | `/api/knowledge/intents/{id}/runs/current` | - stop the run, keeping what it found. |
+| `GET` | `/api/knowledge/intents/{id}/runs/current` | - the intent's latest background run. |
 | `GET` | `/api/knowledge/items` | - list/search with pagination. |
 | `POST` | `/api/knowledge/items` | - author a typed item directly (note/gist/ |
 | `DELETE` | `/api/knowledge/items/{id}` | _(no summary)_ |
@@ -602,7 +610,9 @@ The 953 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/knowledge/sources` | the watched sources, with health, plus the kind catalog. |
 | `POST` | `/api/knowledge/sources` | save a source, after its provider validates the spec. |
 | `POST` | `/api/knowledge/sources/preview` | the dry run for the paste-URL create flow. |
+| `DELETE` | `/api/knowledge/sources/{id}` | - stop following a feed, keeping what it added. |
 | `PATCH` | `/api/knowledge/sources/{id}` | apply a remediation, rename, or pause a source. |
+| `POST` | `/api/knowledge/sources/{id}/check` | - check a feed now, in the background. |
 | `GET` | `/api/knowledge/stats` | _(no summary)_ |
 | `GET` | `/api/knowledge/tag-tree` | every tag with its parent and live usage count. |
 | `GET` | `/api/knowledge/tags` | - distinct tags (frequency-ordered) for autocomplete. |
@@ -637,6 +647,10 @@ The 953 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/lexicon/terms` | {canonical, aliases?} — add a manual term. |
 | `DELETE` | `/api/lexicon/terms/{id}` | remove a term you added, or one learned from a fix. |
 | `PATCH` | `/api/lexicon/terms/{id}` | {enabled?} — enable/disable (prune) a term. |
+| `GET` | `/api/library` | every thing in the library, one row per thing, in one read. |
+| `POST` | `/api/library/bulk` | one operation on many things, answered for each. |
+| `GET` | `/api/library/settings` | the library's own settings: ``power_user_view``. |
+| `PUT` | `/api/library/settings` | change the library's own settings. |
 | `GET` | `/api/listening` | whether the microphone is live, and which sources hold it. |
 | `POST` | `/api/listening` | the shell's report: ``{"on": bool, "sources": [...]}``. |
 | `POST` | `/api/logout` | sign every dashboard session out, everywhere. |

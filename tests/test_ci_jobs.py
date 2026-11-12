@@ -922,11 +922,29 @@ def test_a_python_placeholder_with_no_interpreter_is_refused_before_the_step_run
     assert not marker.exists()
 
 
-def test_the_jobs_time_is_shared_by_its_steps(repo, tmp_path):
-    job = _job("slow", "import time; time.sleep(1.5)", "import time; time.sleep(1.5)")
-    outcome = _run(repo, job, tmp_path, deadline_s=2, grace=0.2)
+@pytest.mark.parametrize("slow_first_s", [0.0, 1.0], ids=["as-run", "a-slow-first-step"])
+def test_the_jobs_time_is_shared_by_its_steps(repo, tmp_path, monkeypatch, slow_first_s):
+    """Each step fits the job's 3 s alone and the two together don't: the second gets what the
+    first left and times out on the job's budget. The steps are `sleep`, not Python programs. On a
+    loaded machine an interpreter's start can spend the budget before the second step begins, and
+    the job then says it ran out before step 2. The second case makes the first step 1 s slower,
+    as such a start would, and the second step still begins and times out."""
+    real = run.run_job
+    first: list[float] = []
+
+    def slower_first_step(argv, *args, **kwargs):
+        result = real(argv, *args, **kwargs)
+        if tuple(argv) == ("sleep", "1") and not first:
+            first.append(slow_first_s)
+            time.sleep(slow_first_s)
+        return result
+
+    monkeypatch.setattr(run, "run_job", slower_first_step)
+    job = _job("slow", steps=(Step(("sleep", "1")), Step(("sleep", "2.5"))))
+    outcome = _run(repo, job, tmp_path, deadline_s=3, grace=0.2)
+    assert first == [slow_first_s]
     assert outcome.code == run.RED
-    assert outcome.reasons[0].startswith("step 2: the job timed out after ")
+    assert outcome.reasons[0].startswith("step 2: the job timed out after 3s"), outcome.reasons
 
 
 #: What keeps a job from running on this machine in either mode, and how its reason names it.

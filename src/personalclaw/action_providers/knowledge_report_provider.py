@@ -68,6 +68,9 @@ from personalclaw.action_providers.knowledge_persist_provider import _open_store
 
 logger = logging.getLogger(__name__)
 
+#: The ``last_status`` and run word of a report that stopped because its tags are gone.
+TAGS_MISSING = "tags_missing"
+
 #: How many source items a single run will show the model. A scope is unbounded in principle
 #: (a quiet report resumed after a month can match thousands), and an unbounded prompt is the
 #: failure mode that turns one late run into a context-limit error. The NEWEST items survive
@@ -207,12 +210,32 @@ class KnowledgeReportActionProvider(ActionProvider):
 
         rr = _reports_module()
         defn = rr.get_report(report_id)
+        if defn is not None and getattr(defn, "finding_item_id", "") is None:
+            # Saved before reports kept their write-up's id: given the one of its name first, once.
+            try:
+                rr.migrate_write_ups(_open_store())
+                defn = rr.get_report(report_id)
+            except Exception:  # noqa: BLE001 — the run goes on; its write finds its own item
+                logger.warning("knowledge-report: the write-up migration failed", exc_info=True)
         if defn is None:
             # No `record_run` here on purpose: there is no report row to stamp, so recording a
             # failure would have to invent one. The caller's own error is the record.
             return ActionResult(
                 success=False,
                 error=f"knowledge-report: no report definition {report_id!r}",
+            )
+
+        # A report whose source names tags none of which is there any more reads nothing: it
+        # says so in place of running, and calls no model (`knowledge.report_tags`).
+        stopped = tags_gone(defn)
+        if stopped:
+            rr.record_stopped(report_id, status=TAGS_MISSING, result=stopped)
+            return ActionResult(
+                success=True,
+                stdout=json.dumps({"report_id": report_id, "run": TAGS_MISSING, "model_calls": 0}),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                outcome="skip",
+                summary=stopped,
             )
 
         # THE watermark. Read before the scope is resolved (see the module docstring) and
@@ -329,7 +352,13 @@ class KnowledgeReportActionProvider(ActionProvider):
 
         persist_body = _persist_body(result)
         said = rr.wrote_words(defn, len(source_items))
-        rr.record_run(report_id, ok=True, result=said, watermark_ts=resolution_ts)
+        rr.record_run(
+            report_id,
+            ok=True,
+            result=said,
+            watermark_ts=resolution_ts,
+            finding_item_id=str(persist_body.get("item_id") or ""),
+        )
         _emit_research_finding(
             report_id=report_id,
             title=str(getattr(defn, "name", "") or report_id),
@@ -354,6 +383,20 @@ class KnowledgeReportActionProvider(ActionProvider):
             duration_ms=int((time.monotonic() - started) * 1000),
             summary=said,
         )
+
+
+def tags_gone(defn: Any, store: Any = None) -> str:
+    """The sentence a report says in place of running when every tag its source names is gone
+    (`report_tags.gone_sentence`), "" when it can run or the taxonomy cannot be read."""
+    from personalclaw.knowledge import report_tags
+
+    if not getattr(defn, "tags_deleted", ()) or not report_tags.gone_sentence(defn, set()):
+        return ""  # no tag of its scope was deleted: nothing to look up
+    try:
+        return report_tags.gone_sentence(defn, report_tags.tag_names(store or _open_store()))
+    except Exception:  # noqa: BLE001 — an unreadable taxonomy stops nothing here
+        logger.debug("knowledge-report: tag taxonomy unreadable", exc_info=True)
+        return ""
 
 
 # ── the report module seam ──
@@ -419,6 +462,10 @@ def _resolve_scope(
     """
     if scope is None:
         return []
+    if str(getattr(scope, "intent", "") or ""):
+        return _intent_findings(
+            store, str(scope.intent), cutoff_ts=cutoff_ts, exclude_kind=exclude_kind
+        )
     tags = [str(t) for t in (getattr(scope, "tags", ()) or ())]
     item_ids: set[str] = set()
     if not tags:
@@ -449,6 +496,37 @@ def _resolve_scope(
 
     rows.sort(key=lambda r: (_epoch(r), str(r.get("id") or "")))
     # Newest survive the cut, then oldest-first order is restored for numbering.
+    return rows[-MAX_SCOPE_ITEMS:]
+
+
+def _intent_findings(
+    store: Any, intent_id: str, *, cutoff_ts: float, exclude_kind: str
+) -> list[dict[str, Any]]:
+    """The items an intent's findings kept after *cutoff_ts* name, each read with what the intent
+    found in it ahead of its text, oldest finding first. A finding whose item is gone, archived or
+    retired is left out: it has nothing to cite."""
+    found: dict[str, tuple[float, str]] = {}
+    for row in store.db.execute(
+        "SELECT item_id, takeaway, created_at FROM intent_outcomes "
+        "WHERE intent_id = ? AND item_id IS NOT NULL ORDER BY created_at, rowid",
+        (intent_id,),
+    ):
+        at = _epoch({"created_at": row["created_at"]})
+        if at > cutoff_ts:
+            found[str(row["item_id"])] = (at, str(row["takeaway"] or ""))
+    rows: list[dict[str, Any]] = []
+    for item_id, (at, takeaway) in sorted(found.items(), key=lambda kv: (kv[1][0], kv[0])):
+        item = store.get_item(item_id)
+        if not item or str(item.get("kind") or "") == exclude_kind:
+            continue
+        if str(item.get("status") or "active") != "active" or item.get("is_archived"):
+            continue
+        if takeaway:
+            item = {
+                **item,
+                "content": f"What your intent found: {takeaway}\n\n{item.get('content') or ''}",
+            }
+        rows.append(item)
     return rows[-MAX_SCOPE_ITEMS:]
 
 
@@ -675,6 +753,9 @@ def _persist_config(
         ],
         "mode": "upsert",
         "source_ref": f"research-report:{getattr(defn, 'id', '')}",
+        # The report's own write-up, by id: a rename keeps it, and a report of another's name
+        # writes its own. "" before its first write, which creates it.
+        "target_item_id": str(getattr(defn, "finding_item_id", "") or ""),
     }
 
 

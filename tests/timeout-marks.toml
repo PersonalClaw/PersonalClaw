@@ -465,6 +465,11 @@ cap = 50
 reason = "a hundred-item knowledge store built and checked for real; 21 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
+site = "tests/test_library_counts_are_true.py::test_the_total_and_every_count_are_true_over_5000_things"
+cap = 90
+reason = "a home of 5,000 things, 200 of them artifacts written through the provider, read twice whole; 7.5 s alone and 14.8 s beside a full local set at load 29 (2026-11-11), most of it the seed"
+
+[[mark]]
 site = "tests/test_mcp_import_from_claude_code_keeps_the_server.py::test_an_imported_server_is_kept_and_still_runs_after_a_restart"
 cap = 50
 reason = "a real MCP server imported, then started again after a restart; 21 s on CI at worst (breadth's coverage leg, 2026-10-24)"
@@ -833,6 +838,16 @@ reason = "a hypothesis property: each generated config written and loaded back; 
 site = "tests/test_a_stage_gate_judges_what_the_stage_did.py::test_a_stage_that_changed_two_files_passes_on_what_its_gate_observed"
 cap = 50
 reason = "a code loop driven to its stage gate for real: a worktree per task, the merge, and each check the supervisor runs as a child process; 20 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_a_stage_gate_judges_what_the_stage_did.py::test_a_criterion_held_from_outside_the_stage_asks_its_owner_at_once"
+cap = 60
+reason = "a code loop's stage gate driven for real, whose git subprocess calls (loop/worktree.py's _git, from commits_not_by and the merge's sparse_scope) take most of it: 15 to 30 s at a 1-minute load of 41 to 59 on main and on a branch alike, and past 30 s once on each (2026-11-11)"
+
+[[mark]]
+site = "tests/test_a_stage_gate_says_which_criterion_failed_and_reads_the_task_outputs.py::test_a_stage_is_judged_when_its_last_task_worker_is_done_and_the_loop_ends"
+cap = 60
+reason = "a code loop's stage gate driven for real, attended and not, whose git subprocess calls (loop/worktree.py's _git, from commits_not_by) take most of it: 9 to 20 s at a 1-minute load of 41 to 59 on main and on a branch alike, and past 30 s once in a full local run at a load near 29 (2026-11-11)"
 
 [[mark]]
 site = "tests/test_schedule_history.py::test_a_NOISY_job_does_not_evict_every_OTHER_automation"

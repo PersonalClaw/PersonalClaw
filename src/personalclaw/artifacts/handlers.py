@@ -52,9 +52,11 @@ from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.file_view import read_head, whole_text
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import (
+    MISSING,
     RequestValidationError,
     bool_field,
     json_object_body,
+    optional_bool,
     require_string,
     string_field,
 )
@@ -744,11 +746,21 @@ async def api_artifact_update(request: web.Request) -> web.Response:
                     {"error": f"{key} must be a list of tag names"}, status=400
                 )
             tag_edits[key] = names
+    flags, flag_refusal = _library_flags(body)
+    if flag_refusal is not None:
+        return flag_refusal
     refused = await _app_edit_refusal(request, prov, slug, body)
     if refused is not None:
         return refused
     content = body.get("content")
     what = f"the body of the artifact {slug!r}"
+    if flags and not any(key in body for key in _UPDATE_KEYS):
+        # Filing alone: no body, name or tag changes, so no `update` and no `updated_at` bump.
+        art = prov.set_library_flags(slug, **flags)
+        if art is None:
+            return web.json_response({"error": "not found"}, status=404)
+        _audit(request, "artifact.update", "ok", f"slug={slug} filed")
+        return web.json_response(_serialize(art, include_content=True))
     try:
         art = prov.update(
             slug,
@@ -791,8 +803,45 @@ async def api_artifact_update(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=400)
     if art is None:
         return web.json_response({"error": "not found"}, status=404)
+    if flags:
+        art = prov.set_library_flags(slug, **flags) or art
     _audit(request, "artifact.update", "ok", f"slug={slug}")
     return web.json_response(_serialize(art, include_content=True))
+
+
+#: The PATCH keys that go through ``update`` (a body, metadata or tag change).
+_UPDATE_KEYS = (
+    "content",
+    "snapshot",
+    "event_type",
+    "name",
+    "description",
+    "collection",
+    "add_tags",
+    "remove_tags",
+)
+
+
+def _library_flags(body: dict[str, Any]) -> tuple[dict[str, Any], web.Response | None]:
+    """The library's flags a PATCH names (``project_id``, ``pinned``, ``archived``), checked:
+    ``project_id`` is "" (out of its project) or a project that exists, and the flags are
+    booleans. A refusal names the field and writes nothing."""
+    flags: dict[str, Any] = {}
+    if "project_id" in body:
+        from personalclaw import project_items
+
+        pid, why = project_items.requested_project(body["project_id"])
+        if why:
+            return {}, json_error("unknown_project", message=why, status=404)
+        flags["project_id"] = pid
+    try:
+        pinned, archived = optional_bool(body, "pinned"), optional_bool(body, "archived")
+    except RequestValidationError as exc:
+        return {}, exc.response
+    for key, value in (("pinned", pinned), ("archived", archived)):
+        if value is not MISSING:
+            flags[key] = value
+    return flags, None
 
 
 async def api_artifact_delete(request: web.Request) -> web.Response:

@@ -4,8 +4,8 @@ A test that wants to know whether the gateway serves a route asks the router the
 not the text of the module that registers it: a refactor that moves a registration keeps the
 route, and a route left unregistered no longer resolves. The table is built as ``start_dashboard``
 builds its routes (``dashboard/server.py``): the MCP-tool routes, the dashboard's route table
-(``dashboard/routes.register_dashboard_routes``) and the knowledge routes. It is built once per
-process; nothing serves it.
+(``dashboard/routes.register_dashboard_routes``), the knowledge routes and the library's. It is
+built once per process; nothing serves it.
 """
 
 from __future__ import annotations
@@ -26,12 +26,14 @@ def gateway_app() -> web.Application:
     if _APP is None:
         from personalclaw.dashboard import server
         from personalclaw.dashboard.handlers.knowledge import setup_knowledge_routes
+        from personalclaw.dashboard.handlers.library import setup_library_routes
         from personalclaw.dashboard.routes import register_dashboard_routes
 
         app = web.Application()
         server._register_mcp_routes(app)
         register_dashboard_routes(app)
         setup_knowledge_routes(app)
+        setup_library_routes(app)
         _APP = app
     return _APP
 

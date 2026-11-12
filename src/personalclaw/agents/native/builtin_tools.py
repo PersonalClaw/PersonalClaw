@@ -1904,9 +1904,17 @@ class NativeBuiltinToolProvider(ToolProvider):
             if lang:
                 extra["gist_language"] = lang
 
-        from personalclaw.knowledge import get_knowledge_store
+        from personalclaw.knowledge import get_knowledge_store, project_scope
 
         store = get_knowledge_store()
+        # Who made it and where: this chat, and in a project's chat the turn's project, private.
+        made, filed_by = project_scope.origin_scope(
+            project_scope.ORIGIN_CHAT,
+            session_key=self._session_key,
+            project_id=current_project_id(),
+        )
+        extra["file_metadata"] = made
+        tags = [*tags, *[t for t in filed_by if t not in tags]]
         # Bookmark dedup: re-saving a URL already in the library (modulo trailing slash /
         # tracking params) returns the existing item rather than a duplicate — the same
         # guard the HTTP create path applies.
@@ -2250,6 +2258,9 @@ class NativeBuiltinToolProvider(ToolProvider):
     async def _t_log_decision(self, a: dict) -> ToolResult:
         from personalclaw.decisions import DecisionError, log_decision
 
+        # Read on the turn's own context, before the write moves to a worker thread.
+        session_key, project_id = self._session_key, current_project_id()
+
         def _log() -> dict:
             # `enqueue=_enrich_in_background` is the wiring that makes a logged decision
             # vector-searchable: `decisions.log_decision` deliberately does not reach for the
@@ -2265,6 +2276,8 @@ class NativeBuiltinToolProvider(ToolProvider):
                 review_horizon=str(a.get("review_horizon", "") or ""),
                 tags=[str(t) for t in a["tags"]] if isinstance(a.get("tags"), list) else None,
                 enqueue=_enrich_in_background,
+                session_key=session_key,
+                project_id=project_id,
             )
 
         said = (str(a.get(key, "") or "") for key in ("summary", "content", "expectation"))

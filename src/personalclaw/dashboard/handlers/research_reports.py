@@ -197,7 +197,35 @@ def _scope(raw: Any, label: str) -> tuple[dict[str, Any] | None, web.Response | 
             message=f"{label}.window_secs must be a non-negative integer",
             status=400,
         )
-    return {"tags": [str(t) for t in tags], "window_secs": int(window)}, None
+    intent = raw.get("intent", "")
+    if not isinstance(intent, str):
+        return None, json_error(
+            "invalid_request", message=f"{label}.intent must be a string", status=400
+        )
+    intent = intent.strip()
+    if intent and tags:
+        return None, json_error(
+            "invalid_request",
+            message=f"{label} reads an intent's findings or tags, not both",
+            status=400,
+        )
+    if intent and not _intent_exists(intent):
+        return None, json_error(
+            "invalid_request", message=f"{label}.intent names no intent", status=400
+        )
+    out: dict[str, Any] = {"tags": [str(t) for t in tags], "window_secs": int(window)}
+    if intent:
+        out["intent"] = intent
+    return out, None
+
+
+def _intent_exists(intent_id: str) -> bool:
+    from pathlib import Path
+
+    from personalclaw.knowledge.intents import IntentStore
+    from personalclaw.knowledge.store import knowledge_db_path
+
+    return IntentStore(Path(knowledge_db_path()).parent / "intents.json").get(intent_id) is not None
 
 
 def _fields(
@@ -288,17 +316,41 @@ def _policies(rr: ModuleType) -> tuple[str, ...]:
     return tuple(str(p) for p in getattr(rr, "CITATION_POLICIES", ()))
 
 
-def _served(rr: ModuleType, defn: Any) -> dict[str, Any]:
+def _served(rr: ModuleType, defn: Any, tag_names: set[str] | None = None) -> dict[str, Any]:
     """One definition as the page reads it: its stored form, its schedule as the Reports page
     states it (``knowledge.report_schedules.shown``) — in words, with its zone and next run — and
     what it reads, in the sentence its card shows (``research_reports.sources_shown``)."""
     from personalclaw.knowledge.report_schedules import shown
+    from personalclaw.triggers import claims as _claims
 
     return {
         **rr.to_dict(defn),
         "schedule_shown": shown(defn),
         "sources_shown": rr.sources_shown(defn),
+        # A run holds the report's claim now (`knowledge_report_provider._hold_claim`).
+        "running": _claims.is_running(report_claim_id(defn.id)),
+        # The names of its scopes that were deleted and match no tag now
+        # (`knowledge.report_tags.missing_tags`).
+        "missing_tags": _missing_tags(defn, tag_names),
     }
+
+
+def _tag_names(request: web.Request) -> set[str] | None:
+    """Every tag name in the library now, folded, read once for a request; None when the store
+    cannot be read."""
+    from personalclaw.knowledge import report_tags
+
+    try:
+        return report_tags.tag_names(request.app["state"].knowledge_store)
+    except Exception:  # noqa: BLE001 — unreadable: nothing is said to be missing
+        logger.debug("reports: tag taxonomy unreadable", exc_info=True)
+        return None
+
+
+def _missing_tags(defn: Any, tag_names: set[str] | None) -> list[str]:
+    from personalclaw.knowledge import report_tags
+
+    return [] if tag_names is None else report_tags.missing_tags(defn, tag_names)
 
 
 async def api_reports_list(request: web.Request) -> web.Response:
@@ -306,7 +358,8 @@ async def api_reports_list(request: web.Request) -> web.Response:
     rr = _reports_module()
     if rr is None:
         return _unavailable()
-    return web.json_response({"reports": [_served(rr, d) for d in rr.load_reports()]})
+    names = _tag_names(request)
+    return web.json_response({"reports": [_served(rr, d, names) for d in rr.load_reports()]})
 
 
 async def api_report_create(request: web.Request) -> web.Response:
@@ -320,7 +373,7 @@ async def api_report_create(request: web.Request) -> web.Response:
         return error or json_error("invalid_request", message="invalid request", status=400)
     saved = rr.save_report(rr.from_dict(fields))
     _sel_log("knowledge_report.create", f"report_id={getattr(saved, 'id', '')}")
-    return web.json_response({"report": _served(rr, saved)})
+    return web.json_response({"report": _served(rr, saved, _tag_names(request))})
 
 
 async def api_report_update(request: web.Request) -> web.Response:
@@ -354,7 +407,7 @@ async def api_report_update(request: web.Request) -> web.Response:
             return json_error("invalid_request", message=refused, status=400)
     saved = rr.save_report(proposed)
     _sel_log("knowledge_report.update", f"report_id={report_id} fields={sorted(fields)}")
-    return web.json_response({"report": _served(rr, saved)})
+    return web.json_response({"report": _served(rr, saved, _tag_names(request))})
 
 
 async def api_report_delete(request: web.Request) -> web.Response:
@@ -412,6 +465,12 @@ async def api_report_run(request: web.Request) -> web.Response:
             {"error": "a run for this report is already in flight", "reason": "already_running"},
             status=409,
         )
+    from personalclaw.action_providers.knowledge_report_provider import TAGS_MISSING, tags_gone
+
+    # Every tag the report reads is gone: it says so, as a scheduled fire does, and runs nothing.
+    if said := tags_gone(defn, getattr(request.app.get("state"), "knowledge_store", None)):
+        rr.record_stopped(report_id, status=TAGS_MISSING, result=said)
+        return web.json_response({"error": said, "reason": TAGS_MISSING}, status=409)
 
     ran, outcome, said = await _dispatch_report(report_id)
     _sel_log("knowledge_report.run", f"report_id={report_id} ran={ran} outcome={outcome}")

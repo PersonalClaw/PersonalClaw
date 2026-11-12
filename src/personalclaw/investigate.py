@@ -737,6 +737,39 @@ def _resolve_knowledge_item(entity_id: str, state) -> InvestigateContext | None:
     )
 
 
+def _resolve_findings(entity_id: str, state) -> InvestigateContext | None:
+    """An intent's findings log, by the intent's id: its goal and what it found, newest first.
+    An intent with no findings is no log, as the library lists none for it. The takeaways are
+    the matcher's words about saved items and ride the snapshot raw, fenced at injection."""
+    from pathlib import Path
+
+    from personalclaw.knowledge.intents import IntentStore
+
+    try:
+        store = getattr(state, "knowledge_store", None)
+        if store is None:
+            return None
+        intent = IntentStore(Path(store.db_path).parent / "intents.json").get(entity_id)
+        found = store.outcomes_for_intent(entity_id) if intent is not None else []
+    except Exception:  # noqa: BLE001
+        logger.debug("findings read failed for %s", entity_id, exc_info=True)
+        return None
+    if intent is None or not found:
+        return None
+    lines = [f"Findings for the intent: {intent.goal}", f"{len(found)} found, newest first:"]
+    for outcome in found:
+        title = outcome.get("item_title") or "(an item since deleted)"
+        lines.append(f"- {outcome.get('takeaway') or ''} (from: {title})")
+    return InvestigateContext(
+        kind="findings",
+        id=entity_id,
+        title=f"Findings: {intent.goal}",
+        snapshot="\n".join(lines),
+        back_link=f"#/library?item=findings:{entity_id}",
+        opening_prompt="Help me think about what this intent found — what matters here?",
+    )
+
+
 # ── Memory: records and lessons ──────────────────────────────────────────────
 
 
@@ -1249,6 +1282,7 @@ register_investigate_resolver("schedule_run", _resolve_schedule_run)
 register_investigate_resolver("trigger_run", _resolve_trigger_run)
 register_investigate_resolver("loop_cycle", _resolve_loop_cycle)
 register_investigate_resolver("knowledge_item", _resolve_knowledge_item)
+register_investigate_resolver("findings", _resolve_findings)
 register_investigate_resolver("memory_record", _resolve_memory_record)
 register_investigate_resolver("memory_lesson", _resolve_memory_lesson)
 register_investigate_resolver("doctor_finding", _resolve_doctor_finding)

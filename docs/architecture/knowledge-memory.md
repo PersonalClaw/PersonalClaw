@@ -517,6 +517,51 @@ item vector).
   `partial`. Only a node that claimed success while producing no text is the
   lie this names.
 
+### The library's one read
+
+`GET /api/library` (`dashboard/handlers/library.py`) lists everything you keep in one read, one
+row per thing and one row shape: notes, files, links and decisions from the knowledge store,
+pages, apps and documents from the artifact store, each scheduled report once (`report:<id>`,
+carrying its write-up), and each intent that has kept findings as its findings log
+(`findings:<intent id>`). An artifact's search mirror is never a row of its own. The answer
+holds every row the filter leaves (up to 10,000), a true `total`, each filter value's count
+(taken over the rows every other filter leaves), and `failed`, each store it could not read.
+
+- **Its revision.** An unchanged library answers 304 to its `ETag` without reading a row. The
+  revision hashes the knowledge store's `library_revision` counter, which SQLite triggers move on
+  every insert, update and delete in the tables the rows come from (whichever connection wrote),
+  a stat of each artifact's `meta.json`, the intents and reports files' times, the reports a run
+  holds, the projects and loops, and the minute.
+- **What is in a project** is one rule (`project_items`), which `GET /api/projects/{id}/linked`
+  reads too. A loop is in the one project `loop_project_id` names (its own when that exists, else
+  its backing one). An artifact's own `project_id` wins over its loop's tag, and `""` stored with
+  `project_cleared` takes it out whatever the tag says. A knowledge item is in its
+  `file_metadata.project_id`, filed with the project's tag; moving one
+  (`KnowledgeStore.move_item_project`) swaps both in one write and leaves `updated_at` alone.
+- **Who made a thing, and where.** A note an agent saves and a decision it logs record
+  `origin: chat` and the chat's `session_key`, and in a project's chat that project, private
+  (`project_scope.origin_scope`); one you make in the app records `origin: owner`. A row's
+  `from` names the chat, loop, workflow run, source or intent by its current title.
+- **Findings rows.** A findings log's own `archived`, `read` and `pinned` live in
+  `intent_log_state`, beside the intent rather than on its record, so setting them never makes
+  an open Edit intent stale. An intent can check your saved items in the background
+  (`knowledge/intent_runs.py`): one job per intent, in memory, recording each match as it is
+  answered, so a stop keeps what it found.
+- **Reports.** A report keeps its write-up by id (`finding_item_id`), so a rename keeps one
+  write-up and two reports of one name keep one each; a one-time migration gives each older
+  report the write-up of its name. A report's source can name an intent: each run reads the
+  findings it kept since the report's watermark, and their items. A report's scope holds its
+  tags by name: a rename or merge carries them, a delete leaves the name (so the report reads
+  nothing rather than everything) and is noted on the report, `missing_tags` names the deleted
+  tags no tag matches now, and a report whose source tags are all among them does not run and
+  says why (`knowledge/report_tags.py`). A tag nobody has made yet stops nothing.
+- **The owner's call on a conflict.** Each pair of items that disagree has one id, a hash of the
+  two item ids, sorted (`knowledge/conflict_calls.py`). The call is kept by that id in
+  `conflict_decisions`, outside the conflict list each reading replaces, so it holds when either
+  item is read again and its claims come back in other words. Both claims are always kept.
+- **Removing a feed** deletes the source and its cursor and keeps every item it added; the
+  artifacts mirror is its Settings switch's, not a feed you remove.
+
 ## Memory
 
 ### Stores
