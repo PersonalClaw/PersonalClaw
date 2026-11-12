@@ -11,8 +11,11 @@ the QUERIED ITEM (expand ``~``/``$VAR``, then ``abspath``, which anchors a relat
 and collapses ``.``/``..``). NEVER run the *pattern* through ``normpath``: ``normpath``
 treats ``*``/``**`` as ordinary path segments and collapses an adjacent ``..`` against
 them, so ``/a/**/../b`` becomes ``/a/b`` — silently dropping the ``**`` and widening an
-allow (or shrinking a deny). What a pattern's ``~`` and ``$VAR`` expand to is not glob text, so
-it is tidied as the item is (:func:`expand_pattern`); the rest of the pattern is never touched.
+allow (or shrinking a deny). What a pattern's ``~`` and ``$VAR`` expand to is tidied as a
+path, as the item is (:func:`expand_pattern`); a ``*`` or ``?`` it holds still matches as a
+wildcard, and a ``[`` is literal. A relative value that starts a pattern is read at any depth, as
+a pattern that starts with neither ``/`` nor ``*`` is. A queried path or a pattern that starts
+with two or more slashes is read from ``/``. The rest of the pattern is kept as written.
 Two properties this buys:
 
 1. ``~/ws/../.bashrc`` collapses to ``~/.bashrc`` and no longer matches an allow of
@@ -131,8 +134,9 @@ def expand_pattern(pattern: str) -> str:
     expands to, each expansion tidied (:func:`_tidy`) and joined to the text beside it with one
     ``/`` where both bring one.
 
-    Only the expansions change. The pattern's own text, its glob tokens and any ``..`` it spells
-    included, is kept exactly as written: it is never put through ``normpath`` (the rule above).
+    Only the expansions change, and two or more leading slashes are read as ``/``. The pattern's
+    own text, its glob tokens and any ``..`` it spells included, is otherwise kept as written: it
+    is never put through ``normpath`` (the rule above).
     Without the tidying, an expansion holding ``//``, ``/./`` or ``/../``, or a variable ending
     in ``/`` as macOS's ``TMPDIR`` does, spelled the pattern one way and the normalized path
     another, and the rule matched nothing. A variable that ends the rule names its folder, so the

@@ -7,8 +7,9 @@ variable ending in ``/`` (macOS sets ``TMPDIR`` so), a home with ``//`` inside, 
 another, and the rule matched nothing. Only what ``~`` and ``$VAR`` expand to is tidied: the glob
 part of a pattern is still never normalized (``tests/test_guardrails_path_matcher.py``).
 
-Each row is checked as an allow (the ceiling's allow, and a loop's write scope) and as a deny
-(the denylist's path rules): all three ask the one path matcher.
+Each row is checked as an allow (the ceiling's allow, and
+``supervisor_policy.write_scope_allows``) and as a deny (the denylist's path rules, through
+``check_action``): all three ask the one path matcher.
 """
 
 from __future__ import annotations
@@ -165,7 +166,7 @@ def test_as_an_allow_it_admits_what_it_names_and_nothing_else(
         C.ScopedRuleset(mode="closed", allow=(narrower, wider)),
     )
     assert kept.allow == (narrower,)
-    # A loop's write scope.
+    # The supervisor policy's declared write scope.
     policy = SupervisorPolicy(write_scope=WriteScope(allowed_paths=(pattern,)))
     assert write_scope_allows(policy, inside) is True
     assert write_scope_allows(policy, outside) is False
