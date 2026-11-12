@@ -13,6 +13,8 @@ Each row is checked as an allow (the ceiling's allow, and a loop's write scope) 
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from personalclaw.guardrails import ceiling as C
@@ -23,6 +25,8 @@ from personalclaw.workflows.supervisor_policy import (
     WriteScope,
     write_scope_allows,
 )
+
+pytestmark = pytest.mark.security
 
 VAR = "PC_RULE_ROOT"
 
@@ -169,11 +173,16 @@ def test_as_an_allow_it_admits_what_it_names_and_nothing_else(
 
 @pytest.mark.parametrize(("held", "pattern", "inside", "outside"), ROWS)
 def test_as_a_deny_it_refuses_what_it_names_and_nothing_else(
-    expansion, held, pattern, inside, outside
+    expansion, monkeypatch, held, pattern, inside, outside
 ):
     expansion(held)
-    assert denylist._glob_match(inside, pattern) is True
-    assert denylist._glob_match(outside, pattern) is False
+    monkeypatch.setattr(
+        denylist, "_load_config_rules", lambda: [denylist.DenyRule(paths=(pattern,))]
+    )
+    refused = denylist.check_action("file", {"path": inside})
+    assert refused.blocked is True
+    assert refused.matched == f"config:{pattern}"
+    assert denylist.check_action("file", {"path": outside}).blocked is False
 
 
 def test_a_rule_reads_the_environment_it_is_asked_in(monkeypatch):
@@ -298,3 +307,53 @@ def test_a_named_home_is_looked_up_once(monkeypatch):
         assert path_glob(f"{home}/notes/a", "~root/notes/**") is True
     clear()
     assert looked == ["root"]
+
+
+def test_each_expansion_is_tidied_and_joined_on_both_sides(monkeypatch):
+    """Two expansions in one rule, and text before an expansion: each is tidied on its own and
+    joined with one ``/``."""
+    monkeypatch.setenv("PC_RULE_A", "/srv/")
+    monkeypatch.setenv("PC_RULE_B", "data//notes/")
+    assert path_glob("/srv/data/notes/a.txt", "$PC_RULE_A/$PC_RULE_B**") is True
+    assert path_glob("/srv/data/notesx/a.txt", "$PC_RULE_A/$PC_RULE_B**") is False
+    monkeypatch.setenv(VAR, "/var/folders/xy/T/")
+    assert path_glob("/srv/var/folders/xy/T/a.txt", f"/srv/${VAR}**") is True
+    assert path_glob("/srv/var/folders/xy/Tx/a.txt", f"/srv/${VAR}**") is False
+
+
+def test_a_variable_in_the_middle_of_a_rule_names_its_part(monkeypatch):
+    monkeypatch.setenv(VAR, "/data")
+    rule = f"/srv/${VAR}/**"
+    assert path_glob("/srv/data/notes/a.txt", rule) is True
+    assert path_glob("/srv/database/a.txt", rule) is False
+    assert denylist._glob_match("/srv/data/notes/a.txt", rule) is True
+    kept = C.compose_ruleset(
+        C.ScopedRuleset(mode="closed", allow=(rule,)),
+        C.ScopedRuleset(mode="closed", allow=("/srv/data/notes/**", "/srv/**")),
+    )
+    assert kept.allow == ("/srv/data/notes/**",)
+
+
+def test_the_home_forms_expanduser_read_still_expand(monkeypatch):
+    """``~name`` reads that user's home, and a home that is ``/`` joins with one ``/``."""
+    root_home = os.path.expanduser("~root")
+    assert path_glob(f"{root_home}/notes/a", "~root/notes/**") is True
+    monkeypatch.setenv("HOME", "/")
+    assert path_glob("/ws/a.py", "~/ws/**") is True
+    assert path_glob("/wsx/a.py", "~/ws/**") is False
+
+
+def test_a_rule_reads_the_variables_it_is_asked_in(monkeypatch):
+    """The same rule, asked again after its variable has changed, follows the value it is asked
+    with, not the one it was first asked with."""
+    monkeypatch.setenv(VAR, "/srv/a/")
+    assert path_glob("/srv/a/x.txt", f"${VAR}**") is True
+    monkeypatch.setenv(VAR, "/srv/b/")
+    assert path_glob("/srv/b/x.txt", f"${VAR}**") is True
+    assert path_glob("/srv/a/x.txt", f"${VAR}**") is False
+
+
+def test_a_padded_rule_and_a_relative_value_read_as_before(monkeypatch):
+    assert path_glob("/etc/passwd", " /etc/** ") is True
+    monkeypatch.setenv(VAR, "build/")
+    assert path_glob("/elsewhere/build/a.o", f"${VAR}**") is True

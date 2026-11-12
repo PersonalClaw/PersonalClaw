@@ -176,6 +176,9 @@ NAMED_MODULES: dict[str, str] = {
     "tests/test_a_browse_start_page_is_read_as_a_browser_reads_it.py": (
         "a browse start page is read as a browser reads it, however its arguments are written"
     ),
+    "tests/test_a_path_rule_matches_what_its_variables_expand_to.py": (
+        "a path rule written with ~ or a $VAR names the paths its expansion names"
+    ),
 }
 
 
