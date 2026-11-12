@@ -70,6 +70,41 @@ ROWS = [
         "/srv/people/home/alice/ws/a.py",
         id="a-home-holding-a-dot-dot-segment",
     ),
+    pytest.param(
+        ("var", "/srv/data/."),
+        f"${{{VAR}}}x/**",
+        "/srv/data/.x/a",
+        "/srv/datax/a",
+        id="text-glued-after-a-value-ending-in-a-dot-segment",
+    ),
+    pytest.param(
+        ("var", "/srv/data/."),
+        f"${VAR}**",
+        "/srv/data/notes/a",
+        "/srv/database/a",
+        id="a-wildcard-after-a-value-ending-in-a-dot-segment",
+    ),
+    pytest.param(
+        ("var", "/srv/data/sub/.."),
+        f"${VAR}**",
+        "/srv/data/notes/a",
+        "/srv/database/a",
+        id="a-wildcard-after-a-value-ending-in-a-dot-dot-segment",
+    ),
+    pytest.param(
+        ("var", "./data"),
+        f"/srv/pre${VAR}/**",
+        "/srv/pre./data/x",
+        "/srv/predata/x",
+        id="text-glued-before-a-value-starting-with-a-dot-segment",
+    ),
+    pytest.param(
+        ("var", "./build"),
+        f"${VAR}/**",
+        "/srv/build/a.txt",
+        "/srv/builds/a.txt",
+        id="a-relative-variable-is-read-at-any-depth",
+    ),
 ]
 
 
@@ -153,3 +188,46 @@ def test_an_unset_or_empty_variable_is_left_as_it_was(monkeypatch):
     assert path_glob("/srv/data/a.txt", f"${VAR}/**") is False
     monkeypatch.setenv(VAR, "")
     assert path_glob("/notes/a.txt", f"${VAR}/notes/**") is True
+
+
+def test_a_variable_that_ends_the_rule_names_its_folder(monkeypatch):
+    """A rule that ends with its variable names the folder the variable holds, whether the value
+    ends in ``/`` or in a ``.`` segment, and nothing inside it or beside it."""
+    for held in ("/srv/data/", "/srv/data/."):
+        monkeypatch.setenv(VAR, held)
+        for rule in (f"${VAR}", f"${{{VAR}}}"):
+            assert path_glob("/srv/data", rule) is True
+            assert path_glob("/srv/data/a.txt", rule) is False
+            assert path_glob("/srv/database", rule) is False
+    monkeypatch.setenv(VAR, "/srv/data/")
+    rule = f"${VAR}"
+    monkeypatch.setattr(denylist, "_load_config_rules", lambda: [denylist.DenyRule(paths=(rule,))])
+    assert denylist.check_action("file", {"path": "/srv/data"}).blocked is True
+    assert denylist.check_action("file", {"path": "/srv/data/a.txt"}).blocked is False
+    kept = C.compose_ruleset(
+        C.ScopedRuleset(mode="closed", allow=(rule,)),
+        C.ScopedRuleset(mode="closed", allow=(rule,)),
+    )
+    assert kept.allow == (rule,)
+
+
+def test_a_variable_set_to_nothing_mid_rule_leaves_one_slash(monkeypatch):
+    monkeypatch.setenv(VAR, "")
+    assert path_glob("/srv/secrets/k", f"/srv/${VAR}/secrets/**") is True
+
+
+def test_a_rule_reads_its_variables_as_the_queried_path_does(monkeypatch):
+    """The rule and the path it is asked about read ``$VAR`` the same way: a home holding a
+    ``$VAR`` expands it in both, set or set to nothing, and an unclosed ``${`` takes the rest of the
+    text in both."""
+    monkeypatch.setenv("PC_RULE_W", "alice")
+    monkeypatch.setenv("HOME", "/srv/people/$PC_RULE_W")
+    assert path_glob("~/ws/a", "~/ws/**") is True
+    assert path_glob("/srv/people/alice/ws/a", "~/ws/**") is True
+    monkeypatch.setenv("PC_RULE_W", "")
+    assert path_glob("/srv/people/ws/a", "~/ws/**") is True
+    assert path_glob("/srv/people/wsx/a", "~/ws/**") is False
+    assert path_glob("/srv/people", "~") is True
+    monkeypatch.delenv("PC_RULE_X", raising=False)
+    monkeypatch.setenv(VAR, "v")
+    assert path_glob(f"/x/${{PC_RULE_X/${VAR}/a", f"/x/${{PC_RULE_X/${VAR}/**") is True
