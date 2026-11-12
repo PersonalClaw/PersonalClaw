@@ -477,7 +477,8 @@ to the new lock and never relaxes a bound. Between releases the
 flake, `pyproject.toml` or `uv.lock`, and weekly, it builds the flake and boots its gateway,
 checks `nix/pins.toml` against the packaged release's tag, and builds this checkout's own wheel
 on the same package set, so a bound nixpkgs cannot meet fails the change that adds it rather
-than this checklist.
+than this checklist. It is a gate of the merge verdict (`tools/ci/workflows.py`'s `GATES`), so
+that change's verdict is red until it passes.
 
 - [ ] Bump `version` and the wheel `hash` in `nix/personalclaw.nix`
       (`nix store prefetch-file --json <wheel url>`).

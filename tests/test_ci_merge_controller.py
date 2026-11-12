@@ -11,6 +11,7 @@ that contract run on a branch at main's tip, and its verdict waits for it.
 from __future__ import annotations
 
 import base64
+import datetime
 import difflib
 import json
 import re
@@ -20,9 +21,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from ci_merge_controller_shared import GATE_BOUNDS, GATE_FILTERS
 
 from tools.ci import merge_controller as mc
-from tools.ci import merge_verdict, trust
+from tools.ci import merge_verdict, trust, workflows
 
 REPO = "owner/project"
 RUN = 77
@@ -31,11 +33,35 @@ MAIN = "b" * 40
 CONTROLLER = "c" * 40
 DIGEST = "sha256:" + "d" * 64
 WF = trust.DEFINITION_ROOTS[0]
+ACTIONS = trust.DEFINITION_ROOTS[1]
 MERGE_PATH = mc.MERGE_WORKFLOW
 MERGE_YML = "name: Merge\non:\n  workflow_dispatch: {}\njobs: {}\n"
+#: Each gate's workflow (rule 5b) with its filter as main's stands, planted in every tree.
+GATE = {g.file: g for g in workflows.GATES}
+
+
+def gate_yml(
+    file: str, paths: list[str] | None = None, minutes: object = None, **pull_request: Any
+) -> str:
+    """A gate's workflow: its name, its pull_request filter and each job's bound, nothing it
+    runs."""
+    spec = {"paths": GATE_FILTERS[file] if paths is None else paths, **pull_request}
+    bound = GATE_BOUNDS[file] if minutes is None else minutes
+    jobs = {job: {"timeout-minutes": bound} for job in GATE[file].jobs}
+    return json.dumps({"name": GATE[file].name, "on": {"pull_request": spec}, "jobs": jobs}) + "\n"
+
+
+GATE_FILES = {GATE[file].path: gate_yml(file) for file in GATE_FILTERS}
 
 
 _PULL_NUMBER = re.compile(r"refs/pull/([0-9]+)/head")
+
+
+def _after(at: str, minutes: float) -> str:
+    """The time *minutes* after *at*, as the jobs API writes one."""
+    start = datetime.datetime.fromisoformat(at.replace("Z", "+00:00"))
+    end = start + datetime.timedelta(minutes=minutes)
+    return end.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _oid(text: str) -> str:
@@ -59,6 +85,61 @@ class FakeApi:
         self.review(HEAD, ("completed", "success"))
         self.sign_off(HEAD, ("completed", "success"))
         self.codeql(HEAD)
+        for file in GATE_FILTERS:
+            self.gate(file)
+
+    def gate(self, file: str, *runs: Mapping[str, Any], head: str = HEAD) -> None:
+        """The head's runs of a gate's workflow, oldest first, each under the gate's name. Each run
+        may name its ``status``, ``conclusion``, ``event``, ``path``, ``head_sha`` and
+        ``run_attempt``, and its ``attempts``: each attempt a list of its jobs, ``(name,
+        conclusion, the step that failed or "")``, how many minutes it ran (one by default) and
+        any field of its own to set (its times, say), a conclusion None for a job still going. By
+        default one attempt with every one of the gate's jobs green."""
+        gate = GATE[file]
+        listed = []
+        for n, run in enumerate(runs):
+            run_id = 5000 + 100 * list(GATE_FILTERS).index(file) + n
+            attempts = run.get("attempts", [[(job, "success", "") for job in gate.jobs]])
+            listed.append(
+                {
+                    "id": run.get("id", run_id),
+                    "name": gate.name,
+                    "path": run.get("path", gate.path),
+                    "event": run.get("event", "pull_request"),
+                    "head_sha": run.get("head_sha", head),
+                    "status": run.get("status", "completed"),
+                    "conclusion": run.get("conclusion", "success"),
+                    "run_attempt": run.get("run_attempt", len(attempts)),
+                    "html_url": f"https://github.com/{REPO}/actions/runs/{run_id}",
+                }
+            )
+            for attempt, jobs in enumerate(attempts, 1):
+                found = [
+                    {
+                        "id": run_id * 100 + i,
+                        "name": name,
+                        "status": "completed" if conclusion is not None else "in_progress",
+                        "conclusion": conclusion,
+                        "started_at": "2026-11-10T12:00:00Z",
+                        "completed_at": _after("2026-11-10T12:00:00Z", (*more, 1.0)[0]),
+                        "steps": (
+                            [{"name": "Set up job", "conclusion": "success"}]
+                            + ([{"name": step, "conclusion": "failure"}] if step else [])
+                        ),
+                        **(more[1] if len(more) > 1 else {}),
+                    }
+                    for i, (name, conclusion, step, *more) in enumerate(jobs)
+                ]
+                at = f"/repos/{REPO}/actions/runs/{run_id}/attempts/{attempt}/jobs"
+                self.answers[f"{at}?per_page=100&page=1"] = {
+                    "total_count": len(found),
+                    "jobs": found,
+                }
+        query = f"head_sha={head}&event=pull_request&per_page=100&page=1"
+        self.answers[f"/repos/{REPO}/actions/workflows/{file}/runs?{query}"] = {
+            "total_count": len(listed),
+            "workflow_runs": listed,
+        }
 
     def codeql(
         self,
@@ -190,7 +271,11 @@ class FakeApi:
         files: Mapping[str, str],
         truncated: bool = False,
         parents: tuple[str, ...] = (),
+        gates: bool = True,
     ) -> None:
+        """A commit's tree, with main's gate workflows (:data:`GATE_FILES`) unless *gates* is
+        False or *files* names one of its own."""
+        files = {**(GATE_FILES if gates else {}), **files}
         tree_oid = _oid(commit + "tree" + "".join(sorted(f + v for f, v in files.items())))
         self.answers[f"/repos/{REPO}/git/commits/{commit}"] = {
             "tree": {"sha": tree_oid},
@@ -401,7 +486,11 @@ def _contract(api: FakeApi, *runs: Mapping[str, Any]) -> None:
 
 
 def _changes(api: FakeApi, path: str = "tools/ci/verdict.py", text: str = "x = 1\n") -> FakeApi:
+    """The head changes *path*; a gate whose filter names it ran on the head, green, as it would."""
     api.tree(HEAD, {MERGE_PATH: MERGE_YML, "README.md": "hi\n", path: text})
+    for file, paths in GATE_FILTERS.items():
+        if workflows.filter_matches(paths, path):
+            api.gate(file, {})
     return api
 
 
@@ -626,7 +715,7 @@ def test_the_definitions_are_read_from_the_api_as_git_would_read_them(tmp_path: 
     subprocess.run([*git, "add", "."], check=True)
     subprocess.run([*git, "commit", "-q", "-m", "one"], check=True)
     api = FakeApi()
-    api.tree(MAIN, files)
+    api.tree(MAIN, files, gates=False)
     _, tree = mc.api_tree(api, REPO, MAIN)
     assert set(tree.blobs) == set(files)
     from_api = trust._definitions(tree, trust.REVIEWED_HELPERS)
@@ -3188,3 +3277,879 @@ def test_a_queue_commit_s_note_it_cannot_read_leaves_its_red_as_it_is() -> None:
     assert found is not None and found.conclusion == "failure"
     assert found.output["title"].startswith("Red: ")
     assert "- retries not counted: unread: " in found.output["summary"]
+
+
+# ── The gates (rule 5b): a workflow of its own that a pull request's paths start ─────────────
+#
+# Each gate's pull_request runs on the head are read always, every one must pass on every
+# attempt, and main's copy of its filter decides only whether no run is red. The class this
+# closes: a head red on a gate beside a green Merge run is red.
+
+NIX_RUN = f"https://github.com/{REPO}/actions/runs/5000"
+NIX_RUNS = f"/repos/{REPO}/actions/workflows/nix.yml/runs?head_sha={HEAD}&event=pull_request"
+NIX_PATHS = GATE_FILTERS["nix.yml"]
+
+
+def _gated(path: str = "uv.lock", text: str = "changed\n", api: FakeApi | None = None) -> FakeApi:
+    """A head that changes one path a gate's filter names, and nothing that defines CI."""
+    api = api or FakeApi()
+    api.tree(HEAD, {MERGE_PATH: MERGE_YML, "README.md": "hi\n", path: text})
+    return api
+
+
+def _nix(*jobs: tuple[str, str | None, str], **run: Any) -> dict[str, Any]:
+    """One Nix run whose attempts are each the jobs given (by default one green `flake`)."""
+    return {"attempts": [list(jobs)] if jobs else [[("flake", "success", "")]], **run}
+
+
+def _title(api: FakeApi, queue: mc.Queue | None = None) -> str:
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None, "every judged head posts"
+    return found.output["title"]
+
+
+def test_a_head_that_changes_no_gated_path_is_green_and_says_no_gate_was_expected() -> None:
+    api = FakeApi()
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success"
+    for gate in workflows.GATES:
+        assert f"- no {gate.what} ({gate.file}) was expected: it changes no path main's" in (
+            found.output["summary"]
+        )
+        # Its runs are read all the same: one listing a gate, whatever main's filter says.
+        listing = f"/repos/{REPO}/actions/workflows/{gate.file}/runs?head_sha={HEAD}"
+        assert sum(c.startswith(listing) for c in api.calls) == 1, gate.file
+
+
+@pytest.mark.parametrize("path", NIX_PATHS)
+def test_a_head_that_changes_a_nix_path_and_has_no_nix_build_is_red_not_waiting(path: str) -> None:
+    path = path.replace("**", "python.nix")
+    api = _gated(path)
+    for file, paths in GATE_FILTERS.items():
+        if file != "nix.yml" and workflows.filter_matches(paths, path):
+            api.gate(file, {})
+    found = _red(api)
+    assert found.output["title"] == (
+        f"Red: the head changes `{path}`, which main's nix.yml runs on, and has no Nix build"
+        " (nix.yml) run on pull_request: its own copy's filter may miss it, and a diff of more"
+        " than 300 files starts none"
+    )
+    assert "text" not in found.output, "a missing run waits on nothing"
+
+
+@pytest.mark.parametrize("status", ["in_progress", "queued", "waiting"])
+def test_a_nix_build_still_going_is_a_red_that_waits_on_it(status: str) -> None:
+    api = _gated()
+    api.gate("nix.yml", _nix(("flake", None, ""), status=status, conclusion=None))
+    found = _red(api)
+    assert found.output["title"] == (
+        f"Red: waiting: the head's Nix build (nix.yml) is {status!r}, not finished: run {NIX_RUN}"
+    )
+    assert found.output["text"] == f"```{mc.WAITING_FENCE}\nnix.yml\n```\n"
+
+
+@pytest.mark.parametrize(
+    ("jobs", "run", "says"),
+    [
+        pytest.param(
+            [("flake", "failure", "The next release builds on the same package set")],
+            {"conclusion": "failure"},
+            "attempt 1's `flake` is 'failure' at `The next release builds on the same package set`",
+            id="a-build-step",
+        ),
+        pytest.param(
+            [("flake", "cancelled", "")],
+            {"conclusion": "cancelled"},
+            "attempt 1's `flake` is 'cancelled'",
+            id="cancelled",
+        ),
+        pytest.param(
+            [("flake", "timed_out", "Build the package and run the flake's checks")],
+            {"conclusion": "timed_out"},
+            "attempt 1's `flake` is 'timed_out' at `Build the package and run the flake's checks`",
+            # A 'timed_out' conclusion GitHub may send; it sends a job that reaches its bound as
+            # 'cancelled', which test_a_nix_job_cancelled_at_its_bound_... reads.
+            id="timed-out-as-github-may-send-it",
+        ),
+        pytest.param(
+            [("flake", "skipped", "")],
+            {"conclusion": "success"},
+            "attempt 1's `flake` is 'skipped'",
+            id="skipped",
+        ),
+        pytest.param(
+            [("other", "success", "")],
+            {"conclusion": "success"},
+            "attempt 1 has 0 `flake` jobs, not one",
+            id="missing",
+        ),
+        pytest.param(
+            [("flake", "success", ""), ("flake", "success", "")],
+            {"conclusion": "success"},
+            "attempt 1 has 2 `flake` jobs, not one",
+            id="twice",
+        ),
+        pytest.param(
+            [("flake", "success", ""), ("extra", "failure", "Run it")],
+            {"conclusion": "failure"},
+            "attempt 1's `extra` is 'failure' at `Run it`",
+            id="another-job-red",
+        ),
+        pytest.param(
+            [],
+            {"conclusion": "startup_failure"},
+            "attempt 1 ran no job, and the run is 'startup_failure'",
+            id="job-less",
+        ),
+        pytest.param(
+            [("flake", "success", "")],
+            {"conclusion": "failure"},
+            "the run is 'failure'",
+            id="green-jobs-red-run",
+        ),
+    ],
+)
+def test_a_nix_build_that_did_not_pass_is_red(
+    jobs: list[tuple[str, str | None, str]], run: dict[str, Any], says: str
+) -> None:
+    api = _gated()
+    api.gate("nix.yml", {"attempts": [jobs], **run})
+    title = _red(api).output["title"]
+    assert title == f"Red: the head's Nix build (nix.yml) is red: {says} (run {NIX_RUN})"
+
+
+def test_a_red_nix_build_beside_a_green_merge_run_is_red() -> None:
+    """A head whose own pyproject change sets a bound the package set cannot meet: every Merge
+    job green, DCO, review and CodeQL green, and its Nix run red at the next-release step. The
+    verdict read none of it and was green; now it is red."""
+    api = _gated("pyproject.toml", '[project]\ndependencies = ["example>=9.9,<10"]\n')
+    api.gate(
+        "nix.yml", _nix(("flake", "failure", "The next release builds on the same package set"))
+    )
+    found = _red(api)
+    assert "the head's Nix build (nix.yml) is red" in found.output["title"]
+    assert found.output["summary"].count("- the head's Nix build") == 1
+
+
+def test_a_nix_red_on_attempt_1_is_never_rerun_into_green() -> None:
+    api = _gated()
+    api.gate(
+        "nix.yml",
+        {"attempts": [[("flake", "failure", "Build it")], [("flake", "success", "")]]},
+    )
+    assert _title(api) == (
+        f"Red: the head's Nix build (nix.yml) is red: attempt 1's `flake` is 'failure' at"
+        f" `Build it` (run {NIX_RUN})"
+    )
+
+
+def test_any_red_nix_run_on_the_head_is_red_not_only_the_newest() -> None:
+    """A pull request closed and reopened gets a new run on the same head: an older red one
+    still counts, so a reopen can't turn a red into a green."""
+    api = _gated()
+    api.gate("nix.yml", _nix(("flake", "failure", "Build it"), conclusion="failure"), _nix())
+    assert f"`flake` is 'failure' at `Build it` (run {NIX_RUN})" in _title(api)
+
+
+def test_an_older_run_red_for_more_than_a_cancel_is_red_beside_a_green_newer_run() -> None:
+    """Only a run a newer one cancelled is set aside: an older run GitHub could not start is red."""
+    api = _gated()
+    api.gate("nix.yml", {"conclusion": "startup_failure", "attempts": [[]]}, _nix())
+    assert "attempt 1 ran no job, and the run is 'startup_failure'" in _title(api), _title(api)
+
+
+def test_a_nix_run_cancelled_by_a_newer_one_on_the_head_is_set_aside() -> None:
+    api = _gated()
+    api.gate("nix.yml", _nix(("flake", "cancelled", ""), conclusion="cancelled"), _nix())
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert f"- its Nix build (nix.yml) passed on every attempt: run {NIX_RUN[:-1]}1" in (
+        found.output["summary"]
+    )
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        pytest.param({"path": WF + "fake-nix.yml"}, id="another-workflow-named-Nix"),
+        pytest.param({"event": "workflow_dispatch"}, id="a-dispatch"),
+        pytest.param({"event": "push"}, id="a-push"),
+        pytest.param({"head_sha": "9" * 40}, id="an-older-head"),
+    ],
+)
+def test_a_nix_run_that_is_not_mains_on_this_head_counts_for_nothing(run: dict[str, Any]) -> None:
+    api = _gated()
+    api.gate("nix.yml", _nix(**run))
+    assert "and has no Nix build (nix.yml) run on pull_request" in _title(api)
+
+
+def test_a_red_nix_run_on_the_head_counts_though_main_s_filter_expects_none() -> None:
+    """The head's own filter started a run main's would not: it is held to it all the same."""
+    api = FakeApi()
+    api.gate("nix.yml", _nix(("flake", "failure", "Build it"), conclusion="failure"))
+    assert "the head's Nix build (nix.yml) is red" in _title(api)
+
+
+def test_whether_a_head_needs_a_nix_build_is_main_s_filter() -> None:
+    api = _gated()
+    assert "has no Nix build (nix.yml) run" in _title(api)
+    without = [p for p in NIX_PATHS if p != "uv.lock"]
+    api.tree(MAIN, {GATE["nix.yml"].path: gate_yml("nix.yml", without)})
+    api.tree(HEAD, {GATE["nix.yml"].path: gate_yml("nix.yml", without), "uv.lock": "changed\n"})
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert "- no Nix build (nix.yml) was expected" in found.output["summary"]
+
+
+def test_a_head_that_narrows_its_own_nix_filter_still_needs_a_nix_build() -> None:
+    """The head's nix.yml names only flake.nix, so it starts no run for its uv.lock change, nor
+    for its own nix.yml: main's filter names both, so the head is red."""
+    api = _changes(FakeApi(), GATE["nix.yml"].path, gate_yml("nix.yml", ["flake.nix"]))
+    api.tree(
+        HEAD,
+        {
+            MERGE_PATH: MERGE_YML,
+            "README.md": "hi\n",
+            GATE["nix.yml"].path: gate_yml("nix.yml", ["flake.nix"]),
+            "uv.lock": "changed\n",
+        },
+    )
+    api.gate("nix.yml")
+    _contract(api, {})
+    assert _title(api).startswith(
+        "Red: the head changes `.github/workflows/nix.yml`, `uv.lock`, which main's nix.yml runs"
+        " on, and has no Nix build (nix.yml) run on pull_request"
+    )
+
+
+@pytest.mark.parametrize(
+    ("paths", "pull_request", "says"),
+    [
+        pytest.param(
+            ["nix/[ab].nix"],
+            {},
+            "names a filter pattern this does not read: 'nix/[ab].nix'",
+            id="a-set",
+        ),
+        pytest.param(
+            ["flake.ni?"],
+            {},
+            "names a filter pattern this does not read: 'flake.ni?'",
+            id="a-question-mark",
+        ),
+        pytest.param(
+            ["**/flake.nix"],
+            {},
+            "names a filter pattern this does not read: '**/flake.nix'",
+            id="a-leading-globstar",
+        ),
+        pytest.param(
+            NIX_PATHS,
+            {"paths-ignore": ["docs/**"]},
+            "filters pull_request by paths-ignore",
+            id="paths-ignore",
+        ),
+        pytest.param(
+            NIX_PATHS, {"branches": ["main"]}, "filters pull_request by branches", id="branches"
+        ),
+        pytest.param(NIX_PATHS, {"types": ["opened"]}, "filters pull_request by types", id="types"),
+        pytest.param([], {}, "has no pull_request paths list", id="no-paths"),
+    ],
+)
+def test_a_filter_the_matcher_does_not_read_is_unread(
+    paths: list[str], pull_request: dict[str, Any], says: str
+) -> None:
+    api = FakeApi()
+    api.tree(MAIN, {GATE["nix.yml"].path: gate_yml("nix.yml", paths, **pull_request)})
+    api.tree(HEAD, {GATE["nix.yml"].path: gate_yml("nix.yml", paths, **pull_request)})
+    assert _title(api).startswith(f"Red: unread: main's nix.yml {says}")
+
+
+def test_main_without_a_gated_workflow_is_unread() -> None:
+    api = FakeApi()
+    files = {p: t for p, t in GATE_FILES.items() if p != GATE["release-image-tooling.yml"].path}
+    api.tree(MAIN, {MERGE_PATH: MERGE_YML, "README.md": "hi\n", **files}, gates=False)
+    api.tree(HEAD, {MERGE_PATH: MERGE_YML, "README.md": "changed\n", **files}, gates=False)
+    assert _title(api) == (
+        "Red: unread: main has no .github/workflows/release-image-tooling.yml, which tools/ci's"
+        " GATES names"
+    )
+
+
+def test_a_green_names_each_gate_run_in_its_summary_and_receipt() -> None:
+    api = _gated()
+    api.gate("nix.yml", _nix())
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert f"- its Nix build (nix.yml) passed on every attempt: run {NIX_RUN}" in (
+        found.output["summary"]
+    )
+    receipt = merge_verdict.read_receipt(mc.check_body(found.body()))
+    assert receipt.toolchain == {"runner": "ubuntu-24.04", "definitions": MAIN, "nix.yml": NIX_RUN}
+
+
+@pytest.mark.parametrize(
+    ("file", "path"),
+    [
+        ("action-pins.yml", ACTIONS + "setup/action.yml"),
+        ("action-pins.yml", "tools/ci/action_pins.py"),
+        ("release-image-tooling.yml", "tools/ci/oci_layout.py"),
+        ("release-image-tooling.yml", WF + "release.yml"),
+    ],
+)
+def test_each_gate_is_expected_by_its_own_filter(file: str, path: str) -> None:
+    api = _changes(FakeApi(), path)
+    api.gate(file)
+    _contract(api, {})
+    title = _title(api)
+    assert f"and has no {GATE[file].what} ({file}) run on pull_request" in title, title
+
+
+GATE_RUN = 5100
+
+
+@pytest.mark.parametrize("file", list(GATE_FILTERS))
+def test_a_completed_gate_run_judges_its_head_again_from_its_own_merge_run(file: str) -> None:
+    api = _gated()
+    _merge_runs(api, OWN_MERGE, [RUN])
+    run = {
+        "repository": {"full_name": REPO},
+        "path": GATE[file].path,
+        "event": "pull_request",
+        "status": "completed",
+        "head_sha": HEAD,
+    }
+    api.answers[f"/repos/{REPO}/actions/runs/{GATE_RUN}"] = run
+    api.gate("nix.yml", _nix(("flake", "failure", "Build it"), conclusion="failure"))
+    outcome = mc.judge(api, REPO, GATE_RUN, CONTROLLER)
+    assert outcome.posting is not None and outcome.posting.head_sha == HEAD
+    assert "the head's Nix build (nix.yml) is red" in outcome.posting.output["title"]
+    for other, why in (
+        ({"event": "workflow_dispatch"}, "not a completed pull request run of a gate"),
+        ({"event": "push"}, "not a completed pull request run of a gate"),
+        ({"status": "in_progress"}, "not a completed pull request run of a gate"),
+        ({"repository": {"full_name": "someone/fork"}}, "is of 'someone/fork'"),
+    ):
+        api.answers[f"/repos/{REPO}/actions/runs/{GATE_RUN}"] = {**run, **other}
+        outcome = mc.judge(api, REPO, GATE_RUN, CONTROLLER)
+        assert outcome.posting is None and why in outcome.why, (other, outcome.why)
+
+
+def test_a_head_waiting_on_codeql_and_nix_names_both_in_its_fence() -> None:
+    api = _gated()
+    api.codeql(HEAD, pull_alerts=(), processed=("actions",))
+    api.gate("nix.yml", _nix(("flake", None, ""), status="in_progress", conclusion=None))
+    found = _red(api)
+    assert found.output["text"] == f"```{mc.WAITING_FENCE}\ncodeql\nnix.yml\n```\n"
+
+
+def test_each_gate_s_wait_has_its_own_fence_word() -> None:
+    for gate in workflows.GATES:
+        reason = f"{mc.WAITING_GATE}{gate.what} ({gate.file}) is 'queued', not finished: run x"
+        assert mc._fence_word(reason) == gate.file
+    assert mc._fence_word(f"{mc.WAITING_CONTRACT}is started") == "contract"
+    assert mc._fence_word(f"{mc.WAITING}CodeQL has not analysed the head yet") == "codeql"
+
+
+# The retry note on a gate's red: flake-class only when every red job of it was cancelled or
+# failed at a step that fetches only outside inputs.
+
+
+def _gate_red(*jobs: tuple[str, str | None, str], results: str = "success") -> FakeApi:
+    api = _retried() if results == "failure" else _gated()
+    if results != "failure":
+        api.run(event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}}])
+        files = [{"filename": "uv.lock", "status": "modified", "patch": "@@ -1 +1 @@\n-a\n+b"}]
+        api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
+    api.gate("nix.yml", _nix(*jobs, conclusion="failure"))
+    return api
+
+
+@pytest.mark.parametrize(
+    ("job", "why"),
+    [
+        pytest.param(
+            ("flake", "failure", "Install Nix"),
+            "the Nix build failed at `Install Nix`, a step that fetches only outside inputs",
+            id="install-nix",
+        ),
+        pytest.param(
+            ("flake", "failure", "Set up job"),
+            "the Nix build failed at `Set up job`, a step that fetches only outside inputs",
+            id="set-up-job",
+        ),
+        pytest.param(
+            ("flake", "failure", "Run actions/checkout@" + "3" * 40),
+            f"the Nix build failed at `Run actions/checkout@{'3' * 40}`, a step that fetches only"
+            " outside inputs",
+            id="the-checkout",
+        ),
+        pytest.param(
+            ("flake", "cancelled", ""),
+            "the Nix build was cancelled (a newer run in nix.yml's concurrency group, a person, or"
+            " a lost runner cancels it)",
+            id="cancelled",
+        ),
+    ],
+)
+def test_a_nix_red_at_an_outside_input_or_cancelled_is_flake_class(
+    job: tuple[str, str | None, str], why: str
+) -> None:
+    found = _note(_gate_red(job))
+    assert found.output["title"].startswith("Red (retry 0 of 2, flake-class): the head's Nix build")
+    assert f"- flake-class: {why}: a new head runs it again" in found.output["summary"]
+
+
+@pytest.mark.parametrize(
+    "job",
+    [
+        pytest.param(
+            ("flake", "failure", "The next release builds on the same package set"),
+            id="a-build-step",
+        ),
+        pytest.param(
+            ("flake", "failure", "Install uv"), id="install-uv-runs-after-the-head-s-script"
+        ),
+        # A 'timed_out' conclusion GitHub may send; the shape it sends for a job at its bound is
+        # the cancelled-at-bound row's.
+        pytest.param(
+            ("flake", "timed_out", "Build the package and run the flake's checks"),
+            id="timed-out-as-github-may-send-it",
+        ),
+        pytest.param(("flake", "timed_out", "Install Nix"), id="timed-out-at-an-outside-step"),
+        pytest.param(("flake", "failure", ""), id="no-step-named"),
+    ],
+)
+def test_a_nix_red_of_the_change_s_own_is_not_flake_class(job: tuple[str, str | None, str]) -> None:
+    found = _note(_gate_red(job))
+    assert found.output["title"].startswith("Red (retry 0 of 2): the head's Nix build"), found
+    assert "- not flake-class: its red is not its tests' alone: the head's Nix build" in (
+        found.output["summary"]
+    )
+
+
+def test_a_nix_outside_red_beside_a_flake_class_results_red_is_flake_class() -> None:
+    found = _note(_gate_red(("flake", "failure", "Install Nix"), results="failure"))
+    assert found.output["title"].startswith("Red (retry 0 of 2, flake-class): ")
+    assert "and the Nix build failed at `Install Nix`" in found.output["summary"]
+
+
+def test_a_nix_outside_red_beside_a_results_red_that_is_not_flake_class_is_not() -> None:
+    api = _gate_red(("flake", "failure", "Install Nix"), results="failure")
+    found = _note(api, FakeRetry(flaky=()))
+    assert found.output["title"].startswith("Red (retry 0 of 2): ")
+    assert "has no flaky history" in found.output["summary"]
+
+
+def test_a_nix_outside_red_beside_a_red_of_another_gate_s_own_is_not_flake_class() -> None:
+    api = _gate_red(("flake", "failure", "Install Nix"))
+    api.gate(
+        "action-pins.yml",
+        {
+            "attempts": [
+                [("sha-matches-tag", "failure", "Every pinned SHA is its release tag's commit")]
+            ],
+            "conclusion": "failure",
+        },
+    )
+    found = _note(api)
+    assert found.output["title"].startswith("Red (retry 0 of 2): ")
+    assert "- not flake-class: its red is not its tests' alone: the head's action pin check" in (
+        found.output["summary"]
+    )
+
+
+def test_a_date_only_retry_of_a_nix_flake_counts_as_retry_1() -> None:
+    api = _gate_red(("flake", "failure", "Install Nix"))
+    tree = _earlier(api, EARLIER)
+    found = _note(api, FakeRetry(((EARLIER, tree),)))
+    assert found.output["title"].startswith("Red (retry 1 of 2, flake-class): the head's Nix build")
+
+
+# The matcher, as GitHub reads a filter.
+
+
+def test_the_filter_matcher_reads_globs_as_github_does() -> None:
+    match = workflows.filter_matches
+    assert match(["*.md"], "README.md") and not match(["*.md"], "docs/x.md"), "* stops at /"
+    assert match(["nix/**"], "nix/a/b.nix") and not match(["nix/**"], "nixos/a"), "** crosses /"
+    assert not match(["deploy/**", "!deploy/docker/**"], "deploy/docker/x"), "a later ! takes back"
+    assert match(["!deploy/docker/**", "deploy/**"], "deploy/docker/x"), "order matters"
+    for pattern in ("?", "a+", "[ab]", "{a,b}", "**/x", "a/**/b", "/x", "a**b", "", "a\\b"):
+        assert not workflows.filter_modelled(pattern), pattern
+        with pytest.raises(ValueError, match="does not read"):
+            match([pattern], "x")
+
+
+# ── A gate's run a newer one cancelled, its timeouts, and a head that changes a gate ──────────
+
+PINS_RUN = f"https://github.com/{REPO}/actions/runs/5200"
+
+
+def test_a_nix_red_whose_rerun_a_reopen_cancelled_stays_red_beside_a_green_newer_run() -> None:
+    """A run's conclusion is its last attempt's: attempt 1 failed at the head's own step, a close
+    or a reopen cancelled its re-run, so the run reads 'cancelled', and the reopen's run passed.
+    Only the cancel is set aside; attempt 1's red holds."""
+    api = _gated()
+    older = {
+        "conclusion": "cancelled",
+        "attempts": [[("flake", "failure", "Build it")], [("flake", "cancelled", "")]],
+    }
+    api.gate("nix.yml", older, _nix())
+    assert _title(api) == (
+        f"Red: the head's Nix build (nix.yml) is red: attempt 1's `flake` is 'failure' at"
+        f" `Build it` (run {NIX_RUN})"
+    )
+
+
+def test_a_gate_job_red_in_a_run_a_close_cancelled_stays_red_and_its_cancelled_job_does_not() -> (
+    None
+):
+    """pin-smoke failed while layout-smoke ran, a close cancelled the run, and the reopen's run
+    passed: pin-smoke's red holds, and layout-smoke's cancel, which the close did, is set aside."""
+    api = FakeApi()
+    older = {
+        "conclusion": "cancelled",
+        "attempts": [
+            [("pin-smoke", "failure", "Build a two-platform image (no push)"),
+             ("layout-smoke", "cancelled", "")]
+        ],
+    }  # fmt: skip
+    api.gate("release-image-tooling.yml", older, {})
+    found = _red(api)
+    assert found.output["title"] == (
+        "Red: the head's release image tooling run (release-image-tooling.yml) is red: attempt"
+        " 1's `pin-smoke` is 'failure' at `Build a two-platform image (no push)` (run"
+        f" {PINS_RUN})"
+    )
+    assert "layout-smoke" not in found.output["summary"]
+
+
+def test_a_set_aside_run_is_named_in_no_passed_line_or_receipt() -> None:
+    api = _gated()
+    api.gate("nix.yml", _nix(("flake", "cancelled", ""), conclusion="cancelled"), _nix())
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    newer = f"https://github.com/{REPO}/actions/runs/5001"
+    assert f"- its Nix build (nix.yml) passed on every attempt: run {newer}\n" in (
+        found.output["summary"] + "\n"
+    )
+    receipt = merge_verdict.read_receipt(mc.check_body(found.body()))
+    assert receipt.toolchain["nix.yml"] == newer
+
+
+def test_a_middle_attempt_red_between_two_greens_is_red() -> None:
+    api = _gated()
+    api.gate(
+        "nix.yml",
+        {
+            "attempts": [
+                [("flake", "success", "")],
+                [("flake", "failure", "Build it")],
+                [("flake", "success", "")],
+            ]
+        },
+    )
+    assert "attempt 2's `flake` is 'failure' at `Build it`" in _title(api)
+
+
+@pytest.mark.parametrize("minutes", [45.0, 45.2])
+def test_a_nix_job_cancelled_at_its_bound_timed_out_and_is_the_change_s_own(
+    minutes: float,
+) -> None:
+    """GitHub ends a job that reaches its timeout-minutes as 'cancelled': one that ran its whole
+    45 minutes (main's nix.yml) timed out, the change's own, never flake-class. This is the shape
+    GitHub sends for a timeout."""
+    api = _gate_red(("flake", "cancelled", "", minutes))
+    api.gate("nix.yml", _nix(("flake", "cancelled", "", minutes), conclusion="cancelled"))
+    found = _note(api)
+    assert found.output["title"] == (
+        "Red (retry 0 of 2): the head's Nix build (nix.yml) is red: attempt 1's `flake` timed"
+        f" out at its 45 minutes (run {NIX_RUN})"
+    )
+
+
+def test_an_older_nix_run_that_timed_out_is_red_beside_a_green_newer_run() -> None:
+    api = _gated()
+    timed_out = _nix(("flake", "cancelled", "", 45.2), conclusion="cancelled")
+    api.gate("nix.yml", timed_out, _nix())
+    assert "attempt 1's `flake` timed out at its 45 minutes" in _title(api)
+
+
+@pytest.mark.parametrize("minutes", [3.0, 44.9])
+def test_a_nix_job_cancelled_before_its_bound_is_still_flake_class(minutes: float) -> None:
+    api = _gate_red(("flake", "cancelled", "", minutes))
+    api.gate("nix.yml", _nix(("flake", "cancelled", "", minutes), conclusion="cancelled"))
+    found = _note(api)
+    assert found.output["title"].startswith("Red (retry 0 of 2, flake-class): the head's Nix")
+
+
+@pytest.mark.parametrize("minutes", ["${{ inputs.minutes }}", 0, True, 4.5])
+def test_a_gate_bound_that_is_no_whole_number_of_minutes_is_unread(minutes: object) -> None:
+    api = FakeApi()
+    api.tree(MAIN, {GATE["nix.yml"].path: gate_yml("nix.yml", minutes=minutes)})
+    api.tree(HEAD, {GATE["nix.yml"].path: gate_yml("nix.yml", minutes=minutes)})
+    assert _title(api).startswith(
+        f"Red: unread: main's nix.yml bounds `flake` by {minutes!r}, not a whole number"
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [GATE["nix.yml"].path, ACTIONS + "setup/action.yml"],
+    ids=["the-gate-s-workflow", "a-local-action"],
+)
+@pytest.mark.parametrize("step", ["Set up job", "Install Nix", "Run actions/checkout@" + "3" * 40])
+def test_a_head_that_changes_what_a_gate_runs_owns_its_red_at_an_outside_step(
+    path: str, step: str
+) -> None:
+    """The run takes its steps from the head: a bad action pin or a build step named Install Nix
+    of the head's own fails there, so a red at those steps is the change's own."""
+    api = _gate_red(("flake", "failure", step))
+    text = gate_yml("nix.yml") if path == GATE["nix.yml"].path else "runs: {using: composite}\n"
+    api.tree(HEAD, {MERGE_PATH: MERGE_YML, "README.md": "hi\n", path: text + "# changed\n"})
+    api.gate("action-pins.yml", {})
+    _contract(api, {})
+    found = _note(api)
+    assert found.output["title"].startswith("Red (retry 0 of 2): the head's Nix build"), found
+
+
+def test_a_cancelled_job_beside_a_job_red_at_its_own_step_in_one_gate_is_not_flake_class() -> None:
+    api = _gate_red(("flake", "success", ""))
+    api.gate("nix.yml", _nix())
+    api.gate(
+        "release-image-tooling.yml",
+        {
+            "conclusion": "failure",
+            "attempts": [
+                [("pin-smoke", "cancelled", ""),
+                 ("layout-smoke", "failure", "Load and run each platform from the layout")]
+            ],
+        },
+    )  # fmt: skip
+    found = _note(api)
+    assert found.output["title"].startswith("Red (retry 0 of 2): the head's release image"), found
+
+
+def test_under_the_queue_a_behind_head_needs_a_nix_build_by_main_s_tip_filter() -> None:
+    """Behind main under the queue, the head's change is read against the commit it was built on,
+    and the filter is main's tip's: there it names uv.lock, though the built-on commit's and the
+    head's own nix.yml do not, so a head that changes uv.lock with no run is red."""
+    api = FakeApi()
+    api.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {
+        "behind_by": 3,
+        "merge_base_commit": {"sha": AHEAD},
+    }
+    narrow = gate_yml("nix.yml", [p for p in NIX_PATHS if p != "uv.lock"])
+    api.tree(AHEAD, {MERGE_PATH: MERGE_YML, "README.md": "hi\n", GATE["nix.yml"].path: narrow})
+    api.tree(
+        HEAD,
+        {
+            MERGE_PATH: MERGE_YML,
+            "README.md": "hi\n",
+            GATE["nix.yml"].path: narrow,
+            "uv.lock": "changed\n",
+        },
+    )
+    found = mc.decide(api, REPO, RUN, CONTROLLER, mc.Queue(FakeQueue(), APP, True)).posting
+    assert found is not None and found.conclusion == "failure", found
+    assert "the head changes `uv.lock`, which main's nix.yml runs on" in found.output["title"]
+
+
+def test_a_head_that_deletes_a_nix_file_needs_a_nix_build() -> None:
+    api = FakeApi()
+    api.tree(MAIN, {MERGE_PATH: MERGE_YML, "README.md": "hi\n", "nix/old.nix": "{ }\n"})
+    assert "the head changes `nix/old.nix`, which main's nix.yml runs on" in _title(api)
+
+
+@pytest.mark.parametrize(
+    ("plant", "says"),
+    [
+        pytest.param(
+            lambda api: api.answers.pop(f"{NIX_RUNS}&per_page=100&page=1"),
+            "Red: unread: GET /repos/owner/project/actions/workflows/nix.yml/runs",
+            id="no-runs-listing",
+        ),
+        pytest.param(
+            lambda api: (
+                api.gate("nix.yml", _nix()),
+                api.answers.pop(
+                    f"/repos/{REPO}/actions/runs/5000/attempts/1/jobs?per_page=100&page=1"
+                ),
+            ),
+            "Red: unread: GET /repos/owner/project/actions/runs/5000/attempts/1/jobs",
+            id="no-attempt-jobs",
+        ),
+        pytest.param(
+            lambda api: (
+                api.tree(MAIN, {GATE["nix.yml"].path: "on: [unclosed\n"}),
+                api.tree(HEAD, {GATE["nix.yml"].path: "on: [unclosed\n"}),
+            ),
+            "Red: unread: main's nix.yml is not YAML",
+            id="not-yaml",
+        ),
+        pytest.param(
+            lambda api: api.gate("nix.yml", _nix(run_attempt=None)),
+            "Red: unread: nix.yml run 5000 names no attempt",
+            id="no-run-attempt",
+        ),
+        pytest.param(
+            lambda api: api.gate("nix.yml", _nix(id="5000")),
+            f"Red: unread: a run of {HEAD}'s nix.yml names no id",
+            id="no-whole-id",
+        ),
+    ],
+)
+def test_a_gate_answer_this_cannot_read_is_unread(plant: Any, says: str) -> None:
+    api = FakeApi()
+    plant(api)
+    assert _title(api).startswith(says), _title(api)
+
+
+def test_only_the_last_attempt_of_a_run_a_newer_one_cancelled_is_set_aside() -> None:
+    """Attempt 1 was cancelled (a person, a lost runner), attempt 2 re-ran it and a reopen's run
+    cancelled that: attempt 2 is the cancel the newer run did, attempt 1's is not."""
+    api = _gated()
+    older = {
+        "conclusion": "cancelled",
+        "attempts": [[("flake", "cancelled", "")], [("flake", "cancelled", "")]],
+    }
+    api.gate("nix.yml", older, _nix())
+    assert "attempt 1's `flake` is 'cancelled'" in _title(api)
+    assert "attempt 2" not in _title(api)
+
+
+def test_an_older_cancelled_run_whose_job_failed_at_a_step_first_is_red_at_that_step() -> None:
+    """A job that failed at a step, then was cancelled (a close, a reopen), concludes 'cancelled':
+    it is judged as the failure it names, never set aside."""
+    api = _gated()
+    older = _nix(("flake", "cancelled", "Build the package and run the flake's checks"))
+    api.gate("nix.yml", {**older, "conclusion": "cancelled"}, _nix())
+    assert _title(api) == (
+        "Red: the head's Nix build (nix.yml) is red: attempt 1's `flake` is 'failure' at"
+        f" `Build the package and run the flake's checks` (run {NIX_RUN})"
+    )
+
+
+def test_a_newest_cancelled_run_whose_job_failed_at_its_own_step_is_not_flake_class() -> None:
+    api = _gate_red(("flake", "cancelled", "Build the package and run the flake's checks"))
+    api.gate(
+        "nix.yml",
+        _nix(
+            ("flake", "cancelled", "Build the package and run the flake's checks"),
+            conclusion="cancelled",
+        ),
+    )
+    assert _note(api).output["title"].startswith("Red (retry 0 of 2): the head's Nix build")
+
+
+@pytest.mark.parametrize(
+    ("first", "says"),
+    [
+        pytest.param([], "attempt 1 ran no job", id="no-job-on-attempt-1"),
+        pytest.param([("other", "success", "")], "attempt 1 has 0 `flake` jobs", id="no-flake"),
+    ],
+)
+def test_an_earlier_attempt_of_a_run_a_newer_one_cancelled_is_read_whole(
+    first: list[tuple[str, str | None, str]], says: str
+) -> None:
+    api = _gated()
+    older = {"conclusion": "cancelled", "attempts": [first, [("flake", "cancelled", "")]]}
+    api.gate("nix.yml", older, _nix())
+    assert says in _title(api)
+
+
+@pytest.mark.parametrize(
+    ("times", "says"),
+    [
+        pytest.param({"started_at": None}, "names no started_at with a zone", id="no-start"),
+        pytest.param(
+            {"completed_at": "2026-11-10T12:30:00"},
+            "names no completed_at with a zone: '2026-11-10T12:30:00'",
+            id="no-zone",
+        ),
+        pytest.param({"started_at": "soon"}, "names no started_at with a zone", id="no-time"),
+    ],
+)
+def test_a_cancelled_job_whose_times_this_cannot_read_is_unread(
+    times: dict[str, object], says: str
+) -> None:
+    api = _gated()
+    api.gate("nix.yml", _nix(("flake", "cancelled", "", 3.0, times), conclusion="cancelled"))
+    assert _title(api).startswith("Red: unread: job 500000 " + says), _title(api)
+
+
+@pytest.mark.parametrize(
+    ("times", "says"),
+    [
+        pytest.param({"started_at": None}, "names no started_at with a zone", id="no-start"),
+        pytest.param({"completed_at": None}, "names no completed_at with a zone", id="no-end"),
+        pytest.param(
+            {"started_at": "2026-11-10T12:00:00"}, "names no started_at with a zone", id="naive"
+        ),
+    ],
+)
+def test_a_superseded_job_whose_times_this_cannot_read_is_unread(
+    times: dict[str, object], says: str
+) -> None:
+    """A job of a run a newer one cancelled, which ran 45.2 minutes past its 45: a time this cannot
+    read is unread, never set aside."""
+    api = _gated()
+    older = _nix(("flake", "cancelled", "", 45.2, times), conclusion="cancelled")
+    api.gate("nix.yml", older, _nix())
+    assert _title(api).startswith("Red: unread: job 500000 " + says), _title(api)
+
+
+#: A job GitHub cancelled before any runner took it: no runner, no step, and its started_at is when
+#: it was queued (as the jobs API writes such a job), here 50 minutes before the cancel. The jobs
+#: API names no runner by a runner_id of 0 or of null.
+QUEUED = ("flake", "cancelled", "", 50.0, {"runner_id": 0, "runner_name": "", "steps": []})
+QUEUED_NULL = ("flake", "cancelled", "", 50.0, {"runner_id": None, "runner_name": "", "steps": []})
+
+
+@pytest.mark.parametrize("queued", [QUEUED, QUEUED_NULL], ids=["runner-id-0", "runner-id-null"])
+def test_a_job_cancelled_in_the_queue_past_its_bound_is_read_as_a_cancel(
+    queued: tuple[str, str, str, float, dict[str, object]],
+) -> None:
+    """Its time is its wait in the queue, not a run: set aside in an older run beside a green
+    newer one, and flake-class on the newest."""
+    api = _gated()
+    api.gate("nix.yml", _nix(queued, conclusion="cancelled"), _nix())
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    api = _gate_red(queued)
+    api.gate("nix.yml", _nix(queued, conclusion="cancelled"))
+    assert _note(api).output["title"].startswith("Red (retry 0 of 2, flake-class): the head's Nix")
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({"runner_id": 1000179068, "steps": []}, id="a-runner-and-no-step"),
+        pytest.param({"runner_id": None, "steps": None}, id="no-steps-list"),
+    ],
+)
+def test_a_cancelled_job_that_names_a_runner_or_no_steps_list_is_timed(
+    fields: dict[str, object],
+) -> None:
+    """Only a job that names no runner and lists no step is read as one cancelled in the queue:
+    one that names a runner, or an answer with no steps list, is timed, so 50 minutes past its 45
+    is a timeout, red beside a green newer run."""
+    api = _gated()
+    older = _nix(("flake", "cancelled", "", 50.0, fields), conclusion="cancelled")
+    api.gate("nix.yml", older, _nix())
+    assert "attempt 1's `flake` timed out at its 45 minutes" in _title(api), _title(api)
+
+
+def test_a_job_cancelled_before_it_started_is_read_as_a_cancel() -> None:
+    """GitHub can end a job it cancelled before it started a second before its start: it ran
+    no time, so it did not time out. Set aside in an older run beside a green newer one, and
+    flake-class on the newest."""
+    early = ("flake", "cancelled", "", -1 / 60)
+    api = _gated()
+    api.gate("nix.yml", _nix(early, conclusion="cancelled"), _nix())
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    api = _gate_red(early)
+    api.gate("nix.yml", _nix(early, conclusion="cancelled"))
+    assert _note(api).output["title"].startswith("Red (retry 0 of 2, flake-class): the head's Nix")

@@ -13,6 +13,12 @@
 # cache.nixos.org's paths, PyPI's files, the installer. A week is how long a vanished input can
 # go unnoticed here, and the first user to install would otherwise be the one who notices.
 #
+# GATES THE MERGE VERDICT. tools/ci/workflows.py's GATES names this workflow, its `flake` job and
+# the steps that fetch only outside inputs (`Install Nix`, with GitHub's set-up and the checkout).
+# Main's copy of the pull_request filter below decides when a head needs this run, and every run
+# on the head must pass on every attempt. Never dispatch it on a pull request's branch: it joins
+# that pull request's run's concurrency group below and cancels the run the verdict reads.
+#
 # NO TOKEN. Nothing here needs one: the checkout is of a public repository and every fetch is
 # anonymous. And the Nix installer writes whatever token the job holds into /etc/nix/nix.conf,
 # where the gateway this job boots could read it, so the job holds none.

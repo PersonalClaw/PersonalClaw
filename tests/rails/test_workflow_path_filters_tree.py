@@ -17,7 +17,13 @@ A step that builds the project (``uv build``) reads all of it, which no filter n
 says why its filter leaves that out (:data:`PROJECT_BUILDS`). Every trigger's ``paths:`` is the same
 list, and every workflow with a filter is held here or by the rail :data:`HELD_ELSEWHERE` names.
 GitHub reads a filter as globs, in order: ``*`` matches within a folder, ``**`` across folders, and
-a later ``!pattern`` takes back what an earlier one matched.
+a later ``!pattern`` takes back what an earlier one matched (``tools/ci/workflows.py``'s
+``filter_matches``, the merge verdict's own reader).
+
+Each is a gate of the merge verdict (``workflows.GATES``), so its shape is held to what the gate
+says of it: its ``name:``, its jobs (none skipped by a job-level ``if:``), the steps it calls
+outside inputs, and a ``pull_request`` filtered by its paths alone, every pattern one the verdict
+reads.
 """
 
 from __future__ import annotations
@@ -34,8 +40,10 @@ import yaml
 from job_reads import forget, python_reads, tracked_dirs, tracked_paths
 from rails_repo import REPO
 
+from tools.ci import workflows
+
 _WORKFLOWS = ".github/workflows"
-HELD = ("nix.yml", "action-pins.yml", "release-image-tooling.yml")
+HELD = tuple(gate.file for gate in workflows.GATES)
 
 #: Workflows whose filter another rail holds, and that rail. None since #3915's flip retired
 #: docker-single-container.yml, whose build is the catalogue's `image` entry.
@@ -125,30 +133,9 @@ def builds_the_project(doc: Mapping[Any, Any]) -> bool:
     return any(_PROJECT_BUILD.search(str(step.get("run", ""))) for step in _steps(doc))
 
 
-def _glob(pattern: str) -> re.Pattern[str]:
-    out, i = "", 0
-    while i < len(pattern):
-        if pattern.startswith("**", i):
-            out, i = out + ".*", i + 2
-        elif pattern[i] == "*":
-            out, i = out + "[^/]*", i + 1
-        elif pattern[i] == "?":
-            out, i = out + "[^/]", i + 1
-        else:
-            out, i = out + re.escape(pattern[i]), i + 1
-    return re.compile(out)
-
-
 def matches(patterns: list[str], path: str) -> bool:
-    """Whether GitHub's filter starts the workflow for ``path``: patterns read in order, a later
-    ``!pattern`` taking back what an earlier one matched."""
-    hit = False
-    for pattern in patterns:
-        if pattern.startswith("!"):
-            hit = hit and not _glob(pattern[1:]).fullmatch(path)
-        else:
-            hit = hit or bool(_glob(pattern).fullmatch(path))
-    return hit
+    """Whether GitHub's filter starts the workflow for ``path``, as the merge verdict reads it."""
+    return workflows.filter_matches(patterns, path)
 
 
 def unmatched(patterns: list[str], found: Mapping[str, str], root: Path = REPO) -> list[str]:
@@ -204,6 +191,110 @@ def test_every_workflow_with_a_filter_is_held() -> None:
 def test_each_reasoned_project_build_is_still_one() -> None:
     for name in PROJECT_BUILDS:
         assert builds_the_project(_doc(name)), f"{name} builds the project no more: drop its reason"
+
+
+def gate_problems(gate: workflows.Gate, doc: Mapping[Any, Any]) -> list[str]:
+    """How the workflow differs from what its gate says of it. A gate job, and each of its steps,
+    runs every time and fails when it fails: no ``if:`` and no ``continue-on-error``, which the
+    head's own copy, the one its run takes, could use to read a red as green."""
+    out: list[str] = []
+    if doc.get("name") != gate.name:
+        out.append(f"{gate.file} is named {doc.get('name')!r}, not its gate's {gate.name!r}")
+    jobs = doc.get("jobs") or {}
+    for name in gate.jobs:
+        job = jobs.get(name)
+        if not isinstance(job, Mapping):
+            out.append(f"{gate.file} has no `{name}` job, which its gate requires")
+        else:
+            if "if" in job:
+                out.append(f"{gate.file}'s `{name}` has a job-level if:, so a run may skip it")
+            if job.get("name", name) != name:
+                out.append(
+                    f"{gate.file}'s `{name}` is named {job.get('name')!r}, so the verdict finds no"
+                    f" `{name}` job in its run"
+                )
+            if "continue-on-error" in job:
+                out.append(
+                    f"{gate.file}'s `{name}` sets continue-on-error, so its red may read green"
+                )
+            for step in job.get("steps", []) or []:
+                label = step.get("name") or step.get("uses") or step.get("run", "")[:40]
+                if "continue-on-error" in step:
+                    out.append(
+                        f"{gate.file}'s `{name}` step `{label}` sets continue-on-error, so a red"
+                        " step may read green"
+                    )
+                if "if" in step:
+                    out.append(
+                        f"{gate.file}'s `{name}` step `{label}` has an if:, so a run may skip it"
+                    )
+    steps = {str(s.get("name")) for j in jobs.values() for s in (j or {}).get("steps", []) or []}
+    for step in gate.outside:
+        if step != "Set up job" and step not in steps:
+            out.append(f"{gate.file} has no step named {step!r}, which its gate calls outside")
+    try:
+        workflows.pull_request_paths(doc)
+    except ValueError as exc:
+        out.append(f"{gate.file} {exc}")
+    return out
+
+
+@pytest.mark.parametrize("gate", workflows.GATES, ids=lambda g: g.file)
+def test_each_gate_is_its_workflow_as_the_verdict_reads_it(gate: workflows.Gate) -> None:
+    found = gate_problems(gate, _doc(gate.file))
+    assert not found, "\n".join(found)
+
+
+_BUILD = "Build the package and run the flake's checks"
+
+
+def _flake_step(doc: Any, **fields: Any) -> None:
+    """Set *fields* on the flake job's build step."""
+    for step in doc["jobs"]["flake"]["steps"]:
+        if step.get("name") == _BUILD:
+            step.update(fields)
+            return
+    raise AssertionError("premise: nix.yml's flake job has its build step")
+
+
+def _renamed_step(doc: Any) -> None:
+    for step in doc["jobs"]["flake"]["steps"]:
+        if step.get("name") == "Install Nix":
+            step["name"] = "Install"
+            return
+    raise AssertionError("premise: nix.yml's flake job has an Install Nix step")
+
+
+_GATE_EDITS = {
+    "nix.yml is named 'Nix build', not its gate's 'Nix'": lambda d: d.update(name="Nix build"),
+    "nix.yml has no `flake` job, which its gate requires": lambda d: d["jobs"].pop("flake"),
+    "nix.yml's `flake` has a job-level if:": lambda d: d["jobs"]["flake"].update({"if": "false"}),
+    "nix.yml has no step named 'Install Nix'": _renamed_step,
+    "nix.yml's `flake` is named 'Build'": lambda d: d["jobs"]["flake"].update({"name": "Build"}),
+    "nix.yml's `flake` sets continue-on-error": lambda d: d["jobs"]["flake"].update(
+        {"continue-on-error": True}
+    ),
+    f"nix.yml's `flake` step `{_BUILD}` sets continue-on-error": lambda d: _flake_step(
+        d, **{"continue-on-error": True}
+    ),
+    f"nix.yml's `flake` step `{_BUILD}` has an if:": lambda d: _flake_step(
+        d, **{"if": "github.event_name != 'pull_request'"}
+    ),
+    "nix.yml filters pull_request by paths-ignore": lambda d: _triggers(d)["pull_request"].update(
+        {"paths-ignore": ["docs/**"]}
+    ),
+    "nix.yml names a filter pattern this does not read: '**/flake.nix'": lambda d: _triggers(d)[
+        "pull_request"
+    ]["paths"].append("**/flake.nix"),
+}
+
+
+@pytest.mark.parametrize("says", list(_GATE_EDITS))
+def test_a_gate_whose_workflow_differs_fails(says: str) -> None:
+    doc = _doc("nix.yml")
+    _GATE_EDITS[says](doc)
+    found = gate_problems(workflows.GATES[0], doc)
+    assert any(f.startswith(says) for f in found), found
 
 
 def test_the_census_is_not_vacuous() -> None:
