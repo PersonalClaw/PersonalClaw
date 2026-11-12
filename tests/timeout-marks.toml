@@ -586,8 +586,8 @@ reason = "the schedule history appended, rotated and trimmed at its real sizes; 
 
 [[mark]]
 site = "tests/test_shell_syntax_splits_a_line_as_bash_does.py::test_a_generated_line_is_read_as_bash_runs_it"
-cap = 50
-reason = "hypothesis-generated lines, each read by the shell reader and by a real bash; 24 s on CI at worst (breadth's night, 2026-10-24)"
+cap = 100
+reason = "400 hypothesis-generated lines, each read by the shell reader and by a real bash, all under this one mark; 24 s on CI at worst (breadth's night, 2026-10-24), a 13.2 s call alone on a Mac at load 40, and past its 50 s cap inside a loaded local set at load 38 to 46 (2026-11-12)"
 
 [[mark]]
 site = "tests/test_test_values_have_no_real_token_format.py::test_a_provider_key_prefix_appears_only_where_the_shape_is_tested"
@@ -893,3 +893,18 @@ reason = "a census of every tracked file under tools/, scripts/, src/ and .githu
 site = "tests/test_website_installer.py::TestTruncatedDownloadFailsClosed.test_every_truncation_prefix_installs_nothing"
 cap = 60
 reason = "the installer fed to /bin/sh once for each line-prefix, about 224 shells; 0.2 s on CI (static, on Linux's dash), but on a Mac, where /bin/sh is bash, 6.7 and 12.6 s inside a loaded local set (loads 37 to 46) and past 30 s once (loads 27 to 34, 2026-11-12)"
+
+[[mark]]
+site = "tests/test_a_stage_gate_judges_what_the_stage_did.py::test_the_owners_word_reaches_the_gate_and_the_loop_finishes"
+cap = 60
+reason = "a loop run whose stage gate waits for the owner's word and then finishes; 16 to 20 s alone on a Mac (six runs, 2026-11-12), and past 30 s once alone and inside a loaded local set at load 38 to 46"
+
+[[mark]]
+site = "tests/test_a_loop_that_ends_keeps_the_work_nobody_merged.py::test_a_merge_that_conflicts_is_undone_and_keeps_the_work"
+cap = 60
+reason = "a loop's end over a real git repository whose merge conflicts and is undone; 8.5 to 20 s alone on a Mac (six runs, 2026-11-12), and past 30 s inside a loaded local set at load 38 to 46"
+
+[[mark]]
+site = "tests/test_an_attended_loop_merges_only_what_its_owner_approves.py::test_resume_after_setting_an_identity_does_not_stop_on_the_settled_question"
+cap = 60
+reason = "an attended loop resumed after a commit identity is set, over a real git repository; 8.9 to 19.5 s alone on a Mac (six runs, 2026-11-12), and past 30 s inside a loaded local set at load 38 to 46"
