@@ -51,12 +51,12 @@ let
 
   app = python.pkgs.buildPythonPackage {
     pname = "personalclaw";
-    version = "0.3.7";
+    version = "0.3.8";
     format = "wheel";
 
     src = fetchurl {
-      url = "https://files.pythonhosted.org/packages/f8/df/35cd5680ba1400f1b5142ad38829f496c161afcbfab17e77efdceb99b70d/personalclaw-0.3.7-py3-none-any.whl";
-      hash = "sha256-sq0VZ+AyXjjcivv0uWNu6Rot2g3BAJdoCaH1EM+f03U=";
+      url = "https://files.pythonhosted.org/packages/87/ed/062c64f6eb9c81e83f894b52e3d70cbe44d3a6264b12f3e05af54955fa7e/personalclaw-0.3.8-py3-none-any.whl";
+      hash = "sha256-w6MWDodcD+Twz7WtDgrbbWWOQhrLkJrdz/24tgAp8eY=";
     };
 
     # `pysqlite3-binary` is not in nixpkgs, and it is an OPTIONAL ACCELERATOR, not a
@@ -97,6 +97,7 @@ let
         tree-sitter-language-pack
         httpx
         certifi
+        idna
         pyyaml
         python-dotenv
         tzdata
