@@ -1,5 +1,6 @@
 """What the knowledge store keeps for the library (`dashboard/handlers/library.py`): its revision
-counter, a knowledge item's move between projects and a findings log's own state.
+counter, a knowledge item's move between projects, a findings log's own state and the owner's
+call on a conflict.
 
 Mixed into :class:`~personalclaw.knowledge.store.KnowledgeStore`, which opens them after its own
 schema and migrations, so the store module keeps to its size and the library's parts sit
@@ -31,10 +32,20 @@ class LibraryTables:
         "collection_items",
         "intent_outcomes",
         "intent_log_state",
+        "conflict_decisions",
         "sources",
     )
 
     _LIBRARY_SQL = """
+            -- The owner's call on a conflict, by the pair's id (`knowledge.conflict_calls`):
+            -- outside the conflict list each reading of an item replaces, so it holds when
+            -- either item is read again. `choice` is one of the two items' ids, or `both`.
+            CREATE TABLE IF NOT EXISTS conflict_decisions (
+                id TEXT PRIMARY KEY,
+                choice TEXT NOT NULL,
+                decided_at TEXT NOT NULL
+            );
+
             -- A findings log's own state, beside its intent rather than on the intent's record:
             -- reading, pinning or archiving the log then never makes an open Edit intent's save
             -- stale. Deleting the intent deletes its row; clearing its findings leaves it.
@@ -188,4 +199,19 @@ class LibraryTables:
     def delete_intent_log_state(self, intent_id: str) -> None:
         """Drop an intent's findings log state (when the intent itself is deleted)."""
         self.db.execute("DELETE FROM intent_log_state WHERE intent_id = ?", (intent_id,))
+        self.db.commit()
+
+    def conflict_choices(self) -> dict[str, str]:
+        """Map of conflict id → the owner's call on it (`knowledge.conflict_calls`)."""
+        rows = self.db.execute("SELECT id, choice FROM conflict_decisions")
+        return {str(r["id"]): str(r["choice"]) for r in rows}
+
+    def decide_conflict(self, conflict_id: str, choice: str) -> None:
+        """Keep the owner's call on conflict *conflict_id*, replacing an earlier one."""
+        self.db.execute(
+            "INSERT INTO conflict_decisions (id, choice, decided_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET choice = excluded.choice, "
+            "decided_at = excluded.decided_at",
+            (conflict_id, choice, utc_now_iso()),
+        )
         self.db.commit()

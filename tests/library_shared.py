@@ -132,6 +132,31 @@ async def report_run(report_id: str) -> dict:
     return json.loads(result.stdout)
 
 
+def key_points(item_id: str, *points: str) -> None:
+    """Give item *item_id* the key points a reading of it wrote, as the ingest pass leaves them."""
+    store = knowledge_store()
+    store.db.execute(
+        "UPDATE items SET insights = ? WHERE id = ?",
+        (json.dumps({"key_points": list(points)}), item_id),
+    )
+    store.db.commit()
+
+
+def conflict_pass(item_id: str) -> list[dict]:
+    """The ingest pipeline's conflict pass over *item_id*, as a reading of it runs it."""
+    from personalclaw.action_providers.knowledge_persist_provider import run_ingest_conflict_pass
+
+    return run_ingest_conflict_pass(knowledge_store(), item_id)
+
+
+def conflict_id(a: str, b: str) -> str:
+    """The id of the pair (*a*, *b*), as the brief spells it."""
+    import hashlib
+
+    lo, hi = sorted((a, b))
+    return hashlib.sha256(f"conflict:{lo}:{hi}".encode()).hexdigest()[:16]
+
+
 def write_up(name: str, content: str) -> str:
     """A report's write-up as its runs keep it: the research-finding item of the report's name."""
     from personalclaw.knowledge.semantics import RESEARCH_FINDING_KIND, logical_key

@@ -18,7 +18,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import json_error
-from personalclaw.knowledge import intent_runs, project_scope
+from personalclaw.knowledge import conflict_calls, intent_runs, project_scope
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
 from personalclaw.knowledge.llm_pool import LLMPool
 from personalclaw.knowledge.media import classify, guess_mime
@@ -3044,35 +3044,48 @@ async def list_conflicts(request: web.Request) -> web.Response:
 
     Every row is a deterministic finding, so no row carries a tier label: `find_conflicts` is the
     only writer, and a field whose value is the same on every row tells a reader nothing.
+
+    The owner's call is the one write, and it never removes a claim: each row carries its pair's
+    ``id``, the ``choice`` made on it ("" for none) and ``prefer`` worked out from it
+    (`knowledge.conflict_calls`).
     """
     store = _store(request)
     limit = _int_param(request, "limit", 100, low=1, high=500)
-    rows: list[dict] = []
     try:
-        # A LIKE prefilter before parsing: `file_metadata` is a JSON blob on every row, and
-        # json-loading the whole store to find the few items with conflicts would make this route
-        # scale with library size rather than with the number of conflicts.
-        candidates = store.db.execute(
-            "SELECT id, title, kind, file_metadata FROM items "
-            "WHERE is_archived = 0 AND file_metadata LIKE '%\"conflicts\"%' "
-            "ORDER BY updated_at DESC LIMIT ?",
-            (limit,),
-        )
-        for row in candidates:
-            try:
-                meta = json.loads(row["file_metadata"] or "{}")
-            except (TypeError, ValueError):
-                continue
-            entries = meta.get("conflicts") if isinstance(meta, dict) else None
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                if isinstance(entry, dict):
-                    rows.append({"item_id": row["id"], "item_title": row["title"], **entry})
+        choices = store.conflict_choices()
+        rows = [
+            conflict_calls.served(r, choices) for r in conflict_calls.entries(store, limit=limit)
+        ]
     except Exception:
         logger.warning("could not read knowledge conflicts", exc_info=True)
         return web.json_response({"conflicts": [], "count": 0, "error": "unreadable"})
     return web.json_response({"conflicts": rows[:limit], "count": len(rows)})
+
+
+async def decide_conflict(request: web.Request) -> web.Response:
+    """POST /api/knowledge/conflicts/{id}/decision -- record which of two items to go by.
+
+    ``{choice}``: the id of one of the pair's two items, or ``both``. Kept by the pair's id, so it
+    holds when either item is read again, and it covers every claim the two disagree on. An id
+    that names no pair in disagreement now, or a choice that is neither item nor ``both``, is
+    refused with nothing written. Both claims stay."""
+    store = _store(request)
+    cid = request.match_info["id"]
+    pair = conflict_calls.pair_items(store, cid)
+    if pair is None:
+        return json_error(
+            "unknown_conflict", message="No two items disagree under that id now.", status=404
+        )
+    choice = (await json_object_body(request)).get("choice")
+    if not isinstance(choice, str) or choice not in (*pair, conflict_calls.BOTH):
+        return json_error(
+            "bad_choice",
+            message="The choice is the id of one of the two items, or both.",
+            status=400,
+        )
+    store.decide_conflict(cid, choice)
+    await _sel_log_async("conflict.decide", conflict_id=cid, choice=choice)
+    return web.json_response({"id": cid, "choice": choice})
 
 
 async def list_item_relations(request: web.Request) -> web.Response:
@@ -4208,6 +4221,7 @@ def setup_knowledge_routes(app: web.Application) -> None:
     # flag needs a place a human can see it. Read-only by design — deciding which source to trust
     # is the owner's judgement, not something an endpoint should let the system settle.
     app.router.add_get("/api/knowledge/conflicts", list_conflicts)
+    app.router.add_post("/api/knowledge/conflicts/{id}/decision", decide_conflict)
     app.router.add_get("/api/knowledge/items/{id}/relations", list_item_relations)
     app.router.add_get("/api/knowledge/items/{id}/staleness", get_item_staleness)
     # The structural editing verbs. Registered BEFORE the `/items/{id}` catch-alls for

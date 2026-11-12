@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **967 registrations** over **784 distinct paths** — 960 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **968 registrations** over **785 distinct paths** — 961 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -25,7 +25,7 @@ The 134 families the surface divides into, largest first.
 | Family | Registrations | Distinct paths |
 |---|---|---|
 | `/api/chat` | 91 | 78 |
-| `/api/knowledge` | 77 | 62 |
+| `/api/knowledge` | 78 | 63 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
 | `/api/models` | 38 | 30 |
@@ -161,7 +161,7 @@ The 134 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 960 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 961 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -549,6 +549,7 @@ The 960 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/knowledge/collections/{id}/items` | shelve one or many items. |
 | `DELETE` | `/api/knowledge/collections/{id}/items/{item_id}` | unshelve one item. |
 | `GET` | `/api/knowledge/conflicts` | every recorded disagreement in the store. |
+| `POST` | `/api/knowledge/conflicts/{id}/decision` | - record which of two items to go by. |
 | `GET` | `/api/knowledge/decisions` | the journal view and the calibration strip. |
 | `GET` | `/api/knowledge/embedding/status` | - embedding config and progress. |
 | `GET` | `/api/knowledge/entities` | _(no summary)_ |

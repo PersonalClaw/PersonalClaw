@@ -1600,6 +1600,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "paused": "The intent is paused, so it checks nothing until it is switched on.",
     "no_run": "The intent has not checked your saved items since the gateway started.",
     "bad_limit": "The page size is not a whole number in the allowed range.",
+    "unknown_conflict": "No two items disagree under that id now.",
+    "bad_choice": "The choice is neither of the two items that disagree, nor both.",
 }
 
 

@@ -274,6 +274,7 @@ def _row(**fields: Any) -> dict:
         "pinned": False,
         "archived": False,
         "running": False,
+        "conflicts": [],
         "state": "",
         "excerpt": "",
         "size": None,
@@ -761,6 +762,8 @@ def read_library(sources: Sources, query: Query, *, runs_reader: Any = None) -> 
     except Exception:
         logger.warning("library: the artifact store could not be read", exc_info=True)
         failed.append(STORE_ARTIFACTS)
+    if STORE_KNOWLEDGE in found:
+        _join_conflicts(found[STORE_KNOWLEDGE], rows)
     searched: dict[str, Any] = {}
     if query.q:
         order, hits, searched = search(found, query.q, reports)
@@ -968,6 +971,22 @@ def _mtime_ns(path: Any) -> int:
         return os.stat(path).st_mtime_ns
     except (OSError, TypeError):
         return 0
+
+
+def _join_conflicts(store: Any, rows: list[dict]) -> None:
+    """Give each knowledge row the ids of its conflicts with no call yet, on both items of each
+    pair, whichever of them holds the entry (`knowledge.conflict_calls`)."""
+    from personalclaw.knowledge import conflict_calls
+
+    try:
+        waiting = conflict_calls.undecided(store)
+    except Exception:
+        logger.debug("library: conflicts unreadable", exc_info=True)
+        return
+    for row in rows:
+        kind, _, ident = row["ref"].partition(":")
+        if kind == "knowledge" and ident in waiting:
+            row["conflicts"] = sorted(waiting[ident])
 
 
 def running_reports() -> frozenset[str]:
