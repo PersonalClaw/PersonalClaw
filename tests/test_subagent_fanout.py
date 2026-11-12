@@ -16,6 +16,8 @@ Each test proves one of these properties:
   at its start), and a stopped helper hands its slot to the one waiting for it.
 - A workflow run's key: its breaker and run budget count every step of the run, one after another
   as well as side by side, and end with the run.
+- A helper's ending starts what waits for a slot only on its manager's own loop, and nothing once
+  the gateway's start-up has raised.
 """
 
 import asyncio
@@ -1347,3 +1349,69 @@ class TestARunsKeyLastsTheRun:
             await _settle()
             assert run_key not in mgr._fanout_failures
             assert run_key not in mgr._run_fanouts and run_key not in mgr._run_fanouts_ended
+
+
+# ── a helper's ending starts nothing off its manager's loop ─────────────────────────────────
+
+
+class TestADrainStartsOnlyOnItsLoop:
+    @pytest.mark.asyncio
+    async def test_an_ending_on_another_loop_or_on_none_starts_nothing(self) -> None:
+        """A helper's ending can run where its manager does not: a task of a loop that closed with
+        it pending is collected while another loop runs (a test's helper, in a later test's loop),
+        and its ending drains the queue there. What waits for a slot is not started there, where
+        nothing would stop it, nor with no loop running at all."""
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            holder = mgr.spawn("holds the one slot", parent_session_key="dashboard:x")
+            waiting = mgr.spawn("waits for it", parent_session_key="dashboard:y")
+            assert holder is not None and waiting is not None and waiting.queued
+            mgr._running_count = 0  # the slot reads free, as at the holder's ending
+
+            async def _drain_here() -> None:
+                mgr._drain_queue()
+
+            await asyncio.to_thread(lambda: asyncio.run(_drain_here()))  # another loop
+            await asyncio.to_thread(mgr._drain_queue)  # no loop running
+            assert waiting.queued and waiting in mgr._queue and waiting.id not in mgr._tasks
+            mgr._drain_queue()  # the positive control: on its own loop, it starts
+            assert not waiting.queued and waiting.id in mgr._tasks
+            mgr._running_count = 2  # the holder and the helper it started, for the stop's count
+
+    @pytest.mark.asyncio
+    async def test_the_gateway_raising_stops_its_helpers_starting_first(self, monkeypatch) -> None:
+        """When the gateway's start-up raises, nothing its manager holds starts from then on: the
+        loop's close cancels the helpers still running, and each one's ending would start a helper
+        waiting for its slot, after the app processes were stopped."""
+        from personalclaw import gateway
+        from personalclaw.config.loader import AppConfig
+
+        made: list[SubagentManager] = []
+        starting_at_the_stop: list[bool] = []
+
+        async def run(self) -> None:
+            self.subagent_mgr = SubagentManager(
+                sessions=MagicMock(),
+                ctx_builder=MagicMock(),
+                on_done=AsyncMock(),
+                is_yolo=lambda: True,
+            )
+            made.append(self.subagent_mgr)
+            raise RuntimeError("start-up failed")
+
+        monkeypatch.setattr(gateway.GatewayOrchestrator, "run", run)
+        monkeypatch.setattr(
+            "personalclaw.apps.app_runtime.stop_processes",
+            lambda: starting_at_the_stop.append(not made[0]._stopping),
+        )
+        cfg = AppConfig()
+        monkeypatch.setattr(cfg, "load_credentials", lambda: {})
+        with pytest.raises(RuntimeError, match="start-up failed"):
+            await gateway.run_gateway(cfg, no_dashboard=True, no_crons=True)
+        assert starting_at_the_stop == [False]

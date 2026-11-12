@@ -3638,6 +3638,11 @@
      {"annotation": "str", "kind": "keyword_only", "name": "because"}
     ],
     "returns": "int"
+   },
+   "stop_starting": {
+    "kind": "method",
+    "params": [],
+    "returns": "None"
    }
   }
  },

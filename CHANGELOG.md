@@ -13,6 +13,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat starts helpers again once the helpers it had are stopped or have ended: after Stop fan-out or a stopped turn found them all waiting to start, after its last helper reached Max tokens / run, after five of its helpers failed in a row, or after a helper's start was denied or went unanswered. Until the gateway restarted, it refused every later helper with the old reason. A helper stopped while it runs, or ended at its time limit, now lets the next helper waiting to start begin at once; before, that helper waited for another one to end, and one asked for later could start first.**
 - **A project's work board lists a loop once, no longer again as each of its steps.**
 - **A workflow run's Max tokens / run and its failure breaker count every agent step of the run, one after another as well as side by side, until the run ends. A step that started after the one before it had ended began again at 0 tokens and 0 failures, so a run of steps in a row could spend Max tokens / run on each and fail five times per step. Once a run's steps are stopped (Stop fan-out, the ceiling or the breaker), its later steps are refused until the run ends.**
+- **A gateway whose start-up fails starts no helper that was waiting for its slot while it closes, after its app processes have stopped.**
 
 ### Security
 
@@ -25,6 +26,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **For apps, `personalclaw.sdk.channel.SubagentManager` has `end_run_fanout(key)`: a workflow run's fan-out key (`workflow:<run_id>`) ends with the run, and what its agent steps shared (the breaker's count, a stop and the run's token total) ends once nothing of the run runs or waits.**
+- **For apps, `personalclaw.sdk.channel.SubagentManager` has `stop_starting()`: the manager starts no helper from then on, and one still waiting for a slot stays recorded for the next start. `cancel_all` begins with it.**
 - **The gateway lists your whole library in one read, `GET /api/library`: notes, files, links, artifacts, report write-ups and what each intent found, one row per thing, with a true total and the name of any store it couldn't read. A note or an artifact can move into a project, which takes it out of the one it was in, or leave its project. A note or a decision saved in a project's chat is filed under that project. An intent can write a report on a schedule, and its check of what you already saved can run in the background, with its progress and a way to stop it. The run that answers when it is done still works. A feed can be removed or checked at once. You can record which of two items that disagree to go by, and both are kept. Renaming or merging a tag keeps the reports that read it on the same items, and a report whose tags were all deleted stops running on its schedule and says why.**
 
 ### Changed

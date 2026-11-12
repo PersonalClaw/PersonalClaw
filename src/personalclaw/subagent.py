@@ -531,6 +531,9 @@ class SubagentManager:
         # Set once the gateway stops (`cancel_all`): nothing starts after it, so a spawn still
         # queued waits, recorded, for the next start rather than starting into the shutdown.
         self._stopping = False
+        # The loop this manager runs on, bound at its first start (`_dispatch_run`). A helper's
+        # ending run on another loop, or with none running, starts nothing (`_drain_queue`).
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._reaper_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # The grant that last waived an ask in each running agent's runtime (`_policy_source`),
         # so the audit row of a call its runtime approved without asking names who decided.
@@ -1389,6 +1392,9 @@ class SubagentManager:
         """
         agent = info.agent
         agent_id = info.id
+        if self._loop is None:
+            with contextlib.suppress(RuntimeError):
+                self._loop = asyncio.get_running_loop()
         info.queued = False
         self._inc_running(info)
         # It runs as its own work (its mark and the model it was handed), not the dispatcher's.
@@ -1681,6 +1687,8 @@ class SubagentManager:
         """
         if self._stopping or not self._queue or self._running_count >= self._max_concurrent:
             return
+        if not self._on_its_loop():
+            return
         # Find the first queued spawn whose run-lane also has room.
         idx = next(
             (
@@ -1718,6 +1726,16 @@ class SubagentManager:
             logger.exception("Draining queue: the start of %s raised", info.id)
         if self._queue and self._running_count < self._max_concurrent:
             asyncio.get_event_loop().call_later(2.0, self._drain_queue)
+
+    def _on_its_loop(self) -> bool:
+        """Whether the code running now runs on this manager's loop. A helper's ending can run on
+        another: a task of a loop that closed with it pending is collected while another loop runs,
+        and its ending runs there. A helper it started there would run where nothing stops it."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return self._loop is None or loop is self._loop
 
     async def _spawn_with_approval(self, info: SubagentInfo) -> None:
         """Ask to start *info* (:meth:`_ask_to_start`): refused, it ends with why, giving back its
@@ -2646,11 +2664,19 @@ class SubagentManager:
         logger.info("Cancelled fan-out %s (%d child(ren))", fanout_key, len(victims))
         return len(victims)
 
+    def stop_starting(self) -> None:
+        """Start nothing from now on: a spawn still waiting stays recorded for the next start
+        (``subagent_waiting``). :meth:`cancel_all` begins with it. The gateway calls it alone when
+        it exits by raising: the loop's close then cancels the helpers still running, and each
+        one's ending would start a helper waiting for its slot on that closing loop, after the app
+        processes were stopped, in a task the close never cancels."""
+        self._stopping = True
+
     async def cancel_all(self) -> None:
         """Cancel all running subagents and wait a bounded time for their cleanup: one cancelled
         while it starts its agent's process may never leave (``cancel_and_wait``). Nothing starts
         after it: a spawn still waiting stays recorded for the next start (``subagent_waiting``)."""
-        self._stopping = True
+        self.stop_starting()
         if self._reaper_task and not self._reaper_task.done():
             self._reaper_task.cancel()
             self._reaper_task = None
