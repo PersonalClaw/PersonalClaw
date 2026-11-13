@@ -104,6 +104,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from personalclaw.command_paths import folded, kept_spellings
+
 #: The files, by name under the home.
 OWNER_ONLY_FILES: tuple[str, ...] = ("config.json", "mcp.json")
 
@@ -341,8 +343,9 @@ def _is_gits(spelling: str) -> bool:
 
 class _Places:
     """The owner-only places, resolved once for a check of many paths (every path a command
-    names), with the home in use when *home* is None. Compared regardless of case, since a
-    case-insensitive disk opens ``CONFIG.JSON`` as ``config.json``."""
+    names), with the home in use when *home* is None. Compared regardless of case and in one
+    Unicode form (``command_paths.folded``), since a case-insensitive disk opens ``CONFIG.JSON``
+    as ``config.json``, and a disk may keep or hand back a letter composed or decomposed."""
 
     def __init__(self, home: Path | str | None = None) -> None:
         root = Path(home) if home is not None else _home()
@@ -354,22 +357,23 @@ class _Places:
         self._files: dict[str, str] = {}
         self._dirs: list[tuple[str, str]] = []
         for path, is_dir, kind in named:
-            for spelling in {os.path.abspath(path), _real(path)}:
+            written = os.path.abspath(os.path.expanduser(path))
+            for spelling in {os.path.abspath(path), *map(_real, kept_spellings(written))}:
                 if is_dir:
-                    self._dirs.append((spelling.casefold(), kind))
+                    self._dirs.append((folded(spelling), kind))
                 else:
-                    self._files.setdefault(spelling.casefold(), kind)
+                    self._files.setdefault(folded(spelling), kind)
 
     def kind_of(self, path: Path | str) -> str:
         """:func:`kind_of`, against the places resolved when this was made."""
         target = _real(path)
         written = os.path.abspath(os.path.expanduser(str(path)))
         for spelling in dict.fromkeys((target, written)):
-            folded = spelling.casefold()
-            if kind := self._files.get(folded):
+            form = folded(spelling)
+            if kind := self._files.get(form):
                 return kind
             for base, holds in self._dirs:
-                if folded == base or folded.startswith(base + os.sep):
+                if form == base or form.startswith(base + os.sep):
                     return holds
         if any(_is_gits(spelling) for spelling in dict.fromkeys((target, written))):
             return GIT
