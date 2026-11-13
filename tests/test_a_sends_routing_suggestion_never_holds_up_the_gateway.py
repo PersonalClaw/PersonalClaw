@@ -142,18 +142,24 @@ async def test_a_send_does_not_wait_past_the_budget_and_routes_by_hints(
 ):
     """🔴 Red before: the send waited for the model however long it took.
 
-    The embed the budget stopped waiting for runs on to its end, and records its call there, so it
-    is let finish before the test ends (``held_workers``)."""
+    The model answers nothing until the send has (``server.held``). A send that waited on it past
+    the budget would never answer, so the send answering while its embed of the message is still
+    outstanding proves it did not: by order, where a bound on its time failed on a slow runner. The
+    embed the budget stopped waiting for runs on once the model is let go, and records its call
+    there, so it is let finish before the test ends (``held_workers``)."""
     state, app = gateway
     with held_workers():
         async with TestClient(TestServer(app)) as client:
             await _warm(client, state, index)
             monkeypatch.setattr(routing, "QUERY_EMBED_BUDGET_SECS", 0.2, raising=False)
-            server.secs = 2.0
-            with caplog.at_level(logging.INFO, logger="personalclaw.agents.routing"):
-                body, took = await _send(client, state, "chat-1", SAID)
+            server.held = threading.Event()
+            try:
+                with caplog.at_level(logging.INFO, logger="personalclaw.agents.routing"):
+                    body, _ = await asyncio.wait_for(_send(client, state, "chat-1", SAID), 10)
+                await _asked(server, SAID)  # outstanding: the held model answers nothing
+            finally:
+                server.held.set()
 
-    assert took < 0.8, f"the send answered in {took:.2f}s, past a 0.2s budget"
     suggestion = body["routing_suggestion"]
     assert (suggestion["agent"], suggestion["method"]) == ("dba", "keyword")
     said = [r.getMessage() for r in caplog.records if "agent routing" in r.getMessage()]
