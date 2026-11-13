@@ -34,8 +34,8 @@
   - region "Home":
     - textbox "Start something":
       - /placeholder: "Start something: type it and press Enter for a new chat"
-    - region "Needs You":
-      - heading "Needs You" [level=#]
+    - region "Needs you":
+      - heading "Needs you" [level=#]
       - text: "#"
       - list:
         - listitem:
@@ -66,8 +66,8 @@
           - 'link "Answer it where it asks: May I archive last year’s mail? — Loop · Sort the inbox"':
             - /url: "#/loops/l-e#e"
             - text: Answer it where it asks
-    - region "Running Now":
-      - heading "Running Now" [level=#]
+    - region "Running now":
+      - heading "Running now" [level=#]
       - paragraph: Nothing is running right now.
     - region "Recent and completed":
       - heading "Recent and completed" [level=#]

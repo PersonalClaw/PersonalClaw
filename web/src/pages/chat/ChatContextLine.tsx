@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { Blocks, FolderKanban, GitBranch, MessageCircleQuestion, type LucideIcon } from 'lucide-react'
+import { Blocks, GitBranch, MessageCircleQuestion, type LucideIcon } from 'lucide-react'
+import { ProjectChip } from '../../ui/ProjectChip'
 import { ScreenShareChip } from '../../ui/ScreenShareChip'
 import { startedByLabel, startedByTitle } from './StartedByApp'
 
@@ -23,8 +24,8 @@ export interface ChatContext {
   screenShare?: { onStop: () => void } | null
   /** The app that started this conversation, by the name install consent showed — '' for yours. */
   startedBy?: string
-  /** The project the chat is scoped to. */
-  project?: { name: string; open: () => void } | null
+  /** The project the chat is scoped to: its chip, the header's one way to it. */
+  project?: { id: string; name: string } | null
   /** The conversation this one was branched from. `title: ''` = that origin was deleted. */
   branchedFrom?: { title: string; open: () => void } | null
   /** What this chat was opened to investigate. No `open` when the source left no link
@@ -74,8 +75,7 @@ export function chatContextChips(c: ChatContext): ReactNode[] {
     chips.push(<ContextChip key="app" icon={Blocks} label={startedByLabel(c.startedBy)} title={startedByTitle(c.startedBy)} />)
   }
   if (c.project) {
-    chips.push(<ContextChip key="project" icon={FolderKanban} accent label={c.project.name}
-      title={`Scoped to project: ${c.project.name} — open the project`} onClick={c.project.open} />)
+    chips.push(<ProjectChip key="project" id={c.project.id} name={c.project.name} />)
   }
   // Branch lineage, read from the PERSISTED `forked_from`, so it names the parent's CURRENT
   // title. A deleted origin has nothing to open, so it degrades to a plain label.

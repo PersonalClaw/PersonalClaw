@@ -12,7 +12,7 @@ import { Home } from '../pages/dashboard/Home'
 export function HomeHarness({ query: initial = {}, navigate = () => {}, onQuery, defaultView = 'attention' }: {
   query?: Record<string, string>
   /** The view Home opens on with no `?view`: Attention, as `#/mission-control` opens it, since the
-   *  tests that mount it read Needs You and the rest of that view. */
+   *  tests that mount it read Needs you and the rest of that view. */
   defaultView?: 'overview' | 'attention'
   navigate?: RouteProps['navigate']
   onQuery?: (query: Record<string, string>) => void
@@ -39,7 +39,7 @@ export function waitingItem(over: Partial<WaitingItem> = {}): WaitingItem {
     id: 'approval:appr-1', kind: 'approval', work: 'chat:chat-1', session: 'chat-1',
     brief: { tool: 'shell.run', tool_input: { command: 'ls' }, tool_purpose: 'List the folder', source_label: 'chat “Release notes”', confirms: [] },
     consequence: 'changes', risk: 'caution', asked_at: '2026-10-21T10:00:00Z', age_secs: 60,
-    expires_at: null, current: true, interrupt: 'deliver',
+    expires_at: null, current: true, interrupt: 'deliver', project_id: '', loop_kind: '',
     answer: { method: 'POST', path: '/api/approvals/appr-1/{answer}', takes: ['approve', 'reject'], body: {} },
     route: '#/chat/chat-1',
     ...over,
@@ -68,7 +68,7 @@ export function waitingList(waiting: WaitingItem[] = [], unreadable: string[] = 
 export function runningRow(over: Partial<RunningRow> = {}): RunningRow {
   return {
     work: 'chat:chat-1', kind: 'chat', session: 'chat-1', phase: 'tool', line: 'Running shell', since: null,
-    name: 'nightly sweep', agent: '', started_at: null, route: '#/chat/chat-1', blocked: false, waiting: [], ...over,
+    name: 'nightly sweep', agent: '', started_at: null, route: '#/chat/chat-1', blocked: false, waiting: [], project_id: '', loop_kind: '', ...over,
   }
 }
 

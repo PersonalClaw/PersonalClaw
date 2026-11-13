@@ -37,7 +37,7 @@ function waitingOf(row: Record<string, unknown>) {
 }
 
 /** Answer `GET /api/approvals` with *rows*, and `GET /api/waiting` with the same rows as Home's
- *  Needs You reads them, and record every decision the page sends. */
+ *  Needs you reads them, and record every decision the page sends. */
 async function stubApprovals(page: Page, rows: Record<string, unknown>[]): Promise<Request[]> {
   const decisions: Request[] = []
   await page.route('**/api/approvals', (route) =>

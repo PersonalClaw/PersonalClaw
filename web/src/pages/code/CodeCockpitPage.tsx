@@ -96,7 +96,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
         missingBuild={missingBuild} missingTest={missingTest} runInWorkspaceTerminal={runInWorkspaceTerminal}
         onNewTarget={onNewTarget} onBack={onBack} del={del} />
 
-      <CockpitMeta project={p} onOpenProject={onOpenProject} onRuntimeChange={runtimeEditable ? moveRuntime : undefined} />
+      <CockpitMeta project={p} onRuntimeChange={runtimeEditable ? moveRuntime : undefined} />
 
       {/* Expandable prompt bar — first line collapsed, full on expand. */}
       <CockpitPromptBar prompt={p.task || ''} />

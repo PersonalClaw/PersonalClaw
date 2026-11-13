@@ -10,8 +10,8 @@ import type { WsMessage } from '../../lib/useChatSocket'
 // #3698 added running workflow runs to the Working lane and left one thing undone: the page read
 // them once. A run that finished or failed kept its "running" card until a reload.
 //
-// Running Now is the running list (`GET /api/running`), and the list says it moved in one
-// `running_changed` frame per window. Needs You is the waiting list, read again on the same ring.
+// Running now is the running list (`GET /api/running`), and the list says it moved in one
+// `running_changed` frame per window. Needs you is the waiting list, read again on the same ring.
 // These drive the page through that frame, so what is asserted is the card a user sees.
 
 const waiting = vi.fn<() => Promise<WaitingList>>()
@@ -49,7 +49,7 @@ function run(over: Partial<RunningRow> = {}): RunningRow {
   return {
     work: 'workflow:run-1', kind: 'workflow', session: '', phase: 'tool', line: 'Fetching the paper',
     since: '2026-09-26T09:00:05Z', name: 'paper-ingest', agent: '', started_at: '2026-09-26T09:00:00Z',
-    route: '#/workflows/runs/run-1', blocked: false, waiting: [], ...over,
+    route: '#/workflows/runs/run-1', blocked: false, waiting: [], project_id: '', loop_kind: '', ...over,
   }
 }
 const list = (live: RunningRow[] = [], finished: RunningRow[] = []): RunningList => ({ running: live, finished })
@@ -79,47 +79,47 @@ beforeEach(() => {
 })
 
 describe('Home, while a workflow run changes', () => {
-  it('🔑 a run that finishes leaves Running Now for Recent and completed without a reload', async () => {
+  it('🔑 a run that finishes leaves Running now for Recent and completed without a reload', async () => {
     render(<HomeHarness />)
-    expect(await within(lane('Running Now')).findByText('Fetching the paper')).toBeTruthy()
+    expect(await within(lane('Running now')).findByText('Fetching the paper')).toBeTruthy()
 
     running.mockResolvedValue(list([], [run({ phase: 'done', line: 'Done in 2 minutes', since: '2026-09-26T09:02:00Z' })]))
     send(RING)
 
-    expect(await within(lane('Running Now')).findByText('Nothing is running right now.')).toBeTruthy()
+    expect(await within(lane('Running now')).findByText('Nothing is running right now.')).toBeTruthy()
     const tail = within(lane('Recent and completed')).getByRole('list', { name: 'Just finished' })
     expect(within(tail).getByText('Done in 2 minutes')).toBeTruthy()
   })
 
-  it('🔑 a run that parks on a question says it waits on you, and its question is in Needs You', async () => {
+  it('🔑 a run that parks on a question says it waits on you, and its question is in Needs you', async () => {
     render(<HomeHarness />)
-    expect(await within(lane('Running Now')).findByText('Fetching the paper')).toBeTruthy()
+    expect(await within(lane('Running now')).findByText('Fetching the paper')).toBeTruthy()
 
     // Still live, as the list counts a run waiting on you, and never said to be running.
     running.mockResolvedValue(list([run({ phase: 'input', line: 'Needs your answer', waiting: ['q-1'] })]))
     waiting.mockResolvedValue(waitingList([question]))
     send(RING)
 
-    await waitFor(() => expect(within(lane('Needs You')).getByText('Which paper next?')).toBeTruthy())
-    expect(within(lane('Running Now')).getByText('Waiting for your answer')).toBeTruthy()
-    expect(within(lane('Running Now')).getByText('1 waiting on you')).toBeTruthy()
-    expect(within(lane('Running Now')).queryByText('Fetching the paper')).toBeNull()
+    await waitFor(() => expect(within(lane('Needs you')).getByText('Which paper next?')).toBeTruthy())
+    expect(within(lane('Running now')).getByText('Waiting for your answer')).toBeTruthy()
+    expect(within(lane('Running now')).getByText('1 waiting on you')).toBeTruthy()
+    expect(within(lane('Running now')).queryByText('Fetching the paper')).toBeNull()
   })
 
   it('a run that starts while the page is open appears', async () => {
     running.mockResolvedValue(list())
     render(<HomeHarness />)
-    expect(await within(lane('Running Now')).findByText('Nothing is running right now.')).toBeTruthy()
+    expect(await within(lane('Running now')).findByText('Nothing is running right now.')).toBeTruthy()
 
     running.mockResolvedValue(list([run({ work: 'workflow:run-2', name: 'nightly-digest' })]))
     send(RING)
 
-    expect(await within(lane('Running Now')).findByText('nightly-digest')).toBeTruthy()
+    expect(await within(lane('Running now')).findByText('nightly-digest')).toBeTruthy()
   })
 
   it('a listing hint reads no running list: the list rings for itself', async () => {
     render(<HomeHarness />)
-    await within(lane('Running Now')).findByText('paper-ingest')
+    await within(lane('Running now')).findByText('paper-ingest')
     const before = running.mock.calls.length
 
     send({ type: 'refresh', data: { kinds: ['workflow_runs', 'loops'] } })

@@ -325,7 +325,7 @@ reads that entry:
 | Surface | Reads |
 |---|---|
 | The workflow run view, a loop's cockpit, a room's view, the agent-activity feed | `GET /api/approvals` — the entries, verbatim |
-| Home's **Needs You** and the toolbar's needs-you badge (`#/mission-control` opens Home), the phone companion, the desktop tray | `GET /api/waiting` — each entry as an item's brief, in the list's order, beside everything else waiting on you |
+| Home's **Needs you** and the toolbar's needs-you badge (`#/mission-control` opens Home), the phone companion, the desktop tray | `GET /api/waiting` — each entry as an item's brief, in the list's order, beside everything else waiting on you |
 | The chat card, the out-of-context nudge | the `approval` WS frame — the same entry |
 | The phone push, the `ApprovalRequest` lifecycle hook | fired from the registration |
 | The Inbox, and that row's notification (the bell, Notifications) | an `agent_request` row raised through `emit_attention_item`, `refs = {approval: <registry id>, session}`; its notification carries the same refs |
@@ -369,7 +369,7 @@ The entry also says where the call came from, in words (`source_label`, from
 job when one started it), `MCP server “…”`, `room “…” · member “…”`. Every surface that answers an
 approval renders the one approval card
 (`pages/chat/ApprovalCard`;
-`app/PendingApprovalCard` for the queue surfaces: the workflow run view, Home's Needs You, the
+`app/PendingApprovalCard` for the queue surfaces: the workflow run view, Home's Needs you, the
 Inbox row and its notification): the tool and its risk, what it can touch, its whole
 input a click away (Show all), and, away from the work that asked, "From <source_label>", a link
 to that work on a surface that lists approvals from everywhere. A channel's prompt is tagged with
@@ -429,10 +429,10 @@ for every door.
 
 **Every surface that announces an approval answers it.** The Inbox row and its notification offer
 Approve and Deny in place (`web/src/app/ApprovalDecision.tsx`, through
-`POST /api/approvals/{id}/{action}`), as Home's Needs You, the workflow run view and the phone do. They read
+`POST /api/approvals/{id}/{action}`), as Home's Needs you, the workflow run view and the phone do. They read
 the entry live from `GET /api/approvals`, because a row and its notification outlive the approval
 they name: once it has ended they say so and offer neither. A trigger's run asks with no chat behind
-it, so these and Home's Needs You are where its approval is answered.
+it, so these and Home's Needs you are where its approval is answered.
 
 **Only you answer.** Each entry records who asked it (`asked_by`: the chat's agent, the app that
 started the chat, a subagent, the run whose step asked, the trigger), and `resolve_approval` and
@@ -613,7 +613,7 @@ cancelled run's leftover spawn approval started the subagent.
 **Announced once.** The Inbox row is the durable listing, not a second announcement: the chat
 card announces an approval in context and the nudge everywhere else, so the SPA's notification
 toast stands down for a note whose `refs` name an approval (it still lands in the bell), and
-Home's Needs You lists the approval once, from the waiting list, and never its Inbox row, and the
+Home's Needs you lists the approval once, from the waiting list, and never its Inbox row, and the
 sidebar's lanes recognise the row as the approval they already list (`mirroredApprovalId`).
 
 **No model's verdict can hide one.** `system/agent_request`, the kind the row rides, is a
@@ -663,7 +663,7 @@ Where she sees it:
   while it waits). Nothing is chosen for her and nothing is sent by arriving, focus or Enter.
 - **The Inbox**: a "Needs you" row (`needs_input`, `refs = {question, session, source_label}`, on
   the `system/agent_request` notification), which the Inbox lists by who asks, in which chat, with
-  a link to answer it there. Home's Needs You lists the question once, from the waiting list.
+  a link to answer it there. Home's Needs you lists the question once, from the waiting list.
 - The turn waits on her, so it is not running long: its clock stops (`waiting_on_owner`).
 
 Her answer, `POST /api/chat/sessions/{session}/questions/{question}/answer` with
@@ -702,10 +702,13 @@ loop's step, a plan ready to launch, a chat's step) and a control-bridge confirm
 past answering, an item leaves the list.
 
 - **One item shape:** `{id, kind, work, session, brief, consequence, risk, asked_at, age_secs,
-  expires_at, current, interrupt, answer, route}`. `brief` is the source's own words, exactly as its own card
+  expires_at, current, interrupt, answer, route, project_id, loop_kind}`. `brief` is the source's own words, exactly as its own card
   shows them, and `answer` its own route (`{method, path, takes, body}`), with that route's guards
-  unchanged. The list has no answer route of its own, so nothing is answered through it that its
-  source would refuse.
+  unchanged. `project_id` is the project its work is in, `""` for none, decided once on the gateway
+  (`work_project`: a chat's, a loop's, a run's, a helper's parent's; an automation's is none), and
+  `loop_kind` its loop's kind when the work is a loop or a run started as one, else `""`. A core
+  before 0.3.9 serves neither field, so an app reads a missing one as `""`. The list has no
+  answer route of its own, so nothing is answered through it that its source would refuse.
 - **One order:** by consequence (`destructive`, then `changes`, then `asks`), then age, oldest
   first, on every surface.
 - **May it interrupt you now:** `interrupt` is decided once, by the gateway, from mute, quiet hours
@@ -733,7 +736,7 @@ past answering, an item leaves the list.
   plan written or cleared, and a bridge confirmation minted, taken or expired. An app's socket
   hears it only when its manifest declares `/api/waiting` (`ws_state.WAITING_LIST_FRAMES`), the
   one exception beside the approval relay's (`docs/security/limitations.md`).
-- **Who reads it:** Home's Needs You is its items in its order, then your notes and the skill
+- **Who reads it:** Home's Needs you is its items in its order, then your notes and the skill
   proposals (an approval on the one approval card; a gate, a park, a browser grant and a bridge
   confirmation answered in place through their own routes; a free-text gate, a loop's question
   and an agent's single question answered with a typed line from the item's detail

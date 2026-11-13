@@ -44,6 +44,14 @@ def _code(**over):
     return store.create(Loop(**base))
 
 
+def _project(name: str) -> str:
+    """A project that exists: a loop is listed under a project only when the project is there
+    (`store.loop_project_id`)."""
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    return HierarchyStore().create_project(name).id
+
+
 class TestCrud:
     def test_create_assigns_id_and_persists_kind_config(self):
         g = _goal()
@@ -57,22 +65,27 @@ class TestCrud:
             store.create(Loop(id="", name="x", kind="nope", task="t" * 12))
 
     def test_list_and_list_for_project(self):
-        g, c = _goal(), _code()
-        _goal(project_id="p-2")
+        p1, p2 = _project("Garden"), _project("Homelab")
+        g, c = _goal(project_id=p1), _code(project_id=p1)
+        _goal(project_id=p2)
         assert {lp.id for lp in store.list_all()} >= {g.id, c.id}
-        assert {lp.id for lp in store.list_for_project("p-1")} == {g.id, c.id}
+        assert {lp.id for lp in store.list_for_project(p1)} == {g.id, c.id}
 
-    def test_list_for_project_matches_tasks_project_id(self):
-        # A loop bound to a project only via tasks_project_id (a project-less launch's
-        # auto-provisioned backing project, or a task-provisioning code loop) must show
-        # in the project's loop history — same as /linked. Was project_id-only.
-        explicit = _goal(project_id="p-9")
+    def test_list_for_project_follows_the_one_rule(self):
+        # A loop is listed under its project_id when that names a project, else under its
+        # tasks_project_id when that does (a project-less launch's auto-provisioned backing
+        # project, or a task-provisioning code loop), never under both (`loop_project_id`).
+        p9, other = _project("Garden"), _project("Homelab")
+        explicit = _goal(project_id=p9)
         provisioned = _code(project_id="")
-        store.set_tasks_links(provisioned.id, tasks_project_id="p-9", task_list_ids={})
-        ids = {lp.id for lp in store.list_for_project("p-9")}
-        assert ids == {explicit.id, provisioned.id}
-        # blank project id never matches everything
+        store.set_tasks_links(provisioned.id, tasks_project_id=p9, task_list_ids={})
+        elsewhere = _goal(project_id=other)
+        store.set_tasks_links(elsewhere.id, tasks_project_id=p9, task_list_ids={})
+        assert {lp.id for lp in store.list_for_project(p9)} == {explicit.id, provisioned.id}
+        assert {lp.id for lp in store.list_for_project(other)} == {elsewhere.id}
+        # a blank id, or one that names no project, lists nothing
         assert store.list_for_project("") == []
+        assert store.list_for_project("p-none") == []
 
     def test_delete_removes_row_and_dir(self):
         g = _goal()
@@ -228,18 +241,18 @@ class TestRedactedView:
         assert red["marginal_scores"] == [2.5]
 
     def test_list_redacted_attaches_findings_and_filters(self):
-        g = _goal()
+        g = _goal(project_id=_project("Garden"))
         (loop_files.loop_dir(g.id) / "findings" / "cycle_001.json").write_text(
             json.dumps({"cycle": 1, "summary": "found it"})
         )
         loop_files.record_cycle_findings(g.id)  # ingest into the ledger the list view projects
-        _goal(project_id="p-2")
+        _goal(project_id=_project("Homelab"))
         rows = store.list_redacted()
         row = next(r for r in rows if r["id"] == g.id)
         # findings attached so list cards show count + latest-insight (parity w/ detail)
         assert row["findings"] and row["findings"][-1]["summary"] == "found it"
         # project + kind filters
-        assert {r["id"] for r in store.list_redacted(project_id="p-1")} == {g.id}
+        assert {r["id"] for r in store.list_redacted(project_id=g.project_id)} == {g.id}
         assert all(r["kind"] == "code" for r in store.list_redacted(kind="code"))
 
 

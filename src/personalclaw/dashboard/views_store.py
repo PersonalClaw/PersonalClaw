@@ -99,8 +99,8 @@ PRESET_MISSION_CONTROL_ID = "mission-control"
 #: Home's three groups, in the order they are read: what waits on YOU to answer, what is
 #: running now, and what finished recently. Same DECLARED-composition contract as
 #: ``_OVERVIEW_CORE_REFS`` — the FE renders a fixed layout for these ``core:`` refs (``GROUP_REFS``
-#: in ``web/src/pages/dashboard/Home.tsx``), sourcing Needs You from the waiting list and Running
-#: Now from the running list, so the schema is composition-ready without making the render
+#: in ``web/src/pages/dashboard/Home.tsx``), sourcing Needs you from the waiting list and Running
+#: now from the running list, so the schema is composition-ready without making the render
 #: dynamic. The ``group-`` segment is load bearing: it keeps a group ref from colliding with a
 #: same-named Overview widget.
 _MISSION_CONTROL_CORE_REFS = (

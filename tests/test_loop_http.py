@@ -1109,15 +1109,17 @@ class TestListGetUpdate:
         return _body(_run(H.api_loop_create(_req("POST", "/api/loops", state, body=base))))["id"]
 
     def test_list_and_project_filter(self, state):
-        a = self._make(state, project_id="p-1")
-        self._make(state, project_id="p-2")
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        # The filter lists the loops in a project, which is there (`loop_project_id`).
+        garden, homelab = (HierarchyStore().create_project(n).id for n in ("Garden", "Homelab"))
+        a = self._make(state, project_id=garden)
+        self._make(state, project_id=homelab)
         all_ids = {
             e["id"] for e in _body(_run(H.api_loop_list(_req("GET", "/api/loops", state))))["loops"]
         }
         assert a in all_ids
-        p1 = _body(_run(H.api_loop_list(_req("GET", "/api/loops?project_id=p-1", state))))["loops"]
-        # match_info has no query; emulate by setting rel_url via a fresh request
-        req = _req("GET", "/api/loops?project_id=p-1", state)
+        req = _req("GET", f"/api/loops?project_id={garden}", state)
         p1 = _body(_run(H.api_loop_list(req)))["loops"]
         assert {e["id"] for e in p1} == {a}
 

@@ -618,7 +618,7 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
       // (seededDetail → loadingHistory=false): the user's message shows on the first
       // frame with NO skeleton over it, and only the pending agent reply loads.
       if (seedMessages?.length) {
-        writeCachedDetail(created.key, { key: created.key, title: '', messages: seedMessages, run_state: idleRunState(created.key), memory_mode: memoryMode } as unknown as ChatDetail)
+        writeCachedDetail(created.key, { key: created.key, title: '', project_id: projectId, messages: seedMessages, run_state: idleRunState(created.key), memory_mode: memoryMode } as unknown as ChatDetail)
       }
       // Hand the live run ACROSS the remount, before causing it. This instance is about
       // to be destroyed and its `streaming` state with it; the replacement reads the

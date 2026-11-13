@@ -15,7 +15,7 @@ An id that names no project reads as none: the thing keeps the id, and sits unde
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -112,8 +112,3 @@ def requested_project(value: Any) -> tuple[str, str]:
     if pid and not read_projects().exists(pid):
         return "", f"no project has the id {pid!r}"
     return pid, ""
-
-
-def project_exists_test() -> Callable[[str], bool]:
-    """A membership test over the projects that exist now, for callers that need only that."""
-    return read_projects().exists

@@ -34,8 +34,10 @@ const KEY = 'chat-geo-1790000000'
 const TITLE = 'Planning the quarterly product launch across marketing, engineering and support with every dependency spelled out'
 const PARENT_TITLE = 'The original launch plan, before anyone asked what a two-person team would do with it'
 const APP_NAME = 'Probe Alpha'
+const PROJECT = { id: 'p-geo-launch', name: 'Garden irrigation, the spring beds and the greenhouse' }
 
-/** A branched conversation an app started, with turns and a priced cost — every chip at once. */
+/** A branched conversation an app started, in a long-named project, with turns and a priced cost:
+ *  every chip at once. */
 const DETAIL = {
   key: KEY,
   title: TITLE,
@@ -53,6 +55,7 @@ const DETAIL = {
   created_by_app: 'probe-alpha',
   created_by_app_name: APP_NAME,
   app_auto_approves: false,
+  project_id: PROJECT.id,
 }
 
 const USAGE = {
@@ -64,6 +67,10 @@ async function pinTheChat(page: Page): Promise<void> {
   await page.route(`**/api/chat/sessions/${KEY}`, (route) =>
     route.request().method() === 'GET'
       ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DETAIL) })
+      : route.fallback())
+  await page.route(`**/api/projects/${PROJECT.id}`, (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(PROJECT) })
       : route.fallback())
   await page.route(`**/api/usage/totals?*`, (route) =>
     new URL(route.request().url()).searchParams.get('session') === KEY
@@ -226,6 +233,8 @@ test.describe('the chat header fits at every width', () => {
       // A chip may truncate; its full text must still be there for the pointer and the reader.
       expect(g.names.some((n) => n.includes(PARENT_TITLE)), 'the branch chip lost its full parent title').toBe(true)
       expect(g.names.some((n) => n.includes(APP_NAME)), 'the app chip lost the app name').toBe(true)
+      // The chat's project, read from the chat's own record: its chip, a link to the project.
+      await expect(page.locator('header').getByRole('link', { name: `Open project ${PROJECT.name}` })).toHaveAttribute('href', `#/projects/${PROJECT.id}`)
     })
   }
 })

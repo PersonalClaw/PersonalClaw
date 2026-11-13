@@ -121,8 +121,9 @@ describe('both composing surfaces use the one helper', () => {
   const read = (rel: string) => readSource(join(SRC, rel))
   const codeOf = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-  it("Home's Needs You composes through it", () => {
-    const code = codeOf('pages/dashboard/Home.tsx')
+  it("Home's Needs you composes through it", () => {
+    // Its cards are drawn from `NeedCards.tsx`, Home's one copy, which a project's page can draw too.
+    const code = codeOf('pages/dashboard/NeedCards.tsx')
     expect(code).toMatch(/const subject = rowSubject\(\[needName\(row\), row\.raisedBy, previewLine\(row\.subtitle\)\]\)/)
     expect(code, 'no hand-rolled join').not.toMatch(/`\$\{row\.title\} — \$\{row\.subtitle\}`/)
   })

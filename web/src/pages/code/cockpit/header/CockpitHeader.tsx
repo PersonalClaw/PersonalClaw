@@ -4,6 +4,7 @@ import { HeaderActions, HeaderControl } from '../../../../ui/HeaderActions'
 import { IconButton } from '../../../../ui/IconButton'
 import { confirmStopLoop } from '../../../loop/stopLoop'
 import { type CodeProject } from '../../../../lib/api'
+import { loopProjectId, useProjectList } from '../../../../lib/loopProject'
 import { ENDED_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../../../lib/loopStatus'
 import { useWorkspaceChanges } from '../files/useWorkspaceChanges'
 import { COMMIT_HOOKS_NOTE, useCommit } from './useCommit'
@@ -33,15 +34,17 @@ export function CockpitHeader({ id, project: p, setProject, setToast, onOpenProj
   const { statuses } = useWorkspaceChanges(ws, !ws, false)
   const canCommit = !!ws && ENDED_LOOP_STATUSES.has(p.status) && Object.keys(statuses).length > 0
   const commit = useCommit({ id, ws, setToast })
+  // The one project the loop is in (`loopProjectId`): the one it launched into, else the one made
+  // for its tasks. The back control shows only when the loop is in one the list knows.
+  const projectId = loopProjectId(p, useProjectList([p.project_id, p.tasks_project_id]).ids)
   return (
     <TopBar
       left={<div className="flex min-w-0 items-center gap-2">
-        {/* Back-to-project: left of the title, jumps to the Project this loop belongs to
-            (tasks_project_id is the provisioned container; project_id a pre-launch scope).
-            Only shown when the loop is actually bound to a project AND we can open it. */}
-        {onOpenProject && (p.tasks_project_id || p.project_id) && (
+        {/* Back-to-project: left of the title, jumps to the Project this loop belongs to.
+            Only shown when the loop is in a project AND we can open it. */}
+        {onOpenProject && projectId && (
           <IconButton icon={ChevronLeft} label="Back to the project this loop belongs to"
-            onClick={() => onOpenProject((p.tasks_project_id || p.project_id) as string)}
+            onClick={() => onOpenProject(projectId)}
             size={28} iconSize={18} className="shrink-0" />
         )}
         <Code2 size={18} className="shrink-0 text-primary" />

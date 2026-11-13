@@ -8,7 +8,7 @@ import { HomeHarness, waitingItem, waitingList } from '../test/homeHarness'
 
 // ── The toolbar's needs-you badge ───────────────────────────────────────────────────────────────
 //
-// One badge, on every page, for what waits on you: it counts Home's Needs You from the same read,
+// One badge, on every page, for what waits on you: it counts Home's Needs you from the same read,
 // shows nothing at 0, and never lets an unknown count read as nothing waiting.
 
 const waiting = vi.fn()
@@ -61,7 +61,7 @@ describe('the needs-you badge', () => {
     expect(within(b).getByText('—')).toBeInTheDocument()
   })
 
-  it('counts every row of Needs You, notes included, and opens Home on Attention', async () => {
+  it('counts every row of Needs you, notes included, and opens Home on Attention', async () => {
     waiting.mockResolvedValue(waitingList([waitingItem(), waitingItem({ id: 'question:q', kind: 'question', brief: { questions: [{ question: 'Q?' }] } })]))
     inboxOpen.mockResolvedValue([{ id: 'n1', item_kind: 'user_note', status: 'pending', message: 'Call the bank', created_at: 1 }])
     const navigate = vi.fn()
@@ -73,11 +73,11 @@ describe('the needs-you badge', () => {
     expect(navigate).toHaveBeenCalledWith('dashboard?view=attention')
   })
 
-  it('agrees with Home’s Needs You, read once for both', async () => {
+  it('agrees with Home’s Needs you, read once for both', async () => {
     waiting.mockResolvedValue(waitingList([waitingItem(), waitingItem({ id: 'question:q', kind: 'question', brief: { questions: [{ question: 'Q?' }] } })]))
     render(<><NeedsYouBadge navigate={() => {}} /><HomeHarness /></>)
     await screen.findByRole('button', { name: '2 waiting on you — open Attention' })
-    const group = screen.getByRole('region', { name: 'Needs You' })
+    const group = screen.getByRole('region', { name: 'Needs you' })
     expect(within(group).getByText('2')).toHaveAttribute('data-group-count')
     expect(waiting).toHaveBeenCalledTimes(1)
   })

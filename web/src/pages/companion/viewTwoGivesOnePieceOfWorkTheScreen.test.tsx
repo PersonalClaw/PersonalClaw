@@ -153,7 +153,7 @@ describe('an approval answered on the phone', () => {
   it('leaves Home on the next change frame too', async () => {
     render(<><Phone initial={{ open: 'approval:ap-1' }} /><HomeHarness /></>)
     const two = await vi.waitFor(() => { const v = viewTwo(); if (!v) throw new Error('not open'); return v })
-    const home = () => screen.getByRole('region', { name: 'Needs You' })
+    const home = () => screen.getByRole('region', { name: 'Needs you' })
     await vi.waitFor(() => expect(within(home()).getByRole('group', { name: 'Permission needed to run Bash' })).toBeTruthy())
     await userEvent.click(within(two).getByRole('button', { name: 'Allow Bash' }))
     await vi.waitFor(() => expect(resolveApproval).toHaveBeenCalledTimes(1))

@@ -299,6 +299,9 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // open. Sourced from the server (not from the navigation that created the branch) so
   // the breadcrumb is still there after a reload. `title: ''` = the origin is gone.
   const [branchedFrom, setBranchedFrom] = useState<{ key: string; title: string } | null>(null)
+  // The project the chat is in, from its own read (`""` for none). A chat just made is painted
+  // from the copy its create wrote, so the first send's remount names it before any read lands.
+  const [chatProject, setChatProject] = useState(seededDetail?.project_id || '')
   // The app that started this conversation — `null` for one of yours. Read from the session
   // detail on every open.
   const [startedBy, setStartedBy] = useState<{ name: string } | null>(null)
@@ -603,6 +606,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         // Branch lineage — restore the "Branched from" breadcrumb on every open,
         // including a plain browser reload, because it comes from persisted state rather
         // than from whatever navigation happened to land us here.
+        setChatProject(d.project_id || '')
         setBranchedFrom(d.forked_from
           ? { key: branchParentKey(d.forked_from), title: d.forked_from_title || '' }
           : null)
@@ -1287,6 +1291,6 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     contextPct, contextWindow, contextParts, autoChain, setAutoChain, workingDir, setWorkingDir,
     sessionBindingRef, bindingToldRef, bindingNonce,
     title, setTitle, titleNeed, setTitleNeed, sessionCost,
-    branchedFrom, startedBy, investigateOrigin,
+    branchedFrom, chatProject, startedBy, investigateOrigin,
   }
 }

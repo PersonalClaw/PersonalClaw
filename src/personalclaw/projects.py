@@ -56,6 +56,19 @@ def resolve_project_id(chosen_id: str = "", *, auto_name: str = "") -> str:
     return _create_unique(store, name).id
 
 
+def project_exists(project_id: str) -> bool:
+    """Whether *project_id* names a project: its record is there and reads. ``False`` for ``""``,
+    for an id no project has (a deleted one), and on any error, so a reader that asks never fails
+    on the answer."""
+    if not project_id:
+        return False
+    try:
+        return _store().get_project(project_id) is not None
+    except Exception:  # noqa: BLE001 - an id that cannot be read names no project
+        logger.debug("project_exists: %r could not be read", project_id, exc_info=True)
+        return False
+
+
 def _create_unique(store: HierarchyStore, name: str):
     """Create a project, suffixing the name on collision so a generated name never
     fails. Returns the created (or existing-on-exact-name) Project."""

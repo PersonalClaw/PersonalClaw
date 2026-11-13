@@ -135,7 +135,7 @@ export function AgentDay() {
   }), [now, narrow, data, feed.entities, needs.rows])
 
   const failed = error ?? feed.error ?? needs.error
-  // Until Needs You has answered, the band can't say what waits on you, so it says nothing yet.
+  // Until Needs you has answered, the band can't say what waits on you, so it says nothing yet.
   const settling = (loading && !data) || feed.loading || needs.loading
   return (
     <AgentDayView view={view} failed={!!failed} settling={settling} narrow={narrow}

@@ -876,7 +876,7 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
     from personalclaw import waiting
     from personalclaw.dashboard.chat_seen_routes import attend
 
-    snap = waiting.taken(state)
+    snap = waiting.taken(state, places=False)
 
     def _attend() -> None:
         try:
@@ -1153,11 +1153,8 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
                 )
             ),
             **(_started_by(session.created_by_app, {}) if app_chat else {}),
-            # Memory mode so mode-gated affordances restore on reopen (e.g. the chat
-            # page hides Fork on a non-persistent session — the backend refuses to
-            # fork temporary/incognito). The session-list endpoint already returns
-            # this; the detail endpoint must too, or a reopened chat looks persistent.
-            "memory_mode": getattr(session, "memory_mode", "persistent") or "persistent",
+            # Its memory mode and its project, as the session list returns them (`_session_scope`).
+            **_session_scope(session),
             # Reply style and explanations, each RESOLVED (the style with its preview), as for
             # memory_mode: the composer must restore to what actually takes effect, and it must
             # not re-derive either resolution order to work that out.
@@ -3142,6 +3139,20 @@ def _explain_payload(session: _ChatSession) -> dict[str, object]:
         "explain_effective": resolved.explain,
         "explain_source": resolved.source,
         "explain_default": default,
+    }
+
+
+def _session_scope(session: _ChatSession) -> dict[str, str]:
+    """A chat's memory mode and its project, as the session list returns them, for its detail.
+
+    Memory mode, so mode-gated affordances restore on reopen (the chat page hides Fork on a
+    non-persistent session: the backend refuses to fork temporary or incognito ones), or a
+    reopened chat looks persistent. The project the chat is in, as the session list and a restore
+    read it (``""`` for none), so the chat's header names its project however the chat was opened.
+    """
+    return {
+        "memory_mode": getattr(session, "memory_mode", "persistent") or "persistent",
+        "project_id": str(getattr(session, "project_id", "") or ""),
     }
 
 

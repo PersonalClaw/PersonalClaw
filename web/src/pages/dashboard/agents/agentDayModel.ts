@@ -10,7 +10,7 @@ import { previewLine } from '../../../lib/previewText'
 //
 // - what an agent DID is its model calls, folded by the gateway (`GET /api/agents/day`);
 // - what it is DOING is the live feed (`useAgentActivity`);
-// - what WAITS on you is Needs You, the read Attention counts, so the two agree at every moment.
+// - what WAITS on you is Needs you, the read Attention counts, so the two agree at every moment.
 //   An agent with an open ask is waiting on you, never working;
 // - what FAILED today is its helpers' and loops' ends;
 // - what COMES NEXT is the schedule. A run whose agent the schedule does not name sits on its own
@@ -292,7 +292,7 @@ export function buildDay(input: DayInput): DayView {
     }
   }
 
-  // What waits on you: Needs You's rows, each on the row of the agent whose work asks it.
+  // What waits on you: Needs you's rows, each on the row of the agent whose work asks it.
   let unattributed = 0
   for (const [index, row] of input.asks.entries()) {
     const owner = row.origin === 'waiting' ? (byWork.get(row.item.work) ?? (row.item.session ? bySession.get(row.item.session) : undefined)) : undefined

@@ -99,11 +99,15 @@ def _call(
 
 
 def test_the_store_lists_only_rows_it_can_open() -> None:
-    before, after = _code("before"), _code("after", project_id="p-2")
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    # A loop is listed under a project only when the project is there (`loop_project_id`).
+    garden, homelab = (HierarchyStore().create_project(n).id for n in ("Garden", "Homelab"))
+    before, after = _code("before", project_id=garden), _code("after", project_id=homelab)
     _plant_bad_row(before)
 
     assert {lp.id for lp in store.list_all()} == {before.id, after.id}
-    assert {lp.id for lp in store.list_for_project("p-1")} == {before.id}
+    assert {lp.id for lp in store.list_for_project(garden)} == {before.id}
     assert store.get(BAD_ID) is None
 
 

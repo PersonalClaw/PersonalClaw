@@ -42,7 +42,7 @@ function mockApi() {
 async function mountHome() {
   const { DashboardLiveProvider } = await import('./DashboardLive')
   const { useNeedsYou } = await import('../../lib/useNeedsYou')
-  // Needs You's read, as Home and the toolbar's badge hold it.
+  // Needs you's read, as Home and the toolbar's badge hold it.
   function NeedsYou() { useNeedsYou(); return null }
   render(<DashboardLiveProvider><NeedsYou /></DashboardLiveProvider>)
   await act(async () => { await Promise.resolve() })

@@ -347,14 +347,23 @@ def end_unattended_grant(state, loop_id: str) -> None:
         worker._agent_floor_seeded = False
 
 
+def _project_of(loop: Loop) -> str:
+    """The one project *loop* is in (``store.loop_project_id``): the project it was launched
+    into, else the one made for its tasks, else ``""``."""
+    from personalclaw.projects import project_exists
+
+    return store.loop_project_id(loop, project_exists)
+
+
 def _context_dir(loop: Loop) -> str:
     """The loop's containing-project shared context dir (or '' if none/unresolvable)."""
-    if not loop.project_id:
-        return ""
     try:
         from personalclaw import projects as projects_svc
 
-        return projects_svc.context_dir(loop.project_id) or ""
+        project_id = _project_of(loop)
+        if not project_id:
+            return ""
+        return projects_svc.context_dir(project_id) or ""
     except Exception:
         logger.debug("context_dir lookup failed for %s", loop.id, exc_info=True)
         return ""
@@ -365,12 +374,13 @@ def _project_brief_block(loop: Loop) -> str:
     WHAT/WHY, injected as shared context for every loop scoped under it (the vision's
     'available as context for each agent working on any session or loop in that
     project'). Empty when the loop isn't project-scoped or the project has no brief."""
-    if not loop.project_id:
-        return ""
     try:
         from personalclaw.tasks.hierarchy import HierarchyStore
 
-        project = HierarchyStore().get_project(loop.project_id)
+        project_id = _project_of(loop)
+        if not project_id:
+            return ""
+        project = HierarchyStore().get_project(project_id)
         brief = (getattr(project, "brief", "") or "").strip() if project else ""
         if not brief:
             return ""
@@ -389,10 +399,11 @@ def _sibling_loops_block(loop: Loop) -> str:
     exist in the shared context dir, mirroring the project-chat preamble's loop history.
     This is the loop-side of the vision's cohesive per-project context. Empty when the
     loop isn't project-scoped or has no siblings. Best-effort."""
-    if not loop.project_id:
-        return ""
     try:
-        siblings = [lp for lp in store.list_for_project(loop.project_id) if lp.id != loop.id]
+        project_id = _project_of(loop)
+        if not project_id:
+            return ""
+        siblings = [lp for lp in store.list_for_project(project_id) if lp.id != loop.id]
         if not siblings:
             return ""
         lines = [

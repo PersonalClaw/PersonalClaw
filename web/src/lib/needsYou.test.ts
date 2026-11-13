@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { WaitingItem, WaitingList } from './api'
 import { needsYou, waitingTitle, type NoteInput } from './needsYou'
 
-// ── Needs You is the waiting list, in its order, then the Inbox's own asks ─────────────────────────
+// ── Needs you is the waiting list, in its order, then the Inbox's own asks ─────────────────────────
 //
 // The ids an answer posts with are read by the one parser every surface shares,
 // `waitingAnswer.ts`, and held to its own test.
@@ -12,7 +12,7 @@ function waitingItem(over: Partial<WaitingItem> = {}): WaitingItem {
     id: 'approval:a1', kind: 'approval', work: 'chat:c1', session: 'c1',
     brief: { tool: 'shell.run', tool_purpose: 'List the folder', source_label: 'chat “Release notes”' },
     consequence: 'changes', risk: 'caution', asked_at: '2026-10-21T10:00:00Z', age_secs: 60,
-    expires_at: null, current: true, interrupt: 'deliver',
+    expires_at: null, current: true, interrupt: 'deliver', project_id: '', loop_kind: '',
     answer: { method: 'POST', path: '/api/approvals/a1/{answer}', takes: ['approve', 'reject'], body: {} },
     route: '#/chat/c1',
     ...over,
@@ -26,7 +26,7 @@ const note = (over: Partial<NoteInput> = {}): NoteInput => ({
   created_at: 100, refs: {}, sender_name: '', channel_name: '', ...over,
 })
 
-describe('Needs You', () => {
+describe('Needs you', () => {
   it('keeps the waiting list in the order it is served, never sorting it again', () => {
     // The list serves the broad-reach new item before the low-risk old one: consequence first.
     const destructive = waitingItem({ id: 'approval:new', consequence: 'destructive', age_secs: 5, answer: { method: 'POST', path: '/api/approvals/new/{answer}', takes: [], body: {} } })

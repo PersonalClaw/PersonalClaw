@@ -100,7 +100,7 @@ opens it (#3818, #3819). Every route and substate round-trips through the URL, b
 
 | Screen | Primary job | Work surface | Header (at most 3) | Right pane |
 |---|---|---|---|---|
-| Home | see what needs you, what is running and what finished | A Start something line, then Needs You (sorted by consequence, then age), Running Now (each row with its exact phase and last update), Recent/Completed, with a filter that shows one of them. An approval is answered inline, and an ask that takes words from its detail. | New chat, View (Overview or Attention) | the selected item's detail; a compact window opens it in place |
+| Home | see what needs you, what is running and what finished | A Start something line, then Needs you (sorted by consequence, then age), Running now (each row with its exact phase and last update), Recent/Completed, with a filter that shows one of them. An approval is answered inline, and an ask that takes words from its detail. | New chat, View (Overview or Attention) | the selected item's detail; a compact window opens it in place |
 | Thread | delegate and converse | the reading column, folded work lines, artifact cards, the composer | the title (renamed inline), Share, overflow | activity, artifacts and sources, closed by default |
 | Goal loop | supervise an autonomous run | the run as a thread: the plan on top, cycles below, and at its foot a progress strip (its cycle, Start, Pause or Resume, a two-step Stop and how it reports) over the composer, which is its nudge | the title (renamed inline) and its link, Delete once it has ended, Details | plan review beside its planning; a cycle picked from Details, beside the thread, while Details keeps its list |
 | Code session | review the agent's changes | the thread, with the review pane open on uncommitted changes | Commit or open PR, overflow | the diff and its inline comments |
@@ -199,7 +199,7 @@ Top to bottom:
 
 - **From Home:** the count pills (one needs-you badge in the toolbar replaces them, and it shows
   nothing at 0), the chip row that repeats the sidebar, the system telemetry (to Settings ›
-  System), and suggestions outside Needs You or the empty state. #3803 made the first cut, and
+  System), and suggestions outside Needs you or the empty state. #3803 made the first cut, and
   #3813 made Home the three groups.
 - **To Home's Overview:** the bands that have no place in the three groups, your agents' day,
   pinned artifacts, the desktop and browser live views, Discover and recent activity, are Home's
@@ -215,10 +215,10 @@ Top to bottom:
 
 | Indicator | Home | Escalates to |
 |---|---|---|
-| Pending approval | the inline card where the agent asked; Home's Needs You; one toolbar badge | the tray and the buddy while the window is not focused |
+| Pending approval | the inline card where the agent asked; Home's Needs you; one toolbar badge | the tray and the buddy while the window is not focused |
 | Working, this thread | the orb and its status line at the turn head | none |
-| Working, another thread | a static pip on its sidebar row; Home's Running Now | none |
-| A loop waiting for input | Needs You; its sidebar pip | the buddy while the owner is away |
+| Working, another thread | a static pip on its sidebar row; Home's Running now | none |
+| A loop waiting for input | Needs you; its sidebar pip | the buddy while the owner is away |
 | Permission mode | the Execution Boundary control beside the composer, wherever the agent can act (a new loop's Mode, beside the loop composer) | the approval card itself |
 | Task mode (autonomy) | the composer's footer, beside the Execution Boundary control | the plan review, while a plan waits |
 | Memory mode (temporary or incognito) | the Execution Boundary control, on the control itself, plus a subtle tint on the thread | none |
@@ -226,7 +226,7 @@ Top to bottom:
 | Working directory, sandbox and network reach | the Execution Boundary control | none |
 | Sources and grounding | inline citations at the answer; the full list in the right pane | none |
 | Gateway connection and sync | the status line, quiet while connected; in words, with when it was last reached, while not. Focus mode hides the line unless the connection is lost | a banner, once the connection has stayed lost for 2 s, and gone when it is back |
-| Background helpers | inside the parent turn's folded steps; counted in Running Now | none |
+| Background helpers | inside the parent turn's folded steps; counted in Running now | none |
 | Blocked or failed actions (the egress guard, the scanner, tool errors) | inline at the action; their history in Settings › Security | the blocked state of the orb and the buddy |
 
 ## The four rules

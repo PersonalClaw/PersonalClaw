@@ -64,7 +64,7 @@ const AP: PendingApproval = {
 const RUNNING: RunningList = {
   running: [{
     work: 'chat:s1', kind: 'chat', session: 's1', phase: 'approval', line: 'Needs your OK', since: null,
-    name: 'Nightly sweep', agent: '', started_at: new Date().toISOString(), route: '#/chat/s1', blocked: false, waiting: ['ap-1'],
+    name: 'Nightly sweep', agent: '', started_at: new Date().toISOString(), route: '#/chat/s1', blocked: false, waiting: ['ap-1'], project_id: '', loop_kind: '',
   }],
   finished: [],
 }

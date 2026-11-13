@@ -196,15 +196,21 @@ def _project_folder(project) -> dict:
 
 
 async def api_projects_list(request: web.Request) -> web.Response:
-    """GET /api/projects"""
-    store = _store()
-    projects = store.list_projects()
-    # Precompute task-list counts once (one pass over all lists) for the UI.
-    counts: dict[str, int] = {}
-    for tl in store.list_task_lists():
-        counts[tl.project_id] = counts.get(tl.project_id, 0) + 1
-    out = [_project_payload(store, p, list_counts=counts) for p in projects]
-    return web.json_response({"projects": out})
+    """GET /api/projects
+
+    Read off the event loop: it reads every project's file and every task list, and the shell
+    reads it on each load (the sidebar names each loop's project from it)."""
+
+    def read() -> list[dict]:
+        store = _store()
+        projects = store.list_projects()
+        # Precompute task-list counts once (one pass over all lists) for the UI.
+        counts: dict[str, int] = {}
+        for tl in store.list_task_lists():
+            counts[tl.project_id] = counts.get(tl.project_id, 0) + 1
+        return [_project_payload(store, p, list_counts=counts) for p in projects]
+
+    return web.json_response({"projects": await asyncio.to_thread(read)})
 
 
 async def api_projects_create(request: web.Request) -> web.Response:
@@ -897,6 +903,57 @@ def _unbind_bound_chats(state, pid: str) -> int:
     return n
 
 
+def _unbind_held_sessions(state, pid: str) -> int:
+    """Clear the project from every session the gateway holds that still names a deleted project:
+    a chat bound while the delete ran, and an app's, a channel's or a worker's, which the guard
+    does not count. A held session writes its project back to its record at its next save, so
+    each is cleared before the records are. Best-effort; returns how many were cleared."""
+    n = 0
+    try:
+        held = list((getattr(state, "_sessions", {}) or {}).values())
+    except Exception:
+        logger.debug("delete-project: the held sessions could not be read", exc_info=True)
+        return 0
+    for s in held:
+        if getattr(s, "project_id", "") != pid:
+            continue
+        try:
+            s.project_id = ""
+            n += 1
+        except Exception:
+            logger.debug("unbind session %s failed", getattr(s, "key", "?"), exc_info=True)
+    return n
+
+
+def _unbind_chats_on_disk(state, pid: str) -> int:
+    """Clear the project from every chat record on disk that names a deleted project, the held
+    chats' among them, so a chat kept only on disk no longer names it, and a held one does not
+    take the binding back from its record on a restart. Its transcript is left as it is
+    (``ConversationLog.update_metadata``). Call off the event loop: it lists every record.
+    Best-effort; returns how many were cleared."""
+    log = getattr(state, "conversation_log", None) if state is not None else None
+    if log is None or not pid:
+        return 0
+    n = 0
+    try:
+        listed = log.list_sessions_with_metadata()
+    except Exception:
+        logger.warning("delete-project: the chats on disk could not be listed", exc_info=True)
+        return 0
+    for entry, meta in listed:
+        if meta.get("project_id") != pid:
+            continue
+        key = str(entry.get("key") or "")
+        try:
+            log.update_metadata(key, {}, drop=("project_id",))
+            n += 1
+        except Exception:
+            logger.warning(
+                "delete-project: the chat on disk %s still names the project", key, exc_info=True
+            )
+    return n
+
+
 async def _teardown_bound_loops(pid: str, state: Any) -> None:
     """Tear down every loop scoped under a project being force-deleted: stop the worker and
     its turn in flight + clean its git worktrees/branches + delete the loop row. Without this,
@@ -983,6 +1040,12 @@ async def api_projects_delete(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=400)
     if not deleted:
         return web.json_response({"error": "not found"}, status=404)
+    # The project is gone, on either path, so no chat names it any more: every session the
+    # gateway holds first (each writes its project back at its next save), then every record kept
+    # on disk, the held chats' too, so a restart binds none again. Transcripts are left as they
+    # are. A refused delete (the 409 above, or the store's 400 or 404) clears no record here.
+    _unbind_held_sessions(state, pid)
+    await asyncio.to_thread(_unbind_chats_on_disk, state, pid)
     return web.json_response({"ok": True})
 
 

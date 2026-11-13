@@ -19,6 +19,8 @@ export function waitingItem(over: Partial<WaitingItem> & Pick<WaitingItem, 'kind
     interrupt: 'deliver',
     answer: { method: 'POST', path: '', takes: [], body: {} },
     route: '',
+    project_id: '',
+    loop_kind: '',
     ...over,
   }
 }

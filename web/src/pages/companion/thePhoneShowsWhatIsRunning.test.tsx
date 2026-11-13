@@ -56,7 +56,7 @@ function row(over: Partial<RunningRow> = {}): RunningRow {
   return {
     work: 'chat:c1', kind: 'chat', session: 'c1', phase: 'searching', line: 'Looking through your notes',
     since: UPDATED, name: 'Plan the garden', agent: 'gardener', started_at: '2026-10-21T10:00:00Z',
-    route: '#/chat/c1', blocked: false, waiting: [], ...over,
+    route: '#/chat/c1', blocked: false, waiting: [], project_id: '', loop_kind: '', ...over,
   }
 }
 const list = (live: RunningRow[] = [], finished: RunningRow[] = []): RunningList => ({ running: live, finished })

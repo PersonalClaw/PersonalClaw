@@ -5,7 +5,7 @@ const doc: UiDoc = {
   name: 'NeedsYouBadge',
   keywords: ['needs you', 'waiting', 'badge', 'count', 'approvals', 'questions', 'attention', 'shell', 'toolbar', 'home'],
   description:
-    "The shell corner's needs-you badge: a raised-hand glyph with the number of rows in Home's Needs You (everything waiting on the owner's answer from `GET /api/waiting`, then the Inbox's notes and skill proposals), on every page. Clicking it opens Home. It reads the same query as Home (`useNeedsYou`), so the badge and the group never disagree. It renders nothing at 0, and since its absence says nothing waits, a count not known (before the first read lands, or after a read that failed) shows a muted dash instead of disappearing.",
+    "The shell corner's needs-you badge: a raised-hand glyph with the number of rows in Home's Needs you (everything waiting on the owner's answer from `GET /api/waiting`, then the Inbox's notes and skill proposals), on every page. Clicking it opens Home. It reads the same query as Home (`useNeedsYou`), so the badge and the group never disagree. It renders nothing at 0, and since its absence says nothing waits, a count not known (before the first read lands, or after a read that failed) shows a muted dash instead of disappearing.",
   props: [
     { name: 'navigate', description: 'The shell router; the badge sends the owner to `dashboard` (Home).' },
     { name: 'className', description: "Extra classes on the badge, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) the shell gives it." },

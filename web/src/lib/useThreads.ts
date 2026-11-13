@@ -5,6 +5,7 @@ import { loopApprovalId, placeOfRefs, type ApprovalPlace } from '../app/approval
 import { loopTitle, toLanes, type ActivityInput, type ApprovalInput, type AttentionInput, type Lane, type LaneCard, type LoopInput } from './attentionLanes'
 import { epochSeconds, sessionRecencyMs } from './epoch'
 import { loopRoute } from './loopKind'
+import { loopProjectId, useProjectList } from './loopProject'
 import { sessionTitle } from './sessionTitle'
 import { refreshKinds, useChatSocket, type WsMessage } from './useChatSocket'
 
@@ -90,7 +91,8 @@ export interface ProjectThreads {
 export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id' | 'pinned' | 'attention' | 'folder_id' | 'tags'>
   & Partial<Pick<ChatSessionSummary, 'created' | 'lifecycle' | 'created_by_app' | 'created_by_app_name'>>
 /** The loop list's fields the join reads. */
-export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'> & Partial<Pick<Loop, 'created_at' | 'completed_at' | 'last_cycle_at' | 'broken'>>
+export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'>
+  & Partial<Pick<Loop, 'tasks_project_id' | 'created_at' | 'completed_at' | 'last_cycle_at' | 'broken'>>
 
 export interface ThreadSources {
   sessions: ThreadChat[]
@@ -99,6 +101,9 @@ export interface ThreadSources {
   items: AttentionInput[]
   /** The pending approvals (`GET /api/approvals`). */
   approvals: ApprovalInput[]
+  /** The ids the project list knows, which file each loop under its one project
+   *  (`loopProjectId`); `null` or absent while the list is not read. */
+  projectIds?: ReadonlySet<string> | null
 }
 
 /** Which pip each of Home's lanes means. Idle is nothing a row marks. */
@@ -176,7 +181,7 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
       kind: l.kind === 'code' ? 'code' : 'loop',
       id,
       title: loopTitle(l),
-      projectId: str(l.project_id),
+      projectId: loopProjectId(l, src.projectIds ?? null),
       route: loopRoute(l),
       pip: l.status === 'failed' ? 'failed' : null,
       pinned: false,
@@ -336,6 +341,9 @@ export function useThreads(): ThreadsRead {
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current) }, [])
   useChatSocket(onMessage, refresh)
 
-  const groups = useMemo(() => (data ? toThreads(data) : []), [data])
+  const { ids: projectIds } = useProjectList(
+    (data?.loops ?? []).flatMap((l) => [l.project_id, l.tasks_project_id]),
+  )
+  const groups = useMemo(() => (data ? toThreads({ ...data, projectIds }) : []), [data, projectIds])
   return { groups, loading, error, refresh }
 }

@@ -11,7 +11,7 @@ import { HomeHarness, runningRow, thread, waitingItem, waitingList } from '../..
 
 // ── Home is the attention stack (#3813) ─────────────────────────────────────────────────────────
 //
-// Three groups, in order: Needs You (the waiting list, by consequence then age), Running Now (the
+// Three groups, in order: Needs you (the waiting list, by consequence then age), Running now (the
 // running list, each row's phase and last update) and Recent and completed. No idle group. And
 // every state the surface can be in says what it is: empty, overloaded, offline, a concurrent
 // answer, an expired ask, a failed read, and the read that recovers.
@@ -70,7 +70,7 @@ afterEach(() => { vi.restoreAllMocks() })
 const BOX = HTMLElement.prototype.getBoundingClientRect
 
 const group = (name: string) => screen.getByRole('region', { name })
-const needsYou = () => group('Needs You')
+const needsYou = () => group('Needs you')
 
 describe('the three groups', () => {
   it('render in order under the page title, and there is no idle group', async () => {
@@ -78,14 +78,14 @@ describe('the three groups', () => {
     await screen.findByText('Nothing is waiting on you.')
     const headings = screen.getAllByRole('heading').map((h) => h.textContent)
     expect(headings[0]).toMatch(/^Good \w+, Sam$/)
-    expect(headings.slice(1)).toEqual(['Needs You', 'Running Now', 'Recent and completed'])
+    expect(headings.slice(1)).toEqual(['Needs you', 'Running now', 'Recent and completed'])
     expect(screen.queryByRole('heading', { name: 'Idle' })).toBeNull()
   })
 
   it('each says what its emptiness means, and the all-clear offers suggestions', async () => {
     render(<HomeHarness />)
     expect(await within(needsYou()).findByText('Nothing is waiting on you.')).toBeInTheDocument()
-    expect(within(group('Running Now')).getByText('Nothing is running right now.')).toBeInTheDocument()
+    expect(within(group('Running now')).getByText('Nothing is running right now.')).toBeInTheDocument()
     expect(await within(group('Recent and completed')).findByText(/Nothing has finished lately/)).toBeInTheDocument()
     expect(screen.getByTestId('suggestions')).toBeInTheDocument()
   })
@@ -97,7 +97,7 @@ describe('the three groups', () => {
     expect(screen.getByTestId('overlay-dashboard')).toBeInTheDocument()
   })
 
-  it('Needs You keeps the order the list serves: consequence, then age', async () => {
+  it('Needs you keeps the order the list serves: consequence, then age', async () => {
     // The low-risk ask is older; the broad-reach approval is newer. The list serves the approval
     // first, and Home never sorts the list again.
     waiting.mockResolvedValue(waitingList([
@@ -200,6 +200,14 @@ describe('every state', () => {
     expect(screen.queryByTestId('suggestions')).toBeNull()
   })
 
+  it('beside a listed card, an unread source is named and nothing else is said to wait', async () => {
+    waiting.mockResolvedValue(waitingList([waitingItem()], ['gate']))
+    render(<HomeHarness />)
+    expect(await within(needsYou()).findByText(/Could not read workflow runs: what they hold may be waiting on you/)).toBeInTheDocument()
+    expect(within(needsYou()).getByRole('group', { name: 'Permission needed to run shell.run' })).toBeInTheDocument()
+    expect(within(needsYou()).queryByText('Nothing else is waiting on you.')).toBeNull()
+  })
+
   it('a frame that something waits re-reads the list, and the new ask shows', async () => {
     render(<HomeHarness />)
     await screen.findByText('Nothing is waiting on you.')
@@ -229,11 +237,11 @@ describe('the selected item’s detail', () => {
     running.mockResolvedValue({ running: [runningRow({ name: 'Plan the garden', line: 'Reading the plan' })], finished: [] })
     let address: Record<string, string> = {}
     render(<HomeHarness onQuery={(q) => { address = q }} />)
-    const row = await within(group('Running Now')).findByRole('listitem', { name: /Plan the garden/ })
+    const row = await within(group('Running now')).findByRole('listitem', { name: /Plan the garden/ })
     await userEvent.click(within(row).getByRole('button', { name: 'Show the details of Plan the garden' }))
     const pane = await screen.findByRole('region', { name: 'Plan the garden' })
     expect(within(pane).getByText('Reading the plan')).toBeInTheDocument()
-    expect(group('Running Now')).toBeVisible()
+    expect(group('Running now')).toBeVisible()
     expect(address.open).toBe('run:chat:chat-1')
     expect(within(pane).getByRole('button', { name: 'Close' })).toBeInTheDocument()
   })
@@ -244,9 +252,9 @@ describe('the selected item’s detail', () => {
     render(<HomeHarness query={{ open: 'waiting:approval:appr-1' }} />)
     const pane = await screen.findByRole('region', { name: 'shell.run' })
     expect(within(pane).getByRole('button', { name: /^Allow/ })).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: 'Needs You' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Needs you' })).toBeNull()
     await userEvent.click(within(pane).getByRole('button', { name: 'Back to Home' }))
-    expect(await screen.findByRole('region', { name: 'Needs You' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Needs you' })).toBeInTheDocument()
   })
 })
 
@@ -259,9 +267,9 @@ describe('the header', () => {
     expect(navigate).toHaveBeenCalledWith('chat/new')
     await userEvent.click(screen.getByRole('radio', { name: 'Overview' }))
     expect(await screen.findByTestId('home-overview')).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: 'Needs You' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Needs you' })).toBeNull()
     await userEvent.click(screen.getByRole('radio', { name: 'Attention' }))
-    expect(await screen.findByRole('region', { name: 'Needs You' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Needs you' })).toBeInTheDocument()
   })
 })
 

@@ -5,7 +5,7 @@ import {
   ArrowLeft, X, Check, MessageSquarePlus,
   Trash2, HelpCircle, Search, ChevronRight, CornerDownRight,
   Maximize2, PanelRight, ScrollText, Download, FileText, Bot, Cpu, BarChart3, ExternalLink, ListChecks, Link2, AlertTriangle, Copy,
-  FolderKanban, FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles, CirclePause, CheckCircle2, XCircle, Repeat,
+  FolderOpen, Clock, ShieldCheck, DollarSign, Sparkles, CirclePause, CheckCircle2, XCircle, Repeat,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
@@ -28,6 +28,8 @@ import { duration, spring, physics, messageEnter } from '../../design/motion'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
 import { api, ApiError, type GoalLoop, type LoopFinding, type LoopNudge, type LoopVerdict, type LoopCheck, type LoopCheckJudge, type Artifact, type TaskItem, type LoopSpend, type LoopReport } from '../../lib/api'
+import { loopProjectId, useProjectList } from '../../lib/loopProject'
+import { ProjectChip } from '../../ui/ProjectChip'
 import { reportActionFailure } from '../../app/reportingWrite'
 import { loopSpendPill, loopSpendTitle } from '../../lib/runCost'
 import { peekQuery, writeQuery } from '../../lib/data'
@@ -190,7 +192,7 @@ function asText(v: unknown): string {
   return String(v)
 }
 
-export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenTask, onOpenProject, query, setQuery }: { id: string; onBack: () => void; onDeleted?: () => void; onOpenArtifact?: (slug: string) => void; onOpenTask?: (taskId: string) => void; onOpenProject?: (projectId: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenTask, query, setQuery }: { id: string; onBack: () => void; onDeleted?: () => void; onOpenArtifact?: (slug: string) => void; onOpenTask?: (taskId: string) => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const q = query
   const sq = setQuery
   const [c, setC] = useState<GoalLoop | null>(null)
@@ -248,19 +250,12 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   const [runFlags, setRunFlags] = useState<RunFlags>(emptyRunFlags)
   const judgeDegraded = runFlags.judgeDegraded
   const [linkCopied, setLinkCopied] = useState(false)
-  // The containing Project's name — for a clickable pill linking back to the Project,
-  // mirroring the Code cockpit. Resolve project_id (explicit user scope) OR
-  // tasks_project_id (the auto-provisioned backing project a project-less loop gets):
-  // a loop launched without choosing a project still lives under a project via
-  // tasks_project_id, so the chip must show it — gating on project_id alone hid it.
-  const [projName, setProjName] = useState('')
-  const projId = c?.project_id || c?.tasks_project_id || ''
-  useEffect(() => {
-    if (!projId) { setProjName(''); return }
-    let alive = true
-    api.project(projId).then((pr) => { if (alive) setProjName(pr.name) }).catch(() => {})
-    return () => { alive = false }
-  }, [projId])
+  // The one Project that contains the loop, by the gateway's rule (`loopProjectId`): the one it
+  // was launched into, else the one made for its tasks (a loop launched into no project still
+  // lives under one). Named from the project list, for the chip linking back to it.
+  const projects = useProjectList([c?.project_id, c?.tasks_project_id])
+  const projId = c ? loopProjectId(c, projects.ids) : ''
+  const projName = projects.byId.get(projId)?.name ?? ''
   // The worker's phase line while its turn runs ("Thinking", the tool it runs), as the gateway
   // measured it; empty between turns, where the status line says "Working".
   const [statusText, setStatusText] = useState('')
@@ -724,15 +719,8 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
           measured zero rather than the unmeasured turn it is. */}
       {skillsUsed.length > 0 && <MetaPill icon={<Sparkles size={11} />} text={skillsUsedLabel(skillsUsed)} title={skillsUsedTitle(skillsUsed)} />}
       <span className="flex-1" />
-      {/* scope: containing project (clickable) + bound workspace */}
-      {/* Raw: the project button is the clickable twin of this row's h-5 truncating MetaPill; ui/MetaChip is h-6 and untruncated. */}
-      {projId && projName && (onOpenProject
-        ? <button type="button" onClick={() => onOpenProject(projId)} title={`Project: ${projName} — open`}
-            data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-5 max-w-[14rem] hover:brightness-110"
-            style={accentChip}>
-            <FolderKanban size={11} className="shrink-0" /><span className="truncate">{projName}</span>
-          </button>
-        : <MetaPill icon={<FolderKanban size={11} />} text={projName} tone="primary" title="Project" />)}
+      {/* scope: containing project (its chip, the row's one way to it) + bound workspace */}
+      <ProjectChip id={projId} name={projName} />
       {wsDir
         ? <MetaPill icon={<FolderOpen size={11} />} text={folderName(wsDir)} title={`Workspace: ${wsDir}`} />
         : c.work_dir && <MetaPill icon={<FolderOpen size={11} />} text={folderName(c.work_dir)} title={`Works in: ${c.work_dir}`} />}

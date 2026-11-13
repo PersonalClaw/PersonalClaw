@@ -1217,6 +1217,8 @@ def _waiting_list_holds() -> None:
         "interrupt",
         "answer",
         "route",
+        "project_id",
+        "loop_kind",
     )
     assert waiting.ITEM_FIELDS == promised
     assert waiting.CONSEQUENCES == ("destructive", "changes", "asks")
@@ -1268,6 +1270,8 @@ def _running_list_holds() -> None:
         "session",
         "blocked",
         "waiting",
+        "project_id",
+        "loop_kind",
     )
     assert running_now.ROW_FIELDS == promised
     assert running_now.CHANGED in ws_state.RUNNING_LIST_FRAMES

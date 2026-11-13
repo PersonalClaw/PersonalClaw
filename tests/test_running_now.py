@@ -56,6 +56,8 @@ ROW = {
     "session",
     "blocked",
     "waiting",
+    "project_id",
+    "loop_kind",
 }
 
 

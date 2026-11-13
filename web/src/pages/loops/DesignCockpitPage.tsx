@@ -3,7 +3,7 @@ import { reportingWrite } from '../../app/reportingWrite'
 import { fvs, withWeight } from '../../design/fontWeight'
 import {
   ArrowLeft, Pause, Play, Square, MessageSquarePlus, MessageSquare, Trash2, Link2, Check,
-  Palette, Type, Ruler, Box, Download, Upload, FolderKanban, Layers, RefreshCw, Contrast, GripVertical, Repeat,
+  Palette, Type, Ruler, Box, Download, Upload, Layers, RefreshCw, Contrast, GripVertical, Repeat,
   CheckCircle2, CircleDot, Circle, Clock,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -17,6 +17,8 @@ import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { unavailableWhen } from '../../ui/unavailable'
 import { ReactWidgetFrame } from '../../ui/widget/ReactWidgetFrame'
 import { api, type Loop, type Artifact, type LoopPhase } from '../../lib/api'
+import { loopProjectId, useProjectList } from '../../lib/loopProject'
+import { ProjectChip } from '../../ui/ProjectChip'
 import type { Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { downloadText, safeFilename } from '../../lib/download'
@@ -101,11 +103,11 @@ export const TOKEN_EDIT_HELD = HELD_CHANGE_REASON
  *                apply a color as a brand/accent override (persisted to the loop).
  *   • Exports  — download the token set (JSON), the CSS-variable block, and DESIGN.md.
  *  Reached at #/loops/<id> when loop.kind === 'design' (LoopsSection dispatches). */
-export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuildWithChat, query, setQuery }: {
-  id: string; onBack: () => void; onDeleted?: () => void; onOpenProject?: (projectId: string) => void
+export function DesignCockpitPage({ id, onBack, onDeleted, onBuildWithChat, query, setQuery }: {
+  id: string; onBack: () => void; onDeleted?: () => void
   // Open a project-bound chat seeded to build/mix components for THIS design system on
-  // the canvas (agentic chat). Given the loop + its resolved tokens for the seed.
-  onBuildWithChat?: (loop: Loop) => void
+  // the canvas (agentic chat). Given the loop and the one project it is in (`loopProjectId`).
+  onBuildWithChat?: (loop: Loop, projectId: string) => void
 } & Partial<Pick<RouteProps, 'query' | 'setQuery'>>) {
   const [loop, setLoop] = useState<Loop | null>(null)
   const [notFound, setNotFound] = useState(false)
@@ -120,15 +122,16 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [nudgeOpen, setNudgeOpen] = useState(false)
   const [nudgeText, setNudgeText] = useState('')
-  const [projName, setProjName] = useState('')
+  // The one project the loop is in (`loopProjectId`): the one it launched into, else the one made
+  // for its tasks (a project-less design loop still lives under a backing project), named from
+  // the project list.
+  const projects = useProjectList([loop?.project_id, loop?.tasks_project_id])
+  const projId = loop ? loopProjectId(loop, projects.ids) : ''
+  const projName = projects.byId.get(projId)?.name ?? ''
 
   const loadLoop = useCallback(() => {
     api.uLoop(id).then((l) => {
       setLoop(l); setNotFound(false)
-      // Resolve the containing project: explicit project_id OR the auto-provisioned
-      // tasks_project_id (a project-less design loop still lives under a backing project).
-      const pid = l.project_id || l.tasks_project_id || ''
-      if (pid) api.project(pid).then((p) => setProjName(p?.name || '')).catch(() => {})
     }).catch((e) => { if (e?.status === 404) setNotFound(true) })
   }, [id])
 
@@ -342,7 +345,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
             {canAct('stop') && <HeaderControl icon={Square} label={confirmStop ? 'Stop for good?' : 'Stop'} variant={confirmStop ? 'danger' : 'secondary'} onClick={() => { if (!confirmStop) { setConfirmStop(true); return } setConfirmStop(false); act('stop') }} />}
             {/* Agentic build — open a chat to build/mix components for this design system
                 on the canvas. Loop-aware via the seed regardless of a project. */}
-            {onBuildWithChat && <HeaderControl icon={MessageSquare} label="Build with chat" variant="secondary" onClick={() => onBuildWithChat(loop)} />}
+            {onBuildWithChat && <HeaderControl icon={MessageSquare} label="Build with chat" variant="secondary" onClick={() => onBuildWithChat(loop, projId)} />}
             {/* `ariaExpanded`, not `active` — see the same control in `LoopCockpitPage`: it reveals
                 an adjacent composer rather than turning a setting on. */}
             {active && <HeaderControl icon={MessageSquarePlus} label="Nudge" variant="secondary" ariaExpanded={nudgeOpen} onClick={() => setNudgeOpen((v) => !v)} />}
@@ -381,14 +384,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
             <Clock size={11} />{fmtDesignElapsed(loop.elapsed_seconds ?? 0)}
           </span>
         )}
-        {(loop.project_id || loop.tasks_project_id) && projName && (
-          // Raw: an h-5 truncating accent pill sized to this status row; ui/MetaChip is h-6 and untruncated.
-          <button type="button" onClick={() => onOpenProject?.((loop.project_id || loop.tasks_project_id)!)} title={`Project: ${projName} — open`}
-            data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-5 hover:brightness-110"
-            style={accentChip}>
-            <FolderKanban size={11} /><span className="truncate max-w-[14rem]">{projName}</span>
-          </button>
-        )}
+        <ProjectChip id={projId} name={projName} />
         {/* What its planner and workers run on — before launch, the picker. */}
         <LoopRunsOn loop={loop} onChange={canAct('start') ? moveRuntime : undefined} />
         <div className="ml-auto">
