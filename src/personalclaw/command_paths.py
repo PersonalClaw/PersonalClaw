@@ -24,8 +24,19 @@ import fnmatch
 import os
 import re
 import shlex
+import unicodedata
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
+
+
+def folded(text: str) -> str:
+    """*text* in the one form every path and name check compares: decomposed (Unicode NFD), case
+    folded, then composed (NFC). A letter can be written as one code point or as a base letter and
+    a combining mark, and a filesystem may keep or hand back either, so a check that folded case
+    alone could miss a protected place by its other spelling. Decomposed first, since folding the
+    case of a composed letter can split off a mark the other spelling keeps in a different place,
+    and the two spellings would fold apart."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFD", text).casefold())
 
 
 def strip_shell_quotes(command: str) -> str:
@@ -217,7 +228,9 @@ def _globbed(path: Path, budget: list[int], unexpanded: list[Path] | None = None
         if not _MAGIC.search(part):
             found = [os.path.join(prefix, part) for prefix in found]
             continue
-        wanted = part.casefold()
+        # As the shell compares (the name as kept, the part as written), and both casefolded, and
+        # both in the one form: an entry counts when any pair matches.
+        wanted = (part, part.casefold(), folded(part))
         matched: list[str] = []
         for prefix in found:
             if budget[0] <= 0:
@@ -226,7 +239,8 @@ def _globbed(path: Path, budget: list[int], unexpanded: list[Path] | None = None
             try:
                 with os.scandir(prefix) as entries:
                     for entry in entries:
-                        if fnmatch.fnmatchcase(entry.name.casefold(), wanted):
+                        names = (entry.name, entry.name.casefold(), folded(entry.name))
+                        if any(fnmatch.fnmatchcase(n, w) for n, w in zip(names, wanted)):
                             matched.append(os.path.join(prefix, entry.name))
                             if len(matched) > _MAX_MATCHES:
                                 return _left_unexpanded(path, unexpanded)
@@ -270,7 +284,14 @@ def glob_meets(one: str, other: str) -> bool:
     """Whether two glob components, either of them a plain name, can name one entry: there is a
     name both match. Regardless of case, and a dot first matched like any other character, so the
     answer can only be wider than the shell's."""
-    a, b = _glob_tokens(one.casefold()), _glob_tokens(other.casefold())
+    return any(
+        _tokens_meet(_glob_tokens(a), _glob_tokens(b))
+        for a, b in ((folded(one), folded(other)), (one.casefold(), other.casefold()))
+    )
+
+
+def _tokens_meet(a: list[str], b: list[str]) -> bool:
+    """Whether two glob components, as tokens (:func:`_glob_tokens`), can name one entry."""
     seen: dict[tuple[int, int], bool] = {}
 
     def meet(i: int, j: int) -> bool:
@@ -301,20 +322,22 @@ def glob_forms(glob: Path) -> list[tuple[str, ...]]:
     written = os.path.normpath(os.path.abspath(glob))
     parts = Path(written).parts
     first = next((n for n, part in enumerate(parts) if _MAGIC.search(part)), len(parts))
-    forms = {written.casefold()}
+    forms = {written}
     try:
         forms.add(os.path.join(os.path.realpath(os.path.join(*parts[:first])), *parts[first:]))
     except (OSError, ValueError):
         pass
-    return [Path(form.casefold()).parts for form in forms]
+    return list({Path(fold(form)).parts for form in forms for fold in (str.casefold, folded)})
 
 
 def glob_reaches(glob_parts: tuple[str, ...], location: str) -> bool:
     """Whether a glob, by its parts (:func:`glob_forms`), could name *location*, an absolute path,
     or a path inside it."""
-    wanted = Path(location.casefold()).parts
-    return len(glob_parts) >= len(wanted) and all(
-        glob_meets(part, name) for part, name in zip(glob_parts, wanted)
+    spellings = {Path(unicodedata.normalize(f, location.casefold())).parts for f in ("NFC", "NFD")}
+    return any(
+        len(glob_parts) >= len(wanted)
+        and all(glob_meets(part, name) for part, name in zip(glob_parts, wanted))
+        for wanted in spellings
     )
 
 
@@ -374,7 +397,7 @@ def named_paths(
     # From every part, repeats included: each `cd` moves the shell again.
     bases = _working_dirs(segments, start, user_home)
     # Regardless of case: on a case-insensitive filesystem `SESSION_KEY` opens `session_key`.
-    bare = frozenset(name.casefold() for name in names)
+    bare = frozenset(folded(name) for name in names)
     budget = [_MAX_LISTINGS]
     # What a part names depends on its text, *bases* and *bare*, all fixed for the call, and on the
     # listing budget left, which only goes down. A part whose reading listed no folder had no glob,
@@ -394,7 +417,7 @@ def named_paths(
             if not (
                 "/" in word
                 or word.startswith((".", "~"))
-                or word.casefold() in bare
+                or folded(word) in bare
                 or (named is not None and named(word))
             ):
                 continue
@@ -404,3 +427,37 @@ def named_paths(
                     yield word, found
         if budget[0] == left:
             read.add(segment)
+
+
+def kept_spellings(path: str) -> list[str]:
+    """*path* as the filesystem keeps it, for a check that looks a protected folder up (the
+    credential guard's protected places and the home's credential folders). A filesystem that
+    matches names byte for byte finds a folder only by the spelling it was made with: either
+    Unicode form, or both in one name. So when *path* is not there as written and the miss is in a
+    part that is not ASCII, each folder along it is listed and every entry whose one form
+    (:func:`folded`) is the part's is kept: a match too many only protects more. As written when it
+    is there, when the parts it misses are ASCII (one spelling each, so an ASCII path costs what it
+    did), or when nothing on disk matches."""
+    if path.isascii() or not os.path.isabs(path) or os.path.lexists(path):
+        return [path]
+    parts = Path(path).parts
+    last = max(at for at, part in enumerate(parts) if not part.isascii())
+    if os.path.lexists(os.path.join(*parts[: last + 1])):
+        return [path]
+    found = [parts[0]]
+    for part in parts[1:]:
+        wanted = folded(part)
+        kept: list[str] = []
+        for here in found:
+            there = os.path.join(here, part)
+            if os.path.lexists(there):
+                kept.append(there)
+            elif not part.isascii():
+                try:
+                    names = os.listdir(here)
+                except OSError:
+                    continue
+                kept += [os.path.join(here, n) for n in names if folded(n) == wanted]
+        if not (found := kept):
+            return [path]
+    return found

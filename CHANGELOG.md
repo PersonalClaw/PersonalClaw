@@ -34,6 +34,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A credential's value written in quotes is masked by its name, as one without quotes is: `"password": "…"` in JSON, a quoted value in YAML, `DB_PASSWORD="…"` in an env file, and a keyword argument or a JavaScript object's field, a line break after its `:` or `=` included, for `api_key`, `secret_key`, `access_token`, `refresh_token`, `client_secret`, `password`, `passwd` and `private_key`, and for the `SecretAccessKey` and `SessionToken` the AWS CLI writes. The mask replaces what the quotes hold, so the name and the quotes stay and a JSON document still parses, and a tool call's card masks such a value in the call's input as its preview does.**
 - **A redaction warning names what kind of text it masked, and at most its length or a scheme or host the masked text keeps, never any of the value: a credential pattern's warning and a long URL query's warning held the first characters of what they matched.**
 - **A path rule written with `~` or a `$VAR` names the paths its home or variable names: a trailing `/`, a doubled `/`, a `/./` or `/../` inside it, or text glued to it, and a path or a rule that starts with two or more slashes is read from `/`.**
+- **The credential guard compares a path in one Unicode form, so a protected place or name is refused whether a letter in it is written composed or decomposed.**
 
 ### Added
 
