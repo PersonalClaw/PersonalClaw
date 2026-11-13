@@ -48,6 +48,16 @@ def first_letters(names: str) -> str:
 
 _FIRSTS = first_letters(f"{AWS_NAMES}|{NAMES}")
 
+#: How a name sets its value, in the generic and the AWS name patterns: ``:`` or ``=``, Go's and
+#: Make's ``:=``, and Make's ``::=``, ``:::=``, ``?=`` and ``+=``. The passes for a value without
+#: quotes never read an ``=`` that opens ``=>`` before whitespace, an escaped quote or the end of
+#: the text, so the quoted pass reads the value after a PHP, Perl or Ruby map's ``=>`` under every
+#: name, and a bare ``name => expression``, as often a JavaScript arrow function as a map, stays
+#: whole. Each is atomic, so a ``:=`` is never read back as a ``:`` with a value that starts with
+#: ``=``.
+ASSIGN = r"(?>:{1,3}=|[?+]=|:|=(?!>(?:\s|\\+[\"']|\Z)))"
+QUOTED_ASSIGN = r"(?>:{1,3}=|[?+]=|=>|[:=])"
+
 #: The pass for a value without quotes (``security``) reads these AWS names in any case, and the
 #: access key id's, which only it reads.
 AWS_KEY_NAMES = rf"{AWS_NAMES}|AccessKeyId|aws_access_key_id"
@@ -60,10 +70,10 @@ _AWS_GAP = (
     r"(?:[^\S\r\n]*+(?=\S)|[^\S\r\n]*+[\r\n]\s*+(?!\\*+[\"']?(?:[\w.-]+\\*+[\"']?[^\S\r\n]*+"
     r"(?:=>|[:=])(?=\s|\Z)|[A-Z_][A-Z0-9_]*=|[\w.-]*\[REDACTED:)))"
 )
-#: In that pass, an AWS name not inside ``${``, its ``:`` or ``=`` and the gap, up to a value that
-#: is no reference (:data:`NOT_A_REFERENCE`).
+#: In that pass, an AWS name not inside ``${``, how it sets its value and the gap, up to a value
+#: that is no reference (:data:`NOT_A_REFERENCE`).
 AWS_NAMED = (
-    rf"(?<!\$\{{)(?=(?i:[{_KEY_FIRSTS}]))(?i:{AWS_KEY_NAMES})\s*+[:=]{_AWS_GAP}"
+    rf"(?<!\$\{{)(?=(?i:[{_KEY_FIRSTS}]))(?i:{AWS_KEY_NAMES})\s*+{ASSIGN}{_AWS_GAP}"
     rf"(?!\[REDACTED:){NOT_A_REFERENCE}"
 )
 #: A literal default in ``${NAME:-default}`` under an AWS name, read up to its ``}``.
@@ -78,15 +88,15 @@ AWS_BRACED_DEFAULT = (
 #: after a name (a label, a message) stays.
 _CHAR = r"(?:[^\s\\\"']|\\++[^\s\\\"'])"
 
-#: A name, the quote that closes it in JSON, ``:`` or ``=`` with any whitespace around it (a line
-#: break included), and a value of eight or more characters that the same quote opens and closes, at
-#: any depth of escaping (``"``, ``\"``, ``\\\"``), and after an AWS name not a reference. A value
-#: on a line of its own is read only when what follows its closing quote is not ``:`` or ``=>``:
-#: that is a key of its own, after a name whose value is empty. A mask holds a space, so a masked
-#: value is never read as one again. The value can never hold a quote, so it ends at the first one
-#: after its own, and the scan stays linear in the length of the text.
+#: A name, the quote that closes it in JSON, :data:`QUOTED_ASSIGN` with any whitespace around it (a
+#: line break included), and a value of eight or more characters that the same quote opens and
+#: closes, at any depth of escaping (``"``, ``\"``, ``\\\"``), and after an AWS name not a
+#: reference. A value on a line of its own is read only when what follows its closing quote is not
+#: ``:`` or ``=>``: that is a key of its own, after a name whose value is empty. A mask holds a
+#: space, so a masked value is never read as one again. The value can never hold a quote, so it ends
+#: at the first one after its own, and the scan stays linear in the length of the text.
 QUOTED_RE = re.compile(
-    rf"(?=(?i:[{_FIRSTS}]))(?i:(?P<aws>{AWS_NAMES})|{NAMES})(?:\\*+[\"'])?+\s*+[:=]"
+    rf"(?=(?i:[{_FIRSTS}]))(?i:(?P<aws>{AWS_NAMES})|{NAMES})(?:\\*+[\"'])?+\s*+{QUOTED_ASSIGN}"
     rf"[^\S\r\n]*+(?P<nl>[\r\n]\s*+)?+(?P<quote>\\*+[\"'])"
     rf"(?(aws){NOT_A_REFERENCE})(?P<value>{_CHAR}{{8,}}+)(?P=quote)"
     rf"(?(nl)(?![^\S\r\n]*+(?::(?!:)|=>)))"

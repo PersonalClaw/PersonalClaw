@@ -1198,6 +1198,8 @@ def redact_exfiltration_urls(text: str) -> tuple[str, list[str]]:
 _TOKEN_UNIT = _escaped_run_unit("", escaped="'\"")
 _TOKEN_VALUE = rf"(?:\\['\"]{_TOKEN_UNIT}+(?:\\['\"])?|{_TOKEN_UNIT}+)"
 
+_ASSIGN = quoted_credentials.ASSIGN  # how a credential's name sets its value: `:`, `=`, `:=` ...
+
 #: A ``name = value`` credential's value: eight or more characters up to whitespace, a comma, a
 #: semicolon or a quote. The lookahead is the length test as it always read, so an escape changes
 #: only where the value ends, never whether it is masked.
@@ -1239,7 +1241,7 @@ _CREDENTIAL_PATTERNS = re.compile(
     # restored masks from such a view put the stored value back without its label. Each name a
     # mask can follow carries it (`pwd=`, the AWS names), so a second pass of `redact_credentials`,
     # or of `redact_for_display` and `redact_field` built on it, changes nothing.
-    rf"|(?i:{quoted_credentials.NAMES})\s*+[:=]\s*+(?!\[REDACTED:){_ASSIGNED_VALUE}"
+    rf"|(?i:{quoted_credentials.NAMES})\s*+{_ASSIGN}\s*+(?!\[REDACTED:){_ASSIGNED_VALUE}"
     rf"|(?:[Pp]wd=(?![/~])|PWD=(?![/~$]))(?!\[REDACTED:){_ASSIGNED_VALUE}"  # never a folder
     # `Authorization: Bearer <token>` / a bare bearer token.
     r"|(?i:bearer)\s+[A-Za-z0-9._~+/-]{16,}=*"
