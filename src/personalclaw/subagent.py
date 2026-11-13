@@ -55,6 +55,7 @@ from personalclaw.session import SessionManager
 from personalclaw.stats import Stats
 from personalclaw.subagent_ask import spawn_ask, spawn_refusal
 from personalclaw.subagent_endings import _timeout_context
+from personalclaw.subagent_folders import _run_workdir_for, validate_cwd  # noqa: F401 (re-exported)
 from personalclaw.subagent_kill import sigkill_session
 from personalclaw.subagent_persistence import (
     ASKING,
@@ -218,72 +219,6 @@ def check_memory_available(min_gb: float = 4.0, path: str = "/proc/meminfo") -> 
     except (ValueError, IndexError):
         return (True, -1.0)
     return (True, -1.0)
-
-
-def validate_cwd(cwd: str, allowed_roots: list[str], *, run_workdir: str = "") -> tuple[str, str]:
-    """Validate a caller-supplied ``cwd`` for a spawn.
-
-    Resolves symlinks and verifies the path is an existing directory inside the workspace (the
-    folder the parent session itself works in), under a root the operator added in
-    ``agent.subagent_cwd_allowed_roots``, or inside *run_workdir*: the folder of the workflow run
-    the spawn is a step of (``workflows.provisioning.run_workdir``: its scratch folder, its own
-    worktree, the folder its project is bound to when it works in place, or its project's context
-    folder), which the engine put the run's steps in. The list is empty by default, so the
-    workspace and a run's own folder are where a spawn may work until the owner names another.
-
-    Args:
-        cwd: Caller-supplied absolute path (may contain ``~``).
-        allowed_roots: Extra permitted root paths from config (may contain ``~``).
-        run_workdir: The spawning run's own folder, ``""`` for any other spawn.
-
-    Returns:
-        ``(resolved_cwd, error)``. On success ``error`` is empty and
-        ``resolved_cwd`` is the canonical absolute path (realpath-resolved).
-        On failure ``error`` is a reason string and ``resolved_cwd`` is empty.
-    """
-    if not cwd:
-        return ("", "")
-    try:
-        expanded = os.path.expanduser(cwd)
-        if not os.path.isabs(expanded):
-            return ("", "cwd must be an absolute path")
-        resolved = os.path.realpath(expanded)
-    except (OSError, ValueError) as exc:
-        return ("", f"cwd resolution failed: {exc}")
-    if not os.path.isdir(resolved):
-        return ("", "cwd does not exist or is not a directory")
-    # The workspace defaults to the home's own folder, which no configured root names: a subagent
-    # may always work where the session that spawns it works.
-    from personalclaw.config.loader import workspace_root
-
-    workspace = os.path.realpath(workspace_root())
-    resolved_roots = [workspace] + [os.path.realpath(os.path.expanduser(r)) for r in allowed_roots]
-    if run_workdir:
-        resolved_roots.append(os.path.realpath(run_workdir))
-    for root in resolved_roots:
-        if resolved == root or resolved.startswith(root + os.sep):
-            return (resolved, "")
-    return (
-        "",
-        f"cwd is not in the workspace ({workspace}) or under any allowed root: {allowed_roots}. "
-        "Add its folder in Settings → Agent defaults → Allowed working directories.",
-    )
-
-
-def _run_workdir_for(parent_run: str) -> str:
-    """The folder of the workflow run a spawn is a step of, or ``""``.
-
-    ``parent_run`` is ``workflow:<run_id>`` only when the workflow engine dispatches the run's own
-    step: no caller of ``/api/spawn`` or of an agent's tool can set it. The folder itself comes
-    from that run's record (``workflows.provisioning.run_workdir``), never from the request, so a
-    spawn is admitted to its own run's folder and to no other."""
-    from personalclaw.workflows.ownership import OWNED_PREFIX
-
-    if not parent_run.startswith(OWNED_PREFIX):
-        return ""
-    from personalclaw.workflows.provisioning import run_workdir
-
-    return run_workdir(parent_run[len(OWNED_PREFIX) :])
 
 
 # Capability class for a spawn's tool surface. The values mirror the
@@ -574,6 +509,12 @@ class SubagentManager:
         # (breaker trip, run-budget exceeded, kill-fan-out). A queued or
         # new spawn for one of these is refused with that reason rather than started.
         self._fanout_stops: dict[str, str] = {}
+        # The fan-out keys workflow runs' agent steps share (their ``parent_run``,
+        # ``workflow:<run_id>``), and those whose run has ended (`end_run_fanout`). A run's steps
+        # run one after another as often as side by side, so a run's breaker streak, stop and run
+        # total last until the run ends, not only while one of its steps runs or waits.
+        self._run_fanouts: set[str] = set()
+        self._run_fanouts_ended: set[str] = set()
         self.hook_store: Any = None  # Optional ScriptHookStore, set by server.py
         # Whose work an agent's run is and which folder's memory it reads (`memory_reads.reach_of`,
         # `memory_locality.work_folder`), for its first prompt; set by the state that holds this.
@@ -590,6 +531,9 @@ class SubagentManager:
         # Set once the gateway stops (`cancel_all`): nothing starts after it, so a spawn still
         # queued waits, recorded, for the next start rather than starting into the shutdown.
         self._stopping = False
+        # The loop this manager runs on, bound at its first start (`_dispatch_run`). A helper's
+        # ending run on another loop, or with none running, starts nothing (`_drain_queue`).
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._reaper_task: asyncio.Task | None = None  # type: ignore[type-arg]
         # The grant that last waived an ask in each running agent's runtime (`_policy_source`),
         # so the audit row of a call its runtime approved without asking names who decided.
@@ -1394,6 +1338,8 @@ class SubagentManager:
         # --- Fan-out stop (breaker / run budget / kill-fan-out): a stopped
         # fan-out refuses further spawns with the recorded TYPED reason. ---
         fkey = _fanout_key(info)
+        if info.parent_run:
+            self._run_fanouts.add(info.parent_run)
         stop_reason = self._fanout_stops.get(fkey)
         if stop_reason:
             info.done, info.never_ran = True, True
@@ -1446,6 +1392,9 @@ class SubagentManager:
         """
         agent = info.agent
         agent_id = info.id
+        if self._loop is None:
+            with contextlib.suppress(RuntimeError):
+                self._loop = asyncio.get_running_loop()
         info.queued = False
         self._inc_running(info)
         # It runs as its own work (its mark and the model it was handed), not the dispatcher's.
@@ -1669,9 +1618,10 @@ class SubagentManager:
     async def _cancel_if_still_stopped(self, fkey: str, reason: str) -> int:
         """The run budget's cancel of *fkey*, which runs after the child that crossed the ceiling
         has ended. It stops the fan-out only while the stop that scheduled it, *reason*, still
-        stands. When that child was the fan-out's last, its ending has drained the fan-out and
-        ended the stop, and a helper started under *fkey* since (the chat's next helper, or the
-        workflow run's next agent step) must not be ended by a stop that is gone."""
+        stands. When that child was a chat fan-out's last, its ending has drained the fan-out and
+        ended the stop, and the chat's next helper, started under *fkey* since, must not be ended
+        by a stop that is gone. A workflow run's stop stands until the run ends
+        (:meth:`_maybe_clear_fanout`), so its next agent step is refused, not started."""
         if self._fanout_stops.get(fkey) != reason:
             return 0
         return await self.cancel_fanout(fkey, reason=reason)
@@ -1679,15 +1629,20 @@ class SubagentManager:
     def _maybe_clear_fanout(self, fkey: str) -> None:
         """Drop a fan-out's breaker/budget/stop state once it is fully drained.
 
-        A later fan-out reusing the same key (a new workflow run rarely does; a
-        chat parent may) must start clean — otherwise a prior run's tripped breaker
-        would pre-stop it. Called after each child finishes; clears only when no
-        child of this key is running or queued.
+        A chat's later fan-out reuses its key and must start clean — otherwise a prior
+        fan-out's tripped breaker would pre-stop it. Called after each child finishes; clears
+        only when no child of this key is running or queued. A workflow run's key is kept until
+        its run has ended too (:meth:`end_run_fanout`): its agent steps share it one after another
+        as often as side by side, and its breaker and Max tokens / run count the whole run.
         """
         if self._lane_count(fkey) > 0:
             return
         if any(_fanout_key(qi) == fkey for qi in self._queue):
             return
+        if fkey in self._run_fanouts and fkey not in self._run_fanouts_ended:
+            return
+        self._run_fanouts.discard(fkey)
+        self._run_fanouts_ended.discard(fkey)
         self._fanout_failures.pop(fkey, None)
         self._fanout_stops.pop(fkey, None)
         try:
@@ -1696,6 +1651,15 @@ class SubagentManager:
             get_meter().end_run(fkey)
         except Exception:
             logger.debug("fan-out meter end_run failed for %s", fkey, exc_info=True)
+
+    def end_run_fanout(self, key: str) -> None:
+        """The workflow run whose fan-out *key* (``workflow:<run_id>``) this is has ended: the
+        breaker streak, stop and run total its agent steps shared end once nothing of it runs or
+        waits, at once when nothing does (``started_work.end_run``)."""
+        if not key:
+            return
+        self._run_fanouts_ended.add(key)
+        self._maybe_clear_fanout(key)
 
     async def _safe_announce(self, info: SubagentInfo) -> None:
         """Notify completion callback (single info, as a one-element batch) with
@@ -1722,6 +1686,8 @@ class SubagentManager:
         stops: what waits is kept for the next start (``subagent_waiting``).
         """
         if self._stopping or not self._queue or self._running_count >= self._max_concurrent:
+            return
+        if not self._on_its_loop():
             return
         # Find the first queued spawn whose run-lane also has room.
         idx = next(
@@ -1760,6 +1726,16 @@ class SubagentManager:
             logger.exception("Draining queue: the start of %s raised", info.id)
         if self._queue and self._running_count < self._max_concurrent:
             asyncio.get_event_loop().call_later(2.0, self._drain_queue)
+
+    def _on_its_loop(self) -> bool:
+        """Whether the code running now runs on this manager's loop. A helper's ending can run on
+        another: a task of a loop that closed with it pending is collected while another loop runs,
+        and its ending runs there. A helper it started there would run where nothing stops it."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return self._loop is None or loop is self._loop
 
     async def _spawn_with_approval(self, info: SubagentInfo) -> None:
         """Ask to start *info* (:meth:`_ask_to_start`): refused, it ends with why, giving back its
@@ -2688,11 +2664,19 @@ class SubagentManager:
         logger.info("Cancelled fan-out %s (%d child(ren))", fanout_key, len(victims))
         return len(victims)
 
+    def stop_starting(self) -> None:
+        """Start nothing from now on: a spawn still waiting stays recorded for the next start
+        (``subagent_waiting``). :meth:`cancel_all` begins with it. The gateway calls it alone when
+        it exits by raising: the loop's close then cancels the helpers still running, and each
+        one's ending would start a helper waiting for its slot on that closing loop, after the app
+        processes were stopped, in a task the close never cancels."""
+        self._stopping = True
+
     async def cancel_all(self) -> None:
         """Cancel all running subagents and wait a bounded time for their cleanup: one cancelled
         while it starts its agent's process may never leave (``cancel_and_wait``). Nothing starts
         after it: a spawn still waiting stays recorded for the next start (``subagent_waiting``)."""
-        self._stopping = True
+        self.stop_starting()
         if self._reaper_task and not self._reaper_task.done():
             self._reaper_task.cancel()
             self._reaper_task = None

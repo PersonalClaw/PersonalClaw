@@ -166,6 +166,58 @@ class TestValidateCwd:
         assert resolved == ""
         assert "or under any allowed root" in err
 
+    def test_every_unlisted_folder_gets_the_one_refusal(self, tmp_path: Path) -> None:
+        """A folder outside the workspace and every allowed root is refused before anything
+        reads it: one made and one never made get the same refusal, word for word."""
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        made = tmp_path / "made"
+        made.mkdir()
+        never_made = tmp_path / "never-made"
+        refusals = {validate_cwd(str(folder), [str(allowed)]) for folder in (made, never_made)}
+        assert refusals == {
+            (
+                "",
+                f"cwd is not in the workspace ({_workspace()}) or under any allowed root: "
+                f"{[str(allowed)]}. Add its folder in Settings → Agent defaults → Allowed "
+                "working directories.",
+            )
+        }
+
+    def test_a_listed_folder_that_is_no_directory_still_says_so(self, tmp_path: Path) -> None:
+        """Inside an allowed root, a folder that is not a directory is refused for that."""
+        resolved, err = validate_cwd(str(tmp_path / "never-made"), [str(tmp_path)])
+        assert (resolved, err) == ("", "cwd does not exist or is not a directory")
+
+
+@pytest.mark.parametrize(
+    ("folder", "root", "admitted"),
+    [
+        pytest.param("allow", "allow", True, id="the root itself"),
+        pytest.param("allow/child", "allow", True, id="a folder below the root"),
+        pytest.param("allow-extra", "allow", False, id="a sibling sharing the root's prefix"),
+    ],
+)
+def test_a_folder_is_in_a_root_when_it_is_the_root_or_below_it(
+    tmp_path: Path, folder: str, root: str, admitted: bool
+) -> None:
+    """The one check that decides whether a folder is in an allowed root: the root itself and a
+    folder below it are, a sibling whose name only starts with the root's is not."""
+    for name in ("allow/child", "allow-extra"):
+        (tmp_path / name).mkdir(parents=True, exist_ok=True)
+    resolved, err = validate_cwd(str(tmp_path / folder), [str(tmp_path / root)])
+    assert (resolved != "", err == "") == (admitted, admitted), err
+    if admitted:
+        assert resolved == os.path.realpath(tmp_path / folder)
+
+
+def test_a_root_of_the_filesystem_admits_that_folder_alone() -> None:
+    """A root of `/` admits `/` and no folder below it, as the check always has: the root's own
+    name ends in the separator a folder below it would start with."""
+    assert validate_cwd("/", ["/"]) == ("/", "")
+    resolved, err = validate_cwd(os.path.realpath(os.sep + "tmp"), ["/"])
+    assert resolved == "" and "or under any allowed root" in err
+
 
 # ---------------------------------------------------------------------------
 # SubagentManager.spawn integration — cwd is threaded onto SubagentInfo
@@ -312,6 +364,43 @@ class TestSpawnCwd:
             "working directories."
         )
         assert manager._running_count == running_before
+
+    @pytest.mark.asyncio
+    async def test_a_spawn_in_any_unlisted_folder_gets_the_one_refusal(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The spawn's reply, what the spawn tool answers its caller, is the same for an unlisted
+        folder that was made and one never made: the same refusal, the same audit row."""
+        allowed_roots = [str(tmp_path / "allowed")]
+        (tmp_path / "allowed").mkdir()
+        (tmp_path / "made").mkdir()
+        mock_cfg = MagicMock()
+        mock_cfg.agent.spawn_min_memory_gb = 4.0
+        mock_cfg.agent.subagent_cwd_allowed_roots = allowed_roots
+        replies = []
+        for folder in (tmp_path / "made", tmp_path / "never-made"):
+            manager = SubagentManager(
+                sessions=_mock_sessions(),
+                ctx_builder=_mock_ctx_builder_auto_spawn(),
+            )
+            sel_mock = MagicMock()
+            with (
+                _only_the_cwd_gate_can_fire(),
+                patch("personalclaw.subagent.Stats"),
+                patch("personalclaw.subagent.sel", return_value=sel_mock),
+                patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+            ):
+                info = manager.spawn("t", cwd=str(folder))
+            assert info is not None
+            row = sel_mock.log_tool_invocation.call_args_list[0].kwargs
+            replies.append((info.done, info.error, row["outcome"], row["metadata"]["reason"]))
+        refusal = (
+            f"cwd is not in the workspace ({_workspace()}) or under any allowed root: "
+            f"{allowed_roots}. Add its folder in Settings → Agent defaults → Allowed working "
+            "directories."
+        )
+        assert replies == [(True, f"spawn refused: {refusal}", "rejected_invalid_cwd", refusal)] * 2
 
     @pytest.mark.asyncio
     async def test_cwd_refusal_survives_every_hostile_earlier_gate(

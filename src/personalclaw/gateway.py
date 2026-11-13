@@ -5720,8 +5720,11 @@ async def run_gateway(
         # when it is stopped before its signal handlers are installed (they come after the update
         # check), since a Ctrl-C then cancels it. Startup has already started every enabled app's
         # backend and worker by then, and each would outlive the gateway, re-parented to init,
-        # until the next boot reaped it.
+        # until the next boot reaped it. Nothing starts from here on: the loop's close cancels the
+        # helpers still running, and each one's ending would start a helper waiting for its slot.
         from personalclaw.apps.app_runtime import stop_processes
 
+        if orchestrator.subagent_mgr is not None:
+            orchestrator.subagent_mgr.stop_starting()
         stop_processes()
         raise

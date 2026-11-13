@@ -14,6 +14,10 @@ Each test proves one of these properties:
 - A fan-out's stop: it refuses what is on its way into the fan-out and ends once nothing of it
   runs or waits, however its last helper ends (on its own, stopped, refused in a drain, or refused
   at its start), and a stopped helper hands its slot to the one waiting for it.
+- A workflow run's key: its breaker and run budget count every step of the run, one after another
+  as well as side by side, and end with the run.
+- A helper's ending starts what waits for a slot only on its manager's own loop, and nothing once
+  the gateway's start-up has raised.
 """
 
 import asyncio
@@ -1193,3 +1197,221 @@ class TestTheStopEndsWithItsFanout:
             assert x in mgr._fanout_stops
             refused = mgr.spawn("x's next helper", parent_session_key=x)
             assert refused is not None and refused.done and refused.error.startswith(BREAKER)
+
+
+# ── a workflow run's key lasts the run ───────────────────────────────────────────────────────
+
+
+def _failing_sessions() -> MagicMock:
+    """The completing sessions, except the model call fails: each helper ends with an error."""
+    sessions = _completing_sessions()
+    provider = sessions.get_or_create.return_value[0]
+
+    async def _stream(*_a, **_kw):
+        raise RuntimeError("the model call failed")
+        yield  # an async generator, as the provider's stream is
+
+    provider.stream = MagicMock(side_effect=lambda *a, **kw: _stream())
+    return sessions
+
+
+STEPS_CHAT = "dashboard:chat-that-started-the-run"
+
+
+async def _one_step(mgr: SubagentManager, run_key: str, n: int) -> SubagentInfo:
+    """Agent step *n* of the workflow run whose fan-out key is *run_key*, run to its end before
+    anything else starts: a run's steps one after another, none of them side by side. Started from
+    a chat, as Run workflow in one does, so the step reads that chat's memory setting."""
+    step = mgr.spawn(f"step {n}", parent_session_key=STEPS_CHAT, parent_run=run_key)
+    assert step is not None and not step.done, step.error if step else None
+    await asyncio.gather(*list(mgr._tasks.values()), return_exceptions=True)
+    await mgr.flush_deliveries()
+    await _settle()
+    return step
+
+
+class TestARunsKeyLastsTheRun:
+    """A workflow run's agent steps share one fan-out key, ``workflow:<run_id>``
+    (``workflows/engine.py``). Its breaker and its Max tokens / run count the whole run, steps run
+    one after another as well as side by side, and end with the run (``started_work.end_run``)."""
+
+    @pytest.mark.asyncio
+    async def test_a_step_after_the_one_that_crossed_the_ceiling_is_refused(self) -> None:
+        from personalclaw.guardrails.budgets import Budget, reset_meter
+
+        reset_meter()
+        run_key = "workflow:run-two-steps"
+        mgr = SubagentManager(
+            sessions=_completing_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        with (
+            patch("personalclaw.subagent.Stats"),
+            patch("personalclaw.subagent.sel"),
+            patch(
+                "personalclaw.guardrails.budgets.run_budget_from_config",
+                return_value=Budget(max_tokens=2000),
+            ),
+        ):
+            first = await _one_step(mgr, run_key, 1)  # 1500 of the run's 2000
+            assert first.done and not first.error, first.error
+            second = await _one_step(mgr, run_key, 2)  # 3000: it crosses the ceiling as it ends
+            assert second.done and not second.error, second.error
+            third = mgr.spawn("step 3", parent_session_key=STEPS_CHAT, parent_run=run_key)
+            assert third is not None and third.done and third.never_ran, third
+            assert third.error.startswith("spawn refused: run budget exceeded"), third.error
+            assert "3000/2000" in third.error, third.error
+        reset_meter()
+
+    @pytest.mark.asyncio
+    async def test_failed_steps_one_after_another_trip_the_runs_breaker(self) -> None:
+        run_key = "workflow:run-of-failing-steps"
+        mgr = SubagentManager(
+            sessions=_failing_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            for n in range(_CIRCUIT_BREAKER_THRESHOLD):
+                step = await _one_step(mgr, run_key, n)
+                assert step.done and step.error and not step.cancelled, step.error
+            refused = mgr.spawn("the next step", parent_session_key=STEPS_CHAT, parent_run=run_key)
+            assert refused is not None and refused.done and refused.never_ran
+            assert refused.error.startswith(BREAKER), refused.error
+            # A chat's helpers end their fan-out's streak when they drain, as before.
+            chat = "dashboard:chat-of-failing-helpers"
+            for n in range(_CIRCUIT_BREAKER_THRESHOLD):
+                helper = mgr.spawn(f"helper {n}", parent_session_key=chat)
+                assert helper is not None and not helper.done, helper.error
+                await asyncio.gather(*list(mgr._tasks.values()), return_exceptions=True)
+                await mgr.flush_deliveries()
+                await _settle()
+            assert chat not in mgr._fanout_stops and chat not in mgr._fanout_failures
+
+    @pytest.mark.asyncio
+    async def test_the_runs_end_ends_what_its_steps_shared(self) -> None:
+        """``started_work.end_run``, which a run's terminal write and its deletion call, ends the
+        breaker streak, stop and run total of the run's key, even when ending what the run started
+        fails, so a run reusing the id (a resumed one) starts clean."""
+        from types import SimpleNamespace
+
+        from personalclaw import started_work
+        from personalclaw.guardrails.budgets import get_meter, reset_meter
+
+        reset_meter()
+        run_key = "workflow:run-that-ends"
+        mgr = SubagentManager(
+            sessions=_failing_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            for n in range(_CIRCUIT_BREAKER_THRESHOLD):
+                await _one_step(mgr, run_key, n)
+            get_meter().charge_run(run_key, 1200, 0.0)
+            assert run_key in mgr._fanout_stops, "the positive control: the run's breaker tripped"
+            run = SimpleNamespace(id="run-that-ends", title="", workflow_name="digest")
+            with patch.object(started_work, "end_started", AsyncMock(side_effect=OSError("disk"))):
+                assert await started_work.end_run(run, ending="failed", subagents=mgr) == 0
+            assert run_key not in mgr._fanout_stops and run_key not in mgr._fanout_failures
+            assert get_meter().run_totals(run_key).tokens == 0
+            assert run_key not in mgr._run_fanouts and run_key not in mgr._run_fanouts_ended
+            again = mgr.spawn(
+                "a resumed run's step", parent_session_key=STEPS_CHAT, parent_run=run_key
+            )
+            assert again is not None and not again.done, again.error
+            await asyncio.gather(*list(mgr._tasks.values()), return_exceptions=True)
+            await mgr.flush_deliveries()
+        reset_meter()
+
+    @pytest.mark.asyncio
+    async def test_a_run_that_ends_while_its_step_runs_ends_its_key_with_that_step(self) -> None:
+        run_key = "workflow:run-ends-mid-step"
+        sessions, began = _sessions_that_say_they_started()
+        mgr = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            step = mgr.spawn("step", parent_session_key=STEPS_CHAT, parent_run=run_key)
+            assert step is not None and not step.queued
+            await asyncio.wait_for(began.wait(), 5)
+            mgr._fanout_failures[run_key] = 3  # a streak the run's earlier steps left
+            mgr.end_run_fanout(run_key)
+            assert mgr._fanout_failures.get(run_key) == 3, "kept while a step of the run still runs"
+            assert await mgr.cancel(step.id) is True
+            await _settle()
+            assert run_key not in mgr._fanout_failures
+            assert run_key not in mgr._run_fanouts and run_key not in mgr._run_fanouts_ended
+
+
+# ── a helper's ending starts nothing off its manager's loop ─────────────────────────────────
+
+
+class TestADrainStartsOnlyOnItsLoop:
+    @pytest.mark.asyncio
+    async def test_an_ending_on_another_loop_or_on_none_starts_nothing(self) -> None:
+        """A helper's ending can run where its manager does not: a task of a loop that closed with
+        it pending is collected while another loop runs (a test's helper, in a later test's loop),
+        and its ending drains the queue there. What waits for a slot is not started there, where
+        nothing would stop it, nor with no loop running at all."""
+        mgr = SubagentManager(
+            sessions=_hanging_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            on_done=AsyncMock(),
+            is_yolo=lambda: True,
+            max_concurrent=1,
+        )
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+            holder = mgr.spawn("holds the one slot", parent_session_key="dashboard:x")
+            waiting = mgr.spawn("waits for it", parent_session_key="dashboard:y")
+            assert holder is not None and waiting is not None and waiting.queued
+            mgr._running_count = 0  # the slot reads free, as at the holder's ending
+
+            async def _drain_here() -> None:
+                mgr._drain_queue()
+
+            await asyncio.to_thread(lambda: asyncio.run(_drain_here()))  # another loop
+            await asyncio.to_thread(mgr._drain_queue)  # no loop running
+            assert waiting.queued and waiting in mgr._queue and waiting.id not in mgr._tasks
+            mgr._drain_queue()  # the positive control: on its own loop, it starts
+            assert not waiting.queued and waiting.id in mgr._tasks
+            mgr._running_count = 2  # the holder and the helper it started, for the stop's count
+
+    @pytest.mark.asyncio
+    async def test_the_gateway_raising_stops_its_helpers_starting_first(self, monkeypatch) -> None:
+        """When the gateway's start-up raises, nothing its manager holds starts from then on: the
+        loop's close cancels the helpers still running, and each one's ending would start a helper
+        waiting for its slot, after the app processes were stopped."""
+        from personalclaw import gateway
+        from personalclaw.config.loader import AppConfig
+
+        made: list[SubagentManager] = []
+        starting_at_the_stop: list[bool] = []
+
+        async def run(self) -> None:
+            self.subagent_mgr = SubagentManager(
+                sessions=MagicMock(),
+                ctx_builder=MagicMock(),
+                on_done=AsyncMock(),
+                is_yolo=lambda: True,
+            )
+            made.append(self.subagent_mgr)
+            raise RuntimeError("start-up failed")
+
+        monkeypatch.setattr(gateway.GatewayOrchestrator, "run", run)
+        monkeypatch.setattr(
+            "personalclaw.apps.app_runtime.stop_processes",
+            lambda: starting_at_the_stop.append(not made[0]._stopping),
+        )
+        cfg = AppConfig()
+        monkeypatch.setattr(cfg, "load_credentials", lambda: {})
+        with pytest.raises(RuntimeError, match="start-up failed"):
+            await gateway.run_gateway(cfg, no_dashboard=True, no_crons=True)
+        assert starting_at_the_stop == [False]

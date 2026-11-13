@@ -272,7 +272,21 @@ async def end_run(
     except Exception:
         logger.warning("run %s: could not end what its steps started", run.id, exc_info=True)
         return 0
+    finally:
+        _end_its_fanout(subagents, f"{OWNED_PREFIX}{run.id}")
     return ended.runs + ended.subagents + launched
+
+
+def _end_its_fanout(subagents: Any, key: str) -> None:
+    """The breaker streak, stop and run total that run fan-out *key*'s agent steps shared end with
+    the run (``SubagentManager.end_run_fanout``), whatever ending what the run started came to."""
+    end = getattr(subagents, "end_run_fanout", None)
+    if not callable(end):
+        return
+    try:
+        end(key)
+    except Exception:
+        logger.warning("could not end the fan-out key %s", key, exc_info=True)
 
 
 def _stopped(ending: str) -> bool:
