@@ -1,22 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { WORK_PHASES, phaseFamily, phaseLabel, type PhaseFamily } from '../../lib/workPhase'
+import { WORK_PHASES, phaseLabel } from '../../lib/workPhase'
+import { ORB_STATES, ORB_STATE_OF } from '../../lib/orbState'
+import { MOVES } from '../../ui/orb/clawRing'
 
 // ── Settings → Design: the agent orb's states, in the owner's own colours ────────────────────────
 //
 // The orb is the agent's working signal, tinted by the scheme, so an owner choosing a scheme sees
-// what it does to the orb here: every phase of the contract at the two sizes the orb is drawn at,
-// 20 px at the head of a reply and 64 px in an empty chat, grouped by the four families. It is
-// closed until asked for, because the active family moves and a settings page with nothing
-// running animates nothing. It is also the surface the visual suite photographs for every state.
+// what it does to the orb here: every phase of the contract at the three sizes the orb is drawn
+// at, 64 px in an empty chat, 20 px in a turn's live line and 12 px as a list row's still mark,
+// grouped by the claw ring's five states (#6117). It is closed until asked for, because thinking
+// and working move and a settings page with nothing running animates nothing. It is also the
+// surface the visual suite photographs for every state.
 
 vi.mock('../../lib/api', () => ({
   api: new Proxy({}, { get: (_t, key) => (key === 'themes' ? () => Promise.resolve([]) : () => Promise.resolve(null)) }),
 }))
 
 import { AgentOrbStates } from './AgentOrbStates'
-
-const FAMILIES: PhaseFamily[] = ['active', 'waiting', 'blocked', 'quiet']
 
 let MATCHING: string[] = []
 const ORIGINAL_MATCH_MEDIA = window.matchMedia
@@ -47,32 +48,33 @@ describe('the agent orb’s states', () => {
     expect(orbs()).toHaveLength(0)
   })
 
-  it('shows every phase of the contract at 20 and 64 px, each named, under its family', () => {
+  it('shows every phase of the contract at 64, 20 and 12 px, each named, under its state', () => {
     render(<AgentOrbStates />)
     open()
     expect(screen.getByRole('button', { name: 'Hide its states' })).toHaveAttribute('aria-expanded', 'true')
     const gallery = document.querySelector('[data-orb-gallery]') as HTMLElement
     const groups = within(gallery).getAllByRole('group')
-    expect(groups.map((g) => g.getAttribute('data-orb-family'))).toEqual(FAMILIES)
+    expect(groups.map((g) => g.getAttribute('data-orb-sheet-state'))).toEqual([...ORB_STATES])
     for (const phase of WORK_PHASES) {
-      const card = gallery.querySelector(`[data-orb-state="${phase}"]`) as HTMLElement
+      const card = gallery.querySelector(`[data-orb-sheet-phase="${phase}"]`) as HTMLElement
       expect(card, phase).toBeTruthy()
-      expect(card.closest('[data-orb-family]')?.getAttribute('data-orb-family'), phase).toBe(phaseFamily(phase))
+      expect(card.closest('[data-orb-sheet-state]')?.getAttribute('data-orb-sheet-state'), phase).toBe(ORB_STATE_OF[phase].state)
       const words = card.cloneNode(true) as HTMLElement
       for (const o of words.querySelectorAll('[data-agent-orb]')) o.remove()
       expect(words.textContent, 'its words name the phase with the orbs hidden').toBe(phaseLabel(phase))
       const sizes = Array.from(card.querySelectorAll<HTMLElement>('[data-agent-orb]')).map((o) => [o.dataset.orbPhase, o.dataset.orbSize])
-      expect(sizes, phase).toEqual([[phase, '64'], [phase, '20']])
+      expect(sizes, phase).toEqual([[phase, '64'], [phase, '20'], [phase, '12']])
     }
-    expect(orbs()).toHaveLength(WORK_PHASES.length * 2)
+    expect(orbs()).toHaveLength(WORK_PHASES.length * 3)
   })
 
-  it('the active family moves, and nothing else does', () => {
+  it('thinking and working move at 64 and 20 px, and nothing else does', () => {
     render(<AgentOrbStates />)
     open()
     for (const o of orbs()) {
       const phase = o.dataset.orbPhase as (typeof WORK_PHASES)[number]
-      expect(o.dataset.agentOrb, phase).toBe(phaseFamily(phase) === 'active' ? 'animated' : 'still')
+      const moves = MOVES[ORB_STATE_OF[phase].state] && o.dataset.orbSize !== '12'
+      expect(o.dataset.agentOrb, `${phase} at ${o.dataset.orbSize}`).toBe(moves ? 'animated' : 'still')
     }
   })
 

@@ -2,23 +2,26 @@
  *
  * One set for coral, the agent orb, the buddy and the four state families (quiet, active, waiting,
  * blocked), in layer 2 for every scheme and mode. The buddy has no colour of its own (`web/DESIGN.md`
- * §2): its dots read the orb's tokens. The examples are `ui/StateMark`, and each case the update
+ * §2): its dots read the orb's tokens. The examples are the orb's still mark with its words
+ * (`ui/orb/OrbMark`, in the family's token), and each case the update
  * names gets its gallery test: every state with its words, forced colours, high contrast, and the
  * editor and terminal surfaces.
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { SCHEMES } from './schemes'
 import { tokenLayer } from './tokenLayers'
 import { loadTokenSheets, tokenValue, type Mode } from './tokenSheet'
 import { SYSTEM_STATE_FAMILIES, WORK_PHASES, WORK_PHASE_LOOKS, type PhaseFamily } from '../lib/workPhase'
-import { StateMark } from '../ui/StateMark'
+import { ORB_STATE_OF, type OrbStateName } from '../lib/orbState'
+import { OrbMark } from '../ui/orb/OrbMark'
 
 afterEach(cleanup)
 
 const MODES: Mode[] = ['dark', 'light']
 const FAMILIES: PhaseFamily[] = ['quiet', 'active', 'waiting', 'blocked']
-/** The tokens the update names: coral (the brand), the orb (whose dots the buddy shares) and the four families. */
+/** The tokens the update names: coral (the brand), the orb (whose colours the buddy shares) and the four families. */
 const STATE_TOKENS = ['--color-brand', '--color-orb-alive', '--color-orb-rest', ...FAMILIES.map((f) => `--color-state-${f}`)]
 /** What each resolves to: the colour the orb, buddy and status docs already name, so no value is new. */
 const MEANS: Record<string, string> = {
@@ -40,11 +43,19 @@ const lum = (hex: string) => {
 }
 const ratio = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05) }
 
-/** Every state the phase contract names, with the family and the words it reads as. */
-const STATES: { state: string; family: PhaseFamily; words: string }[] = [
-  ...WORK_PHASES.map((p) => ({ state: p, family: WORK_PHASE_LOOKS[p].family, words: WORK_PHASE_LOOKS[p].label })),
-  ...Object.entries(SYSTEM_STATE_FAMILIES).map(([s, family]) => ({ state: `system:${s}`, family, words: s === 'idle' ? 'Idle' : s === 'restarting' ? 'Restarting' : 'Offline' })),
+/** Every state the phase contract names, with the family and the words it reads as, and the orb's
+ *  form it is marked with. A system state is no agent's state, so its example is ready's still ring
+ *  (thinking's for a restart under way), and its words say which it is. */
+const STATES: { state: string; family: PhaseFamily; words: string; form: OrbStateName }[] = [
+  ...WORK_PHASES.map((p) => ({ state: p, family: WORK_PHASE_LOOKS[p].family, words: WORK_PHASE_LOOKS[p].label, form: ORB_STATE_OF[p].state })),
+  ...Object.entries(SYSTEM_STATE_FAMILIES).map(([s, family]) => ({
+    state: `system:${s}`, family, words: s === 'idle' ? 'Idle' : s === 'restarting' ? 'Restarting' : 'Offline', form: (s === 'restarting' ? 'thinking' : 'ready') as OrbStateName,
+  })),
 ]
+/** A state's example: its still mark in the family's shared token, beside its words. */
+const example = (family: PhaseFamily, form: OrbStateName, words: ReactNode) => (
+  <OrbMark state={form} tone={`--color-state-${family}`} family={family}>{words}</OrbMark>
+)
 
 describe('state tokens: one shared set, in layer 2, for every scheme and mode', () => {
   const sheets = loadTokenSheets()
@@ -79,34 +90,38 @@ describe('state examples: every state with its words', () => {
     for (const f of FAMILIES) expect(STATES.some((s) => s.family === f), f).toBe(true)
   })
 
-  for (const { state, family, words } of STATES) {
+  for (const { state, family, words, form } of STATES) {
     it(`${state}: the ${family} mark, and the words "${words}"`, () => {
-      const { container } = render(<StateMark family={family}>{words}</StateMark>)
+      const { container } = render(example(family, form, words))
       const el = container.firstElementChild as HTMLElement
       expect(el.dataset.stateFamily).toBe(family)
       expect(el.textContent).toBe(words)
       // The mark is decoration: an assistive reading gets the words, never a colour.
-      const mark = el.querySelector('[aria-hidden="true"]') as HTMLElement
-      expect(mark.textContent).toBe('')
-      expect(mark.style.background).toBe(`var(--color-state-${family})`)
+      const mark = el.querySelector('[data-orb-mark]') as HTMLElement
+      expect(mark.dataset.orbMark).toBe(form)
+      expect(mark.dataset.orbInkToken).toBe(`--color-state-${family}`)
+      for (const part of mark.querySelectorAll('canvas, [data-orb-badge]')) expect(part.getAttribute('aria-hidden')).toBe('true')
     })
   }
 })
 
 describe('state examples: forced colours', () => {
-  it('with every colour removed, each state is still its words, and the mark keeps its ring', () => {
-    for (const { family, words } of STATES) {
-      const { container, unmount } = render(<StateMark family={family}>{words}</StateMark>)
-      // What forced colours does to it: author colours are replaced, so strip them.
-      for (const el of container.querySelectorAll<HTMLElement>('*')) {
-        el.style.removeProperty('background')
-        el.style.removeProperty('border-color')
-        el.style.removeProperty('color')
-      }
+  const original = window.matchMedia
+  afterEach(() => { window.matchMedia = original })
+
+  it('in forced colours each state is still its words, and its mark keeps its form in the system’s text colour', () => {
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes('forced-colors'), media: query, onchange: null,
+      addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia
+    for (const { family, words, form } of STATES) {
+      const { container, unmount } = render(example(family, form, words))
       const el = container.firstElementChild as HTMLElement
       expect(el.textContent, family).toBe(words)
-      // A border survives forced colours in the system's text colour; a fill alone would vanish.
-      expect(el.querySelector('[aria-hidden="true"]')!.className, family).toMatch(/\bborder\b/)
+      // The form, not a fill, tells the states apart, so it survives in the system's text colour.
+      const mark = el.querySelector<HTMLElement>('[data-orb-mark]')!
+      expect(mark.dataset.orbMark, family).toBe(form)
+      expect(mark.dataset.orbInkToken, family).toBe('CanvasText')
       unmount()
     }
   })
@@ -147,7 +162,7 @@ describe('state examples: the editor and terminal surfaces', () => {
   it('a mark inside a mono editor surface still says its state', () => {
     const { container } = render(
       <pre className="font-mono" style={{ background: 'var(--editor-background)', color: 'var(--editor-foreground)' }}>
-        <StateMark family="blocked">Stopped</StateMark>
+        {example('blocked', 'done', 'Stopped')}
       </pre>,
     )
     expect(container.querySelector('[data-state-family="blocked"]')!.textContent).toBe('Stopped')

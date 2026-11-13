@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { AgentDef, AgentProvider, DiscoveredAgent, ModelItem, ApprovalMode, TaskMode, ReasoningEffort } from '../../lib/api'
+import type { TurnEnding } from '../turnEnding'
 import type { WorkPhase } from '../../lib/workPhase'
 import type { AskBeforeSwitch } from './dearerSwitch'
 import type { ContextAction, ContextCost } from './ContextDisclosure'
@@ -55,6 +56,9 @@ export interface ComposerProps {
    *  owner (an approval or a question) and turns again when the turn runs again. A host with no
    *  phase to give leaves it out, and the sweep turns for as long as the turn streams. */
   phase?: WorkPhase | null
+  /** How the running turn ended, once its last frame said so (`ui/turnEnding.ts`). Voice mode's orb
+   *  shows it, done or a failure, until its orb has settled and `MIN_HOLD_MS` more, then rests. */
+  ending?: TurnEnding | null
   /** Send button shows a circular spinner (no stop/send) — for a one-shot
    *  pre-send processing step like the goal composer's analyze pass. */
   processing?: boolean

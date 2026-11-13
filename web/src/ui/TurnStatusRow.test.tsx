@@ -134,6 +134,21 @@ describe('what is said, and what is not', () => {
     view.rerender(<TurnStatusRow {...props} phase="tool" line="Search the web" />)
     expect(live().textContent).toBe('Search the web')
   })
+
+  it('a change of state is said once, and the orb morphing into it says nothing more', async () => {
+    const { view, props } = draw({ phase: 'tool', line: 'Search the web' })
+    await shown()
+    const said: string[] = []
+    const watch = new MutationObserver(() => said.push(live().textContent ?? ''))
+    watch.observe(live(), { childList: true, characterData: true, subtree: true })
+    view.rerender(<TurnStatusRow {...props} phase="approval" line="" />)
+    expect(row()?.querySelector('[data-agent-orb]')?.getAttribute('data-orb-state')).toBe('waiting')
+    // The morph's frames, and long after it has settled.
+    await act(async () => { vi.advanceTimersByTime(3000) })
+    await act(async () => {})
+    watch.disconnect()
+    expect(said, 'the live region spoke more than once for one change').toEqual(['Needs your OK'])
+  })
 })
 
 describe('under reduced motion', () => {

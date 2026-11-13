@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { Thread } from '../lib/useThreads'
 import { ThreadRail } from './ThreadRail'
 
 // ── The chat list: one list of chats, goal loops and code sessions (#3814, #5877) ─────────────────
 //
 // Every chat, goal loop or code session the view lists is a dense row that opens it, in one list. A
-// row can carry one state dot, its state in the dot's tooltip and in the row's name: running,
-// waiting on you, failed. Only a running or waiting row's glow moves. A pinned chat shows its pin, an
+// row can carry one state mark, its state in the row's tooltip and in its name: running, waiting on
+// you, failed. Nothing in a row moves: the mark is still. A pinned chat shows its pin, an
 // archived one its archive while the view lists both, and an app's chat names the app. The open row
 // is lit (`aria-current="page"`). Loading, a failed read, an empty list and an empty view each have a
 // row of their own, so none of them reads as a list with nothing in it.
@@ -34,6 +34,13 @@ function rail(props: Partial<Parameters<typeof ThreadRail>[0]> = {}) {
   return { ...utils, onOpen, onRetry }
 }
 
+/** What a row's tooltip, the app's own, says: it shows at once on keyboard focus. */
+function tipOf(el: Element): string | null {
+  act(() => { fireEvent.focus(el) })
+  const said = document.querySelector('[data-tooltip-bubble]')?.textContent ?? null
+  act(() => { fireEvent.blur(el) })
+  return said
+}
 const rowNames = () => [...document.querySelectorAll('[data-thread-key]')].map((b) => b.getAttribute('aria-label'))
 
 beforeEach(() => { localStorage.clear() })
@@ -61,7 +68,7 @@ describe('the chat history rail', () => {
     const trip = screen.getByRole('button', { name: 'Trip planning, pinned, started by Zapier, unread' })
     expect(trip.querySelectorAll('[data-row-mark]'), 'the pin').toHaveLength(1)
     expect(trip.querySelector('[data-started-by]')?.textContent).toBe('Zapier')
-    expect(trip.getAttribute('title')).toContain("A turn in it runs with Zapier's permissions.")
+    expect(tipOf(trip)).toContain("A turn in it runs with Zapier's permissions.")
     expect(screen.getByRole('button', { name: 'Old notes, archived' }).querySelectorAll('[data-row-mark]')).toHaveLength(1)
   })
 
@@ -93,7 +100,7 @@ describe('the chat history rail', () => {
     expect(screen.getByRole('button', { name: 'Old notes' }).querySelector('[data-row-mark]')).toBeNull()
   })
 
-  it('says each state in its name and its dot\'s tooltip, never by the dot alone', () => {
+  it('says each state in its name and its tooltip, never by the mark alone', () => {
     rail()
     for (const [name, word, family] of [
       [/^Goal loop: Find a seed supplier/, 'running', 'active'],
@@ -103,24 +110,24 @@ describe('the chat history rail', () => {
       const row = screen.getByRole('button', { name })
       const mark = row.querySelector('[data-state-family]')
       expect(mark?.getAttribute('data-state-family')).toBe(family)
-      expect(mark?.getAttribute('title')).toBe(word.charAt(0).toUpperCase() + word.slice(1))
+      expect(tipOf(row)?.endsWith(` — ${word.charAt(0).toUpperCase() + word.slice(1)}`), `${word}: the tooltip ends with the word`).toBe(true)
       expect(row.getAttribute('aria-label')).toMatch(new RegExp(`, ${word}$`))
     }
     expect(screen.getByRole('button', { name: 'Plan the garden' }).querySelector('[data-state-family]')).toBeNull()
   })
 
-  it("a running or waiting row's one motion is the shared glow, and it schedules no frame", () => {
+  it('nothing in a row moves: a running or waiting row is a still mark, and it schedules no frame', () => {
     const raf = vi.spyOn(window, 'requestAnimationFrame')
     rail()
     expect(raf).not.toHaveBeenCalled()
-    for (const name of [/^Goal loop: Find a seed supplier/, /^Order the soil/]) {
+    for (const name of [/^Goal loop: Find a seed supplier/, /^Order the soil/, /^Code session: Fence gate/, /^Plan the garden/]) {
       const row = screen.getByRole('button', { name })
-      expect(row.querySelectorAll('.status-pulse')).toHaveLength(1)
-      expect(row.outerHTML).not.toMatch(/animate-|spin/)
+      expect(row.querySelector('.status-pulse'), String(name)).toBeNull()
+      expect(row.outerHTML, String(name)).not.toMatch(/animate-|pulse|spin/)
     }
-    // Nothing else in the rail moves: a failed row and a calm one have no glow.
-    for (const name of [/^Code session: Fence gate/, /^Plan the garden/]) {
-      expect(screen.getByRole('button', { name }).outerHTML).not.toMatch(/animate-|pulse|spin/)
+    // The control: the running and waiting rows do carry their marks.
+    for (const name of [/^Goal loop: Find a seed supplier/, /^Order the soil/]) {
+      expect(screen.getByRole('button', { name }).querySelector('[data-orb-mark]'), String(name)).not.toBeNull()
     }
   })
 
@@ -162,7 +169,7 @@ describe('the chat history rail', () => {
     const title = 'Find a supplier for heritage tomato seeds that ships to the north before the frost'
     rail({ rows: [thread({ key: 'chat:long', title })] })
     const row = screen.getByRole('button', { name: title })
-    expect(row).toHaveAttribute('title', title)
+    expect(tipOf(row)).toBe(title)
     expect(row.querySelector('.truncate')?.textContent).toBe(title)
   })
 

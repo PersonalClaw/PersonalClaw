@@ -185,4 +185,10 @@ describe('the chat composer hands the reply style to Chat preferences', () => {
     expect(stage, 'ComposerStage moved or lost its props, so this reads nothing').toContain('onSend')
     expect(stage).not.toContain('replyStyle')
   })
+
+  it('ComposerStage is given the turn’s ending, so voice mode’s orb holds how the turn ended', () => {
+    const stage = propsOf(CHAT_COMPOSER, 'ComposerStage')
+    expect(stage, 'ComposerStage moved or lost its props, so this reads nothing').toContain('phase')
+    expect(stage, 'voice mode is not told how the turn ended').toContain('ending')
+  })
 })

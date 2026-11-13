@@ -4,7 +4,7 @@ import type { Thread, ThreadKind, ThreadPip } from '../lib/useThreads'
 import type { PhaseFamily } from '../lib/workPhase'
 import { bindingLabel } from '../app/keymap'
 import { withWeight } from '../design/fontWeight'
-import { prefersReducedMotion } from '../design/motion'
+import { ORB_STATE_OF_PIP } from '../lib/orbState'
 import { startedByName, startedByTitle } from '../pages/chat/StartedByApp'
 import { Button } from './Button'
 import { FilterMenu, type FilterSectionDef } from './FilterMenu'
@@ -14,6 +14,8 @@ import { SearchField } from './SearchField'
 import { WindowedList } from './WindowedList'
 import { cx } from './cx'
 import { RING_REACH, SELECTED_PILL } from './NavRail'
+import { OrbMark } from './orb/OrbMark'
+import { Tooltip } from './Tooltip'
 
 /** `loading`: nothing read yet. `failed`: the last read failed, and the rows are what the last good
  *  read said (none when no read has succeeded). `offline`: the gateway is not answering at all, so
@@ -32,7 +34,8 @@ const KIND_MARK: Partial<Record<ThreadKind, { word: string; icon: LucideIcon }>>
 }
 
 /** Each pip's state family (the shared state tokens the orb and the buddy read) and its words. A
- *  project's page lists its chats with the same marks (`pages/projects/ProjectThreads.tsx`). */
+ *  project's page lists its chats with the same marks, drawn in the shared state tokens
+ *  (`pages/projects/ProjectThreads.tsx`). */
 export const PIP: Record<ThreadPip, { family: PhaseFamily; word: string }> = {
   waiting: { family: 'waiting', word: 'waiting on you' },
   running: { family: 'active', word: 'running' },
@@ -305,8 +308,8 @@ export function ThreadRail({
 
 /** One row of the list. Its title starts flush with the bar's rows (`px-s`, as New chat). A row's
  *  marks sit before its title in the kind icon's slot (a kind, a pin, an archive), an app's chat
- *  names the app at its end, and its state dot sits at its right end, so a dot pushes no title right
- *  and a row with no state keeps no room for one. */
+ *  names the app at its end, and its state mark sits at its right end, so a mark pushes no title
+ *  right and a row with no state keeps no room for one. */
 function ThreadRow({ thread, selected, archivedMark, onOpen }: {
   thread: Thread; selected: boolean; archivedMark: boolean; onOpen: (route: string) => void
 }) {
@@ -320,67 +323,67 @@ function ThreadRow({ thread, selected, archivedMark, onOpen }: {
     app && `started by ${app}`,
   ].filter(Boolean).join(', ')
   const name = pip ? `${said}, ${pip.word}` : said
-  const tip = [said, app && startedByTitle(app), thread.pipNote].filter(Boolean).join(' — ')
+  // The row's tooltip, the app's own (`ui/Tooltip.tsx`), never the browser's: its name, the state's
+  // word where it has a mark, and what the name lacks, an app's permissions and a helper's ask. Only
+  // those last are its description, since the name says the rest.
+  const notes = [app && startedByTitle(app), thread.pipNote].filter(Boolean).join(' ')
+  const tip = [said, pip && pip.word.charAt(0).toUpperCase() + pip.word.slice(1), notes].filter(Boolean).join(' — ')
   const marks: LucideIcon[] = [kind?.icon, thread.pinned ? Pin : undefined, archivedMark ? Archive : undefined]
     .filter((m): m is LucideIcon => !!m)
   return (
-    <button
-      type="button" onClick={() => onOpen(thread.route)}
-      data-thread-key={thread.key}
-      aria-label={name}
-      title={tip}
-      aria-current={selected ? 'page' : undefined}
-      data-type="body-m"
-      className={cx(
-        'group relative flex w-full items-center gap-s rounded-pill px-s py-1 text-left transition-colors duration-(--duration-short)',
-        selected ? 'text-on-surface' : 'text-on-surface-var hover:bg-surface-low/60 hover:text-on-surface',
-      )}
-      style={withWeight({ minHeight: 32 }, selected ? 470 : 400)}>
-      {selected && <span aria-hidden className={SELECTED_PILL} />}
-      {marks.map((Mark, i) => (
-        <Mark key={i} size={14} strokeWidth={2} aria-hidden data-row-mark className="relative shrink-0 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }} />
-      ))}
-      <span className="relative min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words" style={{ zIndex: ROW_LABEL_Z }}>{thread.title}</span>
-      {app && (
-        <span data-type="caption" data-started-by className="relative inline-flex min-w-0 max-w-[40%] shrink items-center gap-0.5 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }}>
-          <Blocks size={12} strokeWidth={2} aria-hidden className="shrink-0" />
-          <span className="min-w-0 truncate">{app}</span>
-        </span>
-      )}
-      {pip && <StateDot family={pip.family} word={pip.word} />}
-    </button>
+    <Tooltip text={tip} describes={false} description={notes || undefined} side="end">{(trigger) => (
+      <button
+        type="button" onClick={() => onOpen(thread.route)}
+        {...trigger}
+        data-thread-key={thread.key}
+        aria-label={name}
+        aria-current={selected ? 'page' : undefined}
+        data-type="body-m"
+        className={cx(
+          'group relative flex w-full items-center gap-s rounded-pill px-s py-1 text-left transition-colors duration-(--duration-short)',
+          selected ? 'text-on-surface' : 'text-on-surface-var hover:bg-surface-low/60 hover:text-on-surface',
+        )}
+        style={withWeight({ minHeight: 32 }, selected ? 470 : 400)}>
+        {selected && <span aria-hidden className={SELECTED_PILL} />}
+        {marks.map((Mark, i) => (
+          <Mark key={i} size={14} strokeWidth={2} aria-hidden data-row-mark className="relative shrink-0 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }} />
+        ))}
+        <span className="relative min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words" style={{ zIndex: ROW_LABEL_Z }}>{thread.title}</span>
+        {app && (
+          <span data-type="caption" data-started-by className="relative inline-flex min-w-0 max-w-[40%] shrink items-center gap-0.5 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }}>
+            <Blocks size={12} strokeWidth={2} aria-hidden className="shrink-0" />
+            <span className="min-w-0 truncate">{app}</span>
+          </span>
+        )}
+        {pip && thread.pip && <RowMark pip={thread.pip} family={pip.family} />}
+      </button>
+    )}</Tooltip>
   )
 }
 
-/** A row's dot colour, by its state's family: green while it runs (`--color-ok`), orange while it
+/** A row's mark colour, by its state's family: green while it runs (`--color-ok`), orange while it
  *  waits on you, grey when it finished unread and red when it failed. The rail's own reading of the
  *  states, the owner's: the orb, the buddy and the project page keep the shared state tokens, where
  *  running is the brand colour. */
-const DOT_TONE: Record<PhaseFamily, string> = {
-  active: 'var(--color-ok)',
-  waiting: 'var(--color-state-waiting)',
-  quiet: 'var(--color-state-quiet)',
-  blocked: 'var(--color-state-blocked)',
+export const MARK_TONE: Record<PhaseFamily, string> = {
+  active: '--color-ok',
+  waiting: '--color-state-waiting',
+  quiet: '--color-state-quiet',
+  blocked: '--color-state-blocked',
 }
-/** The states where something is happening, whose dot glows. */
-const GLOWS: ReadonlySet<PhaseFamily> = new Set(['active', 'waiting'])
 
-/** A row's state as a dot in its colour (DOT_TONE), with the shared running glow (`.status-pulse`)
- *  in the same colour while its work runs or waits on you; unread and failed are steady dots. The
- *  words are the dot's tooltip and part of the row's name, so the colour is never the only cue; the
- *  row itself spends no width on them. Under reduced motion each glow is a still ring around its dot,
- *  in its own colour, so the two still read apart from the steady dots. Bordered in its own colour,
- *  as a state mark is, so forced colours still draw it. */
-function StateDot({ family, word }: { family: PhaseFamily; word: string }) {
-  const tone = DOT_TONE[family]
-  const lively = GLOWS.has(family)
-  const glow = lively && !prefersReducedMotion()
+/** A row's state as the claw ring's 12 px still mark (`ui/orb/OrbMark.tsx`): its pip's state
+ *  (`ORB_STATE_OF_PIP`) in the row's colour (MARK_TONE), a running row's two rings, a waiting row's
+ *  clasp, and done's mark for an unread or a failed one, the failure with its ×. It never moves, so
+ *  nothing in the rail animates and reduced motion has nothing to stop. The words are in the row's
+ *  tooltip and its name, so neither the colour nor the shape is the only cue; the row itself
+ *  spends no width on them. */
+function RowMark({ pip, family }: { pip: ThreadPip; family: PhaseFamily }) {
+  const look = ORB_STATE_OF_PIP[pip]
   return (
-    <span data-state-family={family} data-state-dot={glow ? 'glowing' : 'still'} title={word.charAt(0).toUpperCase() + word.slice(1)}
-      className="relative inline-flex size-2 shrink-0" style={{ zIndex: ROW_LABEL_Z }}>
-      {glow && <span aria-hidden className="status-pulse absolute inset-0 rounded-pill" style={{ background: tone }} />}
-      {lively && !glow && <span aria-hidden data-still-glow className="absolute rounded-pill border" style={{ inset: -3, borderColor: tone, opacity: 0.6 }} />}
-      <span aria-hidden className="relative size-2 rounded-pill border" style={{ background: tone, borderColor: tone }} />
+    <span data-state-family={family}
+      className="relative inline-flex shrink-0" style={{ zIndex: ROW_LABEL_Z }}>
+      <OrbMark state={look.state} badge={look.badge} tone={MARK_TONE[family]} />
     </span>
   )
 }

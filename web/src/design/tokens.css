@@ -393,7 +393,7 @@
      state-<family> the colour each of the four families reads in (lib/workPhase.ts): quiet at rest,
                     active coral, waiting the warn tone (it needs the owner), blocked the danger tone
    The buddy has no token of its own (web/DESIGN.md §2): it draws with the orb's. A state is never
-   shown by these alone; its words go beside it (ui/StateMark). ── */
+   shown by these alone; its words go beside the orb's still mark (ui/orb/OrbMark). ── */
 :root {
   --color-brand: var(--color-primary);
   --color-orb-alive: var(--color-brand);

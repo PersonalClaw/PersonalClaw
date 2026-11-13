@@ -1,8 +1,8 @@
 /** The pose set (`poseSet.ts`) drawn as layered SVG sources, and the contact sheets beside them
  *  (#3830). Each source is one whole orb, its pivot at its centre, holding three parts a renderer
- *  can move: the dots (the agent orb's drawing at the pose's frame, through its own engine), the
+ *  can move: the dots (the thinking-orbs drawing at the pose's frame, through that package's engine), the
  *  wash and the badge. Every colour is a token, set in a style, so one source is the pose in light
- *  and in dark and in every scheme; a dot's depth is its opacity, which is how the agent orb's
+ *  and in dark and in every scheme; a dot's depth is its opacity, which is how the thinking-orbs
  *  painter shades a tinted dot toward the canvas. A template still is drawn in black, which the
  *  menu bar recolours, and has no wash. The whole orb only moves, turns or scales by one factor.
  *

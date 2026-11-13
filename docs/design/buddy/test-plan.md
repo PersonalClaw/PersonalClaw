@@ -45,8 +45,8 @@ Each test maps to an acceptance criterion of an implementation task.
 - Side by side with other products' status indicators and assistant orbs, from public material,
   nothing the buddy adds to the agent orb (its outline, badge, wash, poses, gestures and presence),
   nor the whole orb, shows a drawn form or choreography a viewer would recognise as another
-  product's. The dots and their states are the agent orb's licensed base
-  ([`agent-orb.md`](../agent-orb.md#the-component)), shared on purpose, so they are not judged on
+  product's. The dots are the `thinking-orbs` package's licensed base and their states the agent
+  orb's ([`agent-orb.md`](../agent-orb.md#the-component)), shared on purpose, so they are not judged on
   their own. The result is recorded beside [the choice](character.md#the-choice), naming none of
   them, and the originality record cites it ([#4570]).
 - Copy: no rendered line exceeds its surface's limit with names up to 200 characters.

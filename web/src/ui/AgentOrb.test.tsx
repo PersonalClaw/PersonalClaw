@@ -2,22 +2,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { AgentOrb, ORB_LOOKS, orbLookOf } from './AgentOrb'
+import { AgentOrb } from './AgentOrb'
+import { ORB_STATE_OF } from '../lib/orbState'
+import { MOVES } from './orb/clawRing'
 import { WORK_PHASES, WORK_PHASE_LOOKS, phaseFamily, phaseLabel, type WorkPhase } from '../lib/workPhase'
 
-// ── The agent orb: one look per phase, from the phase contract and the orb tokens ────────────────
+// ── The agent orb: each phase drawn as its state of the claw ring, in the orb tokens (#6117) ─────
 //
-// The chat's thinking indicator guessed what a turn was doing from the words of its status line and
-// rotated seven stock phrases under it. The orb is handed a phase of the contract (`lib/workPhase`)
-// and nothing else: each phase is one drawing in one of the four families, the active family moves
-// and the rest are still frames, and a waiting or failed turn carries a badge whose shape, not its
-// colour, says which (`docs/design/agent-orb.md`, "Phase to state").
-
-/** The drawings `docs/design/agent-orb.md` names for the active family. */
-const ACTIVE_DRAWINGS: Partial<Record<WorkPhase, string>> = {
-  queued: 'breathing', thinking: 'breathing', searching: 'searching', tool: 'working', planning: 'solving',
-  delegating: 'connecting', streaming: 'composing', listening: 'listening', retrying: 'working', waiting_model: 'breathing',
-}
+// The orb is handed a phase of the contract (`lib/workPhase`) and nothing else, and draws it as one
+// of the claw ring's five states through the one mapping (`lib/orbState.ts`): thinking and working
+// move, ready, waiting and done hold still, and a waiting or failed turn carries a badge whose shape,
+// not its colour, says which (`docs/design/agent-orb.md`, "Phase to state"). The mapping's own cases,
+// and that no raw string reaches it, are `lib/orbState.test.ts`'s.
 const BADGED: Partial<Record<WorkPhase, string>> = { approval: '!', input: '?', error: '×' }
 
 /** What the platform says it wants, flippable per test: matching media queries by substring. */
@@ -42,25 +38,16 @@ afterEach(() => {
 
 const orbOf = (container: HTMLElement) => container.querySelector('[data-agent-orb]') as HTMLElement
 
-describe('every phase of the contract maps to exactly one orb look', () => {
-  it('the table covers the whole contract and nothing else', () => {
-    expect(Object.keys(ORB_LOOKS).sort()).toEqual([...WORK_PHASES].sort())
-  })
-
-  it.each([...WORK_PHASES])('%s: one drawing, moving only in the active family, alive only while an agent is', (phase) => {
-    const look = ORB_LOOKS[phase]
+describe('every phase of the contract is drawn as its one state', () => {
+  it.each([...WORK_PHASES])('%s: its state, moving only while it thinks or works, alive only while an agent is', (phase) => {
+    const { container } = render(<AgentOrb phase={phase} />)
+    const orb = orbOf(container)
+    const look = ORB_STATE_OF[phase]
     const family = phaseFamily(phase)
-    expect(look.moves, 'it moves exactly when its family is active').toBe(family === 'active')
-    expect(look.ink, 'the dots are alive while an agent works or waits on her, at rest otherwise').toBe(family === 'active' || family === 'waiting' ? 'alive' : 'rest')
-    if (family === 'active') expect(look.drawing).toBe(ACTIVE_DRAWINGS[phase])
+    expect(orb.dataset.orbState).toBe(look.state)
+    expect(orb.dataset.agentOrb, 'it moves exactly when its state does').toBe(MOVES[look.state] ? 'animated' : 'still')
+    expect(look.ink, 'alive while an agent works, listens or waits on the owner, at rest otherwise').toBe(family === 'active' || family === 'waiting' ? 'alive' : 'rest')
     expect(look.badge ?? null, 'a badge only where the owner is needed or the turn failed').toBe(phase in BADGED ? phase : null)
-  })
-
-  it('no orb look is reachable from a raw string: only a phase of the contract names one', () => {
-    for (const raw of ['Thinking…', 'Working', 'working', 'composing', 'breathing', 'Needs your OK', '', null, undefined, 3]) {
-      expect(orbLookOf(raw), String(raw)).toBeNull()
-    }
-    for (const phase of WORK_PHASES) expect(orbLookOf(phase)).toBe(ORB_LOOKS[phase])
   })
 })
 
@@ -70,7 +57,7 @@ describe('what it draws for each phase', () => {
     const orb = orbOf(container)
     expect(orb.dataset.orbPhase).toBe(phase)
     expect(orb.dataset.orbFamily).toBe(WORK_PHASE_LOOKS[phase].family)
-    expect(orb.dataset.orbDrawing).toBe(ORB_LOOKS[phase].drawing)
+    expect(orb.dataset.orbState).toBe(ORB_STATE_OF[phase].state)
     // One image, named for the phase, so a screen reader that reaches it hears the exact phase.
     expect(screen.getAllByRole('img')).toHaveLength(1)
     expect(screen.getByRole('img')).toHaveAccessibleName(phaseLabel(phase))
@@ -95,7 +82,7 @@ describe('what it draws for each phase', () => {
     }
   })
 
-  it('is drawn at 20 px by default and at 64 px when asked, each its own tuned design', () => {
+  it('is drawn at 20 px by default, at 64 px for an empty state and at 12 px as a list\'s still mark', () => {
     const small = render(<AgentOrb phase="thinking" />)
     expect(orbOf(small.container).dataset.orbSize).toBe('20')
     expect((small.container.querySelector('canvas') as HTMLCanvasElement).style.width).toBe('20px')
@@ -103,6 +90,11 @@ describe('what it draws for each phase', () => {
     const large = render(<AgentOrb phase="thinking" size={64} />)
     expect(orbOf(large.container).dataset.orbSize).toBe('64')
     expect((large.container.querySelector('canvas') as HTMLCanvasElement).style.width).toBe('64px')
+    large.unmount()
+    // The list's mark never moves, whatever its state: shape and ink only.
+    const mark = render(<AgentOrb phase="tool" size={12} />)
+    expect(orbOf(mark.container).dataset.orbSize).toBe('12')
+    expect(orbOf(mark.container).dataset.agentOrb).toBe('still')
   })
 })
 
@@ -112,7 +104,7 @@ describe('its colour is the orb tokens, never a literal', () => {
     document.documentElement.style.setProperty('--color-orb-rest', '#777777')
     for (const phase of WORK_PHASES) {
       const { container, unmount } = render(<AgentOrb phase={phase} />)
-      const alive = ORB_LOOKS[phase].ink === 'alive'
+      const alive = ORB_STATE_OF[phase].ink === 'alive'
       expect(orbOf(container).dataset.orbInkToken, phase).toBe(alive ? '--color-orb-alive' : '--color-orb-rest')
       expect(orbOf(container).dataset.orbInk, phase).toBe(alive ? '#3366cc' : '#777777')
       unmount()
@@ -135,7 +127,7 @@ describe('its colour is the orb tokens, never a literal', () => {
 })
 
 describe('high contrast', () => {
-  it('under a request for more contrast, the dots take the words’ ink', () => {
+  it('under a request for more contrast, the strokes take the words’ ink', () => {
     MATCHING = ['prefers-contrast: more']
     for (const phase of WORK_PHASES) {
       const { container, unmount } = render(<AgentOrb phase={phase} />)
@@ -145,7 +137,7 @@ describe('high contrast', () => {
     }
   })
 
-  it('in forced colours, the dots take the system’s text colour', () => {
+  it('in forced colours, the strokes take the system’s text colour', () => {
     MATCHING = ['forced-colors: active']
     for (const phase of WORK_PHASES) {
       const { container, unmount } = render(<AgentOrb phase={phase} />)

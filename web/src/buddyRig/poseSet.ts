@@ -1,5 +1,5 @@
 /** The buddy's v0.3.0 pose set (#3830), as one table: every pose `docs/design/buddy/character.md`
- *  names under "The poses", and the tray's and the dock's stills, each on the agent orb's drawing
+ *  names under "The poses", and the tray's and the dock's stills, each on the thinking-orbs drawing
  *  and moved the way the rig's poses move it (`poses.ts`, `arrange.ts`), with the badge and the wash
  *  the in-place candidate draws (`inPlaceParts.ts`).
  *
@@ -12,7 +12,7 @@ import type { OrbState } from 'thinking-orbs'
 import { BUDDY_LINES, type LineParts } from '../lib/buddy/copy'
 import { SYSTEM_STATE_FAMILIES, WORK_PHASE_LOOKS, phaseLabel, type PhaseFamily, type PhaseTone, type WorkPhase } from '../lib/workPhase'
 import { expr } from '../design/motion'
-import { ORB_LOOKS } from '../ui/AgentOrb'
+import { ORB_LOOKS } from './orbLooks'
 import type { Mark } from './inPlaceParts'
 import { poseOf, type RigPhase } from './poses'
 
@@ -21,7 +21,7 @@ export type BuddyState = WorkPhase | 'restarting' | 'offline'
 
 /** One frame of a pose: the orb's look, what its dots do, and what the whole orb does. */
 export interface Frame {
-  /** The agent orb's drawing, in its ink. */
+  /** The thinking-orbs drawing, in its ink. */
   drawing: OrbState
   ink: 'alive' | 'rest'
   /** The badge's mark, in the tone; the wash rises in the same tone. */
@@ -68,6 +68,14 @@ export function wordsOf(state: BuddyState): string {
   if (state === 'restarting') return text(BUDDY_LINES.restarting())
   if (state === 'offline') return text(BUDDY_LINES.offline(null))
   return phaseLabel(state)
+}
+
+/** Whether a state's dots move: as the agent orb's state for it does (`lib/orbState.ts`), while it
+ *  thinks or works. Restarting moves as working does, and offline holds still. */
+export function movesOf(state: BuddyState): boolean {
+  if (state === 'restarting') return ORB_LOOKS.tool.moves
+  if (state === 'offline') return false
+  return ORB_LOOKS[state].moves
 }
 
 /** The family a state reads in, from the phase contract. */
@@ -124,8 +132,8 @@ const FLOATING = 56
 const familyPose = (state: BuddyState): PoseSpec => {
   const still = stillOf(state)
   const family = familyOf(state)
-  return family === 'active'
-    ? { id: `${family}-${state}`, words: wordsOf(state), room: CARD, motion: `the dots move in the agent orb's ${still.drawing} state`, still, key: moving(still) }
+  return movesOf(state)
+    ? { id: `${family}-${state}`, words: wordsOf(state), room: CARD, motion: `the dots move in the ${still.drawing} drawing`, still, key: moving(still) }
     : { id: `${family}-${state}`, words: wordsOf(state), room: CARD, motion: 'holds still', still }
 }
 

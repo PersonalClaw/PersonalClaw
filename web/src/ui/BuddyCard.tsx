@@ -119,7 +119,7 @@ function Row({ w, ended, cut }: { w: CardWork; ended?: string; cut?: boolean }) 
   const name = `Open ${rowSubject([w.name, KIND_WORD[w.kind] ?? w.kind])}`
   return (
     <li data-in-sight={w.id} data-kind={w.kind} className="flex min-w-0 items-start gap-s">
-      <span className="flex shrink-0 items-center gap-xs pt-0.5"><AgentOrb phase={w.phase} size={20} /><Glyph kind={w.kind} /></span>
+      <span className="flex shrink-0 items-center gap-xs pt-0.5"><AgentOrb phase={w.phase} size={12} /><Glyph kind={w.kind} /></span>
       <div className="flex min-w-0 flex-1 flex-col">
         <span data-type="body-s" data-work-line="" className="min-w-0 truncate text-on-surface">{said}</span>
         <div className="flex min-w-0 flex-wrap items-center gap-x-s">
@@ -166,7 +166,7 @@ function StepLines({ steps }: { steps: StepWindow }) {
                 ) : null}
                 {step.helpers?.length ? (
                   <span data-helpers="" className="flex flex-wrap gap-xs" aria-label={`${step.helpers.length} helpers`} role="group">
-                    {step.helpers.map((phase, i) => <AgentOrb key={i} phase={phase} size={20} />)}
+                    {step.helpers.map((phase, i) => <AgentOrb key={i} phase={phase} size={12} />)}
                   </span>
                 ) : null}
               </div>

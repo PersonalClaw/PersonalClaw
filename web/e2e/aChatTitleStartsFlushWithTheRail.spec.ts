@@ -4,8 +4,8 @@ import { gotoRoute } from './helpers'
 // ── A CHAT'S TITLE IN THE SIDEBAR STARTS FLUSH WITH THE RAIL'S OTHER ROWS ────────────────────────
 //
 // The rail is narrow and a chat's title needs a few words to make sense, so none of its width goes
-// to an indent: a row's title starts at the left edge New chat's icon starts at, with a state dot or
-// without (the dot sits at the row's right end). New chat's label reads whole beside Open Chat
+// to an indent: a row's title starts at the left edge New chat's icon starts at, with a state mark
+// or without (the mark sits at the row's right end). New chat's label reads whole beside Open Chat
 // history, which stays inside the rail. jsdom lays nothing out, so
 // `aChatTitleStartsFlushWithTheRail.test.tsx` reads the padding classes; this measures the edges in
 // a real browser, at the rail's narrowest width and at its default one. The chats are route stubs,

@@ -3,8 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, AudioLines, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { duration, spring, physics, expr, sweep } from '../design/motion'
-import { AgentOrb, ORB_LOOKS } from './AgentOrb'
+import { ORB_STATE_OF } from '../lib/orbState'
+import { AgentOrb } from './AgentOrb'
+import { MOVES } from './orb/clawRing'
 import { voiceOrbPhase } from './composer/voiceOrb'
+import { bloomsFor, useHeldEnding } from './turnEnding'
 import { AgentModelPill, ApprovalPill, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
@@ -42,7 +45,7 @@ const FOCUS_RING = { outlineWidth: '2px', outlineStyle: 'solid', outlineColor: '
  *  agent/model/mode options. Pill cluster: [+] agent-and-model · (approval where
  *  enabled) · the host's pills … [mic] [send]. Textarea auto-grows to a user-resizable max. */
 export function Composer({
-  value, onChange, onSend, streaming, phase, processing, onStop, placeholder = 'Ask anything',
+  value, onChange, onSend, streaming, phase, ending = null, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, contextParts, contextActions, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
@@ -179,6 +182,10 @@ export function Composer({
   // Hands-free holds the same recorder open while it listens: said as its own capture source, so
   // the tray, every window and the gateway show it as the composer's dictation shows (#3833).
   useCaptureReport(listening && mic.state === 'recording', 'hands-free')
+  // Voice mode's orb: it hears the owner while the microphone records unmuted; once a turn ends it
+  // holds how it ended, if it was showing the turn then.
+  const heard = mic.state === 'recording' && !mic.muted
+  const voiceEnding = useHeldEnding(ending, listening && !heard)
 
   // `restH` is the user-set resting height — the editor is at least this tall
   // even when empty (so the handle resizes it at rest), and auto-grows with
@@ -276,12 +283,12 @@ export function Composer({
   // While a turn runs the button is the Stop control: a stop square with a thin arc turning round
   // it (`docs/design/agent-orb.md`). The lap is `design/motion`'s `sweep()`, which is null under
   // reduced motion, and then no arc is drawn: a loop has no shorter version. The arc reads the
-  // turn's phase as the agent orb does (`ORB_LOOKS[phase].moves`): it turns while the turn works and
+  // turn's phase as the agent orb does (`MOVES[ORB_STATE_OF[phase].state]`): it turns while the turn works and
   // holds still while it waits on the owner (an approval or a question), so the card that needs her
   // holds her attention. A turn the gateway has not described yet is waiting to start, which moves.
   const stopSweep = sendKind === 'stop' && sweep() !== null
   const stopTitle = `Stop this turn (${bindingLabel('stop-turn')})`
-  const turning = !phase || ORB_LOOKS[phase].moves
+  const turning = !phase || MOVES[ORB_STATE_OF[phase].state]
   const actions = (
     <div className="flex items-center gap-xs">
       {/* The reason rides `disabledReason`, NOT the label. Folding it into the label mutates the
@@ -507,12 +514,12 @@ export function Composer({
           )}
 
           {/* Voice mode (#4963): the 64 px orb, above the draft its dictation fills. `listening`
-              while it hears the owner, which is the whole mode, and the turn's own phase while it
-              is muted for a reply read aloud; under reduced motion the orb is one still frame. Its
-              name is the phase's words. */}
+              while it hears the owner, which is the whole mode, the turn's own phase while it is
+              muted for a reply read aloud, and how the turn ended while that is held; under reduced
+              motion the orb is one still frame. Its name is the phase's words. */}
           {listening && (
             <div data-voice-orb="" className="flex justify-center pt-s">
-              <AgentOrb phase={voiceOrbPhase({ heard: mic.state === 'recording' && !mic.muted, phase })} size={64} />
+              <AgentOrb phase={voiceOrbPhase({ heard, phase, ending: voiceEnding.held })} size={64} onSettled={voiceEnding.onSettled} bloom={bloomsFor(voiceEnding.held)} />
             </div>
           )}
           {/* How it works, where a phone can read it too: it has no hover for the tooltip. The status

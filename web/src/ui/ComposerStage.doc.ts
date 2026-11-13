@@ -19,6 +19,7 @@ const doc: UiDoc = {
     { name: 'onSend', description: 'Called to send the draft — also invoked mid-stream, as "steer" when canSteer and "queue" otherwise, when canQueue.' },
     { name: 'streaming', description: 'True while a turn is streaming — flips the send button to Stop (or Steer with a typed draft).' },
     { name: 'phase', description: 'The running turn\'s phase (lib/workPhase), null until the gateway says one: the Stop control\'s arc holds still while the turn waits on the owner (an approval or a question), as the agent orb does.' },
+    { name: 'ending', description: 'How the running turn ended, once its last frame said so: voice mode\'s orb shows it until it has settled and MIN_HOLD_MS more, then rests (ui/turnEnding.ts).' },
     { name: 'processing', description: 'One-shot pre-send processing (e.g. the goal analyze pass) → a spinning send button with no stop/queue affordance.' },
     { name: 'onStop', description: 'Called from the Stop button to abort the running turn.' },
     { name: 'placeholder', description: "Editor placeholder (default 'Ask anything')." },

@@ -10,8 +10,8 @@ import { runState, runningState } from '../../test/runState'
 // out of view while the transcript followed its end. Now the running turn has one orb, in its live
 // line (`ui/TurnStatusRow`): bare, with no border, background or pill, the last thing in the turn
 // column under the latest message, scrolling with the thread (#5867). It is driven only by the turn's
-// `work_phase` frames: it changes with the phase, its line is the gateway's, and it goes when the turn
-// ends. Nothing else in the transcript draws a live orb. Stopping stays in reach whatever the scroll:
+// `work_phase` frames: it changes with the phase, its line is the gateway's, and when the turn ends it
+// shows how it ended, then goes. Nothing else in the transcript draws a live orb. Stopping stays in reach whatever the scroll:
 // the composer's send button is "Stop this turn" while the turn runs, its tooltip shows Esc, and it
 // stops the turn the way Esc does. The frames below are what the gateway sends for one turn.
 
@@ -185,8 +185,10 @@ describe('a running turn has one live orb, in its bare line at the end of the co
     expect((orbs()[0] as HTMLElement).dataset.agentOrb).toBe('still')
     expect(orbs()).toHaveLength(1)
 
-    // The turn's last frame says how it ended: the turn is over, and its row goes.
+    // The turn's last frame says how it ended: the row shows that ending, then goes.
     pushFrame('work_phase', { ...runState({ session: SESSION, phase: 'done', line: 'Done in 9 seconds', last_outcome: 'complete', seq: 6 }) })
+    await waitFor(() => expect(line(), 'the chat did not hand the line its ending').toBe('Done in 9 seconds'))
+    expect(head()?.dataset.phase).toBe('done')
     await waitFor(() => expect(head()).toBeNull())
     pushFrame('chat_done', { outcome: 'complete' })
     expect(orbs()).toHaveLength(0)
