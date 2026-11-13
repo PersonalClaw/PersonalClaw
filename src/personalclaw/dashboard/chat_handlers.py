@@ -939,15 +939,14 @@ async def api_chat_session_bound_project(request: web.Request) -> web.Response:
     construction, so ``artifact_save`` there stamped nothing. The session key already
     crosses to that process, so this endpoint closes the loop with no protocol change.
 
-    Keyed off the work the request's sign-in proves (``approval_answer.work_of_request``: the
-    session the internal credential names in ``X-Session-Key``), never off a path segment or a
-    query parameter: the caller must prove which session it IS, and letting it name any session
-    would turn a stamping helper into a cross-session read of someone else's project binding. An
-    app's own work is no chat's.
+    Keyed off ``X-Session-Key`` (``approval_answer.work_of_request``): it answers for the chat
+    the call names there beside PersonalClaw's internal credential (the tool server names the
+    chat it serves), never for one named in its path or query, and answers no Project to an
+    app's token or to work that is no chat's.
 
-    Returns ``{"project_id": ""}`` — a 200, not a 404 — when the header is absent, the
-    session is unknown or the session binds no project. All three mean the same thing to
-    the one caller ("nothing to stamp"), and an error status would make a normal
+    Returns ``{"project_id": ""}`` — a 200, not a 404 — when the header is absent, the work
+    is no chat's, the session is unknown or the session binds no project. All four mean the
+    same thing to the one caller ("nothing to stamp"), and an error status would make a normal
     unscoped save look like a failure in its logs. Deliberately does NOT fall back to
     the Personal default the way ``/api/context`` does: filing an unscoped save under a
     project the user never chose is worse than an unstamped artifact.
@@ -956,7 +955,15 @@ async def api_chat_session_bound_project(request: web.Request) -> web.Response:
     sk = approval_answer.work_of_request(request)
     if not sk or sk == session_keys.DASHBOARD_UI or session_keys.APP.names(sk):
         return web.json_response({"project_id": ""})
-    name = sk.split(":", 1)[-1] if ":" in sk else sk
+    # A chat's key is `dashboard:<name>`, and a bare name is a chat's own. Work that is no chat's
+    # (`cron:`, `subagent:`, `hook:`, `loop:` and the like) has no chat's Project, even when a chat
+    # has the name after its colon.
+    if session_keys.DASHBOARD.names(sk):
+        name = sk.removeprefix(session_keys.DASHBOARD.prefix)
+    elif ":" not in sk:
+        name = sk
+    else:
+        return web.json_response({"project_id": ""})
     session = (getattr(state, "_sessions", {}) or {}).get(name)
     return web.json_response(
         {"project_id": str(getattr(session, "project_id", "") or "") if session else ""}

@@ -71,11 +71,12 @@ class ArtifactProvider(ABC):
         against every Project's library — which is how one Project's document overwrote
         another's (#3309).
 
-        That spelling is **fail-safe, not stylistic**: ``_current_project_id`` returns ``""``
-        for an unscoped session *and* on any resolution failure. Under a truthy filter a
-        failure degrades to "dedup against every Project" and can still overwrite another
-        Project's document; here it degrades to "dedup against unscoped only", which mints
-        a new row. No test can bind that failure path, so the spelling is its only guard.
+        Callers never pass ``None`` from a lookup. When the agent CLI's tool server cannot
+        learn the chat's Project (``artifact_project.current`` says why), the new row
+        is filed under no Project with a WARNING and a note in the reply, and a fresh
+        ``artifact_save`` and a document create skip this name check rather than dedup against
+        unscoped rows, since "" then means "not known", not "unscoped".
+        ``tests/test_project_stamping.py`` binds that failure path.
         """
         return None
 

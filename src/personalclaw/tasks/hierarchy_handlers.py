@@ -290,7 +290,7 @@ async def api_projects_get(request: web.Request) -> web.Response:
 #
 # It is a UI default only. Agent-created work does not read it — an unscoped agent save stays
 # unscoped, because filing work under a project the user did not choose is worse than filing it
-# under none (`mcp_artifacts._current_project_id`).
+# under none (`artifact_project.current`).
 
 #: `entity_settings/<key>.json`.
 _PROJECT_SETTINGS_ENTITY = "projects"

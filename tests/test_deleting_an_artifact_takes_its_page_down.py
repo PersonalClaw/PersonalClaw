@@ -22,6 +22,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw.artifact_project import Project
 from personalclaw.artifacts import registry
 from personalclaw.artifacts.deploy import ArtifactDeployStore
 from personalclaw.artifacts.handlers import register_artifact_routes
@@ -42,7 +43,7 @@ def native(provider):
         patch.object(registry, "get_provider", return_value=provider),
         patch("personalclaw.mcp_artifacts._resolve_session_key", return_value="dashboard:chat-1"),
         # An unscoped chat: no Project to ask the gateway about.
-        patch("personalclaw.mcp_artifacts._current_project_id", return_value=""),
+        patch("personalclaw.artifact_project.current", return_value=Project("", "")),
     ):
         yield provider
 

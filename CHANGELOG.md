@@ -20,6 +20,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow run's Max tokens / run and its failure breaker count every agent step of the run, one after another as well as side by side, until the run ends. A step that started after the one before it had ended began again at 0 tokens and 0 failures, so a run of steps in a row could spend Max tokens / run on each and fail five times per step. Once a run's steps are stopped (Stop fan-out, the ceiling or the breaker), its later steps are refused until the run ends.**
 - **A gateway whose start-up fails starts no helper that was waiting for its slot while it closes, after its app processes have stopped.**
 - **The gateway keeps answering while a code loop starts a stage's tasks: git checks the tree and cuts each task's worktree off the gateway's event loop, so a big repository no longer holds every request for seconds. A Stop, a Pause, a delete, or a task taken off the queue, cancelled or done meanwhile starts no worker for that task, and a stopped or deleted loop keeps no fresh checkout.**
+- **What an agent makes in a project's chat now belongs to that project and shows on its page: the artifacts and documents an agent CLI saves, and the images and videos any agent makes. A save there is no longer refused because another project holds an artifact of that name.**
 
 ### Security
 

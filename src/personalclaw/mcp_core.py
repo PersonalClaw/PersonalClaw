@@ -77,6 +77,9 @@ logger = logging.getLogger(__name__)
 # it publishes its session key here for _resolve_session_key() to consult. This
 # is what lets a subagent spawned by a native worker inherit the parent's trust
 # (goal loop unattended mode), instead of resolving a stale gateway PID file.
+# The agent CLI's tool server binds this key around each call too
+# (_call_as_its_session), so a bound key doesn't mean the gateway:
+# serves_an_agent_cli() says which process this is.
 _CURRENT_SESSION_KEY: contextvars.ContextVar[str] = contextvars.ContextVar(
     "personalclaw_current_session_key", default=""
 )

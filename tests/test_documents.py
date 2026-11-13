@@ -839,10 +839,10 @@ class TestDocumentRegenerate:
 class TestDocumentNameDedup:
     def _prov(self, tmp_path, monkeypatch):
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-        # Pinned, not incidental: with no bound Project `_current_project_id` falls through
-        # to `_session_bound_project_id`, which asks the GATEWAY when it can resolve a
-        # session key. An inherited PERSONALCLAW_SESSION_KEY would make the unscoped arms
-        # below depend on a live gateway; blanking it keeps them a pure function of tmp_path.
+        # With no bound Project `artifact_project.current` falls through to
+        # `artifact_project.session_bound`, which asks the gateway only in the agent CLI's tool
+        # server (`serves_an_agent_cli()`), never in this process. Blanking an inherited
+        # PERSONALCLAW_SESSION_KEY keeps the unscoped arms below free of any session identity.
         monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "")
         from personalclaw.artifacts.native import NativeArtifactProvider
 
@@ -1052,8 +1052,9 @@ class TestDocumentNameDedup:
     # `self.list(kind=kind)` with no Project, so it saw EVERY Project's library. Project B
     # creating "Weekly Note" therefore found Project A's artifact, updated it in place and
     # left `project_id: project-a` — A silently held B's bytes (recoverable only from
-    # version history) and B's page never showed the document. One code path serves all
-    # five document formats (csv/docx/pdf/pptx/xlsx), so docx here proves all of them.
+    # version history) and B's page never showed the document. One name check serves all
+    # five document formats (csv/docx/pdf/pptx/xlsx), so docx here proves it for all of them.
+    # The stamp has two sites: prov.create files a csv, prov.create_binary the rest.
 
     def test_a_second_projects_document_does_not_touch_the_firsts(self, tmp_path, monkeypatch):
         """THE #3309 regression: two Projects, one name ⇒ two artifacts, A untouched."""
@@ -1123,9 +1124,10 @@ class TestDocumentNameDedup:
     def test_an_unscoped_session_dedups_only_against_unscoped_artifacts(
         self, tmp_path, monkeypatch
     ):
-        """`_current_project_id()` returns "" — a str — for an unscoped session, never None.
-        So "" must mean *only unscoped*, which is why the new filter is present-vs-absent:
-        a truthy check would read "" as "no filter" and leave the global dedup in place."""
+        """`artifact_project.current()` gives an unscoped session's Project as "" — a str —
+        never None. So "" must mean *only unscoped*, which is why the new filter is
+        present-vs-absent: a truthy check would read "" as "no filter" and leave the global dedup
+        in place."""
         from personalclaw.mcp_artifacts import _document_create
 
         prov = self._prov(tmp_path, monkeypatch)
@@ -1163,6 +1165,103 @@ class TestDocumentNameDedup:
         assert rows["filed"].version == 1
         assert rows["filed-2"].project_id == ""
         assert "In A" in self._docx_text(prov, "filed")
+
+    @staticmethod
+    def _counted_project(monkeypatch, answer: str) -> list[str]:
+        """Answer every Project lookup with *answer* and record each ask."""
+        from personalclaw import artifact_project
+
+        asked: list[str] = []
+
+        def counted() -> artifact_project.Project:
+            asked.append("project")
+            return artifact_project.Project(answer, "")
+
+        monkeypatch.setattr(artifact_project, "current", counted)
+        return asked
+
+    @pytest.mark.parametrize("answer", ["project-a", ""])
+    def test_one_create_looks_its_project_up_once(self, tmp_path, monkeypatch, answer):
+        """The Project a new document's name is deduped in is the Project it is filed under:
+        one create asks once, whatever the answer. Asked twice, the two answers could differ
+        (the agent CLI's tool server asks the gateway each time), and the dedup would read one
+        Project while the document was filed under another. An answer of "" (an unscoped chat)
+        is an answer too: asking again because of it brings the two answers back."""
+        import personalclaw.mcp_artifacts as ma
+
+        prov = self._prov(tmp_path, monkeypatch)
+        asked = self._counted_project(monkeypatch, answer)
+        reply = ma._document_create(
+            prov,
+            "document_create",
+            {"name": "Tide log", "markdown": "# Tides\n"},
+            None,
+            self._quiet,
+        )
+
+        assert reply.startswith("Created docx: tide-log (v1"), reply
+        assert prov.get("tide-log").project_id == answer
+        assert len(asked) == 1, f"one create looked its project up {len(asked)} times"
+
+    @pytest.mark.parametrize("answer", ["project-a", ""])
+    def test_a_csv_is_filed_under_the_project_it_asked_once(self, tmp_path, monkeypatch, answer):
+        """A csv is filed by the text create (``prov.create``), not the binary one the other
+        formats take, so the docx case above does not prove its stamp."""
+        import personalclaw.mcp_artifacts as ma
+
+        prov = self._prov(tmp_path, monkeypatch)
+        asked = self._counted_project(monkeypatch, answer)
+        reply = ma._document_create(
+            prov,
+            "sheet_create",
+            {"name": "Berths", "format": "csv", "rows": [["quay", "boat"]]},
+            None,
+            self._quiet,
+        )
+
+        assert reply.startswith("Created csv: berths"), reply
+        assert prov.get("berths").project_id == answer
+        assert len(asked) == 1, f"one csv create looked its project up {len(asked)} times"
+
+    def test_a_next_version_by_slug_looks_no_project_up(self, tmp_path, monkeypatch):
+        """Only a call that can make a new document asks for its Project. A next version
+        written by slug with its base keeps the row it writes over, and that row's Project,
+        so it never reads the answer; in the agent CLI's tool server each ask is a round trip
+        to the gateway. The asks are counted at the turn's bound Project, where every lookup
+        starts in both runtimes."""
+        import personalclaw.agents.native.builtin_tools as builtin_tools
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = self._prov(tmp_path, monkeypatch)
+        asked: list[str] = []
+
+        def counted() -> str:
+            asked.append("project")
+            return "project-a"
+
+        monkeypatch.setattr(builtin_tools, "current_project_id", counted)
+        first = _document_create(
+            prov,
+            "document_create",
+            {"name": "Tide log", "markdown": "# Tides\n"},
+            None,
+            self._quiet,
+        )
+        assert first.startswith("Created docx: tide-log (v1"), first
+        assert len(asked) == 1, f"a new create asked {len(asked)} times"
+
+        asked.clear()
+        reply = _document_create(
+            prov,
+            "document_create",
+            {"name": "Tide log", "markdown": "# Ebb\n", "slug": "tide-log", "base": _base(first)},
+            None,
+            self._quiet,
+        )
+
+        assert reply.startswith("Updated docx: tide-log (v2"), reply
+        assert prov.get("tide-log").project_id == "project-a"
+        assert len(asked) == 0, f"a next version by slug asked {len(asked)} times"
 
 
 # ── The round-trip gate, as a rail: generate with the TOOL, parse it back, diff ──
