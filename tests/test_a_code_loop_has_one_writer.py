@@ -20,8 +20,15 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
+from a_code_loops_git_runs_off_the_gateways_loop_shared import (  # noqa: F401
+    _CAP,
+    _held,
+    _lock_waits,
+    _when,
+    hold,
+)
 
-from personalclaw.loop import kinds, store, tasks_link
+from personalclaw.loop import kinds, manager, store, tasks_link, worktree
 from personalclaw.loop.loop import Loop, LoopStatus
 from personalclaw.loop.manager import session_key, task_session_key
 
@@ -40,6 +47,7 @@ def _tmp_home(monkeypatch, tmp_path):
     kinds.ensure_loaded()
     yield tmp_path
     kinds.get("code")._stood_down.clear()
+    manager._GIT_LOCKS.clear()
 
 
 def _git(ws, home, *args):
@@ -277,3 +285,201 @@ def test_a_stage_fans_out_before_the_stage_workers_first_finding(repo):
 
     assert len(_task_workers(loop, svc)) == 2
     assert svc.get_by_session(session_key(loop.id)).active is False
+
+
+# ── git runs off the gateway's event loop ─────────────────────────────────────
+
+#: Each git step of a stage's fan-out, by the name the scheduler calls it by. An Unattended loop
+#: makes the first commit of an unborn repository itself; an Attended one only checks for one.
+_CUT_STEPS = [
+    "ensure_base_commit",
+    "has_base_commit",
+    "has_uncommitted_changes",
+    "scope_for_task",
+    "add_worktrees",
+]
+
+
+async def _schedule_beside(loop, ctx, hold, then):  # noqa: F811 - the imported fixture
+    """One scheduler pass, and *then* on the event loop once the held step began."""
+    return await asyncio.gather(
+        kinds.get("code").schedule(store.get(loop.id), ctx), _when(*hold, then)
+    )
+
+
+@pytest.mark.parametrize("step", _CUT_STEPS)
+def test_the_gateway_answers_while_git_readies_a_stages_worktrees(
+    repo, monkeypatch, hold, step  # noqa: F811 - the imported fixture
+):
+    """On a 10K-file repository a worktree took seconds to cut, and the gateway answered nothing
+    meanwhile. Each step runs in a worker thread now: a request the gateway gets while git works
+    is answered before git is done."""
+    loop, state, svc = _armed(repo, attended=step == "has_base_commit")
+    seen = _held(monkeypatch, step, *hold)
+    made: list[str] = []
+    if step == "has_base_commit":
+        ensure = worktree.ensure_base_commit
+        monkeypatch.setattr(
+            worktree, "ensure_base_commit", lambda ws: made.append(ws) or ensure(ws)
+        )
+
+    async def a_request():
+        return not seen.returned
+
+    _stopped, answered_first = _run(_schedule_beside(loop, _Ctx(state, svc), hold, a_request))
+
+    assert seen.on_loop is False, f"{step} ran on the gateway's event loop"
+    assert answered_first, "the request waited for git"
+    assert len(_task_workers(loop, svc)) == 2
+    assert made == [], "an Attended loop made a base commit"
+
+
+def test_a_pass_that_comes_while_worktrees_are_cut_cuts_nothing_again(
+    repo, monkeypatch, hold  # noqa: F811 - the imported fixture
+):
+    """A pass that comes while git cuts the stage's worktrees finds no worker for those tasks
+    yet; it leaves them to the pass that is cutting them."""
+    loop, state, svc = _armed(repo)
+    seen = _held(monkeypatch, "add_worktrees", *hold)
+    ctx = _Ctx(state, svc)
+
+    waits = _lock_waits(monkeypatch)
+
+    async def another_pass():
+        # Started, not awaited: one that got past the turn-away would wait on the cut's lock.
+        second = asyncio.ensure_future(kinds.get("code").schedule(store.get(loop.id), ctx))
+        second.add_done_callback(lambda _done: waits.set())
+        if not await asyncio.to_thread(waits.wait, _CAP):
+            raise AssertionError("the second pass neither ended nor waited on the cut")
+        return second
+
+    _stopped, second = _run(_schedule_beside(loop, ctx, hold, another_pass))
+    _run(second)
+
+    assert seen.on_loop is False
+    assert seen.calls == 1, "a second pass cut the same tasks' worktrees again"
+    assert len(_task_workers(loop, svc)) == 2
+    assert [e for e, _ in ctx.events].count("task_started") == 2
+
+
+@pytest.mark.parametrize("turn", ["still_running", "already_ended"])
+def test_a_stage_worker_whose_cycle_begins_while_git_reads_its_tree_keeps_its_tasks(
+    repo, monkeypatch, hold, turn  # noqa: F811 - the imported fixture
+):
+    """A cycle that began while git read the tree may have edited it after git looked, so its
+    tasks stay its own, as they do when its edits are already there. One that is already over by
+    the time git answers counts too. The stage worker is never stood down for it: switching its
+    nudge loop back on restamps when it was armed, so a stand-down on every poll would starve
+    it."""
+    loop, state, svc = _armed(repo)
+    seen = _held(
+        monkeypatch, "has_uncommitted_changes", *hold, answer_first=turn == "already_ended"
+    )
+    stage = state._sessions[session_key(loop.id)]
+    switched_off = []
+    update = svc.update
+
+    async def recorded(loop_id, **kw):
+        if kw.get("active") is False:
+            switched_off.append(loop_id)
+        await update(loop_id, **kw)
+
+    svc.update = recorded
+
+    async def a_cycle_begins():
+        stage.messages.append({"role": "user", "content": "cycle 1"})
+        stage.running = True
+        if turn == "already_ended":
+            (repo / "digest.py").write_text("def title(t):\n    return t\n")
+            stage.running = False
+
+    _run(_schedule_beside(loop, _Ctx(state, svc), hold, a_cycle_begins))
+
+    assert seen.on_loop is False
+    assert _task_workers(loop, svc) == [], "a worktree cut from HEAD would miss that cycle's edits"
+    assert switched_off == [], "the stage worker was stood down for a fan-out that never came"
+    assert svc.get_by_session(session_key(loop.id)).active is True
+
+
+def test_a_task_taken_off_the_queue_while_worktrees_are_cut_gets_no_worker(
+    repo, monkeypatch, hold  # noqa: F811 - the imported fixture
+):
+    """Its owner takes a task off the queue while git cuts its worktree: no worker starts for it,
+    and the other task's does."""
+    loop, state, svc = _armed(repo)
+    seen = _held(monkeypatch, "add_worktrees", *hold)
+    ctx = _Ctx(state, svc)
+
+    async def take_one_off():
+        queued = store.get(loop.id).kind_config["queued_task_ids"]
+        store.unqueue_tasks(loop.id, [queued[0]])
+        return queued
+
+    _stopped, queued = _run(_schedule_beside(loop, ctx, hold, take_one_off))
+
+    assert seen.on_loop is False
+    assert svc.get_by_session(task_session_key(loop.id, queued[0])) is None
+    assert [t for t in queued if svc.get_by_session(task_session_key(loop.id, t))] == queued[1:]
+    assert [d["task_id"] for e, d in ctx.events if e == "task_started"] == queued[1:]
+
+
+@pytest.mark.parametrize("status", ["cancelled", "done"])
+def test_a_task_cancelled_or_done_while_worktrees_are_cut_gets_no_worker(
+    repo, monkeypatch, hold, status  # noqa: F811 - the imported fixture
+):
+    """Its owner cancels a task, or marks it done, while git cuts its worktree: no worker starts
+    for it, it keeps that status, and the other task's worker starts. Nothing takes such a task
+    off the queue, and starting a worker marks its task in progress."""
+    from personalclaw.tasks import registry
+
+    loop, state, svc = _armed(repo)
+    seen = _held(monkeypatch, "add_worktrees", *hold)
+    ctx = _Ctx(state, svc)
+
+    async def resolve_one():
+        queued = list(store.get(loop.id).kind_config["queued_task_ids"])
+        await registry.update_task(queued[0], provider_name="native", status=status)
+        return queued
+
+    _stopped, queued = _run(_schedule_beside(loop, ctx, hold, resolve_one))
+
+    assert seen.on_loop is False
+    assert svc.get_by_session(task_session_key(loop.id, queued[0])) is None
+    assert [d["task_id"] for e, d in ctx.events if e == "task_started"] == queued[1:]
+    kept = _run(registry.get_task(queued[0], provider_name="native")).status
+    assert getattr(kept, "value", kept) == status, f"starting its worker undid the {status}"
+
+
+@pytest.mark.parametrize("meanwhile", ["unqueued", "stopped"])
+def test_a_change_while_one_task_starts_reaches_the_next_ones_start(repo, meanwhile):
+    """A pass starts its tasks' workers one after another, and each start waits on the gateway.
+    Its owner takes the next task off the queue, or stops the loop, while the first one starts:
+    the next one gets no worker, and a stopped loop keeps no fresh checkout for it."""
+    loop, state, svc = _armed(repo)
+    ctx = _Ctx(state, svc)
+    first: list[str] = []
+    add = svc.add
+
+    async def changed_meanwhile(*, session_name, **kw):
+        row = await add(session_name=session_name, **kw)
+        if session_name.startswith(f"{session_key(loop.id)}-") and not first:
+            queued = store.get(loop.id).kind_config["queued_task_ids"]
+            first.append(next(t for t in queued if task_session_key(loop.id, t) == session_name))
+            first.append(next(t for t in queued if t != first[0]))
+            if meanwhile == "unqueued":
+                store.unqueue_tasks(loop.id, [first[1]])
+            else:
+                store.update_status(loop.id, LoopStatus.STOPPED)
+        return row
+
+    svc.add = changed_meanwhile
+
+    stopped = _run(kinds.get("code").schedule(store.get(loop.id), ctx))
+
+    started, other = first
+    assert [d["task_id"] for e, d in ctx.events if e == "task_started"] == [started]
+    assert svc.get_by_session(task_session_key(loop.id, other)) is None, "the next task started"
+    if meanwhile == "stopped":
+        assert stopped is True, "the pass did not say the loop stopped running"
+        wt = worktree.worktree_path(str(repo), other, loop.tasks_project_id)
+        assert not os.path.isdir(wt), "a stopped loop kept the next task's fresh checkout"

@@ -937,4 +937,4 @@ reason = "11 tests that each drive a loop over real git repositories, its merges
 [[mark]]
 site = "tests/test_a_loop_that_ends_keeps_the_work_nobody_merged.py::_GIT_LOOP_CAP"
 cap = 60
-reason = "3 tests that each drive a loop's end over real git repositories; 13.5 to 15.8 s alone on a Mac at worst over three runs at loads 34 to 44 (2026-11-12), the file's slowest after the conflicting merge's own 60 s"
+reason = "6 tests that each drive a loop's end over real git repositories; at worst over three runs alone on a Mac, 13.5 to 15.8 s for three of them at loads 34 to 44 (2026-11-12) and 2.6 to 8.7 s for all six at loads 16 to 28 (2026-11-13), the file's slowest after the conflicting merge's own 60 s"

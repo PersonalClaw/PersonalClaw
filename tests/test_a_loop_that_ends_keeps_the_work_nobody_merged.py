@@ -22,9 +22,17 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import threading
 from types import SimpleNamespace
 
 import pytest
+from a_code_loops_git_runs_off_the_gateways_loop_shared import (  # noqa: F401
+    _CAP,
+    _held,
+    _lock_waits,
+    _when,
+    hold,
+)
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
@@ -37,7 +45,7 @@ from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
 from personalclaw.loop.manager import session_key, task_session_key
 from personalclaw.loop.plan_walkthrough import planner_session_key
 
-#: The cap of each test here that drives a loop over real git repositories: 10 to 21 s alone
+#: The cap of each test here that drives a loop over real git repositories: up to 15.8 s alone
 #: on a Mac under load (tests/timeout-marks.toml), past the suite's 30 s in a loaded set.
 _GIT_LOOP_CAP = pytest.mark.timeout(60)
 
@@ -106,6 +114,8 @@ def _tmp_home(monkeypatch, tmp_path):
     yield tmp_path
     kinds.get("code")._stood_down.clear()
     manager._LOOP_GRANTS.clear()
+    manager._DELETING.clear()
+    manager._GIT_LOCKS.clear()
 
 
 def _git(ws, home, *args):
@@ -205,10 +215,9 @@ class _Ctx:
 LINE = "- Digest titles are escaped once. (#21)\n"
 
 
-def _fanned_out(ws, *, state=None, project_id="", name="digest titles", attended=True):
-    """A running code loop on autopilot, Attended unless said otherwise, whose one task worker has
-    started in its own worktree and has made the edit its owner approved there, not yet merged.
-    Its planner's nudge row is still on disk from its walkthrough, as one is after a restart."""
+def _started(ws, *, state=None, project_id="", name="digest titles", attended=True):
+    """A running code loop on autopilot, Attended unless said otherwise, with one task in its
+    stage, that its scheduler has not asked about yet."""
     loop = store.create(
         Loop(
             id="",
@@ -231,6 +240,14 @@ def _fanned_out(ws, *, state=None, project_id="", name="digest titles", attended
     _run(tasks_link.seed_phase_tasks(loop.id))
     state = state or _State()
     _run(manager.start(state, SVC, loop.id))
+    return store.get(loop.id), state
+
+
+def _fanned_out(ws, *, state=None, project_id="", name="digest titles", attended=True):
+    """A running code loop on autopilot, Attended unless said otherwise, whose one task worker has
+    started in its own worktree and has made the edit its owner approved there, not yet merged.
+    Its planner's nudge row is still on disk from its walkthrough, as one is after a restart."""
+    loop, state = _started(ws, state=state, project_id=project_id, name=name, attended=attended)
     _run(kinds.get("code").schedule(store.get(loop.id), _Ctx(state, SVC)))
     loop = store.get(loop.id)
     (tid,) = loop.kind_config["queued_task_ids"]
@@ -435,6 +452,200 @@ def test_a_stopped_run_keeps_the_work_nobody_merged(repo):
 
     assert store.get(loop.id).status == LoopStatus.STOPPED.value
     assert _edit_in(wt) and worktree.branch_exists(str(repo), tid)
+
+
+# ── a loop that ends while its worktree is cut ───────────────────────────────
+
+
+#: How each ending lands on the event loop while git cuts a task's worktree in a worker thread.
+ENDS_MID_CUT = {
+    "stopped": lambda state, loop_id: manager.stop(state, SVC, loop_id),
+    "paused": lambda state, loop_id: manager.pause(state, SVC, loop_id),
+    "deleted": lambda state, loop_id: manager.teardown_for_delete(state, SVC, loop_id),
+}
+
+
+@_GIT_LOOP_CAP
+@pytest.mark.parametrize("ending", list(ENDS_MID_CUT))
+def test_a_loop_that_ends_while_its_worktree_is_cut_starts_no_worker_for_it(
+    repo, monkeypatch, request, hold, ending  # noqa: F811 - the imported fixture
+):
+    """Git cuts a task's worktree in a worker thread, so a Stop, a Pause or a delete can land
+    while it does. The loop then starts no worker for that task, and a loop that cannot resume
+    keeps no fresh checkout: a paused one keeps it, since its Resume takes the worktree back.
+    The ending's own git waits for the cut (``manager.git_lock``): none of it runs on a worktree
+    git is still making."""
+    loop, state = _started(repo)
+    # Held at its checkout, after `worktree add` registered the worktree and before it is filled.
+    seen = _held(monkeypatch, "_git", *hold, when=lambda *args, **_kw: args[1:] == ("checkout",))
+    ctx = _Ctx(state, SVC)
+    # The ending got as far as it can while the cut runs: it waits on the loop's git lock, it
+    # reached its own git, or it is over.
+    as_far = threading.Event()
+    request.addfinalizer(as_far.set)
+    during: list[str] = []
+    for name in ("sweep_finished", "discard", "commit_pending"):
+        real = getattr(worktree, name)
+
+        def watched(*args, _real=real, _name=name, **kw):
+            if not seen.returned:
+                during.append(_name)
+            if _name != "commit_pending":
+                as_far.set()
+            return _real(*args, **kw)
+
+        monkeypatch.setattr(worktree, name, watched)
+    _lock_waits(monkeypatch, as_far)
+
+    async def end_it():
+        queued = list(store.get(loop.id).kind_config["queued_task_ids"])
+        over = asyncio.ensure_future(ENDS_MID_CUT[ending](state, loop.id))
+        over.add_done_callback(lambda _done: as_far.set())
+        if not await asyncio.to_thread(as_far.wait, _CAP):
+            raise AssertionError(f"the {ending} never got as far as it can while the cut runs")
+        return queued, over
+
+    async def a_pass():
+        return await asyncio.gather(
+            kinds.get("code").schedule(store.get(loop.id), ctx), _when(*hold, end_it)
+        )
+
+    stopped, ((tid,), over) = _run(a_pass())
+    _run(over)
+
+    assert seen.on_loop is False
+    assert during == [], f"the {ending}'s git ran on a worktree git was still making: {during}"
+    assert stopped is True, "the pass did not say the loop stopped running"
+    assert SVC.get_by_session(task_session_key(loop.id, tid)) is None, "a worker started"
+    assert "task_started" not in [e for e, _ in ctx.events]
+    from personalclaw.tasks import registry
+
+    task = _run(registry.get_task(tid, provider_name="native"))
+    assert (
+        task is None or getattr(task.status, "value", task.status) != "in_progress"
+    ), "starting its worker marked the task in progress"
+    wt = worktree.worktree_path(str(repo), tid, loop.tasks_project_id)
+    if ending == "paused":
+        assert os.path.isdir(wt), "a paused loop lost the worktree its Resume takes back"
+    else:
+        assert not os.path.isdir(wt), f"a {ending} loop kept a fresh checkout"
+        assert not worktree.branch_exists(str(repo), tid)
+
+
+@_GIT_LOOP_CAP
+@pytest.mark.parametrize("tree", ["clean", "dirty"])
+@pytest.mark.parametrize("ending", list(ENDS_MID_CUT))
+def test_a_loop_that_ends_while_git_checks_its_tree_cuts_no_worktree(
+    repo, monkeypatch, hold, ending, tree  # noqa: F811 - the imported fixture
+):
+    """An ending that lands while git checks the tree, before any worktree is cut: the pass cuts
+    none, starts no worker and says the loop stopped running, whatever git found. A dirty tree,
+    which keeps a stage's tasks with its worker, is what git finds most often."""
+    loop, state = _started(repo)
+    if tree == "dirty":
+        with open(os.path.join(repo, "CHANGELOG.md"), "a", encoding="utf-8") as fh:
+            fh.write(LINE)
+    seen = _held(monkeypatch, "has_uncommitted_changes", *hold)
+    cuts = []
+    monkeypatch.setattr(worktree, "add_worktrees", lambda *args, **kw: cuts.append(args) or {})
+    ctx = _Ctx(state, SVC)
+
+    async def a_pass():
+        return await asyncio.gather(
+            kinds.get("code").schedule(store.get(loop.id), ctx),
+            _when(*hold, lambda: ENDS_MID_CUT[ending](state, loop.id)),
+        )
+
+    stopped, _ended = _run(a_pass())
+
+    assert seen.on_loop is False
+    assert stopped is True, "the pass did not say the loop stopped running"
+    assert cuts == [], f"a {ending} loop had a worktree cut"
+    assert "task_started" not in [e for e, _ in ctx.events]
+
+
+@_GIT_LOOP_CAP
+@pytest.mark.parametrize("ending", ["stopped", "deleted"])
+def test_an_ending_still_under_way_when_the_cut_returns_starts_no_worker(
+    repo, monkeypatch, hold, ending  # noqa: F811 - the imported fixture
+):
+    """A Stop or a delete is still ending its run when the cut returns, its children not yet
+    told: the pass starts no worker for a loop that is going, and keeps no fresh checkout."""
+    from personalclaw.loop import children
+
+    loop, state = _started(repo)
+    seen = _held(monkeypatch, "add_worktrees", *hold)
+    reached, release = asyncio.Event(), asyncio.Event()
+
+    async def end_children(*_args, **_kw):
+        reached.set()
+        await release.wait()
+        return 0
+
+    monkeypatch.setattr(children, "end_children", end_children)
+    ctx = _Ctx(state, SVC)
+
+    async def start_the_ending():
+        queued = list(store.get(loop.id).kind_config["queued_task_ids"])
+        over = asyncio.ensure_future(ENDS_MID_CUT[ending](state, loop.id))
+        await reached.wait()
+        return queued, over
+
+    async def a_pass():
+        return await asyncio.gather(
+            kinds.get("code").schedule(store.get(loop.id), ctx), _when(*hold, start_the_ending)
+        )
+
+    stopped, ((tid,), over) = _run(a_pass())
+
+    try:
+        assert seen.on_loop is False
+        assert stopped is True, "the pass did not say the loop stopped running"
+        assert SVC.get_by_session(task_session_key(loop.id, tid)) is None, "a worker started"
+        assert "task_started" not in [e for e, _ in ctx.events]
+        wt = worktree.worktree_path(str(repo), tid, loop.tasks_project_id)
+        assert not os.path.isdir(wt), f"a {ending} loop kept a fresh checkout"
+        assert not worktree.branch_exists(str(repo), tid)
+    finally:
+        release.set()
+        _run(over)
+
+
+def test_the_pass_sweeps_a_fresh_checkout_only_once_the_endings_git_is_done(repo, monkeypatch):
+    """A pass that finds its loop ended sweeps the checkouts it just cut, and an ending's settle
+    may be at its git on those worktrees meanwhile: the sweep waits for it (``manager.git_lock``).
+    """
+    loop, _state = _started(repo)
+    ids = list(_run(tasks_link.task_titles(loop)))
+    lock = manager.git_lock(loop.id)
+    reached = _lock_waits(monkeypatch)
+    order: list[str] = []
+    real = worktree.sweep_finished
+
+    def swept(*args, **kw):
+        order.append("the pass swept")
+        reached.set()
+        return real(*args, **kw)
+
+    monkeypatch.setattr(worktree, "sweep_finished", swept)
+    store.update_status(loop.id, LoopStatus.STOPPED)
+
+    async def beside_the_endings_git():
+        async with lock:  # the ending's settle, at its git
+            sweep = asyncio.ensure_future(
+                kinds.get("code")._keep_or_sweep(store.get(loop.id), str(repo), ids)
+            )
+            if not await asyncio.to_thread(reached.wait, _CAP):
+                raise AssertionError("the pass's sweep neither waited on the lock nor swept")
+            order.append("the ending's git let go")
+        await sweep
+
+    _run(beside_the_endings_git())
+
+    assert order == [
+        "the ending's git let go",
+        "the pass swept",
+    ], "the pass swept beside the ending's git"
 
 
 # ── a loop that cannot be resumed has nothing queued ─────────────────────────
