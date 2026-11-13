@@ -1208,7 +1208,9 @@ locked/ checks never leave the machine that registered the study.
     )
 
     sec_sub = sec_parser.add_subparsers(dest="sec_action")
-    sec_sub.add_parser("audit", help="Scan conversation history for suspicious tool usage")
+    sec_sub.add_parser(
+        "audit", help="Scan conversation history and memory for suspicious tool usage and content"
+    )
     sec_sub.add_parser("deny-list", help="Show active deny patterns")
     sel_parser = sec_sub.add_parser("events", help="Show recent security event log entries")
     sel_parser.add_argument("-n", "--limit", type=int, default=20, help="Number of entries")
@@ -1517,7 +1519,7 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         epilog="""
 Examples:
   personalclaw learn list
-  personalclaw learn add 'use snake_case for variables' --category tool
+  personalclaw learn add 'use snake_case for variables'
   personalclaw learn remove 'snake_case'
 """,
         formatter_class=_fmt,
@@ -1525,12 +1527,6 @@ Examples:
     learn_sub = learn_parser.add_subparsers(dest="learn_action")
     memory_remember = learn_sub.add_parser("add", help="Save a lesson")
     memory_remember.add_argument("rule", help="The rule or correction to remember")
-    memory_remember.add_argument(
-        "--category",
-        choices=["tool", "preference", "knowledge"],
-        default="knowledge",
-        help="Lesson category (default: knowledge)",
-    )
     memory_remember.add_argument("--negative", help="What NOT to do (optional)")
     learn_sub.add_parser("list", help="List all lessons, every folder's memory's included")
     learn_rm = learn_sub.add_parser(

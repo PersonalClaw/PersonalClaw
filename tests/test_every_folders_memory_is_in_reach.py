@@ -446,8 +446,8 @@ def test_the_command_line_lists_every_memory_and_reaches_a_folders(tmp_path, cap
 
     _learn(argparse.Namespace(learn_action="list"))
     lines = capsys.readouterr().out.splitlines()
-    assert f"  [knowledge] {EVERY_CHAT_LESSON}" in lines, lines
-    assert f"  [knowledge] {GARDEN_LESSON} (kept in the memory of {shown})" in lines, lines
+    assert f"  {EVERY_CHAT_LESSON}" in lines, lines
+    assert f"  {GARDEN_LESSON} (kept in the memory of {shown})" in lines, lines
     _learn(argparse.Namespace(learn_action="remove", query="water"))
     assert capsys.readouterr().out.strip() == (
         f"Removed lessons matching: water (from the memory every chat keeps, the memory of {shown})"

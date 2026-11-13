@@ -29,6 +29,14 @@ REPORTS_WITH_A_STATUS = {
     ("cli_doctor.py", "_doctor"): "the doctor's report ends on its verdict and what to fix",
     ("cli_doctor.py", "_doctor_crypto"): "`doctor --crypto` reports each check; 1 says one failed",
     ("push.py", "push_cmd"): "`push test` says what it sent; 1 says nothing was delivered",
+    (
+        "cli_commands.py",
+        "_run_eval",
+    ): "`eval`'s scenarios and where they were saved; 1 = one failed",
+    (
+        "durability/footprint.py",
+        "footprint_cmd",
+    ): "`footprint --json` prints its document either way; 1 = the reclaim asked for did not run",
     ("inbound/auth.py", "_show_token"): "`inbound token show` answers either way; 1 = none works",
     ("evals/child.py", "main"): "the result line is the protocol its parent reads on stdout",
     ("evals/optimize.py", "main"): "JSON on stdout is the bash action's protocol, errors too",

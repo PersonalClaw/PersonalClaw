@@ -299,7 +299,7 @@ def test_learn_add_of_a_lesson_memory_refuses_exits_1(capsys):
     from personalclaw.cli_commands import _learn
 
     too_long = "Keep the seed trays on the north bench, " + "and check every row, " * 220
-    add = argparse.Namespace(learn_action="add", rule=too_long, category="knowledge", negative=None)
+    add = argparse.Namespace(learn_action="add", rule=too_long, negative=None)
 
     err = _refused(capsys, lambda: _learn(add))
 

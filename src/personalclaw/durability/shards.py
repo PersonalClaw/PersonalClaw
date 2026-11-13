@@ -1477,8 +1477,12 @@ def backup_cmd(args) -> int:
         # Two exports racing would interleave partial writes into one manifest.
         with single_flight("shard-export") as acquired:
             if not acquired:
-                print("⏭  Another shard export is already running — skipping.", file=sys.stderr)
-                return 0
+                # Nothing was exported, so the exit says so: what runs it on a schedule reads 1.
+                print(
+                    "⏭  Another shard export is already running, so nothing was exported.",
+                    file=sys.stderr,
+                )
+                return 1
             try:
                 machine_id(home)  # before the earlier export is cleared: a link at it refuses
             except LinkInTheWay as link:

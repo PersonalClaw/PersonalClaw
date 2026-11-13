@@ -440,6 +440,11 @@ What a script changes:
 - `snapshot --list` with no snapshots → prints nothing.
 - A flag the command line's form does not take (`token --bearer --json`, `auth enroll --clear
   --label`, `inbound token show --ttl`) → exit 2.
+- `personalclaw status` with no gateway, a failing `eval` or `eval-gate`, an audit that finds
+  something or could not open memory to scan, `backup export` or `footprint --reclaim` under the
+  lock, and a partial `project import` now exit 1. `set -e` scripts and `&&` chains read that as
+  a failure, so test the exit or read `--json`.
+- `learn add --category X` → `learn add`.
 
 Added, nothing to change: every new `--json`.
 

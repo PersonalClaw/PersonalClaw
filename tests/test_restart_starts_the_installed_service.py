@@ -205,8 +205,10 @@ def test_status_names_the_service_and_the_command_that_starts_it(
     the command that starts the service installed for this home."""
     _install_plist()
 
-    cli_server._status(argparse.Namespace(port=None))
+    with pytest.raises(SystemExit) as stop:
+        cli_server._status(argparse.Namespace(port=None))
 
+    assert stop.value.code == 1
     out = capsys.readouterr().out
     assert "io.personalclaw.gateway" in out, out
     assert "personalclaw restart" in out, out

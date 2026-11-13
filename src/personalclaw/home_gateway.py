@@ -150,6 +150,15 @@ def open_loopback(request: urllib.request.Request, *, timeout: float) -> Any:
     return _LOOPBACK.open(request, timeout=timeout)
 
 
+def timed_out(exc: BaseException) -> bool:
+    """Whether a failed :func:`open_loopback` call is a gateway too slow to answer in time, not one
+    that is gone: a read timeout raises ``TimeoutError``, a connect timeout a ``URLError`` whose
+    reason is one. A refused or reset connection is neither (``_healthz`` tells them apart so)."""
+    return isinstance(exc, TimeoutError) or (
+        isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, TimeoutError)
+    )
+
+
 def _decoded(raw: bytes) -> dict[str, Any]:
     """A JSON object from *raw*, or ``{}`` for anything else."""
     try:

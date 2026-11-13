@@ -583,13 +583,13 @@ def footprint_cmd(args) -> int:  # noqa: ANN001
 
         with single_flight("footprint-reclaim") as acquired:
             if not acquired:
-                skipped = "⏭  Another reclaim is already running — skipping."
-                if not as_json:
-                    print(skipped)
-                    return 0
-                # The document still prints, with no reclaim in it: the maintenance tick holds
-                # the same lock, so a script asking for one must still get one.
+                skipped = "⏭  Another reclaim is already running, so nothing was reclaimed."
                 print(skipped, file=sys.stderr)
+                if not as_json:
+                    return 1
+                # The document still prints, with no reclaim in it: the maintenance tick holds
+                # the same lock, so a script asking for one must still get one. The reclaim it
+                # asked for was not done, so it exits 1 below.
             else:
                 reclaimed = reclaim(home)
         if reclaimed is not None:
@@ -600,7 +600,7 @@ def footprint_cmd(args) -> int:  # noqa: ANN001
 
     if as_json:
         print(json.dumps(data, indent=2))
-        return 0
+        return 1 if getattr(args, "reclaim", False) and reclaimed is None else 0
 
     print(f"Store footprint — {home}")
     print()

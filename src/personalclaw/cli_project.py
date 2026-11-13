@@ -216,7 +216,8 @@ def _import(args: argparse.Namespace) -> int:
             f"   🔑 Re-enter {len(plan.secrets_expected)} credential(s): "
             f"{', '.join(plan.secrets_expected)}"
         )
-    return 0
+    # What it left unchanged was not imported, so the exit says so, as `restore`'s does.
+    return 1 if left else 0
 
 
 def project_main(args: argparse.Namespace) -> int:

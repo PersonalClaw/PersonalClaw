@@ -30,12 +30,21 @@ the same record, and their `--port` only checks it.
 | Exit | Meaning |
 |---|---|
 | `0` | The command did what you asked. |
-| `1` | It ran and refused or failed: no gateway is running, the job id is not there, a check found a problem. |
+| `1` | It ran and refused or failed: no gateway is running, the job id is not there, a check found a problem, or it did not do what it was asked because another run holds its lock. |
 | `2` | The command line is wrong, and the usage is on stderr: `personalclaw` alone, a group with none of its commands (`personalclaw cron`), a required argument that is missing or empty, two options that exclude each other (`cron add --every 60 --cron "0 9 * * *"`). |
 
 `--help` prints on stdout and exits `0`. `auth`, `incident` and `push` alone show their status
 and `skills` alone lists the installed skills; every other group needs one of its commands.
 A command whose section below lists its own codes (`gateway`, `chat`, `run`) follows that list.
+
+A check exits with its verdict. Each of these prints its report on stdout and exits `1` when it
+finds what it checks for: `status` when no gateway of this home is running, `doctor`, `security
+audit` and `memory audit` when the scan finds something or could not open memory to scan, `security
+verify` over a broken chain, `backup validate` over a damaged export, `eval` when a scenario fails
+and `eval-gate` when the proposal regresses. `backup export` and `footprint --reclaim` exit `1` when
+another run holds the lock, so nothing was exported or reclaimed, and `project import` and `restore`
+when they left something unchanged. A report of a state keeps `0`: `incident status` while incident
+mode is on, and `ablation` when nothing is due.
 
 stdout carries only what a command makes, the same at a terminal and in a pipe. A command that
 makes something prints it alone, one value per line (`token`'s link, `pair`'s code, `inbound token
@@ -46,9 +55,11 @@ work as printed, and every warning an action prints, is on stderr. `--json`, whe
 one document: every key always there, `null` where the command could not learn the value, `[]`
 for none; its keys are what scripts read, and text for a person can change between releases. A
 refusal, failure or usage message goes to stderr and stdout stays empty; a check whose report is
-its answer (`doctor`, `security verify`, `backup validate`, `inbound token show`, `skills verify`,
-`automation verify-migration`, `service status`, `push test`, `capture import`) prints the report
-on stdout either way, and its exit status says whether it passed.
+its answer (`status`, `doctor`, `security audit`, `memory audit`, `security verify`, `backup
+validate`, `eval`, `eval-gate`, `inbound token show`, `skills verify`, `automation
+verify-migration`, `service status`, `push test`, `capture import`) prints the report
+on stdout either way, and its exit status says whether it passed; `project import` and `restore`
+keep their summary on stdout when they left something unchanged.
 
 ## `personalclaw gateway`
 
@@ -364,7 +375,7 @@ reads as registered and not tested.
 
 | Command | What it does |
 |---|---|
-| `personalclaw status [--port] [--json]` | Show runtime stats from this home's running gateway, or say that none is running and how to start it, and the service installed for this home, if there is one, with whether it is running. `--json` prints `running`, `port`, `stats` (`uptime`, `sessions`, `subagents`, `cron_jobs`, `turns`, `lessons`, each `null` when the gateway did not say), `stats_unavailable` (`auth_required`, `http_<code>`, `unexpected_response` or `gone`, else `null`) and `service` (`name`, `path`, `running`, or `null`). |
+| `personalclaw status [--port] [--json]` | Show runtime stats from this home's running gateway, or say that none is running and how to start it (and exit `1`), and the service installed for this home, if there is one, with whether it is running. `--json` prints `running`, `port`, `stats` (`uptime`, `sessions`, `subagents`, `cron_jobs`, `turns`, `lessons`, each `null` when the gateway did not say), `stats_unavailable` (`auth_required`, `http_<code>`, `unexpected_response`, `timeout` or `gone`, else `null`) and `service` (`name`, `path`, `running`, or `null`). |
 | `personalclaw stop [--port]` | Stop this home's gateway, and return once it has exited. It finds the gateway from the record the gateway keeps in its home (its port and pid), so it needs no other program. `--port` stops it only if it listens on that port. With a service installed for this home and running, it stops the service and leaves it installed: it starts again at your next login (macOS) or the next boot (Linux), or with `personalclaw restart`. In a container it changes nothing and prints the host command that stops the container. |
 | `personalclaw restart [--port]` | Restart the gateway: the service installed for this home, whether or not it is running (a gateway started outside it is stopped first), else stop this home's gateway and start a fresh one on the port it had. A home has one gateway, so a fresh one starts only once the old one has exited. A service installed for another home is left alone. In a container it changes nothing and prints the host command that restarts the container. |
 | `personalclaw logs [-f] [-n LINES]` | Show gateway logs (`-f` live tail; `-n` line count, default 100). Reads the systemd journal (Linux service), the launchd service's two files (macOS), `~/Library/Logs/PersonalClaw/gateway.log` (what the gateway printed) and `gateway.err` (its log lines), each under its name, or `gateway.log` in the home (a gateway that is not a service). The log lines are the same as Settings → Health → Diagnostics → Live logs: the gateway's own, every loaded app's from the moment it loads, what each app's backend, background worker and engine print (masked, tagged with the app), and any library's warnings. |
@@ -461,7 +472,7 @@ Save or manage learned corrections.
 
 | Subcommand | What it does |
 |---|---|
-| `learn add RULE [--category tool\|preference\|knowledge] [--negative TEXT]` | Save a lesson (default category `knowledge`; `--negative` records what NOT to do). |
+| `learn add RULE [--negative TEXT]` | Save a lesson (`--negative` records what NOT to do). |
 | `learn list` | List all lessons. |
 | `learn remove QUERY` | Remove lessons whose rule matches a substring. |
 
@@ -474,10 +485,10 @@ Manage the vector memory system.
 | `memory list` | Show semantic memory entries. |
 | `memory search QUERY` | Search episodic memories. |
 | `memory stats` | Show memory statistics. |
-| `memory audit` | Scan memory for suspicious content. |
+| `memory audit` | Scan memory for suspicious content; exits `1` when it finds some, or cannot open memory to scan. |
 | `memory partitions [--json]` | List every memory: the one every chat shares, then each folder's, with what it holds and the id `--partition` takes. `--json` prints each as `id` (`""` for the shared one), `folder`, `gone`, `facts` and `episodes`. |
 | `memory export [-o FILE]` | Export all memory to JSON (default: stdout), one document even for a memory with no records. A file it writes is readable only by you. |
-| `memory import FILE` | Import memory from a JSON export. |
+| `memory import FILE` | Import memory from a JSON export; a file that is not JSON is refused, exit `1`. |
 | `memory migrate` | Migrate legacy markdown memory to the vector store. |
 
 ## `personalclaw agent`
@@ -552,8 +563,8 @@ Security audit and deny list.
 
 | Subcommand | What it does |
 |---|---|
-| `security audit` | Scan conversation history for suspicious tool usage. |
-| `security deny-list` | Show active deny patterns. |
+| `security audit` | Scan conversation history and memory for suspicious tool usage and content; exits `1` when it finds some, or cannot open memory to scan. |
+| `security deny-list` | Show active deny patterns; an empty `config.json` adds none, and one it cannot read as a JSON object is refused, exit `1`. |
 | `security events [-n LIMIT]` | Show recent security event log entries (default 20), masked, each with what it ran or touched: a shell call's command, the file a write changed. |
 | `security verify` | Verify security event log HMAC integrity. |
 
@@ -580,7 +591,7 @@ the status.
 |---|---|
 | `personalclaw snapshot [OUTPUT_DIR] [--keep N] [--list \| --json]` | Create a portable backup of PersonalClaw state (keeps the N most recent, default 7, and the newest one a restore drill verified while the newer ones are unverified; it names each snapshot it removes and why; `--list` prints one path per line, newest first, and nothing when there are none; `--json` prints the one it made as `path` and `bytes`, and what it did on stderr). Its warnings are on stderr. A snapshot is the backup a restore reads: it holds every store whole, your skills, scripts, uploads and the other folders of files included, with every file at its path. Each database in it, wherever it is in the home and an installed app's own included, is one consistent copy taken through SQLite's backup API, never the bytes of a file being written, and a file of yours named like one of PersonalClaw's databases is kept like any other file. It is written to `<home>/snapshots` unless `snapshot_dir` says otherwise, so it is on this machine until you point it somewhere else, and it is readable only by you from its first byte, as is every file extracted from it. It carries no credential value — keys and tokens stay in the credential store, and settings hold references to them. It leaves out each app's engine (the app's own Python environment, `apps/<app>/venv`), which is built for the machine it runs on. |
 | `personalclaw restore [SNAPSHOT] [--mode replace\|merge] [--dry-run] [--components LIST] [--list-components] [--force]` | Restore state from a snapshot `.tar.gz`, or from an export `.zip` (Settings → Backups & Data → Import / Export), which is restored whole, so `--components` does not apply to it. With the gateway running, a merge of either kind runs, here or from the dashboard, and a replace is refused by both in the same words, naming this command. A merge brings each log's entries in where they belong in time — notifications, run history, feedback, the model-call audit and the security log — so a log's newest entries stay its newest, and its bound lets the oldest go. A merge that leaves a part unchanged (a store it could not read, a table it had to skip, a log that kept changing while it was merged, or a part the home holds behind a link) names each one on stderr instead of `✅ Merge complete.` and exits 1, an export archive's as a snapshot's; the dashboard's merge and import name them too. A restore that refuses (a file that is not a snapshot, a replace while the gateway runs) prints nothing on stdout, and its warnings, its restart reminder and the question whether to resume held automations are on stderr. No restore writes through a link the home holds: where the home has a symbolic link at a path the snapshot or archive brings, at a folder on the way to it, or beside a database where SQLite keeps its log, or a file there with another name (a hard link), that part is left exactly as it is. A merge reads nothing through the link and writes nothing there; a replace neither moves it aside nor puts the snapshot's copy in its place, says `Replace finished, but … left unchanged` with the link's path, and exits 1. Remove the link and restore again to bring that part in. An export archive's merge says what became of each store it holds: merged (the knowledge library, the vocabulary, the learning log and each project's memories and learning log row by row, tags by name), copied into a home without it, or left unchanged and why (this home's settings, feedback and any other single-file store it already has stay its own). A merge of either kind brings in every row of the other home's learning log once, matched by an identity each row keeps in every home, so merging the same archive again adds nothing. A merge takes an installed app's database as it takes the rest of the app's data: one this home lacks comes in whole, and one it has stays as it is. No restore puts a database's write-ahead log (`-wal`, `-shm`) into the home: a merge puts a database in on its own, removing first a log this home kept at its path with no database there (which SQLite discards when it next opens that database), and a replace moves this home's database aside with its log, so a restored database never opens with pages another copy of it wrote. A refused replace names the running gateway's pid and port. A replace (of a snapshot or an export archive) brings each automation that runs on its own back paused, and says how many and why (`--dry-run` says how many it would): a snapshot names the PersonalClaw home that took it, and one from another home may still be running there, so resume them with **Resume all** on the Automations page once that home is retired. Restoring this home's own snapshot at a terminal asks whether to resume them now; a snapshot that names no home is treated as another's. A merge brings automations in switched off already. Either mode has each chat that worked in the workspace of the home the snapshot or archive came from work in this home's workspace, so what it kept stays in the shared memory, wherever either home is. `--force` replaces even while the gateway runs. It names each restored app whose engine is not installed here; Install engine, on the app's card in Settings → Models & Providers → Providers, puts it back. `--mode replace` moves the current state into `pre-restore-<timestamp>/`, as it is (never a copy of it), except each app's engine: an app the snapshot brings back keeps the engine it has here, since an engine is built for this machine and a snapshot never carries one, and the restore names those apps. An app the snapshot does not have is set aside in that folder with its engine, whose size the restore names, and deleting the folder reclaims it. |
-| `personalclaw backup export [OUT_DIR] [--incremental]` | Export your records as **deterministic shards** — canonical JSONL per store plus a SHA-256 manifest, byte-identical for identical state (so it diffs cleanly), in the format sync carries between machines. It is not a backup: it holds no folder of files (skills, scripts, uploads, the workspace, installed apps), each database is rows, and nothing restores from it. The backup is `personalclaw snapshot`. Defaults to `<home>/shards`; `OUT_DIR` must be empty or hold an earlier export, of which only what the export wrote is replaced. It names each file it could not carry, and exits non-zero when there is one. It reads nothing through a link the home holds: a store behind a symbolic link (at its folder, at a folder on the way to it, or beside a database), or a file of a store that is a symbolic link or has another name (a hard link), is one it could not carry, named with why, and a link at the home's `machine_id` refuses the export. `--incremental` re-exports only the stores whose content changed. Secrets are never exported. Every shard and the manifest are readable only by you. |
+| `personalclaw backup export [OUT_DIR] [--incremental]` | Export your records as **deterministic shards** — canonical JSONL per store plus a SHA-256 manifest, byte-identical for identical state (so it diffs cleanly), in the format sync carries between machines. It is not a backup: it holds no folder of files (skills, scripts, uploads, the workspace, installed apps), each database is rows, and nothing restores from it. The backup is `personalclaw snapshot`. Defaults to `<home>/shards`; `OUT_DIR` must be empty or hold an earlier export, of which only what the export wrote is replaced. It names each file it could not carry, and exits non-zero when there is one, or when another export is running, so it exported nothing. It reads nothing through a link the home holds: a store behind a symbolic link (at its folder, at a folder on the way to it, or beside a database), or a file of a store that is a symbolic link or has another name (a hard link), is one it could not carry, named with why, and a link at the home's `machine_id` refuses the export. `--incremental` re-exports only the stores whose content changed. Secrets are never exported. Every shard and the manifest are readable only by you. |
 | `personalclaw backup validate [SHARD_DIR]` | Verify an export end to end: the manifest parses, every declared shard exists, and each one's byte length, row count, and SHA-256 re-derive — plus every row re-parses. **Exits non-zero on any problem**, so it works as a cron/CI check. A snapshot is verified by the restore drill (Settings → Backups & Data → Backups → Verify a restore). |
 
 **Scheduled backups say when they fail.** While automatic backups are on
@@ -602,7 +613,7 @@ The restore drill reads each database the snapshot holds, and only those: a file
 
 | Command | What it does |
 |---|---|
-| `personalclaw footprint [--json] [--reclaim]` | Per-store **bytes on disk** for every store in the state manifest, plus a **growth rate** and the store that is growing fastest. `--reclaim` compacts every database now (FTS5 merge → `PRAGMA optimize` → `VACUUM`) and reports the measured change: the bytes freed, or how much the stores grew when compacting left them larger (a database the running gateway holds open can keep the rewritten pages in its `-wal` file). With `--json`, `reclaim` is always there, `null` when no reclaim ran (another one held the lock, said on stderr), `reclaim.net_change_bytes` is signed and `freed_bytes`/`growth_bytes` are never negative. |
+| `personalclaw footprint [--json] [--reclaim]` | Per-store **bytes on disk** for every store in the state manifest, plus a **growth rate** and the store that is growing fastest. `--reclaim` compacts every database now (FTS5 merge → `PRAGMA optimize` → `VACUUM`) and reports the measured change: the bytes freed, or how much the stores grew when compacting left them larger (a database the running gateway holds open can keep the rewritten pages in its `-wal` file). Another reclaim holding the lock is said on stderr and exits `1`. With `--json`, `reclaim` is always there, `null` when no reclaim ran (another one held the lock), `reclaim.net_change_bytes` is signed and `freed_bytes`/`growth_bytes` are never negative. |
 
 Each run records one sample, so **a rate appears from the second run onward** — a
 single reading cannot tell "not growing" from "measured once", and the report says
@@ -737,7 +748,7 @@ rather than ignoring them.
 | `personalclaw automation verify-migration [--json]` | Diff the legacy `crons.json` against `triggers.json`: the report on stdout, and exit 1 when the migration needs attention (`--json`: one document). |
 | `personalclaw consolidate KEY \| --all` | Run skill/memory extraction over a session transcript now (the same path the idle poll and session-end triggers use). |
 | `personalclaw discover [--timeout SECS] [--json]` | Find PersonalClaw gateways advertising themselves on the local network (mDNS/DNS-SD `_personalclaw._tcp`). Prints each one's name and base URL. Finding nothing is a normal result and exits 0 — discovery is opt-in, is a no-op on a loopback-only gateway, and many networks filter multicast. See [Companion apps](../guides/companion-apps.md). |
-| `personalclaw eval [SCENARIOS...] [--all] [--judge]` | Run multi-session evaluation scenarios (default: a ~30s smoke test; `--judge` enables LLM scoring). |
+| `personalclaw eval [SCENARIOS...] [--all] [--judge]` | Run multi-session evaluation scenarios (default: a ~30s smoke test; `--judge` enables LLM scoring). Exits `1` when a scenario failed. |
 | `personalclaw incident [on [--reason TEXT] \| off \| status [--json]]` | The kill switch: `on` suspends every unattended run, `off` resumes them, and `status`, the default, says which. `--json` prints `active`, `started_at` and `reason` (`null` while off). |
 | `personalclaw mcp-core` | The internal MCP server entry point spawned by ACP agents — not user-facing, and genuinely hidden from `--help` (`cli.HIDDEN_COMMANDS`). Still dispatchable; it just is not advertised. It runs wherever the agent CLI that starts it runs, in that CLI's sandbox, so it logs to its own stderr, masked, which the CLI keeps, and never opens the gateway's `gateway.log`; a call whose work writes one of the stores at the top of the home (an automation, a callback, a tile, a proposal, a model call's spend) is made by the gateway through `POST /api/tools/invoke`; and a security-log row it can no longer append once the gateway rotates the log is said in that stderr. (`personalclaw mcp-schedule` was retired with the `schedule_*` tool aliases in #328 and no longer exists.) |
 | `personalclaw pair PROVIDER [--explain]` | Print a one-time pairing code alone (8 digits, 10 minutes) for a new sender on a channel (`telegram`, `discord`, `email`…). `--explain` says on stderr who it is for and how it is used; under a channel rule for strangers that takes no code, a line on stderr says so, every time. |

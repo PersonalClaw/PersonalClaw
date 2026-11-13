@@ -217,7 +217,9 @@ _FINDING = {"type": "semantic", "key": ACTS, "warning": "flagged", "value": ACTS
 def test_a_flagged_memory_is_shown_as_text(monkeypatch, capsys):
     """A flagged entry is shown the same way."""
     monkeypatch.setattr(cli_commands, "scan_memory", lambda: [_FINDING])
-    cli_commands._memory_action("audit", argparse.Namespace(), None, None)
+    with pytest.raises(SystemExit) as stop:  # a finding is exit 1, its report on stdout
+        cli_commands._memory_action("audit", argparse.Namespace(), None, None)
+    assert stop.value.code == 1
     out = capsys.readouterr().out
     _as_text(out)
     assert out.count(SHOWN) == 2, out
@@ -231,7 +233,9 @@ def test_the_security_audit_shows_what_it_found_as_text(monkeypatch, tmp_path, c
         lambda history: [{"file": ACTS, "warning": "a denied call", "snippet": ACTS}],
     )
     monkeypatch.setattr(cli_commands, "scan_memory", lambda: [_FINDING])
-    cli_commands._security(argparse.Namespace(sec_action="audit"))
+    with pytest.raises(SystemExit) as stop:  # a finding is exit 1, its report on stdout
+        cli_commands._security(argparse.Namespace(sec_action="audit"))
+    assert stop.value.code == 1
     out = capsys.readouterr().out
     _as_text(out)
     assert out.count(SHOWN) == 4, out

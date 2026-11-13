@@ -63,7 +63,9 @@ def _status(capsys, *flags: str, routes=None, home: Path | None = None):
 def test_status_json_with_no_gateway(home, capsys):
     from personalclaw.cli_server import _status as status
 
-    status(_args("status", "--json"))
+    with pytest.raises(SystemExit) as stop:
+        status(_args("status", "--json"))
+    assert stop.value.code == 1, "no gateway running is exit 1, its report on stdout"
     assert (
         capsys.readouterr().out
         == json.dumps(
@@ -470,7 +472,8 @@ def test_footprint_reclaim_json_still_prints_its_document_while_another_reclaim_
 
     with single_flight("footprint-reclaim") as acquired:
         assert acquired
-        assert footprint.footprint_cmd(_args("footprint", "--reclaim", "--json")) == 0
+        # The reclaim it asked for did not run, so it exits 1, with the document still printed.
+        assert footprint.footprint_cmd(_args("footprint", "--reclaim", "--json")) == 1
     out, err = capsys.readouterr()
     doc = json.loads(out)
     assert out == json.dumps(doc, indent=2) + "\n"
