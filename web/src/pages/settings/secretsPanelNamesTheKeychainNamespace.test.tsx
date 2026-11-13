@@ -37,6 +37,8 @@ async function mount(store: Store) {
     api: {
       secrets: async () => payload(store),
       projects: async () => [],
+      // The project picker lists the pinned projects first.
+      projectSettings: async () => ({ default_project_id: '', pinned_project_ids: [] }),
       putSecret: vi.fn(),
       deleteSecret: vi.fn(),
     },

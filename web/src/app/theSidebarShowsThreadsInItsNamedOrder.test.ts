@@ -2,13 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { toThreads, type ThreadChat, type ThreadLoop, type ThreadSources } from '../lib/useThreads'
 import type { ApprovalInput } from '../lib/attentionLanes'
 import { runState, runningState } from '../test/runState'
-import { projectGroups, type GroupedProject } from '../pages/projects/projectChatGroups'
 import { DEFAULT_VIEW, applyView } from './chatListView'
 
 // ── The sidebar lists its chat history in one named order (#3814, #5877) ──────────────────────────
 //
 // One order serves chats, goal loops and code sessions alike, in the sidebar's chat list by default
-// and in every group of the Projects page's chats by project: pinned first, then the latest activity,
+// and under each project: pinned first, then the latest activity,
 // newest first, with ties broken by the row's key. A chat's activity is the time its
 // list row says it last did something (`sessionRecencyMs`); a loop's is its newest cycle's, which
 // its row says (`last_cycle_at`). A row with no cycle time falls back to its workers' latest
@@ -40,14 +39,14 @@ function sources(over: Partial<ThreadSources> = {}): ThreadSources {
   return { sessions: [], loops: [], items: [], approvals: [], ...over }
 }
 
-const PROJECTS: GroupedProject[] = [
-  { id: 'p-personal', name: 'Personal', status: 'active' },
-  { id: 'p-garden', name: 'Garden', status: 'active' },
-]
+const PROJECTS = ['p-personal', 'p-garden']
 
-/** The keys of each group the chats by project show, by project id. */
+/** The keys under each project, by project id ("" for none), in the order the sidebar lists them
+ *  in its default view. */
 function order(src: ThreadSources): Record<string, string[]> {
-  return Object.fromEntries(projectGroups(toThreads(src), PROJECTS).map((g) => [g.id.replace(/^project:/, ''), g.threads.map((t) => t.key)]))
+  const out: Record<string, string[]> = Object.fromEntries(PROJECTS.map((id) => [id, []]))
+  for (const t of applyView(toThreads(src).flatMap((g) => g.threads), DEFAULT_VIEW, [], [])) (out[t.projectId] ??= []).push(t.key)
+  return out
 }
 
 /** The keys the sidebar lists in its default view. */

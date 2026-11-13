@@ -26,7 +26,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // 🪤 AND THREE "DESTRUCTIVE-LOOKING" SITES DELIBERATELY STAY NEUTRAL. A verb sweep flags them; reading
 // them shows they are not destroys:
-//   · `ProjectsSection` "Clear workspace"      → `setWorkspaceDir('')`, clears an INPUT FIELD
+//   · `NewProjectDialog` "Remove folder"       → `setWorkspaceDir('')`, clears an INPUT FIELD
 //   · `ChatPage` "Remove file/paste/knowledge" → composer attachments, re-attachable draft edits
 //   · `ModelsPanel` "Remove … from chain"      → a reversible settings edit
 // Tinting those trains people to read red as "routine", which is how a danger colour stops working.
@@ -171,7 +171,7 @@ describe('🔴 the composer controls were ALREADY tinted, and that decision stan
 describe('the two that stay neutral, because they are not destroys', () => {
   const NEUTRAL: [string, string][] = [
     // `setWorkspaceDir('')` — clears an INPUT FIELD, nothing stored.
-    ['pages/projects/ProjectsSection.tsx', 'Clear workspace'],
+    ['pages/projects/NewProjectDialog.tsx', 'Remove folder'],
     // A reversible settings edit: the entry can be added back.
     ['pages/settings/ModelsPanel.tsx', 'from chain'],
   ]

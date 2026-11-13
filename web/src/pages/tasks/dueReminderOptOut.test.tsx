@@ -20,7 +20,7 @@ beforeEach(() => {
   resetDataStore()
   vi.spyOn(api, 'projects').mockResolvedValue([])
   vi.spyOn(api, 'taskLists').mockResolvedValue([])
-  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '' })
+  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '', pinned_project_ids: [] })
 })
 afterEach(() => { vi.restoreAllMocks(); resetDataStore() })
 

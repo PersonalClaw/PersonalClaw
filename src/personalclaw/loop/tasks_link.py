@@ -65,7 +65,11 @@ def _is_resolved(status) -> bool:
 
 
 def _loop_project_name(loop: Loop) -> str:
-    return (loop.name or loop.task or "Loop")[:80].strip()
+    """The name a project a loop makes is given: the loop's name, else its task, as the loop's
+    own reads show them (masked), so the project is named as the loop is shown."""
+    from personalclaw import projects as projects_svc
+
+    return projects_svc.masked_name(loop.name or loop.task or "") or "Loop"
 
 
 def ensure_project(loop: Loop) -> str:
@@ -75,11 +79,19 @@ def ensure_project(loop: Loop) -> str:
     this code work under "Website Redesign") → a fresh auto-named project. Without the
     project_id fallback the user's deliberate scoping was dropped: the loop spawned a
     new auto-project instead of nesting its per-stage TaskLists under the chosen one.
-    Idempotent."""
+    Idempotent.
+
+    A project it makes carries the loop's mark (``made_for``), so the Projects list can fold it
+    under "Made for goal loops". A loop launched by choice into a project another loop made takes
+    that mark off: the owner made it theirs."""
     from personalclaw import projects as projects_svc
 
+    mine = projects_svc.made_for_loop(loop.id)
     chosen = loop.tasks_project_id or loop.project_id
-    return projects_svc.resolve_project_id(chosen, auto_name=_loop_project_name(loop))
+    pid = projects_svc.resolve_project_id(chosen, auto_name=_loop_project_name(loop), made_for=mine)
+    if not loop.tasks_project_id and loop.project_id and pid == loop.project_id:
+        projects_svc.clear_made_for(pid, unless=mine)
+    return pid
 
 
 def ensure_phase_lists(loop: Loop, tasks_project_id: str) -> dict:

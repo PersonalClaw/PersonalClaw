@@ -217,13 +217,16 @@ describe('on a phone, where no ⌘K is, each moved page has an on-screen way in'
     }))
   }
 
-  it('Tasks: All tasks on the Projects page is a 44 px target there', async () => {
-    // The UI quality matrix measured it under 44 px at 320, 390, 412 and 768 (#3905). jsdom has no
-    // layout, so the classes that set its box are pinned; the matrix measures the box.
+  it('Tasks: All tasks is one step from the Projects page, through a 44 px "…"', async () => {
+    // The UI quality matrix measured the old header button under 44 px at 320, 390, 412 and 768
+    // (#3905). All tasks is a row of the header's "…" now, so the "…" is the target a phone taps:
+    // jsdom has no layout, so the classes that set its box are pinned; the matrix measures the box.
     phone()
     await open('projects')
-    const cls = screen.getByRole('button', { name: 'All tasks' }).className.toString().split(/\s+/)
-    expect(cls).toEqual(expect.arrayContaining(['max-lg:min-h-11', 'max-lg:min-w-11']))
+    const more = screen.getByRole('button', { name: 'More actions' })
+    expect(more.className.toString().split(/\s+/)).toEqual(expect.arrayContaining(['max-lg:min-h-11', 'max-lg:min-w-11']))
+    fireEvent.click(more)
+    expect(await screen.findByRole('button', { name: 'All tasks' })).toBeTruthy()
   })
 
   it('Tasks: the drawer\'s Projects, then All tasks there, or a project and its Tasks view', async () => {
@@ -237,7 +240,8 @@ describe('on a phone, where no ⌘K is, each moved page has an on-screen way in'
     expect(drawerRows).toContain('Projects')
     expect(drawerRows).not.toContain('Tasks')
     await open('projects')
-    fireEvent.click(screen.getByRole('button', { name: 'All tasks' }))
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'All tasks' }))
     await settle()
     expect(location.hash).toBe('#/tasks')
     expect(heading()).toBe('All tasks')

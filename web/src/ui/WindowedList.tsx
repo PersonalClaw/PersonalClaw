@@ -129,12 +129,14 @@ export interface WindowedListProps<T> {
   className?: string
   /** Set false only for a list whose rows are not individually focusable. */
   enableRowKeyboard?: boolean
+  /** The list's name, for a list a page names ("Projects"); unnamed by default, as before. */
+  ariaLabel?: string
   children: (item: T, index: number, ctx: WindowedListRenderContext) => ReactNode
 }
 
 export function WindowedList<T>({
   items, rowKey, rowHeights, estimateRowHeight, gap = 0, noun, findHint,
-  anchorKey, revealKey, overscan = DEFAULT_OVERSCAN, className, enableRowKeyboard = true, children,
+  anchorKey, revealKey, overscan = DEFAULT_OVERSCAN, className, enableRowKeyboard = true, ariaLabel, children,
 }: WindowedListProps<T>) {
   const total = items.length
   const windowed = total > WINDOWING_THRESHOLD
@@ -463,6 +465,7 @@ export function WindowedList<T>({
       <div
         ref={containerRef}
         role="list"
+        aria-label={ariaLabel}
         // -1, not 0: this must be a focus PARKING spot when a row unmounts under the
         // user, and must not add a tab stop before every list in the app.
         tabIndex={-1}

@@ -96,7 +96,7 @@ function census(): string[] {
 // no longer spelled at any: `api.saveArtifactBody` / `api.snapshotArtifactBody` carry it, and
 // `lib/api.ts` is outside the census for the reason given in `census()`.)
 const OPERATION_FLAGS: Record<string, string> = {
-  'pages/projects/ProjectsSection.tsx  api.createProject  name_locked: true':
+  'pages/projects/NewProjectDialog.tsx  api.createProject  name_locked: true':
     'A user who TYPED the name is the lock — it stops the LLM auto-renaming. Not frozen: the rename path re-writes it via `patch({name, name_locked: true})`.',
   'pages/settings/FeedbackPanel.tsx  writeQuery  enabled: false':
     'The CLIENT query cache, not a stored record: the producers read\'s own answer (`{"enabled": false}`) right after the user switched "Collect feedback" off, written instead of asked for. The stored field is the switch they just flipped, through its control.',

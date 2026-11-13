@@ -25,7 +25,7 @@ beforeEach(() => {
   localStorage.clear()
   vi.spyOn(api, 'projects').mockResolvedValue(PROJECTS)
   vi.spyOn(api, 'taskLists').mockResolvedValue(LISTS)
-  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '' })
+  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '', pinned_project_ids: [] })
 })
 
 afterEach(() => {

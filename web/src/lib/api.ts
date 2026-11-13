@@ -2295,7 +2295,18 @@ export interface ProjectItem {
    *  /api/projects/{id}`); absent on the list, on the create and import answers, and on a read an
    *  app makes with its own token. */
   folder?: ProjectFolder | null
+  /** The loop this project was made for, when a loop made its own project with none chosen:
+   *  its kind and name, both `""` once the loop is deleted; `null` for any other project, and
+   *  once the owner renames it, writes its brief, or starts a chat or another loop in it. */
+  made_for?: ProjectMadeFor | null
+  /** Whether the bound folder is there, by the folder picker's rule; `""` with no folder. On the
+   *  list read only, and not on an app's. */
+  folder_state?: FolderState
 }
+/** The loop a project was made for: its kind and name as the loop's reads show them, `""` for both
+ *  once the loop is deleted, and a `null` kind when the gateway could not read the loops. */
+export interface ProjectMadeFor { work: string; kind: string | null; name: string }
+export type FolderState = 'ok' | 'missing' | 'unreadable' | ''
 /** `trusted`: automations may change files and run commands in it; `preview`: they read, change
  *  only the files a run's Allow names, and run no commands; `unknown`: nothing is decided yet (or
  *  the decision could not be read), so they are held as in `preview` until the owner decides. */
@@ -2352,8 +2363,9 @@ export interface WorkBoard {
   completeness: 'complete' | 'inferred' | 'partial' | 'error'
   attention: number; loadedAt: number
 }
-/** `GET/PUT /api/projects/settings`. */
-export interface ProjectSettings { default_project_id: string }
+/** `GET/PUT /api/projects/settings`: the default project (`""` for none) and the pinned
+ *  projects, in the owner's order. Either key alone is a whole `PUT`. */
+export interface ProjectSettings { default_project_id: string; pinned_project_ids: string[] }
 /** The server-side cap on a project or task-list NAME, mirroring `hierarchy.MAX_NAME_LEN`.
  *  Kept in step by `projectNameCap.test.ts`, which reads the Python constant — a name field
  *  bounded here but not there (or vice versa) is exactly the drift that let 3000 characters
@@ -10134,7 +10146,7 @@ export const api = {
   // start. An account preference in `entity_settings/projects.json`, so it follows the user to
   // every browser; `""` when none, or when the stored one is deleted or archived.
   projectSettings: () => get<ProjectSettings>('/api/projects/settings'),
-  updateProjectSettings: (body: ProjectSettings) => put<ProjectSettings>('/api/projects/settings', body),
+  updateProjectSettings: (body: Partial<ProjectSettings>) => put<ProjectSettings>('/api/projects/settings', body),
   // Render the marker-fenced PClaw context block into the project's
   // bound workspace_dir adapter files (CLAUDE.md / AGENTS.md / .cursorrules), replace-
   // in-place. Gated server-side on legibility.context_adapters + a bound workspace_dir.

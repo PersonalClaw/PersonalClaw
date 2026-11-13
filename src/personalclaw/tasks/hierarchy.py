@@ -44,6 +44,7 @@ from personalclaw.tasks.models import (
     REPEATABLE_PROJECT,
     Project,
     TaskList,
+    made_for_value,
 )
 
 
@@ -378,7 +379,10 @@ class HierarchyStore:
         workspace_dir: str = "",
         name_locked: bool = False,
         brief: str = "",
+        made_for: str | None = None,
     ) -> Project:
+        """*made_for* is the loop's mark, given only by ``projects.resolve_project_id`` when a loop
+        makes its own project; no route and no tool passes it."""
         lasting_work.refuse(lasting_work.TASKS, lasting_work.CREATE)
         name = clean_name(name, field="project name")
         if self.get_project_by_name(name):
@@ -393,11 +397,23 @@ class HierarchyStore:
             agent_instructions_template=agent_instructions_template,
             brief=str(brief or "").strip(),
             origin_harness=_current_origin_harness(),
+            made_for=made_for_value(made_for),
             created_at=now,
             updated_at=now,
         )
         self._write_project(project)
         return project
+
+    def clear_made_for(self, project_id: str, *, unless: str = "") -> bool:
+        """Take the loop's mark off *project_id*, unless it is *unless* (that loop's own). Writes
+        only when there is a mark to take off, so it writes once per project. True when it did."""
+        project = self.get_project(project_id)
+        if project is None or project.made_for is None or project.made_for == unless:
+            return False
+        project.made_for = None
+        project.updated_at = _now_iso()
+        self._write_project(project)
+        return True
 
     def update_project(self, project_id: str, **fields) -> Project | None:
         lasting_work.refuse(lasting_work.TASKS, lasting_work.CHANGE)
@@ -439,6 +455,10 @@ class HierarchyStore:
             project.status = status
         if "name_locked" in fields:
             project.name_locked = bool(fields["name_locked"])
+        if "made_for" in fields:
+            # Only the gateway's own callers name it (the project PUT clears it, never sets it):
+            # the PUT's allowlist refuses it in a body.
+            project.made_for = made_for_value(fields["made_for"])
         project.updated_at = _now_iso()
         self._write_project(project)
         return project

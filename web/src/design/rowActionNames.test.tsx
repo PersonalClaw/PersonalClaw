@@ -102,9 +102,10 @@ describe('the two list surfaces name their row controls too', () => {
     expect(code, 'the old shared name must be gone').not.toMatch(/'Deselect task' : 'Select task'/)
   })
 
-  it("#/projects' delete button says WHICH project, and keeps a short tooltip", () => {
-    const code = read('pages/projects/ProjectsSection.tsx')
-    expect(code).toMatch(/label=\{`Delete project: \$\{p\.name\}`\} title="Delete project"/)
+  it("#/projects' row \"…\" says WHICH project, and so does its Delete row", () => {
+    const code = read('pages/projects/ProjectList.tsx')
+    expect(code).toMatch(/label=\{`More actions for \$\{name\}`\} title="More actions"/)
+    expect(code, 'the row shows "Delete project…" and is named for the project').toMatch(/label: 'Delete project…', name: `Delete project: \$\{p\.name\}`/)
   })
 
   it('the repeated-chip families are left alone on purpose', () => {

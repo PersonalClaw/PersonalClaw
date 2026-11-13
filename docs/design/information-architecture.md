@@ -41,8 +41,9 @@ the chat history's floor (its pinned bar and one row) the sidebar scrolls as one
    pip (running, waiting on you, failed) that reads the same rule as Home's groups; a status change
    never moves a row. Nothing in the sidebar animates. The new chat's Chat history panel draws the
    same list, with its own view and no New chat, and its expand control opens the Chat history page.
-   The chats by project moved to the Projects page's Chats by project view, and a project's own page
-   lists its chats beside its detail.
+   Each project's live work is on the Projects page, one list whose search finds a project's chats
+   under it, with the chats in no project folded at its end, and a project's own page lists its
+   chats beside its detail.
 3. **The bottom block:** Inbox (#3818), Automations (#3816) and Capabilities (#3817), the pinned
    app pages, then the phone's Companion and Settings.
 
@@ -54,7 +55,8 @@ supported width, 320 to 1440 px (#3812):
    from Home, from the palette, or by ⌘1 to ⌘9 for the first nine.
 3. The compact window: the same rail as a drawer the toolbar opens. It is never removed.
 4. The command palette: "Go to" for every destination, tab and project, each with its shortcut
-   shown.
+   shown; a project's row carries its mark and what needs you and runs in it, and a "Start a chat
+   in" row each.
 5. The keyboard: the keys in the brief's
    [keyboard model](../../web/REDESIGN.md#6-keyboard-model).
 
@@ -101,6 +103,7 @@ opens it (#3818, #3819). Every route and substate round-trips through the URL, b
 | Screen | Primary job | Work surface | Header (at most 3) | Right pane |
 |---|---|---|---|---|
 | Home | see what needs you, what is running and what finished | A Start something line, then Needs you (sorted by consequence, then age), Running now (each row with its exact phase and last update), Recent/Completed, with a filter that shows one of them. An approval is answered inline, and an ask that takes words from its detail. | New chat, View (Overview or Attention) | the selected item's detail; a compact window opens it in place |
+| Projects | see what is happening in each project, and open the one to work in | one list: a card per project with what needs you, what is running in it, when it last moved, and those rows under it, pinned first, then by activity, in columns on a wide screen; the projects a loop made for itself and the chats in no project fold at its end | Search, Show, New project, and the "…" | none |
 | Thread | delegate and converse | the reading column, folded work lines, artifact cards, the composer | the title (renamed inline), Share, overflow | activity, artifacts and sources, closed by default |
 | Goal loop | supervise an autonomous run | the run as a thread: the plan on top, cycles below, and at its foot a progress strip (its cycle, Start, Pause or Resume, a two-step Stop and how it reports) over the composer, which is its nudge | the title (renamed inline) and its link, Delete once it has ended, Details | plan review beside its planning; a cycle picked from Details, beside the thread, while Details keeps its list |
 | Code session | review the agent's changes | the thread, with the review pane open on uncommitted changes | Commit or open PR, overflow | the diff and its inline comments |

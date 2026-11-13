@@ -1028,6 +1028,14 @@ class Project:
     # existed, which reads as "this harness's". A sidecar for cross-harness attribution — the
     # `p-<hex8>` id format is untouched.
     origin_harness: str = ""
+    # The loop this project was made for, ``"loop:<id>"``: stamped when a loop makes its own
+    # project with none chosen (``loop.tasks_link.ensure_project``), and None once the owner makes
+    # it theirs (a rename, a locked name, a brief, a chat or another loop started in it) or for any
+    # other project. The gateway stamps and clears it; no request body sets it, and an import
+    # never reads it from an archive (an export copies ``project.json`` whole).
+    # A file written before the field existed has no key, and the gateway's boot gives it its
+    # answer once (``projects.backfill_made_for``).
+    made_for: str | None = None
     created_at: str = ""
     updated_at: str = ""
 
@@ -1057,9 +1065,22 @@ class Project:
             agent_instructions_template=d.get("agent_instructions_template", ""),
             brief=str(d.get("brief") or ""),
             origin_harness=str(d.get("origin_harness") or ""),
+            made_for=made_for_value(d.get("made_for")),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )
+
+
+#: What a project's ``made_for`` starts with when a loop made it.
+MADE_FOR_LOOP = "loop:"
+
+
+def made_for_value(raw: Any) -> str | None:
+    """A stored ``made_for`` as the model holds it: ``"loop:<id>"``, or None for anything else (a
+    hand edit, a value from a newer build, ``null``)."""
+    if isinstance(raw, str) and raw.startswith(MADE_FOR_LOOP) and len(raw) > len(MADE_FOR_LOOP):
+        return raw
+    return None
 
 
 @dataclass

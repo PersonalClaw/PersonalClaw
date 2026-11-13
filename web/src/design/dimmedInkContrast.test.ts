@@ -50,6 +50,9 @@ function classAttributes(): Array<{ file: string; line: number; value: string }>
 // live DOM — not a guess from the class name.
 const MEASURED = new Set([
   'pages/projects/ProjectsSection.tsx',
+  // The New project dialog: its intro, its folder's hint and its reason beside Create, measured on
+  // the live DOM in both themes when the dialog moved into a file of its own.
+  'pages/projects/NewProjectDialog.tsx',
   // Added by measuring, per the rule above — not by reading the class name. `#/tasks?view=dag`'s
   // critical-path legend carried `text-on-surface-low/70` on 12px explanatory copy and axe reported
   // `[serious] color-contrast` in ALL THREE configs: **3.84:1** dark (#727374 on #151516) and
@@ -90,13 +93,6 @@ describe('the measured surfaces keep their ink undimmed', () => {
       `text-on-surface-low is already the faintest token (6.67:1); an opacity suffix takes it to ` +
         `3.86:1, below AA 1.4.3:\n  ${hits.join('\n  ')}`,
     ).toEqual([])
-  })
-
-  it('the placeholder still reads as a placeholder', () => {
-    // The italic carries "this is not a value" — the fix must not have flattened that distinction
-    // into ordinary body text.
-    const src = readSource(join(SRC, 'pages/projects/ProjectsSection.tsx'))
-    expect(src).toMatch(/text-on-surface-low text-\[0\.8125rem\] italic">No workspace bound/)
   })
 })
 

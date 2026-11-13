@@ -92,7 +92,7 @@ const FORWARDED: Record<string, RegExp> = {
   'pages/settings/PortabilityPanel.tsx': /<Button[^>]*onClick=\{\(\) => fileRef\.current\?\.click\(\)\}/,
   'pages/files/browse/FileTree.tsx': /label: 'Upload here', onClick: \(\) => uploadInput\.current\?\.click\(\)/,
   'ui/Composer.tsx': /onAttach=\{\(\) => fileRef\.current\?\.click\(\)\}/,
-  'pages/projects/ProjectsSection.tsx': /<HeaderControl[^>]*label="Import" onClick=\{\(\) => importInput\.current\?\.click\(\)\}/,
+  'pages/projects/ProjectList.tsx': /<HeaderControl[^>]*label="Import a project…" onClick=\{\(\) => importInput\.current\?\.click\(\)\}/,
 }
 
 describe('every file picker can be reached without a mouse', () => {

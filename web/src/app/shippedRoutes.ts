@@ -173,12 +173,22 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   // and the pane it names opens as that pane's own flag.
   { route: 'chat/new?prompt=draft+this', from: ['deep-link'], lands: 'chat/new?seed=draft+this' },
   { route: 'chat/new?pane=history', from: ['deep-link'], lands: 'chat/new?history=1' },
-  { route: `chat/new?project=${S.project}`, from: ['deep-link'] },
+  { route: `chat/new?project=${S.project}`, from: ['deep-link', 'palette'] },
   { route: 'chat/new?mode=plan', from: ['deep-link'] },
   { route: `chat/${S.chat}?pane=activity&file=src%2Fapp.py`, from: ['deep-link', 'documented'], lands: `chat/${S.chat}?file=src%2Fapp.py&activity=1` },
 
   // ── Projects ──────────────────────────────────────────────────────────────────────────────────
-  { route: `projects/${S.project}`, from: ['documented'] },
+  { route: `projects/${S.project}`, from: ['palette', 'documented'] },
+  // A project row's Rename opens its page with the title in edit mode; the page drops the key.
+  { route: `projects/${S.project}?rename=1`, from: ['documented'], lands: `projects/${S.project}` },
+  // The palette's New project and Import a project reach the list through its address, which it
+  // reads once and drops: the dialog opens, and the file picker only within the palette's press.
+  { route: 'projects?new=1', from: ['palette'], lands: 'projects' },
+  { route: 'projects?import=1', from: ['palette'], lands: 'projects' },
+  // Retired with the list's Chats by project view and its peek: the list keeps the search, and a
+  // peek opens the project's own page.
+  { route: 'projects?view=chats&q=garden', from: ['documented'], lands: 'projects?q=garden' },
+  { route: `projects?peek=${S.project}`, from: ['documented'], lands: `projects/${S.project}` },
   // A project's Tasks view (#3818), the task list and board held to it, with #/tasks's keys.
   { route: `projects/${S.project}?tab=tasks`, from: ['documented'] },
   { route: `projects/${S.project}?tab=tasks&view=board`, from: ['documented'] },
@@ -284,7 +294,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   // ── Loops and code ────────────────────────────────────────────────────────────────────────────
   { route: 'loop?kind=code', from: ['documented'] },
   { route: 'loop?mode=attended', from: ['deep-link', 'documented'] },
-  { route: 'loops/history', from: ['documented'] },
+  { route: 'loops/history', from: ['palette', 'documented'] },
   { route: `loops/${S.loop}`, from: ['palette', 'approval', 'companion-app', 'gateway', 'documented'] },
   { route: 'code/history', from: ['documented'] },
   { route: `code/${S.code}`, from: ['palette', 'deep-link', 'gateway', 'documented'] },

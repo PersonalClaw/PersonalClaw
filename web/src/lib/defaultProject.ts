@@ -1,5 +1,5 @@
-import { api } from './api'
-import { useMutation, useQuery } from './data'
+import { api, type ProjectSettings } from './api'
+import { peekEntry, useMutation, useQuery, writeQuery } from './data'
 import { reportActionFailure } from '../app/reportingWrite'
 
 /** The user's DEFAULT PROJECT — where the dashboard's create forms (a new task, a new loop)
@@ -43,6 +43,59 @@ export function useDefaultProject(): {
     settled: data !== undefined || !!error,
     error: data === undefined ? error : null,
     setDefaultProject: mutate,
+    pending,
+  }
+}
+
+/** The pins while the read has none (pending, failed, or a cached copy from before pins): one array
+ *  for every render, so an effect keyed on the pins runs once for it, not on each render. */
+const NO_PINS: string[] = []
+
+/** Pin changes, one after another: each starts once the one before it has answered, from the pins
+ *  that answer left in the cache, so two quick toggles both land. */
+let pinWrites: Promise<unknown> = Promise.resolve()
+
+function changePinsInTurn(change: (pins: string[]) => string[]): Promise<ProjectSettings> {
+  const prior = pinWrites
+  const write = (async () => {
+    // The change before this one has answered, either way: a failure was said where it was asked.
+    await Promise.allSettled([prior])
+    const cached = peekEntry<ProjectSettings>(DEFAULT_PROJECT_KEY)?.value
+    const current = Array.isArray(cached?.pinned_project_ids) ? cached.pinned_project_ids : NO_PINS
+    const saved = await api.updateProjectSettings({ pinned_project_ids: change(current) })
+    writeQuery(DEFAULT_PROJECT_KEY, saved, true)
+    return saved
+  })()
+  pinWrites = write
+  return write
+}
+
+/** The projects the owner pinned to the top of every project list, in their order. Stored beside
+ *  the default (`pinned_project_ids` on the same settings), so every browser, the desktop app and
+ *  the phone agree. The gateway leaves an archived or deleted pin out of the read, and keeps an
+ *  archived one through a change for its restore.
+ *
+ *  `changePins` changes the pins from the latest list, after any change still being written, and
+ *  only them: the default is left as it was. While the read has no value (`!settled || error`) the
+ *  pins it shows are none, so a caller offers no change to them. */
+export function useProjectPins(): {
+  pins: string[]
+  settled: boolean
+  error: unknown
+  changePins: (change: (pins: string[]) => string[]) => Promise<unknown>
+  pending: boolean
+} {
+  const { data, error } = useQuery(DEFAULT_PROJECT_KEY, () => api.projectSettings(), { persist: true })
+  const { mutate, pending } = useMutation({
+    run: changePinsInTurn,
+    invalidates: [DEFAULT_PROJECT_KEY],
+    onError: reportActionFailure('change your pinned projects'),
+  })
+  return {
+    pins: Array.isArray(data?.pinned_project_ids) ? data.pinned_project_ids : NO_PINS,
+    settled: data !== undefined || !!error,
+    error: data === undefined ? error : null,
+    changePins: mutate,
     pending,
   }
 }

@@ -43,7 +43,7 @@ describe('the default project follows the user, not the browser', () => {
   // localStorage key while the project page called it "Default project". It is an account
   // setting now (`GET /api/projects/settings`), so every browser starts a new task in it.
   it('a new task starts in the server-stored default project', async () => {
-    vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: 'p-q4' })
+    vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: 'p-q4', pinned_project_ids: [] })
     let last: TaskDraft = emptyDraft()
     render(<Host initial={emptyDraft()} seen={(d) => { last = d }} />)
     const project = await screen.findByRole('combobox', { name: 'Project' })
@@ -53,7 +53,7 @@ describe('the default project follows the user, not the browser', () => {
 
   it('the retired per-browser pointer decides nothing', async () => {
     localStorage.setItem('active-project', 'p-other')
-    vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '' })
+    vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '', pinned_project_ids: [] })
     render(<Host initial={emptyDraft()} seen={() => {}} />)
     const project = await screen.findByRole('combobox', { name: 'Project' })
     await waitFor(() => expect((project as HTMLSelectElement).value).toBe('p-personal'))
@@ -79,7 +79,7 @@ describe('a criterion ticked in the edit form is saved as ticked', () => {
   }
 
   it('the payload carries the tick in a shape the server reads as complete', async () => {
-    vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '' })
+    vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '', pinned_project_ids: [] })
     let last: TaskDraft = toDraft(TASK)
     render(<Host initial={toDraft(TASK)} seen={(d) => { last = d }} />)
     await userEvent.click(screen.getByRole('button', { name: 'Mark done: Copy reviewed by Sam' }))
@@ -101,7 +101,7 @@ describe('Status and Priority fit a narrow panel', () => {
   // sideways (38px by click, 245px by arrow key). Both strips now wrap; the geometry is measured in
   // the browser, and what jsdom can pin is that they wrap AND are still single radiogroups.
   it('both strips wrap and remain one radiogroup each, with the arrow-key contract', async () => {
-    vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '' })
+    vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '', pinned_project_ids: [] })
     let last: TaskDraft = emptyDraft()
     render(<Host initial={emptyDraft()} seen={(d) => { last = d }} />)
     for (const name of ['Status', 'Priority']) {

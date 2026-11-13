@@ -51,7 +51,7 @@ beforeEach(() => {
   resetDataStore()
   vi.spyOn(api, 'projects').mockResolvedValue(PROJECTS)
   vi.spyOn(api, 'taskLists').mockResolvedValue([{ id: 'tl-launch', name: 'Launch', project_id: 'p-q4' }])
-  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '' })
+  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '', pinned_project_ids: [] })
   vi.spyOn(api, 'taskComments').mockResolvedValue([])
   vi.spyOn(api, 'task').mockResolvedValue(STORED)
   saveTask = vi.spyOn(api, 'saveTask').mockImplementation((_id: string, body: Record<string, unknown>, base: string) =>

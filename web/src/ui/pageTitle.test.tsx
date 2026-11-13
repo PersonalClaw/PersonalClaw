@@ -107,6 +107,7 @@ const DESTINATIONS = [
   'pages/settings/SettingsPage.tsx',
   'pages/inbox/InboxPage.tsx',
   'pages/notifications/NotificationsPage.tsx',
+  'pages/projects/ProjectList.tsx',
   'pages/projects/ProjectsSection.tsx',
   'pages/skills/SkillsPage.tsx',
   'pages/learning/LearningPage.tsx',
@@ -157,8 +158,8 @@ describe('every converged destination names itself', () => {
     // SkillsPage (proposals view vs installed view vs the browse branch, which joined with the
     // 2026-09-05 audit) and KnowledgeCreatePage (the type picker step vs the chosen-type form).
     // Named rather than waved through, so a new branch has to justify itself here.
-    // `ProjectsSection` renders three, one per mutually exclusive branch: the LIST page's title, the
-    // shared detail shell's default, and the project view's own `titleNode`. 🪤 Converting the shell's
+    // `ProjectsSection` renders two, one per mutually exclusive branch: the shared detail shell's
+    // default and the project view's own `titleNode` (the list's title is `ProjectList`'s own). 🪤 Converting the shell's
     // default alone left `#/projects/<id>` still h1-less — the project view passes `titleNode`, so the
     // `??` default never renders. Follow the value that reaches the slot, not the first one you find.
     const TWO_STEP = ['pages/skills/SkillsPage.tsx', 'pages/knowledge/KnowledgeCreatePage.tsx',

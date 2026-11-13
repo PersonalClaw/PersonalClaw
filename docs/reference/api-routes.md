@@ -856,8 +856,8 @@ The 966 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/projects` | _(no summary)_ |
 | `POST` | `/api/projects` | _(no summary)_ |
 | `POST` | `/api/projects/import` | import a project archive (multipart `file`). |
-| `GET` | `/api/projects/settings` | the user's default project (`""` when none). |
-| `PUT` | `/api/projects/settings` | set the default project; `""` or null clears it. |
+| `GET` | `/api/projects/settings` | the default project (`""` when none) and the pins, in order. |
+| `PUT` | `/api/projects/settings` | set the default project, the pins, or both. |
 | `DELETE` | `/api/projects/{project_id}` | _(no summary)_ |
 | `GET` | `/api/projects/{project_id}` | _(no summary)_ |
 | `PUT` | `/api/projects/{project_id}` | _(no summary)_ |

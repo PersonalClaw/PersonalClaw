@@ -90,7 +90,7 @@ async function mount(secrets: () => Promise<unknown>) {
   deleteSecret.mockReset().mockResolvedValue({ deleted: '', project_id: '', secrets: [] })
   vi.doMock('../../ui/dialog', () => ({ confirm: vi.fn(async () => true) }))
   // `projects` names the per-project groups; an empty list names each by its id.
-  vi.doMock('../../lib/api', () => ({ api: { secrets, putSecret, deleteSecret, projects: async () => [] } }))
+  vi.doMock('../../lib/api', () => ({ api: { secrets, putSecret, deleteSecret, projects: async () => [], projectSettings: async () => ({ default_project_id: '', pinned_project_ids: [] }) } }))
   const { SecretsPanel } = await import('./SecretsPanel')
   await act(async () => {
     render(<SecretsPanel />)

@@ -31,8 +31,6 @@ import { ErrorBoundary, WidgetBoundary } from './ErrorBoundary'
 import { syncAppGenUiComponents } from './appGenUiLayer'
 import { api } from '../lib/api'
 import { reportingWrite } from './reportingWrite'
-import { useVisiblePoll } from '../lib/useVisiblePoll'
-import { ACTIVE_LOOP_STATUSES } from '../lib/loopStatus'
 import { CommandPalette, keymapCommands, type Command } from './CommandPalette'
 import { THREAD_NUMBERS, useBoundRunner, useKeyBinding, type CommandId } from './keymap'
 import { useRailFocus } from './railFocus'
@@ -340,17 +338,6 @@ function AppInner() {
     document.addEventListener('keydown', onEsc)
     return () => document.removeEventListener('keydown', onEsc)
   }, [mobileNavOpen])
-
-  // Ambient count of loops actively working in the background — surfaced as a badge
-  // on the one Loop nav tile so autonomous runs are visible from any page (the whole
-  // point of a loop is it runs while you're elsewhere). ONE poll over ALL kinds
-  // (general/goal/code/design) — the union of every kind's active states — so a running
-  // General or Design loop is counted too, not just goal+code. Every 30s: an ambient count
-  // is not a live view, and at 8s this was one of THREE readers of `/api/loops` on Home.
-  const [activeLoops, setActiveLoops] = useState(0)
-  useVisiblePoll(() => {
-    api.uLoops().then((ls) => setActiveLoops(ls.filter((l) => ACTIVE_LOOP_STATUSES.has(l.status)).length)).catch(() => {})
-  }, 30_000)
 
   // Installed apps → the Apps nav section. Apps do NOT auto-register: the user
   // opts each one in from its detail panel ("Show in navigation"), persisted via
@@ -815,12 +802,11 @@ function AppInner() {
   const navItems: NavItem[] = []
   for (const n of NAV) {
     // `badgeLabel` says what the number counts. Supplied ONLY where this shell actually knows the
-    // unit: the Projects badge is the active-LOOP count (it read as "1 project" beside five), and
-    // the Store badge is app updates — but only while nothing else is summed into it, since an
-    // SDK-set per-app badge's unit is app-defined and the shell must not invent one for it.
-    if (n.id === 'projects' && activeLoops > 0) {
-      navItems.push({ ...n, badge: String(activeLoops), badgeLabel: `${activeLoops} active loop${activeLoops === 1 ? '' : 's'}` })
-    } else if (n.id === 'capabilities' && appBadgeTotal > 0) {
+    // unit: the Store badge is app updates — but only while nothing else is summed into it, since an
+    // SDK-set per-app badge's unit is app-defined and the shell must not invent one for it. The
+    // Projects row carries none: what each project needs and runs is on the Projects list itself,
+    // and the toolbar's badge owns the total of what needs you.
+    if (n.id === 'capabilities' && appBadgeTotal > 0) {
       navItems.push({
         ...n,
         badge: String(appBadgeTotal),
@@ -976,7 +962,7 @@ function AppInner() {
             right the open chat's context when the owner pinned it. Focus mode hides it while the
             gateway answers. */}
         <StatusLine focusMode={focus} right={<PinnedContextReading />} />
-        <CommandPalette commands={commands} navigate={navigate} />
+        <CommandPalette commands={commands} navigate={navigate} projectRowsAfter="go:artifacts" />
         {/* The replayable product tour — shell-level because its stops
             are shell surfaces (the rail, chat, inbox, the home approvals band, settings) and
             it walks between them. Renders NOTHING until the onboarding done screen or the

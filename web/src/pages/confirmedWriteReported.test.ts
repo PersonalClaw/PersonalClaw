@@ -19,7 +19,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // mechanisms, one user outcome. So this rail derives its population from source instead:
 //
 //   population = the innermost function containing BOTH an `await confirm(`/`confirmDelete(` gate
-//                AND a call to an `api.*` method that `lib/api.ts` implements with post/put/patch/del.
+//                (or a project's own confirm, `confirmArchiveProject(` and its kin in
+//                `pages/projects/projectConfirms.ts`) AND a call to an `api.*` method that
+//                `lib/api.ts` implements with post/put/patch/del.
 //
 // The write set is read out of `lib/api.ts` rather than listed, because a name like `verifySkill`
 // or `sideTurn` gives no clue that it POSTs, and the earlier hand-rolled census missed every write
@@ -88,7 +90,7 @@ function functionSpans(s: string): [number, number, string][] {
   return out
 }
 
-const CONFIRM = /\bawait\s+confirm(?:Delete)?\(/
+const CONFIRM = /\bawait\s+confirm(?:Delete|\w+Project)?\(/
 /** The three credited handling shapes, plus the app's own reporting vocabulary. */
 const REPORTS =
   /reportingWrite\(|reportActionFailure\(|\.catch\(|notify\(|setToast|ne:toast|throw\b|set[A-Za-z]*(?:Err|Error|Msg|Message|Note|Detail|Result|Out|Failure)\b/

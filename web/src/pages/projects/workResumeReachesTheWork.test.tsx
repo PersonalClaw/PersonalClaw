@@ -41,7 +41,7 @@ function mount() {
   vi.spyOn(api, 'taskLists').mockResolvedValue([])
   vi.spyOn(api, 'projectWork').mockResolvedValue(BOARD)
   vi.spyOn(api, 'personalclawConfig').mockResolvedValue({ legibility: { context_adapters: false } } as Awaited<ReturnType<typeof api.personalclawConfig>>)
-  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '' })
+  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '', pinned_project_ids: [] })
   render(<ProjectsSection sub={PROJECT_ID} navigate={navigate} navEpoch={0} query={{}} setQuery={() => {}} />)
 }
 

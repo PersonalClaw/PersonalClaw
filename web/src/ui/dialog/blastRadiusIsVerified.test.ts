@@ -407,7 +407,7 @@ describe('the project delete, and the two workflow bodies', () => {
   // read the caller; the old callee facts are KEPT, because they are still true and still worth pinning,
   // just no longer mistaken for the whole story.
   it('names the TASK deletion the handler performs — verified against the caller, not the callee', () => {
-    const ui = web('pages/projects/ProjectsSection.tsx')
+    const ui = web('pages/projects/projectConfirms.ts')
     // The copy must state the loss and its permanence.
     expect(ui, 'the task loss is named').toMatch(/Every task in this project is permanently deleted/)
     // 🪤 Both wrong forms are pinned out. "task lists detached" was the ORIGINAL defect (it implied the
@@ -450,7 +450,7 @@ describe('the project delete, and the two workflow bodies', () => {
     // It was incomplete rather than wrong, which is why it passed every earlier review: a careful,
     // accurate enumeration of loops/workers/worktrees/branches/chats that simply never said "tasks",
     // so its "can't be undone" read as being about the loops.
-    const ui = web('pages/projects/ProjectsSection.tsx')
+    const ui = web('pages/projects/projectConfirms.ts')
     const force = ui.match(/title: 'Project still has active work'[\s\S]*?body: `([^`]*)`/)?.[1] ?? ''
     expect(force, 'found the force dialog').not.toBe('')
     expect(force, 'the task loss is named on the force path too').toMatch(/task/i)
@@ -467,7 +467,7 @@ describe('the project delete, and the two workflow bodies', () => {
     expect(handler, 'bound work is refused without force').toMatch(
       /rmtree its worktrees out\s*\n?\s*#?\s*from under git/,
     )
-    expect(web('pages/projects/ProjectsSection.tsx'), 'and the force path has its own warning')
+    expect(web('pages/projects/projectConfirms.ts'), 'and the force path has its own warning')
       .toMatch(/STOPS and REMOVES any bound loops/)
   })
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useEffect, useMemo, useRef, useState, useId } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useId } from 'react'
 import { useFocusTrap } from '../ui/useFocusTrap'
 import { AnimatePresence, motion } from 'framer-motion'
 import { framesMayHaveMoved } from '../ui/framesMayHaveMoved'
@@ -11,6 +11,9 @@ import { SearchField } from '../ui/SearchField'
 import { CONTENT_SOURCES, MIN_CONTENT_QUERY, SOURCE_LABEL, useContentSearch, type ContentHit, type ContentSource } from './paletteSearch'
 import { PALETTE_SEARCH_LABEL } from './paletteSearchLabel'
 import { KEYMAP, bindingLabel, useKeyBinding, type CommandId } from './keymap'
+import { ProjectMark } from '../ui/ProjectMark'
+import { TOUCH_TARGET } from '../ui/Toggle'
+import { PaletteProjectRows } from './paletteProjectRows'
 
 export interface Command {
   id: string
@@ -22,6 +25,9 @@ export interface Command {
   /** Listed, never run: why not (a key the focused control handles, a command with nothing to act
    *  on here). The row shows dimmed with the reason. */
   disabledReason?: string
+  /** A project's name: the row draws that project's `ProjectMark` (`sm`, `aria-hidden`) in its
+   *  icon's place, as the project's own rows elsewhere do. Its label still names the row. */
+  mark?: string
 }
 
 /** Every keymap row as a palette command, its keys in its hint, so the palette lists every
@@ -74,14 +80,21 @@ export function rankCommands(commands: Command[], q: string): Command[] {
 }
 
 /** One row of the listbox: a command, or something found inside the user's content. */
-type Row = { id: string; label: string; hint?: string; detail?: string; icon: LucideIcon; run: () => void; disabledReason?: string }
+type Row = { id: string; label: string; hint?: string; detail?: string; icon: LucideIcon; mark?: string; run: () => void; disabledReason?: string }
 
 /** ⌘K / Ctrl+K command palette — search + run navigation and actions, and search what is IN the
  *  app: chats, memory, knowledge and tasks (`paletteSearch.ts`). The single keyboard entry point
  *  (designed for THIS featureset: 16 destinations + global actions, no per-page chord soup). Opens
  *  on ⌘K, closes on Esc, arrows to move, Enter to run. Mounted once at the app shell; `navigate`
  *  is the shell's, and a content hit opens through it. */
-export function CommandPalette({ commands, navigate }: { commands: Command[]; navigate: (path: string) => void }) {
+export function CommandPalette({ commands, navigate, projectRowsAfter }: {
+  commands: Command[]
+  navigate: (path: string) => void
+  /** The id of the command the project rows follow (the Library's last Go to row), so the empty
+   *  palette's first screen is the destinations it always was. The rows are read only while the
+   *  palette is open (`PaletteProjectRows`). Unset, the palette lists no project rows. */
+  projectRowsAfter?: string
+}) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [active, setActive] = useState(0)
@@ -101,7 +114,15 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
 
   const content = useContentSearch(q, open)
 
-  const results = useMemo(() => rankCommands(commands, q), [q, commands])
+  const [projectRows, setProjectRows] = useState<Command[]>([])
+  const onProjectRows = useCallback((rows: Command[]) => setProjectRows(rows), [])
+  const listed = useMemo(() => {
+    if (!projectRowsAfter || !projectRows.length) return commands
+    const at = commands.findIndex((c) => c.id === projectRowsAfter)
+    const cut = at < 0 ? commands.length : at + 1
+    return [...commands.slice(0, cut), ...projectRows, ...commands.slice(cut)]
+  }, [commands, projectRows, projectRowsAfter])
+  const results = useMemo(() => rankCommands(listed, q), [q, listed])
 
   // Commands first, then the content hits grouped by source: ONE list for the cursor, so the arrows
   // and Enter work the same across both halves and `aria-activedescendant` can name any row.
@@ -110,7 +131,7 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
     .map((source) => ({ source, hits: contentHits.filter((h) => h.source === source) }))
     .filter((g) => g.hits.length)
   const rows: Row[] = [
-    ...results.map((c) => ({ id: c.id, label: c.label, hint: c.hint, detail: c.disabledReason, icon: c.icon, run: c.run, disabledReason: c.disabledReason })),
+    ...results.map((c) => ({ id: c.id, label: c.label, hint: c.hint, detail: c.disabledReason, icon: c.icon, mark: c.mark, run: c.run, disabledReason: c.disabledReason })),
     ...groups.flatMap((g) => g.hits.map((h: ContentHit) => ({
       id: h.id, label: h.label, detail: h.detail, icon: SOURCE_ICON[h.source], run: () => navigate(h.path),
     }))),
@@ -147,7 +168,9 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
   }
 
   return (
-    // Gone from over the page's widget frames: they are coming to rest under the pointer again.
+    <>
+    {open && projectRowsAfter && <PaletteProjectRows onRows={onProjectRows} navigate={navigate} />}
+    {/* Gone from over the page's widget frames: they are coming to rest under the pointer again. */}
     <AnimatePresence onExitComplete={framesMayHaveMoved}>
       {open && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -221,6 +244,7 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
         </motion.div>
       )}
     </AnimatePresence>
+    </>
   )
 }
 
@@ -244,9 +268,12 @@ function PaletteOption({ row, id, index, on, onHover, onRun }: {
       // view horizontally. The clipper is the CARD, and its clip is permanent.
       // This is the app's primary keyboard surface, which is where a focus indicator
       // matters most.
-      className="flex w-full items-center gap-3 px-l py-2.5 text-left focus-visible:-outline-offset-2"
+      // Below 1024 px each row is a 44 px target (`TOUCH_TARGET`): the palette opens on a phone too.
+      className={`flex w-full items-center gap-3 px-l py-2.5 text-left focus-visible:-outline-offset-2 ${TOUCH_TARGET}`}
       style={{ background: on ? 'var(--color-surface-high)' : undefined, opacity: row.disabledReason ? 0.6 : undefined }}>
-      <Icon size={16} className="shrink-0" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
+      {row.mark !== undefined
+        ? <ProjectMark name={row.mark} size="sm" />
+        : <Icon size={16} className="shrink-0" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-on-surface text-[0.8125rem]">{row.label}</span>
         {row.detail && <span className="truncate text-on-surface-low text-[0.75rem]">{row.detail}</span>}

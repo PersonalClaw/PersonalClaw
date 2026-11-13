@@ -168,4 +168,4 @@ async def test_the_settings_path_is_not_read_as_a_project_id(tmp_path):
     async with _client(tmp_path) as client:
         r = await client.get("/api/projects/settings")
         assert r.status == 200
-        assert set(await r.json()) == {"default_project_id"}
+        assert set(await r.json()) == {"default_project_id", "pinned_project_ids"}

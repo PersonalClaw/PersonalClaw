@@ -381,6 +381,7 @@ describe('the migrated surfaces read the error', () => {
     // Retry that recovers (driven: 0 rows -> 12, and the alert clears).
     'pages/tasks/TasksListPage.tsx',
     'pages/projects/ProjectsSection.tsx',
+    'pages/projects/ProjectList.tsx',
     'pages/code/CodeSection.tsx',
     'pages/learning/LearningPage.tsx',
     // `#/prompts` is the harsher variant: its fetchers carried `.catch(() => [])`, so the rejection
@@ -801,12 +802,6 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // family; fixing it means giving the router a third outcome, which is a routing design decision and
   // not a swallow to delete.
   'pages/loops/LoopsSection.tsx': 2,
-  // 🪤 THE FILE #532's BODY HELD UP AS THE EXEMPLAR, and it is in this map — which is the clearest
-  // statement of what a number here means. `dirErrorMessage` is the pattern every fix in this commit
-  // copies; the counted site is a different read in the same file, a peek section whose every consumer
-  // is `length > 0`-gated, so it composes no sentence at all. Exemplary and over the line are not
-  // opposites, and a census that scored its own exemplar at zero would be measuring the wrong thing.
-  'pages/projects/ProjectsSection.tsx': 1,
   'pages/prompts/promptWidgets.tsx': 1,
   'pages/settings/AgentDefaultsPanel.tsx': 1,
   'pages/settings/AlwaysOnConventions.tsx': 1,

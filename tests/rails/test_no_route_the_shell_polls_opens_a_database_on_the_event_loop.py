@@ -1,13 +1,15 @@
 """No route the shell polls from every page opens a database on the event loop.
 
-The shell reads routes on a timer from whatever page is open: today the loop list, for the Loop
-tile's badge (``web/src/app/App.tsx``), and the system read, the heartbeat that says whether the
-gateway is there (``web/src/app/gatewayConnection.tsx``). The loop list opened the workflow run
-store on the event loop, and the browser harness's gateway stopped answering with its loop's thread
-inside that open while a worker closed the same database (``pysqlite3`` closes holding the
-interpreter lock: ``test_a_pysqlite3_close_never_runs_beside_an_open``). Whatever the driver, a
-database opened on the loop holds every other request while it opens, and these are asked every
-30 s by every open page.
+The shell reads routes on a timer from whatever page is open: today the system read, the heartbeat
+that says whether the gateway is there (``web/src/app/gatewayConnection.tsx``). It also polled the
+loop list, for the Projects tile's badge (``web/src/app/App.tsx``), until the badge was retired with
+the Projects page's one list; the loop list's handler keeps its open off the loop all the same,
+since a poller that comes back is read here as soon as it is written. The loop list opened the
+workflow run store on the event loop, and the browser harness's gateway stopped answering with its
+loop's thread inside that open while a worker closed the same database (``pysqlite3`` closes holding
+the interpreter lock: ``test_a_pysqlite3_close_never_runs_beside_an_open``). Whatever the driver, a
+database opened on the loop holds every other request while it opens, and these are asked every 30 s
+by every open page.
 
 The routes come from the shell's own pollers, so a new one is read as soon as it is written: every
 ``useVisiblePoll`` and ``setInterval`` under ``web/src/app``, the ``api.<method>`` calls of the
@@ -47,7 +49,7 @@ _COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 _PAIRS = {"(": ")", "[": "]", "{": "}"}
 
 #: The pollers the shell has today, by the route each reads: the walk must find at least these.
-KNOWN_POLLED = frozenset({"/api/loops", "/api/system"})
+KNOWN_POLLED = frozenset({"/api/system"})
 
 #: The driver module, whose ``sqlite3`` is the one every store opens with.
 _DRIVER = "personalclaw.sqlite_compat"
@@ -249,12 +251,11 @@ def test_the_walk_sees_the_running_list_hand_its_stores_off():
 
 @pytest.mark.timeout(50)
 def test_the_shells_pollers_are_followed_to_their_handlers():
-    """The positive control of the pollers: the two the shell has today are found, each followed
-    to the handler its route is registered to."""
+    """The positive control of the pollers: the one the shell has today is found, followed to the
+    handler its route is registered to."""
     routes = _polled_routes()
 
     assert KNOWN_POLLED <= set(routes), sorted(routes)
-    assert routes["/api/loops"][:2] == ("dashboard/handlers/loop_routes.py", "api_loop_list")
     assert routes["/api/system"][:2] == ("dashboard/handlers_system.py", "api_system")
 
 

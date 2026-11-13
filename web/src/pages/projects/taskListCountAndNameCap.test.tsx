@@ -54,8 +54,9 @@ describe('the project-name cap is one number, not two', () => {
   })
 
   it('both project-name inputs carry the cap', () => {
-    // Structural: these two inputs live inside internal components (a modal and an inline rename).
-    const src = source('src/pages/projects/ProjectsSection.tsx')
+    // Structural: these two inputs live inside internal components (the New project dialog and the
+    // project page's inline rename).
+    const src = source('src/pages/projects/ProjectsSection.tsx') + source('src/pages/projects/NewProjectDialog.tsx')
     const capped = src.match(/maxLength=\{MAX_NAME_LEN\}/g) ?? []
     expect(capped.length, 'the New-project input AND the inline rename input').toBe(2)
   })

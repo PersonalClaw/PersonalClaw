@@ -26,14 +26,16 @@ const navigate = vi.fn()
 
 function mount() {
   vi.spyOn(api, 'projects').mockResolvedValue([])
-  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '' })
+  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '', pinned_project_ids: [] })
   render(<ProjectsSection sub="" navigate={navigate} navEpoch={0} query={{}} setQuery={() => {}} />)
 }
 
 const archive = () => new File([new Uint8Array([80, 75, 3, 4])], 'ingest-rework.zip', { type: 'application/zip' })
 
 async function choose(file: File) {
-  await userEvent.click(await screen.findByRole('button', { name: /Import/ }))
+  // Import a project… is a row of the header's "…".
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }))
+  await userEvent.click(await screen.findByRole('button', { name: /Import a project/ }))
   const input = document.querySelector('input[type="file"]') as HTMLInputElement
   expect(input, 'the page takes an archive').toBeTruthy()
   await userEvent.upload(input, file)

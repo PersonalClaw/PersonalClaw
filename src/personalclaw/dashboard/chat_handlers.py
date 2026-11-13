@@ -1242,22 +1242,38 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=409)
     if session.is_restricted:
         logger.info("Session %s created with memory_mode=%s", session.key, session.memory_mode)
+    elif (
+        session.project_id
+        and not request.get("app")
+        and not session._ephemeral
+        and f"dashboard:{session.key}" not in getattr(state, "_ephemeral_keys", set())
+    ):
+        # The owner started a chat in a project a loop made for itself: it is theirs now. A chat
+        # that keeps nothing (Incognito), a throwaway one and an app's leave the mark as it was.
+        # The chat's own project, since a name that opens a kept chat ignores the body's.
+        from personalclaw import projects as projects_svc
+
+        await asyncio.to_thread(projects_svc.clear_made_for, session.project_id)
     # A project-bound chat must be able to READ the project's context dir even when its
     # cwd is the project's bound workspace (the context dir lives outside it, under
     # config/projects/<id>/context). Grant it as an extra native-tool root so the chat
     # can actually read the sibling loops'/chats' shared outcomes the preamble points it
     # at — the "mutually accessible per-project context" the vision promises. Mirrors the
-    # loop worker (manager.py grants the same dir). Best-effort.
-    if project_id:
+    # loop worker (manager.py grants the same dir). Best-effort. The chat's own project, since a
+    # name that opens a kept chat ignores the body's: a kept chat in another project is given
+    # no other project's context.
+    if session.project_id:
         try:
             from personalclaw.tasks.hierarchy import HierarchyStore
 
-            ctx = str(HierarchyStore().context_dir(project_id))
+            ctx = str(HierarchyStore().context_dir(session.project_id))
             if ctx and ctx not in (session._extra_tool_roots or []):
                 session._extra_tool_roots = [*(session._extra_tool_roots or []), ctx]
         except Exception:
             logger.debug(
-                "project context-dir tool-root grant failed for %s", project_id, exc_info=True
+                "project context-dir tool-root grant failed for %s",
+                session.project_id,
+                exc_info=True,
             )
     # Default the working directory to the workspace root so file search works
     # out of the box.

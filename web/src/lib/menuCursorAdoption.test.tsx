@@ -340,10 +340,10 @@ describe('ProjectPicker: a listbox that promised arrows', () => {
     await renderPicker()
     const opts = screen.getAllByRole('option')
     await waitFor(() => expect(document.activeElement).toBe(opts[0]))
-    expect(opts.map((o) => o.getAttribute('tabindex'))).toEqual(['0', '-1', '-1'])
+    expect(opts.map((o) => o.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1'])
     act(() => { fireEvent.keyDown(window, { key: 'End' }) })
-    expect(document.activeElement).toBe(screen.getAllByRole('option')[2])
-    expect(screen.getAllByRole('option').map((o) => o.getAttribute('tabindex'))).toEqual(['-1', '-1', '0'])
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: /New project…/ }))
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('tabindex'))).toEqual(['-1', '-1', '-1', '0'])
   })
 
   it('Escape closes it and hands focus back to the trigger', async () => {

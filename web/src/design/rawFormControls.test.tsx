@@ -83,7 +83,7 @@ describe('a form primitive inside a Field claims its label; a raw element cannot
 
 describe('the three fixed surfaces', () => {
   it('ProjectsSection keeps its own Field layout but PUBLISHES its label id', () => {
-    const src = readFileSync(join(SRC, 'pages/projects/ProjectsSection.tsx'), 'utf8')
+    const src = readFileSync(join(SRC, 'pages/projects/NewProjectDialog.tsx'), 'utf8')
     // The local Field stays: its hint-above-in-sentence-case layout is the subject of an open
     // owner taste call, and swapping it for the shared Field moved 27.9% of the modal's pixels.
     expect(/function Field\b/.test(src), 'the local Field is a kept layout, not drift').toBe(true)
@@ -93,7 +93,7 @@ describe('the three fixed surfaces', () => {
     expect(src).toMatch(/<span id=\{labelId\}/)
     // And its children must be primitives, which are the only things that read the context.
     expect(src).toMatch(/<TextInput autoFocus value=\{name\}/)
-    expect(src).toMatch(/<TextArea value=\{brief\}/)
+    // The dialog asks no brief: it is written on the project's page, where every agent reads it.
   })
 
   it('ToolsPage env field is a TextArea, and the hand-copied class is gone', () => {

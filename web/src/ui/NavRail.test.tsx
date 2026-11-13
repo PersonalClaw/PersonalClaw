@@ -134,14 +134,6 @@ describe('a nav count badge says what it counts', () => {
 describe('the shell supplies the meaning it owns', () => {
   const app = readFileSync(join(process.cwd(), 'src/app/App.tsx'), 'utf8')
 
-  it('names the Projects badge as the active-LOOP count', () => {
-    expect(app, 'the badge is activeLoops, so say so').toMatch(/badgeLabel: `\$\{activeLoops\} active loop/)
-  })
-
-  it('pluralises rather than shipping "1 active loops"', () => {
-    expect(app).toMatch(/activeLoops === 1 \? '' : 's'/)
-  })
-
   it('claims the Store badge is updates ONLY when nothing else is summed in', () => {
     // appBadgeTotal = per-app SDK badges + apps-with-updates. Calling the total "updates" while an
     // app contributed to it would be a false statement, so the label is conditional and falls back

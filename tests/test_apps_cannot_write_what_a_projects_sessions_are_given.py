@@ -828,7 +828,8 @@ def _census() -> set[str]:
 
 
 #: Every field of a project that is not one of the words its sessions are given: the store's own,
-#: and what a project is called and whether it is in use — a label and two switches.
+#: what a project is called and whether it is in use (a label and two switches), and the loop it
+#: was made for (`made_for`), which the gateway stamps and clears and no create body carries.
 NOT_WHAT_A_SESSION_FOLLOWS = {
     "id",
     "is_builtin",
@@ -838,6 +839,7 @@ NOT_WHAT_A_SESSION_FOLLOWS = {
     "name",
     "name_locked",
     "status",
+    "made_for",
 }
 
 

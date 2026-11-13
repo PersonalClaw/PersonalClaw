@@ -75,6 +75,7 @@ const docs: UiDoc[] = [
       { name: 'value', description: 'The field text (controlled).' },
       { name: 'disabled', description: 'Dim + block the field. For an editing surface behind a consent gate (the document/sheet/deck editors), where a still-typeable field would make the gate a notice rather than a mechanism.' },
       { name: 'disabledReason', description: 'Why the field is off, surfaced as a title WHILE disabled. Same carrier Select and Button have: a natively disabled control leaves the tab order, so without it a keyboard user tabs past a dead field with no way to learn what is missing.' },
+      { name: 'className', description: "Classes on the input itself, after the size and surface: for a box the size scale has no tier for, such as the compact widths' 44 px target (`TOUCH_TARGET`) in a dialog." },
     ],
     bestPractices: [
       { guidance: true, description: 'Reach for TextInput for any single-line text entry rather than a raw <input> — it carries the blessed radius, focus ring, tone, and the Field-label aria wiring.' },

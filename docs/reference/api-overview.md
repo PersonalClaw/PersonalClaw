@@ -272,7 +272,7 @@ has cost someone a debugging session.
   A `POST /api/projects` from an app that names `brief`, `agent_instructions_template` or
   `workspace_dir` is refused `403` before anything is made, whatever the value, because those are
   what the project's sessions are given and where they work. Every other write is the owner's:
-  `PUT` and `DELETE /api/projects/{project_id}`, the import, the default project
+  `PUT` and `DELETE /api/projects/{project_id}`, the import, the default project and the pins
   (`PUT /api/projects/settings`), a Work-board claim and its release, and
   `…/context-adapters/regenerate`. The reads stay the app's when its manifest declares them.
 

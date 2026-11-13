@@ -302,10 +302,10 @@ describe('a layout that publishes a label id publishes the hint id too', () => {
   const found = publishers()
 
   it('found the local layouts (vacuity floor)', () => {
-    // Two at the time of writing: `settingsUI`'s Row/Field family and `ProjectsSection`'s modal Field.
+    // Two at the time of writing: `settingsUI`'s Row/Field family and the New project dialog's Field.
     // A floor, not an equality — a third local layout is allowed, it just has to keep the contract.
     expect(found.length, `publishers found: ${found.join(', ')}`).toBeGreaterThanOrEqual(2)
-    expect(found).toContain('pages/projects/ProjectsSection.tsx')
+    expect(found).toContain('pages/projects/NewProjectDialog.tsx')
     expect(found).toContain('pages/settings/settingsUI.tsx')
   })
 
@@ -321,7 +321,7 @@ describe('a layout that publishes a label id publishes the hint id too', () => {
   it("the projects modal's hint carries the id it publishes", () => {
     // Publishing a value nothing renders an `id` for is the inert-control version of this bug: the
     // context says "there is a description at #x" and #x does not exist.
-    const src = readSource(join(SRC_DIR, 'pages/projects/ProjectsSection.tsx'))
+    const src = readSource(join(SRC_DIR, 'pages/projects/NewProjectDialog.tsx'))
     expect(src, 'the hint span must carry the published id').toMatch(/\{hint && <span id=\{hintId\}/)
     // Published only WHEN there is a hint — an `aria-describedby` resolving to nothing is worse than
     // none, because it claims a description exists. Same guard the shared Field states.

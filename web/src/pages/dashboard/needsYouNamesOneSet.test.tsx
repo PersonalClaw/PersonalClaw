@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
 import { loopStatusLabel } from '../../lib/loopStatus'
-import { WORK_STATE_LABEL } from '../projects/ProjectsSection'
+import { WORK_STATE_LABEL } from '../projects/ProjectWorkRow'
 import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── #3471 "Needs you" names ONE set ───────────────────────────────────────────────────────

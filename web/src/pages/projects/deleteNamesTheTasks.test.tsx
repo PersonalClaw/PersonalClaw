@@ -1,6 +1,6 @@
 /** Deleting a project destroyed every task in it, and the dialog promised the opposite.
  *
- * `ProjectsSection.del()` asked for confirmation with:
+ * The Projects list's `del()` (its confirm now `projectConfirms.confirmDeleteProject`, once `ProjectsSection.del()`) asked for confirmation with:
  *
  *     "Its context directory and task lists are removed — the tasks themselves stay."
  *
@@ -34,7 +34,7 @@ import { join } from 'node:path'
 
 const WEB = process.cwd()
 const REPO = join(WEB, '..')
-const page = readFileSync(join(WEB, 'src/pages/projects/ProjectsSection.tsx'), 'utf8')
+const page = readFileSync(join(WEB, 'src/pages/projects/projectConfirms.ts'), 'utf8')
 /** Comments stripped: this fix's own comments necessarily QUOTE the false sentence to explain it, and
  *  a scan that counts prose as code has been wrong repeatedly in this repo. Blanked in place. */
 const code = page
