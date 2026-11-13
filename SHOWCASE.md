@@ -26,6 +26,15 @@ open Home. All of it is live over one WebSocket.
 |---|---|
 | ![Home — light](docs/screenshots/light/01-dashboard.png) | ![Home — dark](docs/screenshots/dark/01-dashboard.png) |
 
+Attention puts what needs you first, then what is running now, then what finished lately. Each
+item there names the project it belongs to, and a running card says what kind of work it is: a
+chat, a goal loop or a code session. This set's demo home has nothing waiting and nothing
+running, so both groups read empty.
+
+| Light | Dark |
+|---|---|
+| ![Home's Attention — light](docs/screenshots/light/16-attention.png) | ![Home's Attention — dark](docs/screenshots/dark/16-attention.png) |
+
 ---
 
 ## 🗣️ Agentic Chat
@@ -59,6 +68,26 @@ sequenceDiagram
     M-->>U: answer (streamed)
     C->>Ctx: after-turn learning (propose, never auto-write)
 ```
+
+---
+
+## 📁 Projects
+
+A project holds the work that belongs together: its tasks, its chats, goal loops and code
+sessions, and the folder the agent works in. The list shows each project with its workspace and
+its task lists, beside its search, Chats by project, All tasks, Loops, Import and New project.
+
+| Light | Dark |
+|---|---|
+| ![Projects — light](docs/screenshots/light/14-projects.png) | ![Projects — dark](docs/screenshots/dark/14-projects.png) |
+
+A project's own page opens on its brief, its workspace and its context folder. Below them its work
+is grouped by state (needs you, working, queued and closed), beside its chats, goal loops and
+code sessions and its task lists.
+
+| Light | Dark |
+|---|---|
+| ![A project — light](docs/screenshots/light/15-project.png) | ![A project — dark](docs/screenshots/dark/15-project.png) |
 
 ---
 
@@ -125,6 +154,14 @@ Code (SDLC), Research, and Design — each with depth and attended/unattended mo
 | Light | Dark |
 |---|---|
 | ![Goal loops — light](docs/screenshots/light/05-loops.png) | ![Goal loops — dark](docs/screenshots/dark/05-loops.png) |
+
+A loop's own page follows one run: its cycle count and what it spent, the project it was launched
+into as a chip with that project's mark, its context folder, its agent and whether it runs
+attended.
+
+| Light | Dark |
+|---|---|
+| ![A goal loop — light](docs/screenshots/light/17-loop.png) | ![A goal loop — dark](docs/screenshots/dark/17-loop.png) |
 
 ```mermaid
 stateDiagram-v2
