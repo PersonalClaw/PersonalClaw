@@ -490,9 +490,7 @@ async def test_a_lesson_taught_in_two_chats_survives_deleting_either(
         for chat in (TRAIN_CHAT, TRIP_CHAT):
             _transcript(gw.home, chat, "Planning the trip.")
             for rule in (BOTH, ONLY_IN[chat]):
-                ok, said = await _call(
-                    "memory_remember", {"rule": rule, "category": "preference"}, asked_from=chat
-                )
+                ok, said = await _call("memory_remember", {"rule": rule}, asked_from=chat)
                 assert ok, said
         held = _lessons_held(gw.home)
         assert held[ONLY_IN[deleted]]["source_session"] == deleted, "filed under its chat"

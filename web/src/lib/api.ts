@@ -5773,7 +5773,7 @@ export interface MemoryObservability {
 // the studio and the gate would eventually disagree.
 export type LessonStanding = 'injected' | 'retained'
 export interface Lesson {
-  rule: string; category: string; ts?: string
+  rule: string; ts?: string
   standing?: LessonStanding; confidence?: number; confidence_reason?: string
   observations?: number; contradictions?: number; reversals?: number
   /** The memory the lesson is in: `partition` "" for every chat's, else a folder's, `folder`
@@ -8975,7 +8975,8 @@ export const api = {
   memoryMigrate: () => post<Record<string, number>>('/api/memory/migrate'),
   memoryImport: (data: unknown, partition = '') => post<Record<string, number>>(inMemory('/api/memory/import', partition), data),
   lessons: (partition = '') => get<{ lessons: Lesson[] }>(inMemory('/api/lessons', partition)).then((d) => d.lessons),
-  addLesson: (rule: string, category = 'knowledge', partition = '') => post<{ ok: boolean }>(inMemory('/api/lessons', partition), { rule, category }),
+  // A lesson has no category: the route refuses one sent with it.
+  addLesson: (rule: string, partition = '') => post<{ ok: boolean }>(inMemory('/api/lessons', partition), { rule }),
   deleteLesson: (rule: string, partition = '') => pairFetch(inMemory('/api/lessons', partition), { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ rule }) }).then(j<{ ok: boolean }>),
 
   // ── Full-text conversation search (over persisted JSONL content) ──

@@ -32,7 +32,7 @@ Before asking ANY question, check memory for prior answers (`memory_recall` /
 
 After each answer, save it as a lesson:
 ```
-memory_remember(rule="<decision>", category="knowledge", scope="workspace")
+memory_remember(rule="<decision>", scope="workspace", workspace="<the path in WORKSPACE IDENTITY>")
 ```
 
 If the plan is simple and clear, say so and move on. If user says "enough" or "just do it", summarize decisions and proceed.

@@ -88,9 +88,7 @@ async def _remember(session_key: str, rule: str) -> tuple[bool, str]:
 
     token = mcp_core.set_current_session_key(session_key)
     try:
-        result = await create_memory_provider().invoke(
-            "memory_remember", {"rule": rule, "category": "preference"}
-        )
+        result = await create_memory_provider().invoke("memory_remember", {"rule": rule})
     finally:
         mcp_core.reset_current_session_key(token)
     return bool(result.success), str(result.output if result.success else result.error)
@@ -240,7 +238,7 @@ async def test_a_loop_a_colleagues_turn_made_changes_none_of_her_memory_in_its_c
         with _Turn(_colleague()):
             loop = _a_loop()
         _the_turn_has_ended()
-        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER}))
         told = await _a_cycle(gw, loop)
         lessons = _lessons(gw.home)
         (ask,) = _asks(gw.state, "memory_remember")
@@ -258,7 +256,7 @@ async def test_an_unattended_loops_cycle_refuses_the_change_with_nobody_to_ask(
     async with _gateway(tmp_path, monkeypatch) as gw:
         with _Turn(_colleague()):
             loop = _a_loop(attended=False)
-        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER}))
         told = await _a_cycle(gw, loop, unattended=True)
         lessons = _lessons(gw.home)
         asked = _asks(gw.state, "memory_remember")
@@ -276,7 +274,7 @@ async def test_the_owners_own_loop_still_remembers_at_once(tmp_path, monkeypatch
     async with _gateway(tmp_path, monkeypatch) as gw:
         with _Turn(_hers()):
             loop = _a_loop()
-        gw.agent.calls.append(("memory_remember", {"rule": HERS, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": HERS}))
         told = await _a_cycle(gw, loop)
         lessons = _lessons(gw.home)
 
@@ -376,7 +374,7 @@ async def test_a_colleagues_subagents_report_handed_back_keeps_who_asked(tmp_pat
             memory_writes.hand_on(agent_work_id("5ab1e7c1"), CHAT)
         _the_turn_has_ended()
         on_done = _completion(gw.state)
-        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER}))
         await on_done([_an_agent("5ab1e7c1")])
         await _settled(gw.state)
         told = gw.agent.told()
@@ -398,7 +396,7 @@ async def test_a_report_that_waited_behind_a_turn_keeps_who_asked(tmp_path, monk
         chat = gw.state.get_or_create_session(CHAT_NAME)
         chat.queue_append(report, asked_for_by=_colleague())
         gw.agent.calls.append([])
-        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER}))
         chat.append("user", "What is on for Thursday?", "msg msg-u", source=DASHBOARD_SOURCE)
         await run_chat(gw.state, chat, "What is on for Thursday?")
         await _settled(gw.state)
@@ -419,7 +417,7 @@ async def test_the_owners_own_subagents_report_still_remembers_at_once(tmp_path,
         with _Turn(_hers()):
             memory_writes.hand_on(agent_work_id("5ab1e7c3"), CHAT)
         on_done = _completion(gw.state)
-        gw.agent.calls.append(("memory_remember", {"rule": HERS, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": HERS}))
         await on_done([_an_agent("5ab1e7c3")])
         await _settled(gw.state)
         told = gw.agent.told()

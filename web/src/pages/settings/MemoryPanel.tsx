@@ -291,12 +291,12 @@ const lessonRef = (rule: string) => `lesson:${rule.slice(0, 80)}`
  *  in the accessibility tree for free rather than needing a parallel label.
  *
  *  A lesson with no `standing` is one served by a backend that predates the gate; it
- *  falls back to the category alone rather than claiming a standing nobody computed. */
+ *  reads "lesson" alone rather than claiming a standing nobody computed. No lesson stores a
+ *  category, so the line names none. */
 export function lessonPreview(l: Lesson): string {
-  const kind = l.category || 'lesson'
-  if (!l.standing) return kind
+  if (!l.standing) return 'lesson'
   const pct = `${Math.round((l.confidence ?? 0) * 100)}%`
-  return `${kind} · ${l.standing === 'injected' ? 'in prompts' : 'held below the gate'} · ${pct} confidence`
+  return `${l.standing === 'injected' ? 'in prompts' : 'held below the gate'} · ${pct} confidence`
 }
 
 /** The Studio explorer's TWO filter dimensions, resolved once (issue #520).
@@ -869,7 +869,6 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
                 traced rather than taken on trust. Contradictions/reversals appear only
                 when there are any — a permanent "0" on every lesson is noise. */}
             <StudioMeta pairs={[
-              ['Category', item.lesson.category || '—'],
               ['Learned', item.lesson.ts ? fmtDate(item.lesson.ts) : '—'],
               ...(item.lesson.standing
                 ? [
@@ -1315,7 +1314,7 @@ function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
   const submit = async () => {
     if (!rule.trim()) return
     setSaving(true); setErr('')
-    try { await api.addLesson(rule.trim(), 'knowledge', partition); onDone(true) }
+    try { await api.addLesson(rule.trim(), partition); onDone(true) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed'); setSaving(false) }
   }
   return (

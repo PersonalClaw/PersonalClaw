@@ -89,19 +89,12 @@ class TestMcpCoreUserActions:
             mock_post.return_value = {"status": "ok"}
             result = self._simulate_tool_call(
                 "memory_remember",
-                {
-                    "rule": "Always use dark mode for code examples",
-                    "category": "preference",
-                },
+                {"rule": "Always use dark mode for code examples"},
             )
         assert "Saved lesson" in result
         mock_post.assert_called_once_with(
             "/api/lessons",
-            {
-                "rule": "Always use dark mode for code examples",
-                "category": "preference",
-                "scope": "global",
-            },
+            {"rule": "Always use dark mode for code examples", "scope": "global"},
         )
 
     def test_learn_with_negative(self):
@@ -111,14 +104,13 @@ class TestMcpCoreUserActions:
                 "memory_remember",
                 {
                     "rule": "Use pytest for testing",
-                    "category": "tool",
                     "negative": "Do not use unittest directly",
                 },
             )
         assert "Saved lesson" in result
 
-    def test_learn_category_defaults_to_knowledge(self):
-        """LLM might omit category — should default to 'knowledge'."""
+    def test_learn_sends_no_category(self):
+        """No lesson stores a category, so none is sent for it."""
         with patch("personalclaw.mcp_memory._post") as mock_post:
             mock_post.return_value = {"status": "ok"}
             result = self._simulate_tool_call(
@@ -129,7 +121,7 @@ class TestMcpCoreUserActions:
             )
         assert "Saved lesson" in result
         call_body = mock_post.call_args[0][1]
-        assert call_body["category"] == "knowledge"
+        assert "category" not in call_body
 
     # -- memory_list: user says "what have I taught you?" --
 
@@ -137,8 +129,8 @@ class TestMcpCoreUserActions:
         with patch("personalclaw.mcp_memory._get") as mock_get:
             mock_get.return_value = {
                 "lessons": [
-                    {"rule": "use dark mode", "category": "preference"},
-                    {"rule": "prefer pytest", "category": "tool"},
+                    {"rule": "use dark mode"},
+                    {"rule": "prefer pytest"},
                 ]
             }
             result = self._simulate_tool_call("memory_list", {})
@@ -300,20 +292,13 @@ class TestBadInputsCaught:
         assert "\u200b" not in call_body["task"]
         assert "\u200d" not in call_body["task"]
 
-    def test_learn_invalid_category(self):
-        result = self._core_call(
-            "memory_remember",
-            {
-                "rule": "test",
-                "category": "evil_category",
-            },
+    def test_learn_refuses_a_category(self):
+        result = self._core_call("memory_remember", {"rule": "test", "category": "preference"})
+        # No lesson stores a category. The refusal names the field and the arguments the tool takes.
+        assert result == (
+            "Error: category: unknown field for tool 'memory_remember' — "
+            "it takes: rule, negative, scope, workspace"
         )
-        # The MCP string boundary now surfaces the
-        # WHAT/WHY/FIX envelope — the bad value is named and a FIX line points at
-        # the allowed values (did-you-mean), instead of a bare "must be one of".
-        assert "Error" in result
-        assert "evil_category" in result
-        assert "WHAT:" in result and "FIX:" in result
 
     def test_a_sub_floor_interval_is_flagged(self):
         """🔴 The floor moved, and became REAL for the first time.
@@ -379,17 +364,11 @@ class TestDashboardApiPatterns:
 
     def test_lesson_create_body(self):
         """POST /api/lessons body validation."""
-        from personalclaw.validation import (
-            ALLOWED_LESSON_CATEGORIES,
-            validate_api_body,
-            validate_string_field,
-        )
+        from personalclaw.validation import validate_api_body, validate_string_field
 
-        body = validate_api_body({"rule": "use dark mode", "category": "preference"})
+        body = validate_api_body({"rule": "use dark mode"})
         rule = validate_string_field(body, "rule", required=True, max_len=500)
-        cat = validate_string_field(body, "category", allowed=ALLOWED_LESSON_CATEGORIES)
         assert rule == "use dark mode"
-        assert cat == "preference"
 
     def test_cron_create_body(self):
         """POST /api/crons body validation."""

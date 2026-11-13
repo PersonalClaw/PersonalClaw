@@ -199,27 +199,14 @@ class TestValidateToolArgs:
             validate_tool_args({"task": "x", "max_turns": -1}, SPAWN_RUN_SCHEMA)
 
     def test_learn_add_valid(self):
-        result = validate_tool_args(
-            {"rule": "use dark mode", "category": "preference"},
-            LEARN_ADD_SCHEMA,
-        )
-        assert result["rule"] == "use dark mode"
-        assert result["category"] == "preference"
-
-    def test_learn_add_default_category(self):
         result = validate_tool_args({"rule": "use dark mode"}, LEARN_ADD_SCHEMA)
-        assert result["category"] == "knowledge"
+        assert result == {"rule": "use dark mode"}
 
-    def test_learn_add_bad_category(self):
-        # The rejection is a coded envelope naming the bad value; its render()
-        # is the exception string, so match on the WHAT line's content.
-        with pytest.raises(ValidationError, match="not allowed") as ei:
-            validate_tool_args(
-                {"rule": "x", "category": "invalid"},
-                LEARN_ADD_SCHEMA,
-            )
-        assert ei.value.agent_error is not None
-        assert ei.value.agent_error.code == "ERR_TOOL_ARG_INVALID"
+    def test_learn_add_refuses_a_category(self):
+        # No lesson stores a category. The rejection names the arguments the tool takes.
+        with pytest.raises(ValidationError, match="unknown field") as ei:
+            validate_tool_args({"rule": "x", "category": "preference"}, LEARN_ADD_SCHEMA)
+        assert str(ei.value).endswith("it takes: rule, negative, scope, workspace")
 
     # These exercise the generic validator; `schedule_add`'s schema was only the vehicle, and it
     # retired with the alias. Re-pointed at `automation_create`, the live equivalent. The

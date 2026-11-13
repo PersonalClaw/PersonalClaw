@@ -295,7 +295,7 @@ class TestResumeFromHistory:
             await client.post("/api/chat/sessions/e1/resume", json={"key": "e1"})
             resp = await client.post(
                 "/api/lessons",
-                json={"rule": "secret", "category": "preference"},
+                json={"rule": "secret"},
                 headers={"X-Session-Key": "dashboard:e1"},
             )
 
@@ -414,7 +414,7 @@ class TestLessonsGate:
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/lessons",
-                json={"rule": "remember this", "category": "knowledge"},
+                json={"rule": "remember this"},
                 headers={"X-Session-Key": "dashboard:e1"},
             )
             assert resp.status == 403
@@ -435,7 +435,7 @@ class TestLessonsGate:
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/lessons",
-                json={"rule": "remember this", "category": "knowledge"},
+                json={"rule": "remember this"},
                 headers={"X-Session-Key": "dashboard:n1"},
             )
             assert resp.status == 200
@@ -448,7 +448,7 @@ class TestLessonsGate:
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/lessons",
-                json={"rule": "remember this", "category": "knowledge"},
+                json={"rule": "remember this"},
             )
             assert resp.status == 400
 
@@ -463,7 +463,7 @@ class TestLessonsGate:
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/lessons",
-                json={"rule": "remember this", "category": "knowledge"},
+                json={"rule": "remember this"},
                 headers={"X-Session-Key": "dashboard:deleted-session"},
             )
             assert resp.status == 403
@@ -485,7 +485,7 @@ class TestLessonsGate:
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/lessons",
-                json={"rule": "remember this", "category": "knowledge"},
+                json={"rule": "remember this"},
                 headers={"X-Session-Key": "dashboard:ui"},
             )
             assert resp.status == 200
@@ -530,7 +530,7 @@ class TestMcpCoreSessionKeyPassthrough:
 
             from personalclaw.mcp_core import _post
 
-            _post("/api/lessons", {"rule": "test", "category": "knowledge"})
+            _post("/api/lessons", {"rule": "test"})
 
         req = mock_urlopen.call_args[0][0]
         assert req.get_header("X-session-key") == "dashboard:e1"
@@ -550,7 +550,7 @@ class TestMcpCoreSessionKeyPassthrough:
 
             from personalclaw.mcp_core import _post
 
-            _post("/api/lessons", {"rule": "test", "category": "knowledge"})
+            _post("/api/lessons", {"rule": "test"})
 
         req = mock_urlopen.call_args[0][0]
         assert req.get_header("X-session-key") is None
@@ -688,7 +688,7 @@ class TestSessionRecovery:
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/lessons",
-                json={"rule": "remember this", "category": "knowledge"},
+                json={"rule": "remember this"},
                 headers={"X-Session-Key": "dashboard:1776000000.123456"},
             )
             assert resp.status == 200
@@ -710,7 +710,7 @@ class TestSessionRecovery:
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/lessons",
-                json={"rule": "remember this", "category": "knowledge"},
+                json={"rule": "remember this"},
                 headers={"X-Session-Key": "dashboard:chat-1-1776000000"},
             )
             assert resp.status == 200
@@ -728,7 +728,7 @@ class TestSessionRecovery:
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/lessons",
-                json={"rule": "remember this", "category": "knowledge"},
+                json={"rule": "remember this"},
                 headers={"X-Session-Key": "dashboard:forged-key"},
             )
             assert resp.status == 403
@@ -775,7 +775,7 @@ class TestSessionRecovery:
             ):
                 resp = await client.post(
                     "/api/lessons",
-                    json={"rule": "x", "category": "knowledge"},
+                    json={"rule": "x"},
                     headers={"X-Session-Key": bad_key},
                 )
                 assert resp.status == 403, f"path-traversal attempt passed: {bad_key!r}"
@@ -789,7 +789,7 @@ class TestSessionRecovery:
             try:
                 resp = await client.post(
                     "/api/lessons",
-                    json={"rule": "x", "category": "knowledge"},
+                    json={"rule": "x"},
                     headers={"X-Session-Key": "dashboard:bad\x00key"},
                 )
                 assert resp.status == 403, "null byte header reached handler"
@@ -815,7 +815,7 @@ class TestSessionRecovery:
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/lessons",
-                    json={"rule": "remember this", "category": "knowledge"},
+                    json={"rule": "remember this"},
                     headers={"X-Session-Key": "dashboard:live1"},
                 )
                 assert resp.status == 200
@@ -844,7 +844,7 @@ class TestSessionRecovery:
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/lessons",
-                    json={"rule": "x", "category": "knowledge"},
+                    json={"rule": "x"},
                     headers={"X-Session-Key": "dashboard:r1"},
                 )
                 assert resp.status == 403
@@ -876,7 +876,7 @@ class TestSessionRecovery:
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/lessons",
-                    json={"rule": "x", "category": "knowledge"},
+                    json={"rule": "x"},
                     headers={"X-Session-Key": "channel:C123:1777000000.000000"},
                 )
                 assert resp.status == 200
@@ -907,7 +907,7 @@ class TestSessionRecovery:
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
                     "/api/lessons",
-                    json={"rule": "x", "category": "knowledge"},
+                    json={"rule": "x"},
                     headers={"X-Session-Key": "dashboard:ui"},
                 )
                 assert resp.status == 200

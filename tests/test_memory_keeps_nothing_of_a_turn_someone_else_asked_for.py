@@ -209,7 +209,7 @@ def _sealed(home: Path) -> list[str]:
 async def _theirs_refused(gw: Any) -> None:
     """Someone else in the group asks the agent to remember their claim; the agent's memory tool
     waits for the owner, and she says no."""
-    gw.agent.calls.append(("memory_remember", {"rule": THEIRS, "category": "preference"}))
+    gw.agent.calls.append(("memory_remember", {"rule": THEIRS}))
     gw.agent.answers.append(TO_THEM)
     await gw.say(COLLEAGUE, THEIRS)
     (ask,) = _asks(gw.state, "memory_remember")
@@ -294,7 +294,7 @@ class _AsksToRemember:
                 kind=EVENT_TOOL_CALL,
                 tool_call_id=f"call-{len(messages)}",
                 title="memory_remember",
-                tool_input=json.dumps({"rule": request.strip(), "category": "preference"}),
+                tool_input=json.dumps({"rule": request.strip()}),
             )
             yield AgentEvent(kind=EVENT_COMPLETE)
             return

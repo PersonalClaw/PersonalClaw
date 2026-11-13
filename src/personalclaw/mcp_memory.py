@@ -16,7 +16,7 @@ from typing import Any
 from personalclaw.mcp_core import GATEWAY_READ_TIMEOUT_SECS, _delete, _get, _post
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import tool_failure
-from personalclaw.validation import ALLOWED_LESSON_CATEGORIES, ALLOWED_LESSON_SCOPES
+from personalclaw.validation import ALLOWED_LESSON_SCOPES
 
 
 def _list_tools() -> list[dict[str, Any]]:
@@ -34,11 +34,6 @@ def _list_tools() -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {
                     "rule": {"type": "string", "description": "The lesson to remember"},
-                    "category": {
-                        "type": "string",
-                        "enum": sorted(ALLOWED_LESSON_CATEGORIES),
-                        "description": "Category: tool, preference, or knowledge",
-                    },
                     "negative": {
                         "type": "string",
                         "description": "What NOT to do (optional)",
@@ -53,7 +48,7 @@ def _list_tools() -> list[dict[str, Any]]:
                         "description": "Absolute working-directory path (required when scope='workspace'). Copy it verbatim from the WORKSPACE IDENTITY block in your session context — a relative name or a bare project name is refused, because a workspace lesson is matched to a directory exactly.",  # noqa: E501
                     },
                 },
-                "required": ["rule", "category"],
+                "required": ["rule"],
             },
         },
         {
@@ -214,11 +209,10 @@ CHANGES_MEMORY = frozenset(
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     if name == "memory_remember":
         rule = args.get("rule", "")
-        category = args.get("category", "knowledge")
         if not rule:
             return tool_failure("rule is required")
         scope = args.get("scope", "global")
-        payload: dict[str, str] = {"rule": rule, "category": category, "scope": scope}
+        payload: dict[str, str] = {"rule": rule, "scope": scope}
         # The endpoint stores what not to do beside the rule; the tool asks for it, so it
         # has to arrive there.
         if args.get("negative"):
@@ -259,7 +253,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             # rule as a universal one — the same confusion the scope exists to prevent.
             ws = le.get("workspace") or ""
             suffix = f" (workspace: {ws})" if le.get("scope") == "workspace" and ws else ""
-            lines.append(f"[{le.get('category', '?')}] {le['rule']}{suffix}{_kept_in(le)}")
+            lines.append(f"{le['rule']}{suffix}{_kept_in(le)}")
         return "\n".join(lines)
 
     if name == "memory_forget":

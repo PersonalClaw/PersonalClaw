@@ -179,12 +179,8 @@ async def test_the_agent_is_told_its_update_was_not_saved_and_still_recalls_the_
     monkeypatch.setattr(vector_memory, "_contains_injection", lambda text: FLAGGED in text)
     update = f"{TAUGHT}, {FLAGGED}"
     async with _gateway(tmp_path, monkeypatch):
-        taught_ok, taught = await _call(
-            "memory_remember", {"rule": TAUGHT, "category": "knowledge"}, asked_from=HERE
-        )
-        update_ok, answered = await _call(
-            "memory_remember", {"rule": update, "category": "knowledge"}, asked_from=HERE
-        )
+        taught_ok, taught = await _call("memory_remember", {"rule": TAUGHT}, asked_from=HERE)
+        update_ok, answered = await _call("memory_remember", {"rule": update}, asked_from=HERE)
         recall_ok, recalled = await _call(
             "memory_recall", {"query": "seed trays north bench"}, asked_from=HERE
         )

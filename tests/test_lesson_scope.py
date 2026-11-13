@@ -325,20 +325,13 @@ def test_memory_list_labels_a_workspace_lesson(monkeypatch):
         "_get",
         lambda _url: {
             "lessons": [
-                {"rule": "everywhere", "category": "knowledge", "scope": "global", "workspace": ""},
-                {
-                    "rule": "only here",
-                    "category": "tool",
-                    "scope": "workspace",
-                    "workspace": "/w/alpha",
-                },
+                {"rule": "everywhere", "scope": "global", "workspace": ""},
+                {"rule": "only here", "scope": "workspace", "workspace": "/w/alpha"},
             ]
         },
     )
     out = mcp_memory._call_tool_inner("memory_list", {})
-    assert "[knowledge] everywhere" in out
-    assert "(workspace:" not in out.splitlines()[0]
-    assert "[tool] only here (workspace: /w/alpha)" in out
+    assert out.splitlines() == ["everywhere", "only here (workspace: /w/alpha)"]
 
 
 # ── refusals: never silently downgrade ───────────────────────────────────────

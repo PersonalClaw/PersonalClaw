@@ -21,14 +21,13 @@ import type { Lesson } from '../../lib/api'
 //      same verdict the injection gate compared; a frontend that re-derived "because it was observed
 //      twice" would be a second opinion, and the studio would eventually contradict the gate.
 
-const base: Lesson = { rule: 'prefer ruff over flake8', category: 'tool' }
+const base: Lesson = { rule: 'prefer ruff over flake8' }
 
 describe('a lesson row says whether it is in prompts', () => {
   it('names the injected state in words, with its confidence', () => {
     const line = lessonPreview({ ...base, standing: 'injected', confidence: 0.65 })
     expect(line).toContain('in prompts')
     expect(line).toContain('65%')
-    expect(line).toContain('tool')
   })
 
   it('names the held state in words rather than by absence', () => {
@@ -42,8 +41,7 @@ describe('a lesson row says whether it is in prompts', () => {
   it('claims no standing when the server reported none', () => {
     // A backend that predates the gate sends no `standing`. Inventing "in prompts"
     // here would be the frontend asserting something nobody computed.
-    expect(lessonPreview(base)).toEqual('tool')
-    expect(lessonPreview({ ...base, category: '' })).toEqual('lesson')
+    expect(lessonPreview(base)).toEqual('lesson')
   })
 
   it('rounds a missing confidence to 0% rather than rendering NaN', () => {

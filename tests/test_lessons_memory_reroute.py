@@ -89,9 +89,7 @@ async def test_dashboard_create_list_delete_roundtrip(tmp_path, with_embedder):
     state, vs = _state_with_record_store(tmp_path, with_embedder=with_embedder)
 
     # create
-    resp = await api_lessons_create(
-        _req(state, body={"rule": "always run make lint", "category": "process"})
-    )
+    resp = await api_lessons_create(_req(state, body={"rule": "always run make lint"}))
     assert (await _read_body(resp)) == {"ok": True}
     # the write landed in memory.db as a lesson.* record
     assert any(json.loads(e["value_json"]) == "always run make lint" for e in vs.get_lessons())

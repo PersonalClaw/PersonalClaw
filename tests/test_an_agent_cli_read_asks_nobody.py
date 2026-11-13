@@ -61,7 +61,7 @@ def _read() -> LLMEvent:
 
 
 def _change() -> LLMEvent:
-    return _asked_by_claude_code("memory_remember", {"rule": "always x", "category": "tool"})
+    return _asked_by_claude_code("memory_remember", {"rule": "always x"})
 
 
 def _shell_read() -> LLMEvent:

@@ -104,9 +104,7 @@ async def test_an_apps_conversation_without_the_permission_changes_no_lesson_and
     """🔴 Red on integration: the lesson was saved as yours, and your lesson was forgotten."""
     async with _gateway(tmp_path, monkeypatch) as gw:
         _install(gw.home, APP, DECLARED)
-        saved_ok, saved = await _call(
-            "memory_remember", {"rule": TAUGHT, "category": "knowledge"}, asked_from=APP_CHAT
-        )
+        saved_ok, saved = await _call("memory_remember", {"rule": TAUGHT}, asked_from=APP_CHAT)
         forgot_ok, forgot = await _call("memory_forget", {"query": "plot 14"}, asked_from=APP_CHAT)
         lessons = _lessons(gw.home)
 
@@ -124,9 +122,7 @@ async def test_an_apps_conversation_with_the_permission_saves_and_forgets_as_the
     """🔴 Red on integration: the lesson was stored as ``user_explicit``, yours."""
     async with _gateway(tmp_path, monkeypatch) as gw:
         _install(gw.home, APP, GRANTED)
-        saved_ok, saved = await _call(
-            "memory_remember", {"rule": TAUGHT, "category": "knowledge"}, asked_from=APP_CHAT
-        )
+        saved_ok, saved = await _call("memory_remember", {"rule": TAUGHT}, asked_from=APP_CHAT)
         lessons = _lessons(gw.home)
         forgot_ok, _forgot = await _call(
             "memory_forget", {"query": "balcony boxes"}, asked_from=APP_CHAT
@@ -154,9 +150,7 @@ async def test_an_apps_incognito_conversation_changes_nothing_even_with_the_perm
     async with _gateway(tmp_path, monkeypatch) as gw:
         _install(gw.home, APP, GRANTED)
         _chat(gw.home, APP_INCOGNITO, "Plan the rota.", app=APP, mode="incognito")
-        saved_ok, saved = await _call(
-            "memory_remember", {"rule": TAUGHT, "category": "knowledge"}, asked_from=APP_INCOGNITO
-        )
+        saved_ok, saved = await _call("memory_remember", {"rule": TAUGHT}, asked_from=APP_INCOGNITO)
         lessons = _lessons(gw.home)
 
     assert not saved_ok
@@ -190,9 +184,7 @@ async def test_an_apps_conversation_without_the_permission_adds_and_reads_no_tri
 async def test_your_own_chat_still_saves_its_lessons_as_yours(tmp_path, monkeypatch):
     async with _gateway(tmp_path, monkeypatch) as gw:
         _install(gw.home, APP, DECLARED)
-        saved_ok, saved = await _call(
-            "memory_remember", {"rule": TAUGHT, "category": "knowledge"}, asked_from=HERE
-        )
+        saved_ok, saved = await _call("memory_remember", {"rule": TAUGHT}, asked_from=HERE)
         lessons = _lessons(gw.home)
 
     assert saved_ok, saved
@@ -225,7 +217,7 @@ async def test_an_apps_own_request_with_the_permission_writes_as_the_app(tmp_pat
         async with TestClient(TestServer(app)) as client:
             resp = await client.post(
                 "/api/lessons",
-                json={"rule": TAUGHT, "category": "knowledge"},
+                json={"rule": TAUGHT},
                 headers={"X-Session-Key": "dashboard:ui"},
             )
             body = await resp.json()
@@ -233,6 +225,58 @@ async def test_an_apps_own_request_with_the_permission_writes_as_the_app(tmp_pat
 
     assert resp.status == 200, body
     assert lessons[TAUGHT]["source"] == AS_THE_APP
+
+
+@pytest.mark.asyncio
+async def test_an_apps_own_lesson_without_the_permission_is_refused_first_category_or_not(
+    tmp_path, monkeypatch
+):
+    """The app's refusal is asked before anything else the change does, the 400 for a category
+    included. A lesson posted for the app's chat with the internal credential, as its tools and
+    scripts post one, is the app's work: it is told the app was not given your memory, nothing is
+    saved, and the security log has its row. (The app's own token never reaches the route without
+    the permission: the app's request gate refuses it first.)"""
+    import asyncio
+    import urllib.error
+    import urllib.request
+
+    from personalclaw import home_gateway, mcp_core
+    from personalclaw import sel as sel_mod
+
+    log = MagicMock()
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        _install(gw.home, APP, DECLARED)
+        monkeypatch.setattr(sel_mod, "sel", lambda: log)
+
+        def post() -> tuple[int, dict]:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{gw.port}/api/lessons",
+                data=json.dumps({"rule": TAUGHT, "category": "tool"}).encode(),
+                headers=mcp_core._internal_headers({"Content-Type": "application/json"}),
+                method="POST",
+            )
+            try:
+                with home_gateway.open_loopback(req, timeout=10) as resp:
+                    return resp.status, json.loads(resp.read())
+            except urllib.error.HTTPError as exc:
+                return exc.code, json.loads(exc.read())
+
+        token = mcp_core.set_current_session_key(APP_CHAT)
+        try:
+            status, body = await asyncio.to_thread(post)
+        finally:
+            mcp_core.reset_current_session_key(token)
+        lessons = _lessons(gw.home)
+
+    assert status == 403, body
+    _not_given_it(body["error"])
+    assert TAUGHT not in lessons
+    rows = [call.kwargs for call in log.log_api_access.call_args_list]
+    assert any(
+        (row.get("caller"), row.get("operation"), row.get("resources"))
+        == (APP_CHAT, "memory_remember", "app_memory_not_granted")
+        for row in rows
+    ), rows
 
 
 # ── the memory store itself ─────────────────────────────────────────────────────────────────
@@ -491,9 +535,7 @@ async def test_the_agent_an_apps_job_starts_recalls_nothing_without_the_permissi
             recalled_ok, recalled = await _call(
                 "memory_recall", {"query": "allotment"}, asked_from=agent
             )
-            saved_ok, saved = await _call(
-                "memory_remember", {"rule": TAUGHT, "category": "knowledge"}, asked_from=agent
-            )
+            saved_ok, saved = await _call("memory_remember", {"rule": TAUGHT}, asked_from=agent)
         finally:
             await manager.cancel_all()
         lessons = _lessons(gw.home)

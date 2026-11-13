@@ -974,7 +974,9 @@ holds every row the filter leaves (up to 10,000), a true `total`, each filter va
 - `memory_list` and `memory_forget` read and change the lessons of every memory
   (`/api/lessons?partition=*`), each listed lesson naming the folder whose memory keeps
   it, and `memory_forget` saying whose it removed them from. A lesson is added to one
-  memory: `POST /api/lessons?partition=*` is refused. On the command line,
+  memory: `POST /api/lessons?partition=*` is refused. A lesson has no category (it is
+  stored as its rule), so one sent to `POST /api/lessons` or `memory_remember` is
+  refused, and no list shows one. On the command line,
   `personalclaw learn list` and `remove` reach every memory the same way,
   `personalclaw memory partitions` lists them with their ids, and `--partition <id>`
   points `memory list`, `search`, `stats`, `export` and `import` at a folder's

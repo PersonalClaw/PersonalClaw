@@ -384,8 +384,8 @@ async def test_memory_list_and_memory_forget_reach_every_folders_memory(
         asker = state.get_or_create_session(name=None).key
         listed = await _tool("memory_list", {}, asked_from=asker)
         lines = listed.splitlines()
-        assert f"[knowledge] {EVERY_CHAT_LESSON}" in lines, listed
-        assert f"[knowledge] {GARDEN_LESSON} (kept in the memory of {shown})" in lines, listed
+        assert EVERY_CHAT_LESSON in lines, listed
+        assert f"{GARDEN_LESSON} (kept in the memory of {shown})" in lines, listed
 
         forgot = await _tool("memory_forget", {"query": "water"}, asked_from=asker)
         assert forgot == (

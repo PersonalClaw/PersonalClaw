@@ -66,7 +66,7 @@ _READS = [
     ("personalclaw.mcp_automation", "automation_dry_run", '{"id": "file:notes"}'),
 ]
 #: The control: a change from the same registry still asks, and still fails closed unattended.
-_CHANGE = ("personalclaw.mcp_memory", "memory_remember", '{"rule": "always x", "category": "tool"}')
+_CHANGE = ("personalclaw.mcp_memory", "memory_remember", '{"rule": "always x"}')
 #: The changes the previews preview, which still ask.
 _PREVIEWED = [
     ("personalclaw.mcp_workflows", "workflow_author", '{"name": "triage", "root": "{}"}'),
