@@ -322,7 +322,7 @@ def capture_preference_facet(service, user_message: str) -> Learned | None:
             # memory already held, or one held for her answer because it would replace a lesson
             # she taught, is nothing learned.
             rule = text[:1].upper() + text[1:]
-            if not service.write_lesson(rule, category="preference", source="facet_veto"):
+            if not service.write_lesson(rule, source="facet_veto"):
                 return None
             return Learned("lesson", text)
         key = upsert_facet(vs, cls, text, cue=cue)
@@ -604,7 +604,7 @@ def run_after_turn_review(
     try:
         if judge is not None:
             service.set_contradiction_judge(judge)
-        ok = service.write_lesson(rule, category="preference", source="after_turn_review")
+        ok = service.write_lesson(rule, source="after_turn_review")
     except Exception:
         logger.debug("after-turn review: write_lesson failed", exc_info=True)
         return None

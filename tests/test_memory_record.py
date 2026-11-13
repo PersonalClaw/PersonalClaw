@@ -210,7 +210,7 @@ def test_store_iter_records_filters_by_kind(tmp_path):
     s = _store(tmp_path)
     s.embed_fn = lambda t: [1.0, 0.0, 0.0]
     s.set_semantic("pref.editor", "vim", confidence=0.9, source="user_explicit")
-    s.write_lesson("always run tests before pushing", category="process")
+    s.write_lesson("always run tests before pushing")
     s.write_episodic("a discrete fragment", source="test")
 
     all_recs = s.iter_records()

@@ -4359,10 +4359,9 @@ class VectorMemoryStore(MemoryProvider):
     def write_lesson(
         self,
         rule: str,
-        category: str = "knowledge",
+        *,
         negative: str | None = None,
         source: str = "user_explicit",
-        *,
         scope: "MemoryScope | None" = None,
         scope_ref: str | None = None,
     ) -> bool:
@@ -5243,9 +5242,7 @@ class VectorMemoryStore(MemoryProvider):
                     data = json.loads(line)
                     rule = data.get("rule", "")
                     negative = data.get("negative")
-                    if rule and self.write_lesson(
-                        rule, data.get("category", "knowledge"), negative, source="migration"
-                    ):
+                    if rule and self.write_lesson(rule, negative=negative, source="migration"):
                         counts["semantic"] += 1
                     else:
                         counts["skipped"] += 1

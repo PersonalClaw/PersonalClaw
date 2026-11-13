@@ -177,8 +177,8 @@ async def _remembered(gw: SimpleNamespace) -> None:
     assert await gw.consolidator.consolidate_session(garden)
     assert await gw.consolidator.consolidate_session(dinner)
     folder = ContextBuilder.get_memory_for(gw.garden, writes=True)
-    assert service_for(folder).write_lesson(GARDEN_LESSON, "preference", None)
-    assert service_for(gw.main).write_lesson(EVERY_CHAT_LESSON, "preference", None)
+    assert service_for(folder).write_lesson(GARDEN_LESSON)
+    assert service_for(gw.main).write_lesson(EVERY_CHAT_LESSON)
 
 
 @contextlib.asynccontextmanager
@@ -377,7 +377,7 @@ async def test_memory_list_and_memory_forget_reach_every_folders_memory(
         assert shared.write_lesson(EVERY_CHAT_LESSON, source="user_explicit")
         shared.close()
         folder = ContextBuilder.get_memory_for(str(garden), writes=True)
-        assert service_for(folder).write_lesson(GARDEN_LESSON, "preference", None)
+        assert service_for(folder).write_lesson(GARDEN_LESSON)
         shown = from_home(str(garden.resolve()))
 
         # Asked from a chat of yours that works in no folder.
@@ -417,7 +417,7 @@ def test_the_command_line_lists_every_memory_and_reaches_a_folders(tmp_path, cap
     garden = tmp_path / "garden-notes"
     garden.mkdir()
     folder = ContextBuilder.get_memory_for(str(garden), writes=True)
-    assert service_for(folder).write_lesson(GARDEN_LESSON, "preference", None)
+    assert service_for(folder).write_lesson(GARDEN_LESSON)
     assert folder.vector_store is not None
     folder.vector_store._graph_enabled = False
     assert (

@@ -327,7 +327,7 @@ def test_an_incognito_chat_still_reads_memory_and_leaves_no_mark_on_it(home) -> 
     store: VectorMemoryStore = home["store"]
     store.write_episodic("The user swims on Tuesdays at the community pool.", tags=["swim"])
     store.set_semantic("user.pref.swim_day", "Tuesday", 0.9, "user_explicit")
-    store.write_lesson("Answer swim questions with the pool schedule.", category="preference")
+    store.write_lesson("Answer swim questions with the pool schedule.")
     before = _rows(store)
     snapshot = store.db.execute(
         "SELECT key, recall_count FROM semantic_memory ORDER BY key"

@@ -2265,8 +2265,7 @@ class HistoryConsolidator:
         for item in raw:
             if isinstance(item, dict) and item.get("rule"):
                 ok = self._svc.write_lesson(
-                    rule=item["rule"],
-                    category=item.get("category", "knowledge"),
+                    item["rule"],
                     negative=item.get("negative"),
                     source="consolidation",
                     **reach,

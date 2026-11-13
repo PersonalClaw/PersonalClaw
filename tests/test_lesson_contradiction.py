@@ -32,8 +32,8 @@ def _live_values(store):
 
 
 def test_topic_overlap_supersedes_not_deletes(vs):
-    vs.write_lesson("always force push to main", "tool")
-    vs.write_lesson("never force push to main", "tool")  # overlaps → newer replaces
+    vs.write_lesson("always force push to main")
+    vs.write_lesson("never force push to main")  # overlaps → newer replaces
     assert _live_values(vs) == ["never force push to main"]
     # The old lesson is SUPERSEDED (reversible pointer), not bare-deleted.
     superseded = vs.db.execute(
@@ -43,9 +43,9 @@ def test_topic_overlap_supersedes_not_deletes(vs):
 
 
 def test_substring_dedup_still_returns_false(vs):
-    vs.write_lesson("use tabs", "tool")
+    vs.write_lesson("use tabs")
     # New rule fully covered by existing → not written.
-    assert vs.write_lesson("use tabs", "tool") is False
+    assert vs.write_lesson("use tabs") is False
 
 
 # ── contradiction judge (mid-band) ──
@@ -74,8 +74,8 @@ def test_judge_supersedes_on_contradiction(vs):
         return True  # declare contradiction
 
     vs.contradiction_judge = judge
-    vs.write_lesson("deploy on friday is fine", "tool")
-    vs.write_lesson("deploy on weekend is risky", "tool")  # same topic, mid-band
+    vs.write_lesson("deploy on friday is fine")
+    vs.write_lesson("deploy on weekend is risky")  # same topic, mid-band
     # The judge ran and (returning True) superseded the older lesson.
     assert calls, "judge was not consulted"
     assert "deploy on weekend is risky" in _live_values(vs)
@@ -85,8 +85,8 @@ def test_judge_supersedes_on_contradiction(vs):
 def test_judge_keeps_both_when_not_contradiction(vs):
     vs.embed_fn = _midband_embedder()
     vs.contradiction_judge = lambda new, old: False  # compatible
-    vs.write_lesson("deploy on friday is fine", "tool")
-    vs.write_lesson("deploy on weekend is risky", "tool")
+    vs.write_lesson("deploy on friday is fine")
+    vs.write_lesson("deploy on weekend is risky")
     vals = _live_values(vs)
     assert "deploy on friday is fine" in vals and "deploy on weekend is risky" in vals
 
@@ -94,8 +94,8 @@ def test_judge_keeps_both_when_not_contradiction(vs):
 def test_no_judge_keeps_both_failsafe(vs):
     vs.embed_fn = _midband_embedder()
     vs.contradiction_judge = None  # not configured → fail-safe
-    vs.write_lesson("deploy on friday is fine", "tool")
-    vs.write_lesson("deploy on weekend is risky", "tool")
+    vs.write_lesson("deploy on friday is fine")
+    vs.write_lesson("deploy on weekend is risky")
     assert len(_live_values(vs)) == 2
 
 
@@ -106,8 +106,8 @@ def test_judge_exception_keeps_both(vs):
         raise RuntimeError("judge crashed")
 
     vs.contradiction_judge = boom
-    vs.write_lesson("deploy on friday is fine", "tool")
-    vs.write_lesson("deploy on weekend is risky", "tool")
+    vs.write_lesson("deploy on friday is fine")
+    vs.write_lesson("deploy on weekend is risky")
     assert len(_live_values(vs)) == 2  # fail-safe on judge error
 
 
@@ -135,6 +135,6 @@ def test_context_injection_is_vector_store_only(tmp_path, monkeypatch):
         skills=SkillsLoader(skills_path=tmp_path / "sk", install_builtins=False),
     )
     # A lesson written to the record store (no embedder → text-only) injects.
-    vs.write_lesson("RECORD-STORE-LESSON", "tool")
+    vs.write_lesson("RECORD-STORE-LESSON")
     ctx = builder.build_session_context()
     assert "RECORD-STORE-LESSON" in ctx

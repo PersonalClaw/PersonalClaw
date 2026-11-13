@@ -69,7 +69,7 @@ def test_set_and_get_semantic_matches_direct(store_with_vectors):
 def test_write_and_get_lessons_matches_direct(store_with_vectors):
     store, vs = store_with_vectors
     svc = MemoryService(store)
-    assert svc.write_lesson("always run tests before pushing", category="process") is True
+    assert svc.write_lesson("always run tests before pushing") is True
     assert svc.get_lessons() == vs.get_lessons()
     assert "tests" in svc.lessons_context()
 

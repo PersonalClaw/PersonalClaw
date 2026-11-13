@@ -99,7 +99,7 @@ def test_the_shipped_config_default_matches_the_derived_floor():
 
 def test_a_single_unrepeated_observation_does_not_reach_a_prompt(vs):
     """One sighting of an inferred rule is an anecdote. It is stored, not injected."""
-    assert vs.write_lesson(RULE, "tool", source=AGENT) is True, "premise: the row was written"
+    assert vs.write_lesson(RULE, source=AGENT) is True, "premise: the row was written"
     assert _live_rules(vs) == [RULE], "premise: the lesson is RETAINED, not discarded"
     assert RULE not in _prompt(vs)
 
@@ -111,12 +111,12 @@ def test_the_same_lesson_reaches_a_prompt_after_enough_corroboration(vs):
     difference is that `write_lesson` was called three more times with the same
     text, which is exactly what a recurring correction looks like in production.
     """
-    vs.write_lesson(RULE, "tool", source=AGENT)
+    vs.write_lesson(RULE, source=AGENT)
     assert RULE not in _prompt(vs), "premise: one observation is below the gate"
     for _ in range(3):
         # Returns False — the dedup pass suppresses the row. The OBSERVATION is
         # what survives, which is the signal this used to throw away.
-        assert vs.write_lesson(RULE, "tool", source=AGENT) is False
+        assert vs.write_lesson(RULE, source=AGENT) is False
     assert RULE in _prompt(vs)
 
 
@@ -128,7 +128,7 @@ def test_the_prompt_seam_can_inject_at_all(vs):
     observation — an instruction is not a hypothesis awaiting evidence — so this
     is the same `_prompt` chain producing the opposite answer.
     """
-    assert vs.write_lesson("always sign off commits with a DCO trailer", "process") is True
+    assert vs.write_lesson("always sign off commits with a DCO trailer") is True
     assert "always sign off commits with a DCO trailer" in _prompt(vs)
 
 
@@ -136,13 +136,13 @@ def test_the_prompt_seam_can_inject_at_all(vs):
 
 
 def test_a_below_gate_lesson_is_retained_and_keeps_accumulating(vs):
-    vs.write_lesson(RULE, "tool", source=AGENT)
+    vs.write_lesson(RULE, source=AGENT)
     first = _standing(vs, RULE)
     assert first.standing is lc.LessonStanding.RETAINED
     assert first.evidence.observations == 1
     assert "retained" in first.reason and "gate" in first.reason
 
-    vs.write_lesson(RULE, "tool", source=AGENT)
+    vs.write_lesson(RULE, source=AGENT)
     second = _standing(vs, RULE)
     assert second.standing is lc.LessonStanding.RETAINED, "still below the gate"
     assert second.evidence.observations == 2, "a retained lesson still gathers evidence"
@@ -150,7 +150,7 @@ def test_a_below_gate_lesson_is_retained_and_keeps_accumulating(vs):
 
 
 def test_a_retained_lesson_is_never_deleted_by_the_gate(vs):
-    vs.write_lesson(RULE, "tool", source=AGENT)
+    vs.write_lesson(RULE, source=AGENT)
     _prompt(vs)  # the gate runs
     assert _live_rules(vs) == [RULE], "the gate must not evict what it declines to inject"
 
@@ -181,14 +181,14 @@ def test_a_contradiction_costs_the_lesson_its_corroboration(vs):
     vs.embed_fn = _midband_embedder()
     vs.contradiction_judge = lambda new, old: True
     for _ in range(4):
-        vs.write_lesson("deploy on friday is fine", "tool", source=AGENT)
+        vs.write_lesson("deploy on friday is fine", source=AGENT)
     store = lc.get_store(vs._db_path.parent)
     rows = [r for r in store.evidence_map(_all_keys(vs)).items()]
     assert rows, "premise: the first rule accumulated evidence"
     old_key, before = rows[0]
     assert before.contradictions == 0 and before.observations == 4
 
-    vs.write_lesson("deploy on weekend is risky", "tool", source=AGENT)
+    vs.write_lesson("deploy on weekend is risky", source=AGENT)
     after = store.evidence_for(old_key)
     assert after.contradictions == 1, "the judge's verdict was recorded as evidence"
     assert after.surviving_observations == before.surviving_observations - 1
@@ -201,10 +201,10 @@ def test_a_refuted_lessons_corroboration_does_not_transfer_to_its_refuter(vs):
     vs.embed_fn = _midband_embedder()
     vs.contradiction_judge = lambda new, old: True
     for _ in range(4):
-        vs.write_lesson("deploy on friday is fine", "tool", source=AGENT)
+        vs.write_lesson("deploy on friday is fine", source=AGENT)
     assert "deploy on friday is fine" in _prompt(vs), "premise: the old rule was injected"
 
-    vs.write_lesson("deploy on weekend is risky", "tool", source=AGENT)
+    vs.write_lesson("deploy on weekend is risky", source=AGENT)
     assert "deploy on weekend is risky" not in _prompt(vs), "one observation of its own"
     assert "deploy on friday is fine" not in _prompt(vs), "refuted, so no longer injected"
 
@@ -217,11 +217,11 @@ def test_a_reversal_voids_the_observations_that_preceded_it(vs):
     the user threw it away — the "why did it start doing that again" failure.
     """
     for _ in range(4):
-        vs.write_lesson(RULE, "tool", source=AGENT)
+        vs.write_lesson(RULE, source=AGENT)
     assert RULE in _prompt(vs), "premise: four observations cross the gate"
 
     assert vs.delete_lesson(RULE) is True
-    vs.write_lesson(RULE, "tool", source=AGENT)  # re-observed once, post-reversal
+    vs.write_lesson(RULE, source=AGENT)  # re-observed once, post-reversal
     assert _live_rules(vs) == [RULE], "premise: the row is back"
     verdict = _standing(vs, RULE)
     assert verdict.evidence.reversals == 1
@@ -234,9 +234,9 @@ def test_a_reversal_voids_the_observations_that_preceded_it(vs):
 def test_a_supersession_carries_evidence_forward_to_the_survivor(vs):
     """Restating a rule more precisely must not read as an evidence reset."""
     for _ in range(4):
-        vs.write_lesson("use ruff", "tool", source=AGENT)
+        vs.write_lesson("use ruff", source=AGENT)
     assert "use ruff" in _prompt(vs), "premise"
-    vs.write_lesson("use ruff for linting", "tool", source=AGENT)  # superset → supersedes
+    vs.write_lesson("use ruff for linting", source=AGENT)  # superset → supersedes
     verdict = _standing(vs, "use ruff for linting")
     assert verdict.evidence.observations == 5
     assert verdict.standing is lc.LessonStanding.INJECTED
@@ -297,8 +297,8 @@ def test_a_human_authored_lesson_ages_slower_but_is_not_exempt():
 
 
 def test_the_reported_standing_matches_what_the_prompt_contains(vs):
-    vs.write_lesson("always run make lint before pushing", "process")  # human → injected
-    vs.write_lesson(RULE, "tool", source=AGENT)  # inferred once → retained
+    vs.write_lesson("always run make lint before pushing")  # human → injected
+    vs.write_lesson(RULE, source=AGENT)  # inferred once → retained
     prompt = _prompt(vs)
     rows = vs.get_lessons()
     standings = vs.lesson_standings(rows)
@@ -311,7 +311,7 @@ def test_the_reported_standing_matches_what_the_prompt_contains(vs):
 
 def test_the_gate_fails_open_rather_than_stripping_every_lesson(vs, monkeypatch):
     """An evidence store that cannot be read must not empty the user's prompt."""
-    vs.write_lesson(RULE, "tool", source=AGENT)
+    vs.write_lesson(RULE, source=AGENT)
 
     def boom(_self):
         raise RuntimeError("evidence db unavailable")
@@ -329,7 +329,7 @@ def test_raising_the_threshold_holds_back_a_lesson_that_was_injected(vs, tmp_pat
     from personalclaw.config.loader import AppConfig, config_path
 
     for _ in range(4):
-        vs.write_lesson(RULE, "tool", source=AGENT)
+        vs.write_lesson(RULE, source=AGENT)
     assert RULE in _prompt(vs), "premise: injected at the default gate"
 
     config_path().write_text(json.dumps({"learning": {"min_lesson_confidence": 0.95}}))
@@ -390,8 +390,8 @@ async def test_the_lessons_endpoint_reports_the_standing_and_its_evidence(vs, tm
     from personalclaw.dashboard.handlers.schedule import api_lessons
     from personalclaw.dashboard.state import DashboardState
 
-    vs.write_lesson("always run make lint before pushing", "process")  # human → injected
-    vs.write_lesson(RULE, "tool", source=AGENT)  # inferred once → retained
+    vs.write_lesson("always run make lint before pushing")  # human → injected
+    vs.write_lesson(RULE, source=AGENT)  # inferred once → retained
 
     mem = MagicMock()
     mem.vector_store = vs

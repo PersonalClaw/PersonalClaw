@@ -88,7 +88,7 @@ def test_query_filters_by_kind(provider):
             ),
         ]
     )
-    provider.write_lesson("always run tests", category="process")
+    provider.write_lesson("always run tests")
     provider.put(
         [MemoryRecord(id="", kind=MemoryKind.EPISODIC, text="a fragment here", source="t")]
     )

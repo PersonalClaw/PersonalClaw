@@ -192,7 +192,7 @@ def _facet(vs, text: str, *, days_ago: float = 1.0, cls: str = "style") -> None:
 def _lesson(vs, rule: str) -> None:
     from personalclaw.memory_service import MemoryService
 
-    assert MemoryService.over_vector_store(vs).write_lesson(rule, category="process")
+    assert MemoryService.over_vector_store(vs).write_lesson(rule)
 
 
 # ── independent store counts (never a second call to the code under test) ──────────

@@ -46,6 +46,10 @@ QUERY_EMBED_BUDGET_SECS = 4.0
 #: names where it was, before the tool stops waiting for it.
 RECALL_BUDGET_SECS = 8.0
 
+#: The ``key`` a ``MemoryWrite`` hook is given for a lesson: the same for every one. A lesson has no
+#: category, and the key was the one its writer passed.
+LESSON_HOOK_KEY = "lesson"
+
 
 @dataclass(frozen=True)
 class QueryVector:
@@ -2074,16 +2078,19 @@ class MemoryService:
     def write_lesson(
         self,
         rule: str,
-        category: str = "knowledge",
+        *,
         negative: str | None = None,
         source: str = "user_explicit",
-        *,
         scope: "MemoryScope | None" = None,
         scope_ref: str | None = None,
     ) -> bool:
         """Write a lesson. ``scope``/``scope_ref`` come from
         :func:`resolve_lesson_scope` — ``None`` means GLOBAL (every existing caller). An app's
-        work writes it as the app (``memory_writes.written_by``), and is scanned as such."""
+        work writes it as the app (``memory_writes.written_by``), and is scanned as such.
+
+        A lesson has no category: it is stored as its rule (and what not to do beside it). Every
+        argument after the rule is named, so a call that still passes a category raises
+        ``TypeError`` rather than having it taken for what not to do."""
         vs = self._vs
         if vs is None:
             return False
@@ -2097,7 +2104,6 @@ class MemoryService:
         # drift and a lesson lands under a ref nothing will ever match.
         ok = vs.write_lesson(
             rule,
-            category=category,
             negative=negative,
             source=source,
             scope=scope,
@@ -2107,11 +2113,13 @@ class MemoryService:
             # `MemoryWrite`: selectable in the hook UI since it was declared, and
             # fired by nothing until now. Emitted only on a SUCCESSFUL write, and only after the
             # write — a hook that ran for a blocked or failed write would report memory the user
-            # does not have. The payload carries the category and source, never the rule text:
-            # a lesson body is user content, and it must not travel into something that executes.
+            # does not have. The payload carries its kind and source, never the rule text: a
+            # lesson body is user content, and it must not travel into something that executes.
+            # Its key is the same for every lesson (`LESSON_HOOK_KEY`); it was the category the
+            # writer passed, which no lesson keeps.
             from personalclaw.triggers.lifecycle_fire import fire_sync, memory_write_payload
 
-            fire_sync(memory_write_payload(kind="lesson", key=category, scope=source))
+            fire_sync(memory_write_payload(kind="lesson", key=LESSON_HOOK_KEY, scope=source))
         return ok
 
     def lesson_refusal(

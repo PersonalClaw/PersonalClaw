@@ -116,7 +116,7 @@ def test_embedderless_write_persists_and_is_retrievable(tmp_path):
     vs.init()
     assert vs.embed_fn is None
 
-    assert vs.write_lesson("prefer uv over pip", "tool") is True
+    assert vs.write_lesson("prefer uv over pip") is True
 
     rows = vs.get_lessons()
     assert len(rows) == 1

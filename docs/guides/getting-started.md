@@ -445,6 +445,8 @@ What a script changes:
   lock, and a partial `project import` now exit 1. `set -e` scripts and `&&` chains read that as
   a failure, so test the exit or read `--json`.
 - `learn add --category X` → `learn add`.
+- A `MemoryWrite` hook whose Context matcher names `key=` → a matcher on `scope=`
+  (`after_turn_review`, `facet_veto`, `consolidation`), since every lesson's key is `lesson`.
 
 Added, nothing to change: every new `--json`.
 

@@ -147,9 +147,9 @@
 {"site": "src/personalclaw/turn_checkpoints.py::_backed_up_preview", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 118, "complexity": 40}
 {"site": "src/personalclaw/turn_checkpoints.py::_name_unbacked_changes", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 142, "complexity": 48}
 {"site": "src/personalclaw/validation.py::validate_field", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 106, "complexity": 48}
-{"site": "src/personalclaw/vector_memory.py::VectorMemoryStore.migrate_from_markdown", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 115, "complexity": 31}
+{"site": "src/personalclaw/vector_memory.py::VectorMemoryStore.migrate_from_markdown", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 113, "complexity": 31}
 {"site": "src/personalclaw/vector_memory.py::VectorMemoryStore.write_episodic", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 170, "complexity": 33}
-{"site": "src/personalclaw/vector_memory.py::VectorMemoryStore.write_lesson", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 239, "complexity": 39}
+{"site": "src/personalclaw/vector_memory.py::VectorMemoryStore.write_lesson", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 238, "complexity": 39}
 {"site": "src/personalclaw/workflows/controller.py::RunController._apply", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 365, "complexity": 45}
 {"site": "src/personalclaw/workflows/engine.py::dispatch_gate", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 472, "complexity": 67}
 {"site": "src/personalclaw/workflows/engine.py::dispatch_stage", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 261, "complexity": 32}

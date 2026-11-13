@@ -818,10 +818,9 @@ def _persist_grill_decisions(body: dict, state: Any) -> int:
             return 0
         written = 0
         for decision in decisions:
-            # category="decision" so these are filterable as scoping decisions rather than mixed
-            # into general knowledge. source="user_explicit": the user typed these answers, and a
-            # weaker source would let the write blocker drop them.
-            if svc.write_lesson(decision, category="decision", source="user_explicit"):
+            # source="user_explicit": the user typed these answers, and a weaker source would let
+            # the write blocker drop them.
+            if svc.write_lesson(decision, source="user_explicit"):
                 written += 1
         logger.info("grill: persisted %d settled decision(s) from launch", written)
         return written

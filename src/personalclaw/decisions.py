@@ -94,10 +94,6 @@ TRIGGER_NAMESPACE = "system:decision-journal"
 #: a row to this feature rather than showing an anonymous "system" reminder.
 TRIGGER_CREATED_BY = TRIGGER_NAMESPACE
 
-#: The lesson category. Filterable as a decision lesson rather than mixed into general
-#: knowledge — the same reason the grill protocol writes ``category="decision"``.
-LESSON_CATEGORY = "decision"
-
 
 class DecisionError(ValueError):
     """A caller-fixable problem: an unknown id, a bad grade, an out-of-range confidence.
@@ -644,7 +640,7 @@ def resolve_decision(
     try:
         # source="user_explicit": the user typed this outcome, and a weaker source lets the
         # memory write blocker drop it.
-        if svc.write_lesson(rule, category=LESSON_CATEGORY, source="user_explicit"):
+        if svc.write_lesson(rule, source="user_explicit"):
             key = _lesson_key_for(svc, rule)
     except MemoryWriteRefused as refused:
         not_kept = refused.reason
