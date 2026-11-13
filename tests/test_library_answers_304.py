@@ -36,9 +36,9 @@ def reads(monkeypatch):
     seen = {"meta": 0, "sql": []}
     real = NativeArtifactProvider._read_meta
 
-    def counted(self, slug):
+    def counted(self, slug, *args, **kwargs):
         seen["meta"] += 1
-        return real(self, slug)
+        return real(self, slug, *args, **kwargs)
 
     monkeypatch.setattr(NativeArtifactProvider, "_read_meta", counted)
     return seen
@@ -59,9 +59,14 @@ async def test_an_unchanged_library_answers_304_reading_no_row(home, clock, read
         artifacts().create(name=f"Page {i}", content="# P", kind="markdown")
     store = knowledge_store()
     async with client(home, knowledge=store) as c:
+        reads["meta"] = 0
         first = await c.get("/api/library")
         etag = first.headers["ETag"]
         assert first.status == 200 and first.headers["Cache-Control"] == "no-cache"
+        body = await first.json()
+        assert body["failed"] == [], body["failed"]
+        assert len([r for r in body["items"] if r["store"] == "artifacts"]) == 3
+        assert reads["meta"] == 3, "the cold read reads each meta.json, through the counter"
         reads["meta"], reads["sql"] = 0, []
         _trace(store, reads)
         again = await c.get("/api/library", headers={"If-None-Match": etag})

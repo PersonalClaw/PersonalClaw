@@ -21,6 +21,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A gateway whose start-up fails starts no helper that was waiting for its slot while it closes, after its app processes have stopped.**
 - **The gateway keeps answering while a code loop starts a stage's tasks: git checks the tree and cuts each task's worktree off the gateway's event loop, so a big repository no longer holds every request for seconds. A Stop, a Pause, a delete, or a task taken off the queue, cancelled or done meanwhile starts no worker for that task, and a stopped or deleted loop keeps no fresh checkout.**
 - **What an agent makes in a project's chat now belongs to that project and shows on its page: the artifacts and documents an agent CLI saves, and the images and videos any agent makes. A save there is no longer refused because another project holds an artifact of that name.**
+- **A folder in your artifacts with a name no artifact can have, or one that links out of the store, no longer makes every page that lists your artifacts fail: it is left out, and the rest are listed.**
 
 ### Security
 
@@ -42,6 +43,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The Nix flake installs 0.3.8.**
 - **Home's Needs you and Running now say which project each piece of work is in, and a running card says what kind of work it is. A code session that made its own project is listed under it and reads its brief.**
 - **The agent orb shows each state in a form of its own: ready holds still, thinking swells, working turns two rings, waiting on you locks into a clasp, and done closes into the claw mark, with one bloom when the turn completed; a finished turn's line now shows it before it goes. A row's state in the sidebar, a project's chats and Home's agents is the orb's still mark.**
+- **Pages that list or search your artifacts answer faster when you have many: the Library's Artifacts tab and its search, Home's Pinned artifacts, the chat's artifact picker, and a project's or a loop's page.**
 
 ## [0.3.8] — 2026-11-11
 
