@@ -10,6 +10,7 @@ full stage-gate + worktree behavior ported from the legacy ``code/`` engine.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -22,7 +23,7 @@ from personalclaw.loop.kinds import (
     register,
     workspace_rules_lines,
 )
-from personalclaw.loop.loop import Loop, LoopStatus
+from personalclaw.loop.loop import TERMINAL_STATUSES, Loop, LoopStatus
 from personalclaw.security import redact_for_display
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,18 @@ def _task_scope_texts(task) -> list[str]:
         elif isinstance(step, dict):
             texts.append(str(step.get("content", "") or ""))
     return texts
+
+
+def _stage_turns(ctx, loop_id: str) -> tuple[bool, int]:
+    """Whether the stage worker's session has a turn running, and how many rows its chat holds.
+    A turn that begins appends its first row, so a turn that began since, even one already over,
+    changes one or the other."""
+    from personalclaw.loop.manager import session_key
+
+    session = ctx.state._sessions.get(session_key(loop_id))
+    if session is None:
+        return False, 0
+    return bool(getattr(session, "running", False)), len(getattr(session, "messages", None) or [])
 
 
 _POOL_CAP = 4  # max concurrent task-workers per loop
@@ -450,6 +463,10 @@ class CodeKind(LoopKindStrategy):
         # Loops whose run has no start point to record (:meth:`_note_start_point`), so a poll
         # does not ask git again. In memory: after a restart the next poll asks once more.
         self._no_start_point: set[str] = set()
+        # Loops whose scheduling pass is under way (:meth:`schedule`). A pass waits on git in a
+        # worker thread, so a second one that came meanwhile would find no worker for the tasks
+        # being cut and cut them again; it does nothing instead.
+        self._scheduling: set[str] = set()
 
     def _is_parallel(self, loop: Loop) -> bool:
         """Parallel mode: queued work + a git workspace (worktrees available). Set
@@ -1767,11 +1784,19 @@ class CodeKind(LoopKindStrategy):
         if idx < 0:
             return False
         if self._is_parallel(loop):
+            if loop.id in self._scheduling:
+                return False  # another pass for this loop is under way
             stage = self.phase_key((loop.plan or [])[idx])
             working = bool(self._live_task_workers(loop, ctx.svc))
             self._landed.discard(loop.id)
-            if await self._schedule_parallel(loop, stage, (loop.workspace_dir or "").strip(), ctx):
-                return True
+            self._scheduling.add(loop.id)
+            try:
+                if await self._schedule_parallel(
+                    loop, stage, (loop.workspace_dir or "").strip(), ctx
+                ):
+                    return True
+            finally:
+                self._scheduling.discard(loop.id)
             loop = store.get(loop.id) or loop
             # The stage's work is in when its last task worker is reaped, or when work its owner
             # approved merging lands (an Attended loop's tasks wait for that, their workers gone).
@@ -1996,8 +2021,9 @@ class CodeKind(LoopKindStrategy):
     async def _schedule_parallel(self, loop: Loop, phase_key: str, ws: str, ctx) -> bool:
         """Run the active phase's ready tasks concurrently — one worker per task in its
         own worktree, at most :func:`_pool_cap` at once. Reap+merge finished workers (freeing
-        slots), then fill free slots with ready tasks. Returns True iff the loop paused
-        (NEEDS_INPUT on a merge conflict that couldn't auto-resolve).
+        slots), then fill free slots with ready tasks. Returns True iff the loop stopped running:
+        it paused for its owner, or it ended while git readied its tasks' worktrees
+        (:meth:`_fan_out`).
 
         A worker whose turn is still running is not reaped (it may be writing its worktree,
         which a merge removes), and no worktree is cut while the stage worker is mid-turn or its
@@ -2005,12 +2031,7 @@ class CodeKind(LoopKindStrategy):
         its merge back would collide with them. Those tasks stay the stage worker's, one writer
         on the one tree (:meth:`_one_writer`)."""
         from personalclaw.loop import store, tasks_link, worktree
-        from personalclaw.loop.manager import (
-            session_key,
-            spawn_task_worker,
-            task_session_key,
-            teardown_task_worker,
-        )
+        from personalclaw.loop.manager import session_key, task_session_key, teardown_task_worker
         from personalclaw.triggers.nudge import why_it_ended
 
         # 1. Reap finished task-workers, and land their work (`_land`).
@@ -2073,18 +2094,36 @@ class CodeKind(LoopKindStrategy):
         stage_worker = ctx.state._sessions.get(session_key(loop.id))
         if stage_worker is not None and getattr(stage_worker, "running", False):
             return False  # the stage worker is writing; fan out once its cycle ends
+        return await self._fan_out(loop, ready[:slots], ws, ctx)
+
+    async def _fan_out(self, loop: Loop, ready: list, ws: str, ctx) -> bool:
+        """Cut a worktree for each of *ready* and start its task worker. Returns True iff the
+        loop stopped running meanwhile.
+
+        Every git step runs in a worker thread, so the gateway keeps answering while git works.
+        Its owner's routes, nudge fires and turn callbacks run meanwhile, so after each wait the
+        pass reads again what it acts on: a stage-worker turn that began during the checks, even
+        one already over, may have left edits git did not see, so the tasks stay its own; a loop
+        stopped, paused or deleted meanwhile starts no worker (:meth:`_still_ours`) and, when it
+        cannot resume, keeps no fresh checkout (:meth:`_keep_or_sweep`); a task taken off the
+        queue, cancelled or done meanwhile gets no worker."""
+        from personalclaw.loop import manager, tasks_link, worktree
+        from personalclaw.loop.manager import session_key, spawn_task_worker, task_session_key
+
+        turns = _stage_turns(ctx, loop.id)
         # Every task's work is committed and merged as git is configured to commit here, so the
         # loop asks for an identity before it cuts a worktree whose work it could not commit.
         # An unborn HEAD gets a first commit to branch from, but only an Unattended loop makes
         # it: an Attended one puts nothing on its owner's branch unasked, so its tasks stay the
         # stage worker's, in the tree, where each edit is asked for.
-        based = (
-            worktree.has_base_commit(ws)
-            if posture.of(loop).asks
-            else worktree.ensure_base_commit(ws)
-        )
-        if not based or worktree.has_uncommitted_changes(ws):
-            return False
+        based = worktree.has_base_commit if posture.of(loop).asks else worktree.ensure_base_commit
+        can_cut = await asyncio.to_thread(based, ws)
+        if can_cut:
+            can_cut = not await asyncio.to_thread(worktree.has_uncommitted_changes, ws)
+        if self._still_ours(loop) is None:
+            return True  # the loop ended while git read the tree, whatever git found
+        if not can_cut or _stage_turns(ctx, loop.id) != turns:
+            return False  # no base, a dirty tree, or a turn began while git read the tree
         # The stage worker stands down BEFORE the first task worker starts, so its next cycle
         # cannot fire in between (`_one_writer` stands it back up when the task workers drain).
         stage_nudge = ctx.svc.get_by_session(session_key(loop.id))
@@ -2098,21 +2137,64 @@ class CodeKind(LoopKindStrategy):
         # its plan names, or is empty for a full checkout when no scope resolves (or
         # when loops.worktree_sparse is off — scope_for_task is the config chokepoint).
         batch = [
-            t
-            for t in ready[:slots]
-            if ctx.svc.get_by_session(task_session_key(loop.id, t.id)) is None
+            t for t in ready if ctx.svc.get_by_session(task_session_key(loop.id, t.id)) is None
         ]
-        specs = [(t.id, worktree.scope_for_task(ws, *_task_scope_texts(t))) for t in batch]
-        paths = worktree.add_worktrees(ws, specs, loop.tasks_project_id)
-        for t in batch:
+
+        def cut() -> dict[str, str | None]:
+            specs = [(t.id, worktree.scope_for_task(ws, *_task_scope_texts(t))) for t in batch]
+            return worktree.add_worktrees(ws, specs, loop.tasks_project_id)
+
+        async with manager.git_lock(loop.id):
+            paths = await asyncio.to_thread(cut)
+        for i, t in enumerate(batch):
+            # The task first: nothing may wait between the loop's re-read and the spawn.
+            fresh = await self._get_task(t.id)
+            now = self._still_ours(loop)
+            if now is None:
+                await self._keep_or_sweep(loop, ws, [b.id for b in batch[i:]])
+                return True
             wt_path = paths.get(t.id)
-            if wt_path is None:
-                continue
-            await spawn_task_worker(ctx.state, ctx.svc, loop, t, wt_path)
+            queued = (now.kind_config or {}).get("queued_task_ids", [])
+            if (
+                wt_path is None
+                or t.id not in queued
+                or fresh is None
+                or tasks_link._is_resolved(fresh.status)
+            ):
+                continue  # off the queue, cancelled or done meanwhile
+            await spawn_task_worker(ctx.state, ctx.svc, loop, fresh, wt_path)
             ctx.publish(
                 loop.id, "task_started", {"loop_id": loop.id, "task_id": t.id, "title": t.title}
             )
         return False
+
+    def _still_ours(self, loop: Loop) -> Loop | None:
+        """The loop as it is now, or None if this pass may no longer act for it: its row is gone,
+        its status is no longer the one this pass read (a Stop, a Pause, an ending), or its
+        delete has begun (a delete sets no status before the row goes)."""
+        from personalclaw.loop import manager, store
+
+        now = store.get(loop.id)
+        if now is None or now.status != loop.status or manager.being_deleted(loop.id):
+            return None
+        return now
+
+    async def _keep_or_sweep(self, loop: Loop, ws: str, task_ids: list[str]) -> None:
+        """The checkouts just cut for *task_ids* of a loop that ended meanwhile: one that cannot
+        resume (gone, being deleted, or ended for good) keeps none that holds no work; a paused
+        or failed one keeps them, since its Resume takes each worktree back as it is."""
+        from personalclaw.loop import manager, store, worktree
+
+        now = store.get(loop.id)
+        if (
+            now is None
+            or manager.being_deleted(loop.id)
+            or LoopStatus(now.status) in TERMINAL_STATUSES
+        ):
+            async with manager.git_lock(loop.id):
+                await asyncio.to_thread(
+                    worktree.sweep_finished, ws, task_ids, loop.tasks_project_id
+                )
 
     def approve_merge(self, loop_id: str, tips: dict[str, str]) -> None:
         """Its owner approved merging each task in *tips* at the commit named (the review they

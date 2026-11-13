@@ -101,7 +101,6 @@
 {"site": "src/personalclaw/llm_helpers.py::stream_and_collect", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 178, "complexity": 34}
 {"site": "src/personalclaw/loop/classify.py::classify", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 119, "complexity": 33}
 {"site": "src/personalclaw/loop/kinds/design.py::DesignKind.on_new_cycle", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 113, "complexity": 36}
-{"site": "src/personalclaw/loop/kinds/sdlc.py::CodeKind._schedule_parallel", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 120, "complexity": 37}
 {"site": "src/personalclaw/loop/kinds/sdlc.py::CodeKind._stage_gate_passed", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 204, "complexity": 35}
 {"site": "src/personalclaw/loop/watchdog.py::LoopWatchdog._poll_once", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 318, "complexity": 57}
 {"site": "src/personalclaw/mcp_artifacts.py::_call_tool_inner", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 264, "complexity": 57}

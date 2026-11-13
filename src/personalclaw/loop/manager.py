@@ -13,6 +13,7 @@ legacy loops/code managers it unifies.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -766,29 +767,29 @@ async def _settle_worktrees(loop: Loop, *, discard: bool) -> None:
     """The worktree half of :func:`end_run`, for an ending that cannot be resumed: only this
     loop's tasks' worktrees are touched, so a sibling loop under the same Project keeps its own.
     Best-effort: a git failure leaves the worktrees where they are, which loses nothing."""
-    import asyncio
-
     from personalclaw.loop import tasks_link, worktree
 
     ws = (loop.workspace_dir or "").strip()
     if not ws:
         return
-    ids = list(await tasks_link.task_titles(loop))
-    project = loop.tasks_project_id
-    try:
-        if discard:
-            await asyncio.to_thread(worktree.discard, ws, ids, project)
-            return
-        kept = await asyncio.to_thread(worktree.sweep_finished, ws, ids, project)
-        # What a kept worktree holds and has not committed is committed on its own branch, as git
-        # is configured to commit there (never under a name of the loop's own), so the review its
-        # owner reads is what a merge would bring in. With no identity it stays uncommitted.
-        if kept and await asyncio.to_thread(worktree.commit_identity, ws) is not None:
-            for work in kept:
-                if work.path and work.changed != 0:
-                    await asyncio.to_thread(worktree.commit_pending, ws, work.task_id, project)
-    except Exception:
-        logger.warning("loop %s: settling its task worktrees failed", loop.id, exc_info=True)
+    async with git_lock(loop.id):
+        ids = list(await tasks_link.task_titles(loop))
+        project = loop.tasks_project_id
+        try:
+            if discard:
+                await asyncio.to_thread(worktree.discard, ws, ids, project)
+                return
+            kept = await asyncio.to_thread(worktree.sweep_finished, ws, ids, project)
+            # What a kept worktree holds and has not committed is committed on its own branch, as
+            # git is configured to commit there (never under a name of the loop's own), so the
+            # review its owner reads is what a merge would bring in. With no identity it stays
+            # uncommitted.
+            if kept and await asyncio.to_thread(worktree.commit_identity, ws) is not None:
+                for work in kept:
+                    if work.path and work.changed != 0:
+                        await asyncio.to_thread(worktree.commit_pending, ws, work.task_id, project)
+        except Exception:
+            logger.warning("loop %s: settling its task worktrees failed", loop.id, exc_info=True)
 
 
 async def stop(state, svc, loop_id: str) -> Loop:
@@ -1101,6 +1102,28 @@ def _is_parallel(loop: Loop) -> bool:
     return bool(loop.kind_config.get("queued_task_ids"))
 
 
+#: Loops being deleted (:func:`teardown_for_delete`). A delete sets no status before the row
+#: goes, so a scheduler pass that waited on git meanwhile reads this to know the loop is going
+#: (:func:`being_deleted`). A deleted id never runs again, so its mark stays.
+_DELETING: set[str] = set()
+
+
+def being_deleted(loop_id: str) -> bool:
+    """Whether *loop_id*'s delete has begun (:func:`teardown_for_delete`)."""
+    return loop_id in _DELETING
+
+
+#: A loop's task-worktree git runs under one lock (:func:`git_lock`): a scheduler pass's cut
+#: and sweep (``CodeKind._fan_out``) and an ending's settle (:func:`_settle_worktrees`) wait
+#: for each other, so neither runs git on a worktree the other is still making or removing.
+_GIT_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def git_lock(loop_id: str) -> asyncio.Lock:
+    """The lock *loop_id*'s task-worktree git runs under (:data:`_GIT_LOCKS`)."""
+    return _GIT_LOCKS.setdefault(loop_id, asyncio.Lock())
+
+
 async def teardown_for_delete(state, svc, loop_id: str) -> None:
     """Everything before the loop row + dir are DELETED: the run ends discarding its task
     worktrees (:func:`end_run`), then the backing Tasks Project goes (else each create-and-delete
@@ -1108,6 +1131,7 @@ async def teardown_for_delete(state, svc, loop_id: str) -> None:
     row), and before the worker session is reaped — a turn still running there would re-save the
     transcript the reap just deleted. What the loop started ends with it, saying the loop was
     deleted (``children.end_children``)."""
+    _DELETING.add(loop_id)
     await end_run(state, svc, loop_id, discard=True)
     try:
         from personalclaw.loop import tasks_link

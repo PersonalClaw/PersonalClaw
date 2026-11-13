@@ -31,7 +31,7 @@ def test_sdlc_scheduler_calls_the_scoped_batch_api():
 
     from personalclaw.loop.kinds import sdlc
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(sdlc.CodeKind._schedule_parallel)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(sdlc.CodeKind._fan_out)))
     calls = {
         ast.unparse(n.func)
         for n in ast.walk(tree)
@@ -40,6 +40,20 @@ def test_sdlc_scheduler_calls_the_scoped_batch_api():
     assert "worktree.add_worktrees" in calls, calls
     assert "worktree.scope_for_task" in calls, calls
     assert "worktree.add_worktree" not in calls, "serial per-task creation is still here"
+    # Each git step is handed to a worker thread, named or inside the nested `cut`, so the
+    # gateway's event loop is never what waits on git: none is called at either one's own level.
+    for fn in (sdlc.CodeKind._fan_out, sdlc.CodeKind._keep_or_sweep):
+        (body,) = ast.parse(textwrap.dedent(inspect.getsource(fn))).body
+        own = []
+        todo = list(ast.iter_child_nodes(body))
+        while todo:
+            node = todo.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            todo.extend(ast.iter_child_nodes(node))
+            if isinstance(node, ast.Call) and ast.unparse(node.func).startswith("worktree."):
+                own.append(ast.unparse(node.func))
+        assert own == [], f"git runs on the event loop in {fn.__name__}: {own}"
 
 
 def test_a_redo_resets_the_worktree_then_falls_back_to_teardown():
