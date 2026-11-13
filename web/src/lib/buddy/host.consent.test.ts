@@ -18,7 +18,7 @@ const T0 = Date.UTC(2026, 9, 22, 9, 0, 0)
 function row(work: string, over: Partial<RunningRow> = {}): RunningRow {
   return {
     work, kind: 'chat', session: work.replace(/^chat:/, ''), phase: 'thinking', line: 'Thinking', since: null,
-    name: `Work ${work}`, agent: '', started_at: new Date(T0).toISOString(), route: '', blocked: false, waiting: [], ...over,
+    name: `Work ${work}`, agent: '', started_at: new Date(T0).toISOString(), route: '', blocked: false, waiting: [], project_id: '', loop_kind: '', ...over,
   }
 }
 
@@ -27,7 +27,7 @@ function approval(id: string, over: Partial<WaitingItem> = {}, brief: Record<str
     id: `approval:${id}`, kind: 'approval', work: 'chat:s1', session: 's1',
     brief: { tool: 'bash', tool_purpose: 'List the files', tool_input: 'ls', confirms: [], ...brief },
     consequence: 'changes', risk: 'safe', asked_at: new Date(T0).toISOString(), age_secs: 0, expires_at: null,
-    current: true, interrupt: 'deliver',
+    current: true, interrupt: 'deliver', project_id: '', loop_kind: '',
     answer: { method: 'POST', path: `/api/approvals/${id}/{answer}`, takes: ['approve', 'reject'], body: {} },
     route: '#/chat/s1', ...over,
   }
@@ -38,7 +38,7 @@ function question(id: string, over: Partial<WaitingItem> = {}): WaitingItem {
     id: `question:${id}`, kind: 'question', work: 'chat:s1', session: 's1',
     brief: { questions: [{ question: 'Which branch?', header: '', multiSelect: false, options: [{ label: 'main', description: '' }] }] },
     consequence: 'asks', risk: '', asked_at: new Date(T0 + 1000).toISOString(), age_secs: 0, expires_at: null,
-    current: true, interrupt: 'deliver',
+    current: true, interrupt: 'deliver', project_id: '', loop_kind: '',
     answer: { method: 'POST', path: `/api/chat/sessions/s1/questions/${id}/answer`, takes: ['answers', 'skip'], body: {} },
     route: '#/chat/s1', ...over,
   }

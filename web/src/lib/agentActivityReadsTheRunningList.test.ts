@@ -18,7 +18,7 @@ function row(over: Partial<RunningRow> = {}): RunningRow {
   return {
     work: 'chat:c1', kind: 'chat', session: 'c1', phase: 'thinking', line: 'Thinking',
     since: '2026-10-21T10:00:00Z', name: 'Plan the garden', agent: 'personalclaw', started_at: '2026-10-21T09:59:00Z',
-    route: '#/chat/c1', blocked: false, waiting: [], ...over,
+    route: '#/chat/c1', blocked: false, waiting: [], project_id: '', loop_kind: '', ...over,
   }
 }
 

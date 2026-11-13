@@ -630,6 +630,14 @@ The supervisor does not take the worker's word for it:
   `~/.personalclaw/projects/<id>/` with `project.json` + `context/` (the
   cross-feature consolidation dir, and the working area when no external
   workspace is bound).
+- **A loop is in one project** (`store.loop_project_id`): its `project_id`, the project it was
+  launched into, when that names a project that exists, else its `tasks_project_id`, the project
+  made for its tasks when it was launched into none, else none. `list_for_project` lists exactly
+  the loops it puts in a project, so a loop is never listed under two, and the brief its worker
+  reads (the project's brief, its context folder, its other loops) and the waiting and running
+  lists (`work_project`) read the same project. The project made for a loop's tasks still holds
+  its task lists and worktrees, so deleting it still counts that loop and, forced, removes it,
+  even while the loop is listed under the project it was launched into.
 - **`loop/worktree.py`** — parallel task execution: workers run several tasks
   of a phase at once, each in its own git worktree under
   `projects/<project_id>/worktrees/<task_id>` (never the user's workspace);

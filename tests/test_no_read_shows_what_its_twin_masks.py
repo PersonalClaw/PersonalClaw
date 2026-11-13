@@ -870,10 +870,13 @@ def test_a_loops_notifications_its_chats_origin_and_its_folder_name_it_masked(lo
 def test_a_projects_board_names_its_loops_masked(loops):
     from personalclaw.loop import store
     from personalclaw.loop.loop import Loop
+    from personalclaw.tasks.hierarchy import HierarchyStore
     from personalclaw.tasks.hierarchy_handlers import _loop_rows
 
-    store.create(Loop(id="", name="", kind="goal", task=f"use {SECRET}", project_id="p1"))
-    rows = _loop_rows("p1")
+    # A project's work rows list the loops in it, once the project is there (`loop_project_id`).
+    garden = HierarchyStore().create_project("Garden").id
+    store.create(Loop(id="", name="", kind="goal", task=f"use {SECRET}", project_id=garden))
+    rows = _loop_rows(garden)
     assert rows and rows[0]["title"].startswith("use"), "precondition: the board lists the loop"
     assert "sk-ant-" not in json.dumps(rows)
 

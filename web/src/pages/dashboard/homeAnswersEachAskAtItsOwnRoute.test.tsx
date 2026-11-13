@@ -9,7 +9,7 @@ import { HomeHarness, gateItem, waitingItem, waitingList } from '../../test/home
 
 // ── Home answers each ask at its own route ──────────────────────────────────────────────────────
 //
-// Needs You is a CONTROL surface: the answer is on the card. Every answer goes through the same
+// Needs you is a CONTROL surface: the answer is on the card. Every answer goes through the same
 // `api` call the item's own page makes, to the route the waiting list names for it (`answer.path`),
 // so no answer is invented here. A resolved card looks resolved when its answer returns; a failed
 // one says why in the gateway's words and keeps its verbs; an ask that ended elsewhere says that
@@ -65,7 +65,7 @@ beforeEach(() => {
     answerBridgeConfirmation, acceptSkillProposal, rejectSkillProposal]) f.mockResolvedValue({ ok: true })
 })
 
-const needsYou = () => screen.getByRole('region', { name: 'Needs You' })
+const needsYou = () => screen.getByRole('region', { name: 'Needs you' })
 
 /** A loop worker's write, as the registry's row names it for its card. */
 const WRITE = '{"path": "docs/README.md", "content": "# PersonalClaw\\n\\nA local agent."}'

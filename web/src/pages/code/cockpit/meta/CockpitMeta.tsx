@@ -1,9 +1,10 @@
-import { Folder, Repeat, Clock, FolderKanban } from 'lucide-react'
+import { Folder, Repeat, Clock } from 'lucide-react'
 import { type CodeProject } from '../../../../lib/api'
 import { loopStatusLabel, loopStatusTone } from '../../../../lib/loopStatus'
 import { LoopRunsOn } from '../../../loop/LoopRuntimePill'
 import { type LoopRuntime } from '../../../loop/loopRuntime'
 import { withArticle } from '../../../../lib/article'
+import { ProjectChip } from '../../../../ui/ProjectChip'
 import { StageTrail } from './StageTrail'
 import { useCockpitMeta } from './useCockpitMeta'
 
@@ -19,17 +20,16 @@ import { useCockpitMeta } from './useCockpitMeta'
  *  is which facts this strip states, and asserting that on the rendered component beats asserting
  *  it on the 3400-line page's source — mounting the whole cockpit would need the chat socket, the
  *  run stream and a dozen endpoints, and would test the mocks. */
-export function CockpitMeta({ project: p, onOpenProject, onRuntimeChange }: {
+export function CockpitMeta({ project: p, onRuntimeChange }: {
   project: CodeProject
-  onOpenProject?: (projectId: string) => void
   /** Given while the project's spec can still change: "Runs on" is then the picker. */
   onRuntimeChange?: (rt: LoopRuntime) => void
 }) {
   const {
-    ws, cycles, projId, projName, wsBase, cap, cyclesText, elapsedText, showProj, dispStatus,
+    ws, cycles, projId, projName, wsBase, cap, cyclesText, elapsedText, dispStatus,
   } = useCockpitMeta({ project: p })
   return (
-    <div data-type="caption" className="flex shrink-0 items-center gap-3 border-b border-outline-variant/40 bg-surface-low/30 px-l py-1 text-on-surface-low">
+    <div data-type="caption" className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-outline-variant/40 bg-surface-low/30 px-l py-1 text-on-surface-low">
       {/* Status leads: it is the one line always true about a run, and the answer to the question
           the rest of the strip qualifies. */}
       <span className="shrink-0 rounded-pill px-2 py-0.5" style={loopStatusTone(dispStatus)}>
@@ -46,32 +46,24 @@ export function CockpitMeta({ project: p, onOpenProject, onRuntimeChange }: {
       {/* Phase-execution status — moved here from beside the title so the
           status bar is the single place to read where the run is. */}
       <StageTrail project={p} />
-      {/* Runs on · workspace · project · cycles all float to the far RIGHT edge (ml-auto pushes
-          the whole group). The project chip is interactive (deep-links to the Project). "Runs on"
-          is always said, since PersonalClaw and an agent CLI are different programs doing her work. */}
-      <span className="ml-auto inline-flex min-w-0 shrink-0 items-center gap-3">
+      {/* Runs on · workspace · project · cycles float to the far RIGHT edge (ml-auto pushes them).
+          "Runs on" is always said, since PersonalClaw and an agent CLI are different programs doing
+          her work. Where the strip is too narrow for its parts, the row wraps rather than running
+          past its edge: the project and the cycle count go to the next line together, and the
+          chip, cut to what that line leaves with the whole name in its tooltip, is the one part that
+          shrinks. */}
+      <span className="ml-auto inline-flex min-w-0 max-w-full items-center gap-3">
         <LoopRunsOn loop={p} onChange={onRuntimeChange} />
         {wsBase && (
-          <span className="inline-flex shrink-0 items-center gap-1" title={ws}>
+          <span className="inline-flex min-w-0 items-center gap-1" title={ws}>
             <Folder size={11} className="shrink-0 opacity-70" />
             <span className="max-w-[220px] truncate font-mono">{wsBase}</span>
           </span>
         )}
-        {showProj && (
-          onOpenProject ? (
-            // Raw: a link in the strip's own ink that turns accent on hover; TextLink draws accent ink at rest.
-            <button type="button" onClick={() => onOpenProject(projId)} title={`Project: ${projName} — open`}
-              className="inline-flex min-w-0 items-center gap-1 text-on-surface-var hover:text-primary">
-              <FolderKanban size={11} className="shrink-0 text-primary" />
-              <span className="max-w-[180px] truncate">{projName}</span>
-            </button>
-          ) : (
-            <span className="inline-flex min-w-0 items-center gap-1" title={`Project: ${projName}`}>
-              <FolderKanban size={11} className="shrink-0 text-primary" />
-              <span className="max-w-[180px] truncate">{projName}</span>
-            </span>
-          )
-        )}
+      </span>
+      <span className="inline-flex min-w-0 max-w-full items-center gap-3">
+        {/* The strip's one way to the project: its chip, a link with a 44 px box on a phone. */}
+        <ProjectChip id={projId} name={projName} />
         {cyclesText && (
           <span className="inline-flex shrink-0 items-center gap-1"
             title={cap > 0 ? `${cycles} of ${withArticle(`${cap}-cycle`)} budget run` : `${cycles} cycles run (uncapped)`}>

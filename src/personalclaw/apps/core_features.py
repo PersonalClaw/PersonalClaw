@@ -197,7 +197,9 @@ THINKING_OUTPUT_CAP = "thinking-output-cap"
 #: consequence and then age (``personalclaw.waiting``), and a ``waiting_changed`` frame carrying
 #: nothing says the list moved. An app whose manifest declares ``/api/waiting`` reads all of it,
 #: with nothing that answers an item, and its socket hears the frame. A core without it has no such
-#: route, so an app that reads the list there reads nothing.
+#: route, so an app that reads the list there reads nothing. Since 0.3.9 each item also carries
+#: ``project_id`` and ``loop_kind`` (``personalclaw.work_project``); a core that offers the name but
+#: was built before serves neither, so an app reads a missing one as ``""``: no project, no loop.
 WAITING_LIST = "waiting-list"
 
 #: An app reads the live work as one list: ``GET /api/running`` serves ``{"running": [row, …],
@@ -205,7 +207,9 @@ WAITING_LIST = "waiting-list"
 #: route, session, blocked, waiting}`` (``personalclaw.running_now``), ``GET /api/running/count``
 #: counts it, and a ``running_changed`` frame names the work that moved. An app whose manifest
 #: declares ``/api/running`` reads the rows of the work its socket hears of. A core without it has
-#: no such route, so an app that reads the list there reads nothing.
+#: no such route, so an app that reads the list there reads nothing. Since 0.3.9 each row also
+#: carries ``project_id`` and ``loop_kind`` (``personalclaw.work_project``); a core that offers the
+#: name but was built before serves neither, so an app reads a missing one as ``""``.
 RUNNING_LIST = "running-list"
 
 #: Each provider in an app's manifest may carry an ``id`` and a ``label`` (and ``renamedFrom``),

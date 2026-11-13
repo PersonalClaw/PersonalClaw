@@ -2,16 +2,17 @@ import { useId, useState } from 'react'
 import type { RunningRow } from '../../lib/api'
 import { clockTime } from '../../lib/epoch'
 import { rowSubject } from '../../lib/rowSubject'
-import { INTERRUPTED_LINE, KIND_WORD, phaseOf } from '../../lib/runningRows'
+import { INTERRUPTED_LINE, phaseOf, workKindWord } from '../../lib/runningRows'
 import type { CutRow } from '../../lib/useCutOff'
 import { Button } from '../../ui/Button'
+import { ProjectChip } from '../../ui/ProjectChip'
 import { StatusPill } from '../../ui/StatusPill'
 import { TextLink } from '../../ui/TextLink'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { MarkdownLine } from '../../ui/MarkdownLine'
 import { previewLine } from '../../lib/previewText'
 
-// ── Home's Running Now: the running list ─────────────────────────────────────────────────────────
+// ── Home's Running now: the running list ─────────────────────────────────────────────────────────
 //
 // Every row is one piece of live work as `GET /api/running` names it (`running_now`): its name, its
 // exact phase as text (the tone only summarises it), what it is doing in the gateway's words, the
@@ -35,6 +36,7 @@ export function RunningLane({
   empty,
   onOpen,
   selected,
+  projectOf,
 }: {
   rows: RunningRow[]
   loading: boolean
@@ -46,6 +48,9 @@ export function RunningLane({
   onOpen?: (row: RunningRow) => void
   /** The work whose detail is open. */
   selected?: string
+  /** The project a row's work is in, by name, for its chip: none for work in no project, or in one
+   *  the reader cannot name. */
+  projectOf?: (row: RunningRow) => { id: string; name: string } | null
 }) {
   const headingId = useId()
   const [all, setAll] = useState(false)
@@ -54,7 +59,7 @@ export function RunningLane({
   return (
     <section aria-labelledby={headingId} data-home-group="running-now" className="flex min-w-0 flex-col gap-s">
       <div className="flex items-center gap-s">
-        <h2 id={headingId} data-type="label-l" className="text-on-surface-var">Running Now</h2>
+        <h2 id={headingId} data-type="label-l" className="text-on-surface-var">Running now</h2>
         {/* No counter reading 0: the group's sentence says nothing runs. */}
         {rows.length > 0 ? <span data-type="label-s" data-lane-count className="text-on-surface-low">{rows.length}</span> : null}
         {blocked > 0 ? (
@@ -68,7 +73,7 @@ export function RunningLane({
         </p>
       ) : (
         <ul className="flex min-w-0 flex-col gap-s">
-          {shown.map((r) => <RunningCard key={r.work} row={r} onOpen={onOpen} selected={selected === r.work} />)}
+          {shown.map((r) => <RunningCard key={r.work} row={r} onOpen={onOpen} selected={selected === r.work} project={projectOf?.(r) ?? null} />)}
         </ul>
       )}
       {rows.length > LARGE_LIST ? (
@@ -122,17 +127,35 @@ export function openable(name: string, onOpen?: () => void, selected = false) {
   }
 }
 
-function RunningCard({ row, onOpen, selected }: { row: RunningRow; onOpen?: (row: RunningRow) => void; selected?: boolean }) {
+function RunningCard({ row, onOpen, selected, project }: {
+  row: RunningRow; onOpen?: (row: RunningRow) => void; selected?: boolean
+  /** The project its work is in, drawn at the card's top right. */
+  project?: { id: string; name: string } | null
+}) {
   const nameId = useId()
   const look = phaseOf(row)
+  const kind = workKindWord(row)
   const updated = clockTime(row.since)
   const waiting = Array.isArray(row.waiting) ? row.waiting.length : 0
+  const meta = [
+    kind ? <span key="kind">{kind}</span> : null,
+    row.agent ? <span key="agent">{row.agent}</span> : null,
+    updated ? <span key="updated">{`Updated ${updated}`}</span> : null,
+    waiting > 0 ? <span key="waiting" className="text-on-surface">{`${waiting} waiting on you`}</span> : null,
+  ].filter((part) => part !== null)
   const open = openable(previewLine(row.name), onOpen ? () => onOpen(row) : undefined, selected)
   return (
     <li aria-labelledby={nameId} {...open.props}
       className={`flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s ${open.className}`}>
       {open.target}
-      <p id={nameId} data-type="label-m" className="min-w-0 truncate text-on-surface-var" title={previewLine(row.name)}><MarkdownLine text={row.name} /></p>
+      {project ? (
+        <div className="flex min-w-0 items-start gap-xs">
+          <p id={nameId} data-type="label-m" className="min-w-[50%] flex-1 truncate text-on-surface-var" title={previewLine(row.name)}><MarkdownLine text={row.name} /></p>
+          <ProjectChip id={project.id} name={project.name} inControl />
+        </div>
+      ) : (
+        <p id={nameId} data-type="label-m" className="min-w-0 truncate text-on-surface-var" title={previewLine(row.name)}><MarkdownLine text={row.name} /></p>
+      )}
       <div className="flex min-w-0 flex-wrap items-center gap-xs">
         {row.blocked ? <StatusPill tone="neutral">Blocked</StatusPill> : null}
         <StatusPill tone={look.tone}>{look.label}</StatusPill>
@@ -141,12 +164,12 @@ function RunningCard({ row, onOpen, selected }: { row: RunningRow; onOpen?: (row
         ) : null}
       </div>
       <div data-type="body-s" className="flex min-w-0 flex-wrap items-center gap-xs text-on-surface-low">
-        {row.agent ? <span>{row.agent}</span> : null}
-        {updated ? <span>{`Updated ${updated}`}</span> : null}
-        {waiting > 0 ? <span className="text-on-surface">{`${waiting} waiting on you`}</span> : null}
+        {/* What kind of work it is leads, each part after a dot: "Code session · Code agent ·
+            Updated 14:02". */}
+        {meta.flatMap((part, i) => (i > 0 ? [<span key={`dot-${i}`} aria-hidden="true">·</span>, part] : [part]))}
       </div>
       {row.route ? (
-        <TextLink href={row.route} ink="emphasis" size="sm" aria-label={`Open ${rowSubject([previewLine(row.name), KIND_WORD[row.kind] ?? row.kind])}`}>Open</TextLink>
+        <TextLink href={row.route} ink="emphasis" size="sm" aria-label={`Open ${rowSubject([previewLine(row.name), kind.toLowerCase() || row.kind])}`}>Open</TextLink>
       ) : null}
     </li>
   )

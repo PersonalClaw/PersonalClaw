@@ -17,7 +17,7 @@ import { runState } from '../../test/runState'
 //
 //   1. Home draws no count pills. What waits on the owner is counted once, by the toolbar's
 //      needs-you badge (`ui/needsYouBadge.test.tsx`), which shows nothing at 0 and a dash while
-//      the count is unknown; on Home the count is in Needs You's own heading.
+//      the count is unknown; on Home the count is in Needs you's own heading.
 //   2. Home draws no shortcut row. Each destination keeps its one path, the sidebar; your recent
 //      threads stay, because they are Home's own content, not navigation.
 //   3. Home draws no telemetry, and reads none. It lives in Settings › System
@@ -82,7 +82,7 @@ async function mountHome() {
 }
 
 describe('Home draws no count pills', () => {
-  it('two approvals waiting are Needs You’s two cards and its heading’s count, and no pill', async () => {
+  it('two approvals waiting are Needs you’s two cards and its heading’s count, and no pill', async () => {
     reads.waiting = () => Promise.resolve({ waiting: [
       { id: 'approval:a1', kind: 'approval', work: '', session: '', brief: { tool: 'shell', confirms: [] }, consequence: 'changes', risk: '', asked_at: null, age_secs: null, expires_at: null, current: true,
         answer: { method: 'POST', path: '/api/approvals/a1/{answer}', takes: [], body: {} }, route: '' },
@@ -90,7 +90,7 @@ describe('Home draws no count pills', () => {
         answer: { method: 'POST', path: '/api/approvals/a2/{answer}', takes: [], body: {} }, route: '' },
     ], unreadable: [] })
     await mountHome()
-    const group = await screen.findByRole('region', { name: 'Needs You' })
+    const group = await screen.findByRole('region', { name: 'Needs you' })
     await waitFor(() => expect(within(group).getByText('2', { selector: '[data-group-count]' })).toBeInTheDocument())
     expect(screen.queryByLabelText(/approvals? waiting/), 'a count pill').toBeNull()
     expect(screen.queryByLabelText(/tasks? ready|inbox$/), 'a count pill').toBeNull()
@@ -159,7 +159,7 @@ describe('Home draws no machine telemetry', () => {
 
   it('the groups that stay are still there (the control)', async () => {
     await mountHome()
-    for (const name of ['Needs You', 'Running Now', 'Recent and completed']) {
+    for (const name of ['Needs you', 'Running now', 'Recent and completed']) {
       expect(screen.getByRole('heading', { name }), `${name} is Home's own and stays`).toBeTruthy()
     }
   })

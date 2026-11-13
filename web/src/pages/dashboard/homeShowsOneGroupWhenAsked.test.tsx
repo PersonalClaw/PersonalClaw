@@ -50,9 +50,9 @@ describe('the group filter', () => {
   it('shows all three until one is picked, then only that one', async () => {
     render(<HomeHarness />)
     await screen.findByText('Which branch?')
-    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Needs You', 'Running Now', 'Recent and completed'])
-    await choose('Running Now')
-    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Running Now'])
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Needs you', 'Running now', 'Recent and completed'])
+    await choose('Running now')
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Running now'])
     expect(screen.getByText('Plan the garden')).toBeInTheDocument()
     expect(screen.queryByText('Which branch?')).toBeNull()
   })
@@ -64,16 +64,16 @@ describe('the group filter', () => {
     render(<HomeHarness />)
     expect(filter(), 'the filter says what it shows').toHaveAttribute('aria-label', 'Show: Recent and completed')
     expect(filter()).toHaveAttribute('data-header-filter', 'set')
-    expect(screen.queryByRole('heading', { name: 'Needs You' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Needs you' })).toBeNull()
     await choose('All groups')
     expect(localStorage.getItem('home-groups')).toBeNull()
   })
 
-  it('never hides what waits from the badge: with Needs You filtered out, it still counts every ask', async () => {
+  it('never hides what waits from the badge: with Needs you filtered out, it still counts every ask', async () => {
     localStorage.setItem('home-groups', 'running-now')
     render(<><NeedsYouBadge navigate={() => {}} /><HomeHarness /></>)
     expect(await screen.findByRole('button', { name: '2 waiting on you — open Attention' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Needs You' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Needs you' })).toBeNull()
   })
 
   it('ignores a stored choice it does not know, and shows all three', async () => {

@@ -11,7 +11,7 @@ import { EntranceGroup, EntranceRegion } from '../../ui/motion'
 import type { RouteProps } from '../../app/useQueryState'
 
 /** Home's Overview view (`#/dashboard?view=overview`): the bands that have no place in the
- *  attention stack, the view Home opens on (`Home.tsx`). Needs You, Running Now and Recent and
+ *  attention stack, the view Home opens on (`Home.tsx`). Needs you, Running now and Recent and
  *  completed took what this page's To triage, Active work and launcher held, the toolbar's needs-you
  *  badge took its count pills, and its suggestions belong to the stack's empty state. What is left
  *  here is what a person comes to look at rather than to answer: your agents' day, pinned artifacts,

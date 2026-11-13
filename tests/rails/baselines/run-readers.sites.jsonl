@@ -38,6 +38,7 @@
 {"site": "src/personalclaw/triggers/tools.py::_running_workflow_runs", "reason": "ids and names: the runs going now, for an automation's refusal to offer", "added": "2026-11-01"}
 {"site": "src/personalclaw/triggers/tools.py::_workflow_run", "reason": "status only: whether the run an automation would wait on is going", "added": "2026-11-01"}
 {"site": "src/personalclaw/waiting.py::_gates", "reason": "asks through its reader: the waiting list is cut to what each reader reads (`Reach`: an agent reads its own chat's items)", "added": "2026-11-01"}
+{"site": "src/personalclaw/waiting.py::project_readers.run", "reason": "names only: the project and loop kind of a run whose item or row the waiting or running list already shows (`work_project`), each list cut to what its reader reads", "added": "2026-11-11"}
 {"site": "src/personalclaw/workflows/audit.py::audit", "reason": "asks through its callers: they pass `only`, the ids `chat_runs.live_runs_read` gives a reader that is not you", "added": "2026-11-01"}
 {"site": "src/personalclaw/workflows/automation_version.py::_run_named", "reason": "its own run: the run whose work an automation version binds, by the id its record names", "added": "2026-11-01"}
 {"site": "src/personalclaw/workflows/batch_start.py::resume", "reason": "maintenance: whether a batch the gateway left asking has started (a count)", "added": "2026-11-01"}

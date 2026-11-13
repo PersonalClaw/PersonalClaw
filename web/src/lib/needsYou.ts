@@ -4,21 +4,21 @@ import {
   proposalTitle, sentenceStart,
 } from './attentionLanes'
 
-// ── Home's Needs You: the waiting list, then the Inbox's own asks ─────────────────────────────────
+// ── Home's Needs you: the waiting list, then the Inbox's own asks ─────────────────────────────────
 //
-// Needs You is `GET /api/waiting` (#3888) in the order it is served: by consequence, then age, the
+// Needs you is `GET /api/waiting` (#3888) in the order it is served: by consequence, then age, the
 // one order Home, the buddy, the tray and the phone keep. Nothing here sorts those items again.
 // After them come the two asks no work waits on, which the list leaves to the Inbox: a skill
 // proposal waiting on a yes or no, and a note you wrote yourself. They follow every waiting item
 // because answering them lets nothing run, oldest first, as the Inbox's own asks always were.
 //
 // A source the gateway could not read is carried as `unreadable`, so the view says it could not
-// read it instead of drawing an empty group: an empty Needs You is this page's "all clear".
+// read it instead of drawing an empty group: an empty Needs you is this page's "all clear".
 
-/** A skill proposal as Needs You reads it. */
+/** A skill proposal as Needs you reads it. */
 export type ProposalInput = Pick<SkillProposal, 'id' | 'slug' | 'description' | 'created_at'>
 
-/** An Inbox row as Needs You reads it. */
+/** An Inbox row as Needs you reads it. */
 export type NoteInput = Pick<
   InboxItem,
   'id' | 'item_kind' | 'status' | 'message' | 'context_summary' | 'created_at' | 'refs' | 'sender_name' | 'channel_name'
@@ -33,7 +33,7 @@ interface RowBase {
   subtitle: string
 }
 
-/** One row of Needs You, carrying the one source object its answer acts on. */
+/** One row of Needs you, carrying the one source object its answer acts on. */
 export type NeedsYouRow =
   | (RowBase & { origin: 'waiting'; item: WaitingItem })
   | (RowBase & { origin: 'proposal'; proposal: ProposalInput; at: number | null })
@@ -112,7 +112,7 @@ export function waitingSubtitle(item: WaitingItem): string {
   }
 }
 
-/** Every row of Needs You: the waiting items in the list's order, then the skill proposals and your
+/** Every row of Needs you: the waiting items in the list's order, then the skill proposals and your
  *  notes, oldest first. Defended as if each argument came off a failed read: a non-array or a
  *  non-object element is skipped, never thrown on, since this runs on a render path. */
 export function needsYou(

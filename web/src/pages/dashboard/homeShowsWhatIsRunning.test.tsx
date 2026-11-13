@@ -7,9 +7,9 @@ import type { RunningList, RunningRow } from '../../lib/api'
 import type { WsMessage } from '../../lib/useChatSocket'
 import { clockTime } from '../../lib/epoch'
 
-// ── Home's Running Now is the running list (#3889, #3813) ───────────────────────────────────────
+// ── Home's Running now is the running list (#3889, #3813) ───────────────────────────────────────
 //
-// Running Now reads `GET /api/running`, the one list of live work every reader shares, and nothing
+// Running now reads `GET /api/running`, the one list of live work every reader shares, and nothing
 // of its own: each row shows the work's name, its exact phase as text, what it is doing, the agent
 // doing it, its last update and a route that opens it. A blocked row says so, apart from working,
 // and a row that waits on you says how much does. The just-finished tail is Recent and completed's.
@@ -59,13 +59,13 @@ function row(over: Partial<RunningRow> = {}): RunningRow {
   return {
     work: 'chat:c1', kind: 'chat', session: 'c1', phase: 'searching', line: 'Searching your knowledge',
     since: UPDATED, name: 'Plan the garden', agent: 'gardener', started_at: '2026-10-21T10:00:00Z',
-    route: '#/chat/c1', blocked: false, waiting: [], ...over,
+    route: '#/chat/c1', blocked: false, waiting: [], project_id: '', loop_kind: '', ...over,
   }
 }
 
 const list = (live: RunningRow[] = [], finished: RunningRow[] = []): RunningList => ({ running: live, finished })
 
-const working = () => screen.getByRole('region', { name: 'Running Now' })
+const working = () => screen.getByRole('region', { name: 'Running now' })
 const recent = () => screen.getByRole('region', { name: 'Recent and completed' })
 
 async function mount() {
@@ -189,7 +189,7 @@ describe('every state of the list', () => {
     const failed = within(tail).getByRole('listitem', { name: /fetch the page/ })
     expect(within(failed).getByText('Stopped')).toBeTruthy()
     expect(within(failed).getByText('Stopped: the site refused')).toBeTruthy()
-    // Nothing runs, and Running Now still says so above Recent and completed's tail.
+    // Nothing runs, and Running now still says so above Recent and completed's tail.
     expect(within(working()).getByText('Nothing is running right now.')).toBeTruthy()
   })
 

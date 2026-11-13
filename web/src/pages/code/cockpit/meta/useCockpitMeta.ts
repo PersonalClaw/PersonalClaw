@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import { api, type CodeProject } from '../../../../lib/api'
+import { useState } from 'react'
+import { type CodeProject } from '../../../../lib/api'
+import { loopProjectId, useProjectList } from '../../../../lib/loopProject'
 import { useVisiblePoll } from '../../../../lib/useVisiblePoll'
 import { effectiveLoopStatus } from '../../../../lib/loopStatus'
 
@@ -16,19 +17,12 @@ export function useCockpitMeta({ project: p }: { project: CodeProject }) {
   // (e.g. "da50a558") — a meaningless path that reads as a bug. No workspace → no chip.
   const ws = p.workspace_dir || ''
   const cycles = p.total_cycles || 0
-  // Resolve the containing Project's name (the redacted code project carries only its
-  // id) so the meta strip can show + link to it — the Code→Project direction, mirroring
-  // the Projects page's →linked-work. Fetched once when the binding id is present.
-  // tasks_project_id (the provisioned/containing project — set at launch, takes
-  // precedence) OR project_id (an explicit pre-launch user scope, before provision runs).
-  const projId = p.tasks_project_id || p.project_id || ''
-  const [projName, setProjName] = useState('')
-  useEffect(() => {
-    if (!projId) { setProjName(''); return }
-    let alive = true
-    api.project(projId).then((pr) => { if (alive) setProjName(pr.name) }).catch(() => {})
-    return () => { alive = false }
-  }, [projId])
+  // The one Project that contains the run, by the gateway's rule (`loopProjectId`): the one it
+  // was launched into, else the one made for its tasks. Named from the project list, so the
+  // strip shows and links to it, and names none the list does not know.
+  const projects = useProjectList([p.project_id, p.tasks_project_id])
+  const projId = loopProjectId(p, projects.ids)
+  const projName = projects.byId.get(projId)?.name ?? ''
   // Tick every 30s WHILE RUNNING so the live elapsed clock actually advances. Without
   // this, liveStretch is recomputed only when `project` changes (an SSE event), which
   // can be minutes apart during one long worker cycle — the minute-granularity clock
@@ -53,9 +47,6 @@ export function useCockpitMeta({ project: p }: { project: CodeProject }) {
     ? (cap > 0 ? `${cycles} / ${cap} cycles` : `${cycles} cycle${cycles === 1 ? '' : 's'}`)
     : ''
   const elapsedText = elapsed > 0 ? fmtDuration(elapsed) : ''
-  // The project chip is interactive (deep-links to the Project), so it's rendered
-  // separately from the plain info items. Show it whenever the work is bound.
-  const showProj = !!(projId && projName)
   // The LIFECYCLE STATUS, in the project's own words from the one registry (#671). This strip
   // calls itself "the single place to read where the run is" and named everything except that:
   // elapsed, stage, workspace, project, cycles. On a loop the API reported as `blocked`, the word
@@ -73,7 +64,7 @@ export function useCockpitMeta({ project: p }: { project: CodeProject }) {
   // read as a green "Completed".
   const dispStatus = effectiveLoopStatus(p.status, p.stop_reason, p.held)
   return {
-    ws, cycles, projId, projName, wsBase, cap, cyclesText, elapsedText, showProj, dispStatus,
+    ws, cycles, projId, projName, wsBase, cap, cyclesText, elapsedText, dispStatus,
   }
 }
 

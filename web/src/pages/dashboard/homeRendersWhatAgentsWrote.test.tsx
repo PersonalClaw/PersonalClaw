@@ -249,7 +249,7 @@ describe("a chat named by its first words, cut with '…', is named with the cut
 describe("no file on Home draws what an agent wrote raw", () => {
   const FIELDS = ['title', 'name', 'line', 'reason', 'prompt', 'question', 'subtitle', 'last_message', 'content']
   const FILES = [
-    'pages/dashboard/Home.tsx', 'pages/dashboard/RunningLane.tsx', 'pages/dashboard/widgets/ScheduleWidget.tsx',
+    'pages/dashboard/Home.tsx', 'pages/dashboard/NeedCards.tsx', 'pages/dashboard/RunningLane.tsx', 'pages/dashboard/widgets/ScheduleWidget.tsx',
     'pages/dashboard/PinnedTiles.tsx', 'pages/capabilities/ListBesideDetail.tsx',
   ]
   /** Sinks in these files that draw no agent's words: an artifact's name, and the pane's plain title

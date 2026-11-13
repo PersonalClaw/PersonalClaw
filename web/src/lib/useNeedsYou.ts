@@ -4,7 +4,7 @@ import { useQuery } from './data'
 import { needsYou, type NeedsYouRow } from './needsYou'
 import { refreshKinds, useChatSocket, type WsMessage } from './useChatSocket'
 
-/** The one read of what waits on you, shared by Home's Needs You and the toolbar's badge, so the
+/** The one read of what waits on you, shared by Home's Needs you and the toolbar's badge, so the
  *  two count the same rows from the same instant. */
 export const NEEDS_YOU_KEY = 'dashboard:needs-you'
 
@@ -38,7 +38,7 @@ export function refreshesNeedsYou(m: WsMessage): boolean {
   return refreshKinds(m).some((k) => k === 'loops' || k === 'workflow_runs' || k === 'crons')
 }
 
-/** What waits on you: the rows of Needs You, the sources the gateway could not read, and the read's
+/** What waits on you: the rows of Needs you, the sources the gateway could not read, and the read's
  *  own state. Re-read on the frames above, a burst of them read once, and after a reconnect, whose
  *  dropped frames are lost. */
 export function useNeedsYou() {

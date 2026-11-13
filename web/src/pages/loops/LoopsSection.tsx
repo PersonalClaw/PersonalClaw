@@ -200,20 +200,18 @@ function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<
     return <DesignCockpitPage id={id}
       onBack={() => navigate('loops/history')}
       onDeleted={() => { invalidateKeys('loops'); navigate('loops/history') }}
-      onOpenProject={(pid) => navigate(`projects/${pid}`)}
       // Agentic build: open a project-bound chat seeded to build/mix components for
       // THIS design system on the canvas. The seed hands the agent the loop id (so its
       // react artifacts tag loop:<id> → render on the canvas) + the token contract; the
       // project binding gives it the shared context dir (DESIGN.md, token_overrides).
-      onBuildWithChat={(l) => {
+      onBuildWithChat={(l, pid) => {
         const seed = `Help me build and refine components for the design system in design loop \`${l.id}\`. `
           + `Read its current tokens via the design token set, and when you create a React component, save it with `
           + `artifact_save(kind='react', tags=['loop:${l.id}']) so it renders live on this loop's canvas. `
           + `Style every component from the design system's token values. First, what component should we build?`
-        // Scope the chat to the loop's project (explicit project_id, else the
-        // auto-provisioned tasks_project_id) so it shares the design system's context
-        // dir; empty when neither (a project-less but still loop-aware chat).
-        const pid = l.project_id || l.tasks_project_id || ''
+        // Scope the chat to the loop's one project, the one its cockpit names (`loopProjectId`), so
+        // it shares the design system's context dir; empty when it is in none (a project-less but
+        // still loop-aware chat).
         // Route to chat/new (a fresh chat) so the seed always lands — a bare #/chat with
         // no project falls to the history page (seed lost). project= is honored on both
         // the project-bound and project-less new-chat paths.
@@ -228,6 +226,5 @@ function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<
     onDeleted={() => { invalidateKeys('loops'); navigate('loops/history') }}
     onOpenArtifact={(slug) => navigate(`artifacts/${slug}`)}
     onOpenTask={(taskId) => navigate(`tasks?open=${encodeURIComponent(taskId)}`)}
-    onOpenProject={(pid) => navigate(`projects/${pid}`)}
     query={query} setQuery={setQuery} />
 }

@@ -70,7 +70,7 @@ a plan review and a bridge confirmation. One list route and one change event. Ea
   rules, so every surface applies one policy.
 
 The list keeps one order, consequence then age, and every surface keeps it: the buddy's
-one-at-a-time alert queue, Home's Needs You, the tray and the phone. The compact and phone
+one-at-a-time alert queue, Home's Needs you, the tray and the phone. The compact and phone
 compositions show it with text, never by the orb's colour or pose. An item that is answered
 or expires leaves the list, and no surface keeps an action that could still send it.
 

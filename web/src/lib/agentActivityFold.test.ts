@@ -34,7 +34,7 @@ const session = (over: Partial<ChatSessionSummary> = {}): ChatSessionSummary => 
 
 const row = (over: Partial<RunningRow> = {}): RunningRow => ({
   work: 'chat:live', kind: 'chat', session: 'live', phase: 'thinking', line: 'Thinking', since: null,
-  name: 'Live chat', agent: '', started_at: null, route: '#/chat/live', blocked: false, waiting: [], ...over,
+  name: 'Live chat', agent: '', started_at: null, route: '#/chat/live', blocked: false, waiting: [], project_id: '', loop_kind: '', ...over,
 })
 
 const approval = (id: string): PendingApproval => ({

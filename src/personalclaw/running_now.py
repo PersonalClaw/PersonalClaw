@@ -5,7 +5,7 @@ wanted to know what was running read each kind's own route and guessed the rest.
 list, served as ``GET /api/running``, with a cheap count beside it (``GET /api/running/count``).
 
 **One row per piece of live work.** Each row is ``{work, kind, name, agent, phase, line, since,
-started_at, route, session, blocked, waiting}``:
+started_at, route, session, blocked, waiting, project_id, loop_kind}``:
 
 - ``work``, ``kind``, ``session``, ``phase``, ``line`` and ``since`` are the work's own last
   ``work_phase`` frame (``work_phases``, ``chat_phase``), and a row carries the rest of that frame
@@ -20,6 +20,8 @@ started_at, route, session, blocked, waiting}``:
 - ``blocked`` is true while the work waits on something other than the owner: a slot, a busy
   local model, a retry (``BLOCKED_PHASES``). Its line says which.
 - ``waiting`` names the approvals and the owner's questions that wait on her for it.
+- ``project_id`` is the project the work is in, ``""`` for none (``work_project``), and
+  ``loop_kind`` its loop's kind when it is a loop or a run started as one, else ``""``.
 
 **What is live.** A chat with a turn running; a helper that has not ended, a queued one included;
 a loop or a run that has started and not ended, including one waiting on her (a loop the owner
@@ -60,7 +62,7 @@ from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 from urllib.parse import quote
 
-from personalclaw import session_keys, workref
+from personalclaw import session_keys, work_project, workref
 from personalclaw.instants import utc_iso
 from personalclaw.security import redact_for_display
 from personalclaw.textfmt import clip_words
@@ -114,6 +116,8 @@ ROW_FIELDS = (
     "session",
     "blocked",
     "waiting",
+    "project_id",
+    "loop_kind",
 )
 
 
@@ -173,6 +177,8 @@ def _row(
             "session": session,
             "blocked": WorkPhase(row["phase"]) in BLOCKED_PHASES,
             "waiting": sorted(set(waiting)),
+            "project_id": "",
+            "loop_kind": "",
             _ORDER: float(order or 0.0),
         }
     )
@@ -360,13 +366,14 @@ def _loop_row(snap: Snapshot, loop: Any) -> dict[str, Any]:
     )
 
 
-def _loops(snap: Snapshot) -> list[dict[str, Any]]:
+def _loops(snap: Snapshot, project_of: work_project.ProjectOf) -> list[dict[str, Any]]:
     from personalclaw.loop import store
 
     out = []
     for loop in store.list_all():
         if str(getattr(loop.status, "value", loop.status)) in LIVE_LOOP_STATUSES:
             out.append(_loop_row(snap, loop))
+            project_of.knows(loops=[loop])
     return out
 
 
@@ -400,7 +407,9 @@ def _run_row(snap: Snapshot, run: Any) -> dict[str, Any]:
     )
 
 
-def _runs(snap: Snapshot) -> tuple[list[dict[str, Any]], set[str]]:
+def _runs(
+    snap: Snapshot, project_of: work_project.ProjectOf
+) -> tuple[list[dict[str, Any]], set[str]]:
     """Each live run's row, with the triggers whose fire started one."""
     from personalclaw.workflows import store
 
@@ -414,6 +423,7 @@ def _runs(snap: Snapshot) -> tuple[list[dict[str, Any]], set[str]]:
                     fired.add(str(run.origin.trigger_id))
                 if not run.parent_run_id:
                     out.append(_run_row(snap, run))
+                    project_of.knows(runs=[run])
             offset += len(page)
             if not page or offset >= total:
                 break
@@ -635,6 +645,13 @@ class Snapshot:
     said: dict[str, dict[str, Any]]
     tail: list[_Ended]
     chats: dict[str, tuple[str, str]]
+    places: work_project.Memory = field(default_factory=work_project.Memory)
+
+
+def _project_readers() -> work_project.Readers:
+    from personalclaw.waiting import project_readers
+
+    return project_readers()
 
 
 def taken(state: Any) -> Snapshot:
@@ -655,6 +672,7 @@ def taken(state: Any) -> Snapshot:
         said=said,
         tail=list(_tail(state)),
         chats={str(s.key): (str(s.title or s.key), str(s.agent or "")) for s in sessions},
+        places=work_project.taken(state, _project_readers()),
     )
 
 
@@ -663,17 +681,18 @@ def read(snap: Snapshot) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     stores: the helpers, the loops, the runs and the triggers' fires. Off the event loop: each
     store is a read of a file."""
     rows = list(snap.rows) + _helpers(snap)
+    project_of = work_project.ProjectOf(snap.places, _project_readers())
     started_by = {
         str(getattr(info, "trigger_id", "") or "")
         for info in snap.helpers
         if not getattr(info, "done", False)
     }
     try:
-        rows += _loops(snap)
+        rows += _loops(snap, project_of)
     except Exception:  # noqa: BLE001 - one store that cannot be read never blanks the list
         logger.warning("running now: could not read the loops", exc_info=True)
     try:
-        found, fired = _runs(snap)
+        found, fired = _runs(snap, project_of)
         rows += found
         started_by |= fired
     except Exception:  # noqa: BLE001 - as above
@@ -684,6 +703,8 @@ def read(snap: Snapshot) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         logger.warning("running now: could not read the triggers' fires", exc_info=True)
     now = _now()
     tail = [_finished_row(snap, held) for held in reversed(snap.tail) if now - held.at <= TAIL_SECS]
+    work_project.stamp(rows, project_of)
+    work_project.stamp(tail, project_of)
     return ordered(rows), tail
 
 

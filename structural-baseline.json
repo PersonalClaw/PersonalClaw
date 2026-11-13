@@ -295,6 +295,7 @@
       "turn_streams",
       "vector_stores",
       "versions",
+      "work_project",
       "work_wait",
       "workref"
     ],

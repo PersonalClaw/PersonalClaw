@@ -1653,6 +1653,10 @@ export interface RunningRow {
   blocked: boolean
   /** The ids of the approvals and the agents' questions waiting on you for it. */
   waiting: string[]
+  /** The project the work is in, decided once on the gateway (`work_project`), "" for none. */
+  project_id: string
+  /** Its loop's kind when the work is a loop or a run started as one, else "". */
+  loop_kind: LoopKind | ''
 }
 
 /** `GET /api/running`: everything live, oldest first, and the last endings, newest first. */
@@ -1704,6 +1708,10 @@ export interface WaitingItem {
   answer: { method: string; path: string; takes: unknown[]; body: Record<string, unknown> }
   /** The dashboard address that shows it with its card. */
   route: string
+  /** The project its work is in, decided once on the gateway (`work_project`), "" for none. */
+  project_id: string
+  /** Its loop's kind when the work is a loop or a run started as one, else "". */
+  loop_kind: LoopKind | ''
 }
 
 /** `GET /api/waiting`: everything waiting on you, by consequence and then age, and the sources that
@@ -9484,6 +9492,8 @@ export const api = {
      *  here — not carried in navigation state — so the breadcrumb survives a reload.
      *  `forked_from_title: ''` with a non-empty `forked_from` = the origin is gone. */
     forked_from?: string; forked_from_title?: string
+    /** The project the chat is in, `""` for none: its header's chip, however the chat was opened. */
+    project_id?: string
     /** Reply style. `reply_style` is what THIS conversation states (`''` = follows its agent);
      *  the rest is resolved by the backend, which owns the order: the composer displays
      *  `reply_style_source`, it never derives it. */

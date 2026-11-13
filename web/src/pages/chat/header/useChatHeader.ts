@@ -18,13 +18,16 @@ import type { useChatComposer } from '../composer/useChatComposer'
 // (its Execution Boundary control). `ChatHeader.tsx` draws the header.
 
 export function useChatHeader({ stream, composer }: {
-  stream: Pick<ChatStream, 'sessionRef' | 'title' | 'setTitle' | 'setTitleNeed' | 'setAutoChain' | 'workingDir' | 'setWorkingDir'>
+  stream: Pick<ChatStream, 'sessionRef' | 'title' | 'setTitle' | 'setTitleNeed' | 'setAutoChain' | 'workingDir' | 'setWorkingDir' | 'chatProject'>
   composer: Pick<ReturnType<typeof useChatComposer>, 'projectId' | 'selection' | 'setToast'>
 }) {
-  const { sessionRef, title, setTitle, setTitleNeed, setAutoChain, workingDir, setWorkingDir } = stream
-  const { projectId, selection, setToast } = composer
-  // Name of the project this chat is bound to — shown as a header chip so the user knows
-  // the chat is scoped to that project's workspace.
+  const { sessionRef, title, setTitle, setTitleNeed, setAutoChain, workingDir, setWorkingDir, chatProject } = stream
+  const { projectId: draftProject, selection, setToast } = composer
+  // The project this chat is in, shown as its header chip: the one a new chat's draft is scoped to,
+  // else the chat's own, from its read. The draft lives only on the new-chat page, and the first
+  // send opens the chat again under its own key, so the chat's own read is what names it there and
+  // on every later visit.
+  const projectId = draftProject || chatProject
   const [projectName, setProjectName] = useState('')
   useEffect(() => {
     if (!projectId) { setProjectName(''); return }
@@ -168,7 +171,7 @@ export function useChatHeader({ stream, composer }: {
     window.setTimeout(() => setToast(null), shownFor)
   }
   return {
-    projectName, renaming, setRenaming, renameVal, setRenameVal, regenningTitle, handoffChannels,
+    projectId, projectName, renaming, setRenaming, renameVal, setRenameVal, regenningTitle, handoffChannels,
     saveAsTemplate, beginRename, commitRename, regenTitle, copyLink, handOff, briefAgent, setWorkspaceDir,
   }
 }

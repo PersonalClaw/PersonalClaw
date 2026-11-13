@@ -1,15 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, Ban, Check, CheckCircle2, Hand, LayoutGrid, MessageSquare, Play, Plus, ShieldAlert, X } from 'lucide-react'
-import {
-  api, ApiError, hasApiCode, type ChatSessionSummary, type RunningList, type RunningRow,
-} from '../../lib/api'
-import { invalidateKeys, useQuery } from '../../lib/data'
+import { AlertTriangle, Hand, LayoutGrid, MessageSquare, Plus, ShieldAlert } from 'lucide-react'
+import { api, type ChatSessionSummary, type RunningList, type RunningRow } from '../../lib/api'
+import { useQuery } from '../../lib/data'
 import { clockTime, sessionRecencyMs } from '../../lib/epoch'
-import type { NeedsYouRow } from '../../lib/needsYou'
-import {
-  waitingAnswerId, waitingQuestion, waitingReply, type CardQuestion, type ReplyTarget,
-} from '../../lib/waitingAnswer'
-import { approvalOf, isStale, useStaleAt } from '../../lib/waitingList'
+import { useProjectList } from '../../lib/loopProject'
+import { useStaleAt } from '../../lib/waitingList'
 import { rowSubject } from '../../lib/rowSubject'
 import { phaseOf } from '../../lib/runningRows'
 import { sessionTitle } from '../../lib/sessionTitle'
@@ -18,7 +13,6 @@ import { useCutOff } from '../../lib/useCutOff'
 import { useNeedsYou } from '../../lib/useNeedsYou'
 import { useIdentity, firstNameOf } from '../../app/identity'
 import { useIsMobile } from '../../app/useIsMobile'
-import { PendingApprovalCard } from '../../app/PendingApprovalCard'
 import { WidgetBoundary } from '../../app/ErrorBoundary'
 import type { RouteProps } from '../../app/useQueryState'
 import { Button } from '../../ui/Button'
@@ -28,7 +22,6 @@ import { RowHitTarget } from '../../ui/RowHitTarget'
 import { StatusPill } from '../../ui/StatusPill'
 import { TextLink } from '../../ui/TextLink'
 import { TopBar } from '../../ui/TopBar'
-import { BUSY_REASON } from '../../ui/unavailable'
 import { InlineLoadError } from '../../ui/ListScaffold'
 import { TextInput } from '../../ui/forms'
 import { SurfaceOverlay } from '../../ui/surfaces/SurfaceOverlay'
@@ -36,29 +29,30 @@ import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBes
 import { StartedByApp, startedByLabel, startedByName } from '../chat/StartedByApp'
 import { FromChannel, channelOf } from '../chat/FromChannel'
 import { HomeOverview } from './DashboardPage'
+import { NeedCard, NeedDetail, NeedsUnreadable, needHeading, needName, rowKey } from './NeedCards'
 import { PinnedTiles } from './PinnedTiles'
-import { FinishedRows, LARGE_LIST, RunningLane, openable } from './RunningLane'
+import { FinishedRows, LARGE_LIST, RunningLane } from './RunningLane'
 import { readShown, writeShown } from './homeShown'
+import { useNeedActions } from './useNeedActions'
 import { Suggestions } from './widgets/Suggestions'
 import { MarkdownLine } from '../../ui/MarkdownLine'
 import { previewLine } from '../../lib/previewText'
-import { cutMarkdown, cutMarkdownLine } from '../../lib/cutMarkdown'
-import { widgetlessText } from '../../ui/widget/blocks'
+import { cutMarkdownLine } from '../../lib/cutMarkdown'
 import { Markdown } from '../../ui/Markdown'
 
 // ── Home: the attention stack ───────────────────────────────────────────────────────────────────
 //
 // Opening PersonalClaw answers three questions at a glance, in this order (#3813):
 //
-//   Needs You            everything waiting on you to answer, from every source (`GET /api/waiting`,
+//   Needs you            everything waiting on you to answer, from every source (`GET /api/waiting`,
 //                        #3888), in the one order every surface keeps: by consequence, then age.
-//   Running Now          the one list of live work (`GET /api/running`), each row with its exact
+//   Running now          the one list of live work (`GET /api/running`), each row with its exact
 //                        phase and its last update.
 //   Recent and completed what just finished, and your own latest threads.
 //
 // Idle work is no group: it is found by search. A group that empties says what that means, a group
 // whose read failed says so, and a source the gateway could not read is named, because an empty
-// Needs You is this page's "all clear", the most misleading thing it could show by mistake.
+// Needs you is this page's "all clear", the most misleading thing it could show by mistake.
 //
 // It is a CONTROL surface: the verbs that resolve an item are on its card, so "what needs me" and
 // "deal with it" are one glance and one click. A resolved card looks resolved the moment its answer
@@ -98,8 +92,8 @@ export function groupForRef(ref: string): Group | null {
 }
 
 export const GROUP_LABEL: Record<Group, string> = {
-  'needs-you': 'Needs You',
-  'running-now': 'Running Now',
+  'needs-you': 'Needs you',
+  'running-now': 'Running now',
   recent: 'Recent and completed',
 }
 
@@ -128,59 +122,10 @@ const RECENT_THREADS = 6
 
 const RUNNING_KEY = 'dashboard:running-now'
 
-/** A waiting source's kind, in words, for "Could not read …". */
-const SOURCE_WORDS: Record<string, string> = {
-  approval: 'approvals',
-  question: 'agents’ questions',
-  loop_question: 'loops’ questions',
-  gate: 'workflow runs',
-  park: 'triggers',
-  browse_grant: 'browser grants',
-  plan_review: 'plans to review',
-  bridge_confirmation: 'control bridge actions',
-}
-
-// ── Per-card outcome ────────────────────────────────────────────────────────────────────────
-
-type Outcome =
-  | { state: 'busy' }
-  | { state: 'done'; text: string }
-  | { state: 'ended'; text: string }
-  | { state: 'failed'; text: string }
-
-/** The gateway's own sentence, plus what the user can do about it. The server text comes first
- *  and verbatim: it is the only part that says WHICH knob to turn. */
-function failureText(verb: string, err: unknown): string {
-  const detail = err instanceof Error && err.message ? err.message : String(err ?? 'unknown error')
-  // A server sentence ends in its own full stop; this one adds the next sentence's.
-  return `Could not ${verb}: ${detail.replace(/[.\s]+$/, '')}. Nothing was recorded — it still needs you, so try again.`
-}
-
-/** When an answer is refused because there is nothing left to decide, the sentence for it, or
- *  null for a real failure: the work that asked has ended (409, the gateway names which), or it
- *  was answered or ended somewhere else (404). Retrying either would change nothing. */
-function endedText(err: unknown): string | null {
-  if (hasApiCode(err, 'approval_owner_ended') && err instanceof Error) return err.message
-  if (err instanceof ApiError && err.status === 404) {
-    return 'It is no longer waiting: it was answered or ended somewhere else.'
-  }
-  return null
-}
-
 /** A read that failed, in the gateway's own words: nothing was asked of it, so nothing was lost. */
 function readFailureText(what: string, err: unknown): string {
   const detail = err instanceof Error && err.message ? err.message : String(err ?? 'unknown error')
   return `Could not read ${what}: ${detail}.`
-}
-
-/** What a gate's or a park's answer did, in words. */
-function answeredText(q: CardQuestion, value: string | boolean): string {
-  if (q.event) return 'Woken — the run is moving again.'
-  if (!q.approval) return `Answered “${String(value)}” — the run is moving again.`
-  if (q.triggerId) {
-    return value === true ? 'Approved — it is running again.' : 'Declined — it asks again the next time it stops.'
-  }
-  return value === true ? 'Approved — the run is moving again.' : 'Declined — the run ends here.'
 }
 
 /** The running list's frames: it says when it moved (`running_changed`). */
@@ -193,19 +138,6 @@ function refreshesRunning(m: WsMessage): boolean {
 function asRunningList(v: unknown): RunningList | undefined {
   const list = v as RunningList | undefined
   return list && Array.isArray(list.running) && Array.isArray(list.finished) ? list : undefined
-}
-
-/** An approval's title is a tool's name or the command itself: it stays as written wherever it is
- *  drawn or named, as its card draws it. Any other ask's title is an agent's line. */
-const isApproval = (row: NeedsYouRow) => row.origin === 'waiting' && row.item.kind === 'approval'
-/** An ask's title as a name or a tooltip: as written for an approval, its plain line for any other. */
-const needName = (row: NeedsYouRow) => (isApproval(row) ? row.title : previewLine(row.title))
-/** An ask's title as a heading: text for an approval, rendered for any other. */
-const needHeading = (row: NeedsYouRow) => (isApproval(row) ? row.title : <MarkdownLine text={row.title} />)
-
-/** The key a row is selected by, in `?open=`. */
-function rowKey(row: NeedsYouRow): string {
-  return row.key
 }
 
 /** Home: Overview, or Attention when it is asked for (#5880). *defaultView* is the view the address
@@ -268,7 +200,6 @@ function AttentionStack({ header, ...route }: RouteProps & { header: (filter?: R
   const {
     data: sessionsData, error: sessionsError, loading: sessionsLoading, refresh: refreshSessions,
   } = useQuery<ChatSessionSummary[]>('chat:sessions:recent', async () => api.chatSessions(), { persist: true })
-  const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({})
   const [allNeeds, setAllNeeds] = useState(false)
   const [shown, setShown] = useState<Shown>(() => readShown(GROUPS))
   const shows = (g: Group) => shown === 'all' || shown === g
@@ -291,6 +222,17 @@ function AttentionStack({ header, ...route }: RouteProps & { header: (filter?: R
     [needs.rows],
   )
   const now = useStaleAt(waitingItems)
+  const { outcomes, actions } = useNeedActions(needs.refresh)
+  // The project each card's work is in, named from the project list: a card names only a project
+  // the list knows (`ProjectChip`), and the list is read again once for one made since it was read.
+  const projects = useProjectList([
+    ...waitingItems.map((item) => item.project_id),
+    ...(runningList?.running ?? []).map((r) => r.project_id),
+  ])
+  const projectOf = (id: string | undefined) => {
+    const p = id ? projects.byId.get(id) : undefined
+    return p ? { id: p.id, name: p.name } : null
+  }
 
   const rows = runningList?.running ?? []
   const finished = runningList?.finished ?? []
@@ -299,73 +241,6 @@ function AttentionStack({ header, ...route }: RouteProps & { header: (filter?: R
     .filter((s) => s.title && !s.run_state?.turn && !liveChats.has(s.key))
     .sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))
     .slice(0, RECENT_THREADS), [sessionsData, liveChats])
-
-  const mark = useCallback((key: string, o: Outcome) => setOutcomes((prev) => ({ ...prev, [key]: o })), [])
-  const refreshNeeds = needs.refresh
-
-  /** Send one answer and say how it went: done, ended elsewhere, or failed in the gateway's words. */
-  const send = useCallback((key: string, sent: Promise<unknown>, done: string, verb: string, after?: () => void) => {
-    mark(key, { state: 'busy' })
-    return sent
-      .then((res) => {
-        const refused = res && typeof res === 'object' && 'refused' in res ? (res as { refused?: string }).refused : ''
-        if (refused) {
-          mark(key, { state: 'failed', text: failureText(verb, new Error(refused)) })
-          return false
-        }
-        mark(key, { state: 'done', text: done })
-        after?.()
-        refreshNeeds()
-        return true
-      })
-      .catch((err) => {
-        const ended = endedText(err)
-        if (ended) {
-          mark(key, { state: 'ended', text: ended })
-          refreshNeeds()
-          return false
-        }
-        mark(key, { state: 'failed', text: failureText(verb, err) })
-        return false
-      })
-  }, [mark, refreshNeeds])
-
-  const actions: CardActions = useMemo(() => ({
-    approval: (key, id, action) => send(key, api.resolveApproval(id, action), action === 'approve' ? 'Approved.' : 'Denied.', `${action} this`),
-    question: (key, q, value) => {
-      const sent = q.triggerId
-        ? api.answerTriggerPark(q.triggerId, { resume_token: q.resumeToken, answer: value === true })
-        : q.confirm
-          ? api.confirmWorkflowRun(q.runId, { verb: value === true ? 'approve' : 'reject', resume_token: q.resumeToken || undefined })
-          : api.resumeWorkflowRun(q.runId, { answer: value, resume_token: q.resumeToken || undefined })
-      void send(key, sent, answeredText(q, value), 'send that answer')
-    },
-    grant: (key, id, action) => {
-      void send(key, api.browseGrantResolve(id, action), action === 'approve' ? 'Allowed — the browser task goes on.' : 'Refused — the browser task stops here.', `${action} this`)
-    },
-    bridge: (key, token, run) => {
-      void send(key, api.answerBridgeConfirmation(token, run), run ? 'Confirmed — it ran once.' : 'Dropped — nothing ran.', 'send that answer')
-    },
-    proposal: (key, id, action) => {
-      const sent = action === 'accept' ? api.acceptSkillProposal(id) : api.rejectSkillProposal(id)
-      void send(key, sent, action === 'accept' ? 'Accepted — the skill is saved.' : 'Rejected.', `${action} this proposal`,
-        () => invalidateKeys('skill-proposals', true))
-    },
-    reply: (key, target, text) => {
-      if (target.kind === 'gate') {
-        return send(key, api.resumeWorkflowRun(target.runId, { answer: text, resume_token: target.resumeToken || undefined }),
-          `Answered “${text}” — the run is moving again.`, 'send that answer')
-      }
-      if (target.kind === 'loop') return send(key, api.uLoopNudge(target.loopId, text), 'Sent to the loop.', 'send that answer')
-      // The chat's own card sends a typed answer as `other`; one it no longer waits on is ended.
-      const sent = api.answerChatQuestion(target.session, target.questionId, { answers: [{ selected: [], other: text }] })
-        .then((r) => {
-          if (r.outcome === 'answered') return r
-          throw new ApiError('it was answered or ended somewhere else', 404)
-        })
-      return send(key, sent, 'Answered — the agent carries on.', 'send that answer')
-    },
-  }), [send])
 
   // ── The selection ──
   const open = query.open ?? ''
@@ -439,22 +314,21 @@ function AttentionStack({ header, ...route }: RouteProps & { header: (filter?: R
         <StartSomething navigate={route.navigate} />
 
         {shows('needs-you') ? <Group group="needs-you" count={needs.data ? needs.rows.length : null}>
-          {needs.unreadable.length > 0 ? (
-            <p role="status" data-type="body-s" className="text-on-surface">
-              {`Could not read ${needs.unreadable.map((k) => SOURCE_WORDS[k] ?? k).join(', ')}: what they hold may be waiting on you and is not shown here.`}
-            </p>
-          ) : null}
+          <NeedsUnreadable unreadable={needs.unreadable}
+            nothingElse={needs.rows.length === 0 && !needs.loading && !needsFailed} />
           {needs.rows.length === 0 ? (
-            <p data-type="body-s" className="text-on-surface-low">
-              {needs.loading ? 'Loading…' : needsFailed ? 'Could not read what is waiting on you.'
-                : needs.unreadable.length > 0 ? 'Nothing else is waiting on you.' : GROUP_EMPTY['needs-you']}
-            </p>
+            needs.loading || needsFailed || needs.unreadable.length === 0 ? (
+              <p data-type="body-s" className="text-on-surface-low">
+                {needs.loading ? 'Loading…' : needsFailed ? 'Could not read what is waiting on you.' : GROUP_EMPTY['needs-you']}
+              </p>
+            ) : null
           ) : (
             <ul className="flex min-w-0 flex-col gap-s">
               {shownNeeds.map((r) => (
                 <li key={r.key} className="min-w-0">
                   <NeedCard row={r} outcome={outcomes[r.key]} actions={actions} now={now}
-                    selected={open === rowKey(r)} onOpen={() => select(rowKey(r))} />
+                    selected={open === rowKey(r)} onOpen={() => select(rowKey(r))}
+                    project={r.origin === 'waiting' ? projectOf(r.item.project_id) : null} />
                 </li>
               ))}
             </ul>
@@ -472,7 +346,7 @@ function AttentionStack({ header, ...route }: RouteProps & { header: (filter?: R
 
         {shows('running-now') ? <RunningLane rows={rows} loading={runningLoading} failed={!!runningError && !runningList}
           empty={GROUP_EMPTY['running-now']} selected={open.startsWith('run:') ? open.slice(4) : undefined}
-          onOpen={(r) => select(`run:${r.work}`)} /> : null}
+          onOpen={(r) => select(`run:${r.work}`)} projectOf={(r) => projectOf(r.project_id)} /> : null}
 
         {shows('recent') ? <Group group="recent" count={null}>
           <FinishedRows finished={finished} interrupted={cut.interrupted}
@@ -519,256 +393,6 @@ function Group({ group, count, children }: { group: Group; count: number | null;
       </div>
       {children}
     </section>
-  )
-}
-
-interface CardActions {
-  approval: (key: string, id: string, action: 'approve' | 'reject') => Promise<unknown>
-  question: (key: string, q: CardQuestion, value: string | boolean) => void
-  grant: (key: string, id: string, action: 'approve' | 'reject') => void
-  bridge: (key: string, token: string, run: boolean) => void
-  proposal: (key: string, id: string, action: 'accept' | 'reject') => void
-  /** A typed line for a free-text ask; true once it is sent, so the field empties only then. */
-  reply: (key: string, target: ReplyTarget, text: string) => Promise<boolean>
-}
-
-/** One Needs You card in the group: what asked, what it asks, and its answer. The card opens its
- *  detail; its own controls keep their clicks. */
-function NeedCard({ row, outcome, actions, now, selected, onOpen }: {
-  row: NeedsYouRow
-  outcome: Outcome | undefined
-  actions: CardActions
-  now: number
-  selected: boolean
-  onOpen: () => void
-}) {
-  const open = openable(needName(row), onOpen, selected)
-  return (
-    <div {...open.props}
-      className={`flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s ${open.className}`}>
-      {open.target}
-      <NeedBody row={row} outcome={outcome} actions={actions} now={now} />
-    </div>
-  )
-}
-
-/** The selected Needs You item, in full: the same card and the same answers, and where it asks. */
-function NeedDetail({ row, outcome, actions, now }: {
-  row: NeedsYouRow
-  outcome: Outcome | undefined
-  actions: CardActions
-  now: number
-}) {
-  const route = row.origin === 'waiting' ? row.item.route : row.origin === 'proposal' ? '#/skills?mode=proposals'
-    : `#/inbox?open=${encodeURIComponent(row.note.id)}`
-  const asked = row.origin === 'waiting' ? clockTime(row.item.asked_at) : ''
-  const item = row.origin === 'waiting' ? row.item : null
-  const reply = item ? waitingReply(item) : null
-  const settled = outcome?.state === 'done' || outcome?.state === 'ended'
-  const questions = item?.kind === 'question' && Array.isArray(item.brief.questions) ? item.brief.questions : []
-  return (
-    <div className="flex min-w-0 flex-col gap-m">
-      <NeedBody row={row} outcome={outcome} actions={actions} now={now} />
-      {questions.length > 1 ? (
-        <ol className="flex min-w-0 list-decimal flex-col gap-xs pl-l">
-          {questions.map((q, i) => (
-            <li key={i} data-type="body-s" className="text-on-surface">
-              {typeof (q as { question?: unknown }).question === 'string' ? <MarkdownLine text={(q as { question: string }).question} /> : ''}
-            </li>
-          ))}
-        </ol>
-      ) : null}
-      {item?.session ? <ConversationTail session={item.session} /> : null}
-      {reply && item && !settled && !isStale(item, now) ? (
-        <ReplyField subject={needName(row)} busy={outcome?.state === 'busy'}
-          onSend={(text) => actions.reply(row.key, reply, text)} />
-      ) : null}
-      <dl data-type="body-s" className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs text-on-surface-var">
-        {row.raisedBy ? <><dt className="text-on-surface-low">Asked by</dt><dd>{row.raisedBy}</dd></> : null}
-        {asked ? <><dt className="text-on-surface-low">Asked</dt><dd>{asked}</dd></> : null}
-        {row.origin === 'waiting' && row.item.expires_at ? (
-          <><dt className="text-on-surface-low">Answer by</dt><dd>{clockTime(row.item.expires_at)}</dd></>
-        ) : null}
-      </dl>
-      {route ? <TextLink href={route} ink="emphasis" size="sm">Open where it asks</TextLink> : null}
-    </div>
-  )
-}
-
-/** A Needs You item's content and answer, shared by its card and its detail. */
-function NeedBody({ row, outcome, actions, now }: {
-  row: NeedsYouRow
-  outcome: Outcome | undefined
-  actions: CardActions
-  now: number
-}) {
-  const settled = outcome?.state === 'done' || outcome?.state === 'ended'
-  const busy = outcome?.state === 'busy'
-  const subject = rowSubject([needName(row), row.raisedBy, previewLine(row.subtitle)])
-  const item = row.origin === 'waiting' ? row.item : null
-  const expired = item ? isStale(item, now) : false
-
-  if (item?.kind === 'approval') {
-    const approval = approvalOf(item)
-    if (approval && !settled && !expired) {
-      return (
-        <div className="flex min-w-0 flex-col gap-xs">
-          <PendingApprovalCard approval={approval} busy={busy} opensSource sourceHref={item.route || undefined}
-            onDecide={(action) => actions.approval(row.key, approval.id, action)} />
-          <CardOutcome outcome={outcome} />
-        </div>
-      )
-    }
-  }
-
-  const question = item ? waitingQuestion(item) : null
-  const answerId = item ? waitingAnswerId(item) : ''
-  const proposal = row.origin === 'proposal' ? row.proposal : null
-  const opensWhereAsked = item && !question && !answerId
-  return (
-    <div className="flex min-w-0 flex-col gap-xs">
-      {row.raisedBy ? <p data-type="label-s" className="min-w-0 truncate text-on-surface-low">{row.raisedBy}</p> : null}
-      {/* What an agent, a loop or a person wrote renders as its line; an approval's title is a tool's
-          name, and a browse grant's second line is ours, so both stay text. */}
-      <p data-type="label-m" className="min-w-0 text-on-surface-var">{item?.kind === 'approval' ? row.title : <MarkdownLine text={row.title} />}</p>
-      {row.subtitle ? <p data-type="body-s" className="min-w-0 text-on-surface-low">{item?.kind === 'browse_grant' ? row.subtitle : <MarkdownLine text={row.subtitle} />}</p> : null}
-      {/* A gate's or a trigger's prompt is a body, with any widget block left out. */}
-      {question?.prompt && question.prompt !== row.title ? (
-        <div data-type="body-s" className="my-1 min-w-0 text-on-surface"><Markdown>{widgetlessText(question.prompt)}</Markdown></div>
-      ) : null}
-      {expired && !settled ? (
-        <p role="status" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface-var">
-          <Ban size={14} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
-          {item?.expires_at
-            ? `This stopped waiting at ${clockTime(item.expires_at)}, so it can no longer be answered here.`
-            : 'This can no longer be answered here.'}
-        </p>
-      ) : null}
-      {opensWhereAsked && item.route ? (
-        <TextLink href={item.route} ink="emphasis" size="sm" aria-label={`Answer it where it asks: ${subject}`}>
-          Answer it where it asks
-        </TextLink>
-      ) : null}
-      {proposal ? (
-        <TextLink href="#/skills?mode=proposals" ink="emphasis" size="sm" aria-label={`Review it in Skills: ${subject}`}>
-          Review it in Skills
-        </TextLink>
-      ) : null}
-      {row.origin === 'note' ? (
-        <TextLink href={`#/inbox?open=${encodeURIComponent(row.note.id)}`} ink="emphasis" size="sm" aria-label={`Open it in the Inbox: ${subject}`}>
-          Open it in the Inbox
-        </TextLink>
-      ) : null}
-
-      <CardOutcome outcome={outcome} />
-
-      {/* Settled or expired, the verbs are GONE, not disabled: a second answer on a settled item
-          is a real action. A FAILED card keeps them: retrying is the point of being told. */}
-      {settled || expired ? null : (
-        <div className="flex min-w-0 flex-wrap items-center gap-xs">
-          {proposal ? (
-            <YesNo subject={subject} busy={busy} yes="Accept" no="Reject"
-              onYes={() => actions.proposal(row.key, proposal.id, 'accept')}
-              onNo={() => actions.proposal(row.key, proposal.id, 'reject')} />
-          ) : null}
-          {question ? (
-            <QuestionActions question={question} subject={subject} busy={busy}
-              onAnswer={(value) => actions.question(row.key, question, value)} />
-          ) : null}
-          {item?.kind === 'browse_grant' && answerId ? (
-            <YesNo subject={subject} busy={busy} yes="Allow" no="Refuse"
-              onYes={() => actions.grant(row.key, answerId, 'approve')}
-              onNo={() => actions.grant(row.key, answerId, 'reject')} />
-          ) : null}
-          {item?.kind === 'bridge_confirmation' && answerId ? (
-            <YesNo subject={subject} busy={busy} yes="Run it once" no="Drop it"
-              onYes={() => actions.bridge(row.key, answerId, true)}
-              onNo={() => actions.bridge(row.key, answerId, false)} />
-          ) : null}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** A yes and a no, each named with what it answers. Both carry `loading` while the answer is on
- *  its way, so neither can be sent twice and assistive tech hears it is busy. */
-function YesNo({ subject, busy, yes, no, onYes, onNo }: {
-  subject: string; busy: boolean; yes: string; no: string; onYes: () => void; onNo: () => void
-}) {
-  return (
-    <>
-      <Button size="xs" variant="primary" loading={busy} ariaLabel={`${yes} ${subject}`} onClick={onYes}>
-        <Check size={13} aria-hidden="true" /> {yes}
-      </Button>
-      <Button size="xs" variant="secondary" loading={busy} ariaLabel={`${no} ${subject}`} onClick={onNo}>
-        <X size={13} aria-hidden="true" /> {no}
-      </Button>
-    </>
-  )
-}
-
-/** How a card's answer went, in words, in a live region: a card that only changed colour is one a
- *  screen-reader user cannot tell from a pending one. */
-function CardOutcome({ outcome }: { outcome: Outcome | undefined }) {
-  if (!outcome || outcome.state === 'busy') return null
-  if (outcome.state === 'failed') {
-    return (
-      <p role="alert" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface">
-        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
-        {outcome.text}
-      </p>
-    )
-  }
-  return (
-    <p role="status" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface-var">
-      {outcome.state === 'done'
-        ? <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-success" aria-hidden="true" />
-        : <Ban size={14} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />}
-      {outcome.text}
-    </p>
-  )
-}
-
-/** A gate's or a park's answers, as buttons: one click per option. A question with no preset options
- *  says where to answer it in your own words rather than offering a text box this card could not
- *  honestly submit. A parked run decides nothing, so its one button wakes it. */
-function QuestionActions({ question, subject, busy, onAnswer }: {
-  question: CardQuestion
-  subject: string
-  busy: boolean
-  onAnswer: (value: string | boolean) => void
-}) {
-  if (question.event) {
-    return (
-      <Button size="xs" variant="primary" loading={busy} ariaLabel={`Wake ${subject} now`} onClick={() => onAnswer(true)}>
-        <Play size={13} aria-hidden="true" /> Wake it now
-      </Button>
-    )
-  }
-  if (question.approval) {
-    return <YesNo subject={subject} busy={busy} yes="Approve" no="Deny" onYes={() => onAnswer(true)} onNo={() => onAnswer(false)} />
-  }
-  if (question.choices.length === 0) {
-    return (
-      <p data-type="body-s" className="text-on-surface-low">
-        This question has no preset options —{' '}
-        <TextLink href={`#/workflows/runs/${encodeURIComponent(question.runId)}`} ink="emphasis" aria-label={`Open the run: ${subject}`}>
-          open the run
-        </TextLink>{' '}
-        to answer it in your own words.
-      </p>
-    )
-  }
-  return (
-    <>
-      {question.choices.map((choice) => (
-        <Button key={choice} size="xs" variant="tonal" disabled={busy} disabledReason={BUSY_REASON}
-          ariaLabel={`Answer ${subject} — ${choice}`} onClick={() => onAnswer(choice)}>
-          {choice}
-        </Button>
-      ))}
-    </>
   )
 }
 
@@ -826,51 +450,6 @@ function ThreadDetail({ s }: { s: ChatSessionSummary }) {
       {s.last_message ? <p data-type="body-m" className="min-w-0 text-on-surface"><Markdown inline>{cutMarkdownLine(s.last_message, 240)}</Markdown></p> : null}
       <TextLink href={`#/chat/${encodeURIComponent(s.key)}`} ink="emphasis" size="sm">Open the chat</TextLink>
     </div>
-  )
-}
-
-/** The one-line reply a free-text ask takes, in its detail: Enter sends it to the ask's own route,
- *  Escape closes the detail (`ListBesideDetail`), and a send that fails keeps the line and says why
- *  above it. Nothing is sent while the owner types. */
-function ReplyField({ subject, busy, onSend }: {
-  subject: string
-  busy: boolean
-  onSend: (text: string) => Promise<boolean>
-}) {
-  const [text, setText] = useState('')
-  return (
-    <TextInput value={text} onChange={setText} ariaLabel={`Reply to ${subject}`}
-      placeholder="Reply in one line: Enter sends, Escape closes"
-      onKeyDown={(e) => {
-        if (e.key !== 'Enter' || e.nativeEvent.isComposing || busy) return
-        e.preventDefault()
-        const line = text.trim()
-        if (!line) return
-        void onSend(line).then((sent) => { if (sent) setText('') })
-      }} />
-  )
-}
-
-/** The last few lines of the conversation an ask came from, read-only: what the agent said before
- *  it asked, so the owner can answer from here. */
-function ConversationTail({ session }: { session: string }) {
-  const { data, error, refresh } = useQuery(`chat:peek:${session}`, async () => api.chatSessionDetail(session), { persist: false })
-  if (error && !data) return <InlineLoadError what="the conversation it came from" error={error} onRetry={refresh} />
-  const lines = (data?.messages ?? []).filter((m) => m.role === 'user' || m.role === 'assistant').slice(-4)
-  if (lines.length === 0) return null
-  return (
-    <section role="region" aria-label="The conversation it came from" className="flex min-w-0 flex-col gap-xs border-l-2 border-outline-variant/40 pl-m">
-      {/* Each line renders as the transcript does: the agent's as its reply (any widget block left
-          out), yours as text written in lines; each cut at a block boundary, never in a fence. */}
-      {lines.map((m, i) => (
-        <div key={i} data-type="body-s" className={`flex min-w-0 items-baseline gap-1.5 ${m.role === 'user' ? 'text-on-surface-var' : 'text-on-surface'}`}>
-          <span className="shrink-0 text-on-surface-low">{m.role === 'user' ? 'You: ' : 'Agent: '}</span>
-          <div className="min-w-0 flex-1">
-            <Markdown breaks={m.role === 'user'}>{cutMarkdown(m.role === 'user' ? String(m.content ?? '') : widgetlessText(String(m.content ?? '')), 400)}</Markdown>
-          </div>
-        </div>
-      ))}
-    </section>
   )
 }
 

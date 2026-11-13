@@ -34,12 +34,12 @@ let useChatHeader: typeof import('./useChatHeader')['useChatHeader']
 const SELECTION: ComposerValue = { agent: 'researcher', model: 'Auto', approval: 'normal', taskMode: 'agent', reasoning: 'high' }
 
 /** The page around the controller: the stream's title and directory, the composer's selection. */
-function mount({ projectId = '' } = {}) {
+function mount({ projectId = '', chatProject = '' } = {}) {
   const s = {
     setTitle: vi.fn(), setTitleNeed: vi.fn(), setAutoChain: vi.fn(), setWorkingDir: vi.fn(), setToast: vi.fn(),
   }
   const hook = renderHook(() => useChatHeader({
-    stream: { sessionRef: { current: SESSION }, title: 'Feed refetch', setTitle: s.setTitle, setTitleNeed: s.setTitleNeed, setAutoChain: s.setAutoChain, workingDir: '', setWorkingDir: s.setWorkingDir },
+    stream: { sessionRef: { current: SESSION }, title: 'Feed refetch', setTitle: s.setTitle, setTitleNeed: s.setTitleNeed, setAutoChain: s.setAutoChain, workingDir: '', setWorkingDir: s.setWorkingDir, chatProject },
     composer: { projectId, selection: SELECTION, setToast: s.setToast },
   }))
   return { ...hook, ...s }
@@ -61,6 +61,22 @@ describe('useChatHeader names the chat', () => {
     const { result } = mount({ projectId: 'p-1' })
     await waitFor(() => expect(result.current.projectName).toBe('Feed work'))
     expect(h.project).toHaveBeenCalledWith('p-1')
+    expect(result.current.projectId).toBe('p-1')
+  })
+
+  it("names the chat's own project when no draft scopes it: a chat opened by its link", async () => {
+    h.project.mockResolvedValue({ name: 'Garden' })
+    const { result } = mount({ chatProject: 'p-garden' })
+    await waitFor(() => expect(result.current.projectName).toBe('Garden'))
+    expect(h.project).toHaveBeenCalledWith('p-garden')
+    expect(result.current.projectId).toBe('p-garden')
+  })
+
+  it("a new chat's draft names its project over any other", async () => {
+    h.project.mockResolvedValue({ name: 'Feed work' })
+    const { result } = mount({ projectId: 'p-1', chatProject: 'p-garden' })
+    await waitFor(() => expect(result.current.projectName).toBe('Feed work'))
+    expect(result.current.projectId).toBe('p-1')
   })
 
   it('renames inline: the title moves at once and the rename is written', async () => {

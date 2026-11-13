@@ -36,9 +36,9 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // value. A fifth per-page map its rail could not see, so the drift it declared fixed was live.
 // §3 compares the two objects directly, which is why it cannot drift again silently.
 //
-// 🔑 AND THEN THE WIDER SET ARRIVED (#3888, #3813). The triage card is gone: Home's Needs You reads
+// 🔑 AND THEN THE WIDER SET ARRIVED (#3888, #3813). The triage card is gone: Home's Needs you reads
 // `GET /api/waiting`, the one list of everything the owner must answer from every source, and the
-// approved Home names its group "Needs You". The rule this file held is unchanged, only its
+// approved Home names its group "Needs you". The rule this file held is unchanged, only its
 // subject moved: a confident "nothing waiting on you" is said only by the surface that read the
 // whole set, and only when no source of it went unread. So §1 and §2 now hold Home to that, §3
 // still holds the work state's one word, and §4 holds the tour to the group it points at.
@@ -74,20 +74,27 @@ const phraseSites = (phrase: string | RegExp) =>
     .sort()
 
 const home = () => codeOf(join(SRC, 'pages/dashboard/Home.tsx'))
+/** Home's cards and what Needs you says of a source it could not read, which a project's page
+ *  can draw too. */
+const cards = () => codeOf(join(SRC, 'pages/dashboard/NeedCards.tsx'))
 const needsRead = () => codeOf(join(SRC, 'lib/useNeedsYou.ts'))
 const overview = () => codeOf(join(SRC, 'pages/dashboard/DashboardPage.tsx'))
 
 describe('§1 "nothing waiting on you" is said only by the surface that read the whole set', () => {
-  it('Needs You is the waiting list, read whole, with the Inbox’s own asks after it', () => {
-    expect(needsRead(), 'Needs You reads the one list of everything waiting').toMatch(/api\.waiting\(\)/)
-    expect(home(), 'Home draws Needs You from that read').toMatch(/useNeedsYou\(\)/)
+  it('Needs you is the waiting list, read whole, with the Inbox’s own asks after it', () => {
+    expect(needsRead(), 'Needs you reads the one list of everything waiting').toMatch(/api\.waiting\(\)/)
+    expect(home(), 'Home draws Needs you from that read').toMatch(/useNeedsYou\(\)/)
   })
 
   it('and its all-clear sentence is the only one, said only when no source went unread', () => {
     const src = home()
     expect(src).toMatch(/'Nothing is waiting on you\.'/)
-    // The sentence for a list some source of which could not be read is a narrower one.
-    expect(src).toMatch(/needs\.unreadable\.length > 0 \? 'Nothing else is waiting on you\.'/)
+    // The sentence for a list some source of which could not be read is a narrower one, said by
+    // the one component that names the unread sources, and it can name a project, for a project's page.
+    expect(src).toMatch(/<NeedsUnreadable unreadable=\{needs\.unreadable\}/)
+    const unread = cards()
+    expect(unread).toMatch(/if \(unreadable\.length === 0\) return null/)
+    expect(unread).toMatch(/project \? `Nothing else in \$\{project\} is waiting on you\.` : 'Nothing else is waiting on you\.'/)
     expect(
       phraseSites(/nothing (is )?waiting on you/i).filter((rel) => rel.startsWith('pages/dashboard/')),
       'a dashboard surface that did not read the whole set claims nothing waits',
@@ -96,8 +103,8 @@ describe('§1 "nothing waiting on you" is said only by the surface that read the
 })
 
 describe('§2 the group is named for what it holds', () => {
-  it('Home names the whole waiting list "Needs You"', () => {
-    expect(home()).toMatch(/'needs-you': 'Needs You'/)
+  it('Home names the whole waiting list "Needs you"', () => {
+    expect(home()).toMatch(/'needs-you': 'Needs you'/)
   })
 
   it('and the work state keeps its own word, owned by the registry', () => {
@@ -142,7 +149,7 @@ describe('§4 the tour describes the group it points at', () => {
   it('names the group by its label, and no label Home no longer has', () => {
     const tour = codeOf(join(SRC, 'app/onboarding/ProductTour.tsx'))
     const step = tour.slice(tour.indexOf("id: 'approvals'"))
-    expect(step.slice(0, 600)).toContain('"Needs You"')
+    expect(step.slice(0, 600)).toContain('"Needs you"')
     expect(step.slice(0, 600), 'the tour still quotes the retired card').not.toContain('"To triage"')
   })
 })

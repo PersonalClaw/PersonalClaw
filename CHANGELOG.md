@@ -27,6 +27,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 
 - **The Nix flake installs 0.3.8.**
+- **Home's Needs you and Running now say which project each piece of work is in, and a running card says what kind of work it is. A code session that made its own project is listed under it and reads its brief.**
 
 ## [0.3.8] — 2026-11-11
 

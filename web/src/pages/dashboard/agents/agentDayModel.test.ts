@@ -8,7 +8,7 @@ import { MAX_ROWS, ago, buildDay, clock, type DayInput } from './agentDayModel'
 // ── Home's "Your agents today": the band's rows, read off what the gateway already says ──────────
 //
 // A row per agent, on a window of time around now. What it did comes from its model calls (the day
-// read), what it is doing from the live feed, what waits on you from Needs You (the read Attention
+// read), what it is doing from the live feed, what waits on you from Needs you (the read Attention
 // counts), what failed from its helpers and loops, and what comes next from the schedule. No time is
 // written that no source gave.
 

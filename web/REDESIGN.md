@@ -221,7 +221,7 @@ Keys are written for macOS. Elsewhere ⌘ is Ctrl and ⌥ is Alt.
 |---|---|
 | ⌘Enter | approves the request that has keyboard focus |
 | Esc | closes or cancels the current detail; it never decides an approval |
-| ⌘⌥A | jumps to the next thread that needs the owner, in Home's Needs You order (consequence, then age) |
+| ⌘⌥A | jumps to the next thread that needs the owner, in Home's Needs you order (consequence, then age) |
 | ⇧Esc | clears the unread markers |
 | ⌘K, ⌘⇧P | the command palette |
 | ⌘B | the sidebar |

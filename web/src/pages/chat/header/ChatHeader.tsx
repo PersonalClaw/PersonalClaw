@@ -22,18 +22,18 @@ import type { ChatHeaderState } from './useChatHeader'
 export function ChatHeader({ header, stream, composer, panes, transcript, started, navigate }: {
   header: ChatHeaderState
   stream: Pick<ChatStream, 'sessionRef' | 'title' | 'titleNeed' | 'branchedFrom' | 'startedBy' | 'investigateOrigin'>
-  composer: Pick<ReturnType<typeof useChatComposer>, 'memoryMode' | 'screenShare' | 'projectId'>
+  composer: Pick<ReturnType<typeof useChatComposer>, 'memoryMode' | 'screenShare'>
   panes: Pick<ChatPanesState, 'activityOpen' | 'setActivityOpen' | 'historyOpen' | 'setHistoryOpen'>
   transcript: Pick<ReturnType<typeof useTranscript>, 'mapOpen' | 'setMapOpen'>
   started: boolean
   navigate: (p: string, opts?: { replace?: boolean }) => void
 }) {
   const {
-    projectName, renaming, setRenaming, renameVal, setRenameVal, regenningTitle, handoffChannels,
+    projectId, projectName, renaming, setRenaming, renameVal, setRenameVal, regenningTitle, handoffChannels,
     saveAsTemplate, beginRename, commitRename, regenTitle, copyLink, handOff,
   } = header
   const { sessionRef, title, titleNeed, branchedFrom, startedBy, investigateOrigin } = stream
-  const { memoryMode, screenShare, projectId } = composer
+  const { memoryMode, screenShare } = composer
   const { activityOpen, setActivityOpen, historyOpen, setHistoryOpen } = panes
   const { mapOpen, setMapOpen } = transcript
   // The header's context line: what this conversation IS, under its title (`ChatContextLine`). What
@@ -41,7 +41,7 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
   const contextChips = started ? chatContextChips({
     screenShare: screenShare.sharing ? { onStop: screenShare.toggle } : null,
     startedBy: startedBy?.name,
-    project: projectName ? { name: projectName, open: () => navigate(`projects/${projectId}`) } : null,
+    project: projectName && projectId ? { id: projectId, name: projectName } : null,
     branchedFrom: branchedFrom
       ? { title: branchedFrom.title, open: () => navigate(`chat/${branchedFrom.key}`) }
       : null,

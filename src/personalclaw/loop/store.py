@@ -451,16 +451,28 @@ def delete_broken(loop_id: str) -> bool:
     return deleted
 
 
-def list_for_project(project_id: str) -> list[Loop]:
-    """Every loop scoped under ``project_id`` (the Projects-primary loop history),
-    newest first. Matches BOTH project_id (explicit user scope) and tasks_project_id
-    (the auto-provisioned backing project a project-less launch / a task-provisioning
-    Code loop gets) — both mean "this loop lives under the project". Without the
-    tasks_project_id arm, such loops were missing from the project's loop history (the
-    detail page, the chat preamble's loop list, the sibling-loops brief footer). The
-    library and ``GET /api/projects/{id}/linked`` read one project per loop instead
-    (:func:`loop_project_id`)."""
+def list_for_project(
+    project_id: str, project_exists: Callable[[str], bool] | None = None
+) -> list[Loop]:
+    """Every loop in ``project_id`` (the Projects-primary loop history), newest first: exactly
+    the loops :func:`loop_project_id` puts in it. A loop launched into no project, or into one
+    that is gone, is in the project made for its tasks; one launched into a project that exists is
+    in that project only, whatever project its tasks were made in. An id that names no project
+    lists nothing. *project_exists* defaults to ``projects.project_exists``, each id read once."""
     if not project_id:
+        return []
+    if project_exists is None:
+        from personalclaw.projects import project_exists as _exists
+
+        project_exists = _exists
+    known: dict[str, bool] = {}
+
+    def exists(pid: str) -> bool:
+        if pid not in known:
+            known[pid] = bool(project_exists(pid))
+        return known[pid]
+
+    if not exists(project_id):
         return []
     conn = _connect()
     try:
@@ -469,20 +481,23 @@ def list_for_project(project_id: str) -> list[Loop]:
             "ORDER BY created_at DESC",
             (project_id, project_id),
         ).fetchall()
-        return [_row_to_loop(r) for r in rows if files.valid_loop_id(r["id"])]
+        loops = [_row_to_loop(r) for r in rows if files.valid_loop_id(r["id"])]
     finally:
         conn.close()
+    return [lp for lp in loops if loop_project_id(lp, exists) == project_id]
 
 
 def loop_project_id(loop: Loop, project_exists: Callable[[str], bool]) -> str:
     """The one project *loop* is in: its own ``project_id`` when that names a project that
     exists, else the ``tasks_project_id`` a project-less launch was given when that one does,
-    else "" (no project).
+    else "" (no project). *project_exists* answers whether an id names a project
+    (``projects.project_exists``).
 
     Either key used to place a loop, so a loop holding both was listed under two projects, and
     an artifact its ``loop:<id>`` tag files had two projects too. The library's project rule
-    (:mod:`personalclaw.project_items`), ``GET /api/projects/{id}/linked`` and the loop manager
-    read this one answer."""
+    (:mod:`personalclaw.project_items`), ``GET /api/projects/{id}/linked``, the loop manager,
+    :func:`list_for_project` and the waiting and running lists (``work_project``) read this one
+    answer."""
     for pid in (loop.project_id, loop.tasks_project_id):
         if pid and project_exists(pid):
             return pid

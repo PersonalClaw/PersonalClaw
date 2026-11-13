@@ -21,6 +21,8 @@ const h = vi.hoisted(() => {
    *  diff's two sides. */
   const reads: Record<string, () => Promise<unknown>> = {
     uLoop: () => Promise.resolve(loop),
+    // The project list, which names the project the loop is in (`useProjectList`).
+    projects: () => Promise.resolve([]),
     allTasks: () => Promise.resolve({ tasks: [{ id: 't-3', title: 'Honour the feed ETag', status: 'open' }] }),
     agentProviders: () => Promise.resolve([]),
     approvals: () => Promise.resolve([]),

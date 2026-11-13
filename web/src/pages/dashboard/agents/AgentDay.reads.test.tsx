@@ -53,7 +53,7 @@ beforeEach(() => { vi.useFakeTimers(); reads = 0; needsLoading = false; week = {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('the band says nothing', () => {
-  it('until Needs You has answered, so it never says nothing waits before it knows', async () => {
+  it('until Needs you has answered, so it never says nothing waits before it knows', async () => {
     needsLoading = true
     const { container, rerender } = render(<AgentDay />)
     await pass(0)

@@ -7,7 +7,7 @@ Mission Control made six reads and folded them. This is the one list, served as
 through, with that route's guards unchanged, and the list has no answer route of its own.
 
 **One item per thing waiting on you**, ``{id, kind, work, session, brief, consequence, risk,
-asked_at, age_secs, expires_at, current, interrupt, answer, route}``:
+asked_at, age_secs, expires_at, current, interrupt, answer, route, project_id, loop_kind}``:
 
 - ``kind`` is the source: ``approval`` (a tool call, a helper's start and a tool server's question
   among them), ``question`` (an agent's question in a chat), ``loop_question`` (a loop's, a Code
@@ -34,6 +34,10 @@ asked_at, age_secs, expires_at, current, interrupt, answer, route}``:
   approval's push, its toast and its cue follow it, and so does every reader that would ping.
 - ``answer`` is the owner's exact action: ``{method, path, takes, body}``, the source's own route
   and what it takes. ``route`` is the dashboard address that shows it with its card.
+- ``project_id`` is the project its work is in, ``""`` for none (``work_project``: a chat's, a
+  loop's, a run's, a helper's parent's; never a trigger's), and ``loop_kind`` its loop's kind when
+  the work is a loop or a run started as one (``code``, ``goal``, ``research``, ``design``,
+  ``general``), else ``""``.
 
 **One order:** by consequence, then age, oldest first (#3888's open question 7, settled):
 destructive first, then what changes something, then the asks.
@@ -70,7 +74,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
-from personalclaw import session_keys, workref
+from personalclaw import session_keys, work_project, workref
 from personalclaw.instants import utc_iso
 
 logger = logging.getLogger(__name__)
@@ -119,6 +123,8 @@ ITEM_FIELDS = (
     "interrupt",
     "answer",
     "route",
+    "project_id",
+    "loop_kind",
 )
 
 #: The fields of an approval's registry row its card shows (``ApprovalPrompt``), carried as its
@@ -201,6 +207,8 @@ def _item(
         "interrupt": "deliver",
         "answer": dict(answer),
         "route": route,
+        "project_id": "",
+        "loop_kind": "",
         "_ts": float(asked_at or 0.0),
     }
 
@@ -641,6 +649,7 @@ class Snapshot:
     confirmations: list[dict[str, Any]] = field(default_factory=list)
     window: float = 0.0
     unreadable: list[str] = field(default_factory=list)
+    places: work_project.Memory = field(default_factory=work_project.Memory)
 
 
 def _taken(kind: str, read: Callable[[], Any], unreadable: list[str], default: Any) -> Any:
@@ -652,8 +661,11 @@ def _taken(kind: str, read: Callable[[], Any], unreadable: list[str], default: A
         return default
 
 
-def taken(state: Any) -> Snapshot:
-    """The gateway's memory as the list reads it. Call on its event loop."""
+def taken(state: Any, *, places: bool = True) -> Snapshot:
+    """The gateway's memory as the list reads it. Call on its event loop. *places* is whether to
+    take where each chat and helper belongs (``work_project.taken``), which only the list's own
+    read places its items by: the chat list, which reads only :func:`chats_waiting`, passes
+    ``False``."""
     from personalclaw.browse import grant
     from personalclaw.inbound import bridge
 
@@ -674,7 +686,33 @@ def taken(state: Any) -> Snapshot:
     snap.confirmations = _taken(
         "bridge_confirmation", bridge.pending_confirmations, snap.unreadable, []
     )
+    if places:
+        snap.places = work_project.taken(state, project_readers())
     return snap
+
+
+def project_readers() -> work_project.Readers:
+    """The stores ``work_project`` places work by, for the waiting and running lists: the loop and
+    run stores, the one loop rule, the project records, and where a session's work is. Its run
+    reader reads a run only for the project and loop kind of an item or row the list already
+    shows, and each list is cut to what its reader reads."""
+    from personalclaw.approval_place import place_of
+    from personalclaw.loop import store as loops
+    from personalclaw.loop.loop import KINDS
+    from personalclaw.projects import project_exists
+    from personalclaw.workflows import store as runs
+
+    def run(ident: str) -> Any:
+        return runs.get(ident)
+
+    return work_project.Readers(
+        loop=loops.get,
+        run=run,
+        loop_project_id=loops.loop_project_id,
+        project_exists=project_exists,
+        place_of=place_of,
+        loop_kinds=KINDS,
+    )
 
 
 def _order(item: Mapping[str, Any]) -> tuple[int, int, float]:
@@ -706,6 +744,9 @@ def read(snap: Snapshot) -> tuple[list[dict[str, Any]], list[str]]:
     items += _bridge_confirmations(snap.confirmations, now)
     live = [i for i in items if i["current"]]
     live.sort(key=_order)
+    project_of = work_project.ProjectOf(snap.places, project_readers())
+    project_of.knows(loops=all_loops or ())
+    work_project.stamp(live, project_of)
     decided: dict[str, str] = {}
     for i in live:
         i.pop("_ts", None)

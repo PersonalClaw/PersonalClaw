@@ -97,6 +97,21 @@ describe('the threads join', () => {
     })
   })
 
+  it('a loop launched into no project is under the project made for its tasks, by the one rule', () => {
+    const src = sources({
+      loops: [
+        loop({ id: 'e5f6a7b8', kind: 'code', name: 'Fence gate', session_key: 'loop-e5f6a7b8', project_id: '', tasks_project_id: 'p-garden' }),
+        loop({ id: 'c9d0e1f2', session_key: 'loop-c9d0e1f2', project_id: 'p-gone', tasks_project_id: 'p-garden' }),
+        loop({ id: 'a3b4c5d6', session_key: 'loop-a3b4c5d6', project_id: 'p-homelab', tasks_project_id: 'p-garden' }),
+      ],
+      projectIds: new Set(['p-garden', 'p-homelab']),
+    })
+    expect(shape(src)).toEqual({
+      'p-garden': [['loop:e5f6a7b8', 'code'], ['loop:c9d0e1f2', 'loop']],
+      'p-homelab': [['loop:a3b4c5d6', 'loop']],
+    })
+  })
+
   it('a chat that came in on a channel is a chat thread', () => {
     const phone = chat({ key: 'chat-9', origin: 'channel', source_id: 'C1', source_label: 'Telegram' })
     expect(shape(sources({ sessions: [phone] }))).toEqual({ 'p-garden': [['chat:chat-9', 'chat']] })

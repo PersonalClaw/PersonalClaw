@@ -319,7 +319,9 @@ phase's tone, with a planted off-tone row as its control.
 a chat with a turn running, a helper that has not ended (a queued one included), a loop or
 a workflow run that has started and not ended, a trigger's fire whose work has no row of
 its own, and a webhook's turn. Each row is the work's last frame with the row's own fields
-beside it (`name`, `agent`, `started_at`, `route`, `blocked`, `waiting`), so a chat's row
+beside it (`name`, `agent`, `started_at`, `route`, `blocked`, `waiting`, `project_id`,
+`loop_kind`: the project the work is in and a loop's kind, by the rule both lists share,
+`work_project`), so a chat's row
 is its `run_state`, but for `waiting`: the row's own names each ask waiting on the owner for
 the work by its registry id, its helpers' included, where the run state's names the turn's
 own asks by their waiting list ids (and `helpers_waiting` its helpers'). Work no producer has said anything of yet reads its phase from its
@@ -336,7 +338,8 @@ would hear that work's phase frame (`ws_state.WORK_FRAMES`), an agent only its o
 work, and the owner everything; the count is cut the same way. Neither route has a
 `ROUTE_AUTHZ` row: an app reaches them only when its manifest declares `/api/running`. An
 app that reads the list names the `running-list` core feature in `requiresCoreFeatures`, so a
-PersonalClaw built before the list refuses to install it rather than answering it nothing.
+PersonalClaw built before the list refuses to install it rather than answering it nothing. A core
+before 0.3.9 serves no `project_id` or `loop_kind`, so an app reads a missing one as `""`.
 
 The list says it moved in one `running_changed` frame per 150 ms window
 (`running_now.changed`): a doorbell naming the work that moved,

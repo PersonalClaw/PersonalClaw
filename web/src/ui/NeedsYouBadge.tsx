@@ -5,7 +5,7 @@ import { useNeedsYou } from '../lib/useNeedsYou'
 /** The toolbar's needs-you badge: how many things wait on you, on every page, opening Home on its
  *  Attention view (#5880), where they are.
  *
- *  It counts the rows of Home's Needs You from the same read (`useNeedsYou`), so the badge and the
+ *  It counts the rows of Home's Needs you from the same read (`useNeedsYou`), so the badge and the
  *  group can never disagree about how many there are. It shows nothing at 0: a counter reading 0
  *  is a claim nobody needs to read (`web/REDESIGN.md` §3, rule 3). And since its absence says
  *  nothing waits, a count not known is never absent: before the first read lands, and after a read

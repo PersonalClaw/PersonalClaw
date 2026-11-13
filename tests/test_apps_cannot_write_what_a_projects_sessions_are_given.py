@@ -294,7 +294,9 @@ async def _given(gw: _Gateway, project_id: str) -> dict[str, str]:
     routed = await gw.ok("GET", f"/api/context?project_id={project_id}")
     return {
         "chat": _project_context_preamble(project_id),
-        "loop": _project_brief_block(SimpleNamespace(id="l-garden", project_id=project_id)),
+        "loop": _project_brief_block(
+            SimpleNamespace(id="l-garden", project_id=project_id, tasks_project_id="")
+        ),
         "get_context": routed["text"],
     }
 

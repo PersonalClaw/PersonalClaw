@@ -99,7 +99,7 @@ export async function answerTheBandsReads(page: Page): Promise<void> {
   await page.route(/\/api\/triggers\/week(\?.*)?$/, (r) => r.fulfill(json(day.week)))
   await page.route(/\/api\/agents(\?.*)?$/, (r) => r.fulfill(json(day.agents)))
   await page.route(/\/api\/usage\/budget(\?.*)?$/, (r) => r.fulfill(json(day.budget)))
-  // Needs You counts an open note and a skill proposal too: answered empty, so the run's home can't
+  // Needs you counts an open note and a skill proposal too: answered empty, so the run's home can't
   // add to what the band counts.
   await page.route(/\/api\/inbox\/open(\?.*)?$/, (r) => r.fulfill(json([])))
   await page.route(/\/api\/skills\/proposals(\?.*)?$/, (r) => r.fulfill(json({ proposals: [], lastReview: null })))

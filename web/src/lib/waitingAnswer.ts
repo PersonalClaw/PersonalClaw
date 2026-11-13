@@ -7,7 +7,7 @@ import type { WaitingItem } from './api'
 // grant's, a bridge confirmation's) are read here, and only here, from `answer.path`, and only from
 // a path of the exact shape its kind answers on. A path of any other shape, or one whose id
 // segment does not decode to one plain segment, is answered nowhere: the surface shows the item
-// and offers no control for it. Home's Needs You and Mission Control both answer through this.
+// and offers no control for it. Home's Needs you and Mission Control both answer through this.
 
 /** What a gate's or a park's answer needs, read off its waiting item (or an Inbox row's card),
  *  for the answer buttons. */
