@@ -83,7 +83,9 @@ on a rerun alike.
 catalogue job leaves (``python -m tools.ci run-job``): its key, result, identity, the GitHub run
 that wrote it (none for a local run), attempt, the diagnostic rerun of a red job's failed tests
 (each classified :data:`FLAKE` or :data:`REPEATED_FAILURE`, never turning the result green),
-which quarantined tests failed, and each step's argv, exit and seconds.
+which quarantined tests failed, and each step's argv, exit and seconds; what it ran on and its
+toolchain (job-record/3), how many of its planned steps never started (/4), and how each rerun
+test first failed (/5, one of :data:`FIRST_FAILURES`).
 
 Standard library only, with no relative imports, so a trusted job can run it as a script.
 """
@@ -165,6 +167,10 @@ class FailedTest:
     test: str
     standing: str
     why: str = ""
+    #: How the test first failed, before its rerun: :data:`FIRST_FAILED` or :data:`TIMED_OUT`
+    #: (job-record/5); None for a record that does not say (an older schema's, or a quarantined
+    #: failure). It changes no standing.
+    first_failure: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1098,10 +1104,13 @@ def from_needs(text: str, identity: Identity, attempt: int = 1) -> list[JobResul
 #: Version 3 adds what the job ran on and its toolchain (#3919), which a push to main holds a
 #: replayed pass to; a version-2 record is still read, and names neither. Version 4 adds how many
 #: of the job's planned steps never started (``unstarted_steps``), which the flake rule holds a
-#: failing job to; a version-3 record is still read, and does not say.
+#: failing job to; a version-3 record is still read, and does not say. Version 5 is version 4 with
+#: one more key on each rerun test: how it first failed (``first_failure``, one of
+#: :data:`FIRST_FAILURES`); a version-4 record is still read, and does not say.
 JOB_RECORD_SCHEMA = "personalclaw.ci.job-record/3"
 _SCHEMA_2 = "personalclaw.ci.job-record/2"
 _SCHEMA_4 = "personalclaw.ci.job-record/4"
+_SCHEMA_5 = "personalclaw.ci.job-record/5"
 _RECORD_KEYS_2 = frozenset(
     {
         "schema",
@@ -1127,6 +1136,14 @@ RUNNER_KEYS = frozenset({"label", "image", "os", "arch"})
 _STEP_RECORD_KEYS = frozenset({"argv", "exit", "seconds"})
 _RERUN_KEYS = frozenset({"argv", "exit", "tests"})
 _RERUN_TEST_KEYS = frozenset({"test", "rerun_result", "why"})
+_RERUN_TEST_KEYS_5 = _RERUN_TEST_KEYS | {"first_failure"}
+
+#: How a failed test first failed, before its rerun (job-record/5): it failed, or it ran out of
+#: time. ``tools/ci/jobs.py`` writes these words and no other (:func:`jobs._first_failure`), so a
+#: record never holds an open value; neither changes how the test stands.
+FIRST_FAILED = "failed"
+TIMED_OUT = "timed out"
+FIRST_FAILURES = frozenset({FIRST_FAILED, TIMED_OUT})
 
 #: How the diagnostic rerun classifies a failed test: it passed alone in a fresh process, or it
 #: failed again. A test that was not rerun (a rail, a security-marked test) is classified null.
@@ -1180,10 +1197,20 @@ def job_record(
     job ran on (:data:`RUNNER_KEYS`) and ``toolchain`` its toolchain's identities; either is
     written null when not given, and a record that names none is never replayed on a push.
     ``unstarted_steps``, when given, is how many of the job's planned steps never started, and
-    the record is job-record/4; when not, it is job-record/3 and does not say.
+    the record is job-record/4; when not, it is job-record/3 and does not say. A rerun whose tests
+    each say how they first failed (``first_failure``, one of :data:`FIRST_FAILURES`) makes a
+    version-4 record job-record/5. Either way the record is read back before it is returned, so
+    one this module would refuse is never written.
     """
+    # A rerun whose tests say how each first failed is job-record/5's (version 4's, with that key).
+    tests = rerun.get("tests") if isinstance(rerun, Mapping) else None
+    five = isinstance(tests, list) and any(
+        isinstance(t, Mapping) and "first_failure" in t for t in tests
+    )
     record: dict[str, object] = {
-        "schema": JOB_RECORD_SCHEMA if unstarted_steps is None else _SCHEMA_4,
+        "schema": (
+            JOB_RECORD_SCHEMA if unstarted_steps is None else _SCHEMA_5 if five else _SCHEMA_4
+        ),
         "key": key,
         "result": result,
         "head_sha": identity.head_sha,
@@ -1233,8 +1260,9 @@ def _no_constant_in(what: str) -> Callable[[str], object]:
     return no_constant
 
 
-def _rerun_faults(rerun: object, where: str) -> None:
-    """Refuse a record's ``rerun`` that is not null or the one shape :func:`job_record` writes."""
+def _rerun_faults(rerun: object, where: str, schema: object = JOB_RECORD_SCHEMA) -> None:
+    """Refuse a record's ``rerun`` that is not null or the one shape its schema has: each test's
+    ``test``, ``rerun_result`` and ``why``, and on job-record/5 its ``first_failure`` too."""
     if rerun is None:
         return
     if not isinstance(rerun, dict):
@@ -1253,9 +1281,13 @@ def _rerun_faults(rerun: object, where: str) -> None:
     if not isinstance(tests, list) or not tests:
         raise Refused(f"{where}: rerun names no test")
     seen: set[str] = set()
+    five = schema == _SCHEMA_5
+    held = "test, rerun_result, why and first_failure" if five else "test, rerun_result and why"
     for entry in tests:
-        if not isinstance(entry, dict) or set(entry) != _RERUN_TEST_KEYS:
-            raise Refused(f"{where}: each rerun test holds exactly test, rerun_result and why")
+        if not isinstance(entry, dict) or set(entry) != (
+            _RERUN_TEST_KEYS_5 if five else _RERUN_TEST_KEYS
+        ):
+            raise Refused(f"{where}: each rerun test holds exactly {held}")
         test, result, why = entry["test"], entry["rerun_result"], entry["why"]
         if not isinstance(test, str) or not test:
             raise Refused(f"{where}: a rerun test must name a test id")
@@ -1271,6 +1303,12 @@ def _rerun_faults(rerun: object, where: str) -> None:
             raise Refused(f"{where}: {test} is classified, and no rerun ran")
         if not isinstance(why, str) or not why:
             raise Refused(f"{where}: {test}'s why must be a non-empty string")
+        first = entry["first_failure"] if five else None
+        if five and (not isinstance(first, str) or first not in FIRST_FAILURES):
+            raise Refused(
+                f"{where}: {test}'s first_failure is {first!r}, not"
+                f" {FIRST_FAILED!r} or {TIMED_OUT!r}"
+            )
 
 
 def _one_record(text: str, n: int) -> JobResult:
@@ -1287,19 +1325,20 @@ def _one_record(text: str, n: int) -> JobResult:
         raise Refused(f"{where} is not JSON: {exc}") from None
     if not isinstance(data, dict):
         raise Refused(f"{where} must be an object, got {type(data).__name__}")
-    # A version-2 or version-4 record holds its version's fields; any other is held to version 3's.
+    # A version-2, -4 or -5 record holds its version's fields (version 5's are version 4's, with
+    # one more on each rerun test); any other is held to version 3's.
     schema = data.get("schema")
     keys = (
         _RECORD_KEYS_2
         if schema == _SCHEMA_2
-        else _RECORD_KEYS_4 if schema == _SCHEMA_4 else _RECORD_KEYS
+        else _RECORD_KEYS_4 if schema in (_SCHEMA_4, _SCHEMA_5) else _RECORD_KEYS
     )
     if set(data) != keys:
         raise Refused(f"{where} must hold exactly {sorted(keys)}, got {sorted(data)}")
-    if schema not in (JOB_RECORD_SCHEMA, _SCHEMA_2, _SCHEMA_4):
+    if schema not in (JOB_RECORD_SCHEMA, _SCHEMA_2, _SCHEMA_4, _SCHEMA_5):
         raise Refused(
-            f"{where} has schema {schema!r}, not {JOB_RECORD_SCHEMA!r}, {_SCHEMA_2!r} or"
-            f" {_SCHEMA_4!r}"
+            f"{where} has schema {schema!r}, not {JOB_RECORD_SCHEMA!r}, {_SCHEMA_2!r},"
+            f" {_SCHEMA_4!r} or {_SCHEMA_5!r}"
         )
     key = data["key"]
     if not isinstance(key, str) or not key:
@@ -1316,7 +1355,7 @@ def _one_record(text: str, n: int) -> JobResult:
         raise Refused(f"{where}: run_id must be a whole number from 1, or null")
     if not _whole(data["attempt"]) or data["attempt"] < 1:
         raise Refused(f"{where}: attempt must be a whole number from 1")
-    _rerun_faults(data["rerun"], where)
+    _rerun_faults(data["rerun"], where, schema)
     # run-job reruns only the failed tests of a red step, so only a failure names a rerun.
     if data["result"] != FAILURE and data["rerun"] is not None:
         raise Refused(f"{where}: only a failure has a rerun, and this {data['result']} names one")
@@ -1347,7 +1386,7 @@ def _one_record(text: str, n: int) -> JobResult:
     if data["result"] == SUCCESS and any(step["exit"] != 0 for step in steps):
         raise Refused(f"{where} says success, and a step exited non-zero")
     unstarted: int | None = None
-    if schema == _SCHEMA_4:
+    if schema in (_SCHEMA_4, _SCHEMA_5):
         unstarted = data["unstarted_steps"]
         if not _whole(unstarted) or unstarted < 0:
             raise Refused(f"{where}: unstarted_steps must be a whole number from 0")
@@ -1372,7 +1411,14 @@ def _one_record(text: str, n: int) -> JobResult:
         raise Refused(f"{where}: toolchain must be null or an object of strings, by toolchain word")
     attempt = data["attempt"]
     tests = [
-        FailedTest(key, attempt, t["test"], t["rerun_result"] or NOT_CLASSIFIED, t["why"])
+        FailedTest(
+            key,
+            attempt,
+            t["test"],
+            t["rerun_result"] or NOT_CLASSIFIED,
+            t["why"],
+            t.get("first_failure"),
+        )
         for t in (data["rerun"] or {}).get("tests", [])
     ]
     tests += [FailedTest(key, attempt, test, QUARANTINED, WAIVED) for test in quarantined]
@@ -1563,7 +1609,10 @@ def tests_summary(tests: Sequence[FailedTest], *, budget: int | None = None) -> 
     ]
     used = 0
     for n, t in enumerate(tests):
-        why = f" ({_inline(t.why)})" if t.why else ""
+        # A test that first timed out says so beside its standing: "flake (first timed out, ...)".
+        said = [f"first {TIMED_OUT}"] if t.first_failure == TIMED_OUT else []
+        said += [_inline(t.why)] if t.why else []
+        why = f" ({', '.join(said)})" if said else ""
         line = f"- `{_inline(t.key)}` attempt {t.attempt}: `{_inline(t.test)}`: {t.standing}{why}"
         used += len(line.encode("utf-8", "backslashreplace")) + 1
         if budget is not None and used > budget:

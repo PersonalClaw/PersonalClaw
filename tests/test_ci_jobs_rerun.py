@@ -248,6 +248,8 @@ def test_a_security_marked_failure_and_a_rail_are_never_rerun_and_stay_red(tmp_p
     assert "security" in rerun[GUARDED]["why"]
     assert rerun[RAIL]["rerun_result"] is None
     assert "rail" in rerun[RAIL]["why"]
+    assert rerun[GUARDED]["first_failure"] == verdict.FIRST_FAILED
+    assert rerun[RAIL]["first_failure"] == verdict.FIRST_FAILED
     # The control beside them: the flaky test in the same job was rerun.
     assert rerun[FLAKY]["rerun_result"] == "flake"
     calls = log.read_text().splitlines()
@@ -306,6 +308,8 @@ HEAD = "a" * 40
 
 
 def _written(**kw) -> str:
+    """A record as run-job writes it; pass ``unstarted_steps`` for a rerun that says how each test
+    first failed (job-record/5), as run-job always does."""
     kw.setdefault("key", "suite")
     kw.setdefault("result", verdict.FAILURE)
     kw.setdefault("identity", verdict.Identity(HEAD))
@@ -664,17 +668,25 @@ def test_the_rerun_is_stopped_at_the_end_of_the_jobs_time(tmp_path, capsys):
     assert capsys.readouterr().err.count("possible xdist hang") == 1
 
 
+_TIMED_OUT_CASE = (
+    '<testcase classname="tests.test_broken.TestBroken" name="test_fails_twice[c]">'
+    '<failure message="Failed: Timeout (&gt;2.0s) from pytest-timeout."/></testcase>'
+)
+
+
 def test_no_rerun_starts_once_the_jobs_time_is_spent(tmp_path):
     root, log, _ = _suite(tmp_path)
     (root / REPORT).parent.mkdir()
     (root / REPORT).write_text(
         '<?xml version="1.0"?><testsuites><testsuite><testcase classname="tests.test_flaky"'
-        ' name="test_fails_then_passes"><failure message="x"/></testcase></testsuite></testsuites>'
+        ' name="test_fails_then_passes"><failure message="x"/></testcase>'
+        f"{_TIMED_OUT_CASE}</testsuite></testsuites>"
     )
     rerun, reasons, stopped = jobs.diagnose(
         [
             *nested_pytest.argv(".", python=PY),
             "tests/test_flaky.py",
+            "tests/test_broken.py",
             f"--junitxml={REPORT}",
         ],
         cwd=root,
@@ -689,13 +701,24 @@ def test_no_rerun_starts_once_the_jobs_time_is_spent(tmp_path):
         "argv": None,
         "exit": None,
         "tests": [
-            {"test": FLAKY, "rerun_result": None, "why": "the job's time ran out before the rerun"}
+            {
+                "test": FLAKY,
+                "rerun_result": None,
+                "why": "the job's time ran out before the rerun",
+                "first_failure": verdict.FIRST_FAILED,
+            },
+            {
+                "test": TWICE_C,
+                "rerun_result": None,
+                "why": "the job's time ran out before the rerun",
+                "first_failure": verdict.TIMED_OUT,
+            },
         ],
     }
     assert reasons == [] and stopped is False
     assert not log.exists()
     # The record reads it back, red.
-    [read] = verdict.from_job_records([_written(rerun=rerun)])
+    [read] = verdict.from_job_records([_written(rerun=rerun, unstarted_steps=0)])
     assert read.result == verdict.FAILURE
 
 
@@ -737,8 +760,196 @@ def test_a_test_stopped_by_its_own_per_test_timeout_is_a_failed_test_and_is_reru
         "test": "tests/test_slow.py::test_times_out_then_passes",
         "rerun_result": "flake",
         "why": "passed rerun alone in a new process",
+        "first_failure": verdict.TIMED_OUT,
     }
     assert log.read_text().splitlines() == ["test_times_out_then_passes"] * 2
+
+
+def test_a_fixture_that_first_timed_out_says_so_and_its_test_is_a_flake(tmp_path, capsys):
+    """pytest-timeout reports a fixture that ran out of time as the test's error on setup, not a
+    failure: the record says the test first timed out, its rerun passes it alone (a flake), and
+    the job stays red."""
+    root, log, _ = _suite(tmp_path)
+    flag = tmp_path / "fixture-slow-seen"
+    _commit(
+        root,
+        {
+            "tests/test_slow_fixture.py": (
+                "import os, time\n\nimport pytest\n\n\n"
+                "@pytest.fixture\n"
+                "def slow_once():\n"
+                f"    if not os.path.exists({str(flag)!r}):\n"
+                f"        open({str(flag)!r}, 'w').close()\n"
+                "        time.sleep(60)\n\n\n"
+                "def test_its_fixture_times_out_then_passes(slow_once):\n"
+                f"    {_calls(log)}"
+            )
+        },
+        "a test whose fixture runs past its per-test timeout once",
+    )
+    argv = (
+        *nested_pytest.argv(".", python=PY),
+        "-p",
+        "no:cacheprovider",
+        "--timeout=2",
+        "-q",
+    )
+    job = _job(command=(Step((*argv, "tests/test_slow_fixture.py", f"--junitxml={REPORT}")),))
+    outcome = _run(root, job, tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    record = _record(outcome)
+    assert record["schema"] == "personalclaw.ci.job-record/5"
+    [entry] = record["rerun"]["tests"]
+    assert entry == {
+        "test": "tests/test_slow_fixture.py::test_its_fixture_times_out_then_passes",
+        "rerun_result": "flake",
+        "why": "passed rerun alone in a new process",
+        "first_failure": verdict.TIMED_OUT,
+    }
+    out = capsys.readouterr().out
+    assert "(first timed out, passed rerun alone in a new process)" in out, out
+    [read] = verdict.from_job_records([outcome.record.read_text()])
+    assert [t.first_failure for t in read.tests] == [verdict.TIMED_OUT]
+
+
+def test_a_failed_test_that_did_not_time_out_says_it_first_failed() -> None:
+    """Only pytest-timeout's words, or xdist's crash line followed by a hard deadline's dump, read
+    as a timeout, at the start of a failure's or an error's message; any other failure, a message
+    that mentions a timeout included, first failed."""
+    import xml.etree.ElementTree as ET
+
+    quoted, both = "tests/t.py::test_x[it's]", 'tests/t.py::test_x[say "hi" it\'s]'
+    assert repr(quoted).startswith('"') and repr(both).startswith("'") and "\\'" in repr(both)
+    cases = {
+        "Failed: Timeout (>2.0s) from pytest-timeout.": verdict.TIMED_OUT,
+        'failed on setup with "Failed: Timeout (>2.0s) from pytest-timeout."': verdict.TIMED_OUT,
+        'failed on teardown with "Failed: Timeout >2.0s"': verdict.TIMED_OUT,
+        "Failed: Timeout >2.0s": verdict.TIMED_OUT,
+        "AssertionError: Timeout (>2.0s) from pytest-timeout.": verdict.FIRST_FAILED,
+        "assert 'Failed: Timeout (>2.0s)' == ''": verdict.FIRST_FAILED,
+        "Failed: Timeouts are configured": verdict.FIRST_FAILED,
+        "": verdict.FIRST_FAILED,
+        # A test past its hard deadline: xdist's crash line, a blank line, then the dump.
+        "failed on setup with \"worker 'gw0' crashed while running 'tests/t.py::test_x'\n\n"
+        "hard deadline: tests/t.py::test_x was still running 9.0s after it started": (
+            verdict.TIMED_OUT
+        ),
+        "worker 'gw1' crashed while running 'tests/t.py::test_x'\n\n"
+        "hard deadline, from outside: tests/t.py::test_x was still running 9.0s": verdict.TIMED_OUT,
+        # xdist quotes the id with repr: an id that holds a ' is in double quotes, and one that
+        # holds both kinds is in single quotes with the ' escaped.
+        f"failed on setup with \"worker {'gw0'!r} crashed while running {quoted!r}\n\n"
+        "hard deadline: tests/t.py::test_x was still running 9.0s after it started": (
+            verdict.TIMED_OUT
+        ),
+        f"worker {'gw1'!r} crashed while running {both!r}\n\n"
+        "hard deadline, from outside: tests/t.py::test_x was still running 9.0s": verdict.TIMED_OUT,
+        # A crash with no deadline's dump (a segfault, an exit) did not time out.
+        "failed on setup with \"worker 'gw0' crashed while running 'tests/t.py::test_x'\"": (
+            verdict.FIRST_FAILED
+        ),
+        "worker 'gw0' crashed while running 'tests/t.py::test_x'\n\nSegmentation fault": (
+            verdict.FIRST_FAILED
+        ),
+        # pytest's JUnit report never words a call this way, so it is not read as one.
+        'failed on call with "Failed: Timeout (>2.0s) from pytest-timeout."': verdict.FIRST_FAILED,
+    }
+    for message, first in cases.items():
+        for tag in ("failure", "error"):
+            case = ET.fromstring(f"<testcase><{tag}/></testcase>")
+            case.find(tag).set("message", message)  # type: ignore[union-attr]
+            assert jobs._first_failure([case], jobs._PYTEST_TIMED_OUT) == first, (tag, message)
+    bare = ET.fromstring("<testcase><failure>Failed: Timeout (>2.0s)</failure></testcase>")
+    assert jobs._first_failure([bare], jobs._PYTEST_TIMED_OUT) == verdict.FIRST_FAILED
+
+
+def test_a_test_any_of_whose_failures_timed_out_first_timed_out() -> None:
+    """A test fails in more than one case (a failed call and a teardown that ran out of time are
+    two cases of one test) or with more than one message (Vitest's assertion, then its
+    afterEach's "Hook timed out"): it first timed out when any of them did, in either order."""
+    import xml.etree.ElementTree as ET
+
+    call = ET.fromstring('<testcase><failure message="AssertionError: x"/></testcase>')
+    teardown = ET.fromstring(
+        '<testcase><error message="failed on teardown with &quot;Failed: Timeout (&gt;2.0s)'
+        ' from pytest-timeout.&quot;"/></testcase>'
+    )
+    for cases in ([call, teardown], [teardown, call]):
+        assert jobs._first_failure(cases, jobs._PYTEST_TIMED_OUT) == verdict.TIMED_OUT
+    assert jobs._first_failure([call, call], jobs._PYTEST_TIMED_OUT) == verdict.FIRST_FAILED
+    assertion, hook = "AssertionError: x", "Hook timed out in 10000ms."
+    for a, b in ((assertion, hook), (hook, assertion)):
+        one = ET.fromstring(
+            f'<testcase><failure message="{a}"/><failure message="{b}"/></testcase>'
+        )
+        assert jobs._first_failure([one], jobs._VITEST_TIMED_OUT) == verdict.TIMED_OUT
+    two = ET.fromstring(
+        '<testcase><failure message="AssertionError: x"/><failure message="Error: y"/></testcase>'
+    )
+    assert jobs._first_failure([two], jobs._VITEST_TIMED_OUT) == verdict.FIRST_FAILED
+
+
+_HARD_DEADLINE_CONFTEST = """
+import hard_deadline
+
+
+def pytest_addoption(parser):
+    hard_deadline.addoption(parser)
+
+
+def pytest_configure(config):
+    hard_deadline.configure(config)
+"""
+
+
+def test_a_test_past_its_hard_deadline_first_timed_out(tmp_path):
+    """A hang pytest-timeout cannot end (here the test cancels its alarm) runs to its hard
+    deadline, whose watchdog ends its process; under xdist the report names the worker's crash
+    and the deadline's dump. That is a test that ran out of time: it first timed out. A test of
+    the same run that fails an assertion first failed."""
+    import xml.etree.ElementTree as ET
+
+    root = tmp_path / "planted"
+    root.mkdir()
+    (root / "conftest.py").write_text(_HARD_DEADLINE_CONFTEST, encoding="utf-8")
+    (root / "test_planted.py").write_text(
+        "import signal\nimport time\n\nimport pytest\n\n\n"
+        "@pytest.mark.timeout(1)\n"
+        "@pytest.mark.parametrize('when', ['now', \"the job's time\"])\n"
+        "def test_cancels_its_alarm_and_hangs(when):\n"
+        "    signal.setitimer(signal.ITIMER_REAL, 0)\n"
+        "    time.sleep(30)\n\n\n"
+        "def test_fails():\n"
+        "    assert False\n",
+        encoding="utf-8",
+    )
+    junit = tmp_path / "junit.xml"
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent)}
+    env.pop("PYTEST_TIMEOUT", None)
+    argv = [
+        *nested_pytest.argv(tmp_path),
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        "-o",
+        "hard_deadline_grace=1",
+        "-n",
+        "2",
+        f"--junitxml={junit}",
+    ]
+    ran = subprocess.run(argv, cwd=root, env=env, capture_output=True, text=True, timeout=60)
+    assert ran.returncode == 1, ran.stdout[-2000:] + ran.stderr[-2000:]
+    cases = {c.get("name"): c for c in ET.parse(junit).getroot().iter("testcase")}
+    for when in ("now", "the job's time"):
+        hung = cases[f"test_cancels_its_alarm_and_hangs[{when}]"]
+        [said] = [
+            e.get("message") or "" for e in (*hung.findall("failure"), *hung.findall("error"))
+        ]
+        assert "crashed while running" in said and "hard deadline: " in said, said[:300]
+        assert jobs._first_failure([hung], jobs._PYTEST_TIMED_OUT) == verdict.TIMED_OUT, said[:300]
+    assert jobs._first_failure([cases["test_fails"]], jobs._PYTEST_TIMED_OUT) == (
+        verdict.FIRST_FAILED
+    )
 
 
 # ── the weekly report reads the rerun's word ──────────────────────────────────────────────────
@@ -1027,7 +1238,12 @@ def test_a_flaky_failure_in_a_package_with_its_own_pytest_root_is_rerun(tmp_path
     assert record["result"] == verdict.FAILURE
     client = "sub/tests/test_client.py::test_client_fails_then_passes"
     assert record["rerun"]["tests"] == [
-        {"test": client, "rerun_result": "flake", "why": "passed rerun alone in a new process"}
+        {
+            "test": client,
+            "rerun_result": "flake",
+            "why": "passed rerun alone in a new process",
+            "first_failure": verdict.FIRST_FAILED,
+        }
     ]
     assert record["rerun"]["argv"][-1] == client
     assert log.read_text().splitlines() == ["test_client_fails_then_passes"] * 2
@@ -1059,6 +1275,7 @@ def test_a_package_failure_never_reruns_its_namesake_at_the_repository_root(tmp_
             "test": "sub/tests/test_same.py::test_same",
             "rerun_result": "repeated failure",
             "why": "failed again, alone",
+            "first_failure": verdict.FIRST_FAILED,
         }
     ]
     assert log.read_text().splitlines() == ["test_same"] * 2
@@ -1123,12 +1340,90 @@ def test_a_case_that_names_no_one_file_of_the_steps_own_is_recorded_and_not_reru
     assert rerun == {
         "argv": None,
         "exit": None,
-        "tests": [{"test": label, "rerun_result": None, "why": _NOT_ONE}],
+        "tests": [
+            {
+                "test": label,
+                "rerun_result": None,
+                "why": _NOT_ONE,
+                "first_failure": verdict.FIRST_FAILED,
+            }
+        ],
     }
     assert reasons == [] and stopped is False
     assert not log.exists()
-    [read] = verdict.from_job_records([_written(rerun=rerun)])
+    [read] = verdict.from_job_records([_written(rerun=rerun, unstarted_steps=0)])
     assert read.result == verdict.FAILURE
+
+
+_TIMEOUT_MESSAGE = "Failed: Timeout (&gt;2.0s) from pytest-timeout."
+
+
+@pytest.mark.parametrize(
+    ("classname", "name", "test", "why"),
+    [
+        ("tests.test_gone", "test_x", "tests.test_gone::test_x", _NOT_ONE),
+        ("tests.rails.test_rail", "test_rail_fails", RAIL, "a rail: red at once and never rerun"),
+    ],
+    ids=["no file", "a rail"],
+)
+@pytest.mark.parametrize(
+    ("failure", "first"),
+    [
+        ('<failure message="AssertionError: x"/>', verdict.FIRST_FAILED),
+        (f'<failure message="{_TIMEOUT_MESSAGE}"/>', verdict.TIMED_OUT),
+    ],
+    ids=["failed", "timed out"],
+)
+def test_a_test_never_rerun_still_says_how_it_first_failed(
+    tmp_path, classname, name, test, why, failure, first
+):
+    root, log, _ = _suite(tmp_path)
+    rerun, reasons, stopped = _diagnose(
+        root,
+        tmp_path,
+        ["tests"],
+        f'<testcase classname="{classname}" name="{name}">{failure}</testcase>',
+    )
+    assert rerun["tests"] == [
+        {"test": test, "rerun_result": None, "why": why, "first_failure": first}
+    ]
+    assert reasons == [] and stopped is False and not log.exists()
+
+
+@pytest.mark.parametrize(
+    "cases",
+    [
+        [
+            '<failure message="AssertionError: x"/>',
+            f'<error message="failed on teardown with &quot;{_TIMEOUT_MESSAGE}&quot;"/>',
+        ],
+        [
+            f'<error message="failed on teardown with &quot;{_TIMEOUT_MESSAGE}&quot;"/>',
+            '<failure message="AssertionError: x"/>',
+        ],
+    ],
+    ids=["call, then teardown", "teardown, then call"],
+)
+def test_a_failed_call_and_a_teardown_that_timed_out_are_one_test_that_first_timed_out(
+    tmp_path, cases
+):
+    """pytest's report holds a test whose call failed and whose teardown then ran out of time as
+    two cases of one name: the record holds one test, and it first timed out."""
+    root, log, seen = _suite(tmp_path)
+    seen.touch()  # its first call was the step's
+    both = "".join(
+        f'<testcase classname="tests.test_flaky" name="test_fails_then_passes">{c}</testcase>'
+        for c in cases
+    )
+    rerun, _, _ = _diagnose(root, tmp_path, ["tests"], both)
+    assert rerun["tests"] == [
+        {
+            "test": FLAKY,
+            "rerun_result": verdict.FLAKE,
+            "why": "passed rerun alone in a new process",
+            "first_failure": verdict.TIMED_OUT,
+        }
+    ]
 
 
 def test_a_case_that_names_no_file_is_recorded_beside_one_that_is_rerun(tmp_path):
@@ -1203,7 +1498,12 @@ def test_a_failed_call_and_a_teardown_error_are_one_test_rerun_once(tmp_path):
     assert len(_failed_in_report(root)) == 2
     test = "tests/test_teardown.py::test_fails_and_tears_down_badly"
     assert _record(outcome)["rerun"]["tests"] == [
-        {"test": test, "rerun_result": "repeated failure", "why": "failed again, alone"}
+        {
+            "test": test,
+            "rerun_result": "repeated failure",
+            "why": "failed again, alone",
+            "first_failure": verdict.FIRST_FAILED,
+        }
     ]
     assert log.read_text().splitlines() == ["test_fails_and_tears_down_badly"] * 2
     import xml.etree.ElementTree as ET
@@ -1268,6 +1568,7 @@ def test_a_test_that_skips_on_the_rerun_is_not_classified(tmp_path):
         "test": "tests/test_skips.py::test_fails_then_skips",
         "rerun_result": None,
         "why": "skipped on the rerun, so not classified",
+        "first_failure": verdict.FIRST_FAILED,
     }
     assert _junit_property(root, "rerun_result") == {
         "tests.test_skips::test_fails_then_skips": None
@@ -1287,6 +1588,7 @@ def test_a_job_whose_only_failure_is_security_marked_says_so_and_never_runs_it_a
             "test": GUARDED,
             "rerun_result": None,
             "why": "security-marked: the rerun deselects it, so it is never rerun",
+            "first_failure": verdict.FIRST_FAILED,
         }
     ]
     assert log.read_text().splitlines() == ["test_security_fails"]
@@ -1335,7 +1637,12 @@ def test_a_rerun_report_it_cannot_read_classifies_nothing(tmp_path, report):
     record = _record(outcome)
     assert record["rerun"]["exit"] == 0
     assert record["rerun"]["tests"] == [
-        {"test": FLAKY, "rerun_result": None, "why": "the rerun reported nothing for it (exit 0)"}
+        {
+            "test": FLAKY,
+            "rerun_result": None,
+            "why": "the rerun reported nothing for it (exit 0)",
+            "first_failure": verdict.FIRST_FAILED,
+        }
     ]
     assert log.read_text().splitlines() == ["test_fails_then_passes"] * 2
     assert _junit_property(root, "rerun_result") == {
@@ -1405,6 +1712,7 @@ def test_a_test_that_times_out_twice_is_a_repeated_failure(tmp_path):
         "test": "tests/test_hang.py::test_always_hangs",
         "rerun_result": "repeated failure",
         "why": "failed again, alone",
+        "first_failure": verdict.TIMED_OUT,
     }
     assert log.read_text().splitlines() == ["test_always_hangs"] * 2
 
@@ -1476,12 +1784,22 @@ def test_a_report_folder_that_cannot_be_kept_aside_gets_no_rerun(tmp_path, monke
 
     monkeypatch.setattr(jobs, "_keep", refuse)
     cases = '<testcase classname="tests.test_flaky" name="test_fails_then_passes"><failure/>'
-    rerun, reasons, stopped = _diagnose(root, tmp_path, ["tests"], cases + "</testcase>")
+    rerun, reasons, stopped = _diagnose(
+        root, tmp_path, ["tests"], cases + "</testcase>" + _TIMED_OUT_CASE
+    )
     why = "the step's report folder could not be kept aside, so it is not rerun"
     assert rerun == {
         "argv": None,
         "exit": None,
-        "tests": [{"test": FLAKY, "rerun_result": None, "why": why}],
+        "tests": [
+            {
+                "test": FLAKY,
+                "rerun_result": None,
+                "why": why,
+                "first_failure": verdict.FIRST_FAILED,
+            },
+            {"test": TWICE_C, "rerun_result": None, "why": why, "first_failure": verdict.TIMED_OUT},
+        ],
     }
     assert len(reasons) == 1, reasons
     assert reasons[0].startswith("rerun: the step's report folder could not be kept aside"), reasons
@@ -1586,7 +1904,7 @@ def test_a_job_whose_time_runs_out_before_a_planned_step_says_so_in_its_record(
     assert outcome.code == run.RED, outcome.reasons
     assert any("ran out before step 3" in r for r in outcome.reasons), outcome.reasons
     record = _record(outcome)
-    assert record["schema"] == "personalclaw.ci.job-record/4"
+    assert record["schema"] == "personalclaw.ci.job-record/5"
     assert [s["exit"] for s in record["steps"]] == [1, 0]
     assert record["unstarted_steps"] == 1
     assert _by_test(record)[FLAKY]["rerun_result"] == "flake"

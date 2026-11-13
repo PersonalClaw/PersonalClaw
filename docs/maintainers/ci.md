@@ -1298,7 +1298,10 @@ main's verdict. Neither step can fail its job, and a push's run writes neither.
   says how many of its planned steps never started (`unstarted_steps`, `job-record/4`) must name
   none: a job whose time ran out after its rerun passed and before its next step began holds no
   exit for that step, so it stays red. A `job-record/3` record does not say, and is read as
-  before;
+  before. A `job-record/5` record is version 4's with one more key on each rerun test, how it
+  first failed (`first_failure`: `failed` or `timed out`, `verdict.FIRST_FAILURES`, and no other
+  word). The rule never reads it: a flake is a flake however it first failed, and the failed-test
+  list says "first timed out" beside a test's standing;
 - the pull request changes no file the test's run reads: for pytest its own file, every
   `conftest.py` above it and `pyproject.toml`; for Vitest its own file, `web/vitest.config.ts`,
   `web/vite.config.ts` and `web/src/test/`. A test the pull request adds or edits is never
@@ -3097,6 +3100,17 @@ known failure.
   reads into the test line's `rerun_result`; and as a `::warning` line. The verdict lists each
   one from the record, and a flake's job still reads red (see "The verdict"); the collector
   carries the record's words into the history's record lines, which the weekly report counts.
+- **How it first failed** (`job-record/5`): each rerun test also carries `first_failure`, `timed
+  out` or `failed`, from the step's own report. For pytest, a `<failure>` or `<error>` message
+  that starts as pytest-timeout's (`Failed: Timeout (>30.0s) from pytest-timeout.`, or `failed on
+  setup with "Failed: Timeout ..."` for a fixture), or as xdist's error for a test past its hard
+  deadline (`failed on setup with "worker '<gw>' crashed while running <id>`, with `<id>` the
+  test's id as Python's `repr` quotes it, a blank line, then `hard deadline:` or `hard deadline,
+  from outside:`); for Vitest, one that starts `Test timed out in` or `Hook timed out in`; for
+  Playwright, a first run whose status is `timedOut`. A test with several failed cases or messages
+  (a failed call and a teardown that timed out) timed out when any of them did. Anything else is
+  `failed`, never an open word, since the record is read back before it is written. A test that
+  first timed out says so on its `::warning` line. Neither word changes how it stands.
 - **The step's own outputs:** the files the step left beside its JUnit report (the real-home
   guard's `reports/real-home-guard.txt` among them) are put back after the rerun, and what the
   rerun wrote there moves to the job's scratch folder, so the job's reports describe the job.

@@ -24,7 +24,7 @@ import pytest
 from ci_merge_controller_shared import GATE_BOUNDS, GATE_FILTERS
 
 from tools.ci import merge_controller as mc
-from tools.ci import merge_verdict, trust, workflows
+from tools.ci import merge_verdict, trust, verdict, workflows
 
 REPO = "owner/project"
 RUN = 77
@@ -3007,6 +3007,35 @@ def test_a_first_flake_class_red_says_retry_0_of_2_and_why() -> None:
     summary = found.output["summary"]
     assert "- retry 0 of 2\n" in summary
     assert "- flake-class: 1 failed test(s), each with an open flaky-test issue" in summary
+
+
+def test_a_version_5_flake_that_first_timed_out_is_still_flake_class() -> None:
+    """job-record/5 says how each rerun test first failed. The notices the controller reads keep
+    their keys and the test's standing, so a flake that first timed out is flake-class as
+    before (verdict.failed_notices, read here as the results job writes them)."""
+    rerun = {
+        "argv": ["uv", "run", "pytest", "-n", "0"],
+        "exit": 1,
+        "tests": [{"test": FLAKY_TEST, "rerun_result": verdict.FLAKE, "why": "passed alone"}],
+    }
+    record = json.loads(
+        verdict.job_record(
+            key=SHARD,
+            result=verdict.FAILURE,
+            identity=verdict.Identity(HEAD, {}),
+            steps=[(["uv", "run", "pytest"], 1, 1.0)],
+            rerun=rerun,
+            unstarted_steps=0,
+        )
+    )
+    record["schema"] = "personalclaw.ci.job-record/5"
+    record["rerun"]["tests"][0]["first_failure"] = verdict.TIMED_OUT
+    results = verdict.from_job_records([json.dumps(record)])
+    judged = verdict.decide([SHARD], results, verdict.Identity(HEAD, {}))
+    notes = tuple(line.split("::", 2)[2] for line in verdict.failed_notices(judged).splitlines())
+    assert notes == _counted(_failed()), "the notices are as a version-4 record's"
+    found = _note(_retried(notes=notes))
+    assert found.output["title"] == f"Red (retry 0 of 2, flake-class): {RESULTS_RED}"
 
 
 def test_an_earlier_red_head_with_the_same_tree_is_a_retry() -> None:
