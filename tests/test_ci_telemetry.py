@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.ci import telemetry
+from tools.ci import telemetry, verdict
 
 RUN = 500
 
@@ -1964,3 +1964,33 @@ def test_a_breadth_run_looks_for_no_pull_request(tmp_path: Path, monkeypatch) ->
     code, lines = _collect(tmp_path, monkeypatch, gh)
     assert code == 0 and lines[0]["tested_by"] is None
     assert not any("/commits/" in a or "/pulls" in a for a in gh.asked)
+
+
+def test_a_version_5_record_whose_first_failure_is_no_word_is_refused_as_a_collect_error() -> None:
+    """The verdict refuses a first failure that is not one of its words, a list or an object
+    included, so the collector names the artifact and stops, as for any record it cannot read."""
+    record = json.loads(
+        verdict.job_record(
+            key="rails",
+            result=verdict.FAILURE,
+            identity=verdict.Identity("a" * 40, {}),
+            steps=[(["pytest"], 1, 1.0)],
+            run_id=RUN,
+            rerun={
+                "argv": ["pytest", "-n", "0"],
+                "exit": 0,
+                "tests": [{"test": "tests/test_a.py::test_x", "rerun_result": "flake", "why": "x"}],
+            },
+            unstarted_steps=0,
+        )
+    )
+    record["schema"] = "personalclaw.ci.job-record/5"
+    name = verdict.record_artifact("rails", run_id=RUN, attempt=1)
+    for first in ([], {}, "timeout"):
+        record["rerun"]["tests"][0]["first_failure"] = first
+        archive = _zip("record.json", json.dumps(record).encode())
+        with pytest.raises(telemetry.CollectError, match=f"{name}: .*first_failure is"):
+            telemetry.record_bytes(name, archive, RUN, 1)
+    record["rerun"]["tests"][0]["first_failure"] = verdict.TIMED_OUT
+    _, read = telemetry.record_bytes(name, _zip("r.json", json.dumps(record).encode()), RUN, 1)
+    assert [t.first_failure for t in read.tests] == [verdict.TIMED_OUT]

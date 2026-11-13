@@ -38,9 +38,10 @@ step ran workers), in a new process, with the step's per-test ``--timeout`` and 
 remaining time. A rail (``tests/rails/``) is never rerun, and the rerun deselects every
 ``security``-marked test. Each failed test is classified ``flake`` (it passed alone) or
 ``repeated failure`` in the record's ``rerun`` field, as a ``rerun_result`` property in the job's
-report (which the telemetry collector reads) and as a ``::warning`` line. The files the step left
-beside its report are put back after the rerun. The job stays red whatever the rerun shows: only
-a quarantine entry waives a known failure.
+report (which the telemetry collector reads) and as a ``::warning`` line. Each also says how it
+first failed, ``timed out`` or ``failed`` (job-record/5, :func:`_first_failure`). The files the
+step left beside its report are put back after the rerun. The job stays red whatever the rerun
+shows: only a quarantine entry waives a known failure.
 
 ``run <tier>`` runs every job of a tier in the catalogue's order, each after the jobs its
 ``after`` names, every shard of each, and judges each job's records with :func:`verdict.decide`
@@ -105,7 +106,7 @@ import tempfile
 import time
 import uuid
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -960,6 +961,35 @@ def _node_id(case: ET.Element, cwd: Path, paths: Sequence[Path]) -> str | None:
     return "::".join([Path(os.path.relpath(file, cwd.resolve())).as_posix(), *classes, name])
 
 
+#: How a test that ran out of time says so in its first attempt's JUnit report, by runner, at the
+#: start of its ``<failure>``'s or ``<error>``'s message. pytest-timeout fails the test (``Failed:
+#: Timeout (>30.0s) from pytest-timeout.``, or ``Failed: Timeout >30.0s`` as older releases word
+#: it) or, for a fixture that timed out, errors it (``failed on setup with "Failed: Timeout
+#: ..."``). A test past its hard deadline (``tests/hard_deadline.py``), a hang pytest-timeout could
+#: not end, has its process ended, and xdist errors it with the deadline's dump after its crash
+#: line (``failed on setup with "worker 'gw0' crashed while running <id>``, the test's id as
+#: Python's repr quotes it, a blank line, and ``hard deadline: ...``, or ``hard deadline, from
+#: outside: ...`` from ``tools/ci/hung.py``). Vitest says ``Test timed out in 5000ms.`` or ``Hook
+#: timed out in 10000ms.``. Any other failure is :data:`verdict.FIRST_FAILED`, never an open word.
+_PYTEST_TIMED_OUT = re.compile(
+    r'(?:failed on (?:setup|teardown) with ")?'
+    r"(?:Failed: Timeout \(?>|worker '[^']+' crashed while running [^\n]+\n\nhard deadline[:,] )"
+)
+_VITEST_TIMED_OUT = re.compile(r"(?:Test|Hook) timed out in \d+ms\b")
+
+
+def _first_failure(cases: Iterable[ET.Element], timed_out: re.Pattern[str]) -> str:
+    """How a test first failed, from its failed cases in the step's own report (a failed call and
+    an errored teardown are two cases of one test): :data:`verdict.TIMED_OUT` when one of their
+    ``<failure>`` or ``<error>`` messages starts as *timed_out* reads a timeout, else
+    :data:`verdict.FIRST_FAILED`."""
+    for case in cases:
+        for found in (*case.findall("failure"), *case.findall("error")):
+            if timed_out.match(found.get("message") or ""):
+                return verdict.TIMED_OUT
+    return verdict.FIRST_FAILED
+
+
 def _case_result(case: ET.Element) -> str:
     if case.find("failure") is not None or case.find("error") is not None:
         return "failed"
@@ -1058,8 +1088,18 @@ def _put_back(
     return sorted(wrote)
 
 
-def _entry(test: str, word: str | None, why: str) -> dict[str, object]:
-    return {"test": test, "rerun_result": word, "why": why}
+def _entry(test: str, word: str | None, why: str, first: str) -> dict[str, object]:
+    """One rerun test as its record names it (job-record/5): its rerun's word and why, and how it
+    first failed (*first*, one of :data:`verdict.FIRST_FAILURES`)."""
+    return {"test": test, "rerun_result": word, "why": why, "first_failure": first}
+
+
+def _warn(entry: Mapping[str, object]) -> None:
+    """Say a rerun test's classification as a warning: its word, and how it first failed when it
+    timed out."""
+    title = entry["rerun_result"] or "never rerun"
+    first = f"first {verdict.TIMED_OUT}, " if entry["first_failure"] == verdict.TIMED_OUT else ""
+    print(f"::warning title={title}::{entry['test']} ({first}{entry['why']})", flush=True)
 
 
 def _classify(got: str | None, clean_run: bool, code: int | None) -> tuple[str | None, str]:
@@ -1120,19 +1160,25 @@ def diagnose(
     order: list[str] = []
     entries: dict[str, dict[str, object]] = {}
     keys: dict[str, Key] = {}  # each test the rerun runs, and its cases' key in the step's report
+    # How each test first failed, over all its failed cases (a call and a teardown: one test).
+    cases: dict[Key, list[ET.Element]] = {}
+    for case in failed_cases:
+        cases.setdefault(_key(case), []).append(case)
+    first = {key: _first_failure(found, _PYTEST_TIMED_OUT) for key, found in cases.items()}
     for case in failed_cases:
         test = _node_id(case, cwd, paths)
         if test is None:
             label = "::".join(_key(case))
             if label not in entries:
                 order.append(label)
-                entries[label] = _entry(label, None, NOT_ONE_FILE)
+                entries[label] = _entry(label, None, NOT_ONE_FILE, first[_key(case)])
             continue
         if test in entries or test in keys:
             continue  # a failed call and an errored teardown: one test, two cases
         order.append(test)
         if (cwd / test.split("::")[0]).resolve().is_relative_to(rails):
-            entries[test] = _entry(test, None, "a rail: red at once and never rerun")
+            why = "a rail: red at once and never rerun"
+            entries[test] = _entry(test, None, why, first[_key(case)])
         else:
             keys[test] = _key(case)
     rerun_argv: list[str] | None = None
@@ -1155,8 +1201,8 @@ def diagnose(
             else "the job's time ran out before the rerun"
         )
         shutil.rmtree(work, ignore_errors=True)
-        for test in keys:
-            entries[test] = _entry(test, None, why)
+        for test, key in keys.items():
+            entries[test] = _entry(test, None, why, first[key])
     elif kept is not None:
         out = work / "junit.xml"
         rerun_argv = [
@@ -1213,7 +1259,7 @@ def diagnose(
         clean_run = seen is not None and code in _READ_ITS_TESTS and not other and not interrupted
         for test, key in keys.items():
             word, why = _classify((seen or {}).get(key), clean_run, code)
-            entries[test] = _entry(test, word, why)
+            entries[test] = _entry(test, word, why, first[key])
     listed = [entries[t] for t in order]
     words = {keys[t]: str(entries[t]["rerun_result"]) for t in keys if entries[t]["rerun_result"]}
     if words:
@@ -1222,8 +1268,7 @@ def diagnose(
         except (ET.ParseError, OSError) as exc:
             reasons.append(f"rerun: the job's report could not be marked: {exc}")
     for entry in listed:
-        title = entry["rerun_result"] or "never rerun"
-        print(f"::warning title={title}::{entry['test']} ({entry['why']})", flush=True)
+        _warn(entry)
     return {"argv": rerun_argv, "exit": code, "tests": listed}, reasons, interrupted
 
 
@@ -1296,6 +1341,10 @@ def diagnose_vitest(
     order: list[str] = []
     entries: dict[str, dict[str, object]] = {}
     keys: dict[str, Key] = {}
+    cases: dict[Key, list[ET.Element]] = {}
+    for case in failed_cases:
+        cases.setdefault(_key(case), []).append(case)
+    first = {key: _first_failure(found, _VITEST_TIMED_OUT) for key, found in cases.items()}
     for case in failed_cases:
         file, name = _key(case)
         test = f"{VITEST_ROOT}/{file}::{name}"
@@ -1304,7 +1353,7 @@ def diagnose_vitest(
         order.append(test)
         path = (cwd / file).resolve() if file else cwd
         if not file or not name or not path.is_file() or not path.is_relative_to(cwd.resolve()):
-            entries[test] = _entry(test, None, NOT_ONE_FILE)
+            entries[test] = _entry(test, None, NOT_ONE_FILE, first[(file, name)])
         else:
             keys[test] = (file, name)
     rerun_argv: list[str] | None = None
@@ -1327,8 +1376,8 @@ def diagnose_vitest(
             else "the job's time ran out before the rerun"
         )
         shutil.rmtree(work, ignore_errors=True)
-        for test in keys:
-            entries[test] = _entry(test, None, why)
+        for test, key in keys.items():
+            entries[test] = _entry(test, None, why, first[key])
     elif kept is not None:
         out = work / "junit.xml"
         files = sorted({file for file, _ in keys.values()})
@@ -1389,7 +1438,7 @@ def diagnose_vitest(
                 word, why = None, "skipped on the rerun, so not classified"
             else:
                 word, why = None, f"the rerun reported nothing for it (exit {code})"
-            entries[test] = _entry(test, word, why)
+            entries[test] = _entry(test, word, why, first[key])
     return _finish(report, order, entries, keys, reasons, rerun_argv, code, interrupted)
 
 
@@ -1412,8 +1461,7 @@ def _finish(
         except (ET.ParseError, OSError) as exc:
             reasons.append(f"rerun: the job's report could not be marked: {exc}")
     for entry in listed:
-        title = entry["rerun_result"] or "never rerun"
-        print(f"::warning title={title}::{entry['test']} ({entry['why']})", flush=True)
+        _warn(entry)
     return {"argv": argv, "exit": code, "tests": listed}, reasons, interrupted
 
 
@@ -1540,6 +1588,7 @@ def diagnose_playwright(
     order: list[str] = []
     entries: dict[str, dict[str, object]] = {}
     alone: dict[tuple[str, str, str], tuple[str, int]] = {}  # (file, title, project): id, line
+    first: dict[str, str] = {}  # how each test's first run ended: timed out, or else failed
     for file, title, status, project, runs, line in tests:
         if status not in ("flaky", "unexpected"):
             continue
@@ -1548,6 +1597,8 @@ def diagnose_playwright(
         if test_id in entries:
             continue
         order.append(test_id)
+        timed_out = bool(runs) and runs[0] == "timedOut"
+        first[test_id] = verdict.TIMED_OUT if timed_out else verdict.FIRST_FAILED
         if status == "unexpected":
             if len(runs) < 2:
                 word, why = None, "failed with no retry run, so not classified"
@@ -1555,21 +1606,22 @@ def diagnose_playwright(
                 word, why = verdict.REPEATED_FAILURE, "failed again on Playwright's one retry"
             else:
                 word, why = None, f"its retry ended {runs[-1]}, so not classified"
-            entries[test_id] = _entry(test_id, word, why)
+            entries[test_id] = _entry(test_id, word, why, first[test_id])
         elif project not in PLAYWRIGHT_ALONE_PROJECTS:
             entries[test_id] = _entry(
                 test_id,
                 None,
                 f"its project, {project}, runs only in its chain or its home, so it is not"
                 " rerun alone",
+                first[test_id],
             )
         elif line is None:
             entries[test_id] = _entry(
-                test_id, None, "its report gives no line, so it is not rerun alone"
+                test_id, None, "its report gives no line, so it is not rerun alone", first[test_id]
             )
         else:
             alone[(file, title, project)] = (test_id, line)
-            entries[test_id] = _entry(test_id, None, "not rerun alone")
+            entries[test_id] = _entry(test_id, None, "not rerun alone", first[test_id])
     if not order:
         return None, [], False
     reasons: list[str] = []
@@ -1580,6 +1632,7 @@ def diagnose_playwright(
                 None,
                 f"one of {len(alone)} flaky tests, more than the {verdict.MAX_FLAKES} a run passes"
                 " as flakes, so none is rerun alone",
+                first[test_id],
             )
         alone = {}
     rerun_argv: list[str] | None = None
@@ -1602,7 +1655,7 @@ def diagnose_playwright(
         )
         shutil.rmtree(work, ignore_errors=True)
         for test_id, _ in alone.values():
-            entries[test_id] = _entry(test_id, None, why)
+            entries[test_id] = _entry(test_id, None, why, first[test_id])
     elif kept is not None:
         out = work / "report.json"
         projects = sorted({project for _, _, project in alone})
@@ -1662,7 +1715,7 @@ def diagnose_playwright(
                 word, why = None, f"it was {got} on the rerun, so not classified"
             else:
                 word, why = None, f"the rerun reported nothing for it (exit {code})"
-            entries[test_id] = _entry(test_id, word, why)
+            entries[test_id] = _entry(test_id, word, why, first[test_id])
     return _finish(None, order, entries, {}, reasons, rerun_argv, code, interrupted)
 
 

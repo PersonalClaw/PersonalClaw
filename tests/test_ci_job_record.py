@@ -84,6 +84,102 @@ def test_a_version_4_record_says_how_many_planned_steps_never_started() -> None:
     assert old.unstarted_steps is None
 
 
+_FIVE = "personalclaw.ci.job-record/5"
+
+
+def _with_test(**keys: object) -> str:
+    """A version-5 record whose first rerun test holds *keys* as well."""
+    data = json.loads(_five())
+    data["rerun"]["tests"][0].update(keys)
+    return json.dumps(data)
+
+
+def _without_first() -> str:
+    """A version-5 record whose second rerun test says nothing of how it first failed."""
+    data = json.loads(_five())
+    del data["rerun"]["tests"][1]["first_failure"]
+    return json.dumps(data)
+
+
+def _three_with_first() -> str:
+    """A version-3 record, which says nothing of planned steps, whose rerun tests each say how
+    they first failed, as only version 5's do."""
+    data = json.loads(_five(schema="personalclaw.ci.job-record/3"))
+    del data["unstarted_steps"]
+    return json.dumps(data)
+
+
+def _five(first: object = verdict.TIMED_OUT, second: object = None, /, **fields: object) -> str:
+    """A failed version-5 record: version 4's, with two rerun tests, the first's first failure
+    *first* and the second's *second* (*first* again when none is given), and *fields* over the
+    record's own."""
+    tests = [("tests/test_a.py::test_flaky", "flake", "passed rerun alone in a new process")]
+    tests += [("tests/test_a.py::test_twice", "repeated failure", "failed again, alone")]
+    rerun = {
+        "argv": ["uv", "run", "pytest", "-n", "0", "tests/test_a.py"],
+        "exit": 1,
+        "tests": [{"test": t, "rerun_result": w, "why": y} for t, w, y in tests],
+    }
+    data = json.loads(
+        _record(
+            result=verdict.FAILURE,
+            steps=[(["uv", "run", "pytest"], 1, 1.5)],
+            rerun=rerun,
+            unstarted_steps=0,
+        )
+    )
+    data["schema"] = _FIVE
+    for test, said in zip(data["rerun"]["tests"], (first, first if second is None else second)):
+        test["first_failure"] = said
+    data.update(fields)
+    return json.dumps(data)
+
+
+def test_a_version_5_record_says_how_each_rerun_test_first_failed() -> None:
+    """job-record/5 is version 4 with one more key on each rerun test: whether it first failed
+    or timed out. How it stands is the rerun's word, as before; a version-4 record does not say."""
+    [five] = verdict.from_job_records([_five(verdict.TIMED_OUT, verdict.FIRST_FAILED)])
+    assert [(t.test, t.standing, t.first_failure) for t in five.tests] == [
+        ("tests/test_a.py::test_flaky", verdict.FLAKE, verdict.TIMED_OUT),
+        ("tests/test_a.py::test_twice", verdict.REPEATED_FAILURE, verdict.FIRST_FAILED),
+    ]
+    assert five.unstarted_steps == 0
+    assert verdict.FIRST_FAILURES == {"failed", "timed out"}
+    four = json.loads(_five())
+    four["schema"] = "personalclaw.ci.job-record/4"
+    for test in four["rerun"]["tests"]:
+        del test["first_failure"]
+    [old] = verdict.from_job_records([json.dumps(four)])
+    assert [t.first_failure for t in old.tests] == [None, None]
+    assert [t.standing for t in old.tests] == [t.standing for t in five.tests]
+
+
+def test_a_test_that_first_timed_out_says_so_in_the_list_and_not_in_the_notices() -> None:
+    """The listing says it beside the standing; the notices the merge controller reads keep
+    their keys, so a flake that first timed out still reads as one there."""
+    judged = verdict.decide(
+        ["rails"],
+        verdict.from_job_records([_five(verdict.TIMED_OUT, verdict.FIRST_FAILED)]),
+        verdict.Identity(HEAD, {}),
+    )
+    listed = verdict.tests_summary(judged.tests)
+    assert (
+        "- `rails` attempt 1: `tests/test_a.py::test_flaky`: flake (first timed out, passed rerun"
+        " alone in a new process)"
+    ) in listed
+    notes = [
+        json.loads(line.split("::", 2)[2]) for line in verdict.failed_notices(judged).splitlines()
+    ]
+    # A test that first failed says only its standing and its why.
+    assert (
+        "- `rails` attempt 1: `tests/test_a.py::test_twice`: repeated failure (failed again,"
+        " alone)\n"
+    ) in listed
+    assert notes[0] == {"failed": 2}
+    assert all(set(n) == {"key", "attempt", "test", "standing"} for n in notes[1:]), notes
+    assert notes[1]["standing"] == verdict.FLAKE
+
+
 def test_a_record_reads_back_as_the_result_it_names() -> None:
     [result] = verdict.from_job_records([_record(attempt=2)])
     # A record names the partners its own job read, so it is judged against those alone.
@@ -221,6 +317,34 @@ def test_a_record_with_seconds_that_are_no_number_is_never_written(seconds: floa
             "a whole number from 0",
         ),
         (_with(schema="personalclaw.ci.job-record/4", unstarted_steps=1), "never started"),
+        # How each rerun test first failed: only version 5 says, on every rerun test, and only
+        # one of the two words.
+        (_five("timeout"), "first_failure is 'timeout', not 'failed' or 'timed out'"),
+        (_five("error"), "first_failure is 'error', not 'failed' or 'timed out'"),
+        (_five(None), "first_failure is None"),
+        (_five(""), "first_failure is ''"),
+        (_five(1), "first_failure is 1"),
+        (_five([]), "first_failure is \\[\\]"),
+        (_five({}), "first_failure is \\{\\}"),
+        (_without_first(), "holds exactly test, rerun_result, why and first_failure"),
+        (
+            _with_test(first_result="error"),
+            "holds exactly test, rerun_result, why and first_failure",
+        ),
+        (_five(schema="personalclaw.ci.job-record/4"), "holds exactly test, rerun_result and why"),
+        (_three_with_first(), "holds exactly test, rerun_result and why"),
+        (
+            _five(
+                unstarted_steps=1,
+                result=verdict.SUCCESS,
+                rerun=None,
+                steps=[{"argv": ["x"], "exit": 0, "seconds": 0}],
+            ),
+            "never started",
+        ),
+        (_five(unstarted_steps=-1), "a whole number from 0"),
+        # A later version is no version this reads: held to version 3's fields, it is refused.
+        (_five(schema="personalclaw.ci.job-record/6"), "must hold exactly"),
     ],
 )
 def test_a_record_it_cannot_read_is_refused(text: str, why: str) -> None:

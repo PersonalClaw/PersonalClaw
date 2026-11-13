@@ -200,6 +200,90 @@ def test_the_flake_rule_passes_nothing_on_a_run_a_rerun_filled() -> None:
     _red(judged, f"a rerun filled a planned job no runner took on attempt 1 ({TWO})")
 
 
+def _version_5(record: str, first: str = verdict.TIMED_OUT) -> str:
+    """The record as job-record/5 says it: each rerun test with how it first failed."""
+    data = json.loads(record)
+    data["schema"] = "personalclaw.ci.job-record/5"
+    for test in data["rerun"]["tests"]:
+        test["first_failure"] = first
+    return json.dumps(data)
+
+
+@pytest.mark.parametrize("first", sorted(verdict.FIRST_FAILURES))
+def test_a_version_5_flake_passes_as_before_however_it_first_failed(first: str) -> None:
+    """How a flake first failed, failed or timed out, is said, never judged: the rule reads its
+    standing, which is its rerun's word."""
+    judged = _judge([_version_5(_record(ONE, _test(FLAKY), unstarted=0), first)])
+    assert judged.green and [(t.key, t.test) for t in judged.flakes] == [(ONE, FLAKY)]
+    assert judged.flakes[0].first_failure == first
+
+
+#: Each red a flake's job reads, as a version-5 record says it: how the flake first failed is
+#: never read by the rule, so each stays red however it did.
+_RED_AS_FIVE = {
+    "a changed read": (
+        lambda: [_record(ONE, _test(FLAKY), unstarted=0)],
+        {"changed": CHANGED | {"tests/conftest.py"}},
+        "tests/conftest.py",
+    ),
+    "three flakes": (
+        lambda: [
+            _record(ONE, _test(FLAKY), _test(OTHER), unstarted=0),
+            _record(TWO, _test(THIRD), unstarted=0),
+        ],
+        {"failed": (ONE, TWO)},
+        "3 failed tests passed alone, more than the 2",
+    ),
+    "beside a repeated failure": (
+        lambda: [
+            _record(
+                ONE,
+                _test(FLAKY),
+                _test(OTHER, verdict.REPEATED_FAILURE, "failed again, alone"),
+                rerun_exit=1,
+                unstarted=0,
+            )
+        ],
+        {},
+        "not passed by a rerun alone",
+    ),
+    "a rerun that did not exit 0": (
+        lambda: [_record(ONE, _test(FLAKY), rerun_exit=1, unstarted=0)],
+        {},
+        "not passed by a rerun alone",
+    ),
+    "a planted step never started": (
+        lambda: [_record(ONE, _test(FLAKY), exits=(0, 1), unstarted=1)],
+        {},
+        "never started 1 of its planned steps",
+    ),
+    "a security-marked test beside it": (
+        lambda: [
+            _record(
+                ONE,
+                _test(FLAKY),
+                _test("tests/test_guard.py::test_it", None, "security-marked: never rerun"),
+                unstarted=0,
+            )
+        ],
+        {},
+        "is not classified, not a flake",
+    ),
+    "a step that exited otherwise": (
+        lambda: [_record(ONE, _test(FLAKY), exits=(124,), unstarted=0)],
+        {},
+        "one step that exited 1 alone",
+    ),
+}
+
+
+@pytest.mark.parametrize("first", sorted(verdict.FIRST_FAILURES))
+@pytest.mark.parametrize("case", list(_RED_AS_FIVE))
+def test_a_version_5_flake_is_red_wherever_its_version_4_is(case: str, first: str) -> None:
+    records, judged_by, says = _RED_AS_FIVE[case]
+    _red(_judge([_version_5(r, first) for r in records()], **judged_by), says)
+
+
 def test_two_flakes_in_two_shards_are_green() -> None:
     judged = _judge([_record(ONE, _test(FLAKY)), _record(TWO, _test(OTHER))], failed=(ONE, TWO))
     assert judged.green

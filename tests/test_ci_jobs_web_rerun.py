@@ -65,6 +65,7 @@ BODY = {
     "passed": "",
     "failed": "<failure message='expected true'/>",
     "timeout": "<failure message='Test timed out in 20000ms.'/>",
+    "hook-timeout": "<failure message='Hook timed out in 10000ms.&#10;If it runs long, say so'/>",
     "skipped": "<skipped/>",
 }
 args = sys.argv[1:]
@@ -91,7 +92,7 @@ def junit(files=(), pattern=None):
             got = outcome(f"{file}::{name}", results)
             if got != "skipped":
                 ran.append(name)
-        failed = failed or got in ("failed", "timeout")
+        failed = failed or got in ("failed", "timeout", "hook-timeout")
         attrs = f"classname={quoteattr(file)} name={quoteattr(name)}"
         rows.append(f"<testcase {attrs}>{BODY[got]}</testcase>")
     body = "".join(rows)
@@ -430,7 +431,12 @@ def test_a_vitest_job_whose_only_failure_is_a_flake_stays_red(tmp_path):
     record = _record(outcome)
     assert record["result"] == verdict.FAILURE
     assert record["rerun"]["tests"] == [
-        {"test": FLAKY, "rerun_result": verdict.FLAKE, "why": "passed rerun alone in a new process"}
+        {
+            "test": FLAKY,
+            "rerun_result": verdict.FLAKE,
+            "why": "passed rerun alone in a new process",
+            "first_failure": verdict.FIRST_FAILED,
+        }
     ]
     [read] = verdict.from_job_records([outcome.record.read_text()])
     assert read.result == verdict.FAILURE
@@ -454,6 +460,32 @@ def test_the_vitest_rerun_says_each_classification_as_a_warning(tmp_path, capsys
     out = capsys.readouterr().out
     assert f"::warning title=flake::{FLAKY} (passed rerun alone in a new process)" in out
     assert f"::warning title=repeated failure::{BROKEN} (failed again, alone)" in out
+
+
+HOOKED_NAME = "hooked > its beforeEach times out once"
+HOOKED = f"web/src/hooked.test.ts::{HOOKED_NAME}"
+
+
+def test_a_vitest_test_whose_hook_first_timed_out_says_so_and_is_a_flake(tmp_path, capsys):
+    """Vitest reports a hook that ran out of time as the test's failure ("Hook timed out in"): the
+    record says the test first timed out, its rerun passed it alone, and the job stays red. A
+    test that first failed an assertion says it first failed."""
+    hooked = ("src/hooked.test.ts", HOOKED_NAME, ["hook-timeout", "passed"])
+    root, path = _plant(tmp_path, vitest=(VITEST_CASES[0], hooked))
+    outcome = _run(root, path, _vitest_job(), tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    record = _record(outcome)
+    assert record["schema"] == "personalclaw.ci.job-record/5"
+    found = {t: (e["rerun_result"], e["first_failure"]) for t, e in _by_test(record).items()}
+    assert found == {
+        FLAKY: (verdict.FLAKE, verdict.FIRST_FAILED),
+        HOOKED: (verdict.FLAKE, verdict.TIMED_OUT),
+    }
+    out = capsys.readouterr().out
+    assert f"::warning title=flake::{HOOKED} (first timed out, passed rerun alone" in out
+    assert f"::warning title=flake::{FLAKY} (passed rerun alone in a new process)" in out
+    [read] = verdict.from_job_records([outcome.record.read_text()])
+    assert {t.test: t.first_failure for t in read.tests}[HOOKED] == verdict.TIMED_OUT
 
 
 def test_a_passing_vitest_job_runs_no_rerun(tmp_path):
@@ -482,6 +514,7 @@ def test_a_vitest_title_with_regular_expression_characters_is_rerun_as_itself(tm
         "test": f"web/src/flaky.test.ts::{TRICKY}",
         "rerun_result": verdict.FLAKE,
         "why": "passed rerun alone in a new process",
+        "first_failure": verdict.FIRST_FAILED,
     }
     [again] = _vitest_calls(tmp_path)
     assert again["ran"] == [TRICKY]
@@ -506,7 +539,13 @@ def test_a_vitest_case_whose_file_is_gone_is_not_rerun(tmp_path):
     _git(root, "commit", "-qam", "the slow file is gone")
     outcome = _run(root, path, _vitest_job(), tmp_path)
     rerun = _by_test(_record(outcome))
-    assert rerun[SLOW] == {"test": SLOW, "rerun_result": None, "why": jobs.NOT_ONE_FILE}
+    # Its first failure says it timed out (Vitest's "Test timed out in"), and it is still not rerun.
+    assert rerun[SLOW] == {
+        "test": SLOW,
+        "rerun_result": None,
+        "why": jobs.NOT_ONE_FILE,
+        "first_failure": verdict.TIMED_OUT,
+    }
     [again] = _vitest_calls(tmp_path)
     assert "src/slow.test.ts" not in again["argv"]
 
@@ -607,8 +646,39 @@ def test_no_vitest_rerun_starts_once_the_jobs_time_is_spent(tmp_path):
     root, path = _plant(tmp_path)
     report = root / jobs.VITEST_JUNIT
     report.parent.mkdir(parents=True)
-    report.write_text(_xml(("src/flaky.test.ts", FLAKY_NAME, "failed")))
-    rerun, reasons, stopped = jobs.diagnose_vitest(
+    report.write_text(
+        "<testsuites><testsuite name='vitest'>"
+        f"<testcase classname='src/flaky.test.ts' name={quoteattr(FLAKY_NAME)}>"
+        "<failure message='x'/></testcase>"
+        "<testcase classname='src/slow.test.ts' name='slow &gt; times out every time'>"
+        "<failure message='Test timed out in 20000ms.'/></testcase>"
+        "</testsuite></testsuites>"
+    )
+    rerun, reasons, stopped = _vitest_with_no_time(tmp_path, root, path)
+    assert rerun == {
+        "argv": None,
+        "exit": None,
+        "tests": [
+            {
+                "test": FLAKY,
+                "rerun_result": None,
+                "why": "the job's time ran out before the rerun",
+                "first_failure": verdict.FIRST_FAILED,
+            },
+            {
+                "test": SLOW,
+                "rerun_result": None,
+                "why": "the job's time ran out before the rerun",
+                "first_failure": verdict.TIMED_OUT,
+            },
+        ],
+    }
+    assert reasons == [] and stopped is False
+    assert _calls(tmp_path) == []
+
+
+def _vitest_with_no_time(tmp_path: Path, root: Path, path: str) -> tuple:
+    return jobs.diagnose_vitest(
         root=root,
         env={},
         host=jobs.Host(root=root, family="ubuntu-", path=path),
@@ -617,15 +687,44 @@ def test_no_vitest_rerun_starts_once_the_jobs_time_is_spent(tmp_path):
         deadline=time.monotonic() - 1,
         started=time.time() - 60,
     )
-    assert rerun == {
-        "argv": None,
-        "exit": None,
-        "tests": [
-            {"test": FLAKY, "rerun_result": None, "why": "the job's time ran out before the rerun"}
-        ],
-    }
-    assert reasons == [] and stopped is False
-    assert _calls(tmp_path) == []
+
+
+_HOOK = "Hook timed out in 10000ms."
+
+
+@pytest.mark.parametrize(
+    ("messages", "one_case"),
+    [
+        (("x", _HOOK), False),
+        ((_HOOK, "x"), False),
+        (("x", _HOOK), True),
+        ((_HOOK, "x"), True),
+    ],
+    ids=[
+        "assertion, then hook",
+        "hook, then assertion",
+        "one case, assertion, then hook",
+        "one case, hook, then assertion",
+    ],
+)
+def test_a_vitest_test_whose_hook_timed_out_after_it_failed_first_timed_out(
+    tmp_path, messages, one_case
+):
+    """Vitest writes a test that failed and whose afterEach then ran out of time as one case
+    holding both failures, and two tests of one file with the same full name as two cases under
+    one key. Either way the record holds one test, and it first timed out."""
+    root, path = _plant(tmp_path)
+    report = root / jobs.VITEST_JUNIT
+    report.parent.mkdir(parents=True)
+    opening = f"<testcase classname='src/flaky.test.ts' name={quoteattr(FLAKY_NAME)}>"
+    failures = [f"<failure message={quoteattr(m)}/>" for m in messages]
+    if one_case:
+        cases = opening + "".join(failures) + "</testcase>"
+    else:
+        cases = "".join(f"{opening}{f}</testcase>" for f in failures)
+    report.write_text(f"<testsuites><testsuite name='vitest'>{cases}</testsuite></testsuites>")
+    rerun, _, _ = _vitest_with_no_time(tmp_path, root, path)
+    assert [(e["test"], e["first_failure"]) for e in rerun["tests"]] == [(FLAKY, verdict.TIMED_OUT)]
 
 
 # ── Vitest: a rerun that cannot classify ───────────────────────────────────────────────────────
@@ -728,10 +827,15 @@ def test_a_vitest_report_folder_that_cannot_be_kept_aside_gets_no_rerun(tmp_path
         raise PermissionError(13, "refused", str(folder))
 
     monkeypatch.setattr(jobs, "_keep", refuse)
-    root, path = _plant(tmp_path, vitest=(VITEST_CASES[0],))
+    root, path = _plant(tmp_path, vitest=(VITEST_CASES[0], VITEST_CASES[4]))
     outcome = _run(root, path, _vitest_job(), tmp_path)
-    [entry] = _record(outcome)["rerun"]["tests"]
-    assert entry["rerun_result"] is None and "could not be kept aside" in entry["why"]
+    entries = _by_test(_record(outcome))
+    assert {t: e["first_failure"] for t, e in entries.items()} == {
+        FLAKY: verdict.FIRST_FAILED,
+        SLOW: verdict.TIMED_OUT,
+    }
+    for entry in entries.values():
+        assert entry["rerun_result"] is None and "could not be kept aside" in entry["why"]
     assert any("could not be kept aside" in r for r in outcome.reasons), outcome.reasons
     assert _vitest_calls(tmp_path) == []
 
@@ -778,6 +882,11 @@ def test_a_flaky_playwright_test_that_passes_alone_is_a_flake_and_the_job_stays_
         "web/e2e/a.spec.ts::hangs [chromium]": verdict.REPEATED_FAILURE,
     }
     assert _by_test(record)[LOADS]["why"] == "passed rerun alone in a new process"
+    assert {t: e["first_failure"] for t, e in _by_test(record).items()} == {
+        LOADS: verdict.FIRST_FAILED,
+        "web/e2e/a.spec.ts::breaks [chromium]": verdict.FIRST_FAILED,
+        "web/e2e/a.spec.ts::hangs [chromium]": verdict.TIMED_OUT,
+    }
     step, alone = _playwright_calls(tmp_path)
     assert step["argv"] == ["playwright", "test", "--grep-invert", "@visual"]
     assert alone["argv"][:4] == ["playwright", "test", *verdict.E2E_ALONE]
@@ -790,6 +899,25 @@ def test_a_flaky_playwright_test_that_passes_alone_is_a_flake_and_the_job_stays_
     assert record["rerun"]["exit"] == 0
 
 
+def test_a_playwright_test_whose_first_run_timed_out_says_so(tmp_path):
+    """Playwright's first run of a test is its first result: ``timedOut`` there is a test that
+    first timed out, whatever its retry and its alone rerun show; ``failed`` first failed."""
+    report = _playwright_report(
+        ("a.spec.ts", "loads", "flaky", ["timedOut", "passed"]),
+        ("a.spec.ts", "hangs", "unexpected", ["failed", "timedOut"]),
+    )
+    root, path = _plant(tmp_path, playwright=report)
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    found = {
+        t: (e["rerun_result"], e["first_failure"]) for t, e in _by_test(_record(outcome)).items()
+    }
+    assert found == {
+        LOADS: (verdict.FLAKE, verdict.TIMED_OUT),
+        "web/e2e/a.spec.ts::hangs [chromium]": (verdict.REPEATED_FAILURE, verdict.FIRST_FAILED),
+    }
+
+
 def test_a_flaky_playwright_test_that_fails_alone_is_a_repeated_failure(tmp_path):
     report = _playwright_report(("a.spec.ts", "loads", "flaky", ["failed", "passed"]))
     root, path = _plant(tmp_path, playwright=report, alone={"loads": "unexpected"})
@@ -797,7 +925,12 @@ def test_a_flaky_playwright_test_that_fails_alone_is_a_repeated_failure(tmp_path
     assert outcome.code == run.RED
     record = _record(outcome)
     assert record["rerun"]["tests"] == [
-        {"test": LOADS, "rerun_result": verdict.REPEATED_FAILURE, "why": "failed again, alone"}
+        {
+            "test": LOADS,
+            "rerun_result": verdict.REPEATED_FAILURE,
+            "why": "failed again, alone",
+            "first_failure": verdict.FIRST_FAILED,
+        }
     ]
     assert record["rerun"]["exit"] == 1
 
@@ -813,7 +946,8 @@ def test_a_green_playwright_step_starts_no_rerun(tmp_path):
 
 def test_more_flaky_playwright_tests_than_a_run_passes_are_none_of_them_rerun(tmp_path):
     report = _playwright_report(
-        *((f"{n}.spec.ts", "loads", "flaky", ["failed", "passed"]) for n in "abc")
+        *((f"{n}.spec.ts", "loads", "flaky", ["failed", "passed"]) for n in "ab"),
+        ("c.spec.ts", "loads", "flaky", ["timedOut", "passed"]),
     )
     root, path = _plant(tmp_path, playwright=report)
     outcome = _run(root, path, _playwright_job(), tmp_path)
@@ -823,18 +957,30 @@ def test_more_flaky_playwright_tests_than_a_run_passes_are_none_of_them_rerun(tm
     assert record["rerun"]["argv"] is None
     assert {e["rerun_result"] for e in record["rerun"]["tests"]} == {None}
     assert all("one of 3 flaky tests" in e["why"] for e in record["rerun"]["tests"])
+    assert {t: e["first_failure"] for t, e in _by_test(record).items()} == {
+        "web/e2e/a.spec.ts::loads [chromium]": verdict.FIRST_FAILED,
+        "web/e2e/b.spec.ts::loads [chromium]": verdict.FIRST_FAILED,
+        "web/e2e/c.spec.ts::loads [chromium]": verdict.TIMED_OUT,
+    }
 
 
 @pytest.mark.parametrize("project", ["stateful", "stateful-again-1", "app-ui"])
 def test_a_flaky_playwright_test_of_a_chained_or_homed_project_is_not_rerun_alone(
     tmp_path, project
 ):
-    report = _playwright_report(("a.spec.ts", "loads", "flaky", ["failed", "passed"], project))
+    report = _playwright_report(
+        ("a.spec.ts", "loads", "flaky", ["failed", "passed"], project),
+        ("b.spec.ts", "hangs", "flaky", ["timedOut", "passed"], project),
+    )
     root, path = _plant(tmp_path, playwright=report)
     outcome = _run(root, path, _playwright_job(), tmp_path)
-    [entry] = _record(outcome)["rerun"]["tests"]
-    assert entry["rerun_result"] is None
-    assert f"its project, {project}, runs only in its chain or its home" in entry["why"]
+    entries = _record(outcome)["rerun"]["tests"]
+    assert [(e["rerun_result"], e["first_failure"]) for e in entries] == [
+        (None, verdict.FIRST_FAILED),
+        (None, verdict.TIMED_OUT),
+    ]
+    for entry in entries:
+        assert f"its project, {project}, runs only in its chain or its home" in entry["why"]
     assert len(_playwright_calls(tmp_path)) == 1
 
 
@@ -888,15 +1034,81 @@ def test_no_alone_rerun_starts_once_the_jobs_time_is_spent(tmp_path):
     assert entry["why"] == "the job's time ran out before the rerun"
 
 
+def test_a_test_no_alone_rerun_runs_for_lack_of_time_still_says_how_it_first_failed(tmp_path):
+    report = _playwright_report(
+        ("a.spec.ts", "loads", "flaky", ["failed", "passed"]),
+        ("b.spec.ts", "hangs", "flaky", ["timedOut", "passed"]),
+    )
+    found, _ = _classify(tmp_path, report)
+    assert found is not None and found["argv"] is None
+    assert [(e["test"], e["why"], e["first_failure"]) for e in found["tests"]] == [
+        (
+            "web/e2e/a.spec.ts::loads [chromium]",
+            "the job's time ran out before the rerun",
+            verdict.FIRST_FAILED,
+        ),
+        (
+            "web/e2e/b.spec.ts::hangs [chromium]",
+            "the job's time ran out before the rerun",
+            verdict.TIMED_OUT,
+        ),
+    ]
+
+
 @pytest.mark.parametrize(
-    ("results", "why"),
+    ("first_run", "first"),
+    [("failed", verdict.FIRST_FAILED), ("timedOut", verdict.TIMED_OUT)],
+)
+def test_a_flaky_test_whose_report_gives_no_line_says_how_it_first_failed(
+    tmp_path, first_run, first
+):
+    flaky = {
+        "status": "flaky",
+        "projectName": "chromium",
+        "results": [{"status": first_run}, {"status": "passed"}],
+    }
+    found, _ = _classify(tmp_path, _spec(flaky), left=60.0)
+    assert found is not None and found["argv"] is None
+    assert found["tests"] == [
+        {
+            "test": "web/e2e/a.spec.ts::t [chromium]",
+            "rerun_result": None,
+            "why": "its report gives no line, so it is not rerun alone",
+            "first_failure": first,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("results", "why", "first"),
     [
-        (["failed"], "failed with no retry run, so not classified"),
-        (["failed", "interrupted"], "its retry ended interrupted, so not classified"),
-        (["failed", "skipped"], "its retry ended skipped, so not classified"),
+        (["failed"], "failed with no retry run, so not classified", verdict.FIRST_FAILED),
+        ([], "failed with no retry run, so not classified", verdict.FIRST_FAILED),
+        (["timedOut"], "failed with no retry run, so not classified", verdict.TIMED_OUT),
+        (
+            ["failed", "interrupted"],
+            "its retry ended interrupted, so not classified",
+            verdict.FIRST_FAILED,
+        ),
+        (["failed", "skipped"], "its retry ended skipped, so not classified", verdict.FIRST_FAILED),
+        (
+            ["timedOut", "interrupted"],
+            "its retry ended interrupted, so not classified",
+            verdict.TIMED_OUT,
+        ),
+    ],
+    ids=[
+        "no retry",
+        "no result",
+        "timed out, no retry",
+        "interrupted",
+        "skipped",
+        "timed out, interrupted",
     ],
 )
-def test_a_playwright_failure_whose_retry_did_not_fail_is_not_classified(tmp_path, results, why):
+def test_a_playwright_failure_whose_retry_did_not_fail_is_not_classified(
+    tmp_path, results, why, first
+):
     report = _playwright_report(("a.spec.ts", "breaks", "unexpected", results))
     root, path = _plant(tmp_path, playwright=report)
     outcome = _run(root, path, _playwright_job(), tmp_path)
@@ -906,6 +1118,7 @@ def test_a_playwright_failure_whose_retry_did_not_fail_is_not_classified(tmp_pat
         "test": "web/e2e/a.spec.ts::breaks [chromium]",
         "rerun_result": None,
         "why": why,
+        "first_failure": first,
     }
 
 
