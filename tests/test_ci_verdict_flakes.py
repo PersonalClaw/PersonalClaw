@@ -176,6 +176,30 @@ def test_one_flake_that_passed_alone_is_green_and_named() -> None:
     assert verdict.flake_notices(judged) == f"::notice title=flake passed::{FLAKY} ({ONE})\n"
 
 
+def test_the_flake_rule_passes_nothing_on_a_run_a_rerun_filled() -> None:
+    # The positive control's flake, on a run where TWO's attempt-1 job no runner took and attempt
+    # 2's record filled it: the rule reads one attempt's records against that attempt's jobs, and
+    # this run holds two attempts', so it passes none.
+    results = verdict.from_needs(_needs(), CANDIDATE)
+    texts = [_record(ONE, _test(FLAKY)), _record(TWO, attempt=2), _record(THREE)]
+    results += verdict.from_job_records([*texts, _record("static")])
+    unpicked = {**_job(TWO, "cancelled", steps=[]), "runner_name": "", "runner_id": None}
+    first = verdict.read_jobs(
+        json.dumps([{"total_count": 1, "jobs": [unpicked]}]), run_id=RUN, attempt=1
+    )
+    judged = verdict.decide(
+        PLAN,
+        results,
+        CANDIDATE,
+        run_id=RUN,
+        changed=CHANGED,
+        jobs=_jobs(ONE),
+        first_jobs=first,
+        attempt=2,
+    )
+    _red(judged, f"a rerun filled a planned job no runner took on attempt 1 ({TWO})")
+
+
 def test_two_flakes_in_two_shards_are_green() -> None:
     judged = _judge([_record(ONE, _test(FLAKY)), _record(TWO, _test(OTHER))], failed=(ONE, TWO))
     assert judged.green
