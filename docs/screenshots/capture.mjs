@@ -46,6 +46,13 @@ const ROUTES = [
   // The Models section of the page that holds it (Settings → Models & Providers).
   ['12-settings-models', '#/settings/models?section=models'],
   ['13-agents',          '#/agents'],
+  ['14-projects',        '#/projects'],
+  // One project's own page: the demo home's "Reading Pipeline" (scripts/generate_demo_home_fixture.py).
+  ['15-project',         '#/projects/p-2d6f5c83'],
+  // Home's Attention view: Needs you and Running now, each item with its project's chip.
+  ['16-attention',       '#/dashboard?view=attention'],
+  // One loop's own cockpit: the demo home's goal loop, in Reading Pipeline.
+  ['17-loop',            '#/loops/a17c3f92'],
 ];
 
 for (const mode of ['light', 'dark']) await mkdir(new URL(`./${mode}/`, import.meta.url), { recursive: true });

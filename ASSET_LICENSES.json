@@ -158,6 +158,10 @@
         "docs/screenshots/dark/11-settings.png",
         "docs/screenshots/dark/12-settings-models.png",
         "docs/screenshots/dark/13-agents.png",
+        "docs/screenshots/dark/14-projects.png",
+        "docs/screenshots/dark/15-project.png",
+        "docs/screenshots/dark/16-attention.png",
+        "docs/screenshots/dark/17-loop.png",
         "docs/screenshots/light/01-dashboard.png",
         "docs/screenshots/light/01-onboarding.png",
         "docs/screenshots/light/02-chat.png",
@@ -171,7 +175,11 @@
         "docs/screenshots/light/10-skills.png",
         "docs/screenshots/light/11-settings.png",
         "docs/screenshots/light/12-settings-models.png",
-        "docs/screenshots/light/13-agents.png"
+        "docs/screenshots/light/13-agents.png",
+        "docs/screenshots/light/14-projects.png",
+        "docs/screenshots/light/15-project.png",
+        "docs/screenshots/light/16-attention.png",
+        "docs/screenshots/light/17-loop.png"
       ]
     },
     {
