@@ -1,8 +1,9 @@
 """The hold that the code-loop tests over one git step share.
 
-Used by ``tests/test_a_code_loop_has_one_writer.py`` and
-``tests/test_a_loop_that_ends_keeps_the_work_nobody_merged.py``. A code loop's scheduler pass
-runs its git steps in a worker thread, so the gateway's event loop keeps answering while git
+Used by ``tests/test_a_code_loop_has_one_writer.py``,
+``tests/test_a_loop_that_ends_keeps_the_work_nobody_merged.py`` and
+``tests/test_an_attended_loop_merges_only_what_its_owner_approves.py``. A code loop's scheduler
+pass runs its git steps in a worker thread, so the gateway's event loop keeps answering while git
 works. A test holds one step until it lets it go and does something on the event loop meanwhile:
 answers a request, ends the loop, starts a turn. No clock decides when.
 """

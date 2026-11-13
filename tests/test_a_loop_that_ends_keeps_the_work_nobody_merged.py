@@ -714,6 +714,125 @@ def test_the_pass_sweeps_a_fresh_checkout_only_once_the_endings_git_is_done(repo
     ], "the pass swept beside the ending's git"
 
 
+def test_the_pass_merges_a_task_only_once_the_endings_git_is_done(repo, monkeypatch):
+    """A merge runs git on a task's worktree and branch, and an ending's settle may be at its git
+    on them meanwhile: the merge waits for it (``manager.git_lock``)."""
+    from personalclaw.tasks import registry
+
+    loop, tid, _wt, state = _fanned_out(repo)
+    task = _run(registry.get_task(tid, provider_name="native"))
+    lock = manager.git_lock(loop.id)
+    reached = _lock_waits(monkeypatch)
+    order: list[str] = []
+    real = worktree.merge_worktree
+
+    def merged(*args, **kw):
+        order.append("the pass merged")
+        reached.set()
+        return real(*args, **kw)
+
+    monkeypatch.setattr(worktree, "merge_worktree", merged)
+    ctx = _Ctx(state, SVC)
+
+    async def beside_the_endings_git():
+        async with lock:  # the ending's settle, at its git
+            merge = asyncio.ensure_future(
+                kinds.get("code")._reap_merge_done(
+                    store.get(loop.id), tid, task, str(repo), ctx, by="the loop"
+                )
+            )
+            if not await asyncio.to_thread(reached.wait, _CAP):
+                raise AssertionError("the merge neither waited on the lock nor ran git")
+            order.append("the ending's git let go")
+        await merge
+
+    _run(beside_the_endings_git())
+
+    assert order == [
+        "the ending's git let go",
+        "the pass merged",
+    ], "the pass merged beside the ending's git"
+
+
+def test_the_review_commits_a_task_only_once_the_endings_git_is_done(repo, monkeypatch):
+    """An Attended loop's review commits a task's work in its worktree, and removes the worktree
+    when the branch brings nothing new, and an ending's settle may be at its git on them
+    meanwhile: the review waits for it (``manager.git_lock``)."""
+    from personalclaw.tasks import registry
+
+    loop, tid, _wt, state = _fanned_out(repo)
+    task = _run(registry.get_task(tid, provider_name="native"))
+    lock = manager.git_lock(loop.id)
+    reached = _lock_waits(monkeypatch)
+    order: list[str] = []
+    real = worktree.commit_pending
+
+    def committed(*args, **kw):
+        order.append("the review committed")
+        reached.set()
+        return real(*args, **kw)
+
+    monkeypatch.setattr(worktree, "commit_pending", committed)
+    ctx = _Ctx(state, SVC)
+
+    async def beside_the_endings_git():
+        async with lock:  # the ending's settle, at its git
+            land = asyncio.ensure_future(
+                kinds.get("code")._land(store.get(loop.id), tid, task, str(repo), ctx)
+            )
+            if not await asyncio.to_thread(reached.wait, _CAP):
+                raise AssertionError("the review neither waited on the lock nor ran git")
+            order.append("the ending's git let go")
+        await land
+
+    _run(beside_the_endings_git())
+
+    assert order == [
+        "the ending's git let go",
+        "the review committed",
+    ], "the review committed beside the ending's git"
+
+
+def test_a_review_that_waited_on_an_endings_settle_runs_no_git(repo, monkeypatch):
+    """A Stop lands while the reap awaits (its task read, its branch check, the worker's
+    teardown), before the review takes the lock, and its settle takes the lock first. The review
+    waits for it, then reads the loop again with the lock held: the loop ended, so it runs no git
+    on what the settle kept or removed, and the pass says the loop stopped."""
+    from personalclaw.tasks import registry
+
+    loop, tid, _wt, state = _fanned_out(repo)
+    task = _run(registry.get_task(tid, provider_name="native"))
+    running = store.get(loop.id)
+    lock = manager.git_lock(loop.id)
+    reached = _lock_waits(monkeypatch)
+    order: list[str] = []
+    real = worktree.commit_pending
+
+    def committed(*args, **kw):
+        order.append("the review committed")
+        reached.set()
+        return real(*args, **kw)
+
+    monkeypatch.setattr(worktree, "commit_pending", committed)
+    ctx = _Ctx(state, SVC)
+
+    async def the_stop_first():
+        store.update_status(loop.id, LoopStatus.STOPPED)  # a Stop sets its status first
+        async with lock:  # then its settle, at its git
+            land = asyncio.ensure_future(
+                kinds.get("code")._land(running, tid, task, str(repo), ctx)
+            )
+            if not await asyncio.to_thread(reached.wait, _CAP):
+                raise AssertionError("the review neither waited on the lock nor ran git")
+            order.append("the ending's git let go")
+        return await land
+
+    stopped = _run(the_stop_first())
+
+    assert stopped is True, "the pass did not say the loop stopped running"
+    assert order == ["the ending's git let go"], f"the review ran git after the settle: {order}"
+
+
 # ── a loop that cannot be resumed has nothing queued ─────────────────────────
 
 

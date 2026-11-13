@@ -21,6 +21,7 @@ from personalclaw.loop.kinds import (
     LoopKindStrategy,
     attendedness_lines,
     register,
+    sdlc_git,
     workspace_rules_lines,
 )
 from personalclaw.loop.loop import TERMINAL_STATUSES, Loop, LoopStatus
@@ -469,18 +470,29 @@ class CodeKind(LoopKindStrategy):
         self._scheduling: set[str] = set()
 
     def _is_parallel(self, loop: Loop) -> bool:
-        """Parallel mode: queued work + a git workspace (worktrees available). Set
-        PERSONALCLAW_CODE_PARALLEL=0 to force sequential everywhere (escape hatch)."""
+        """Parallel mode: queued work, in a workspace where git can cut worktrees (the poll asked
+        git that, :meth:`_poll_git`). Set PERSONALCLAW_CODE_PARALLEL=0 to force sequential
+        everywhere (escape hatch)."""
         import os
 
         if os.environ.get("PERSONALCLAW_CODE_PARALLEL") == "0":
             return False
-        if not (loop.kind_config or {}).get("queued_task_ids"):
-            return False
-        from personalclaw.loop import worktree
+        return bool((loop.kind_config or {}).get("queued_task_ids"))
 
-        ws = (loop.workspace_dir or "").strip()
-        return bool(ws) and worktree.can_parallelize(ws)
+    def _poll_git(self, loop: Loop, ws: str) -> sdlc_git.PollGit:
+        """Everything a poll asks git before it schedules anything, in one worker thread: whether
+        *ws* is a repository, whether git has an identity to commit as there, whether it can cut
+        worktrees there, and, at the run's first poll, where the run starts
+        (:meth:`_note_start_point`). Each is a git process, seconds apart under load."""
+        from personalclaw.loop import worktree
+        from personalclaw.loop.loop import effective_dir
+
+        repo = bool(ws) and worktree.is_git_repo(ws)
+        named = repo and worktree.commit_identity(ws) is not None
+        base = ""
+        if self._start_point_unknown(loop) and not loop_files.cycles_completed(loop.id):
+            base = worktree.start_point(effective_dir(loop) or "")
+        return sdlc_git.PollGit(repo, named, repo and worktree.git_available(), base)
 
     def _live_task_workers(self, loop: Loop, svc) -> list[str]:
         """Queued task ids that currently have an armed worker loop (occupying a pool
@@ -1766,17 +1778,23 @@ class CodeKind(LoopKindStrategy):
         (:meth:`_judge_on_drain`; *judge_on_drain* is off for :meth:`on_new_cycle`, which judges
         next anyway). Returns True iff the loop stopped running: it paused for its owner (a merge
         the scheduler could not settle, a task that ran out of cycles), it stopped, paused or went
-        while the pass read its tasks or git readied their worktrees (:meth:`_still_ours`), or that
-        judgement ended it."""
-        from personalclaw.loop import store, worktree
+        while the poll's git ran, the pass read its tasks or git readied their worktrees
+        (:meth:`_still_ours`), or that judgement ended it."""
+        from personalclaw.loop import store
 
+        # Git answers in a worker thread, so the gateway keeps answering meanwhile; a loop that
+        # stopped, paused or went while it did is asked nothing.
+        ws = (loop.workspace_dir or "").strip()
+        polled = await asyncio.to_thread(self._poll_git, loop, ws)
+        if self._still_ours(loop) is None:
+            return True
         # Every commit of the loop's, the stage worker's in the workspace itself as much as a
         # task's, is made under the owner's name: with git holding none there, the loop stops
         # and asks before any worker's next cycle, rather than leave a worker to make one up.
-        ws = (loop.workspace_dir or "").strip()
-        if ws and worktree.is_git_repo(ws) and self._asks_for_identity(loop, ws, ctx):
+        if polled.repo and not polled.named:
+            self._ask_for_identity(loop, ws, ctx)
             return True
-        loop = self._note_start_point(loop)
+        loop = self._note_start_point(loop, polled.base)
         if loop.autopilot:
             refreshed = await self.autopilot_queue(loop)
             if refreshed is not None:
@@ -1787,7 +1805,7 @@ class CodeKind(LoopKindStrategy):
         idx = self.active_stage_index(loop)
         if idx < 0:
             return False
-        if self._is_parallel(loop):
+        if polled.parallel and self._is_parallel(loop):
             if loop.id in self._scheduling:
                 return False  # another pass for this loop is under way
             stage = self.phase_key((loop.plan or [])[idx])
@@ -1812,23 +1830,20 @@ class CodeKind(LoopKindStrategy):
         await self._one_writer(loop, ctx)
         return False
 
-    def _note_start_point(self, loop: Loop) -> Loop:
+    def _start_point_unknown(self, loop: Loop) -> bool:
+        return not ((loop.kind_config or {}).get(_BASE_KEY) or loop.id in self._no_start_point)
+
+    def _note_start_point(self, loop: Loop, base: str) -> Loop:
         """Record where the loop's run starts in its work folder (``worktree.start_point``), once,
         at its first poll: its stages' gates read what the run changed against it. Its first
         cycle has not landed yet then (a worker's first turn waits out its first idle period,
         longer than a poll), so nothing of the run's work is before it. A loop already at work
         when it is first asked, or in a folder git does not track, records none: its gates read
-        the files its findings name instead."""
-        if (loop.kind_config or {}).get(_BASE_KEY) or loop.id in self._no_start_point:
+        the files its findings name instead. *base* is what the poll read (:meth:`_poll_git`)."""
+        if not self._start_point_unknown(loop):
             return loop
-        from personalclaw.loop import store, worktree
-        from personalclaw.loop.loop import effective_dir
+        from personalclaw.loop import store
 
-        base = (
-            ""
-            if loop_files.cycles_completed(loop.id)
-            else worktree.start_point(effective_dir(loop) or "")
-        )
         if not base:
             self._no_start_point.add(loop.id)
             return loop
@@ -2049,8 +2064,9 @@ class CodeKind(LoopKindStrategy):
                 if (
                     task is not None
                     and tasks_link._is_done(task.status)
-                    and worktree.branch_exists(ws, tid)
+                    and await asyncio.to_thread(worktree.branch_exists, ws, tid)
                 ):
+                    await teardown_task_worker(ctx.svc, loop.id, tid)
                     if await self._land(loop, tid, task, ws, ctx):
                         return True
                 continue
@@ -2088,7 +2104,7 @@ class CodeKind(LoopKindStrategy):
         if waiting:
             if self._live_task_workers(loop, ctx.svc):
                 return False
-            return self._ask_to_merge(loop, waiting, ws, ctx)
+            return await self._ask_to_merge(loop, waiting, ws, ctx)
         # 2. Fill free slots with ready, not-yet-running tasks.
         slots = _pool_cap(loop) - len(self._live_task_workers(loop, ctx.svc))
         if slots <= 0:
@@ -2186,6 +2202,14 @@ class CodeKind(LoopKindStrategy):
             return None
         return now
 
+    def _still_queued(self, loop: Loop, task_id: str) -> Loop | None:
+        """The loop as it is now when this pass may still act for it (:meth:`_still_ours`) and
+        *task_id* is still on its queue, else None."""
+        now = self._still_ours(loop)
+        if now is None or task_id not in (now.kind_config or {}).get("queued_task_ids", []):
+            return None
+        return now
+
     async def _keep_or_sweep(self, loop: Loop, ws: str, task_ids: list[str]) -> None:
         """The checkouts just cut for *task_ids* of a loop that ended meanwhile: one that cannot
         resume (gone, being deleted, or ended for good) keeps none that holds no work; a paused
@@ -2218,67 +2242,82 @@ class CodeKind(LoopKindStrategy):
             if not approved:
                 self._merge_approvals.pop(loop_id, None)
 
-    def _asks_for_identity(self, loop: Loop, ws: str, ctx) -> bool:
-        """Pause *loop* for its owner when git has no identity to commit as in *ws*, rather than
-        commit under an invented one. True iff it paused."""
-        from personalclaw.loop import store, worktree
+    def _ask_for_identity(self, loop: Loop, ws: str, ctx) -> None:
+        """Pause *loop* for its owner, since git has no identity to commit as in *ws* (the poll
+        asked, :meth:`_poll_git`), rather than commit under an invented one."""
+        from personalclaw.loop import store
 
-        if worktree.commit_identity(ws) is not None:
-            return False
         loop_files.write_question(
             loop.id, _no_identity_question(ws), asked_by=loop_files.SCHEDULER_QUESTION
         )
         store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
         ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
-        return True
 
     async def _land(self, loop: Loop, tid: str, task, ws: str, ctx) -> bool:
         """A finished task's work goes into the workspace's checked-out branch: at once for an
         Unattended loop, and for an Attended one only at the commit its owner approved merging
         (:meth:`approve_merge`). Until then its work stays on its own branch, committed
-        there so that what its owner reviews is what would land. Returns True iff the loop paused
-        for its owner."""
-        from personalclaw.loop import worktree
+        there so that what its owner reviews is what would land. Returns True iff the loop
+        stopped running: it paused for its owner, or it stopped, paused or went meanwhile.
 
-        if not posture.of(loop).asks:
-            if self._asks_about_another_name(loop, tid, task, ws, ctx):
-                return True
-            return await self._reap_merge_done(loop, tid, task, ws, ctx, by=MERGED_BY_LOOP)
-        if not worktree.commit_pending(ws, tid, loop.tasks_project_id):
-            return False  # nothing to review yet; the next poll tries again
-        if worktree.brings_nothing_new(ws, worktree.branch_name(tid)):
+        Git reads and commits the task's work in a worker thread, so the gateway keeps
+        answering meanwhile, and an Attended loop's review, which commits and may remove the
+        worktree, under the loop's git lock, once the pass has read the loop again with the lock
+        held: an ending whose settle went first leaves the review no git to run. After the git,
+        the pass reads the loop again (:meth:`_still_queued`): a loop that ended meanwhile is asked
+        nothing, and a task taken off its queue meanwhile is not merged. Its work stays on its
+        branch either way, for its owner."""
+        if posture.of(loop).asks:
+            from personalclaw.loop import manager
+
+            # It commits the task's work and may remove its worktree: under the loop's git lock,
+            # and only for a loop still running once the lock is held, since an ending's settle
+            # that took the lock first has kept or removed what the review would touch.
+            async with manager.git_lock(loop.id):
+                if self._still_queued(loop, tid) is None:
+                    return self._still_ours(loop) is None
+                review = await asyncio.to_thread(sdlc_git.review, ws, tid, loop.tasks_project_id)
+        else:
+            review = await asyncio.to_thread(sdlc_git.other_names, ws, tid)
+        if self._still_queued(loop, tid) is None:
+            return self._still_ours(loop) is None
+        if review.nothing_new:
             # The task changed nothing the branch lacks (nothing at all, or a change already
             # there, the same patch another task landed): nothing to merge or to ask about.
             from personalclaw.loop import store
 
-            already = bool(worktree.branch_commits(ws, tid))
-            worktree.remove_worktree(ws, tid, loop.tasks_project_id)
             store.unqueue_tasks(loop.id, [tid])
             ctx.publish(
                 loop.id,
                 "task_done",
-                {"loop_id": loop.id, "task_id": tid, "merged": False, "already_on_base": already},
+                {
+                    "loop_id": loop.id,
+                    "task_id": tid,
+                    "merged": False,
+                    "already_on_base": review.already,
+                },
             )
             return False
-        if self._asks_about_another_name(loop, tid, task, ws, ctx):
+        if not review.committed:
+            return False  # nothing to review yet; the next poll tries again
+        if review.other and review.identity is not None:
+            self._ask_about_another_name(loop, tid, task, review.identity, review.other, ctx)
             return True
+        if not posture.of(loop).asks:
+            return await self._reap_merge_done(loop, tid, task, ws, ctx, by=MERGED_BY_LOOP)
         approved = self._approved_tip(loop.id, tid)
-        if approved and approved == worktree.branch_tip(ws, tid):
+        if approved and approved == review.tip:
             return await self._reap_merge_done(loop, tid, task, ws, ctx, by=MERGED_BY_OWNER)
         return False
 
-    def _asks_about_another_name(self, loop: Loop, tid: str, task, ws: str, ctx) -> bool:
-        """Pause *loop* for its owner when task *tid*'s branch holds commits made as anyone but
-        the identity git commits as in *ws* (a worker that set a name of its own), rather than
-        merge them into the owner's branch or put them up for merging. True iff it paused."""
+    def _ask_about_another_name(
+        self, loop: Loop, tid: str, task, identity: tuple[str, str], other: list[str], ctx
+    ) -> None:
+        """Pause *loop* for its owner, since task *tid*'s branch holds commits made as someone
+        other than *identity*, the one git commits as there, rather than merge them into the
+        owner's branch or put them up for merging."""
         from personalclaw.loop import store, worktree
 
-        identity = worktree.commit_identity(ws)
-        if identity is None:
-            return False  # the scheduler asks for one before anything gets this far
-        other = worktree.commits_not_by(ws, tid, identity)
-        if not other:
-            return False
         loop_files.write_question(
             loop.id,
             _other_name_question(task, worktree.branch_name(tid), identity, other),
@@ -2286,7 +2325,6 @@ class CodeKind(LoopKindStrategy):
         )
         store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
         ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
-        return True
 
     async def _awaiting_merge(self, loop: Loop, ws: str, ctx) -> list[tuple[str, object]]:
         """The finished tasks of an Attended *loop* whose work waits for its owner to merge it:
@@ -2305,24 +2343,34 @@ class CodeKind(LoopKindStrategy):
             task = await self._get_task(tid)
             if task is None or not tasks_link._is_done(task.status):
                 continue
-            if worktree.branch_exists(ws, tid):
+            if await asyncio.to_thread(worktree.branch_exists, ws, tid):
                 waiting.append((tid, task))
         return waiting
 
-    def _ask_to_merge(self, loop: Loop, waiting: list[tuple[str, object]], ws: str, ctx) -> bool:
+    async def _ask_to_merge(
+        self, loop: Loop, waiting: list[tuple[str, object]], ws: str, ctx
+    ) -> bool:
         """Put the work waiting in an Attended loop to its owner: the loop pauses with a merge
         review its page shows (each task's branch, its commits and its diff,
         ``GET /api/loops/{id}/merge``), and the bell and the Inbox say it is waiting. Always
-        True: the loop paused."""
+        True: the loop paused, or it stopped, paused or went while git read the branches (and is
+        asked nothing)."""
         from personalclaw.loop import store, worktree
 
-        into = worktree.base_branch(ws)
+        def read() -> tuple[str, dict[str, str]]:
+            return worktree.base_branch(ws), {
+                tid: worktree.branch_tip(ws, tid) for tid, _ in waiting
+            }
+
+        into, tips = await asyncio.to_thread(read)
+        if self._still_ours(loop) is None:
+            return True
         tasks = [
             {
                 "task_id": tid,
                 "title": str(getattr(task, "title", "") or tid),
                 "branch": worktree.branch_name(tid),
-                "tip": worktree.branch_tip(ws, tid),
+                "tip": tips[tid],
             }
             for tid, task in waiting
         ]
@@ -2350,14 +2398,15 @@ class CodeKind(LoopKindStrategy):
             for t in await tasks_link.stage_tasks(loop, phase_key)
             if tasks_link._is_done(t.status)
         }
-        return [
-            t
-            for t in ready
-            if not any(
+
+        def waits(task) -> bool:  # in a worker thread: each is a git process
+            return any(
                 d.depends_on_task_id in done and worktree.branch_exists(ws, d.depends_on_task_id)
-                for d in (t.dependencies or [])
+                for d in (task.dependencies or [])
             )
-        ]
+
+        waiting = await asyncio.to_thread(lambda: [waits(t) for t in ready])
+        return [t for t, w in zip(ready, waiting) if not w]
 
     async def _reap_merge_done(self, loop: Loop, tid: str, task, ws: str, ctx, *, by: str) -> bool:
         """Merge a done task's branch into base, as git is configured to commit there, and note it
@@ -2365,15 +2414,29 @@ class CodeKind(LoopKindStrategy):
         go in is undone and the task's work stays as it is, on its branch and in its worktree, and
         the loop pauses for its owner: a conflict asks how to resolve it (``loop.conflicts``), any
         other git failure asks her to check the workspace's git state. Both are the scheduler's
-        questions, so a Resume tries the merge again. Returns True iff the merge did NOT integrate
-        (caller stops + awaits the user)."""
-        from personalclaw.loop import conflicts, store, worktree
+        questions, so a Resume tries the merge again. Returns True iff the loop stopped running:
+        the merge did NOT integrate (caller stops + awaits the user), or the loop stopped, paused
+        or went while git merged."""
+        from personalclaw.loop import conflicts, manager, store, worktree
 
         branch = worktree.branch_name(tid)
-        into = worktree.base_branch(ws)
         title = str(getattr(task, "title", "") or tid)
-        commits = worktree.branch_commits(ws, tid)
-        result = worktree.merge_worktree(ws, tid, loop.tasks_project_id)
+
+        def merge() -> tuple[str, list[str], worktree.MergeResult, str]:
+            into = worktree.base_branch(ws)
+            commits = worktree.branch_commits(ws, tid)
+            result = worktree.merge_worktree(ws, tid, loop.tasks_project_id)
+            return into, commits, result, "" if result.ok else worktree.branch_tip(ws, tid)
+
+        # The stage worker stands down first: no cycle of its starts in the tree git merges into.
+        stage = ctx.svc.get_by_session(manager.session_key(loop.id))
+        if stage is not None and getattr(stage, "active", False):
+            self._stood_down.add(loop.id)
+            await ctx.svc.update(stage.id, active=False)
+        # In a worker thread, so the gateway keeps answering while git merges (~22 git calls), and
+        # under the loop's git lock, so an ending's settle waits for the merge.
+        async with manager.git_lock(loop.id):
+            into, commits, result, tip = await asyncio.to_thread(merge)
         self._drop_approval(loop.id, tid)
         if result.ok:
             store.unqueue_tasks(loop.id, [tid])
@@ -2402,9 +2465,13 @@ class CodeKind(LoopKindStrategy):
                     "already_on_base": result.already,
                 },
             )
-            return False
+            # What landed is recorded whatever happened meanwhile; a loop that stopped, paused
+            # or went while git merged is asked nothing more.
+            return self._still_ours(loop) is None
+        if self._still_ours(loop) is None:
+            return True  # its ending keeps the work on its branch, for its owner
         if result.conflicts:
-            conflicts.ask(loop, tid, title, ws, result.conflicts)
+            conflicts.ask(loop, tid, title, ws, result.conflicts, into=into, tip=tip)
             out = (
                 f"Merge conflict in {conflicts.named(result.conflicts)}: the work is kept on "
                 f"{branch} until you choose how to resolve it."
