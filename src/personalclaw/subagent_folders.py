@@ -10,13 +10,15 @@ import os
 def validate_cwd(cwd: str, allowed_roots: list[str], *, run_workdir: str = "") -> tuple[str, str]:
     """Validate a caller-supplied ``cwd`` for a spawn.
 
-    Resolves symlinks and verifies the path is an existing directory inside the workspace (the
-    folder the parent session itself works in), under a root the operator added in
+    Resolves symlinks, then checks that the path is inside the workspace (the folder the parent
+    session itself works in), under a root the operator added in
     ``agent.subagent_cwd_allowed_roots``, or inside *run_workdir*: the folder of the workflow run
     the spawn is a step of (``workflows.provisioning.run_workdir``: its scratch folder, its own
     worktree, the folder its project is bound to when it works in place, or its project's context
     folder), which the engine put the run's steps in. The list is empty by default, so the
     workspace and a run's own folder are where a spawn may work until the owner names another.
+    Only then is the path read as a directory: a path outside every root is refused before
+    anything reads it, with the one refusal every such path gets.
 
     Args:
         cwd: Caller-supplied absolute path (may contain ``~``).
@@ -37,8 +39,6 @@ def validate_cwd(cwd: str, allowed_roots: list[str], *, run_workdir: str = "") -
         resolved = os.path.realpath(expanded)
     except (OSError, ValueError) as exc:
         return ("", f"cwd resolution failed: {exc}")
-    if not os.path.isdir(resolved):
-        return ("", "cwd does not exist or is not a directory")
     # The workspace defaults to the home's own folder, which no configured root names: a subagent
     # may always work where the session that spawns it works.
     from personalclaw.config.loader import workspace_root
@@ -48,7 +48,11 @@ def validate_cwd(cwd: str, allowed_roots: list[str], *, run_workdir: str = "") -
     if run_workdir:
         resolved_roots.append(os.path.realpath(run_workdir))
     for root in resolved_roots:
-        if resolved == root or resolved.startswith(root + os.sep):
+        # The root itself or a folder below it, in one check: a sibling whose name only starts
+        # with the root's (`allow-extra` beside `allow`) is not in it.
+        if resolved.startswith(root) and resolved[len(root) :][:1] in ("", os.sep):
+            if not os.path.isdir(resolved):
+                return ("", "cwd does not exist or is not a directory")
             return (resolved, "")
     return (
         "",
