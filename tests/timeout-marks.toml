@@ -840,6 +840,11 @@ cap = 40
 reason = "a hypothesis property: each generated config written and loaded back; 18 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
+site = "tests/test_a_stage_gate_judges_what_the_stage_did.py::test_the_gateway_answers_while_a_drained_stages_gate_reads_what_it_changed"
+cap = 60
+reason = "a code loop driven for real to the poll that reaps its two task workers, merges their worktrees and judges the stage, with one git step held off the event loop until the test lets it go; 5.9 to 7.8 s alone on a Mac at a 1-minute load near 30 (2026-11-13), the shape of its file's other driven tests, which reach 30 s under load"
+
+[[mark]]
 site = "tests/test_a_stage_gate_judges_what_the_stage_did.py::test_a_stage_that_changed_two_files_passes_on_what_its_gate_observed"
 cap = 50
 reason = "a code loop driven to its stage gate for real: a worktree per task, the merge, and each check the supervisor runs as a child process; 20 s on CI at worst (a merge leg, 2026-10-24)"
