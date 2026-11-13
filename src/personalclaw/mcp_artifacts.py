@@ -12,6 +12,8 @@ import logging
 import re
 from typing import Any, NamedTuple
 
+from personalclaw import artifact_project
+from personalclaw.artifact_project import Project
 from personalclaw.artifacts import dedupe as artifact_dedupe
 from personalclaw.artifacts import retakes
 from personalclaw.artifacts.bases import base_for, base_outcome, names_a_base, parse_base
@@ -22,77 +24,12 @@ from personalclaw.artifacts.models import (
     is_binary_kind,
     is_valid_slug,
 )
-from personalclaw.mcp_core import MODEL_WORK, _resolve_session_key
+from personalclaw.mcp_core import MODEL_WORK, _resolve_session_key, get_current_session_key
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import BUILDS_META_KEY, ToolFailure, tool_failure
 from personalclaw.validation import decode_json_text
 
 logger = logging.getLogger(__name__)
-
-
-def _current_project_id() -> str:
-    """The Project this save scopes under, resolved for BOTH runtimes.
-
-    Two callers, two mechanisms, one answer:
-
-    * the **native** runtime runs in-process and binds a per-turn contextvar, so reading
-      it is exact and free;
-    * an **ACP** CLI's tools run in a separate ``personalclaw mcp-core`` process, where
-      that contextvar is empty by construction. ``provider_bridge`` pops ``project_id``
-      unconditionally and hands it only to the native builder, so nothing about the
-      binding crosses into the ACP branch. Every ACP ``artifact_save`` therefore stamped
-      ``project_id=""`` and the artifact never appeared on its Project page.
-
-    The ACP half resolves SERVER-SIDE from the session key rather than by threading a new
-    argument through the protocol: the key already crosses as ``PERSONALCLAW_SESSION_KEY``
-    (or the ``session_pid_<pid>.txt`` ancestor walk), which is exactly what
-    ``_resolve_session_key`` reads, so the gateway can be asked what that session is bound
-    to. No protocol change, and the answer is live rather than a snapshot taken at spawn.
-
-    Returns "" for an unscoped session, and "" on any failure — never a default project.
-    Stamping an unscoped save into "Personal" would file work under a project the user
-    never chose, which is worse than an unstamped artifact.
-    """
-    try:
-        from personalclaw.agents.native.builtin_tools import current_project_id
-
-        pid = current_project_id() or ""
-        if pid:
-            return pid
-    except Exception:
-        pass
-    return _session_bound_project_id()
-
-
-def _session_bound_project_id() -> str:
-    """The calling session's bound Project, read from the gateway. "" when unresolvable.
-
-    **Out-of-process callers only, and the guard is load-bearing.** The in-process native
-    runtime lives INSIDE the gateway, so a blocking ``urllib`` GET from here would have
-    the gateway waiting on itself — at best a wasted round trip, at worst a request
-    issued from the event loop that cannot be served until it returns. Its session key
-    arrives via ``mcp_core._CURRENT_SESSION_KEY`` (a contextvar), so that contextvar
-    being set is the exact signal for "I am in-process": in that case the native project
-    contextvar is authoritative and its emptiness means unscoped, full stop.
-
-    An ACP CLI's ``mcp-core`` process has no such contextvar — its key comes from
-    ``PERSONALCLAW_SESSION_KEY`` or the ``session_pid_<pid>.txt`` ancestor walk — so it
-    falls through and asks.
-    """
-    from personalclaw.mcp_core import _CURRENT_SESSION_KEY, _get
-
-    if _CURRENT_SESSION_KEY.get():
-        return ""  # in-process native turn: the contextvar already answered
-    if not _resolve_session_key():
-        return ""  # no session identity → nothing to look up
-    try:
-        got = _get("/api/chat/sessions/bound-project")
-        if not isinstance(got, dict) or got.get("error"):
-            return ""
-        return str(got.get("project_id") or "")
-    except Exception:
-        logger.debug("session project lookup failed", exc_info=True)
-        return ""
 
 
 #: How much of an artifact's text one ``artifact_get`` hands over. Below the tool-output cap
@@ -1380,6 +1317,111 @@ def _save_next_version(
     )
 
 
+def _save_new(
+    prov: Any, args: dict[str, Any], content: str, slug: str, sk: str | None, _audit: Any
+) -> str:
+    """``artifact_save`` that makes a new artifact: at *slug* when the call names one no artifact
+    has, else at a slug made from its name. Its name is checked only against the artifacts of the
+    Project it is filed under (so another Project's artifact neither refuses it nor takes its
+    text), and not at all when the lookup failed."""
+    from personalclaw.artifacts.models import redacted
+
+    if slug and args.get("base"):
+        _audit("denied", slug, "a base for an artifact that does not exist")
+        return tool_failure(_no_target_for_base(slug, str(args.get("kind") or "widget")))
+    # Same-deliverable dedup (#290): a save tagged `loop:<id>` whose bytes are
+    # already in the library under that same tag IS that artifact, whatever the
+    # model chose to call it. The framework's completion-time graduation of a
+    # loop's deliverable carries the same tag, so without this the two writers
+    # produce two byte-identical rows for one document — and `find_similar` below
+    # cannot see it, because it matches on the NAME's slug and the two names
+    # differ. Updated in place rather than refused with a hint: the worker is
+    # ending its turn, so a hint has no next turn to land in. The text it holds is
+    # this very text, so nothing of anyone's is replaced; the revision it was matched
+    # on is named all the same, so a write landing between the match and this one is
+    # not undone, and the save carries on as a new one instead.
+    if not slug and yes_or_no(args.get("force")) is not True:
+        same = artifact_dedupe.find_same_deliverable(
+            prov, tags=args.get("tags"), content=content or ""
+        )
+        if same is not None:
+            from personalclaw.stale_write import revision_of
+
+            try:
+                upd = prov.update(
+                    same.slug,
+                    content=content,
+                    snapshot=True,
+                    event_type="iterated",
+                    actor="agent",
+                    session_id=sk,
+                    tags=sorted(set(same.tags) | set(args.get("tags") or [])),
+                    expect_revision=revision_of(redacted(same.content)),
+                )
+            except ArtifactStaleWrite:
+                same = None  # it changed after the match, so it is not this text now
+        if same is not None:
+            _audit("deduped", same.slug)
+            version = upd.version if upd is not None else same.version
+            kept = _kept_note(upd, same.version, sk) if upd is not None else ""
+            return (
+                f"That content is already saved as '{redacted(same.name)}' "
+                f"(slug: {same.slug}) under the same tag — updated it in place "
+                f"(version {version}) instead of saving a duplicate.{kept}"
+            )
+    # Asked once, before the name check, so the name check and the stamp name the same Project.
+    project, why = artifact_project.current()
+    # List-before-save dedup: a fresh save (no explicit slug, not forced) whose name matches an
+    # existing artifact of its own Project ("" = unscoped only, never None = every Project)
+    # refuses with a hint, so the agent updates that one instead of minting a "-2" twin. Skipped
+    # when the lookup failed: "" then means not known, not unscoped, so the save makes its own
+    # row and says so.
+    if not slug and not why and yes_or_no(args.get("force")) is not True:
+        similar = prov.find_similar(
+            args["name"], kind=args.get("kind", "widget"), project_id=project
+        )
+        if similar is not None:
+            _audit("deduped", similar.slug)
+            return (
+                f"An artifact named '{redacted(similar.name)}' already exists "
+                f"(slug: {similar.slug}). To revise it, read it with artifact_get and "
+                f"call artifact_update with slug='{similar.slug}' and the base that read "
+                "names. To save a NEW separate artifact anyway, call artifact_save "
+                "again with force=true."
+            )
+    # The same deliverable above holds this very text already, so it is new only here.
+    refused = _text_refusal(
+        args.get("kind", "widget"),
+        name=args["name"],
+        description=args.get("description", ""),
+        content=content,
+    )
+    if refused is not None:
+        _audit("denied", error=refused.code)
+        return tool_failure(refused.nothing_made)
+    art = prov.create(
+        name=args["name"],
+        content=content or "",
+        kind=args.get("kind", "widget"),
+        source="chat",
+        slug=slug or None,
+        description=args.get("description", ""),
+        tags=args.get("tags"),
+        collection=args.get("collection", ""),
+        actor="agent",
+        session_id=sk,
+        # Ties the artifact to the turn's Project so it shows on that Project's page: bound
+        # per-turn by the native runtime, asked of the gateway in the agent CLI's tool server
+        # (artifact_project.current); "" when the session isn't scoped to a project.
+        project_id=project,
+    )
+    _audit("success", art.slug)
+    return (
+        f"Saved artifact '{redacted(art.name)}' (slug: {art.slug}, version {art.version}, "
+        f"base {base_for(art)})."
+    ) + artifact_project.unknown_note(art.slug, why, sk)
+
+
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     """Dispatch artifact_* tools directly against the native provider entity.
 
@@ -1431,94 +1473,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             if existing is not None:
                 # A slug that names an artifact saves its next version, over the version read.
                 return _save_next_version(prov, existing, args, content, sk, _audit)
-            if slug and args.get("base"):
-                _audit("denied", slug, "a base for an artifact that does not exist")
-                return tool_failure(_no_target_for_base(slug, str(args.get("kind") or "widget")))
-            # Same-deliverable dedup (#290): a save tagged `loop:<id>` whose bytes are
-            # already in the library under that same tag IS that artifact, whatever the
-            # model chose to call it. The framework's completion-time graduation of a
-            # loop's deliverable carries the same tag, so without this the two writers
-            # produce two byte-identical rows for one document — and `find_similar` below
-            # cannot see it, because it matches on the NAME's slug and the two names
-            # differ. Updated in place rather than refused with a hint: the worker is
-            # ending its turn, so a hint has no next turn to land in. The text it holds is
-            # this very text, so nothing of anyone's is replaced; the revision it was matched
-            # on is named all the same, so a write landing between the match and this one is
-            # not undone, and the save carries on as a new one instead.
-            if not slug and yes_or_no(args.get("force")) is not True:
-                same = artifact_dedupe.find_same_deliverable(
-                    prov, tags=args.get("tags"), content=content or ""
-                )
-                if same is not None:
-                    from personalclaw.stale_write import revision_of
-
-                    try:
-                        upd = prov.update(
-                            same.slug,
-                            content=content,
-                            snapshot=True,
-                            event_type="iterated",
-                            actor="agent",
-                            session_id=sk,
-                            tags=sorted(set(same.tags) | set(args.get("tags") or [])),
-                            expect_revision=revision_of(redacted(same.content)),
-                        )
-                    except ArtifactStaleWrite:
-                        same = None  # it changed after the match, so it is not this text now
-                if same is not None:
-                    _audit("deduped", same.slug)
-                    version = upd.version if upd is not None else same.version
-                    kept = _kept_note(upd, same.version, sk) if upd is not None else ""
-                    return (
-                        f"That content is already saved as '{redacted(same.name)}' "
-                        f"(slug: {same.slug}) under the same tag — updated it in place "
-                        f"(version {version}) instead of saving a duplicate.{kept}"
-                    )
-            # List-before-save dedup: a fresh save (no explicit slug,
-            # not forced) whose name matches an existing artifact refuses with a hint
-            # so the agent updates the existing one instead of minting a "-2" twin.
-            if not slug and yes_or_no(args.get("force")) is not True:
-                similar = prov.find_similar(args["name"], kind=args.get("kind", "widget"))
-                if similar is not None:
-                    _audit("deduped", similar.slug)
-                    return (
-                        f"An artifact named '{redacted(similar.name)}' already exists "
-                        f"(slug: {similar.slug}). To revise it, read it with artifact_get and "
-                        f"call artifact_update with slug='{similar.slug}' and the base that read "
-                        "names. To save a NEW separate artifact anyway, call artifact_save "
-                        "again with force=true."
-                    )
-            # The same deliverable above holds this very text already, so it is new only here.
-            refused = _text_refusal(
-                args.get("kind", "widget"),
-                name=args["name"],
-                description=args.get("description", ""),
-                content=content,
-            )
-            if refused is not None:
-                _audit("denied", error=refused.code)
-                return tool_failure(refused.nothing_made)
-            art = prov.create(
-                name=args["name"],
-                content=content or "",
-                kind=args.get("kind", "widget"),
-                source="chat",
-                slug=slug or None,
-                description=args.get("description", ""),
-                tags=args.get("tags"),
-                collection=args.get("collection", ""),
-                actor="agent",
-                session_id=sk,
-                # Tie the artifact to the active Project so it surfaces in the
-                # Project detail page. Bound per-turn by the native runtime; "" when
-                # the session isn't scoped to a project.
-                project_id=_current_project_id(),
-            )
-            _audit("success", art.slug)
-            return (
-                f"Saved artifact '{redacted(art.name)}' (slug: {art.slug}, version {art.version}, "
-                f"base {base_for(art)})."
-            )
+            return _save_new(prov, args, content, slug, sk, _audit)
 
         if name == "artifact_get":
             return _artifact_get(prov, args, sk, _audit)
@@ -1948,6 +1903,7 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
                 art,
                 edits,
             )
+    project = artifact_project.for_media()
     art = prov.create_binary(
         name=str(args.get("name", "")).strip() or prompt[:60],
         data=data,
@@ -1956,11 +1912,12 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         source="chat",
         actor="agent",
         session_id=sk,
+        project_id=project.id,
     )
     _audit("success", art.slug)
     return _image_landed(
         f"Generated image '{art.name}' (slug: {art.slug}) via {model_ref}.{note}", art, edits
-    )
+    ) + artifact_project.unknown_note(art.slug, project.why_unknown, get_current_session_key())
 
 
 def _materialize_video(result: Any) -> tuple[bytes, str] | None:
@@ -2056,6 +2013,7 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
     data, mime = materialized
 
     display_name = str(args.get("name", "")).strip() or prompt[:60]
+    project = artifact_project.for_media()
     art = prov.create_binary(
         name=display_name,
         data=data,
@@ -2064,6 +2022,7 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         source="chat",
         actor="agent",
         session_id=sk,
+        project_id=project.id,
     )
     _audit("success", art.slug)
     duration_info = getattr(results[0], "duration_s", 0) or ""
@@ -2076,7 +2035,7 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         f'<video src="{raw_url}" controls preload="auto" '
         f'style="max-width:100%;border-radius:12px;margin:8px 0">'
         f"</video>"
-    )
+    ) + artifact_project.unknown_note(art.slug, project.why_unknown, get_current_session_key())
 
 
 def regenerate_image_at_slug(
@@ -2146,7 +2105,12 @@ def regenerate_image_at_slug(
         art = prov.update_binary(slug, data=data, mime=mime, actor=actor, session_id=session_id)
     else:
         # Deleted (the common case for a broken transcript image): recreate at the
-        # SAME slug → version 1, so a transcript ref pinned to ?version=1 resolves.
+        # SAME slug → version 1, so a transcript ref pinned to ?version=1 resolves. It comes
+        # back under its chat's Project. The web client names that chat by its bare id, and
+        # `artifact_project.of_open_chat` reads only a `dashboard:` key, so the key is made first.
+        from personalclaw.constants import dashboard_session_key
+
+        chat = dashboard_session_key(session_id) if session_id else ""
         art = prov.create_binary(
             name=prompt[:60],
             data=data,
@@ -2156,6 +2120,7 @@ def regenerate_image_at_slug(
             slug=slug,
             actor=actor,
             session_id=session_id,
+            project_id=artifact_project.of_open_chat(chat).id,
         )
         if art is not None and art.slug != slug:
             # Slug collided unexpectedly (shouldn't happen for a deleted artifact);
@@ -2301,13 +2266,25 @@ def _bullet(entry: Any) -> Any:
 
 
 def _document_target(
-    prov: Any, name: str, args: dict[str, Any], fmt: str, sk: str | None
-) -> tuple[Any, str, Any]:
-    """``(target, refusal, expectation)``: the existing artifact a document tool's call writes the
-    next version of (``None`` for a new one), the sentence the call is refused with (``""`` when
-    it may go ahead) and what the store compares under its lock (:func:`_base_check`). A refusal
-    that comes with a target is about the base the call names, since the call writes over that
-    target's text; one without is about its slug or its format.
+    prov: Any,
+    name: str,
+    args: dict[str, Any],
+    fmt: str,
+    sk: str | None,
+) -> tuple[Any, str, Any, Project]:
+    """``(target, refusal, expectation, project)``: the existing artifact a document tool's call
+    writes the next version of (``None`` for a new one), the sentence the call is refused with
+    (``""`` when it may go ahead), what the store compares under its lock (:func:`_base_check`)
+    and the :class:`Project` a new document is filed under. A refusal that comes with a target is
+    about the base the call names, since the call writes over that target's text; one without is
+    about its slug or its format.
+
+    The Project is asked (:func:`artifact_project.current`) only on a call that can make a new
+    document: one with no slug, and one whose slug names nothing and that names no base. Every
+    other return carries ``Project("", "")``, unasked. When the gateway did not say
+    (``why_unknown`` set), a call with no slug skips the name check: "" then means "not known",
+    not "unscoped", so an unscoped document of the same name is not this chat's to write over,
+    and a new row is made.
 
     An explicit slug names the target. Without one, an artifact of this format with the same name
     in this turn's project does, through the very ``prov.find_similar`` call ``artifact_save``
@@ -2322,10 +2299,13 @@ def _document_target(
     display_name = str(args.get("name") or "").strip() or f"Untitled {fmt}"
     slug = str(args.get("slug") or "").strip()
     raw_base = args.get("base")
+    unasked = Project("", "")
     if slug:
         named = prov.get(slug)
         if named is None:
-            return None, (_no_target_for_base(slug, fmt) if raw_base else ""), None
+            if raw_base:
+                return None, _no_target_for_base(slug, fmt), None, unasked
+            return None, "", None, artifact_project.current()  # creates at this slug
         # A slug names the artifact this file becomes the next version OF, and a version is of
         # its artifact's kind: a docx cannot be an image's next version, nor a csv a markdown
         # note's. Said before anything is rendered into the store, with the way to do each.
@@ -2336,10 +2316,16 @@ def _document_target(
                 f"version. Leave out slug to make a new {fmt}. "
                 f"{_change_it(named.kind, slug, f'{slug!r} itself')}",
                 None,
+                unasked,
             )
         refusal, expected = _base_check(prov, named, raw_base, sk, tool=name)
-        return named, refusal, expected
-    similar = prov.find_similar(display_name, kind=fmt, project_id=_current_project_id())
+        return named, refusal, expected, unasked
+    project = artifact_project.current()
+    similar = (
+        None
+        if project.why_unknown
+        else prov.find_similar(display_name, kind=fmt, project_id=project.id)
+    )
     named = prov.get(similar.slug) if similar is not None else None
     if named is None:
         if raw_base:
@@ -2349,8 +2335,9 @@ def _document_target(
                 f"names no slug and no {fmt} is named '{display_name}'. Pass the slug of the {fmt} "
                 f"you read, or leave out base to make a new {fmt}. Nothing was written.",
                 None,
+                unasked,
             )
-        return None, "", None
+        return None, "", None, project
     if not names_a_base(raw_base):
         return (
             named,
@@ -2359,9 +2346,10 @@ def _document_target(
             f"artifact_get and call {name} again with slug='{named.slug}' and the base that read "
             f"names; to make a separate {fmt}, give it a different name. Nothing was written.",
             None,
+            unasked,
         )
     refusal, expected = _base_check(prov, named, raw_base, sk, tool=name)
-    return named, refusal, expected
+    return named, refusal, expected, unasked
 
 
 def _with_masks_kept(prov: Any, target: Any, args: dict[str, Any]) -> dict[str, Any]:
@@ -2439,9 +2427,9 @@ def _document_create(
         )
     display_name = str(args.get("name") or "").strip() or f"Untitled {fmt}"
     slug = str(args.get("slug") or "").strip()
-    # The artifact this call writes the next version of, and the base it is written over. Said
-    # before anything is rendered: a call refused here costs no rendering.
-    named, refusal, expected = _document_target(prov, name, args, fmt, sk)
+    # The artifact this call writes the next version of, the base it is written over and the
+    # Project a new one is filed under. Said before rendering: a refusal here costs none.
+    named, refusal, expected, project = _document_target(prov, name, args, fmt, sk)
     if refusal:
         if named is not None:  # a write over its text, refused for the base it names
             _audit(base_outcome(args.get("base")), named.slug)
@@ -2621,7 +2609,7 @@ def _document_create(
                 tags=args.get("tags") or None,
                 actor="agent",
                 session_id=sk,
-                project_id=_current_project_id(),
+                project_id=project.id,
             )
         else:
             art = prov.create(
@@ -2634,9 +2622,17 @@ def _document_create(
                 tags=args.get("tags") or None,
                 actor="agent",
                 session_id=sk,
-                project_id=_current_project_id(),
+                project_id=project.id,
             )
     _audit("success", art.slug)
+    return _document_reply(art, fmt, data, binary, target, project, sk)
+
+
+def _document_reply(
+    art: Any, fmt: str, data: bytes, binary: bool, target: str, project: Project, sk: str | None
+) -> str:
+    """What ``_document_create`` answers for *art*, the document it wrote: what was made, where
+    it downloads and, on a new row whose Project the gateway did not say, the note."""
     # "Created" vs "Updated": name-dedup makes the update path a routine outcome of a plain
     # repeat call, and an agent told it "Created" a v2 has been told the one thing that is
     # not true about what just happened — it would go looking for a second file.
@@ -2646,12 +2642,16 @@ def _document_create(
         f"base {base_for(art)}). "
     )
     if binary:
-        return made + f"Download at /api/artifacts/{art.slug}/raw"
-    # A csv is a text kind: its file is the text the store keeps, which the raw route (the bytes
-    # of a binary kind) does not serve. So the reply names where it opens and downloads instead.
+        made += f"Download at /api/artifacts/{art.slug}/raw"
+    else:
+        # A csv is a text kind: its file is the text the store keeps, which the raw route (the
+        # bytes of a binary kind) does not serve. So the reply names where it opens instead.
+        made += (
+            f"It opens in Artifacts at /#/artifacts/{art.slug}, where Download saves it as a "
+            f".{fmt} file."
+        )
     return made + (
-        f"It opens in Artifacts at /#/artifacts/{art.slug}, where Download saves it as a "
-        f".{fmt} file."
+        "" if target else artifact_project.unknown_note(art.slug, project.why_unknown, sk)
     )
 
 

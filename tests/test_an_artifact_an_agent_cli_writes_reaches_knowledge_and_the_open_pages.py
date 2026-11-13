@@ -16,6 +16,11 @@ door: its artifact tools change nothing in the library, as the gateway's own age
 gateway's own writes are heard once and handed to no one. The content scan reads an artifact's text
 once, at the tool that writes it.
 
+A save also carries its chat's Project: the tool server asks the gateway which Project the chat it
+serves belongs to (GET /api/chat/sessions/bound-project), so what an agent CLI saves in a Project's
+chat joins that Project's page, a second document of the same name in that chat is refused and
+names the first, and a chat in no Project files what it saves under none.
+
 Driven as an agent CLI drives it: the real gateway asking for a sign-in, a page open on its event
 stream, and the real ``personalclaw mcp-core`` started with the server the gateway declares to the
 CLI (``acp.mcp_servers.core_mcp_servers``), spoken to over stdio. The refused text is the content
@@ -40,6 +45,7 @@ from unittest.mock import MagicMock
 
 import aiohttp
 import pytest
+import tree_under_test
 
 from personalclaw import gateway_base, mcp_core
 from personalclaw.acp.mcp_servers import core_mcp_servers
@@ -49,6 +55,8 @@ from personalclaw.artifacts.native import NativeArtifactProvider
 #: The chats the agent CLI's tool server serves, as the gateway names them to that process.
 CHAT = "dashboard:chat-cli-artifacts"
 INCOGNITO = "dashboard:chat-cli-incognito"
+#: A chat that belongs to a Project.
+PROJECT_CHAT = "dashboard:chat-cli-harbour"
 
 #: Every auth shortcut a test process might inherit: each would admit a call before the internal
 #: credential is looked at.
@@ -165,6 +173,11 @@ async def _gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIter
     monkeypatch.setenv("HOME", str(user_home))
     for name in _AUTH_SHORTCUTS:
         monkeypatch.delenv(name, raising=False)
+    # No backups or history of the scratch home: their threads would outlive the test.
+    home.mkdir(mode=0o700, parents=True)
+    (home / "config.json").write_text(
+        json.dumps({"durability": {"auto_backup": False, "time_travel": False}}), encoding="utf-8"
+    )
 
     dist = tmp_path / "dist"
     (dist / "assets").mkdir(parents=True)
@@ -248,13 +261,27 @@ class _ToolServer:
         return not result.get("isError"), text
 
 
+def _tool_server_env(gw: _Gateway, chat: str = CHAT) -> dict[str, str]:
+    """The environment an agent CLI starts the tool server for *chat* with: the CLI's own ``PATH``
+    and ``HOME``, and the entries the gateway declares to the CLI. Built from nothing, it puts this
+    tree's ``src`` first on ``PYTHONPATH`` (``tests/tree_under_test.py``), so the child imports the
+    tree under test rather than the venv's editable install, and carries the run's
+    ``PYTHONPYCACHEPREFIX`` when one is set."""
+    (server,) = core_mcp_servers(session_key=chat)
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(gw.user_home)}
+    env.update({entry["name"]: entry["value"] for entry in server["env"]})
+    tree_under_test.put_first(env)
+    if prefix := os.environ.get("PYTHONPYCACHEPREFIX"):
+        env["PYTHONPYCACHEPREFIX"] = prefix
+    return env
+
+
 @contextlib.asynccontextmanager
 async def _tool_server(gw: _Gateway, chat: str) -> AsyncIterator[_ToolServer]:
     """The tool server started as an agent CLI starts it: the command, arguments and environment
     the gateway declares to the CLI for *chat*, on the CLI's own ``PATH`` and ``HOME``."""
     (server,) = core_mcp_servers(session_key=chat)
-    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(gw.user_home)}
-    env.update({entry["name"]: entry["value"] for entry in server["env"]})
+    env = _tool_server_env(gw, chat)
     proc = await asyncio.create_subprocess_exec(
         server["command"],
         *server["args"],
@@ -331,6 +358,103 @@ async def test_what_the_agent_cli_saves_and_edits_is_found_in_knowledge_and_show
         assert await gw.found("breakwater") == ["Harbour survey notes"]
         assert await gw.found("cormorant") == [], "the old text must leave Knowledge"
         assert gw.heard == [(changes.UPSERT, slug)] * 2
+
+
+@pytest.mark.asyncio
+async def test_what_the_agent_cli_saves_in_a_project_chat_belongs_to_that_project(
+    tmp_path, monkeypatch
+):
+    """🔴 Red where the tool server's stamp read only the gateway's own turn: an artifact and a
+    document an agent CLI saved in a chat that belongs to a Project were filed under no project,
+    so neither appeared on that Project's page. The tool server asks the gateway which Project the
+    chat it serves belongs to. A document's name is unique within its project, so a second
+    document of the same name in that chat is refused and names the first; a chat that belongs
+    to no Project files what it saves under none."""
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        gw.state.get_or_create_session(
+            PROJECT_CHAT.removeprefix("dashboard:"),
+            memory_mode="persistent",
+            project_id="p-harbour",
+        )
+        async with _tool_server(gw, PROJECT_CHAT) as tools:
+            ok, said = await tools.call(
+                "artifact_save",
+                {
+                    "name": "Mooring plan",
+                    "kind": "markdown",
+                    "content": "# Moorings\n\nThe trawlers berth on the east quay.",
+                },
+            )
+            assert ok, said
+            assert gw.stored(_slug(said)).project_id == "p-harbour"
+
+            ok, said = await tools.call(
+                "document_create", {"name": "Harbour report", "markdown": "# Harbour report"}
+            )
+            assert ok, said
+            report = re.search(r"Created \w+: ([a-z0-9-]+)", said)
+            assert report, said
+            first = report.group(1)
+            assert gw.stored(first).project_id == "p-harbour"
+
+            ok, said = await tools.call(
+                "document_create", {"name": "Harbour report", "markdown": "# Another report"}
+            )
+            assert not ok, said
+            assert f"(slug: {first}," in said, said
+
+            ok, said = await tools.call(
+                "sheet_create",
+                {"name": "Berths", "format": "csv", "rows": [["quay", "boat"]]},
+            )
+            assert ok, said
+            sheet = re.search(r"Created \w+: ([a-z0-9-]+)", said)
+            assert sheet, said
+            assert gw.stored(sheet.group(1)).project_id == "p-harbour"
+
+        async with _tool_server(gw, CHAT) as tools:
+            ok, said = await tools.call(
+                "artifact_save",
+                {"name": "Loose notes", "kind": "markdown", "content": "Gulls on the slipway."},
+            )
+            assert ok, said
+            assert gw.stored(_slug(said)).project_id == ""
+
+
+@pytest.mark.asyncio
+async def test_a_project_chat_saving_a_name_another_project_holds_makes_its_own(
+    tmp_path, monkeypatch
+):
+    """🔴 Red where the name check looked in every Project: an artifact another Project holds
+    refused the save, and its hint steered the agent to write that artifact's next version. The
+    chat's save makes its own artifact in its own Project, and the other one is left as it was."""
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        theirs = registry.get_provider("native").create(
+            name="Berth plan",
+            content="The ferries berth on the west quay.",
+            kind="markdown",
+            project_id="p-quay",
+        )
+        gw.state.get_or_create_session(
+            PROJECT_CHAT.removeprefix("dashboard:"),
+            memory_mode="persistent",
+            project_id="p-harbour",
+        )
+        async with _tool_server(gw, PROJECT_CHAT) as tools:
+            ok, said = await tools.call(
+                "artifact_save",
+                {
+                    "name": "Berth plan",
+                    "kind": "markdown",
+                    "content": "# Berths\n\nThe trawlers berth on the east quay.",
+                },
+            )
+        assert ok, said
+        assert _slug(said) == "berth-plan-2", said
+        assert gw.stored("berth-plan-2").project_id == "p-harbour"
+        kept = gw.stored(theirs.slug)
+        assert (kept.project_id, kept.version) == ("p-quay", 1)
+        assert kept.content == "The ferries berth on the west quay."
 
 
 @pytest.mark.asyncio
@@ -578,6 +702,89 @@ def _gateway_is(monkeypatch, pid: int | None) -> None:
     """The live gateway of this home, as its runtime record names it (``None``: none runs)."""
     live = None if pid is None else gateway_base.LiveGateway(port=19931, pid=pid)
     monkeypatch.setattr(gateway_base, "live_gateway", lambda: live)
+
+
+def test_the_tool_server_runs_the_tree_under_test(tmp_path, monkeypatch):
+    """🔴 Red where the tool server's environment was built from nothing and left it there: the
+    child imported ``personalclaw`` from the venv's editable install, which a venv shared by
+    several clones points at one of, so the end-to-end tests above could pass on another tree's
+    source. This tree's ``src`` goes first on its ``PYTHONPATH`` (``tests/tree_under_test.py``),
+    and a ``PYTHONPYCACHEPREFIX`` the run sets is carried, so the child writes no bytecode into
+    the tree either."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "data"))
+    gw = _Gateway(home=tmp_path / "data", user_home=tmp_path, port=0, state=None, token="")
+
+    monkeypatch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+    env = _tool_server_env(gw)
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == tree_under_test.src()
+    assert "PYTHONPYCACHEPREFIX" not in env
+
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "pycache"))
+    assert _tool_server_env(gw)["PYTHONPYCACHEPREFIX"] == str(tmp_path / "pycache")
+
+
+class _Answer:
+    """What the gateway's transport hands back: a body to read, inside a ``with``."""
+
+    def __init__(self, body: dict) -> None:
+        self._body = json.dumps(body).encode()
+
+    def __enter__(self) -> _Answer:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def test_the_tool_server_files_a_save_under_the_chat_it_serves(store, monkeypatch):
+    """The tool server's own dispatch (``mcp_core._call_as_its_session``), in this process: an
+    artifact and a document saved for a chat that belongs to a Project are filed under it. The
+    gateway is asked about the chat this process serves, named in ``X-Session-Key`` on every call,
+    and answers that the chat keeps what it makes and belongs to the Project. The end-to-end test
+    above proves the same through a child; this one fails where the child would run another
+    tree's source."""
+    from personalclaw.mcp_core import _CURRENT_SESSION_KEY
+
+    monkeypatch.setattr(registry, "get_provider", lambda _name: store)
+    monkeypatch.setattr(mcp_core, "_SERVES_AN_AGENT_CLI", True)
+    monkeypatch.setattr(mcp_core, "_SESSION_MODES", {})
+    monkeypatch.setattr("personalclaw.agents.native.builtin_tools.current_project_id", lambda: "")
+    monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", PROJECT_CHAT)
+    monkeypatch.setattr(mcp_core, "_internal_secret", lambda: "test-secret")
+    monkeypatch.setattr(mcp_core, "_api_base", lambda: "http://127.0.0.1:1")
+    _gateway_is(monkeypatch, None)
+    asked: list[str] = []
+
+    def gateway(req, timeout=None) -> _Answer:
+        path = req.full_url.removeprefix("http://127.0.0.1:1")
+        assert req.get_header("X-session-key") == PROJECT_CHAT, (path, req.header_items())
+        asked.append(path)
+        if path == "/api/chat/sessions/model-reach":
+            return _Answer({"memory_mode": "persistent", "turn_stopped": False})
+        if path == "/api/chat/sessions/bound-project":
+            return _Answer({"project_id": "p-harbour"})
+        return _Answer({})
+
+    monkeypatch.setattr(mcp_core.home_gateway, "open_loopback", gateway)
+    unbound = _CURRENT_SESSION_KEY.set("")
+    try:
+        said = mcp_core._call_as_its_session(
+            "artifact_save", {"name": "Mooring plan", "kind": "markdown", "content": "# Moorings"}
+        )
+        assert store.get(_slug(said)).project_id == "p-harbour", said
+
+        said = mcp_core._call_as_its_session(
+            "document_create", {"name": "Harbour report", "markdown": "# Harbour report"}
+        )
+        report = re.search(r"Created \w+: ([a-z0-9-]+)", said)
+        assert report, said
+        assert store.get(report.group(1)).project_id == "p-harbour"
+    finally:
+        _CURRENT_SESSION_KEY.reset(unbound)
+    assert asked.count("/api/chat/sessions/bound-project") >= 2, asked
 
 
 def test_a_process_beside_the_gateway_hands_it_each_write_once(store, handed, monkeypatch):
