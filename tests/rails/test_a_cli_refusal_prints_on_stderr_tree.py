@@ -20,8 +20,15 @@ PACKAGE = Path(personalclaw.__file__).parent
 #: Functions whose stdout before a failing status is their real output, and why.
 REPORTS_WITH_A_STATUS = {
     ("apps/quality.py", "main"): "the verification report is the output; 1 says what failed",
-    ("cli_commands.py", "_security"): "`security verify` reports the log; 1 says it is tampered",
+    ("cli.py", "_handle_skills"): "`skills verify` reports each skill; 1 says a record is damaged",
+    ("cli_commands.py", "_automation"): "`automation verify-migration` is the report; 1 = act",
+    (
+        "cli_commands.py",
+        "_verify_verdict",
+    ): "`security verify`'s verdict is the report; 1 = tampered",
     ("cli_doctor.py", "_doctor"): "the doctor's report ends on its verdict and what to fix",
+    ("cli_doctor.py", "_doctor_crypto"): "`doctor --crypto` reports each check; 1 says one failed",
+    ("push.py", "push_cmd"): "`push test` says what it sent; 1 says nothing was delivered",
     ("inbound/auth.py", "_show_token"): "`inbound token show` answers either way; 1 = none works",
     ("evals/child.py", "main"): "the result line is the protocol its parent reads on stdout",
     ("evals/optimize.py", "main"): "JSON on stdout is the bash action's protocol, errors too",

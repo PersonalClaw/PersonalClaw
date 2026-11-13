@@ -44,14 +44,14 @@ def _gather(pid: str) -> tuple[list[dict], list[dict]]:
         if provider is not None:
             artifacts = [a.to_dict() for a in provider.list(project_id=pid)]
     except Exception:  # noqa: BLE001
-        print("⚠️  artifact metadata unavailable; exporting without it")
+        print("⚠️  artifact metadata unavailable; exporting without it", file=sys.stderr)
     try:
         from personalclaw.workflows import store as wf_store
 
         rows, _total = wf_store.list_runs(project_id=pid, limit=1000)
         runs = [r.to_dict() for r in rows]
     except Exception:  # noqa: BLE001
-        print("⚠️  run digests unavailable; exporting without them")
+        print("⚠️  run digests unavailable; exporting without them", file=sys.stderr)
     return artifacts, runs
 
 
@@ -175,18 +175,28 @@ def _import(args: argparse.Namespace) -> int:
     # What the lines below show is the archive's own words: its project's name and the credential
     # names it expects, as the terminal is given them. The import takes the plan as it was read.
     read, plan = plan, _as_shown(plan)
-    print(import_summary(plan, preview=True))
-    if plan.refused:
-        print(f"   ✖ {len(plan.refused)} refused:")
-        for issue in plan.refused[:10]:
-            print(f"     · {terminal_text(str(issue.path))}: {terminal_text(str(issue.message))}")
-        if len(plan.refused) > 10:
-            print(f"     · … and {len(plan.refused) - 10} more")
+
+    def show(stream: Any, **counted: Any) -> None:
+        """The plan's summary and the rows it refused, on *stream*."""
+        print(import_summary(plan, **counted), file=stream)
+        if plan.refused:
+            print(f"   ✖ {len(plan.refused)} refused:", file=stream)
+            for issue in plan.refused[:10]:
+                print(
+                    f"     · {terminal_text(str(issue.path))}: {terminal_text(str(issue.message))}",
+                    file=stream,
+                )
+            if len(plan.refused) > 10:
+                print(f"     · … and {len(plan.refused) - 10} more", file=stream)
 
     if args.dry_run:
+        show(sys.stdout, preview=True)
         print("   (dry run — nothing was written)")
         return 0
+    # A real import prints no plan before it writes: a refusal leaves stdout empty, and what it
+    # did is said once it has done it.
     if not plan.ok:
+        show(sys.stderr, preview=True)
         print("❌ Nothing importable in this archive.", file=sys.stderr)
         return 1
 
@@ -194,12 +204,13 @@ def _import(args: argparse.Namespace) -> int:
         created, written, left = pa.import_project(read, extracted, store=store, home=config_dir())
     except LinkInTheWay as link:
         return _refused_by_a_link(link)
+    show(sys.stdout, written=len(written), left=left)
     print(
         f"✅ Imported as {terminal_text(str(created.name))} ({created.id}) — {len(written)} "
         "entities written"
     )
     if left:
-        print(f"   ⚠️  Left unchanged: {terminal_text(str('; '.join(left)))}")
+        print(f"   ⚠️  Left unchanged: {terminal_text(str('; '.join(left)))}", file=sys.stderr)
     if plan.secrets_expected:
         print(
             f"   🔑 Re-enter {len(plan.secrets_expected)} credential(s): "

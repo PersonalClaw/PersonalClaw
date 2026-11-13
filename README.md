@@ -269,7 +269,7 @@ docker exec personalclaw personalclaw token
 ```
 
 The URL carries the container's own port, 10000. If you published a different host port,
-open that one instead; the command reminds you.
+open that one instead; `personalclaw token --explain` says so too.
 
 State lives in the named volume `personalclaw_home`, mounted at `/data`, so it survives
 `docker rm`/`docker run`. That includes your work: the image puts the workspace at

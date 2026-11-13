@@ -1456,6 +1456,7 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
     core ladder.
     """
     from personalclaw.dashboard.origin import (
+        PHONE_SIGN_IN_HINT,
         auth_is_off,
         declared_proxy_front,
         is_local_bind,
@@ -1562,10 +1563,7 @@ async def _probe_remote_reachability(ctx: DoctorContext) -> ProbeResult:
         base_url = f"http://{tnet}:{port}" if port else f"http://{tnet}"
         return ProbeResult(
             ok=True,
-            detail=(
-                f"tailnet {tnet} — open {base_url} on your phone "
-                "(run `personalclaw token` for the signed-in link)"
-            ),
+            detail=f"tailnet {tnet} — open {base_url} on your phone and {PHONE_SIGN_IN_HINT}",
             evidence={
                 "tailnet_ip": tnet,
                 "phone_url": base_url,

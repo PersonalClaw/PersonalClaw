@@ -21,12 +21,28 @@ from typing import Any
 
 from personalclaw import session_keys
 from personalclaw.auth import credentials as creds
+from personalclaw.cli_output import explain, print_json
 from personalclaw.security import terminal_text
 
 
-def _print_status() -> int:
+def _print_status(args: Any = None) -> int:
     st = creds.status()
     cfg = _auth_config()
+    if getattr(args, "as_json", False):
+        # `config get auth` holds neither the credential nor the 2FA fact: this does.
+        print_json(
+            {
+                "login_enabled": bool(cfg.get("login_enabled")),
+                "credential_set": bool(st["configured"]),
+                "username": (st["username"] or None) if st["configured"] else None,
+                "totp_enrolled": bool(st["totp_enabled"]),
+                "require_totp": bool(cfg.get("require_totp")),
+                "session_ttl": cfg.get("session_ttl"),
+                "lockout_threshold": cfg.get("lockout_threshold"),
+                "lockout_window": cfg.get("lockout_window"),
+            }
+        )
+        return 0
     print("Owner login")
     print(f"  enabled:     {'yes' if cfg.get('login_enabled') else 'no'}")
     if st["configured"]:
@@ -143,7 +159,7 @@ def auth_cmd(args) -> int:
     if action == "disable":
         _set_auth_field("login_enabled", False)
         print("✅ Owner login disabled. The stored credential is kept.")
-        print("   Use `personalclaw auth set-password` to change it, or delete it with --clear.")
+        print("   Use `personalclaw auth set-password` to change it.")
         return 0
 
     if action == "totp":
@@ -158,27 +174,37 @@ def auth_cmd(args) -> int:
     if action == "rotate-key":
         return _rotate_key_cmd(args)
 
-    return _print_status()
+    return _print_status(args)
 
 
 def _enroll_cmd(args) -> int:
-    """``personalclaw auth enroll [--label NAME] [--clear]`` — a single-use device code."""
+    """``personalclaw auth enroll [--label NAME] [--explain] | --clear`` — a single-use device code.
+
+    stdout is the code alone (``7K4M-QP93``), so it can be piped; what it is and how it is used is
+    ``--explain``'s, on stderr. ``--clear`` makes no code, so a ``--label`` or ``--explain`` beside
+    it is a usage error rather than dropped."""
     from personalclaw.auth import enrollment
 
     if bool(getattr(args, "clear", False)):
+        if getattr(args, "label", None) is not None or getattr(args, "explain", False):
+            print(
+                "❌ auth enroll --clear makes no code, so it takes neither --label nor --explain.",
+                file=sys.stderr,
+            )
+            return 2
         enrollment.clear_codes()
         print("✅ Cleared every outstanding enrollment code.")
         return 0
 
     code, _expires_at = enrollment.issue_code(label=str(getattr(args, "label", "") or ""))
     mins = enrollment.CODE_TTL_SECS // 60
-    print("✅ Enrollment code (single use, valid for %d minutes):" % mins)
-    print()
-    print(f"    {enrollment.format_code(code)}")
-    print()
-    print("Open the dashboard on the other device and enter this code. It is shown once,")
-    print("works exactly once, and expires on its own — losing it costs nothing, just")
-    print("run this again.")
+    print(enrollment.format_code(code))
+    explain(
+        args,
+        f"Enrollment code, single use, valid for {mins} minutes. Open the dashboard on the other "
+        "device and enter it. It is shown once, works exactly once, and expires on its own: "
+        "losing it costs nothing, just run this again.",
+    )
     return 0
 
 
@@ -303,7 +329,23 @@ def _rotate_key_cmd(args) -> int:
 
 
 def _totp_cmd(args) -> int:
+    """``personalclaw auth totp [setup] [--rotate] [--json] [--explain]`` and ``totp disable``.
+
+    stdout is the new secret's ``otpauth://`` link alone, the form QR encoders and password
+    managers take; ``--json`` gives the secret and the link. What to do with it is
+    ``--explain``'s, on stderr, and never holds the secret. A secret already enrolled is replaced
+    only with ``--rotate``: replacing it turns the old authenticator entry's codes off, and with
+    ``auth.require_totp`` on, login then needs the new one."""
     sub = str(getattr(args, "totp_action", "") or "setup")
+    if sub == "disable" and any(
+        getattr(args, flag, False) for flag in ("as_json", "explain", "rotate")
+    ):
+        print(
+            "❌ auth totp disable makes no secret, so it takes none of --json, --explain or "
+            "--rotate.",
+            file=sys.stderr,
+        )
+        return 2
     if sub == "disable":
         if _auth_config().get("require_totp"):
             # Deleting the secret while login still asks for a code would make password login
@@ -321,16 +363,29 @@ def _totp_cmd(args) -> int:
         print("❌ Set a password first — 2FA is a second factor, not the first.", file=sys.stderr)
         return 1
 
+    if creds.status()["totp_enabled"] and not getattr(args, "rotate", False):
+        print(
+            "❌ 2FA is already enrolled. personalclaw auth totp --rotate replaces its secret, and "
+            "codes from the old authenticator entry stop working.",
+            file=sys.stderr,
+        )
+        return 1
+
     from personalclaw.auth.totp import new_secret, provisioning_uri
 
     secret = new_secret()
     creds.set_totp_secret(secret)
     user = creds.status()["username"] or "owner"
-    print("✅ 2FA enrolled. Add this to your authenticator app NOW — it is shown once:")
-    print()
-    print(f"    secret: {secret}")
-    print(f"    uri:    {provisioning_uri(secret, user)}")
-    print()
-    print("Then set `auth.require_totp` to true (Settings → Account, or config.json) to")
-    print("require the code at login. Verify the code works BEFORE requiring it.")
+    uri = provisioning_uri(secret, user)
+    if getattr(args, "as_json", False):
+        print_json({"secret": secret, "uri": uri})
+    else:
+        print(uri)
+    explain(
+        args,
+        "2FA is enrolled, and this is the only time it is shown. Add it to your authenticator "
+        "app: scan the link as a QR code, or type the secret after secret= in it. Then set "
+        "auth.require_totp to true (Settings → Account, or config.json) to require the code at "
+        "login. Verify a code works BEFORE requiring it.",
+    )
     return 0

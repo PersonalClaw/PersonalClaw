@@ -221,6 +221,7 @@
       "cli_commands",
       "cli_config",
       "cli_doctor",
+      "cli_output",
       "cli_project",
       "cli_server",
       "cli_setup",

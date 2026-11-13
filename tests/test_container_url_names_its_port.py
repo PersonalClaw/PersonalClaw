@@ -4,8 +4,9 @@ Measured on the image: ``docker exec … personalclaw token`` printed
 ``http://localhost:10000?token=…``, the gateway's port INSIDE the container. A user who published
 another host port (``-p 127.0.0.1:19501:10000``) had to know to edit the URL by hand. Nothing in
 the container can see the host side of ``-p``, so the fix is not to guess it: both places that
-print the URL — the ``token`` command and the startup banner — say the port is the container's
-and to use the published one. Outside a container they print exactly what they always did.
+print the URL — the ``token`` command (with ``--explain``) and the startup banner — say the port
+is the container's and to use the published one. Outside a container they print exactly what they
+always did, and without ``--explain`` the ``token`` command prints the link alone.
 
 Driven through the real printers with only their I/O faked, and no synthetic value here is or was
 ever a credential.
@@ -26,16 +27,19 @@ from personalclaw.dashboard.origin import format_dashboard_urls
 _SYNTHETIC_TOKEN = "synthetic.placeholder.not-a-real-token"
 
 
-def _run_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> tuple[str, str, int]:
-    """`personalclaw token` against a gateway of this home on a port of its own, standing in for
-    the container's: its secret file and its token route. Returns stdout, stderr and the port."""
+def _run_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys, *, explain: bool = True
+) -> tuple[str, str, int]:
+    """`personalclaw token`, with ``--explain`` when *explain*, against a gateway of this home on a
+    port of its own, standing in for the container's: its secret file and its token route.
+    Returns stdout, stderr and the port."""
     monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     (tmp_path / ".local_secret").write_text("synthetic-local-secret\n")
     routes = {("GET", "/api/token/local"): (200, {"token": _SYNTHETIC_TOKEN})}
     with gateway_stand_in(tmp_path, routes=routes) as gateway:
         gateway.record()
-        cli_server._token(argparse.Namespace(ttl="20h", port=None))
+        cli_server._token(argparse.Namespace(ttl="20h", port=None, explain=explain))
     captured = capsys.readouterr()
     return captured.out, captured.err, gateway.port
 
@@ -43,7 +47,8 @@ def _run_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> tuple
 def test_the_token_command_says_the_port_is_the_containers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:
-    """🔑 The URL stays the one line on stdout; the note goes to stderr, naming the port."""
+    """🔑 The URL stays the one line on stdout; with ``--explain`` the note goes to stderr, naming
+    the port, and without it stderr is empty."""
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     out, err, port = _run_token(monkeypatch, tmp_path, capsys)
     # stdout is still a list of URLs, so `open "$(docker exec … personalclaw token)"` keeps working.
@@ -54,6 +59,9 @@ def test_the_token_command_says_the_port_is_the_containers(
     assert [word for word in err.replace("`", " ").split() if word.strip(".,:").isdigit()] == [
         str(port)
     ]
+    out, err, port = _run_token(monkeypatch, tmp_path, capsys, explain=False)
+    assert out == f"http://127.0.0.1:{port}?token={_SYNTHETIC_TOKEN}\n"
+    assert err == ""
 
 
 def test_outside_a_container_the_token_command_is_unchanged(

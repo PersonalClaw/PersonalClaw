@@ -226,10 +226,12 @@ def test_unmapped_kind_refuses_and_names_what_it_detected(
         cli_server._update()
 
     assert exc.value.code == 1
-    out = capsys.readouterr().err
+    captured = capsys.readouterr()
+    out = captured.err
     assert "flatpak" in out  # says what it saw
     assert "refusing to guess" in out
     assert not git.calls and not spawns  # never fell through to the git pipeline
+    assert captured.out == "", "a refused update prints nothing on stdout"
 
 
 # ── git ─────────────────────────────────────────────────────────────────────
@@ -858,3 +860,102 @@ def test_rollback_to_an_unusable_version_refuses_before_installing(
     assert "Not a usable version to pin" in capsys.readouterr().err
     assert not spawns
     assert not (tmp_path / "config.json").exists()  # nothing was written either
+
+
+# ── a refused update prints nothing on stdout, and pins nothing ──────────────────────
+
+
+def test_an_unmapped_kind_with_to_refuses_and_leaves_the_pin_unset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    _real_config_home(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_server.self_update, "detect_install_kind", lambda: "flatpak")
+    with pytest.raises(SystemExit) as exc:
+        cli_server._update(to="0.1.2")
+    assert exc.value.code == 1
+    assert capsys.readouterr().out == ""
+    assert cli_server.AppConfig.load().updates.pin == ""
+
+
+def test_an_unusable_to_prints_nothing_on_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    _real_config_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "pip")
+    with pytest.raises(SystemExit) as exc:
+        cli_server._update(to="not a version")
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == "" and "Not a usable version to pin" in captured.err
+
+
+@pytest.mark.parametrize("kind", ["git", "pip", "container"])
+def test_a_to_naming_no_release_prints_nothing_and_leaves_the_pin_as_it_was(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns, kind
+) -> None:
+    _real_config_home(monkeypatch, tmp_path)
+    if kind == "git":
+        monkeypatch.setattr(su, "_run_git", _Git())
+        (tmp_path / "checkout").mkdir()
+        _as_git_checkout(monkeypatch, tmp_path / "checkout")
+    else:
+        monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", kind)
+    with pytest.raises(SystemExit) as exc:
+        cli_server._update(to="0.0.9")  # in no release `_ROLLBACK_RELEASES` lists
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == "", captured.out
+    assert "No " in captured.err and "release" in captured.err
+    assert cli_server.AppConfig.load().updates.pin == ""
+    assert not spawns
+
+
+def test_no_git_repo_prints_nothing_on_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns
+) -> None:
+    proj = _as_git_checkout(monkeypatch, tmp_path)
+    # Detection found the checkout, and by the time the update looks it is gone.
+    answers = iter([proj])
+    monkeypatch.setattr(su, "git_root", lambda _proj: next(answers, ""))
+    with pytest.raises(SystemExit) as exc:
+        cli_server._update()
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == "" and f"No git repo at {proj}" in captured.err
+
+
+@pytest.mark.parametrize("channel", ["stable", "nightly"])
+def test_a_dirty_tree_or_no_release_prints_nothing_on_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, spawns, channel
+) -> None:
+    _as_git_checkout(monkeypatch, tmp_path)
+    _channel(monkeypatch, channel)
+    monkeypatch.setattr(cli_server, "__version__", "0.1.0")
+    _fake_resolve(monkeypatch, "v9.9.9")
+    git = _Git(status=(0, " M src/personalclaw/cli.py\n", ""), **{"rev-parse": (0, "a\n", "")})
+    monkeypatch.setattr(su, "_run_git", git)
+    monkeypatch.setattr(su, "git_is_up_to_date", lambda *_: False)
+    monkeypatch.setattr(su, "git_tracked_changes", lambda *_: [" M src/personalclaw/cli.py"])
+    with pytest.raises(SystemExit) as exc:
+        cli_server._update()
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == "" and "git stash" in captured.err
+
+    _fake_resolve(monkeypatch, "")
+    if channel == "stable":
+        with pytest.raises(SystemExit):
+            cli_server._update()
+        captured = capsys.readouterr()
+        assert captured.out == "" and "No matching release found" in captured.err
+
+
+def test_a_failed_refresh_warns_on_stderr_only(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    def _fail(argv, *a, **kw):  # type: ignore[no-untyped-def]
+        return subprocess.CompletedProcess(argv, 1, "", "boom")
+
+    monkeypatch.setattr(cli_server.subprocess, "run", _fail)
+    cli_server._refresh_agent_config("")
+    captured = capsys.readouterr()
+    assert "Agent config refresh failed" in captured.err
+    assert "refresh failed" not in captured.out

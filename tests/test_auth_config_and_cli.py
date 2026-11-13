@@ -364,6 +364,15 @@ def test_totp_setup_needs_a_password_first(capsys) -> None:
     assert "Set a password first" in capsys.readouterr().err
 
 
+#: What `auth totp --explain` says on stderr, the sentence the design writes out.
+TOTP_EXPLAINED = (
+    "2FA is enrolled, and this is the only time it is shown. Add it to your authenticator app: "
+    "scan the link as a QR code, or type the secret after secret= in it. Then set "
+    "auth.require_totp to true (Settings → Account, or config.json) to require the code at login. "
+    "Verify a code works BEFORE requiring it.\n"
+)
+
+
 def test_totp_setup_prints_the_secret_once(monkeypatch, capsys) -> None:
     from personalclaw.auth import totp
     from personalclaw.auth.cli import auth_cmd
@@ -373,11 +382,19 @@ def test_totp_setup_prints_the_secret_once(monkeypatch, capsys) -> None:
     creds.set_password("jordan", "correct-horse-battery")
     assert auth_cmd(_Args(auth_command="totp", totp_action="setup")) == 0
 
-    out = capsys.readouterr().out
+    out, err = capsys.readouterr()
     secret = saved[creds.TOTP_SECRET_KEY]
-    assert secret in out and "shown once" in out
+    # The link alone, the form a QR encoder or a password manager takes.
+    assert out == totp.provisioning_uri(secret, "jordan") + "\n"
+    assert err == ""
     # The printed secret must be the one that will actually verify.
     assert totp.verify_code(secret, totp.code_now(secret)) is True
+
+    assert auth_cmd(_Args(auth_command="totp", totp_action="setup", rotate=True, explain=True)) == 0
+    out, err = capsys.readouterr()
+    rotated = saved[creds.TOTP_SECRET_KEY]
+    assert out == totp.provisioning_uri(rotated, "jordan") + "\n"
+    assert err == TOTP_EXPLAINED and rotated not in err
 
 
 def _store(monkeypatch) -> dict[str, str]:

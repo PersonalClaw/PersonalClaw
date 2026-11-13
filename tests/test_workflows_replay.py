@@ -246,13 +246,13 @@ async def test_cli_workflow_replay_reports_and_exits_clean(capsys) -> None:
 
     run_id = await _drive(_pipeline_spec())
 
-    args = SimpleNamespace(workflow_command="replay", run_id=run_id, json=False)
+    args = SimpleNamespace(workflow_command="replay", run_id=run_id, as_json=False)
     assert _workflow_cmd(args) == 0
     assert "byte-identical" in capsys.readouterr().out
 
     edited = _pipeline_spec()
     edited["root"]["children"][1]["config"]["prompt"] = "USE {{nodes.a.output}}"
     store.write_spec(run_id, edited)
-    args = SimpleNamespace(workflow_command="replay", run_id=run_id, json=False)
+    args = SimpleNamespace(workflow_command="replay", run_id=run_id, as_json=False)
     assert _workflow_cmd(args) == 0  # divergence still exits clean
     assert "DIVERGED" in capsys.readouterr().out

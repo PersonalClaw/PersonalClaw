@@ -102,9 +102,6 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "cli_server.py::_spawn_detached_gateway::subprocess.Popen": "PersonalClaw's own gateway",
     "computer_use/macos_tcc.py::_probe::subprocess.run": _PROBE,
     "computer_use/service.py::_run_driver::create_subprocess_limited": "the computer-use driver",
-    "dashboard/handlers/_shared.py::_list_marketplace_skills::asyncio.create_subprocess_exec": (
-        _COMPOSED
-    ),
     "dashboard/handlers/files.py::_content_search_rg::asyncio.create_subprocess_exec": _COMPOSED,
     "dashboard/handlers/files.py::_git::asyncio.create_subprocess_exec": _GIT,
     "dashboard/handlers/files.py::api_reveal_path::subprocess.Popen": "the system file opener",

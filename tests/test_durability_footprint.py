@@ -253,7 +253,7 @@ def test_a_corrupt_series_reads_as_empty_rather_than_wedging(home):
 
 class _Args:
     def __init__(self, **kw):
-        self.json = False
+        self.as_json = False
         self.reclaim = False
         for key, value in kw.items():
             setattr(self, key, value)
@@ -281,10 +281,10 @@ def test_the_command_emits_the_same_answer_as_json(home, capsys):
     import json
 
     (home / "memory.db").write_bytes(b"x" * 1000)
-    footprint.footprint_cmd(_Args(json=True))
+    footprint.footprint_cmd(_Args(as_json=True))
     capsys.readouterr()
     (home / "memory.db").write_bytes(b"x" * 3000)
-    footprint.footprint_cmd(_Args(json=True))
+    footprint.footprint_cmd(_Args(as_json=True))
     data = json.loads(capsys.readouterr().out)
 
     assert data["total_bytes"] >= 3000
@@ -298,7 +298,7 @@ def test_the_command_is_registered_on_the_cli(home):
     from personalclaw.cli import build_parser
 
     args = build_parser().parse_args(["footprint", "--json"])
-    assert args.command == "footprint" and args.json is True
+    assert args.command == "footprint" and args.as_json is True
 
 
 # ── Clause 2: the pruner's caller is the SCHEDULED path ─────────────────────

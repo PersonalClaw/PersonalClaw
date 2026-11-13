@@ -14,6 +14,7 @@ written: a row an earlier version wrote then has the identity it has in every ho
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
@@ -41,12 +42,18 @@ def _whole(src_db: Path, label: str) -> bool:
         check = sqlite3.connect(f"file:{src_db}?mode=ro", uri=True)
         try:
             if check.execute("PRAGMA integrity_check;").fetchone()[0] != "ok":
-                print(f"  ⚠️  {label}: source integrity check failed — skipping merge")
+                print(
+                    f"  ⚠️  {label}: source integrity check failed — skipping merge",
+                    file=sys.stderr,
+                )
                 return False
         finally:
             check.close()
     except Exception as exc:  # noqa: BLE001 — a corrupt source must not abort the restore
-        print(f"  ⚠️  {label}: source unreadable ({terminal_text(str(exc))}) — skipping merge")
+        print(
+            f"  ⚠️  {label}: source unreadable ({terminal_text(str(exc))}) — skipping merge",
+            file=sys.stderr,
+        )
         return False
     return True
 
@@ -82,7 +89,8 @@ def ready_to_merge(
         except Exception as exc:  # noqa: BLE001 — one store that cannot open must not abort
             print(
                 f"  ⚠️  {label}: could not be opened to merge ({terminal_text(str(exc))}) — "
-                "left unchanged"
+                "left unchanged",
+                file=sys.stderr,
             )
             unchanged.append(label)
             ready = None

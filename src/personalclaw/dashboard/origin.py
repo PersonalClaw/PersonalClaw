@@ -280,6 +280,16 @@ def _local_addresses() -> list[str]:
     return sorted(addrs)
 
 
+#: How a phone at the tailnet address signs in, after "open <its URL> on your phone and ": what
+#: `doctor`'s remote line and the `remote.reachability` probe both say. `personalclaw token`
+#: prints this computer's 127.0.0.1 link, which the phone cannot open, so it is pasted into the
+#: token box there; `--remote` prints the phone's own link once `dashboard.url` names that address.
+PHONE_SIGN_IN_HINT = (
+    "paste the `personalclaw token` link into its token box, or run "
+    "`personalclaw token --remote` once dashboard.url names that address"
+)
+
+
 def tailnet_ip(addresses: Iterable[str] | None = None) -> str:
     """Return this machine's tailnet address (100.64.0.0/10), or ``""`` if none.
 

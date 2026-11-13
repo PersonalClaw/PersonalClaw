@@ -144,6 +144,37 @@ def _push_switch() -> bool:
     return switch_on()
 
 
+def _config_get_key(
+    d: dict, key: str, *, reveal: bool, masked_paths: list[str], unresolved: list[str]
+) -> None:
+    """``config get KEY`` over the document *d* as it is shown (masked, or revealed): the value
+    alone on stdout, an object or a list as indented JSON, a string as it is and any other scalar
+    as JSON writes it. An unknown key, or a credential's own key without ``--reveal``, exits 1."""
+    val = _dict_get(d, key)
+    if val is _MISSING:
+        print(f"❌ Unknown key: {key}", file=sys.stderr)
+        sys.exit(1)
+    if not reveal and _in_subtree(masked_paths, key) == [key]:
+        # The key's own value is the credential: printing its mask at exit 0 would hand a
+        # script a stand-in it cannot tell from the value.
+        _refuse(
+            "config_get",
+            key,
+            f"❌ {key} is a credential, so it is not printed: personalclaw config get "
+            f"--reveal {key} prints it.",
+            outcome="refused",
+        )
+    if isinstance(val, (dict, list)):
+        print(json.dumps(val, indent=2))
+    elif isinstance(val, str):
+        print(terminal_text(val))
+    else:
+        # A scalar as JSON writes it: `true`, `false`, `null`, `3`, `0.5`.
+        print(json.dumps(val))
+    _report_withheld(masked_paths, key)
+    _report_unresolved(unresolved, key)
+
+
 def _run_config_action(args: argparse.Namespace, action: str | None) -> None:
     """Run one `config` action: get, set, unset or edit."""
     if action == "get":
@@ -189,17 +220,7 @@ def _run_config_action(args: argparse.Namespace, action: str | None) -> None:
             _report_withheld(masked_paths, None)
             _report_unresolved(unresolved, None)
             return
-        val = _dict_get(d, key)
-        if val is _MISSING:
-            print(f"❌ Unknown key: {key}", file=sys.stderr)
-            sys.exit(1)
-        if isinstance(val, (dict, list)):
-            print(json.dumps(val, indent=2))
-        else:
-            val = terminal_text(str(val))
-            print(val)
-        _report_withheld(masked_paths, key)
-        _report_unresolved(unresolved, key)
+        _config_get_key(d, key, reveal=reveal, masked_paths=masked_paths, unresolved=unresolved)
     elif action == "set":
 
         file_path = getattr(args, "file", None)

@@ -614,7 +614,7 @@ class TestIntegrity:
         (fresh / "memory_index.db").unlink(missing_ok=True)
         # Re-run merge to trigger warning
         restore_main([str(tarball), "--mode", "merge", "--components", "memory"])
-        assert "memory_index.db is missing" in capsys.readouterr().out
+        assert "memory_index.db is missing" in capsys.readouterr().err
 
 
 class TestSecurity:
@@ -731,7 +731,7 @@ class TestIntegrityFailure:
         monkeypatch.setenv("PERSONALCLAW_HOME", str(fresh))
         ret = restore_main([str(corrupt_tar), "--mode", "replace"])
         assert ret == 1
-        assert "integrity check failed" in capsys.readouterr().out
+        assert "integrity check failed" in capsys.readouterr().err
 
 
 class TestParsedNamespace:
@@ -811,10 +811,10 @@ class TestCorruptSourceDB:
         monkeypatch.setenv("PERSONALCLAW_HOME", str(dst))
         ret = restore_main([str(corrupt_tar), "--mode", "merge"])
         assert ret == 1
-        out_text = capsys.readouterr().out
-        assert "Source DB unreadable" in out_text
+        out_text, err_text = capsys.readouterr()
+        assert "Source DB unreadable" in err_text
         assert "✅ memory" not in out_text and "✅ Merge complete." not in out_text
-        assert "⚠️  Merge finished, but 1 part was left unchanged: memory.db." in out_text
+        assert "⚠️  Merge finished, but 1 part was left unchanged: memory.db." in err_text
         assert "✅ skills" in out_text, "the rest of the snapshot still merges"
 
 

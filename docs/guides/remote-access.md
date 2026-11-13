@@ -47,12 +47,14 @@ your phone ──(tailnet, encrypted)──▶ your gateway at 100.x.y.z:PORT
    ```bash
    PERSONALCLAW_BIND_HOST=0.0.0.0 personalclaw gateway --port 10000
    ```
-4. **Open it on your phone with the signed-in link.** On the machine, mint a token URL and rewrite
-   the host to the tailnet address:
+4. **Open it on your phone with the signed-in link.** On the phone, open the tailnet address
+   (`http://100.101.102.103:10000`) and paste the link `personalclaw token` prints into its token
+   box:
    ```bash
-   personalclaw token          # prints http://localhost:10000?token=…
+   personalclaw token          # prints http://127.0.0.1:10000?token=…
    ```
-   On the phone, open `http://100.101.102.103:10000?token=…` (same path and token, tailnet host).
+   Or set `dashboard.url` to the tailnet address and run `personalclaw token --remote`, which
+   prints the link at that address for the phone to open.
 
 **`personalclaw doctor` does this detection for you.** It now finds the tailnet interface and
 prints the phone-usable base URL directly:
@@ -60,7 +62,7 @@ prints the phone-usable base URL directly:
 ```
 Remote access
   remote:      ✅ tailnet 100.101.102.103 — open http://100.101.102.103:10000 on your phone
-               (run: personalclaw token, for the signed-in link)
+               and paste the `personalclaw token` link into its token box, or run `personalclaw token --remote` once dashboard.url names that address
 ```
 
 If instead it says `local-only`, your gateway isn't on a tailnet yet — walk back through the steps
@@ -264,7 +266,7 @@ a gateway reachable directly, bypassing the proxy, is a gateway whose `X-Real-IP
 ### Step 3 — 2FA (recommended if you are actually on the internet)
 
 ```bash
-personalclaw auth totp setup     # prints a secret + otpauth:// URI, ONCE
+personalclaw auth totp setup     # prints its otpauth:// link once: the secret is the value after secret=, and --json prints both
 ```
 
 Add it to any authenticator app, **verify a code works**, and only then require it (Settings →
@@ -567,7 +569,7 @@ reasons it can be — check both:
    `dashboard.url` that adds your public origin to the origin allowlist the gateway checks on the
    upgrade. With only `public_url` set the browser opens the socket and the gateway refuses it,
    which looks identical to a CSP problem. State-changing requests return `403` for the same
-   reason.
+   reason. Then `personalclaw token --remote` prints the sign-in link at that address.
 
 (Both apply to the public-tunnel path; the tailnet path needs no `public_url`.)
 

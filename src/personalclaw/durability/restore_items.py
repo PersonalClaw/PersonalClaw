@@ -12,6 +12,7 @@ part it left unchanged is never reported as done.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -76,17 +77,14 @@ def merged_or_brought_in(
 
 
 def said(what: str, left: list[str], since: int) -> None:
-    """Say how the part *what* of a restore went: done, or what it put on *left* after its first
-    *since*."""
-    done = len(left) == since
+    """Say how the part *what* of a restore went: done, in the transcript on stdout, or what it put
+    on *left* after its first *since*, a warning on stderr."""
+    if len(left) == since:
+        print(terminal_text(str(f"  ✅ {what}")))
+        return
     print(
-        terminal_text(
-            str(
-                f"  ✅ {what}"
-                if done
-                else f"  ⚠️  {what}: left unchanged: {', '.join(left[since:])}"
-            )
-        )
+        terminal_text(str(f"  ⚠️  {what}: left unchanged: {', '.join(left[since:])}")),
+        file=sys.stderr,
     )
 
 

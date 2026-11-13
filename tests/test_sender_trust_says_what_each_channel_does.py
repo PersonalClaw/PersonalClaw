@@ -208,25 +208,26 @@ def test_leaving_the_rule_that_asks_for_a_code_ends_the_code_outstanding():
 # ── the terminal's code says the same ───────────────────────────────────────────────────────
 
 
-def _pair_in_the_terminal(provider: str, capsys) -> str:
+def _pair_in_the_terminal(provider: str, capsys, *, explain: bool = True) -> tuple[str, str]:
     import argparse
 
     from personalclaw.cli_commands import _pair
 
-    _pair(argparse.Namespace(provider=provider))
-    return capsys.readouterr().out
+    _pair(argparse.Namespace(provider=provider, explain=explain))
+    captured = capsys.readouterr()
+    return captured.out, captured.err
 
 
 def test_a_code_from_the_terminal_claims_no_bot(capsys):
     """``personalclaw pair email`` said to send the code "to the email bot". No channel is loaded
-    in the terminal, so the sentence claims nothing a channel does."""
-    out = _pair_in_the_terminal(MAILBOX, capsys)
-    assert "bot" not in out
-    assert f"send it to your agent on {MAILBOX} within 10 minutes" in out
-    assert "lets nobody in" not in out
+    in the terminal, so the sentence ``--explain`` prints claims nothing a channel does."""
+    _out, err = _pair_in_the_terminal(MAILBOX, capsys)
+    assert "bot" not in err
+    assert f"send it to your agent on {MAILBOX} within 10 minutes" in err
+    assert "lets nobody in" not in err
 
 
 def test_a_code_from_the_terminal_says_when_the_rule_takes_none(capsys):
     ct.set_trust_policies(MAILBOX, dm="owner_only")
-    out = _pair_in_the_terminal(MAILBOX, capsys)
-    assert f"It lets nobody in until {MAILBOX}'s rule for strangers asks for a code again" in out
+    _out, err = _pair_in_the_terminal(MAILBOX, capsys, explain=False)
+    assert f"It lets nobody in until {MAILBOX}'s rule for strangers asks for a code again" in err

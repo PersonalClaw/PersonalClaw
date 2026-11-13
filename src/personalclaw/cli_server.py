@@ -13,7 +13,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import NoReturn
 
@@ -29,6 +29,7 @@ from personalclaw import (
 )
 from personalclaw.atomic_write import open_streamed
 from personalclaw.auth import lifetimes
+from personalclaw.cli_output import explain, print_json
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import DATA_WARNING
@@ -91,18 +92,65 @@ def _bind_port() -> int:
     return parse_dashboard_url(url)[1]
 
 
-def _token(args: argparse.Namespace) -> None:
-    """Print a dashboard URL with a fresh auth token, from this home's gateway
-    (``home_gateway.reach``): the one it recorded, or the one ``--port`` or ``PERSONALCLAW_PORT``
-    names, once it has shown it serves this home. The home's local secret goes to no other.
+#: Why ``token --remote`` has no address, after "❌ ", by what ``dashboard.url`` holds. The fix is
+#: the same for each: name the address other devices open, or take this computer's link.
+_NO_REMOTE_ADDRESS_FIX = (
+    "so there is no address for another device's link. Set it to the address other devices "
+    "open (personalclaw config set dashboard.url https://…), or leave out --remote for this "
+    "computer's link."
+)
 
-    A ``--ttl`` that is not a lifetime, or one over the 90-day limit, is refused HERE, with the
-    sentence saying why — before the gateway is asked for anything.
+
+def _remote_origin() -> tuple[str, str]:
+    """The origin of ``dashboard.url``, the address other devices open, and ``""``; or ``""`` and
+    the sentence saying why there is none: it is unset, it names no http or https address, or
+    ``config.json`` could not be read (``AppConfig.load`` never raises, so a discarded read is
+    told apart through ``config_discard``). The sentence never echoes the value, which may hold a
+    user name and password."""
+    url = (AppConfig.load().dashboard.url or "").strip()
+    discard = config_loader.config_discard()
+    if discard is not None:
+        return "", (
+            f"config.json could not be read: {discard.reason}, so there is no address for another "
+            "device's link. Repair it (personalclaw config edit opens it as it is, and the fixed "
+            "copy replaces it), or leave out --remote for this computer's link."
+        )
+    if not url:
+        return "", f"dashboard.url is not set, {_NO_REMOTE_ADDRESS_FIX}"
+    origin = dashboard_origin(url)
+    if not origin:
+        return "", f"dashboard.url names no http or https address, {_NO_REMOTE_ADDRESS_FIX}"
+    return origin, ""
+
+
+def _token(args: argparse.Namespace) -> None:
+    """Print a sign-in link from this home's gateway (``home_gateway.reach``): the one it
+    recorded, or the one ``--port`` or ``PERSONALCLAW_PORT`` names, once it has shown it serves
+    this home. The home's local secret goes to no other.
+
+    stdout is the one thing the form typed asks for, so ``personalclaw token | pbcopy`` copies
+    it: this computer's link, the link at ``dashboard.url`` (``--remote``), the token alone
+    (``--bearer``), or one JSON document (``--json``). What it is and how long it lasts is
+    ``--explain``'s, on stderr, and never holds the token.
+
+    Everything that can refuse is checked before the gateway is asked for anything, so a refusal
+    mints no sign-in: a ``--ttl`` that is not a lifetime, or one over the 90-day limit, and a
+    ``--remote`` with no address to put in the link.
     """
     ttl = parse_duration(args.ttl)
     if ttl is None or ttl > MAX_SESSION_TTL_SECS:
         refusal = lifetimes.unreadable(args.ttl) if ttl is None else lifetimes.too_long(ttl)
         print(f"❌ {refusal}", file=sys.stderr)
+        sys.exit(1)
+    remote = getattr(args, "remote", False)
+    bearer = getattr(args, "bearer", False)
+    as_json = getattr(args, "as_json", False)
+    explaining = getattr(args, "explain", False)
+    # `dashboard.url` is read once, and only by a form that uses it: the default link is the
+    # address the gateway proved, and needs nothing from config.json.
+    origin, no_origin = _remote_origin() if (remote or as_json or explaining) else ("", "")
+    if remote and not origin:
+        print(f"❌ {no_origin}", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -119,22 +167,42 @@ def _token(args: argparse.Namespace) -> None:
         sys.exit(1)
     # The address the reach proved this home's gateway at, where it signed this command in: never a
     # host read from this command's own environment, which can name another address, or a name.
-    print(f"{gateway.url}?token={token}")
-    # On stderr, so stdout stays a list of URLs a script can open; a person running
-    # `docker exec … personalclaw token` sees both.
-    lifetime = _token_lifetime_note(data)
-    if lifetime:
-        print(lifetime, file=sys.stderr)
-    note = container_port_note(port)
-    if note:
-        print(note, file=sys.stderr)
-    origin = dashboard_origin(AppConfig.load().dashboard.url)
-    if origin and "localhost" not in origin:
-        print(f"{origin}/?token={token}")
+    link = f"{gateway.url}?token={token}"
+    remote_link = f"{origin}?token={token}" if origin else None
+    if as_json:
+        print_json(
+            {
+                "url": link,
+                "remote_url": remote_link,
+                "token": token,
+                "expires_in": data.get("expires_in"),
+                "expires_at": data.get("expires_at"),
+                "open_within": data.get("open_within"),
+            }
+        )
+    elif remote:
+        print(remote_link)
+    elif bearer:
+        print(token)
+    else:
+        print(link)
+    local_link = not (remote or bearer)
+    explain(
+        args,
+        _token_lifetime_note(data, bearer=bearer),
+        # The port the printed URL carries: only a form that prints this computer's link has it.
+        (container_port_note(port) or "") if local_link else "",
+        (
+            f"For another device, personalclaw token --remote prints the link at {origin}."
+            if origin and not (remote or bearer or as_json)
+            else ""
+        ),
+    )
 
 
-def _token_lifetime_note(reply: dict) -> str:
-    """What the minted token is and how long it lasts, from the gateway's own numbers.
+def _token_lifetime_note(reply: dict, *, bearer: bool = False) -> str:
+    """What the minted token is and how long it lasts, from the gateway's own numbers: a sign-in
+    link, or with *bearer* the token alone, which a script sends as a header.
 
     Empty when the gateway did not say (an older one still running beside a newer CLI):
     stating a lifetime this side cannot know would be a guess.
@@ -145,7 +213,13 @@ def _token_lifetime_note(reply: dict) -> str:
         until = time.strftime("%H:%M on %d %B", time.localtime(float(reply["expires_at"])))
     except (KeyError, TypeError, ValueError):
         return ""
-    if open_within >= lasts:
+    if bearer:
+        what = (
+            "This is a token for your PersonalClaw dashboard: send it as an "
+            f'"Authorization: Bearer" header from a script. It works for {duration_words(lasts)}, '
+            f"until {until}."
+        )
+    elif open_within >= lasts:
         how = (
             f"It works for {duration_words(lasts)}, until {until}: open it in a browser to sign "
             "that browser in, or send the token after ?token= as an "
@@ -157,8 +231,10 @@ def _token_lifetime_note(reply: dict) -> str:
             f"until {until}. From a script, send the token after ?token= as an "
             f'"Authorization: Bearer" header; it works for {duration_words(lasts)}.'
         )
+    if not bearer:
+        what = f"This is a sign-in link for your PersonalClaw dashboard. {how}"
     return (
-        f"This is a sign-in link for your PersonalClaw dashboard. {how}\n"
+        f"{what}\n"
         "Treat it like a password: anyone who has it can use your dashboard. Settings → Devices & "
         "Access → Devices lists every sign-in, and signs any of them out."
     )
@@ -514,6 +590,16 @@ def _roll_back_for_the_service() -> None:
 _UPDATE_HANDLED_KINDS: frozenset[str] = frozenset({"git", "pip", "container", "desktop"})
 
 
+def _say_updated(cwd: str, target: str) -> None:
+    """How an update that finished ends, a checkout's or a wheel's: that it is updated, the
+    data-handling reminder its transcript keeps on stdout, the agent config refreshed from *cwd*
+    (:func:`_refresh_agent_config`), and the line saying to restart for *target*."""
+    print("\n✅ PersonalClaw updated!")
+    print(f"\n{DATA_WARNING}\n")
+    _refresh_agent_config(cwd)
+    print(_restart_line(target))
+
+
 def _refresh_agent_config(cwd: str) -> None:
     """Re-run `setup --agent-only` so new denied commands / MCP servers take effect.
 
@@ -531,7 +617,10 @@ def _refresh_agent_config(cwd: str) -> None:
     if r.returncode == 0:
         print("  ✅ Agent config refreshed (hooks + MCP servers updated)")
     else:
-        print("  ⚠️  Agent config refresh failed — run: personalclaw setup --agent-only")
+        print(
+            "  ⚠️  Agent config refresh failed — run: personalclaw setup --agent-only",
+            file=sys.stderr,
+        )
 
 
 def _refuse_dirty_tree(tracked: list[str], operation: str) -> None:
@@ -550,8 +639,8 @@ def _refuse_dirty_tree(tracked: list[str], operation: str) -> None:
     sys.exit(1)
 
 
-def _update_git(proj: str) -> None:
-    """Advance a git checkout to its release: ride release tags by channel.
+def _check_git(proj: str, channel: str, pin: str) -> Callable[[], None]:
+    """Check a git checkout's update, and return what runs it once ``update`` has said so.
 
     The ``updates`` channel decides the cadence, replacing the retired
     ``update_dev_mode`` bool: ``stable``/``beta`` (and any pin) ride release TAGS —
@@ -566,13 +655,16 @@ def _update_git(proj: str) -> None:
         # now means the tree moved. Say so rather than touching something else.
         print(f"❌ No git repo at {proj}", file=sys.stderr)
         sys.exit(1)
-    print(f"  📂 {git_dir}")
-
-    cfg = AppConfig.load()
-    if cfg.updates.channel == "nightly":
-        _update_git_nightly(git_dir)
+    if channel == "nightly":
+        go = _check_git_nightly(git_dir)
     else:
-        _update_git_release(git_dir, cfg.updates.channel, cfg.updates.pin)
+        go = _check_git_release(git_dir, channel, pin)
+
+    def update() -> None:
+        print(f"  📂 {git_dir}")
+        go()
+
+    return update
 
 
 def _git_said(result: subprocess.CompletedProcess[str]) -> str:
@@ -585,10 +677,10 @@ def _git_said(result: subprocess.CompletedProcess[str]) -> str:
     return mask_child_output(result.stderr, limit=None, one_line=False)
 
 
-def _update_git_nightly(git_dir: str) -> None:
-    """Nightly/developer channel: track the current branch by fast-forward only."""
+def _check_git_nightly(git_dir: str) -> Callable[[], None]:
+    """Nightly/developer channel: track the current branch by fast-forward only. The fetch, and
+    the clean tree a fast-forward needs, are checked here, before anything prints."""
     branch = self_update.resolve_default_branch(git_dir)
-    print("  ⬇️  git fetch…")
     fetched = self_update.git_fetch(git_dir, branch)
     if fetched.returncode != 0:
         print(
@@ -596,19 +688,30 @@ def _update_git_nightly(git_dir: str) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    current = self_update.git_is_up_to_date(git_dir, branch)
+    if not current:
+        tracked = self_update.git_tracked_changes(git_dir)
+        if tracked:
+            _refuse_dirty_tree(tracked, "a fast-forward")
 
-    if self_update.git_is_up_to_date(git_dir, branch):
-        print("\n✅ Already up to date!")
-        return
+    def update() -> None:
+        print("  ⬇️  git fetch…")
+        if current:
+            print("\n✅ Already up to date!")
+            return
+        _finish_git_update(git_dir, "")
 
-    tracked = self_update.git_tracked_changes(git_dir)
-    if tracked:
-        _refuse_dirty_tree(tracked, "a fast-forward")
-    _finish_git_update(git_dir, "")
+    return update
 
 
-def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
-    """Release channels (stable/beta) and pins: ride a release TAG, not a branch."""
+def _update_git_nightly(git_dir: str) -> None:
+    """Check the nightly channel's update of *git_dir*, then run it."""
+    _check_git_nightly(git_dir)()
+
+
+def _check_git_release(git_dir: str, channel: str, pin: str) -> Callable[[], None]:
+    """Release channels (stable/beta) and pins: ride a release TAG, not a branch. The release,
+    and the clean tree its checkout needs, are checked here, before anything prints."""
     import asyncio
 
     try:
@@ -624,13 +727,22 @@ def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    if _already_there(target, pin):
-        return
+    if self_update.moves_to(target, __version__, pin):
+        tracked = self_update.git_tracked_changes(git_dir)
+        if tracked:
+            _refuse_dirty_tree(tracked, f"checking out {target}")
 
-    tracked = self_update.git_tracked_changes(git_dir)
-    if tracked:
-        _refuse_dirty_tree(tracked, f"checking out {target}")
-    _finish_git_update(git_dir, target)
+    def update() -> None:
+        if _already_there(target, pin):
+            return
+        _finish_git_update(git_dir, target)
+
+    return update
+
+
+def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
+    """Check a release channel's update of *git_dir*, then run it."""
+    _check_git_release(git_dir, channel, pin)()
 
 
 #: How ``personalclaw update`` marks each step of a checkout's update (``checkout_update``).
@@ -645,11 +757,12 @@ _STEP_MARKS = {
 
 
 def _say_step(step: str, detail: str) -> None:
-    """Print one step of a checkout's update; how one that stopped ended, on stderr."""
-    ended = step in {"error", "cancelled"}
+    """Print one step of a checkout's update; a warning, and how one that stopped ended, on
+    stderr."""
+    to_stderr = step in {"error", "cancelled", "warning"}
     print(
         f"  {_STEP_MARKS.get(step, '•')} {terminal_text(str(detail))}",
-        file=sys.stderr if ended else None,
+        file=sys.stderr if to_stderr else None,
     )
 
 
@@ -673,11 +786,7 @@ def _finish_git_update(git_dir: str, target: str) -> None:
     if failed:
         print(f"  ❌ {terminal_text(str(failed))}", file=sys.stderr)
         sys.exit(1)
-
-    print("\n✅ PersonalClaw updated!")
-    print(f"\n{DATA_WARNING}\n")
-    _refresh_agent_config(self_update.package_root(git_dir))
-    print(_restart_line(target))
+    _say_updated(self_update.package_root(git_dir), target)
 
 
 async def _update_until_ctrl_c(git_dir: str, target: str) -> str:
@@ -736,8 +845,8 @@ def _restart_line(target: str) -> str:
     )
 
 
-def _update_pip() -> None:
-    """Upgrade a wheel install (pip / pipx / uv tool) in the running environment.
+def _check_pip(channel: str, pin: str) -> Callable[[], None]:
+    """Check a wheel install's upgrade (pip / pipx / uv tool), and return what runs it.
 
     Rides the ``updates`` channel/pin: the wheel installed is
     ``personalclaw==<resolve_wheel_target(channel, pin)>`` — the release the
@@ -754,9 +863,6 @@ def _update_pip() -> None:
     """
     import asyncio
 
-    cfg = AppConfig.load()
-    channel = cfg.updates.channel
-    pin = cfg.updates.pin
     try:
         target = asyncio.run(self_update.resolve_wheel_target(channel, pin))
     except Exception:
@@ -773,23 +879,21 @@ def _update_pip() -> None:
         )
         sys.exit(1)
 
-    if _already_there(target, pin):
-        return
+    def update() -> None:
+        if _already_there(target, pin):
+            return
+        spec = self_update.upgrade_spec(target)
+        if target:
+            print(_move_line(target))
+        _install(["-U", spec, "--quiet"])
+        _say_updated("", target)
 
-    spec = self_update.upgrade_spec(target)
-    if target:
-        print(_move_line(target))
-    _install(["-U", spec, "--quiet"])
-
-    print("\n✅ PersonalClaw updated!")
-    print(f"\n{DATA_WARNING}\n")
-    _refresh_agent_config("")
-    print(_restart_line(target))
+    return update
 
 
-def _update_container() -> None:
-    """A container image cannot be updated in place — print the host's commands, or say
-    there is nothing newer.
+def _check_container(channel: str, pin: str) -> Callable[[], None]:
+    """A container image cannot be updated in place — check the release, and return what prints
+    the host's commands, or says there is nothing newer.
 
     The release is the one the ``updates`` channel/pin resolves to, and it is compared with the
     running version exactly as the other kinds compare theirs (:func:`_already_there`): nothing
@@ -808,10 +912,8 @@ def _update_container() -> None:
     """
     import asyncio
 
-    cfg = AppConfig.load()
-    pin = cfg.updates.pin
     try:
-        target, image_tag = asyncio.run(self_update.resolve_image(cfg.updates.channel, pin))
+        target, image_tag = asyncio.run(self_update.resolve_image(channel, pin))
     except Exception:
         logging.getLogger(__name__).debug("resolve_image failed", exc_info=True)
         target, image_tag = "", ""
@@ -831,24 +933,27 @@ def _update_container() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    if _already_there(target, pin):
-        return
 
-    print(_move_line(target))
-    print("  📦 This is a container install — the image is replaced, not patched.")
-    print("  Run these on the host:\n")
-    for cmd in container_host.update_commands(image_tag):
-        print(f"      {cmd}")
-    newest = gateway_base.rollback_into(target)
-    if newest:
-        print(
-            f"\n  ↩ This home was last used by {newest}, newer than {target}, so the new "
-            "container's gateway will not start on it until you say the rollback is meant: start "
-            f"it once with `{gateway_base.ROLL_BACK_ENV}={newest}` in its environment (take a "
-            "snapshot first)."
-        )
-    print("\n  See docs/guides/containers.md. Your data lives in the mounted volume")
-    print("  and survives the recreate; `personalclaw snapshot` first if you want a copy.")
+    def update() -> None:
+        if _already_there(target, pin):
+            return
+        print(_move_line(target))
+        print("  📦 This is a container install — the image is replaced, not patched.")
+        print("  Run these on the host:\n")
+        for cmd in container_host.update_commands(image_tag):
+            print(f"      {cmd}")
+        newest = gateway_base.rollback_into(target)
+        if newest:
+            print(
+                f"\n  ↩ This home was last used by {newest}, newer than {target}, so the new "
+                "container's gateway will not start on it until you say the rollback is meant: "
+                f"start it once with `{gateway_base.ROLL_BACK_ENV}={newest}` in its environment "
+                "(take a snapshot first)."
+            )
+        print("\n  See docs/guides/containers.md. Your data lives in the mounted volume")
+        print("  and survives the recreate; `personalclaw snapshot` first if you want a copy.")
+
+    return update
 
 
 def _update_desktop() -> None:
@@ -1008,7 +1113,8 @@ def _pin_before_update(to: str) -> None:
 
     Exits 1 without touching config on an unusable version, and on a failed write: a
     silent fall-through would run the CHANNEL's apply instead, i.e. upgrade the user
-    who asked to roll back.
+    who asked to roll back. ``update`` writes it only once the pinned release resolved
+    (:func:`_usable_pin` checks the version first), so a refused update leaves the pin as it was.
     """
     target = self_update.normalize_version(to)
     if not self_update.set_version_pin(target):
@@ -1022,6 +1128,20 @@ def _pin_before_update(to: str) -> None:
         print(f"  ⏪ Rolling BACK: v{__version__} → v{target}")
         print("     Take a snapshot first if you have not: `personalclaw snapshot`")
     print()
+
+
+def _usable_pin(to: str) -> str:
+    """The release ``--to`` names, as ``updates.pin`` would hold it; or say it is not one, on
+    stderr, and exit 1 with nothing written."""
+    try:
+        target = self_update.normalize_pin(self_update.normalize_version(to))
+    except ValueError:
+        target = ""
+    if not target:
+        print(f"❌ Not a usable version to pin: {to!r}", file=sys.stderr)
+        print("   Give a release version, e.g. `personalclaw update --to 0.1.3`.", file=sys.stderr)
+        sys.exit(1)
+    return target
 
 
 def _update(to: str = "") -> None:
@@ -1056,15 +1176,13 @@ def _update(to: str = "") -> None:
     `personalclaw update && restart` learns nothing — is real, which is why the
     printed text is unambiguous about who must act; scripts that need the
     distinction should read `apply_method` from `GET /api/update/check`.
+
+    **Everything that can refuse is checked before anything prints**: the install kind, the
+    version ``--to`` names, then the kind's own checks (the git root, the release or the pin's
+    release, a clean tree). So a refused update prints nothing on stdout, and ``updates.pin`` is
+    written only once the release it names resolved: an unmapped kind or a missing release
+    leaves it as it was.
     """
-    print("Updating PersonalClaw…\n")
-
-    # `--to <version>` pins BEFORE the kind dispatch, so every branch below resolves the
-    # pinned release through the resolver it already uses. Pinning is what makes
-    # this a rollback and not just a one-time install of an older wheel.
-    if to:
-        _pin_before_update(to)
-
     kind = self_update.detect_install_kind()
     if kind not in _UPDATE_HANDLED_KINDS:
         # No silent fall-through to the git pipeline: advancing a tree this kind may
@@ -1084,14 +1202,25 @@ def _update(to: str = "") -> None:
         )
         sys.exit(1)
 
+    # `--to <version>`: the pinned release is what every branch below resolves, through the
+    # resolver it already uses. Pinning is what makes this a rollback and not just a one-time
+    # install of an older wheel.
+    pinning = _usable_pin(to) if to else ""
+    cfg = AppConfig.load()
+    channel, pin = cfg.updates.channel, pinning or cfg.updates.pin
     if kind == "git":
-        _update_git(self_update.source_checkout())
+        update = _check_git(self_update.source_checkout(), channel, pin)
     elif kind == "pip":
-        _update_pip()
+        update = _check_pip(channel, pin)
     elif kind == "container":
-        _update_container()
-    elif kind == "desktop":
-        _update_desktop()
+        update = _check_container(channel, pin)
+    else:
+        update = _update_desktop
+
+    print("Updating PersonalClaw…\n")
+    if pinning:
+        _pin_before_update(pinning)
+    update()
 
 
 # The ONE place `personalclaw status` names where each counter lives in the
@@ -1112,14 +1241,25 @@ def _update(to: str = "") -> None:
 #
 # `tests/test_cli_status_wire_contract.py` walks this table against a REAL `/api/status`
 # response, so the next rename on either side fails a test instead of zeroing a line.
-_STATUS_LINES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Uptime", ("uptime",)),
-    ("Sessions", ("sessions",)),
-    ("Subagents", ("subagents",)),
-    ("Cron jobs", ("cron", "total")),
-    ("Turns", ("stats", "total_turns")),
-    ("Lessons", ("lessons",)),
+_STATUS_LINES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    # (the line's label, its key in `status --json`'s `stats`, its path in the payload)
+    ("Uptime", "uptime", ("uptime",)),
+    ("Sessions", "sessions", ("sessions",)),
+    ("Subagents", "subagents", ("subagents",)),
+    ("Cron jobs", "cron_jobs", ("cron", "total")),
+    ("Turns", "turns", ("stats", "total_turns")),
+    ("Lessons", "lessons", ("lessons",)),
 )
+
+
+def _status_raw(data: object, path: tuple[str, ...]) -> object:
+    """The payload's own value at *path*, or ``None`` when the payload does not carry it."""
+    cur = data
+    for key in path:
+        if not isinstance(cur, dict) or key not in cur:
+            return None
+        cur = cur[key]
+    return cur
 
 
 def _status_value(data: object, path: tuple[str, ...]) -> str:
@@ -1146,9 +1286,37 @@ def _status(args: argparse.Namespace) -> None:
     ``PERSONALCLAW_PORT`` that is not where this home's gateway answers is a refusal, on stderr
     alone, exit 1: what answers there is not this home's, and its numbers are not this home's."""
     service = service_controller.this_homes_service()
+    as_json = bool(getattr(args, "as_json", False))
+
+    def report(running: bool, port: int | None, data: object, unavailable: str | None) -> None:
+        print_json(
+            {
+                "running": running,
+                "port": port,
+                "stats": (
+                    None
+                    if data is None
+                    else {key: _status_raw(data, path) for _label, key, path in _STATUS_LINES}
+                ),
+                "stats_unavailable": unavailable,
+                "service": (
+                    None
+                    if service is None
+                    else {
+                        "name": service.name,
+                        "path": str(service.path),
+                        "running": service_controller.is_service_active(),
+                    }
+                ),
+            }
+        )
+
     try:
         gateway = home_gateway.reach(getattr(args, "port", None))
     except home_gateway.NoGatewayRunning as exc:
+        if as_json:
+            report(False, None, None, None)
+            return
         print(terminal_text(str(exc)))
         _print_service(service)
         return
@@ -1160,6 +1328,14 @@ def _status(args: argparse.Namespace) -> None:
         with home_gateway.open_loopback(request, timeout=3) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
+        if as_json:
+            report(
+                True,
+                gateway.port,
+                None,
+                "auth_required" if e.code in (401, 403) else f"http_{e.code}",
+            )
+            return
         if e.code in (401, 403):
             print("PersonalClaw gateway is running (token auth enabled).")
             print("  For detailed stats, see the Overview page in the dashboard.")
@@ -1168,16 +1344,25 @@ def _status(args: argparse.Namespace) -> None:
         _print_service(service)
         return
     except (urllib.error.URLError, OSError):
+        if as_json:
+            report(False, gateway.port, None, "gone")
+            return
         print(gateway.gone())
         _print_service(service)
         return
     except Exception:
+        if as_json:
+            report(True, gateway.port, None, "unexpected_response")
+            return
         print("PersonalClaw gateway is running but returned an unexpected response.")
         _print_service(service)
         return
 
+    if as_json:
+        report(True, gateway.port, data, None)
+        return
     print(f"PersonalClaw v{__version__}\n")
-    for label, path in _STATUS_LINES:
+    for label, _key, path in _STATUS_LINES:
         print(f"  {label + ':':<12} {terminal_text(str(_status_value(data, path)))}")
     _print_service(service)
 
@@ -1400,7 +1585,7 @@ async def _consolidate_cmd(args: argparse.Namespace) -> None:
     if await consolidator.consolidate_session(key):
         print("✅ Done.")
     else:
-        print("⚠️  Already in flight — nothing to do.")
+        print("⚠️  Already in flight — nothing to do.", file=sys.stderr)
 
 
 def _service_cmd(args: argparse.Namespace) -> int:

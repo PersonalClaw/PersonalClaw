@@ -136,7 +136,8 @@ def test_a_subagents_task_is_shown_as_text(monkeypatch, capsys):
     cli_commands._spawn_run(argparse.Namespace(task="t", fire_and_forget=True), _GATEWAY, "k")
     out = capsys.readouterr().out
     _as_text(out)
-    assert out.count(SHOWN) == 2, out
+    assert out.count(SHOWN) == 1, out
+    assert out.endswith("a2\n"), "`spawn run --async` prints the id alone"
 
 
 @pytest.mark.parametrize("body", ["json", "plain"])

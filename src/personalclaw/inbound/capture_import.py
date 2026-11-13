@@ -816,7 +816,8 @@ def import_capture_file(
         "skipped": 0,
         "reasons": [],
         "duplicate": False,
-        "content_hash": "",
+        # None until the file is read: a hash of nothing is not a hash.
+        "content_hash": None,
         "format": fmt,
         "source": source,
     }
@@ -905,6 +906,18 @@ def capture_cmd(
     while "imported 0 from a file you named" is a result a script should be able
     to gate on. A duplicate exits 0 — a no-op re-import is the requested outcome.
     """
+    # A file that cannot be read is refused before anything is staged, on stderr: stdout is the
+    # report of an import, and none ran.
+    try:
+        with Path(args.file).open("rb"):
+            pass
+    except OSError as exc:
+        print(
+            f"❌ cannot read {terminal_text(str(args.file))}: "
+            f"{terminal_text(str(exc.strerror or exc))}",
+            file=sys.stderr,
+        )
+        return 1
     try:
         report = import_capture_file(
             args.file,
@@ -923,7 +936,7 @@ def capture_cmd(
         return 1
 
     if getattr(args, "as_json", False):
-        print(json.dumps(report, indent=2, sort_keys=True))
+        print(json.dumps(report, indent=2))
     else:
         print(terminal_text(str(render_report(report))))
 

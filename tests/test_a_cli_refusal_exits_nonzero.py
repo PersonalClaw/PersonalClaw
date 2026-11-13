@@ -134,7 +134,7 @@ def test_cron_update_that_nothing_can_fire_exits_1(home, capsys):
 def test_cron_pause_of_a_job_that_is_not_there_exits_1(home, capsys):
     err = _refused(capsys, lambda: _cron(cron_action="pause", job_id="nope"))
 
-    assert "Job not found: nope" in err
+    assert "no automation with id 'nope'" in err
 
 
 def test_cron_remove_of_a_job_that_is_not_there_exits_1(home, capsys):

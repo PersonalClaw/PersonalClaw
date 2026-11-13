@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Any, TextIO
 
 from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes, private_file
-from personalclaw.durability import home_paths, restore_items, sqlite_files
+from personalclaw.cli_output import print_json
+from personalclaw.durability import home_paths, restore_engines, restore_items, sqlite_files
 from personalclaw.security import terminal_text
 from personalclaw.sqlite_compat import sqlite3
 
@@ -71,11 +72,11 @@ def _data_filter(info: tarfile.TarInfo, _dest: str = "") -> tarfile.TarInfo | No
     """
     # Reject path traversal
     if ".." in PurePosixPath(info.name).parts or info.name.startswith("/"):
-        print(f"⚠️  Rejecting path traversal entry: {_shown(info.name)}")
+        print(f"⚠️  Rejecting path traversal entry: {_shown(info.name)}", file=sys.stderr)
         return None
     # Reject symlinks and hardlinks
     if info.issym() or info.islnk():
-        print(f"⚠️  Rejecting symlink/hardlink entry: {_shown(info.name)}")
+        print(f"⚠️  Rejecting symlink/hardlink entry: {_shown(info.name)}", file=sys.stderr)
         return None
     info.uid = info.gid = 0
     info.uname = info.gname = ""
@@ -289,103 +290,6 @@ def _restore_ignore(entry_path: str, root: Path):
     return _ignore
 
 
-def _engines_not_here(snap: Path, components: list[str] | None) -> list[tuple[str, bool]]:
-    """The apps this restore brought back whose engine is not installed here: ``(display name,
-    whether the app has an engine here at all)``.
-
-    An engine lives in the app's own ``venv/``, which a snapshot leaves out, so an app that declares
-    one comes back without it and offers Install engine, unless this home had it. A merge keeps the
-    live ``venv/`` and a replace hands it back to the app (:func:`_keep_app_engines`); an engine
-    kept that way was installed for the version this home had, so an app is named with ``True``
-    when the version that came back does not match it, and Install engine then brings that
-    environment up to date. An app whose engine is installed is not named, nor is an app the
-    restore did not touch.
-    """
-    if not _store_selected(components, "apps") or not (snap / "apps").is_dir():
-        return []
-    try:
-        from personalclaw.apps.manager import (
-            APP_MANIFEST_FILENAME,
-            APP_VENV_DIRNAME,
-            app_dir,
-            engine_not_installed,
-        )
-        from personalclaw.apps.manifest import AppManifest
-
-        names: list[tuple[str, bool]] = []
-        for tree in sorted((snap / "apps").iterdir()):
-            if tree.name.startswith(".") or not (tree / APP_MANIFEST_FILENAME).is_file():
-                continue
-            if not engine_not_installed(tree.name):
-                continue
-            here = app_dir(tree.name)
-            manifest = AppManifest.from_json_file(here / APP_MANIFEST_FILENAME)
-            names.append((manifest.displayName or tree.name, (here / APP_VENV_DIRNAME).is_dir()))
-        return names
-    except Exception:  # noqa: BLE001 — a note after the restore must never fail the restore
-        import logging
-
-        logging.getLogger(__name__).debug("engine census after restore failed", exc_info=True)
-        return []
-
-
-def _app_display_name(folder: Path) -> str:
-    """The display name in the app manifest *folder* holds, else the folder's name."""
-    from personalclaw.apps.manager import APP_MANIFEST_FILENAME
-    from personalclaw.apps.manifest import AppManifest
-
-    try:
-        return AppManifest.from_json_file(folder / APP_MANIFEST_FILENAME).displayName or folder.name
-    except Exception:  # noqa: BLE001 — a name for a sentence, never a reason to fail a restore
-        return folder.name
-
-
-def _keep_app_engines(displaced: Path, restored: Path) -> list[str]:
-    """Hand each app's engine back to the app of the same name the restore brought back.
-
-    An engine (``apps/<app>/venv``) is built for this machine: capture leaves it out
-    (``derived_within``) and a restore never plants one, so a replace has nothing to put in its
-    place. Moving it into ``pre-restore-<ts>/`` with the rest of the app left gigabytes of working
-    engine there while the restored app offered to install the same engine again. An update keeps
-    an app's engine the same way (``apps.app_manager._carry_state``: a rename on one filesystem,
-    whatever the size), and the app's own check (``SidecarInstall.installed``: the interpreter, and
-    the packages the restored manifest declares) says whether it fits the version that came back.
-    Everything else of the app, its ``data/`` included, stays displaced, so undoing the restore
-    still has it. Returns the folder names of the apps whose engine stayed.
-    """
-    from personalclaw.apps.app_manager import _carry_state
-    from personalclaw.apps.manager import APP_MANIFEST_FILENAME, APP_VENV_DIRNAME
-
-    if not displaced.is_dir() or not restored.is_dir():
-        return []
-    kept: list[str] = []
-    for old in sorted(displaced.iterdir()):
-        new = restored / old.name
-        if old.name.startswith(".") or not (new / APP_MANIFEST_FILENAME).is_file():
-            continue
-        if _carry_state(old, new, names=(APP_VENV_DIRNAME,)):
-            kept.append(old.name)
-    return kept
-
-
-def _engines_set_aside(displaced: Path) -> list[tuple[Path, int]]:
-    """The engines still in the backup: those of apps the restore did not bring back, with their
-    size. Each stays with its app, as removing an app takes its engine along, so moving the folder
-    back undoes the restore whole; the backup is the user's to delete."""
-    from personalclaw.apps.manager import APP_VENV_DIRNAME
-    from personalclaw.durability.footprint import _tree_bytes
-
-    if not displaced.is_dir():
-        return []
-    out: list[tuple[Path, int]] = []
-    for old in sorted(displaced.iterdir()):
-        venv = old / APP_VENV_DIRNAME
-        if old.name.startswith(".") or venv.is_symlink() or not venv.is_dir():
-            continue
-        out.append((old, _tree_bytes(venv, skip_files=set(), skip_dirs=set())))
-    return out
-
-
 def _projects_component_paths(base: Path) -> list[str]:
     """Home-relative per-project paths the named `projects` component covers.
 
@@ -570,7 +474,10 @@ def _copytree_safe(src: Path, dst: Path, **kwargs) -> None:
     def _ignore_symlinks(directory, contents):
         skipped = {name for name in contents if os.path.islink(os.path.join(directory, name))}
         for name in skipped:
-            print(f"⚠️  Skipping symlink in source tree: {_shown(os.path.join(directory, name))}")
+            print(
+                f"⚠️  Skipping symlink in source tree: {_shown(os.path.join(directory, name))}",
+                file=sys.stderr,
+            )
         if outer_ignore:
             skipped |= set(outer_ignore(directory, contents))
         return skipped
@@ -595,6 +502,33 @@ def _write_archive(stage: Path, outfile: Path) -> Path:
     return outfile
 
 
+def _list_snapshots(out: Path, *, as_json: bool) -> int:
+    """``snapshot --list``: the snapshots in *out*, one path per line, newest first, and nothing
+    when there are none, so ``$(personalclaw snapshot --list | head -1)`` is a path or empty.
+    With ``--json`` it is a usage error (exit 2)."""
+    if as_json:
+        print(
+            "❌ snapshot --list does not take --json: --list prints one path per line, and "
+            "--json names the snapshot a run creates.",
+            file=sys.stderr,
+        )
+        return 2
+    snaps = (
+        sorted(
+            out.glob("personalclaw-snapshot-*.tar.gz"),
+            key=lambda x: x.stat().st_mtime,
+            reverse=True,
+        )
+        if out.is_dir()
+        else []
+    )
+    for s in snaps:
+        print(_shown(s))
+    if not snaps:
+        print(f"No snapshots found in {out}", file=sys.stderr)
+    return 0
+
+
 def snapshot_main(
     argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None
 ) -> int:
@@ -614,21 +548,12 @@ def snapshot_main(
         return 1
 
     out = Path(args.output_dir or _default_snapshot_dir())
+    as_json = bool(getattr(args, "as_json", False))
 
     if args.list_snapshots:
-        if not out.is_dir():
-            print(f"No snapshots found in {out}")
-            return 0
-        snaps = sorted(
-            out.glob("personalclaw-snapshot-*.tar.gz"),
-            key=lambda x: x.stat().st_mtime,
-            reverse=True,
-        )
-        for s in snaps:
-            print(_shown(s))
-        if not snaps:
-            print(f"No snapshots found in {out}")
-        return 0
+        return _list_snapshots(out, as_json=as_json)
+    # What a run says it did: on stdout, or on stderr when stdout is the --json document.
+    said = sys.stderr if as_json else sys.stdout
 
     pc = _pc_dir()
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -641,7 +566,10 @@ def snapshot_main(
         )
         total_mb = total_bytes / (1024 * 1024)
         if total_mb > 500:
-            print(f"⚠️  ~/.personalclaw is {total_mb:.0f} MB — snapshot may be large and slow")
+            print(
+                f"⚠️  ~/.personalclaw is {total_mb:.0f} MB — snapshot may be large and slow",
+                file=sys.stderr,
+            )
 
     # WAL checkpoint every DECLARED database, not just memory.db. The inventory is
     # the source of truth for which files are databases, so a store added later is
@@ -656,7 +584,8 @@ def snapshot_main(
             except Exception:
                 print(
                     f"⚠️  WAL checkpoint failed for {_db} (may be locked by the "
-                    "gateway). The backup API still produces a consistent copy."
+                    "gateway). The backup API still produces a consistent copy.",
+                    file=sys.stderr,
                 )
 
     with tempfile.TemporaryDirectory() as work:
@@ -677,7 +606,7 @@ def snapshot_main(
         for files in CORE_FILES.values():
             for f in files:
                 if (pc / f).is_file() and os.path.islink(pc / f):
-                    print(f"⚠️  Skipping symlinked core file: {pc / f}")
+                    print(f"⚠️  Skipping symlinked core file: {pc / f}", file=sys.stderr)
                 elif (pc / f).is_file():
                     sqlite_files.copy_file(pc / f, stage / f)
                     captured.add(f)
@@ -729,7 +658,7 @@ def snapshot_main(
             if rel in captured:
                 continue
             if os.path.islink(src):
-                print(f"⚠️  Skipping symlinked state path: {rel}")
+                print(f"⚠️  Skipping symlinked state path: {rel}", file=sys.stderr)
                 continue
             if src.is_dir():
                 # 🔴 `derived_within` is honored HERE, where the tree is actually copied. `projects`
@@ -806,11 +735,14 @@ def snapshot_main(
 
     sz = outfile.stat().st_size
     human = f"{sz // 1024}K" if sz < 1024 * 1024 else f"{sz / 1024 / 1024:.1f}M"
-    print(f"✅ Snapshot created: {outfile} ({human})")
+    if as_json:
+        print_json({"path": str(outfile), "bytes": sz})
+    print(f"✅ Snapshot created: {outfile} ({human})", file=said)
     if has_hmac_key:
         print(
             "⚠️  Snapshot contains sel_hmac.key — treat this file as sensitive. "
-            "An attacker with access to it could forge SEL audit entries."
+            "An attacker with access to it could forge SEL audit entries.",
+            file=sys.stderr,
         )
 
     _audit("snapshot_created", f"{outfile} ({human})")
@@ -824,12 +756,12 @@ def snapshot_main(
         retention.list_snapshots(out), keep=args.keep, verified=last_verified()["archive"]
     )
     for name in retention.remove(plan.prune)[0]:
-        print(f"🗑  Pruned: {_shown(name)} ({_shown(plan.reasons[name])})")
+        print(f"🗑  Pruned: {_shown(name)} ({_shown(plan.reasons[name])})", file=said)
     if plan.held is not None:
-        print(f"🛡  Kept {plan.held.name} as well: {retention.HELD}.")
+        print(f"🛡  Kept {plan.held.name} as well: {retention.HELD}.", file=said)
 
     remaining = len(list(out.glob("personalclaw-snapshot-*.tar.gz")))
-    print(f"📦 Snapshots in {out}: {remaining} (keep={args.keep})")
+    print(f"📦 Snapshots in {out}: {remaining} (keep={args.keep})", file=said)
     return 0
 
 
@@ -1008,12 +940,15 @@ def _merge_memory(
         with closing(sqlite3.connect(str(src_db))) as check_conn:
             result = check_conn.execute("PRAGMA integrity_check;").fetchone()[0]
         if result != "ok":
-            print(f"  ⚠️  Source DB integrity check failed: {_shown(result)} — skipping merge")
+            print(
+                f"  ⚠️  Source DB integrity check failed: {_shown(result)} — skipping merge",
+                file=sys.stderr,
+            )
             if left_unchanged is not None:
                 left_unchanged.append(label)
             return
     except Exception as e:
-        print(f"  ⚠️  Source DB unreadable: {_shown(e)} — skipping merge")
+        print(f"  ⚠️  Source DB unreadable: {_shown(e)} — skipping merge", file=sys.stderr)
         if left_unchanged is not None:
             left_unchanged.append(label)
         return
@@ -1423,7 +1358,10 @@ def _merge_tables(src_db: Path, dst_db: Path, label: str, unchanged: list[str]) 
         except sqlite3.Error as exc:
             # Without each row's number here, no reference to these tables can follow its row, so
             # neither they nor a table that points into them is merged.
-            print(f"  ⚠️  {label}.{_shown(', '.join(numbered))}: {_shown(exc)} — skipped")
+            print(
+                f"  ⚠️  {label}.{_shown(', '.join(numbered))}: {_shown(exc)} — skipped",
+                file=sys.stderr,
+            )
             refused = set(numbered)
         for table in tables:
             if table in numbered:
@@ -1432,7 +1370,10 @@ def _merge_tables(src_db: Path, dst_db: Path, label: str, unchanged: list[str]) 
                 continue
             refs = numbered_rows.references(conn, table, numbered)
             if any(target in refused for _column, target in refs):
-                print(f"  ⚠️  {label}.{table}: the rows it refers to were not merged — skipped")
+                print(
+                    f"  ⚠️  {label}.{table}: the rows it refers to were not merged — skipped",
+                    file=sys.stderr,
+                )
                 unchanged.append(f"{label} ({table})")
                 continue
             before = conn.total_changes
@@ -1447,7 +1388,7 @@ def _merge_tables(src_db: Path, dst_db: Path, label: str, unchanged: list[str]) 
                 # A column-set mismatch between snapshot and live schema. Skip the table, keep the
                 # rest — the same call `_merge_memory` makes about its opportunistic `contributor`
                 # column, for the same reason: a partial restore beats an aborted one.
-                print(f"  ⚠️  {label}.{table}: {_shown(exc)} — skipped")
+                print(f"  ⚠️  {label}.{table}: {_shown(exc)} — skipped", file=sys.stderr)
                 unchanged.append(f"{label} ({table})")
                 continue
             imported += conn.total_changes - before
@@ -1469,7 +1410,7 @@ def _merge_tables(src_db: Path, dst_db: Path, label: str, unchanged: list[str]) 
                 conn.execute("ROLLBACK")
             except sqlite3.Error:
                 pass
-        print(f"  ⚠️  {label}: merge failed ({_shown(exc)}) — left unchanged")
+        print(f"  ⚠️  {label}: merge failed ({_shown(exc)}) — left unchanged", file=sys.stderr)
         unchanged.append(label)
         return 0
     finally:
@@ -1514,7 +1455,7 @@ def _merge_keyed_jsonl(
     try:
         imported = bounded_log.merge_jsonl(src, dst, key=key_field, at=at)
     except OSError as exc:
-        print(f"  ⚠️  {label}: {_shown(exc)}")
+        print(f"  ⚠️  {label}: {_shown(exc)}", file=sys.stderr)
         if left_unchanged is not None:
             left_unchanged.append(dst.name)
         return 0
@@ -1595,7 +1536,7 @@ def _merge_security_events(
     try:
         imported = bounded_log.merge_jsonl(src, dst, key="event_id", at="timestamp")
     except OSError as exc:
-        print(f"  ⚠️  Security events: {_shown(exc)}")
+        print(f"  ⚠️  Security events: {_shown(exc)}", file=sys.stderr)
         left.append(dst.name)
         return
     print(f"  Security events imported: {imported}")
@@ -1633,7 +1574,7 @@ def _merge_run_history(
     try:
         shards, imported = ScheduleRunStore(dst_dir.parent).merge_in(src_dir, left=left_unchanged)
     except OSError as exc:
-        print(f"  ⚠️  Run history: {_shown(exc)}")
+        print(f"  ⚠️  Run history: {_shown(exc)}", file=sys.stderr)
         if left_unchanged is not None:
             left_unchanged.append(dst_dir.name)
         return
@@ -1651,7 +1592,10 @@ def _backup_and_copy(pc: Path, backup: Path, snap: Path, component: str, left: l
         sqlite_files.move_aside(live, home_paths.home_path(backup, f))
         if (snap / f).is_file():
             if os.path.islink(snap / f):
-                print(f"⚠️  Skipping symlinked file from snapshot: {_shown(snap / f)}")
+                print(
+                    f"⚠️  Skipping symlinked file from snapshot: {_shown(snap / f)}",
+                    file=sys.stderr,
+                )
                 continue
             if component == "security":
                 # Key material: written 0600 from its first byte, never copied and then tightened.
@@ -1663,8 +1607,9 @@ def _backup_and_copy(pc: Path, backup: Path, snap: Path, component: str, left: l
 def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
     """Replace the home's state with the snapshot's, moving what it displaces into
     ``pre-restore-<ts>/``. Returns what the restore did with app engines, for its result:
-    ``engines_kept`` (display names of the apps that kept theirs, :func:`_keep_app_engines`) and
-    ``engines_set_aside`` (``{app, bytes}`` of each left in the backup with its app); what it held
+    ``engines_kept`` (display names of the apps that kept theirs,
+    ``restore_engines.keep_app_engines``) and ``engines_set_aside``
+    (``{app, bytes}`` of each left in the backup with its app); what it held
     that the snapshot had working (:func:`_hold_what_was_in_flight`); the automations it held
     that the snapshot ran on their own, ``automations_held``, with ``held_from``, where the
     snapshot came from (`triggers.restore_hold`); and ``left_unchanged``, each part it left as
@@ -1732,30 +1677,31 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
                 home_paths.put_file(src, live)
             restored.append(rel)
             if rel == "apps":
-                kept = _keep_app_engines(backup / rel, live)
+                kept = restore_engines.keep_app_engines(backup / rel, live)
         restore_items.said("stores", left, since)
     held = _hold_what_was_in_flight(pc, restored)
     from personalclaw.memory_locality import take_in_restored_chats
 
     take_in_restored_chats(snap, pc)
 
-    kept_names = [_app_display_name(pc / "apps" / name) for name in kept]
+    kept_names = [restore_engines.app_display_name(pc / "apps" / name) for name in kept]
     if kept_names:
         print(
             "  ✅ Kept the engine each of these apps had here: "
             f"{_shown(', '.join(kept_names))}. An engine "
             "is built for this machine, so the restore leaves it in place."
         )
-    aside = _engines_set_aside(backup / "apps")
+    aside = restore_engines.engines_set_aside(backup / "apps")
     if aside:
         from personalclaw.durability.footprint import human_bytes
 
         for folder, size in aside:
             print(
-                f"  ⚠️  {_shown(_app_display_name(folder))}'s engine "
+                f"  ⚠️  {_shown(restore_engines.app_display_name(folder))}'s engine "
                 f"({human_bytes(size)}) is in {_shown(folder)}/ "
                 "with the app, which the snapshot does not have. It goes when you delete that "
-                "folder."
+                "folder.",
+                file=sys.stderr,
             )
     if held["runs_held"] or held["loops_held"]:
         print(
@@ -1777,15 +1723,18 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
         backup.rmdir()
     except OSError:
         print(f"  Previous state saved to: {backup}/")
+    # What was left as it was is said on stderr: the restore did not do all it was asked.
     print(
         _shown(
             restore_items.left_unchanged_line(left, "Replace") if left else "✅ Replace complete."
-        )
+        ),
+        file=sys.stderr if left else sys.stdout,
     )
     return {
         "engines_kept": kept_names,
         "engines_set_aside": [
-            {"app": _app_display_name(folder), "bytes": size} for folder, size in aside
+            {"app": restore_engines.app_display_name(folder), "bytes": size}
+            for folder, size in aside
         ],
         **held,
         "automations_held": automations_held,
@@ -1822,14 +1771,20 @@ def _offer_to_resume(pc: Path, done: dict) -> None:
         return
     if held_from == restore_hold.THIS_HOME and sys.stdin.isatty():
         try:
-            answer = input(f"⏸  {restore_hold.resume_question(count)}").strip().lower()
+            # The question on stderr, as every other prompt of this restore: `input()` would
+            # write it to stdout, among the transcript.
+            print(f"⏸  {restore_hold.resume_question(count)}", end="", file=sys.stderr, flush=True)
+            answer = input().strip().lower()
         except EOFError:
             answer = "n"
         if answer in ("", "y", "yes"):
             resumed, kept = restore_hold.resume_all(TriggerStore(base_dir=pc))
             print(f"▶  {restore_hold.resumed_line(len(resumed))}")
             for trigger, why in kept:
-                print(f"⚠️  {_shown(trigger.name or trigger.id)} stays paused: {_shown(why)}")
+                print(
+                    f"⚠️  {_shown(trigger.name or trigger.id)} stays paused: {_shown(why)}",
+                    file=sys.stderr,
+                )
             return
     print(f"⏸  {_shown(restore_hold.where_to_resume(count, held_from))}")
 
@@ -2099,6 +2054,14 @@ def _repoint_library_documents(pc: Path) -> None:
         )
 
 
+def _say_merge_ended(left: list[str]) -> None:
+    """How a merge ended: complete, on stdout, or what it left unchanged, a warning on stderr."""
+    if left:
+        print(_shown(restore_items.left_unchanged_line(left)), file=sys.stderr)
+    else:
+        print("✅ Merge complete.")
+
+
 def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
     """Merge *snap* into the home at *pc*, and return what it left unchanged (empty when every
     part came in): a store that took nothing, a table it skipped, or a part behind a link
@@ -2327,7 +2290,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
     from personalclaw.memory_locality import take_in_restored_chats
 
     take_in_restored_chats(snap, pc)
-    print(_shown(restore_items.left_unchanged_line(left) if left else "✅ Merge complete."))
+    _say_merge_ended(left)
     return left
 
 
@@ -2488,6 +2451,8 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
     pc = _pc_dir()
     populated = home_is_populated(pc)
     mode = args.mode or ("merge" if populated else "replace")
+    if not args.dry_run and _replace_refused(args, mode, "import"):
+        return 1
     if args.mode is None and populated:
         print(f"🔀 Home holds {len(populated)} existing store(s) — proposing MERGE mode.")
         print("   Use --mode replace to overwrite instead (previous state is kept aside).")
@@ -2501,8 +2466,6 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
         if mode == "replace":
             print(f"  Current state would be moved to {pc}/pre-restore-<timestamp>/")
         return 0
-    if _replace_refused(args, mode, "import"):
-        return 1
 
     pc.mkdir(parents=True, exist_ok=True)
     # A replace says where it set the previous state aside as it does it (`_do_replace`).
@@ -2517,18 +2480,23 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
         f"mode={mode} components=all from={archive.name} left_unchanged={len(left)}"
         + (f" automations_held={held} held_from={summary.get('held_from')}" if held else ""),
     )
+    # What it brought in, on stdout; what it left unchanged is the warning on stderr below.
     print(
-        f"{'⚠️ ' if left else '✅'} Imported ({mode}): "
+        f"{'' if left else '✅ '}Imported ({mode}): "
         f"{_shown(', '.join(summary.get('items', [])) or 'nothing to add')}"
     )
     if left:
         print(
             _shown(
                 restore_items.left_unchanged_line(left, "Replace" if mode == "replace" else "Merge")
-            )
+            ),
+            file=sys.stderr,
         )
     _offer_to_resume(pc, summary)
-    print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")
+    print(
+        "\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart",
+        file=sys.stderr,
+    )
     return 1 if left else 0
 
 
@@ -2580,9 +2548,6 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
     # populated home must default to MERGE so a restore cannot displace newer local state.
     populated = home_is_populated(pc)
     mode = args.mode or ("merge" if populated else "replace")
-    if args.mode is None and populated:
-        print(f"🔀 Home holds {len(populated)} existing store(s) — proposing MERGE mode.")
-        print("   Use --mode replace to overwrite instead (previous state is kept aside).")
 
     with tempfile.TemporaryDirectory() as work_str:
         work = Path(work_str)
@@ -2603,7 +2568,14 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
             print("❌ Invalid snapshot format", file=sys.stderr)
             return 1
         snap = snap_dirs[0]
+        # Everything that refuses runs before anything prints, so a refused restore leaves
+        # stdout empty: the format above, and a replace while the gateway runs.
+        if not args.dry_run and _replace_refused(args, mode, "restore"):
+            return 1
 
+        if args.mode is None and populated:
+            print(f"🔀 Home holds {len(populated)} existing store(s) — proposing MERGE mode.")
+            print("   Use --mode replace to overwrite instead (previous state is kept aside).")
         _print_manifest(snap)
         if components:
             print(f"🔧 Components: {','.join(components)}")
@@ -2626,8 +2598,6 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
                 print("  An app the snapshot brings back keeps the engine it has here.")
                 _say_what_would_pause(snap, pc, components)
             return 0
-        if _replace_refused(args, mode, "restore"):
-            return 1
 
         pc.mkdir(parents=True, exist_ok=True)
         left: list[str] = []
@@ -2637,7 +2607,9 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
             left = list(done.get("left_unchanged") or [])
         else:
             left = _do_merge(snap, pc, components)
-        engines = _engines_not_here(snap, components)
+        engines = (
+            restore_engines.engines_not_here(snap) if _store_selected(components, "apps") else []
+        )
 
     # Integrity check of the memory.db the restore left here: never one behind a link.
     memory = home_paths.landing(pc, "memory.db", []) if _want(components, "memory") else None
@@ -2652,13 +2624,14 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         if result == "ok":
             print("🔍 memory.db integrity: OK")
         else:
-            print(f"⚠️  memory.db integrity check failed: {_shown(result)}")
+            print(f"⚠️  memory.db integrity check failed: {_shown(result)}", file=sys.stderr)
             _audit("state_restore_rejected", f"reason=integrity_check_failed from={snap_path.name}")
             return 1
         if not (pc / "memory_index.db").is_file():
             print(
                 "⚠️  memory_index.db is missing — full-text search may not "
-                "work until the FTS index is rebuilt."
+                "work until the FTS index is rebuilt.",
+                file=sys.stderr,
             )
 
     comp_str = ",".join(components) if components else "all"
@@ -2669,20 +2642,12 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         + (f" automations_held={held} held_from={done.get('held_from')}" if held else ""),
     )
 
-    for name, has_one in engines:
-        if has_one:
-            print(
-                f"⚠️  {_shown(name)}'s engine here does not match the version the restore "
-                "brought back. Install engine, on the app's card in Settings → Models & Providers → Providers, brings it up to date."  # noqa: E501
-            )
-            continue
-        print(
-            f"⚠️  {_shown(name)} has no engine here: a snapshot leaves engines out, since "
-            "each one is built for the machine it runs on. Install it with Install engine, on the "
-            "app's card in Settings → Models & Providers → Providers."
-        )
+    restore_engines.say_engines_to_install(engines)
     _offer_to_resume(pc, done)
-    print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")
+    print(
+        "\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart",
+        file=sys.stderr,
+    )
     # A merge that left a part unchanged did not do what it was asked: the failed status, as the
     # integrity check above answers a damaged memory.db, so a script sees it too.
     return 1 if left else 0

@@ -360,8 +360,8 @@ def test_at_the_terminal_it_asks_whether_to_resume_them_now(
     capsys.readouterr()
     monkeypatch.setattr("sys.stdin", _Terminal(answer))
     assert restore_main([str(tarball), "--mode", "replace"]) == 0
-    out = capsys.readouterr().out
-    assert "Resume them now? [Y/n]" in out
+    out, err = capsys.readouterr()
+    assert "Resume them now? [Y/n]" in err, "the question is asked on stderr, as input() is not"
     rows = _rows(laptop)
     if resumed:
         assert "Resumed 3 automations" in out

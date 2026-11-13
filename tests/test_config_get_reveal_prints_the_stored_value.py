@@ -54,6 +54,21 @@ def _with_a_stored_token_and_provider_key(home, capsys) -> None:
     capsys.readouterr()
 
 
+def test_a_credential_key_without_reveal_is_refused_and_prints_nothing(home, capsys) -> None:
+    """Its mask at exit 0 would be a stand-in a script cannot tell from the value."""
+    _with_a_stored_token_and_provider_key(home, capsys)
+    with pytest.raises(SystemExit) as exited:
+        _cli(key="hooks.webhook_token")
+    assert exited.value.code == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == (
+        "❌ hooks.webhook_token is a credential, so it is not printed: personalclaw config get "
+        "--reveal hooks.webhook_token prints it.\n"
+    )
+    assert TOKEN not in out + err
+
+
 def test_reveal_prints_the_stored_token_for_one_key(home, capsys) -> None:
     _with_a_stored_token_and_provider_key(home, capsys)
     _cli(key="hooks.webhook_token", reveal=True)

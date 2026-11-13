@@ -192,14 +192,22 @@ def _seed(home, trigger_id: str) -> None:
 
 
 def test_add_then_list_then_trigger_then_the_run_is_in_its_history(gateway, ran, typed, capsys):
-    _cron(cron_action="add", name="Nightly report", message="summarise", every=3600, yes=True)
-    assert "Created automation 'Nightly report' (clock:nightly-report)" in capsys.readouterr().out
-
-    _cron(cron_action="list")
-    listed = capsys.readouterr().out
-    [line] = [line for line in listed.splitlines() if "Nightly report" in line]
-    job_id = line.split()[1]
+    _cron(
+        cron_action="add",
+        name="Nightly report",
+        message="summarise",
+        every=3600,
+        yes=True,
+        as_json=True,
+    )
+    made = capsys.readouterr()
+    assert "Created automation 'Nightly report' (clock:nightly-report)" in made.err
+    job_id = json.loads(made.out)["id"]
     assert job_id == "clock:nightly-report"
+
+    _cron(cron_action="list", as_json=True)
+    (row,) = [row for row in json.loads(capsys.readouterr().out) if row["name"] == "Nightly report"]
+    assert row["id"] == job_id
 
     _cron(cron_action="trigger", job_id=job_id)
 

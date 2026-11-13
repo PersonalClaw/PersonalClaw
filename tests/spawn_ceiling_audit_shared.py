@@ -371,10 +371,6 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     ),
     "cli_server.py::_logs_cmd::subprocess.run": "operator: logs source probe",
     "cli_server.py::_relay::subprocess.Popen": "operator: journalctl/tail for `logs`, relayed",
-    # Dashboard marketplace/skills CLI shellouts — operator actions via the UI.
-    "dashboard/handlers/_shared.py::_list_marketplace_skills::asyncio.create_subprocess_exec": (
-        "operator: `personalclaw skills list`"
-    ),
     # Files handlers — operator's own file browser / git diff / native pickers.
     "dashboard/handlers/files.py::_content_search_rg::asyncio.create_subprocess_exec": (
         "operator: file search (rg)"

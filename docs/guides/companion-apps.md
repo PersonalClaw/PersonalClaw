@@ -36,7 +36,7 @@ This needs no setup beyond letting the gateway listen on your LAN.
    ```
 3. **Mint a signed-in link and open it on the other device.**
    ```bash
-   personalclaw token         # prints http://localhost:10000?token=…
+   personalclaw token         # prints http://127.0.0.1:10000?token=…
    ```
    On the phone, open the same path with the LAN host substituted:
    `http://192.168.1.37:10000?token=…`

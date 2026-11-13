@@ -1100,7 +1100,7 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             before = {p.name for p in pc.glob("pre-restore-*") if p.is_dir()}
             try:
                 # What became of each app's engine: kept for the app that came back, or left in
-                # the backup with an app that did not (`snapshot._keep_app_engines`).
+                # the backup with an app that did not (`restore_engines.keep_app_engines`).
                 summary.update(
                     {key: value for key, value in _do_replace(snap, pc, None).items() if value}
                 )
