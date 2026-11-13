@@ -1765,8 +1765,9 @@ class CodeKind(LoopKindStrategy):
         When the last of a stage's task workers is reaped, the stage is judged then and there
         (:meth:`_judge_on_drain`; *judge_on_drain* is off for :meth:`on_new_cycle`, which judges
         next anyway). Returns True iff the loop stopped running: it paused for its owner (a merge
-        the scheduler could not settle, a task that ran out of cycles) or that judgement ended
-        it."""
+        the scheduler could not settle, a task that ran out of cycles), it stopped, paused or went
+        while the pass read its tasks or git readied their worktrees (:meth:`_still_ours`), or that
+        judgement ended it."""
         from personalclaw.loop import store, worktree
 
         # Every commit of the loop's, the stage worker's in the workspace itself as much as a
@@ -1779,7 +1780,10 @@ class CodeKind(LoopKindStrategy):
         if loop.autopilot:
             refreshed = await self.autopilot_queue(loop)
             if refreshed is not None:
-                loop = refreshed
+                now = self._still_ours(loop)
+                if now is None:
+                    return True  # the loop stopped running while its tasks were read
+                loop = now
         idx = self.active_stage_index(loop)
         if idx < 0:
             return False
@@ -1893,7 +1897,7 @@ class CodeKind(LoopKindStrategy):
         # The scheduler first, so a task worker that just finished is merged before its stage
         # is judged. A merge conflict it can't auto-resolve pauses the loop.
         if await self.schedule(loop, ctx, judge_on_drain=False):
-            return False  # paused NEEDS_INPUT — watchdog stops the cycle
+            return False  # it stopped running: paused for its owner, or ended meanwhile
         loop = store.get(cid) or loop
         if self.active_stage_index(loop) < 0:
             # No stage plan: complete once a finding lands AND any verify/test passes
@@ -2022,8 +2026,8 @@ class CodeKind(LoopKindStrategy):
         """Run the active phase's ready tasks concurrently — one worker per task in its
         own worktree, at most :func:`_pool_cap` at once. Reap+merge finished workers (freeing
         slots), then fill free slots with ready tasks. Returns True iff the loop stopped running:
-        it paused for its owner, or it ended while git readied its tasks' worktrees
-        (:meth:`_fan_out`).
+        it paused for its owner, or it stopped, paused or went while the pass reaped its tasks or
+        git readied their worktrees (:meth:`_still_ours`).
 
         A worker whose turn is still running is not reaped (it may be writing its worktree,
         which a merge removes), and no worktree is cut while the stage worker is mid-turn or its
@@ -2073,7 +2077,10 @@ class CodeKind(LoopKindStrategy):
                 await teardown_task_worker(ctx.svc, loop.id, tid)
                 if await self._land(loop, tid, task, ws, ctx):
                     return True
-        loop = store.get(loop.id) or loop
+        now = self._still_ours(loop)
+        if now is None:
+            return True  # the loop stopped running while the pass reaped its tasks
+        loop = now
         # An Attended loop's finished work waits for its owner's merge, and nothing new starts on
         # top of it: a worktree is cut from the branch, which does not have that work yet. Once
         # the stage's running workers finish too, all of it is put to the owner in one review.
@@ -2170,7 +2177,7 @@ class CodeKind(LoopKindStrategy):
 
     def _still_ours(self, loop: Loop) -> Loop | None:
         """The loop as it is now, or None if this pass may no longer act for it: its row is gone,
-        its status is no longer the one this pass read (a Stop, a Pause, an ending), or its
+        its status is no longer the one this pass began with (a Stop, a Pause, an ending), or its
         delete has begun (a delete sets no status before the row goes)."""
         from personalclaw.loop import manager, store
 
