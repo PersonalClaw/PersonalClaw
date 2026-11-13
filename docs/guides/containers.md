@@ -156,10 +156,10 @@ printed to the gateway logs at startup and can be regenerated:
 docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway personalclaw token
 ```
 
-Both URLs carry the container's own port (10000). Nothing inside the container can see
+The URL carries the container's own port (10000). Nothing inside the container can see
 which host port you published, so it does not guess: if you mapped a different one
-(`-p 127.0.0.1:8080:10000`), open the URL on that port instead. The command and the
-startup log both say so.
+(`-p 127.0.0.1:8080:10000`), open the URL on that port instead. The startup log says so, and so
+does `personalclaw token --explain`.
 
 To use the app through the web front, open the same link there: replace
 `http://127.0.0.1:10000` with `https://127.0.0.1:3443`, so it starts
@@ -212,7 +212,7 @@ Snapshot state from **inside** the gateway container so the archive captures the
 # create a snapshot (written under /data/snapshots)
 docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway personalclaw snapshot
 
-# list snapshots
+# list snapshots: one path per line, newest first (`snapshot --json` names the one it made)
 docker compose -f deploy/compose/compose.yaml exec personalclaw-gateway personalclaw snapshot --list
 
 # copy one out to the host (resolve the container id from `docker compose ps -q`)

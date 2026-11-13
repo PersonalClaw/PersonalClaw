@@ -71,6 +71,11 @@ from personalclaw.dashboard.session_store import (  # noqa: F401 — re-exported
     DeviceInfo,
     SessionRecord,
 )
+from personalclaw.dashboard.sign_in_device import (
+    _FROM_ANOTHER_DEVICE,
+    _speaks_to_another_device,
+    sign_in_command,
+)
 from personalclaw.dashboard.sign_in_pair import BOUND_CLAIM, bound, pair_for, pair_refusal
 from personalclaw.inbound.webhook import FIRE_PATH, HOOK_PATH
 from personalclaw.sel import AUDIT_OUTCOME_SUCCESS
@@ -1063,11 +1068,11 @@ def _how_to_sign_back_in(via: str, kind: str = "") -> str:
         return "Sign in again with your password."
     if not via:
         return (
-            "To sign back in, run `personalclaw token` on the computer running PersonalClaw and "
+            f"To sign back in, run {sign_in_command()} on the computer running PersonalClaw and "
             f"open the link it prints here, or {_PAIR_THIS_DEVICE}."
         )
     return (
-        "To sign back in, run `personalclaw token` on the computer running PersonalClaw and "
+        f"To sign back in, run {sign_in_command()} on the computer running PersonalClaw and "
         "open the link it prints here."
     )
 
@@ -1076,11 +1081,11 @@ def _how_to_sign_in_with_a_new_link() -> str:
     """What a device holding a link that cannot sign it in does instead."""
     if _login_offered():
         return (
-            "Sign in with your password, or run `personalclaw token` on the computer running "
+            f"Sign in with your password, or run {sign_in_command()} on the computer running "
             "PersonalClaw for a new link."
         )
     return (
-        "To sign in, run `personalclaw token` on the computer running PersonalClaw and open the "
+        f"To sign in, run {sign_in_command()} on the computer running PersonalClaw and open the "
         "new link it prints."
     )
 
@@ -1130,7 +1135,7 @@ def not_signed_in_notice() -> SignedOutNotice:
         how = f"Sign in with your password, or {_PAIR_THIS_DEVICE}."
     else:
         how = (
-            "To sign in, run `personalclaw token` on the computer running PersonalClaw and open "
+            f"To sign in, run {sign_in_command()} on the computer running PersonalClaw and open "
             f"the link it prints here, or {_PAIR_THIS_DEVICE}."
         )
     return SignedOutNotice(
@@ -1992,6 +1997,7 @@ def token_auth_middleware(
     internal_secret: str = "",
     port: int = _DEFAULT_PORT,
     local_only: bool = True,
+    remote_origin: str | None = None,
 ) -> Callable[..., Any]:
     """Factory returning aiohttp middleware for token-based dashboard auth.
 
@@ -2016,7 +2022,17 @@ def token_auth_middleware(
     refused as one (``internal_route_refused``). It is never judged as a
     browser that has not signed in: that answer is a sign-in sentence, which
     no process can act on, and which names the wrong cause.
+
+    *remote_origin* is the address other devices open, which a sign-in sentence to one of them
+    names (:func:`_speaks_to_another_device`). ``None`` reads it from ``dashboard.url`` as the
+    middleware is built, the setting the gateway's dashboard and ``personalclaw token --remote``
+    read.
     """
+    if remote_origin is None:
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.dashboard.origin import dashboard_origin
+
+        remote_origin = dashboard_origin(AppConfig.load().dashboard.url or "")
     strict_routes = tuple(InternalRoute.parse(entry) for entry in sorted(internal_routes))
     mixed_routes = tuple(InternalRoute.parse(entry) for entry in sorted(mixed_internal_routes))
 
@@ -2064,149 +2080,83 @@ def token_auth_middleware(
 
     @web.middleware
     async def middleware(request: web.Request, handler: object) -> web.StreamResponse:
-        from personalclaw.dashboard import worker_eviction
+        # Which device this request's sign-in sentences speak to (`sign_in_command`).
+        mark = _FROM_ANOTHER_DEVICE.set(_speaks_to_another_device(request, remote_origin))
+        try:
+            from personalclaw.dashboard import worker_eviction
 
-        if worker_eviction.serves_no_worker(request):
-            return worker_eviction.self_removing_worker()
-        path = request.path
-        routed = request.rel_url.path_safe
-        _matches_strict = any(route.admits(request.method, routed) for route in strict_routes)
-        _matches_mixed = any(route.admits(request.method, routed) for route in mixed_routes)
+            if worker_eviction.serves_no_worker(request):
+                return worker_eviction.self_removing_worker()
+            path = request.path
+            routed = request.rel_url.path_safe
+            _matches_strict = any(route.admits(request.method, routed) for route in strict_routes)
+            _matches_mixed = any(route.admits(request.method, routed) for route in mixed_routes)
 
-        # The internal credential opens the listed operations and no other. Presented anywhere
-        # else, it is refused as what it is, whichever credential rides beside it: it is never
-        # passed on to the browser's session check, which reads a request carrying no session as
-        # a device that has not signed in and answers with a sentence no process can act on.
-        # Ahead of the local-network bypass on purpose: the development server runs with it, so a
-        # call that bypass admitted was never seen failing, and every install refused it.
-        if "X-Internal-Secret" in request.headers and not (_matches_strict or _matches_mixed):
-            reason = f"{request.method} {path} does not take the internal secret"
-            _sel_fn().log_api_access(
-                caller=request.remote or "",
-                operation="internal_auth",
-                outcome="denied",
-                source="token_auth",
-                resources=path,
-                error=reason,
-            )
-            _log_auth(request, "internal", "denied", reason)
-            from personalclaw.http_errors import json_error
-
-            return json_error("internal_route_refused", status=403)
-
-        # Local-network bypass — opt-in, IP-gated.
-        # When PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1, requests from loopback,
-        # RFC1918, link-local, or ULA addresses skip token validation.
-        # Off by default; intended for trusted home/dev LANs.
-        if os.environ.get("PERSONALCLAW_BYPASS_LOCAL_NETWORKS") == "1":
-            client_ip = _resolved_client_ip(request)
-            if is_private_network(client_ip):
-                request["user"] = request.get("user") or f"local-net:{client_ip}"
-                # The bypass grants on the IP, so it never reaches the session_nonce line
-                # below — which left a paired device on a bypassed LAN indistinguishable from
-                # the owner's browser. Name the session when (and only when) the request
-                # presents one the token proves. See presented_session_nonce.
-                if not request.get("session_nonce"):
-                    request["session_nonce"] = presented_session_nonce(request, port)
-                # For the same reason an app's token is the app's here too: it only narrows.
-                if not request.get("app"):
-                    app_claim = presented_app(request)
-                    if app_claim:
-                        request["app"] = app_claim
-                _log_auth(
-                    request,
-                    request["user"],
-                    "ok",
-                    "local-network bypass",
-                    identity=str(request["session_nonce"] or ""),
+            # The internal credential opens the listed operations and no other. Presented
+            # anywhere else, it is refused as what it is, whichever credential rides beside it:
+            # it is never passed on to the browser's session check, which reads a request
+            # carrying no session as a device that has not signed in and answers with a sentence
+            # no process can act on. Ahead of the local-network bypass on purpose: the
+            # development server runs with it, so a call that bypass admitted was never seen
+            # failing, and every install refused it.
+            if "X-Internal-Secret" in request.headers and not (_matches_strict or _matches_mixed):
+                reason = f"{request.method} {path} does not take the internal secret"
+                _sel_fn().log_api_access(
+                    caller=request.remote or "",
+                    operation="internal_auth",
+                    outcome="denied",
+                    source="token_auth",
+                    resources=path,
+                    error=reason,
                 )
-                return await handler(request)  # type: ignore[operator]
+                _log_auth(request, "internal", "denied", reason)
+                from personalclaw.http_errors import json_error
 
-        # Internal routes: loopback + secret grants immediate access.
-        # If the secret is missing (browser request), fall through to
-        # normal cookie auth so dashboard pages can call these routes.
-        # local_only=False: treat ALL internal routes as mixed (the user has
-        # opted into remote access).
-        if not local_only and _matches_strict and not _matches_mixed:
-            _matches_mixed = True
-            _matches_strict = False
-        _matches_internal = _matches_strict or _matches_mixed
-        if _matches_internal and is_loopback(request.remote or ""):
-            _has_secret_header = "X-Internal-Secret" in request.headers
-            if _has_secret_header:
-                _provided_secret = request.headers["X-Internal-Secret"]
-                # Secret header present — validate it strictly
-                if not internal_secret:
-                    _sel = _sel_fn()
-                    _sel.log_api_access(
-                        caller=request.remote or "",
-                        operation="internal_auth",
-                        outcome="denied",
-                        source="token_auth",
-                        resources=path,
-                        error="no internal secret configured",
-                    )
-                    _log_auth(request, "internal", "denied", "no internal secret configured")
-                    return _deny(request, "Forbidden")
-                if hmac.compare_digest(internal_secret, _provided_secret):
-                    # ONE row family per grant (it was two rows per request), tallied like
-                    # every success: an MCP subprocess polling a route is one actor.
+                return json_error("internal_route_refused", status=403)
+
+            # Local-network bypass — opt-in, IP-gated.
+            # When PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1, requests from loopback,
+            # RFC1918, link-local, or ULA addresses skip token validation.
+            # Off by default; intended for trusted home/dev LANs.
+            if os.environ.get("PERSONALCLAW_BYPASS_LOCAL_NETWORKS") == "1":
+                client_ip = _resolved_client_ip(request)
+                if is_private_network(client_ip):
+                    request["user"] = request.get("user") or f"local-net:{client_ip}"
+                    # The bypass grants on the IP, so it never reaches the session_nonce line
+                    # below — which left a paired device on a bypassed LAN indistinguishable from
+                    # the owner's browser. Name the session when (and only when) the request
+                    # presents one the token proves. See presented_session_nonce.
+                    if not request.get("session_nonce"):
+                        request["session_nonce"] = presented_session_nonce(request, port)
+                    # For the same reason an app's token is the app's here too: it only narrows.
+                    if not request.get("app"):
+                        app_claim = presented_app(request)
+                        if app_claim:
+                            request["app"] = app_claim
                     _log_auth(
-                        request, "internal", "granted", "internal secret", operation="internal_auth"
+                        request,
+                        request["user"],
+                        "ok",
+                        "local-network bypass",
+                        identity=str(request["session_nonce"] or ""),
                     )
                     return await handler(request)  # type: ignore[operator]
-                # Wrong secret → deny (don't fall through)
-                _sel = _sel_fn()
-                _sel.log_api_access(
-                    caller=request.remote or "",
-                    operation="internal_auth",
-                    outcome="denied",
-                    source="token_auth",
-                    resources=path,
-                    error="wrong secret",
-                )
-                _log_auth(request, "internal", "denied", "wrong secret")
-                return _internal_secret_invalid()
-            # No secret header (a browser, the CLI) → verify session auth inline to satisfy
-            # deny-by-default: positively confirm auth at the decision point rather than
-            # deferring to downstream. The same selection the strict path below makes.
-            credentials = _select_request_credentials(request, port)
-            if not credentials.valid:
-                _sel = _sel_fn()
-                _sel.log_api_access(
-                    caller=request.remote or "",
-                    operation="internal_auth",
-                    outcome="denied",
-                    source="token_auth",
-                    resources=path,
-                    error=f"session auth failed: {credentials.failure}",
-                )
-                _log_auth(
-                    request, "internal", "denied", f"session auth failed: {credentials.failure}"
-                )
-                return _refuse(request, credentials, "Forbidden")
-            _adopt(request, credentials)
-            _log_auth(
-                request,
-                credentials.user_id or "internal",
-                "granted",
-                f"{credentials.source} auth (no secret header)",
-                operation="internal_auth",
-            )
-            return await handler(request)  # type: ignore[operator]
-        elif _matches_internal:
-            if _matches_mixed:
-                # Mixed paths on non-loopback (DCV/SSH-forwarded browsers):
-                # explicit cookie validation, mirroring the loopback
-                # no-secret-header branch above.  Deny-by-default —
-                # positively confirm auth at this decision point rather
-                # than relying on downstream fall-through.
-                # If X-Internal-Secret header is present, validate it first
-                # (defense-in-depth: wrong secret = deny, even with valid cookie)
-                if "X-Internal-Secret" in request.headers:
-                    if not internal_secret or not hmac.compare_digest(
-                        internal_secret, request.headers["X-Internal-Secret"]
-                    ):
+
+            # Internal routes: loopback + secret grants immediate access.
+            # If the secret is missing (browser request), fall through to
+            # normal cookie auth so dashboard pages can call these routes.
+            # local_only=False: treat ALL internal routes as mixed (the user has
+            # opted into remote access).
+            if not local_only and _matches_strict and not _matches_mixed:
+                _matches_mixed = True
+                _matches_strict = False
+            _matches_internal = _matches_strict or _matches_mixed
+            if _matches_internal and is_loopback(request.remote or ""):
+                _has_secret_header = "X-Internal-Secret" in request.headers
+                if _has_secret_header:
+                    _provided_secret = request.headers["X-Internal-Secret"]
+                    # Secret header present — validate it strictly
+                    if not internal_secret:
                         _sel = _sel_fn()
                         _sel.log_api_access(
                             caller=request.remote or "",
@@ -2214,12 +2164,36 @@ def token_auth_middleware(
                             outcome="denied",
                             source="token_auth",
                             resources=path,
-                            error="wrong secret (non-loopback mixed)",
+                            error="no internal secret configured",
                         )
+                        _log_auth(request, "internal", "denied", "no internal secret configured")
+                        return _deny(request, "Forbidden")
+                    if hmac.compare_digest(internal_secret, _provided_secret):
+                        # ONE row family per grant (it was two rows per request), tallied like
+                        # every success: an MCP subprocess polling a route is one actor.
                         _log_auth(
-                            request, "internal", "denied", "wrong secret (non-loopback mixed)"
+                            request,
+                            "internal",
+                            "granted",
+                            "internal secret",
+                            operation="internal_auth",
                         )
-                        return _internal_secret_invalid()
+                        return await handler(request)  # type: ignore[operator]
+                    # Wrong secret → deny (don't fall through)
+                    _sel = _sel_fn()
+                    _sel.log_api_access(
+                        caller=request.remote or "",
+                        operation="internal_auth",
+                        outcome="denied",
+                        source="token_auth",
+                        resources=path,
+                        error="wrong secret",
+                    )
+                    _log_auth(request, "internal", "denied", "wrong secret")
+                    return _internal_secret_invalid()
+                # No secret header (a browser, the CLI) → verify session auth inline to satisfy
+                # deny-by-default: positively confirm auth at the decision point rather than
+                # deferring to downstream. The same selection the strict path below makes.
                 credentials = _select_request_credentials(request, port)
                 if not credentials.valid:
                     _sel = _sel_fn()
@@ -2229,13 +2203,10 @@ def token_auth_middleware(
                         outcome="denied",
                         source="token_auth",
                         resources=path,
-                        error=f"mixed non-loopback session auth failed: {credentials.failure}",
+                        error=f"session auth failed: {credentials.failure}",
                     )
                     _log_auth(
-                        request,
-                        "internal",
-                        "denied",
-                        f"mixed non-loopback session auth failed: {credentials.failure}",
+                        request, "internal", "denied", f"session auth failed: {credentials.failure}"
                     )
                     return _refuse(request, credentials, "Forbidden")
                 _adopt(request, credentials)
@@ -2243,57 +2214,113 @@ def token_auth_middleware(
                     request,
                     credentials.user_id or "internal",
                     "granted",
-                    f"mixed non-loopback {credentials.source} auth",
+                    f"{credentials.source} auth (no secret header)",
                     operation="internal_auth",
                 )
                 return await handler(request)  # type: ignore[operator]
-            else:
-                # INVARIANT: non-loopback access to strict internal routes is
-                # ALWAYS denied.  Do NOT remove this branch — without it,
-                # non-loopback requests would silently fall through to
-                # normal cookie auth, defeating the machine-to-machine
-                # isolation that the internal-secret design provides.
-                _sel = _sel_fn()
-                _sel.log_api_access(
-                    caller=request.remote or "",
-                    operation="internal_auth",
-                    outcome="denied",
-                    source="token_auth",
-                    resources=path,
-                    error="non-loopback source",
-                )
-                _log_auth(request, "internal", "denied", "non-loopback source")
-                return _deny(request, "Forbidden")
+            elif _matches_internal:
+                if _matches_mixed:
+                    # Mixed paths on non-loopback (DCV/SSH-forwarded browsers):
+                    # explicit cookie validation, mirroring the loopback
+                    # no-secret-header branch above.  Deny-by-default —
+                    # positively confirm auth at this decision point rather
+                    # than relying on downstream fall-through.
+                    # If X-Internal-Secret header is present, validate it first
+                    # (defense-in-depth: wrong secret = deny, even with valid cookie)
+                    if "X-Internal-Secret" in request.headers:
+                        if not internal_secret or not hmac.compare_digest(
+                            internal_secret, request.headers["X-Internal-Secret"]
+                        ):
+                            _sel = _sel_fn()
+                            _sel.log_api_access(
+                                caller=request.remote or "",
+                                operation="internal_auth",
+                                outcome="denied",
+                                source="token_auth",
+                                resources=path,
+                                error="wrong secret (non-loopback mixed)",
+                            )
+                            _log_auth(
+                                request, "internal", "denied", "wrong secret (non-loopback mixed)"
+                            )
+                            return _internal_secret_invalid()
+                    credentials = _select_request_credentials(request, port)
+                    if not credentials.valid:
+                        _sel = _sel_fn()
+                        _sel.log_api_access(
+                            caller=request.remote or "",
+                            operation="internal_auth",
+                            outcome="denied",
+                            source="token_auth",
+                            resources=path,
+                            error=f"mixed non-loopback session auth failed: {credentials.failure}",
+                        )
+                        _log_auth(
+                            request,
+                            "internal",
+                            "denied",
+                            f"mixed non-loopback session auth failed: {credentials.failure}",
+                        )
+                        return _refuse(request, credentials, "Forbidden")
+                    _adopt(request, credentials)
+                    _log_auth(
+                        request,
+                        credentials.user_id or "internal",
+                        "granted",
+                        f"mixed non-loopback {credentials.source} auth",
+                        operation="internal_auth",
+                    )
+                    return await handler(request)  # type: ignore[operator]
+                else:
+                    # INVARIANT: non-loopback access to strict internal routes is
+                    # ALWAYS denied.  Do NOT remove this branch — without it,
+                    # non-loopback requests would silently fall through to
+                    # normal cookie auth, defeating the machine-to-machine
+                    # isolation that the internal-secret design provides.
+                    _sel = _sel_fn()
+                    _sel.log_api_access(
+                        caller=request.remote or "",
+                        operation="internal_auth",
+                        outcome="denied",
+                        source="token_auth",
+                        resources=path,
+                        error="non-loopback source",
+                    )
+                    _log_auth(request, "internal", "denied", "non-loopback source")
+                    return _deny(request, "Forbidden")
 
-        # Bypass static assets
-        if any(path.startswith(p) for p in _BYPASS_PREFIXES):
-            return await handler(request)  # type: ignore[operator]
-        if path in _BYPASS_EXACT or any(t.fullmatch(path) for t in _BYPASS_TEMPLATES):
-            return await handler(request)  # type: ignore[operator]
-        from personalclaw.dashboard import link_exchange
+            # Bypass static assets
+            if any(path.startswith(p) for p in _BYPASS_PREFIXES):
+                return await handler(request)  # type: ignore[operator]
+            if path in _BYPASS_EXACT or any(t.fullmatch(path) for t in _BYPASS_TEMPLATES):
+                return await handler(request)  # type: ignore[operator]
+            from personalclaw.dashboard import link_exchange
 
-        credentials = link_exchange.keeps_its_cookie(
-            request, port, _select_request_credentials(request, port)
-        )
-        if not credentials.valid:
-            _log_denied(request, credentials)
-            return _refuse(request, credentials, credentials.reason)
-        if credentials.source == "query":
-            # A link: exchanged for a browser's own sign-in where one is signed in, and only this
-            # one request anywhere else. The cookie and the header are the session as they are.
-            return await link_exchange.open_link(
-                request,
-                handler,  # type: ignore[arg-type]
-                credentials,
-                port=port,
-                client_ip=_resolved_client_ip(request),
-                adopt=_adopt,
+            credentials = link_exchange.keeps_its_cookie(
+                request, port, _select_request_credentials(request, port)
             )
-        # Expose authenticated identity to handlers (deny-by-default)
-        _adopt(request, credentials)
-        resp = await handler(request)  # type: ignore[operator]
-        _log_auth(request, credentials.user_id, "ok", "", identity=request["session_nonce"])
-        return resp  # type: ignore[return-value]
+            if not credentials.valid:
+                _log_denied(request, credentials)
+                return _refuse(request, credentials, credentials.reason)
+            if credentials.source == "query":
+                # A link: exchanged for a browser's own sign-in where one is signed in, and only
+                # this one request anywhere else. The cookie and the header are the session as
+                # they are.
+                return await link_exchange.open_link(
+                    request,
+                    handler,  # type: ignore[arg-type]
+                    credentials,
+                    port=port,
+                    client_ip=_resolved_client_ip(request),
+                    adopt=_adopt,
+                )
+            # Expose authenticated identity to handlers (deny-by-default)
+            _adopt(request, credentials)
+            resp = await handler(request)  # type: ignore[operator]
+            _log_auth(request, credentials.user_id, "ok", "", identity=request["session_nonce"])
+            return resp  # type: ignore[return-value]
+        finally:
+            _FROM_ANOTHER_DEVICE.reset(mark)
 
     middleware._is_token_auth = True  # type: ignore[attr-defined]  # sentinel for server.py security gate  # noqa: E501
     return middleware

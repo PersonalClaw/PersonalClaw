@@ -24,7 +24,7 @@ import os
 
 from personalclaw_client import PersonalClawClient
 
-# The owner token: the value after `?token=` in the link `personalclaw token` prints.
+# The owner token: personalclaw token --bearer prints it.
 async with PersonalClawClient(token=os.environ["PERSONALCLAW_TOKEN"]) as pc:
     ok = await pc.ping()
     status = await pc.get_status()

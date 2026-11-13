@@ -12,6 +12,7 @@ from typing import Any, NoReturn
 
 from personalclaw import home_gateway
 from personalclaw.atomic_write import atomic_json_write, write_private_file
+from personalclaw.cli_output import explain, print_json
 from personalclaw.cli_run import RunError, mint_local_token, owner_headers
 from personalclaw.config import config_dir
 from personalclaw.config.loader import AgentProfile, AppConfig
@@ -78,7 +79,7 @@ def _spawn(args: argparse.Namespace) -> None:
         _refuse(f"Error: {terminal_text(str(exc))}")
 
     if action == "list":
-        _spawn_list(gateway, token)
+        _spawn_list(gateway, token, as_json=bool(getattr(args, "as_json", False)))
     elif action == "run":
         _spawn_run(args, gateway, token)
 
@@ -88,8 +89,28 @@ def _lost(gateway: home_gateway.HomeGateway) -> NoReturn:
     _refuse(f"Error: {gateway.gone()}")
 
 
-def _spawn_list(gateway: home_gateway.HomeGateway, token: str) -> None:
-    """``spawn list`` — GET ``/api/spawn`` carrying the caller's minted token."""
+#: ``spawn list --json``'s keys, in order: one row per agent ``GET /api/spawn`` answers, each
+#: value as the gateway redacted it, ``null`` where its row has none.
+SPAWN_ROW_KEYS = (
+    "id",
+    "title",
+    "task",
+    "done",
+    "agent",
+    "parent",
+    "started",
+    "ended",
+    "elapsed",
+    "turns",
+    "last_tool",
+    "waiting_for",
+    "result",
+    "error",
+)
+
+
+def _spawn_list(gateway: home_gateway.HomeGateway, token: str, *, as_json: bool = False) -> None:
+    """``spawn list [--json]`` — GET ``/api/spawn`` carrying the caller's minted token."""
     try:
         req = urllib.request.Request(f"{gateway.url}/api/spawn", headers=owner_headers(token))
         with home_gateway.open_loopback(req, timeout=5) as resp:
@@ -104,6 +125,9 @@ def _spawn_list(gateway: home_gateway.HomeGateway, token: str) -> None:
     except (urllib.error.URLError, OSError):
         _lost(gateway)
     agents = data.get("agents", [])
+    if as_json:
+        print_json([{key: a.get(key) for key in SPAWN_ROW_KEYS} for a in agents])
+        return
     if not agents:
         print("No subagents.")
         return
@@ -136,7 +160,8 @@ def _spawn_run(args: argparse.Namespace, gateway: home_gateway.HomeGateway, toke
     agent_id = result["id"]
 
     if args.fire_and_forget:
-        print(f"Spawned subagent {agent_id}: {terminal_text(str(result['task']))}")
+        # The id alone, so `id=$(personalclaw spawn run --async …)` captures it.
+        print(terminal_text(str(agent_id)))
         return
 
     # Block: poll until done
@@ -252,9 +277,11 @@ def _pair(args: argparse.Namespace) -> None:
     The code is printed to the owner's terminal only — never persisted in plaintext, never
     logged. Direct store call (no running gateway required): pairing is owner-side setup.
 
-    No channel is loaded here, so the sentence claims nothing a channel does (a bot, a mailbox):
-    the code goes to the agent on that channel. A code lets someone in only while the channel's
-    rule for strangers asks for one, so under any other rule the output says so."""
+    stdout is the code alone, so ``personalclaw pair email | pbcopy`` copies it; what it is and
+    how long it works is ``--explain``'s, on stderr. No channel is loaded here, so that sentence
+    claims nothing a channel does (a bot, a mailbox): the code goes to the agent on that channel.
+    A code lets someone in only while the channel's rule for strangers asks for one, so under any
+    other rule a warning says so on stderr, every time: the code will not work as printed."""
     from personalclaw.channel_trust import (
         PAIRING_CODE_TTL_SECS,
         create_pairing_code,
@@ -266,15 +293,17 @@ def _pair(args: argparse.Namespace) -> None:
         _usage_error("❌ Usage: personalclaw pair <provider>   (e.g. telegram, discord, email)")
     code = create_pairing_code(provider)
     minutes = PAIRING_CODE_TTL_SECS // 60
-    print(f"Pairing code for {provider}: {code}")
-    print(
-        f"Have the person you're letting in send it to your agent on {provider} within "
-        f"{minutes} minutes. It works once, then expires."
+    print(code)
+    explain(
+        args,
+        f"Pairing code for {provider}. Have the person you're letting in send it to your agent "
+        f"on {provider} within {minutes} minutes. It works once, then expires.",
     )
     if trust_policies(provider).get("dm") != "pairing":
         print(
             f"It lets nobody in until {provider}'s rule for strangers asks for a code again "
-            "(Settings › Devices & Access › Sender trust)."
+            "(Settings › Devices & Access › Sender trust).",
+            file=sys.stderr,
         )
 
 
@@ -429,6 +458,62 @@ def _cron_refuse(
     sys.exit(1)
 
 
+def _cron_row(row: Any) -> dict:
+    """One automation as ``cron list --json`` and ``cron add --json`` print it, masked as the
+    list's line masks it (``schedule_view.MASKED_FIELDS``) and its message uncut. A row that
+    failed to parse has ``ok`` false, no schedule or message, and its first parse error."""
+    from personalclaw.security import redact_for_display
+    from personalclaw.triggers import schedule_view as _sv
+
+    trigger = row.trigger
+    shown = _sv.to_schedule_row(trigger) if row.ok else {}
+    return {
+        "id": trigger.id,
+        "name": shown.get("name") if row.ok else redact_for_display(trigger.name or ""),
+        "enabled": bool(trigger.enabled),
+        "ok": bool(row.ok),
+        "schedule": _sv.describe_cadence(trigger) if row.ok else None,
+        "message": (shown.get("message") or None) if row.ok else None,
+        "error": None if row.ok else row.errors[0].message,
+    }
+
+
+def _cron_list(store: Any, *, as_json: bool) -> None:
+    """``cron list``: each automation on a line, or with *as_json* one document of rows
+    (:func:`_cron_row`)."""
+    from personalclaw.security import redact_for_display
+    from personalclaw.triggers import schedule_view as _sv
+
+    rows = store.load()
+    if as_json:
+        # Ids hold spaces and colons, so a split into columns can cut one: a script reads this.
+        print_json([_cron_row(row) for row in rows])
+        return
+    if not rows:
+        print("No cron jobs.")
+        return
+    for row in rows:
+        trigger = row.trigger
+        # A row that failed to parse is shown as BROKEN rather than omitted: the legacy list
+        # could not represent one at all, and silently hiding a trigger the user created is how
+        # "where did my automation go" happens.
+        status = "⚠️" if not row.ok else ("✅" if trigger.enabled else "⏸️")
+        sched = _sv.describe_cadence(trigger) if row.ok else (row.errors[0].message)
+        # 🔴 The SHARED projection's `message`, not a hand-read config key. Reading
+        # `config["message"]` printed a BLANK column for every `invoke-agent` trigger, because
+        # that provider's key is `task_template` — and `run-prompt`/`notify` differ again.
+        # `to_schedule_row` already resolves all of them (schedule_view.py:171), which is the
+        # whole reason it exists.
+        # Masked like every read of a schedule (`schedule_view.MASKED_FIELDS`): a terminal is a
+        # screen too, and a scrollback keeps what it showed.
+        if row.ok:
+            shown = _sv.to_schedule_row(trigger)
+        else:
+            shown = {"name": redact_for_display(trigger.name or "")}
+        words = f"{trigger.id}  {shown.get('name') or ''}  ({sched})  "
+        print(f"  {status} {terminal_text(words + str(shown.get('message') or '')[:60])}")
+
+
 def _cron(args: argparse.Namespace) -> None:
     """Dispatch cron subcommands: list, add, update, remove, pause, resume, trigger.
 
@@ -446,8 +531,6 @@ def _cron(args: argparse.Namespace) -> None:
     Every refusal is said on stderr and exits 1 (`_refuse`): a script can only tell "done" from
     "not done" by the exit status.
     """
-    from personalclaw.security import redact_for_display
-    from personalclaw.triggers import schedule_view as _sv
     from personalclaw.triggers import tools as _tools
     from personalclaw.triggers.store import TriggerStore, unreadable
 
@@ -459,31 +542,9 @@ def _cron(args: argparse.Namespace) -> None:
         _refuse(f"Error: {terminal_text(str(found))}")
 
     action = getattr(args, "cron_action", None)
+    as_json = bool(getattr(args, "as_json", False))
     if action == "list":
-        rows = store.load()
-        if not rows:
-            print("No cron jobs.")
-            return
-        for row in rows:
-            trigger = row.trigger
-            # A row that failed to parse is shown as BROKEN rather than omitted: the legacy list
-            # could not represent one at all, and silently hiding a trigger the user created is how
-            # "where did my automation go" happens.
-            status = "⚠️" if not row.ok else ("✅" if trigger.enabled else "⏸️")
-            sched = _sv.describe_cadence(trigger) if row.ok else (row.errors[0].message)
-            # 🔴 The SHARED projection's `message`, not a hand-read config key. Reading
-            # `config["message"]` printed a BLANK column for every `invoke-agent` trigger, because
-            # that provider's key is `task_template` — and `run-prompt`/`notify` differ again.
-            # `to_schedule_row` already resolves all of them (schedule_view.py:171), which is the
-            # whole reason it exists.
-            # Masked like every read of a schedule (`schedule_view.MASKED_FIELDS`): a terminal is a
-            # screen too, and a scrollback keeps what it showed.
-            if row.ok:
-                shown = _sv.to_schedule_row(trigger)
-            else:
-                shown = {"name": redact_for_display(trigger.name or "")}
-            words = f"{trigger.id}  {shown.get('name') or ''}  ({sched})  "
-            print(f"  {status} {terminal_text(words + str(shown.get('message') or '')[:60])}")
+        _cron_list(store, as_json=as_json)
 
     elif action == "add":
         cron_expr = getattr(args, "cron_expr", None)
@@ -572,7 +633,13 @@ def _cron(args: argparse.Namespace) -> None:
             source="cli",
             resources=f"job_id={trigger_id} approval_mode={approval_mode or 'default'}",
         )
-        print(terminal_text(str(result.text)))
+        if as_json:
+            # The automation it made, as `cron list --json` lists it; what it says about it
+            # (where results go, what it may use, its warnings) goes to stderr unchanged.
+            print_json(_cron_row(store.get(trigger_id)))
+            print(terminal_text(str(result.text)), file=sys.stderr)
+        else:
+            print(terminal_text(str(result.text)))
 
     elif action == "update":
         patch: dict = {}
@@ -705,8 +772,10 @@ def _cron(args: argparse.Namespace) -> None:
 
     elif action == "pause":
         result = _tools.set_paused(store, trigger_id=args.job_id, paused=True)
+        # In `set_paused`'s own words, as `resume` refuses: a job that is there and was not paused
+        # is not "not found".
         if not result.ok:
-            _refuse(f"Job not found: {args.job_id}")
+            _refuse(terminal_text(str(result.text)))
         print(terminal_text(str(result.text)))
 
     elif action == "resume":
@@ -766,27 +835,7 @@ def _security(args: argparse.Namespace) -> None:
                 for p in extra:
                     print(f"  ✗ {p}")
     elif action == "audit":
-        history_dir = config_dir() / "history"
-        findings = scan_history(history_dir)
-        if findings:
-            print(f"⚠️  {len(findings)} suspicious entries found:\n")
-            for f in findings:
-                print(f"  📄 {terminal_text(str(f['file']))}")
-                print(f"     {f['warning']}")
-                print(f"     {terminal_text(str(f['snippet'][:120]))}…\n")
-        else:
-            print("✅ No suspicious tool usage found in recent history.")
-
-        mem_findings = scan_memory()
-        if mem_findings:
-            print(f"\n⚠️  {len(mem_findings)} suspicious memory entries:\n")
-            for f in mem_findings:
-                print(f"  [{f['type']}] {terminal_text(str(f['key']))}: {f['warning']}")
-                print(f"    {terminal_text(str(f['value'][:120]))}\n")
-        elif not findings:
-            pass
-        else:
-            print("✅ No suspicious content in vector memory.")
+        _audit_report(scan_history(config_dir() / "history"), scan_memory())
     elif action == "events":
 
         limit = getattr(args, "limit", 20)
@@ -825,15 +874,41 @@ def _security(args: argparse.Namespace) -> None:
         # as `backup validate` does over a corrupt export: a scheduled check that exits 0 over
         # tampered rows reports them as intact to whatever runs it.
         total, valid = sel().verify_integrity(max_entries=None)
-        if total == 0:
-            print("No security events to verify.")
-        elif total == valid:
-            print(f"✅ HMAC chain intact: {total} entries verified.")
-        else:
-            print(
-                f"⚠️  HMAC chain COMPROMISED: {valid}/{total} entries valid, {total - valid} tampered."  # noqa: E501
-            )
-            sys.exit(1)
+        _verify_verdict(total, valid)
+
+
+def _audit_report(findings: list[dict], mem_findings: list[dict]) -> None:
+    """``security audit``'s report: what the history scan and the memory scan found, on stdout.
+    Its ⚠ lines are its findings, not warnings about the command."""
+    if findings:
+        print(f"⚠️  {len(findings)} suspicious entries found:\n")
+        for f in findings:
+            print(f"  📄 {terminal_text(str(f['file']))}")
+            print(f"     {f['warning']}")
+            print(f"     {terminal_text(str(f['snippet'][:120]))}…\n")
+    else:
+        print("✅ No suspicious tool usage found in recent history.")
+
+    if mem_findings:
+        print(f"\n⚠️  {len(mem_findings)} suspicious memory entries:\n")
+        for f in mem_findings:
+            print(f"  [{f['type']}] {terminal_text(str(f['key']))}: {f['warning']}")
+            print(f"    {terminal_text(str(f['value'][:120]))}\n")
+    elif findings:
+        print("✅ No suspicious content in vector memory.")
+
+
+def _verify_verdict(total: int, valid: int) -> None:
+    """``security verify``'s verdict, the report itself, on stdout: and a tampered chain exits 1."""
+    if total == 0:
+        print("No security events to verify.")
+    elif total == valid:
+        print(f"✅ HMAC chain intact: {total} entries verified.")
+    else:
+        print(
+            f"⚠️  HMAC chain COMPROMISED: {valid}/{total} entries valid, {total - valid} tampered."  # noqa: E501
+        )
+        sys.exit(1)
 
 
 async def _run_eval(args: argparse.Namespace) -> None:
@@ -914,7 +989,10 @@ async def _run_eval(args: argparse.Namespace) -> None:
                                         f"{terminal_text(str(reason))}"
                                     )
                                 except Exception as exc:
-                                    print(f"  ⚠️ Judge failed for turn: {terminal_text(str(exc))}")
+                                    print(
+                                        f"  ⚠️ Judge failed for turn: {terminal_text(str(exc))}",
+                                        file=sys.stderr,
+                                    )
                                     tr.assertion_results[idx] = (a, False)
         finally:
             await judge.shutdown()
@@ -1169,11 +1247,13 @@ async def _study(args: argparse.Namespace) -> None:
         samples=samples,
         refusal=suite.refusal,
     )
+    # A preflight that refuses is the refusal's reason, so it goes to stderr with it: nothing ran.
     print(
         f"Study {reg.study_id} ({reg.kind}) on "
         f"{terminal_text(str(reg.subject.get('template_id') or '<unnamed template>'))}\n"
         + terminal_text(str(pre.render()))
-        + "\n"
+        + "\n",
+        file=sys.stderr if pre.refusal else sys.stdout,
     )
     if pre.refusal:
         raise SystemExit(1)
@@ -1507,51 +1587,24 @@ def _retrieval_eval(args: argparse.Namespace) -> None:
     from personalclaw.evals import retrieval_bench as rb
 
     picked = str(getattr(args, "store", "both") or "both")
-    stores = rb.STORES if picked == "both" else (picked,)
+    stores: tuple[str, ...] = rb.STORES if picked == "both" else (picked,)
     k = max(1, int(getattr(args, "k", rb.DEFAULT_K) or rb.DEFAULT_K))
     label_path = str(getattr(args, "label", "") or "")
 
-    labels: dict = {}
+    labels_for: dict[str, dict] = _card_labels(label_path, stores) if label_path else {}
     if label_path:
-        try:
-            card = json.loads(Path(label_path).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            print(
-                f"Error: unreadable card {terminal_text(str(label_path))}: "
-                f"{terminal_text(str(exc))}",
-                file=sys.stderr,
-            )
-            raise SystemExit(1) from exc
-        # Accept the card shape this command PRINTS, so the round-trip is copy-edit-apply
-        # and not "now transform it into some other schema".
-        card_store = str(card.get("store", "") or "")
-        if card_store and card_store not in rb.STORES:
-            print(f"Error: card declares unknown store {card_store!r}.", file=sys.stderr)
-            raise SystemExit(1)
-        if card_store:
-            stores = (card_store,)
-        for entry in card.get("queries") or []:
-            # KEY PRESENCE, not truthiness: `"relevant": []` is the human saying "none of
-            # these answer it", which is a real judgement. `or already_relevant` would make
-            # an empty list fall through and silently re-inherit the MINED label — the one
-            # thing the hand pass exists to overrule.
-            if "relevant" in entry:
-                marked = entry.get("relevant") or []
-            elif "already_relevant" in entry:
-                marked = entry.get("already_relevant") or []
-            else:
-                continue
-            labels[str(entry.get("query", ""))] = [str(i) for i in marked]
-        if not labels:
-            print(
-                'Error: no labels in the card. Mark each query\'s answers under "relevant": '
-                '["<id>", ...] before applying it.',
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
+        # Only the stores a card labels are relabelled.
+        stores = tuple(kind for kind in rb.STORES if kind in labels_for)
 
+    # `--card` prints one document on stdout, so what it did on the way goes to stderr.
+    carding = (
+        bool(getattr(args, "card", False)) and not label_path and not getattr(args, "mine", False)
+    )
+    said = sys.stderr if carding else sys.stdout
+    cards_made: list = []
     for store_kind in stores:
-        print(f"\n=== {store_kind} store ===")
+        print(f"\n=== {store_kind} store ===", file=said)
+        labels = labels_for.get(store_kind, {})
         handle, db_path = rb.open_store(store_kind)
         try:
             benchmark = rb.build_benchmark(store_kind, handle)
@@ -1563,13 +1616,14 @@ def _retrieval_eval(args: argparse.Namespace) -> None:
                 f"qrels: {len(benchmark.queries)} queries "
                 f"({hand} hand-labelled, {len(benchmark.queries) - hand} mined)\n"
                 f"corpus: {benchmark.corpus_snapshot_ref}\n"
-                f"saved:  {path}"
+                f"saved:  {path}",
+                file=said,
             )
             if getattr(args, "mine", False) or labels:
                 continue
-            if getattr(args, "card", False):
+            if carding:
                 retriever = rb.retriever_for(store_kind, handle)
-                print(json.dumps(rb.hand_label_card(benchmark, retriever), indent=2))
+                cards_made.append(rb.hand_label_card(benchmark, retriever))
                 continue
             try:
                 result = rb.run_retrieval_bench(
@@ -1585,12 +1639,78 @@ def _retrieval_eval(args: argparse.Namespace) -> None:
                 raise SystemExit(1) from exc
             _print_retrieval_report(result)
         finally:
-            closer = getattr(handle, "close", None)
-            if callable(closer):
-                try:
-                    closer()
-                except Exception:  # noqa: BLE001 - a close fault must not hide a report
-                    pass
+            _close_store(handle)
+    if carding:
+        # One document: a store's card, or both stores' cards as a list, which --label reads back.
+        print_json(cards_made if picked == "both" else cards_made[0])
+
+
+def _card_labels(label_path: str, stores: tuple[str, ...]) -> dict[str, dict]:
+    """The labels a hand-labelled card at *label_path* gives each store: a card names the store
+    it was made for, and one that names none (an older card) labels every store in *stores*.
+    Refuses, with exit 1, a card it cannot read or one that labels nothing."""
+    from personalclaw.evals import retrieval_bench as rb
+
+    try:
+        read = json.loads(Path(label_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(
+            f"Error: unreadable card {terminal_text(str(label_path))}: "
+            f"{terminal_text(str(exc))}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+    labels_for: dict[str, dict] = {}
+    # Accept the shape this command PRINTS, one store's card or both stores' as a list, so
+    # copy, edit and apply is all it takes, not "now transform it into some other schema".
+    for card in read if isinstance(read, list) else [read]:
+        if not isinstance(card, dict):
+            print("Error: a card is a JSON object with its queries.", file=sys.stderr)
+            raise SystemExit(1)
+        card_store = str(card.get("store", "") or "")
+        if card_store and card_store not in rb.STORES:
+            print(f"Error: card declares unknown store {card_store!r}.", file=sys.stderr)
+            raise SystemExit(1)
+        labels = _labels_on(card)
+        for store_kind in (card_store,) if card_store else stores:
+            if labels:
+                labels_for.setdefault(store_kind, {}).update(labels)
+    if not labels_for:
+        print(
+            'Error: no labels in the card. Mark each query\'s answers under "relevant": '
+            '["<id>", ...] before applying it.',
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return labels_for
+
+
+def _labels_on(card: dict) -> dict[str, list[str]]:
+    """Each query's marked answers on one card."""
+    labels: dict[str, list[str]] = {}
+    for entry in card.get("queries") or []:
+        # KEY PRESENCE, not truthiness: `"relevant": []` is the human saying "none of
+        # these answer it", which is a real judgement. `or already_relevant` would make
+        # an empty list fall through and silently re-inherit the MINED label — the one
+        # thing the hand pass exists to overrule.
+        if "relevant" in entry:
+            marked = entry.get("relevant") or []
+        elif "already_relevant" in entry:
+            marked = entry.get("already_relevant") or []
+        else:
+            continue
+        labels[str(entry.get("query", ""))] = [str(i) for i in marked]
+    return labels
+
+
+def _close_store(handle: object) -> None:
+    """Close a store the bench opened, if it closes: a fault closing it must not hide a report."""
+    closer = getattr(handle, "close", None)
+    if callable(closer):
+        try:
+            closer()
+        except Exception:  # noqa: BLE001 - a close fault must not hide a report
+            pass
 
 
 def _print_retrieval_report(result) -> None:
@@ -1661,7 +1781,8 @@ def _learn(args: argparse.Namespace) -> None:
         if refused is not None:
             _refuse(f"Not saved, and nothing in memory changed: {terminal_text(str(refused[1]))}.")
         neg = f" ({negative})" if negative else ""
-        print(f"Saved: {rule}{neg} [{category}]")
+        # Not the category: the write does not store it, so echoing one would claim it did.
+        print(f"Saved: {terminal_text(str(rule))}{terminal_text(neg)}")
         return
     with memory_locality.record_stores(memory_locality.partitions()) as opened:
         services = [(part, MemoryService.over_vector_store(store)) for part, store in opened]
@@ -1698,14 +1819,29 @@ def _memory_named(part: Any) -> str:
     return f"{named}, a folder that is gone" if part.gone else named
 
 
-def _memory_partitions() -> None:
-    """``personalclaw memory partitions``: every memory, the one every chat shares first, each
-    folder's named by its folder, with what it holds and the id the other commands take."""
+def _memory_partitions(*, as_json: bool = False) -> None:
+    """``personalclaw memory partitions [--json]``: every memory, the one every chat shares first,
+    each folder's named by its folder, with what it holds and the id the other commands take (``""``
+    for the shared one, which the text shows as ``(shared)``)."""
     from personalclaw import memory_locality
 
     parts = memory_locality.partitions()
     with memory_locality.record_stores(parts) as opened:
         held = {part.id: store.memory_stats() for part, store in opened}
+    if as_json:
+        print_json(
+            [
+                {
+                    "id": part.id,
+                    "folder": part.folder or None,
+                    "gone": part.gone,
+                    "facts": held.get(part.id, {}).get("semantic_active", 0),
+                    "episodes": held.get(part.id, {}).get("episodic_active", 0),
+                }
+                for part in parts
+            ]
+        )
+        return
     for part in parts:
         stats = held.get(part.id, {})
         facts, episodes = stats.get("semantic_active", 0), stats.get("episodic_active", 0)
@@ -1722,7 +1858,7 @@ def _memory_cmd(args: argparse.Namespace) -> None:
 
     action = getattr(args, "mem_action", None)
     if action == "partitions":
-        _memory_partitions()
+        _memory_partitions(as_json=bool(getattr(args, "as_json", False)))
         return
     asked = str(getattr(args, "partition", "") or "")
     part = memory_locality.partition_named(asked)
@@ -1732,10 +1868,38 @@ def _memory_cmd(args: argparse.Namespace) -> None:
         )
     with memory_locality.record_stores([part], writes=action in ("import", "migrate")) as opened:
         if not opened:  # a folder's memory that keeps no records yet
+            if action == "export":
+                # Still one document, so `memory export > f.json` is one a script can read.
+                _memory_export(args, {"semantic": [], "episodic": [], "events": []})
+                return
             named = _memory_named(part)
             print(f"{named[:1].upper()}{named[1:]} holds no records.")
             return
         _memory_action(action, args, opened[0][1], MemoryService.over_vector_store(opened[0][1]))
+
+
+def _memory_audit_report(findings: list[dict]) -> None:
+    """``memory audit``'s report, on stdout. Its ⚠ line is its finding, not a warning about the
+    command."""
+    if findings:
+        print(f"⚠️  {len(findings)} suspicious entries:\n")
+        for f in findings:
+            print(f"  [{f['type']}] {terminal_text(str(f['key']))}: {f['warning']}")
+            print(f"    {terminal_text(str(f['value'][:120]))}\n")
+    else:
+        print("✅ No suspicious content in memory.")
+
+
+def _memory_export(args: argparse.Namespace, data: dict) -> None:
+    """Write *data* as one JSON document: to ``-o FILE``, saying so, or alone on stdout."""
+    output = json.dumps(data, indent=2, default=str)
+    out_file = getattr(args, "output", None)
+    if out_file:
+        # Every memory: private from its first byte, wherever the user writes it.
+        write_private_file(out_file, output)
+        print(f"Exported to {out_file}")
+    else:
+        print(output)
 
 
 def _memory_action(action: str | None, args: argparse.Namespace, store: Any, svc: Any) -> None:
@@ -1788,29 +1952,17 @@ def _memory_action(action: str | None, args: argparse.Namespace, store: Any, svc
         print(f"  Audit events: {stats['events_count']}")
 
     elif action == "audit":
-        findings = scan_memory()
-        if findings:
-            print(f"⚠️  {len(findings)} suspicious entries:\n")
-            for f in findings:
-                print(f"  [{f['type']}] {terminal_text(str(f['key']))}: {f['warning']}")
-                print(f"    {terminal_text(str(f['value'][:120]))}\n")
-        else:
-            print("✅ No suspicious content in memory.")
+        _memory_audit_report(scan_memory())
 
     elif action == "export":
-        data = {
-            "semantic": store.get_all_semantic(),
-            "episodic": store.get_episodic_list(limit=10000),
-            "events": store.get_events(limit=1000),
-        }
-        output = json.dumps(data, indent=2, default=str)
-        out_file = getattr(args, "output", None)
-        if out_file:
-            # Every memory: private from its first byte, wherever the user writes it.
-            write_private_file(out_file, output)
-            print(f"Exported to {out_file}")
-        else:
-            print(output)
+        _memory_export(
+            args,
+            {
+                "semantic": store.get_all_semantic(),
+                "episodic": store.get_episodic_list(limit=10000),
+                "events": store.get_events(limit=1000),
+            },
+        )
 
     elif action == "migrate":
         counts = store.migrate_from_markdown()

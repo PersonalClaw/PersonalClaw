@@ -47,6 +47,7 @@ from urllib.parse import quote
 from aiohttp import web
 
 from personalclaw import record_files
+from personalclaw.cli_output import explain, print_json
 from personalclaw.config.external_access import WEBHOOK_SURFACE
 from personalclaw.security import terminal_text
 
@@ -490,34 +491,45 @@ def _create(store: Any, args: Any) -> int:
     label = str(getattr(args, "label", "") or "").strip() or f"{name} sender"
     client, token = make_sender(store, automation, label=label, ttl_secs=ttl, actor="cli")
     said = instructions(automation, token)
-    print(
-        f"✅ Made the sender token “{terminal_text(str(client.label))}” for "
-        f"“{terminal_text(str(name))}” ({terminal_text(str(automation))})."
+    known = PORT_PLACEHOLDER not in said["url"]
+    no_port = (
+        "PersonalClaw is not running, so the port it listens on is not known here: put it in "
+        f"place of {PORT_PLACEHOLDER}."
     )
-    print(
-        f"⏱  It works for {duration_words(ttl)}, until {until_words(client.expires_at)}; then make "
-        "a new one. Settings → Devices & Access → External access and Settings → Devices & Access "
-        "→ Devices list it, and revoke it."
-    )
-    print()
-    print("Copy it into the program now — it is stored only as a hash and is not shown again:")
-    print()
-    print(f"    {said['header']}")
-    print()
-    print("The program posts to:")
-    print()
-    print(f"    {said['url']}")
-    print()
-    print(REACH)
-    if PORT_PLACEHOLDER in said["url"]:
-        print(
-            "PersonalClaw is not running, so the port it listens on is not known here: put it in "
-            f"place of {PORT_PLACEHOLDER}."
+    # The token alone, so `TOKEN=$(…)` captures it: it is stored only as a hash and not shown again.
+    if getattr(args, "as_json", False):
+        print_json(
+            {
+                "client_id": client.client_id,
+                "automation": automation,
+                "label": client.label,
+                "token": token,
+                "url": said["url"] if known else None,
+                "header": said["header"],
+                "curl": said["curl"] if known else None,
+                "expires_at": client.expires_at,
+            }
         )
-    print()
-    print("To try it from this machine:")
-    print()
-    print(f"    {said['curl']}")
+    else:
+        print(token)
+    # Never the token, so `TOKEN=$(… --explain)` keeps it off the screen: the curl line reads it
+    # from $TOKEN, inside double quotes (`curl_line` single-quotes the header it is given).
+    explain(
+        args,
+        f"Made the sender token “{terminal_text(str(client.label))}” for "
+        f"“{terminal_text(str(name))}” ({terminal_text(str(automation))}). It works for "
+        f"{duration_words(ttl)}, until {until_words(client.expires_at)}; then make a new one. "
+        "Settings → Devices & Access → External access and Settings → Devices & Access → Devices "
+        "list it, and revoke it.",
+        f"The program posts to {said['url']} with the token as an Authorization: Bearer header.",
+        REACH,
+        "" if known else no_port,
+        "To try it from this machine, with the token in TOKEN: "
+        f'curl -H "Authorization: Bearer $TOKEN" --data ping {shlex.quote(said["url"])}',
+    )
+    if not known and getattr(args, "as_json", False) and not getattr(args, "explain", False):
+        # The document's address is null, and this says why.
+        print(no_port, file=sys.stderr)
     return 0
 
 

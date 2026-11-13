@@ -267,7 +267,7 @@ docker exec personalclaw personalclaw token
 ```
 
 The URL carries the container's own port, 10000. If you published a different host port,
-open that one instead; the command reminds you.
+open that one instead; `personalclaw token --explain` says so too.
 
 State lives in the named volume `personalclaw_home`, mounted at `/data`, so it survives
 `docker rm`/`docker run`. That includes your work: the image puts the workspace at
@@ -409,6 +409,39 @@ newest release when it starts, then every `updates.check_interval_hours` (defaul
 Settings → Updates still checks once when you press it, and `personalclaw update` still works
 when you run it by hand. This is a separate switch from `updates.auto`: one governs whether
 PersonalClaw *looks*, the other whether it *installs*.
+
+### Upgrading to commands that print only what they make
+
+From 0.3.9 a command's stdout is only what it makes, the same at a terminal and in a pipe, and
+what it is and how long it lasts is `--explain`'s, on stderr.
+
+- **`personalclaw token` prints one line**, this computer's sign-in link, so `| pbcopy` and
+  `| head -1` get it. The link at `dashboard.url` is `--remote`; the token alone is `--bearer`;
+  the lifetimes are in `--json`; the note on what it is and how long it lasts is `--explain`.
+- **`pair`, `auth enroll`, `auth totp`, `inbound token create`, `inbound webhook create` and
+  `spawn run --async` print only the code, link, token or id they make.** `auth totp` prints
+  the secret's `otpauth://` link, and replaces an enrolled secret only with `--rotate`.
+- **`config get KEY` writes `true`, `false` and `null` as JSON does**, and refuses a credential
+  key without `--reveal`.
+- **Warnings are on stderr**, so stdout holds no ⚠ line.
+
+What a script changes:
+
+- `personalclaw token`'s second line → `personalclaw token --remote`; reading its stderr note
+  (`2>&1 | grep 'It works for'`) → `personalclaw token --json`.
+- Cutting `Pairing code for X: `, the indented enrollment code, the TOTP `secret:` or `uri:` line,
+  `Authorization: Bearer` from `inbound token create`, the `curl` line from `inbound webhook
+  create`, or `Spawned subagent ID:` → take stdout as it is, or read `--json`.
+- `True`, `False` and `None` from `config get` → `true`, `false` and `null`; a credential key →
+  `config get --reveal KEY`.
+- `retrieval-eval --card` for both stores → a list of two cards, which `--label` reads back.
+- Running `auth totp` again to replace the secret → `auth totp --rotate`.
+- ⚠ lines, `restore`'s unchanged parts and `capture import`'s unreadable-file report → stderr.
+- `snapshot --list` with no snapshots → prints nothing.
+- A flag the command line's form does not take (`token --bearer --json`, `auth enroll --clear
+  --label`, `inbound token show --ttl`) → exit 2.
+
+Added, nothing to change: every new `--json`.
 
 ### Upgrading to workflow secrets from Settings → Secrets alone
 

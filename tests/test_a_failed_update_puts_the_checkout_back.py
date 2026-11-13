@@ -235,12 +235,17 @@ def _request(state: _State) -> MagicMock:
     return request
 
 
+#: How `update` prints a warning step (`cli_server._say_step`).
+_WARNING_STEP = "  ⚠️  "
+
+
 async def _update(surface: str, state: _State, capsys) -> tuple[int | None, str]:
     """Start an update the way *surface* starts one, and wait it out.
 
     Returns what the surface answered (the dashboard's HTTP status, the CLI's exit code, nothing
     for the auto-update) and what it said went wrong, with its whitespace folded: the update's last
-    error on the dashboard and the auto-update, or the dashboard's refusal, and the CLI's stderr.
+    error on the dashboard and the auto-update, or the dashboard's refusal, and the CLI's stderr
+    but for the warning steps it prints there, as the other surfaces leave warnings out.
     """
     if surface == "cli":
 
@@ -252,7 +257,15 @@ async def _update(surface: str, state: _State, capsys) -> tuple[int | None, str]
             return 0
 
         code = await asyncio.to_thread(_cli)
-        return code, " ".join(capsys.readouterr().err.split())
+        captured = capsys.readouterr()
+        # A warning step (`_say_step`'s shape) is on stderr, never on stdout. The data-handling
+        # reminder a finished update prints opens at the line's start, so it is not one.
+        stepped = [line for line in captured.out.splitlines() if line.startswith(_WARNING_STEP)]
+        assert stepped == [], stepped
+        said = "\n".join(
+            line for line in captured.err.splitlines() if not line.startswith(_WARNING_STEP)
+        )
+        return code, " ".join(said.split())
     if surface == "dashboard":
         resp = await upd.api_update_apply(_request(state))
         await _settle(state)

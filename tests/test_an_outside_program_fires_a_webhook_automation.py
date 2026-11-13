@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shlex
 import time
 from pathlib import Path
@@ -161,21 +162,68 @@ async def test_the_command_the_cli_prints_fires_the_automation(tmp_path, monkeyp
     async with signed_in_gateway(tmp_path, monkeypatch) as gw:
         automation = _automation(gw.home)
         args = build_parser().parse_args(
-            ["inbound", "webhook", "create", automation, "--label", "Build server"]
+            ["inbound", "webhook", "create", automation, "--label", "Build server", "--json"]
         )
 
         assert inbound_cmd(args) == 0
-        printed = capsys.readouterr().out
-        (command,) = [
-            line.strip() for line in printed.splitlines() if line.strip().startswith("curl ")
-        ]
-        status, body = await _follow(command)
+        doc = json.loads(capsys.readouterr().out)
+        status, body = await _follow(doc["curl"])
 
         assert status == 202, body
-        assert gw.url(f"/api/triggers/{automation}/fire") in printed
-        assert "programs on the machine PersonalClaw runs on" in printed
+        assert doc["url"] == gw.url(f"/api/triggers/{automation}/fire")
         (run,) = await _runs(gw, automation)
         assert run["status"] == "success", run
+
+        args = build_parser().parse_args(
+            ["inbound", "webhook", "create", automation, "--label", "Deploy", "--explain"]
+        )
+        assert inbound_cmd(args) == 0
+        out, err = capsys.readouterr()
+        assert "programs on the machine PersonalClaw runs on" in err
+        assert out.strip() not in err, "--explain never repeats the token"
+
+
+@pytest.mark.asyncio
+async def test_a_plain_create_prints_the_token_alone_and_the_explained_curl_fires(
+    tmp_path, monkeypatch, capsys
+):
+    """`TOKEN=$(personalclaw inbound webhook create …)` captures the sender token, and the curl
+    line ``--explain`` prints sends it from $TOKEN."""
+    import os
+    import subprocess
+
+    from personalclaw.cli import build_parser
+    from personalclaw.inbound.auth import inbound_cmd
+
+    async with signed_in_gateway(tmp_path, monkeypatch) as gw:
+        automation = _automation(gw.home)
+        parse = build_parser().parse_args
+        assert inbound_cmd(parse(["inbound", "webhook", "create", automation])) == 0
+        out, err = capsys.readouterr()
+        assert err == ""
+        assert re.fullmatch(r"\S+\n", out), out
+        status, body = await _follow(
+            f"curl -H {shlex.quote('Authorization: Bearer ' + out.strip())} --data ping "
+            f"{shlex.quote(gw.url(f'/api/triggers/{automation}/fire'))}"
+        )
+        assert status == 202, body
+
+        assert inbound_cmd(parse(["inbound", "webhook", "create", automation, "--explain"])) == 0
+        out, err = capsys.readouterr()
+        assert re.fullmatch(r"\S+\n", out), out
+        token = out.strip()
+        (line,) = [w for w in err.splitlines() if "curl " in w]
+        command = line.split(": ", 1)[1]
+        assert command.startswith('curl -H "Authorization: Bearer $TOKEN" --data ping '), command
+        done = await asyncio.to_thread(
+            subprocess.run,
+            ["sh", "-c", command + " -s -o /dev/null -w '%{http_code}'"],
+            env={**os.environ, "TOKEN": token},
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert done.stdout == "202", (done.stdout, done.stderr)
 
 
 def test_the_cli_lists_its_sender_tokens_in_words_and_revokes_one(tmp_path, monkeypatch, capsys):

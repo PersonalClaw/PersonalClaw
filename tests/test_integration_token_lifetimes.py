@@ -638,10 +638,24 @@ class TestRegisterWithLifetime:
 # ══ The command line ═════════════════════════════════════════════════════════════════
 
 
-def _cli(action: str, *, surface: str = "mcp", rotate: bool = False, ttl: str = "") -> int:
+def _cli(
+    action: str,
+    *,
+    surface: str = "mcp",
+    rotate: bool = False,
+    ttl: str | None = None,
+    explain: bool = False,
+    as_json: bool = False,
+) -> int:
     return auth.inbound_cmd(
         argparse.Namespace(
-            inbound_command="token", surface=surface, token_action=action, rotate=rotate, ttl=ttl
+            inbound_command="token",
+            surface=surface,
+            token_action=action,
+            rotate=rotate,
+            ttl=ttl,
+            explain=explain,
+            as_json=as_json,
         )
     )
 
@@ -651,8 +665,8 @@ class TestCommandLine:
         assert _cli("create", ttl="91d") == 1
         assert "An integration token can last at most 90 days" in capsys.readouterr().err
         assert auth.load_surface_token("mcp") is None
-        assert _cli("create", ttl="7d") == 0
-        assert "It works for 7 days, until" in capsys.readouterr().out
+        assert _cli("create", ttl="7d", explain=True) == 0
+        assert "It works for 7 days, until" in capsys.readouterr().err
 
     def test_create_says_who_can_reach_the_surface_and_promises_no_config_that_widens_it(
         self, capsys
@@ -661,15 +675,15 @@ class TestCommandLine:
         reads it, so `public_url` + `allow_remote` never opened one: the closing line said they
         did. It says what is true — this machine only, and an SSH tunnel from anywhere else — and
         the bridge, which listens on its own port from the next start, says that."""
-        assert _cli("create", surface="mcp") == 0
-        out = capsys.readouterr().out
-        assert "It takes requests only from programs on this machine" in out
-        assert "over SSH" in out
-        assert "allow_remote" not in out and "public_url" not in out
-        assert _cli("create", surface="bridge") == 0
-        out = capsys.readouterr().out
-        assert "starts listening the next time PersonalClaw starts" in out
-        assert "allow_remote" not in out
+        assert _cli("create", surface="mcp", explain=True) == 0
+        err = capsys.readouterr().err
+        assert "It takes requests only from programs on this machine" in err
+        assert "over SSH" in err
+        assert "allow_remote" not in err and "public_url" not in err
+        assert _cli("create", surface="bridge", explain=True) == 0
+        err = capsys.readouterr().err
+        assert "starts listening the next time PersonalClaw starts" in err
+        assert "allow_remote" not in err
 
     def test_show_says_until_when_and_revoke_ends_it(self, capsys):
         assert _cli("create") == 0
@@ -687,5 +701,5 @@ class TestCommandLine:
         assert _cli("create") == 1, "a live token needs --rotate"
         assert _cli("revoke") == 0
         capsys.readouterr()
-        assert _cli("create") == 0
-        assert "Rotated the mcp inbound token" in capsys.readouterr().out
+        assert _cli("create", explain=True) == 0
+        assert "Rotated the mcp inbound token" in capsys.readouterr().err

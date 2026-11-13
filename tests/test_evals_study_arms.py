@@ -685,7 +685,9 @@ def test_the_cli_refuses_a_study_whose_corpus_is_EMPTY(eval_home, capsys):
         )
 
     assert exc.value.code == 1
-    assert "no replay population" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "no replay population" in captured.err
+    assert captured.out == "", "a refusing study prints nothing on stdout"
 
 
 def test_the_cli_can_run_a_registered_study_end_to_end(eval_home, monkeypatch, capsys):

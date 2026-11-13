@@ -32,6 +32,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import sys
 from collections.abc import Callable, Collection
 from contextlib import closing
 from pathlib import Path
@@ -87,7 +88,8 @@ def copy_file(src: Path | str, dst: Path | str) -> str:
             name = Path(src).name
             print(
                 f"⚠️  sqlite backup failed for {name} ({terminal_text(str(exc))}); falling "
-                "back to a file copy"
+                "back to a file copy",
+                file=sys.stderr,
             )
     shutil.copy2(str(src), str(dst))
     return str(dst)

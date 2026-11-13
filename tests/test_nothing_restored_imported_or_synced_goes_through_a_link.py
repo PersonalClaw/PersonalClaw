@@ -127,10 +127,12 @@ def _export_archive(path: Path, files: dict[str, bytes]) -> Path:
     return path
 
 
-def _restore(archive: Path, mode: str, capsys) -> tuple[int, str]:
-    """``personalclaw restore <archive> --mode <mode>``: its status and what it printed."""
+def _restore(archive: Path, mode: str, capsys) -> tuple[int, str, str]:
+    """``personalclaw restore <archive> --mode <mode>``: its status, its transcript on stdout,
+    and what it said on stderr: each warning, what it left unchanged among them."""
     code = restore_main([str(archive), "--mode", mode])
-    return code, capsys.readouterr().out
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
 
 
 def _named(what: str, rel: str, why: str = A_LINK) -> bool:
@@ -162,13 +164,14 @@ def test_a_replace_restore_writes_no_single_file_store_through_a_link(
         {rel: b"the snapshot's copy\n", "active_models.json": b'{"chat": "local:small"}'},
     )
 
-    code, out = _restore(archive, "replace", capsys)
+    code, out, err = _restore(archive, "replace", capsys)
 
     assert _state(outside) == before, "the snapshot's copy was written outside the home"
     assert (home / rel).is_symlink() and os.readlink(home / rel) == str(target)
     assert code == 1, "a replace that left a part unchanged ended as a whole one"
-    assert _named(out, rel), out
-    assert "Replace finished, but 1 part was left unchanged" in out
+    assert _named(err, rel), err
+    assert "Replace finished, but 1 part was left unchanged" in err
+    assert "left unchanged" not in out, "a part left unchanged is a warning, on stderr"
     # The rest of the snapshot is restored.
     assert (home / "active_models.json").read_bytes() == b'{"chat": "local:small"}'
 
@@ -187,11 +190,11 @@ def test_a_replace_restore_writes_nothing_through_a_folder_that_is_a_link(
         {"tasks/t1.json": b'{"id": "t1"}', "tool_prefs.json": b'{"x": 1}'},
     )
 
-    code, out = _restore(archive, "replace", capsys)
+    code, _, err = _restore(archive, "replace", capsys)
 
     assert _state(outside) == before
     assert (home / "tasks").is_symlink()
-    assert code == 1 and _named(out, "tasks"), out
+    assert code == 1 and _named(err, "tasks"), err
     assert (home / "tool_prefs.json").read_bytes() == b'{"x": 1}'
 
 
@@ -203,11 +206,11 @@ def test_a_replace_restore_leaves_a_hard_link_as_it_is(home, outside, tmp_path, 
     before = _state(outside)
     archive = _snapshot_archive(tmp_path / "snap.tar.gz", {"tool_prefs.json": b'{"x": 1}'})
 
-    code, out = _restore(archive, "replace", capsys)
+    code, _, err = _restore(archive, "replace", capsys)
 
     assert _state(outside) == before
     assert os.stat(home / "tool_prefs.json").st_ino == os.stat(shared).st_ino
-    assert code == 1 and _named(out, "tool_prefs.json", A_HARD_LINK), out
+    assert code == 1 and _named(err, "tool_prefs.json", A_HARD_LINK), err
 
 
 def test_a_replace_through_an_import_writes_no_store_through_a_link(home, outside, tmp_path):
@@ -338,11 +341,11 @@ def test_the_merge_restore_command_says_what_a_link_kept_and_fails(home, outside
         {"tool_prefs.json": b'{"x": 1}', "active_models.json": b'{"chat": "local:small"}'},
     )
 
-    code, out = _restore(archive, "merge", capsys)
+    code, _, err = _restore(archive, "merge", capsys)
 
     assert not (outside / "tool_prefs.json").exists()
     assert code == 1
-    assert f"Merge finished, but 1 part was left unchanged: tool_prefs.json ({A_LINK})." in out
+    assert f"Merge finished, but 1 part was left unchanged: tool_prefs.json ({A_LINK})." in err
     assert (home / "active_models.json").read_bytes() == b'{"chat": "local:small"}'
 
 
@@ -470,9 +473,10 @@ def test_the_control_a_replace_restore_puts_every_part_back(home, tmp_path, caps
         {**{rel: b"the snapshot's copy\n" for rel in SINGLE_FILES}, "tasks/t1.json": b"{}"},
     )
 
-    code, out = _restore(archive, "replace", capsys)
+    code, out, err = _restore(archive, "replace", capsys)
 
     assert code == 0 and "✅ Replace complete." in out, out
+    assert "left unchanged" not in err, err
     for rel in SINGLE_FILES:
         assert (home / rel).read_bytes() == b"the snapshot's copy\n"
     assert sorted(p.name for p in (home / "tasks").iterdir()) == ["t1.json"]

@@ -205,9 +205,6 @@ _NOT_ROUTED_TO_THE_OWNER: dict[str, str] = {
     "dashboard/handlers/updates.py::_do_update_check::tags": "censused leaf (git tag)",
     "dashboard/handlers/updates.py::_do_update_check::diff": "censused leaf (git diff)",
     # ── still outstanding: pid-killed and reaped, so no hang; the grandchild leaks ──
-    "dashboard/handlers/_shared.py::_list_marketplace_skills::proc": (
-        "outstanding: `personalclaw skills list` pid-killed, unbounded drain"
-    ),
     "workflows/review_service.py::_git::proc": (
         "outstanding: run-workspace `git diff` pid-killed; forks under fsmonitor/LFS"
     ),

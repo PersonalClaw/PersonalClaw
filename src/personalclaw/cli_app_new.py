@@ -1003,7 +1003,7 @@ prints a URL carrying the owner token, and a script sends that token as an
 `Authorization: Bearer` header — never in the URL, where it would land in your shell history.
 
 ```bash
-TOKEN_URL="$(personalclaw token | head -1)"
+TOKEN_URL="$(personalclaw token)"
 export PERSONALCLAW_URL="${{TOKEN_URL%%\\?*}}"
 export PERSONALCLAW_TOKEN="${{TOKEN_URL#*token=}}"
 ```

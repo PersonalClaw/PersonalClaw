@@ -149,7 +149,8 @@ def test_a_snapshot_leaves_every_app_venv_behind_and_keeps_the_app(tmp_path, mon
     for kept in ("app.json", "installed.json", "data/notes.txt"):
         assert f"apps/clone-voice/{kept}" in members, kept
     # The copy never walks into the environment, so no interpreter link is even met.
-    assert "Skipping symlink" not in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "Skipping symlink" not in captured.out + captured.err
 
 
 def test_an_export_leaves_every_app_venv_behind(tmp_path, monkeypatch):
@@ -229,7 +230,7 @@ def test_the_restore_names_each_app_whose_engine_must_be_installed_again(
     capsys.readouterr()
     assert restore_main([str(archive), "--mode", "replace"]) == 0
 
-    said = [line for line in capsys.readouterr().out.splitlines() if "engine" in line]
+    said = [line for line in capsys.readouterr().err.splitlines() if "engine" in line]
     assert said == [f"⚠️  Clone Voice {SENTENCE}"]
 
 
@@ -249,7 +250,8 @@ def test_a_merge_keeps_the_engine_this_home_already_has_and_says_nothing(
 
     assert sidecar.SidecarInstall.for_app("clone-voice").installed
     assert sidecar.venv_python(mine / "venv").is_symlink(), "the live engine was touched"
-    assert "engine" not in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "engine" not in captured.out + captured.err
 
 
 def test_a_store_another_entry_owns_inside_a_tree_still_comes_back(tmp_path, monkeypatch):

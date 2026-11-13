@@ -947,3 +947,144 @@ async def test_a_link_cannot_sign_a_browser_in_once_its_session_has_ended() -> N
         await asyncio.sleep(1.5)
         resp = await browser.get(f"/?token={token}")
         assert resp.status == 403
+
+
+@web.middleware
+async def _from_another_device(request: web.Request, handler: Any) -> web.StreamResponse:
+    """The address a request came from, as the test names it: a phone on the LAN."""
+    peer = request.headers.get("X-Test-Peer", "")
+    return await handler(request.clone(remote=peer) if peer else request)  # type: ignore[operator]
+
+
+#: `dashboard.url` in the cases that set one: the address other devices open.
+REMOTE = "https://pc.example.com"
+HERE = "run `personalclaw token` on the computer running PersonalClaw"
+THERE = "run `personalclaw token --remote` on the computer running PersonalClaw"
+#: A phone on the home network.
+PHONE = "192.168.1.5"
+
+
+def _dashboard(
+    home: Any, *, url: str = "", proxies: tuple[str, ...] = (), auth: Any = None
+) -> None:
+    """This home's config: *url* as `dashboard.url` and *proxies* as its trusted proxies."""
+    dashboard: dict[str, Any] = {"url": url} if url else {}
+    if proxies:
+        dashboard["trusted_proxies"] = list(proxies)
+    config = {"auth": auth or {}, "dashboard": dashboard}
+    (home / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+
+async def _from(headers: dict[str, str], path: str = "/api/status", **kw: Any) -> Any:
+    """What a device not signed in reads at *path*, sending *headers*: the refusal's sentence, or
+    the page's HTML. The middleware is built after the config is written, as the gateway's is."""
+    app = _gateway_app()
+    app.middlewares.insert(0, _from_another_device)
+    app.router.add_post("/api/auth/confirm", auth_h.api_auth_confirm)
+    server = TestServer(app)
+    await server.start_server()
+    device = Device(server, CHROME)
+    try:
+        if kw.get("signed_in"):
+            minted = token_auth.mint_session(
+                "owner", 3600, issuer=token_auth.ISSUER_LOGIN, device=_a_phone(), bound=True
+            )
+            device.pair = minted.pair
+            sent = {"Cookie": f"{COOKIE}={minted.token}", "Origin": f"http://localhost:{PORT}"}
+            resp = await device.post(path, {"password": PASSWORD}, headers={**sent, **headers})
+        else:
+            resp = await device.get(path, headers=headers)
+        if resp.content_type == "text/html":
+            return await resp.text()
+        return (await resp.json())["error"]["message"]
+    finally:
+        await device.http.close()
+        await server.close()
+
+
+def _a_phone() -> ss.DeviceInfo:
+    return ss.DeviceInfo(id=ss.new_device_id(), name="Safari on iPhone", kind="mobile")
+
+
+@pytest.mark.parametrize(
+    ("url", "proxies", "headers", "names"),
+    [
+        pytest.param(REMOTE, (), {"X-Test-Peer": PHONE}, THERE, id="a phone"),
+        pytest.param(REMOTE, (), {}, HERE, id="this computer"),
+        pytest.param("", (), {"X-Test-Peer": PHONE}, HERE, id="a phone, no dashboard.url"),
+        pytest.param(
+            "", (), {"X-Test-Peer": "172.17.0.1"}, HERE, id="a container's host, no dashboard.url"
+        ),
+        pytest.param(
+            REMOTE,
+            (),
+            {
+                "X-Test-Peer": PHONE,
+                "Host": "127.0.0.1",
+                "Origin": "http://127.0.0.1",
+                "X-Forwarded-For": "127.0.0.1",
+                "X-Real-IP": "127.0.0.1",
+            },
+            THERE,
+            id="a phone whose headers name this computer",
+        ),
+        pytest.param(
+            REMOTE,
+            ("127.0.0.1",),
+            {"X-Real-IP": "100.64.1.2"},
+            THERE,
+            id="a phone behind a trusted proxy on this computer",
+        ),
+        pytest.param(
+            REMOTE,
+            (),
+            {"X-Real-IP": "100.64.1.2"},
+            HERE,
+            id="X-Real-IP from a proxy that is not trusted",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_another_device_is_told_the_command_that_prints_a_link_it_can_open(
+    tmp_path, url: str, proxies: tuple[str, ...], headers: dict[str, str], names: str
+) -> None:
+    """`personalclaw token` prints this computer's 127.0.0.1 link, which a phone cannot open: a
+    sentence to another device names `personalclaw token --remote`, the link at `dashboard.url`,
+    where there is one. Another device is a peer that is not loopback, or a loopback proxy whose
+    `X-Real-IP` it is a listed trusted proxy for; no header from anything else moves it."""
+    _dashboard(tmp_path, url=url, proxies=proxies)
+    message = await _from(headers)
+    assert names in message, message
+
+
+@pytest.mark.asyncio
+async def test_the_login_page_tells_a_phone_the_command_that_prints_a_link_it_can_open(
+    tmp_path,
+) -> None:
+    """/login's hint names the command too: a phone on the home network cannot open the
+    127.0.0.1 link `personalclaw token` prints, and /login has no box to paste it into."""
+    creds.set_password("owner", PASSWORD)
+    _dashboard(tmp_path, url=REMOTE, auth={"login_enabled": True})
+    there = await _from({"X-Test-Peer": PHONE}, "/login")
+    assert "you can still use <code>personalclaw token --remote</code>." in there, there[-900:]
+    here = await _from({}, "/login")
+    assert "you can still use <code>personalclaw token</code>." in here, here[-900:]
+
+
+@pytest.mark.asyncio
+async def test_signing_in_again_without_password_sign_in_tells_a_phone_its_command(
+    tmp_path,
+) -> None:
+    """A sign-in confirmed with a password while password sign-in is off is told to sign in with
+    a new link, through the command that prints one the device it answers can open."""
+    _dashboard(tmp_path, url=REMOTE)
+    there = await _from({"X-Test-Peer": PHONE}, "/api/auth/confirm", signed_in=True)
+    assert there == (
+        "Password sign-in isn’t on here, so sign in again with a new link: run "
+        "`personalclaw token --remote` on the computer running PersonalClaw."
+    )
+    here = await _from({}, "/api/auth/confirm", signed_in=True)
+    assert here == (
+        "Password sign-in isn’t on here, so sign in again with a new link: run "
+        "`personalclaw token` on the computer running PersonalClaw."
+    )

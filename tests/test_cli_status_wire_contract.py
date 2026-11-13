@@ -103,9 +103,9 @@ def _real_status_payload(monkeypatch) -> dict:
     return json.loads(resp.body.decode())
 
 
-def _run_status(payload: dict) -> str:
+def _run_status(payload: dict, *, as_json: bool = False) -> str:
     """Drive the real CLI reader over *payload*, served by this home's gateway at the port it
-    records, and return what it printed."""
+    records, and return what it printed (``status --json`` when *as_json*)."""
     import io
     from contextlib import redirect_stdout
 
@@ -116,7 +116,7 @@ def _run_status(payload: dict) -> str:
     with gateway_stand_in(home, routes={("GET", "/api/status"): (200, payload)}) as gateway:
         gateway.record()
         with redirect_stdout(buf):
-            _status(argparse.Namespace(port=None))
+            _status(argparse.Namespace(port=None, as_json=as_json))
     return buf.getvalue()
 
 
@@ -149,7 +149,7 @@ def test_every_key_path_the_cli_reads_exists_in_the_real_payload(home, monkeypat
     payload = _real_status_payload(monkeypatch)
 
     missing = []
-    for label, path in _STATUS_LINES:
+    for label, _key, path in _STATUS_LINES:
         cur: object = payload
         for key in path:
             if not isinstance(cur, dict) or key not in cur:
@@ -160,6 +160,18 @@ def test_every_key_path_the_cli_reads_exists_in_the_real_payload(home, monkeypat
 
     # …and the rendered surface therefore carries no unknowns.
     assert "—" not in _run_status(payload)
+
+
+def test_the_json_form_reads_every_stat_from_the_real_payload(home, monkeypatch) -> None:
+    """`status --json` reads the same paths: against the real response, every stat is there."""
+    _seed_schedule(home, "clock:a")
+    payload = _real_status_payload(monkeypatch)
+
+    doc = json.loads(_run_status(payload, as_json=True))
+    assert doc["running"] is True and doc["stats_unavailable"] is None
+    assert list(doc["stats"]) == [key for _label, key, _path in _STATUS_LINES]
+    assert all(value is not None for value in doc["stats"].values()), doc["stats"]
+    assert doc["stats"]["cron_jobs"] == payload["cron"]["total"]
 
 
 def test_no_line_claims_a_count_the_payload_cannot_produce(home, monkeypatch) -> None:

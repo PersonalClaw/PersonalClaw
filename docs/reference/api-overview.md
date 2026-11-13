@@ -32,8 +32,7 @@ From a script, keep the token out of the URL: request logs record URLs, and a pa
 lands in your shell history.
 
 ```bash
-TOKEN_URL="$(personalclaw token | head -1)"
-PERSONALCLAW_TOKEN="${TOKEN_URL#*token=}"
+PERSONALCLAW_TOKEN="$(personalclaw token --bearer --ttl 30m)"
 curl -H "Authorization: Bearer $PERSONALCLAW_TOKEN" http://127.0.0.1:10000/api/status
 ```
 
@@ -46,7 +45,8 @@ two different owner tokens, one in the header and one in `?token=`, answers `403
 `auth_credential_conflict`. Neither response contains the token.
 
 **How long a token lasts, and how many there can be.** `personalclaw token` mints one for 20
-hours unless `--ttl` says otherwise, and prints how long on stderr; `GET /api/token/local`
+hours unless `--ttl` says otherwise; `--explain` says how long on stderr, and `--json` gives
+`expires_at` and `open_within`. `GET /api/token/local`
 answers `expires_in`, `expires_at` and `open_within` (until when the `?token=` link can still
 sign a browser in, at most 24 hours). Nothing lasts longer than 90 days: `?ttl=` longer than
 that answers `400 token_ttl_too_long`, and a `ttl` that is not a duration like `30m`, `20h` or

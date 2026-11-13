@@ -43,6 +43,7 @@ from personalclaw.dashboard.owner_presence import (
     require_owner_presence,
 )
 from personalclaw.dashboard.owner_token_url import script_source as owner_token_script_source
+from personalclaw.dashboard.sign_in_device import sign_in_command
 from personalclaw.dashboard.token_auth import (
     ISSUER_ENROLL,
     ISSUER_LOGIN,
@@ -554,7 +555,7 @@ async def api_auth_confirm(request: web.Request) -> web.Response:
             ERR_NOT_ENABLED,
             message=(
                 "Password sign-in isn’t on here, so sign in again with a new link: run "
-                "`personalclaw token` on the computer running PersonalClaw."
+                f"{sign_in_command()} on the computer running PersonalClaw."
             ),
             status=403,
         )
@@ -672,9 +673,9 @@ async def login_page(request: web.Request) -> web.Response:
         f"<p class='notice' role='status'>{notice_html(notice.message)}</p>" if notice else ""
     )
     return web.Response(
-        text=_LOGIN_HTML.replace("__TOTP__", "true" if cfg.require_totp else "false").replace(
-            "__NOTICE__", notice_block
-        ),
+        text=_LOGIN_HTML.replace("__TOTP__", "true" if cfg.require_totp else "false")
+        .replace("__NOTICE__", notice_block)
+        .replace("__SIGN_IN_COMMAND__", sign_in_command(html=True)),
         content_type="text/html",
         headers={"Cache-Control": "no-store"},
     )
@@ -700,7 +701,7 @@ autocomplete='one-time-code' style='display:none'>
 <div class='err' id='e' role='alert' aria-live='polite'></div>
 <div class='hint'>
 <a href='#' id='toggle'>Use a device code instead</a> &middot;
-on your home network you can still use <code>personalclaw token</code>.
+on your home network you can still use __SIGN_IN_COMMAND__.
 </div>
 <form id='cf' style='display:none;margin-top:18px'>
 <input id='c' name='code' type='text' placeholder='XXXX-XXXX' autocomplete='off'

@@ -125,9 +125,6 @@ _GATEWAY_ENV: dict[str, str] = {
     "cli_server.py::_refresh_agent_config::subprocess.run": (
         "PersonalClaw's own `setup --agent-only`"
     ),
-    "dashboard/handlers/_shared.py::_list_marketplace_skills::asyncio.create_subprocess_exec": (
-        "PersonalClaw's own `skills list`"
-    ),
     "providers/availability.py::AvailabilityBoard._probe::asyncio.create_subprocess_exec": (
         "PersonalClaw's own availability-probe CLI: it runs the app code the gateway imports "
         "in-process, and must see what the gateway sees to answer for it"

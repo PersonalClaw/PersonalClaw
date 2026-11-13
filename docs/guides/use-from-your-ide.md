@@ -95,20 +95,18 @@ refuses to *be* your dashboard token.
 personalclaw inbound token create mcp
 ```
 
+It prints the token alone, on stdout, so `| pbcopy` copies it and `TOKEN=$(…)` captures it. Your
+client sends it as an `Authorization: Bearer <token>` header. While a switch the surface needs is
+off, a line on stderr says so, every time:
+
 ```
-✅ Created the mcp inbound token.
-🔑 stored as PERSONALCLAW_INBOUND_MCP_TOKEN in the credential store (keychain, else .env at 0600)
-⏱  It works for 90 days, until 26 December at 14:05; then create a new one. Settings → Devices & Access → Devices lists it, and revokes it.
-
-Copy it into your client now — it is not shown again:
-
-    Authorization: Bearer <a long random string>
-
-Then enable the surface (BOTH switches — the master gate is separate):
-    personalclaw config set external_access.enabled true
-    personalclaw config set external_access.mcp.enabled true
-It takes requests only from programs on this machine. From another one, forward a port to this machine's 127.0.0.1 over SSH and connect through the tunnel.
+It is refused until these are on: personalclaw config set external_access.enabled true; personalclaw config set external_access.mcp.enabled true
 ```
+
+`--explain` says on stderr where the token is stored (`PERSONALCLAW_INBOUND_MCP_TOKEN` in the
+credential store: the keychain, else `.env` at 0600), until when it works, and who can reach the
+surface: programs on this machine only, or through an SSH tunnel to its 127.0.0.1. `--json`
+prints the token, where it is stored and when it stops working, for a script.
 
 **Copy it now.** There is no command that prints it again — `personalclaw inbound token show mcp`
 confirms a valid token exists and deliberately does not reveal it:

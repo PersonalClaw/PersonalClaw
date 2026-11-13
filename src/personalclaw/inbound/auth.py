@@ -20,6 +20,7 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
+from personalclaw.cli_output import explain, print_json
 from personalclaw.security import terminal_text
 
 if TYPE_CHECKING:
@@ -402,13 +403,29 @@ def inbound_cmd(args) -> int:
         from personalclaw.inbound import webhook
 
         return webhook.webhook_cmd(args)
+    sub = str(getattr(args, "token_action", "") or "create")
+    # Only `create` makes a token, so a flag for one beside `show` or `revoke` is a command line
+    # that does not say what it means: refused as a usage error rather than ignored.
+    given = [
+        flag
+        for flag, attr in (("--json", "as_json"), ("--explain", "explain"), ("--rotate", "rotate"))
+        if getattr(args, attr, False)
+    ]
+    if getattr(args, "ttl", None) is not None:
+        given.append("--ttl")
+    if sub != "create" and given:
+        flags = given[-1] if len(given) == 1 else f"{', '.join(given[:-1])} or {given[-1]}"
+        print(
+            f"❌ inbound token {sub} does not take {flags}: only create makes a token.",
+            file=sys.stderr,
+        )
+        return 2
     known = surfaces()
     surface = str(getattr(args, "surface", "") or "mcp").lower()
     if surface not in known:
         print(f"❌ Unknown surface {surface!r}. Known: {', '.join(known)}", file=sys.stderr)
         return 1
 
-    sub = str(getattr(args, "token_action", "") or "create")
     key = token_env_key(surface)
 
     from personalclaw.auth.lifetimes import (
@@ -469,31 +486,65 @@ def inbound_cmd(args) -> int:
 
     replacing = current is not None
     token = create_surface_token(surface, ttl, actor="cli")
-    print(f"✅ {'Rotated' if replacing else 'Created'} the {surface} inbound token.")
-    print(f"🔑 stored as {key} in the credential store (keychain, else .env at 0600)")
-    print(
-        f"⏱  It works for {duration_words(ttl)}, until {until_words(time.time() + ttl)}; then "
-        "create a new one. Settings → Devices & Access → Devices lists it, and revokes it."
-    )
-    print()
-    print("Copy it into your client now — it is not shown again:")
-    print()
-    print(f"    Authorization: Bearer {token}")
-    print()
-    print("Then enable the surface (BOTH switches — the master gate is separate):")
-    print("    personalclaw config set external_access.enabled true")
-    print(f"    personalclaw config set external_access.{surface}.enabled true")
+    record = tokens.surface_token(surface, token)
+    expires_at = record.expires_at if record is not None else time.time() + ttl
+    # The token alone, so `… | pbcopy` copies it: it is not shown again.
+    if getattr(args, "as_json", False):
+        print_json(
+            {
+                "surface": surface,
+                "token": token,
+                "credential_key": key,
+                "expires_in": ttl,
+                "expires_at": expires_at,
+            }
+        )
+    else:
+        print(token)
     if surface == BRIDGE_SURFACE:
         # Its own listener, started with the gateway: the switches reach it at the next start.
-        print(
+        reach = (
             "The control bridge starts listening the next time PersonalClaw starts, and only "
             "programs on this machine can reach it."
         )
     else:
         # The truth whatever `allow_remote` says: the dashboard refuses a program's request from
         # another address before the surface reads it (`off_machine_refusal`).
-        print(
+        reach = (
             "It takes requests only from programs on this machine. From another one, forward a "
             "port to this machine's 127.0.0.1 over SSH and connect through the tunnel."
         )
+    explain(
+        args,
+        f"{'Rotated' if replacing else 'Created'} the {surface} inbound token, stored as {key} in "
+        "the credential store (keychain, else .env at 0600). It works for "
+        f"{duration_words(ttl)}, until {until_words(expires_at)}; then create a new one. "
+        "Settings → Devices & Access → Devices lists it, and revokes it. Send it as an "
+        "Authorization: Bearer header.",
+        reach,
+    )
+    # Every time, `--explain` or not: a token whose surface is off is refused as printed.
+    off = _switches_off(surface)
+    if off:
+        these = "these are" if len(off) > 1 else "this is"
+        print(
+            f"It is refused until {these} on: "
+            + "; ".join(f"personalclaw config set {switch} true" for switch in off),
+            file=sys.stderr,
+        )
     return 0
+
+
+def _switches_off(surface: str) -> list[str]:
+    """The switches *surface* needs that are off: the master gate, then the surface's own. Read
+    fail-closed: a ``config.json`` that could not be read has every switch off."""
+    from personalclaw.config.loader import AppConfig
+
+    try:
+        access = AppConfig.load().external_access
+        master = bool(access.enabled)
+        own = bool(getattr(getattr(access, surface, None), "enabled", False))
+    except Exception:  # noqa: BLE001 - an unreadable config has every switch off
+        master = own = False
+    off = [] if master else ["external_access.enabled"]
+    return off + ([] if own else [f"external_access.{surface}.enabled"])

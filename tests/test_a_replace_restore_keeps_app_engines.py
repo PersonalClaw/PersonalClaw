@@ -65,7 +65,7 @@ def test_an_app_the_restore_brings_back_keeps_the_engine_it_has_here(tmp_path, m
 
     capsys.readouterr()
     assert restore_main([str(archive), "--mode", "replace"]) == 0
-    said = capsys.readouterr().out
+    captured = capsys.readouterr()
 
     assert sidecar.SidecarInstall.for_app("clone-voice").installed, "the app has its engine"
     assert (engine_file / "__init__.py").is_file(), "the very environment this machine built"
@@ -77,9 +77,11 @@ def test_an_app_the_restore_brings_back_keeps_the_engine_it_has_here(tmp_path, m
     ), "and what the restore replaced is still there to undo it"
     assert (
         "Kept the engine each of these apps had here: Clone Voice. An engine is built for this "
-        "machine, so the restore leaves it in place." in said
+        "machine, so the restore leaves it in place." in captured.out
     )
-    assert SENTENCE not in said, "no Install engine for an engine that is installed"
+    assert (
+        SENTENCE not in captured.out + captured.err
+    ), "no Install engine for an engine that is installed"
 
 
 def test_an_engine_that_does_not_fit_the_version_that_came_back_is_brought_up_to_date(
@@ -93,7 +95,7 @@ def test_an_engine_that_does_not_fit_the_version_that_came_back_is_brought_up_to
 
     capsys.readouterr()
     assert restore_main([str(archive), "--mode", "replace"]) == 0
-    said = [line for line in capsys.readouterr().out.splitlines() if "engine" in line]
+    said = [line for line in capsys.readouterr().err.splitlines() if "engine" in line]
 
     assert sidecar.SidecarInstall.for_app("clone-voice").installed is False
     assert said[-1] == (
@@ -117,7 +119,7 @@ def test_an_app_the_snapshot_does_not_have_is_set_aside_with_its_engine_and_its_
 
     capsys.readouterr()
     assert restore_main([str(archive), "--mode", "replace"]) == 0
-    said = capsys.readouterr().out
+    said = capsys.readouterr().err
 
     assert not later.exists(), "the snapshot does not have the app"
     aside = _backup(home) / "apps" / "later-voice"

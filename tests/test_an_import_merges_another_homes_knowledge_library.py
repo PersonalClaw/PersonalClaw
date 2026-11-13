@@ -242,8 +242,8 @@ def test_the_terminal_import_says_what_it_left_and_fails(tmp_path, monkeypatch, 
 
     assert snapshot.restore_main([str(damaged), "--mode", "merge"]) == 1
 
-    out = capsys.readouterr().out
-    assert f"⚠️  Merge finished, but 1 part was left unchanged: {LIBRARY}." in out
+    err = capsys.readouterr().err
+    assert f"⚠️  Merge finished, but 1 part was left unchanged: {LIBRARY}." in err
     assert _library(here)["items"] == {"Kitchen quotes": ["kitchen"]}
 
 

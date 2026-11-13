@@ -94,65 +94,30 @@ def _resolve_skill_path(name: str) -> Path | None:
 
 
 async def _list_marketplace_skills() -> list[dict[str, Any]]:
-    """List skills from the marketplace using ``personalclaw skills list`` CLI."""
+    """The installed skills ``personalclaw skills list`` lists (``list_local_skills``), read in
+    this process off the event loop.
+
+    It ran ``personalclaw skills list`` and read its output with patterns for a layout the command
+    never prints (a package header, then ``name: display-name`` lines), so it found nothing and a
+    ``marketplace/<name>`` skill never opened."""
     import asyncio
-    import re
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "personalclaw",
-            "skills",
-            "list",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-        if proc.returncode != 0:
-            return []
-    except FileNotFoundError:
-        return []
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        await proc.communicate()
-        return []
+    from personalclaw.skills.marketplace import list_local_skills
 
-    result: list[dict[str, Any]] = []
-    pkg = ""
-    for line in stdout.decode(errors="replace").splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        # Package header: non-indented line (no leading spaces)
-        if not line.startswith(" ") and not line.startswith("Installed"):
-            pkg = stripped
-            continue
-        # Description line (check BEFORE skill line — both match `word: text`)
-        dm = re.match(r"^\s+Description:\s+(.+)", line)
-        if dm and result and result[-1]["package"] == pkg:
-            result[-1]["description"] = dm.group(1)
-            continue
-        # Skill line: "  name [vX.Y.Z]: display-name" or "  name: display-name"
-        m = re.match(r"^\s+(\S+)(?:\s+\[v[\d.]+\])?:\s+(.+)", line)
-        if m:
-            name = m.group(1)
-            resolved = _resolve_skill_path(name)
-            result.append(
-                {
-                    "key": f"marketplace/{name}",
-                    "name": name,
-                    "description": "",
-                    "path": str(resolved) if resolved else "",
-                    "dir": str(resolved.parent) if resolved else "",
-                    "always": False,
-                    "source": "marketplace",
-                    "package": pkg,
-                }
-            )
-
-    return result
+    listed = await asyncio.to_thread(list_local_skills)
+    return [
+        {
+            "key": f"marketplace/{s['name']}",
+            "name": s["name"],
+            "description": s["description"],
+            "path": s["path"],
+            "dir": str(Path(s["path"]).parent),
+            "always": False,
+            "source": "marketplace",
+            "package": "",
+        }
+        for s in listed
+    ]
 
 
 def _is_restricted_session(state: DashboardState, request: "Any") -> bool:

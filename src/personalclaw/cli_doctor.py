@@ -19,6 +19,7 @@ from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
 from personalclaw.config.credentials import credential_backend_warning, credential_store_state
 from personalclaw.dashboard.origin import (
+    PHONE_SIGN_IN_HINT,
     address_beyond_loopback,
     auth_is_off,
     is_local_bind,
@@ -993,6 +994,33 @@ def _remote_access_hint(live: int | None, port: int | None) -> str:
     return tunnel_hint(port, machine) if port else ""
 
 
+def _doctor_remote(*, local: bool, port: int | None) -> list[str]:
+    """``doctor``'s remote line, and its issue when there is one.
+
+    Reuses the shared tailnet-detection helper and sign-in hint (``PHONE_SIGN_IN_HINT``) so this
+    line and the doctor ``remote.reachability`` probe agree. No token is minted here: it prints
+    the base URL and says how the phone signs in."""
+    tnet = tailnet_ip()
+    remote_port = port or 0
+    if not local and auth_is_off():
+        print(
+            "  remote:      ❌ bound beyond loopback with auth OFF — set a password"
+            " (see docs/guides/remote-access.md) or bind loopback"
+        )
+        return ["remote access: exposed beyond loopback without auth"]
+    if tnet:
+        phone_url = f"http://{tnet}:{remote_port}" if remote_port else f"http://{tnet}"
+        print(f"  remote:      ✅ tailnet {tnet} — open {phone_url} on your phone")
+        print(f"               and {PHONE_SIGN_IN_HINT}")
+    elif local:
+        print("  remote:      local-only — see docs/guides/remote-access.md")
+    else:
+        # What reaches a bind beyond loopback — this machine's interfaces, or the port a
+        # container published — is not something doctor can see, so it says what it established.
+        print("  remote:      no tailnet address found — see docs/guides/remote-access.md")
+    return []
+
+
 def _doctor(*, start_agent_clis: bool = False) -> None:
     """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity.
 
@@ -1180,27 +1208,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         print(f"  auth mode:   ⚠️  {_mode_request.detail}")
 
     # ── Remote access ──
-    # Reuse the shared tailnet-detection helper so this line and the doctor
-    # `remote.reachability` probe agree. No token is minted here — we print the
-    # base URL and point at `personalclaw token` for the signed-in link.
-    _tnet = tailnet_ip()
-    _remote_port = _port or 0
-    if not _local and auth_is_off():
-        print(
-            "  remote:      ❌ bound beyond loopback with auth OFF — set a password"
-            " (see docs/guides/remote-access.md) or bind loopback"
-        )
-        issues.append("remote access: exposed beyond loopback without auth")
-    elif _tnet:
-        _phone_url = f"http://{_tnet}:{_remote_port}" if _remote_port else f"http://{_tnet}"
-        print(f"  remote:      ✅ tailnet {_tnet} — open {_phone_url} on your phone")
-        print("               (run: personalclaw token, for the signed-in link)")
-    elif _local:
-        print("  remote:      local-only — see docs/guides/remote-access.md")
-    else:
-        # What reaches a bind beyond loopback — this machine's interfaces, or the port a
-        # container published — is not something doctor can see, so it says what it established.
-        print("  remote:      no tailnet address found — see docs/guides/remote-access.md")
+    issues.extend(_doctor_remote(local=_local, port=_port))
 
     # ── MCP Tools ──
     print("\nMCP Tools")

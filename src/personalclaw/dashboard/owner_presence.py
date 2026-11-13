@@ -174,8 +174,10 @@ def sign_in_again_sentence(action: str, *, signed_in: float, password: bool) -> 
     if password:
         how = "Confirm it’s you by signing in again with your password."
     else:
+        from personalclaw.dashboard.sign_in_device import sign_in_command
+
         how = (
-            "Confirm it’s you: run `personalclaw token` on the computer running PersonalClaw, "
+            f"Confirm it’s you: run {sign_in_command()} on the computer running PersonalClaw, "
             "then open the link it prints on this device."
         )
     window = duration_words(PRESENCE_WINDOW_SECS)

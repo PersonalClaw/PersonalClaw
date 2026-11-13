@@ -118,8 +118,7 @@ def test_spawn_run_sends_the_minted_token_in_the_header(home, capsys):
         cli_commands._spawn(_spawn_args(action="run", task="probe"))
 
     out = capsys.readouterr().out
-    assert "Forbidden" not in out
-    assert "Spawned subagent agent-7" in out
+    assert out == "agent-7\n", "the id alone, so `$(personalclaw spawn run --async …)` is it"
 
 
 def test_spawn_run_polls_with_the_header_until_the_subagent_is_done(home, monkeypatch, capsys):

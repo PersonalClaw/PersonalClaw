@@ -92,8 +92,11 @@ async def test_probe_tailnet_present_is_ok_and_carries_phone_url(monkeypatch):
     assert res.ok is True
     assert res.evidence["phone_url"] == "http://100.101.102.103:10000"
     assert res.evidence["tailnet_ip"] == "100.101.102.103"
-    assert "tailnet" in res.detail
-    assert "100.101.102.103" in res.detail
+    assert res.detail == (
+        "tailnet 100.101.102.103 — open http://100.101.102.103:10000 on your phone and paste the "
+        "`personalclaw token` link into its token box, or run `personalclaw token --remote` once "
+        "dashboard.url names that address"
+    ), "the same hint doctor's remote line gives"
 
 
 @pytest.mark.asyncio

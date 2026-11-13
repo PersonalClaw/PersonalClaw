@@ -1,4 +1,7 @@
-"""Every token the owner is handed says what it is and how long it lasts — and the docs agree.
+"""Every token the owner is handed can say what it is and how long it lasts — and the docs agree.
+
+``personalclaw token`` prints the link alone, so ``| pbcopy`` copies it; ``--explain`` states
+what it is and how long it lasts on stderr, and ``--json`` gives the lifetimes to a script.
 
 ``personalclaw token`` printed a bare URL; the ``--json-ready`` help and
 ``docs/reference/cli.md`` said its token "grants access for up to 20 hours" while the code minted
@@ -29,39 +32,38 @@ from personalclaw.dashboard import token_auth
 _SYNTHETIC_TOKEN = "synthetic.placeholder.not-a-real-token"
 
 
-def _run_token(monkeypatch, tmp_path, capsys, reply: dict) -> tuple[str, str]:
-    """`personalclaw token` against this home's gateway, on a port of its own, answering *reply*:
-    what it printed, with that port written as ``PORT``."""
+def _run_token(monkeypatch, tmp_path, capsys, reply: dict, *, explain: bool) -> tuple[str, str]:
+    """`personalclaw token`, with ``--explain`` when *explain*, against this home's gateway, on a
+    port of its own, answering *reply*: what it printed, with that port written as ``PORT``."""
     (tmp_path / ".local_secret").write_text("synthetic-local-secret\n")
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     with gateway_stand_in(tmp_path, routes={("GET", "/api/token/local"): (200, reply)}) as gateway:
         gateway.record()
-        cli_server._token(argparse.Namespace(ttl="20h", port=None))
+        cli_server._token(argparse.Namespace(ttl="20h", port=None, explain=explain))
     captured = capsys.readouterr()
     return captured.out.replace(f"127.0.0.1:{gateway.port}?", "127.0.0.1:PORT?"), captured.err
 
 
 def test_personalclaw_token_says_what_it_is_and_how_long_it_lasts(monkeypatch, tmp_path, capsys):
     now = time.time()
-    out, err = _run_token(
-        monkeypatch,
-        tmp_path,
-        capsys,
-        {
-            "token": _SYNTHETIC_TOKEN,
-            "expires_in": 20 * 3600,
-            "expires_at": now + 20 * 3600,
-            "open_within": 20 * 3600,
-        },
-    )
-    # stdout stays exactly the URL, so `open "$(personalclaw token)"` and `| head -1` keep working.
+    reply = {
+        "token": _SYNTHETIC_TOKEN,
+        "expires_in": 20 * 3600,
+        "expires_at": now + 20 * 3600,
+        "open_within": 20 * 3600,
+    }
+    out, err = _run_token(monkeypatch, tmp_path, capsys, reply, explain=True)
+    # stdout is exactly the URL: `| pbcopy` copies it, `open "$(personalclaw token)"` opens it.
     assert out == f"http://127.0.0.1:PORT?token={_SYNTHETIC_TOKEN}\n"
     assert "sign-in link" in err
     assert "Authorization: Bearer" in err, "a script needs to know it can send it as a header"
     assert "20 hours" in err
     assert "Settings → Devices & Access → Devices" in err, "where to see it and sign it out"
+    out, err = _run_token(monkeypatch, tmp_path, capsys, reply, explain=False)
+    assert out == f"http://127.0.0.1:PORT?token={_SYNTHETIC_TOKEN}\n"
+    assert err == "", "without --explain the guidance is not printed"
 
 
 def test_a_long_token_says_its_link_must_still_be_opened_within_a_day(
@@ -78,6 +80,7 @@ def test_a_long_token_says_its_link_must_still_be_opened_within_a_day(
             "expires_at": now + 30 * 86400,
             "open_within": 86400,
         },
+        explain=True,
     )
     assert "within 24 hours" in err, err
     assert "30 days" in err, err

@@ -130,8 +130,9 @@ def test_the_terminal_restore_brings_the_library_back_and_ends_complete(
 
     assert snapshot.restore_main([str(tarball), "--mode", "merge"]) == 0
 
-    out = capsys.readouterr().out
-    assert "merge failed" not in out
+    captured = capsys.readouterr()
+    out = captured.out
+    assert "merge failed" not in out + captured.err
     assert "✅ Merge complete." in out
     assert _titles(tmp_path / "now" / LIBRARY) == ["Garden plan", "Kitchen quotes"]
 
@@ -144,9 +145,9 @@ def test_a_restore_that_leaves_a_part_unchanged_says_which_and_fails(tmp_path, m
 
     assert snapshot.restore_main([str(damaged), "--mode", "merge"]) == 1
 
-    out = capsys.readouterr().out
+    out, err = capsys.readouterr()
     assert "✅ Merge complete." not in out
-    assert f"⚠️  Merge finished, but 1 part was left unchanged: {LIBRARY}." in out
+    assert f"⚠️  Merge finished, but 1 part was left unchanged: {LIBRARY}." in err
     assert _titles(tmp_path / "now" / LIBRARY) == ["Kitchen quotes"]
 
 

@@ -1477,7 +1477,7 @@ def backup_cmd(args) -> int:
         # Two exports racing would interleave partial writes into one manifest.
         with single_flight("shard-export") as acquired:
             if not acquired:
-                print("⏭  Another shard export is already running — skipping.")
+                print("⏭  Another shard export is already running — skipping.", file=sys.stderr)
                 return 0
             try:
                 machine_id(home)  # before the earlier export is cleared: a link at it refuses
@@ -1515,11 +1515,12 @@ def backup_cmd(args) -> int:
             f"{len(result.shards)} shard(s), {result.rows:,} row(s)"
         )
         print(f"📁 {out_dir}")
-        for entry_id, reason in sorted(result.skipped.items()):
-            print(f"⚠️  skipped {entry_id}: {terminal_text(str(reason))}")
-        for path, why in sorted(result.left_out.items()):
-            print(f"⚠️  could not export {path}: {terminal_text(str(why))}")
         print(f"ℹ️  {NOT_A_BACKUP}")
+        # What it could not export last, on stderr: the transcript stays a transcript.
+        for entry_id, reason in sorted(result.skipped.items()):
+            print(f"⚠️  skipped {entry_id}: {terminal_text(str(reason))}", file=sys.stderr)
+        for path, why in sorted(result.left_out.items()):
+            print(f"⚠️  could not export {path}: {terminal_text(str(why))}", file=sys.stderr)
         return 1 if result.left_out else 0
 
     # `validate`: the parser allows no other command.

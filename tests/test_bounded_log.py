@@ -194,7 +194,7 @@ def test_a_merge_restore_names_the_log_it_left_as_it_was(
         src, dst, "id", "Feedback", at="created_at", left_unchanged=left
     )
     assert (imported, left) == (0, ["feedback.jsonl"])
-    assert "left as it was" in capsys.readouterr().out
+    assert "left as it was" in capsys.readouterr().err
     assert _ids(dst) == ["h"]
 
 

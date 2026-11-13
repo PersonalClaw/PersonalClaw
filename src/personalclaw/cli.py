@@ -26,6 +26,7 @@ _ensure_ssl_certs()
 
 import argparse
 import asyncio
+import contextlib
 import io
 import logging
 import os
@@ -35,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import __version__, log_sinks
+from personalclaw.cli_output import print_json
 from personalclaw.config import AppConfig, config_dir
 from personalclaw.config.loader import resolve_config_dir
 from personalclaw.constants import BANNER
@@ -256,6 +258,118 @@ def _require_subcommands(parser: argparse.ArgumentParser) -> None:
                     action.required = True
                     if action.metavar is None:
                         action.metavar = "{%s}" % ",".join(action.choices)
+
+
+def _add_json(
+    parser: argparse.ArgumentParser | argparse._MutuallyExclusiveGroup, what: str
+) -> None:
+    """Give *parser*, or the group of its output forms, ``--json`` (dest ``as_json``): one help
+    sentence, written here once, with *what* naming the document it prints."""
+    parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help=f"Print {what} as one JSON document: every key always there, null where it is "
+        "not known",
+    )
+
+
+def _add_explain(parser: argparse.ArgumentParser, what: str) -> None:
+    """Give *parser* ``--explain``: one help sentence, written here once, with *what* naming the
+    guidance it adds on stderr (:func:`personalclaw.cli_output.explain`)."""
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help=f"Also say on stderr {what}, after the output and never repeating it",
+    )
+
+
+def _add_auth_parser(sub: argparse._SubParsersAction) -> None:
+    """``auth``: the owner login. Setting a password is CLI-only on purpose: a plaintext
+    credential should never ride in an HTTP body."""
+    auth_parser = sub.add_parser("auth", help="Manage the owner login (password, 2FA)")
+    auth_sub = auth_parser.add_subparsers(dest="auth_command")
+    auth_setpw = auth_sub.add_parser("set-password", help="Set the owner login password")
+    auth_setpw.add_argument("--user", default="", help="Login username (defaults to $USER)")
+    auth_sub.add_parser("enable", help="Offer the login form (needs a password first)")
+    auth_sub.add_parser("disable", help="Stop offering the login form")
+    auth_status = auth_sub.add_parser("status", help="Show whether login and 2FA are configured")
+    _add_json(auth_status, "the login and 2FA state")
+    auth_totp = auth_sub.add_parser("totp", help="Enroll or disable a 2FA code")
+    auth_totp.add_argument("totp_action", choices=("setup", "disable"), nargs="?", default="setup")
+    auth_totp.add_argument(
+        "--rotate",
+        action="store_true",
+        help="Replace the enrolled secret (codes from the old authenticator entry stop working)",
+    )
+    _add_json(auth_totp, "the new secret and its otpauth:// link")
+    _add_explain(auth_totp, "what to do with the link and when to require the code")
+    auth_enroll = auth_sub.add_parser("enroll", help="Print a single-use code to pair a device")
+    auth_enroll.add_argument("--label", default=None, help="A note for your own reference")
+    auth_enroll.add_argument(
+        "--clear", action="store_true", help="Invalidate every outstanding code"
+    )
+    _add_explain(auth_enroll, "how long the code works and where it is entered")
+    auth_revoke = auth_sub.add_parser("revoke", help="End dashboard sessions")
+    auth_revoke.add_argument("--all", action="store_true", help="Revoke every session")
+    auth_revoke.add_argument("--port", type=int, default=None, help=_HOME_GATEWAY_PORT_HELP)
+    auth_rotate = auth_sub.add_parser(
+        "rotate-key", help="Replace the sign-in key, signing every device and token out"
+    )
+    auth_rotate.add_argument("--port", type=int, default=None, help=_HOME_GATEWAY_PORT_HELP)
+
+
+def _add_token_parser(sub: argparse._SubParsersAction) -> None:
+    """``token``: a sign-in link, the link at ``dashboard.url``, the token alone or one JSON
+    document, with ``--explain`` on stderr."""
+    token_parser = sub.add_parser(
+        "token",
+        help="Print a dashboard sign-in link (its token also works as a Bearer header)",
+        description=(
+            "Print a sign-in link for the dashboard, alone on one line: this computer's, from "
+            "this home's gateway. Open it in a browser to sign that browser in, or send the "
+            "token after ?token= as an 'Authorization: Bearer' header from a script. Every "
+            "sign-in is listed under Settings → Devices & Access → Devices, where it can be "
+            "signed out."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  personalclaw token | pbcopy          # copy this computer's sign-in link
+  personalclaw token --remote          # the link at dashboard.url, for another device
+  TOKEN="$(personalclaw token --bearer --ttl 30m)"
+  curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:<port>/api/status
+  personalclaw token --json            # the link, the token and how long it lasts
+  personalclaw token --explain         # what the link is and how long it lasts, on stderr
+
+Each run is a new sign-in, and at most 20 that no browser has opened are kept (beyond that the
+least recently used is signed out), so a script mints one and reuses it.""",
+    )
+    token_form = token_parser.add_mutually_exclusive_group()
+    token_form.add_argument(
+        "--remote",
+        action="store_true",
+        help="Print the link at dashboard.url's address, for another device (refused while "
+        "dashboard.url names none)",
+    )
+    token_form.add_argument(
+        "--bearer",
+        action="store_true",
+        help="Print the token alone, for an 'Authorization: Bearer' header",
+    )
+    _add_json(token_form, "the link, the link at dashboard.url, the token and how long it lasts")
+    _add_explain(token_parser, "what the link is, how long it lasts and where it is listed")
+    token_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help=_HOME_GATEWAY_PORT_HELP,
+    )
+    token_parser.add_argument(
+        "--ttl",
+        default="20h",
+        help="How long it lasts: 30m, 20h, 7d (default: 20h; at most 90d, the limit for a "
+        "long-lived credential — longer is refused)",
+    )
 
 
 def _add_seed_options(parser: argparse.ArgumentParser) -> None:
@@ -628,8 +742,10 @@ allow and changes nothing.
         formatter_class=_fmt,
     )
     cron_sub = cron_parser.add_subparsers(dest="cron_action")
-    cron_sub.add_parser("list", help="List cron jobs")
+    cron_list = cron_sub.add_parser("list", help="List cron jobs")
+    _add_json(cron_list, "every automation, its id, schedule and message")
     cron_add = cron_sub.add_parser("add", help="Add a cron job")
+    _add_json(cron_add, "the automation it made, the row cron list --json lists for it,")
     cron_add.add_argument("name", help="Job name")
     cron_add.add_argument("message", help="Message to send to agent")
     # One cadence, and only one: a missing or doubled one is the parser's usage error (exit 2).
@@ -730,7 +846,8 @@ Examples:
         action="store_true",
         help="Fire-and-forget (don't wait for result)",
     )
-    spawn_sub.add_parser("list", help="List subagents")
+    spawn_list = spawn_sub.add_parser("list", help="List subagents")
+    _add_json(spawn_list, "every subagent the gateway knows")
     spawn_parser.add_argument("--port", type=int, default=None, help=_HOME_GATEWAY_PORT_HELP)
 
     # snapshot / restore
@@ -738,8 +855,12 @@ Examples:
     snap_parser.add_argument("output_dir", nargs="?", default=None)
     snap_parser.add_argument("--keep", type=int, default=7, help="Keep N most recent snapshots")
     snap_parser.add_argument(
-        "--list", action="store_true", dest="list_snapshots", help="List existing snapshots"
+        "--list",
+        action="store_true",
+        dest="list_snapshots",
+        help="List existing snapshots, one path per line, newest first",
     )
+    _add_json(snap_parser, "the snapshot a run creates, its path and size,")
 
     # project — move ONE project between machines as a manifest ZIP. Distinct from `snapshot`, which
     # is whole-home: a user who wants to hand a colleague one project has no business shipping their
@@ -769,9 +890,7 @@ Examples:
         help="Re-drive a completed run's decision path and report the first divergent node",
     )
     wf_replay.add_argument("run_id", help="The run id to replay")
-    wf_replay.add_argument(
-        "--json", action="store_true", help="Emit the trajectory diff as JSON instead of text"
-    )
+    _add_json(wf_replay, "the trajectory diff")
 
     rest_parser = sub.add_parser(
         "restore", help="Restore PersonalClaw state from a snapshot or an export archive"
@@ -821,11 +940,15 @@ Examples:
     )
     inbound_token.add_argument(
         "--ttl",
-        default="90d",
+        default=None,
         help=(
             "How long a created token works: 30m, 20h, 7d (default: 90d, the limit for a "
             "long-lived credential — longer is refused)"
         ),
+    )
+    _add_json(inbound_token, "the created token, where it is stored and how long it lasts")
+    _add_explain(
+        inbound_token, "where the created token is stored, how long it lasts and how " "it is sent"
     )
     inbound_webhook = inbound_sub.add_parser(
         "webhook", help="Make, list or revoke the sender tokens that fire a webhook automation"
@@ -844,6 +967,10 @@ Examples:
         "--ttl",
         default="90d",
         help="How long it works: 30m, 20h, 7d (default: 90d, the limit — longer is refused)",
+    )
+    _add_json(webhook_create, "the sender token, the address it fires and a curl command")
+    _add_explain(
+        webhook_create, "how long the sender token works, where it posts and how to try it"
     )
     webhook_list = webhook_sub.add_parser("list", help="List the sender tokens made here")
     webhook_list.add_argument("automation", nargs="?", default="", help="Only this automation's")
@@ -876,29 +1003,7 @@ Examples:
         "--json", dest="as_json", action="store_true", help="Emit the report as JSON"
     )
 
-    # auth — the owner login. Setting a password is CLI-only on
-    # purpose: a plaintext credential should never ride in an HTTP body.
-    auth_parser = sub.add_parser("auth", help="Manage the owner login (password, 2FA)")
-    auth_sub = auth_parser.add_subparsers(dest="auth_command")
-    auth_setpw = auth_sub.add_parser("set-password", help="Set the owner login password")
-    auth_setpw.add_argument("--user", default="", help="Login username (defaults to $USER)")
-    auth_sub.add_parser("enable", help="Offer the login form (needs a password first)")
-    auth_sub.add_parser("disable", help="Stop offering the login form")
-    auth_sub.add_parser("status", help="Show whether login and 2FA are configured")
-    auth_totp = auth_sub.add_parser("totp", help="Enroll or disable a 2FA code")
-    auth_totp.add_argument("totp_action", choices=("setup", "disable"), nargs="?", default="setup")
-    auth_enroll = auth_sub.add_parser("enroll", help="Print a single-use code to pair a device")
-    auth_enroll.add_argument("--label", default="", help="A note for your own reference")
-    auth_enroll.add_argument(
-        "--clear", action="store_true", help="Invalidate every outstanding code"
-    )
-    auth_revoke = auth_sub.add_parser("revoke", help="End dashboard sessions")
-    auth_revoke.add_argument("--all", action="store_true", help="Revoke every session")
-    auth_revoke.add_argument("--port", type=int, default=None, help=_HOME_GATEWAY_PORT_HELP)
-    auth_rotate = auth_sub.add_parser(
-        "rotate-key", help="Replace the sign-in key, signing every device and token out"
-    )
-    auth_rotate.add_argument("--port", type=int, default=None, help=_HOME_GATEWAY_PORT_HELP)
+    _add_auth_parser(sub)
 
     # push — the phone's content-free wake-up transport
     push_parser = sub.add_parser("push", help="Set up content-free push to your phone")
@@ -968,9 +1073,7 @@ records samples and reclaims daily on its own; --reclaim is for wanting the spac
 """,
         formatter_class=_fmt,
     )
-    footprint_parser.add_argument(
-        "--json", action="store_true", help="Emit the report as JSON instead of a table"
-    )
+    _add_json(footprint_parser, "the report (with what --reclaim did, null when nothing ran)")
     footprint_parser.add_argument(
         "--reclaim",
         action="store_true",
@@ -1212,6 +1315,9 @@ Examples:
   personalclaw retrieval-eval --card > card.json  # ...then edit "relevant" per query
   personalclaw retrieval-eval --label card.json   # fold the hand labels back in
 
+--card prints one JSON document: a store's card, or both stores' cards as a list, which --label
+reads back.
+
 Both stores are read-only here: a run that wrote to knowledge.db or memory.db refuses to
 report. Every mask's P@5/R@5 lands under ~/.personalclaw/evals/matrices/<run>/, and the
 per-arm marginal contribution is the leave-one-out delta with an enable/hold verdict.
@@ -1330,17 +1436,7 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         "-n", "--lines", type=int, default=100, help="Number of lines to show (default: 100)"
     )
 
-    # token
-    token_parser = sub.add_parser(
-        "token",
-        help="Print a dashboard sign-in link (its token also works as a Bearer header)",
-        description=(
-            "Print a sign-in link for the dashboard. Open it in a browser to sign that browser "
-            "in, or send the token after ?token= as an 'Authorization: Bearer' header from a "
-            "script. Every sign-in is listed under Settings → Devices & Access → Devices, where "
-            "it can be signed out."
-        ),
-    )
+    _add_token_parser(sub)
 
     # logout
     logout_parser = sub.add_parser("logout", help="Revoke all active dashboard sessions")
@@ -1349,18 +1445,6 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         type=int,
         default=None,
         help=_HOME_GATEWAY_PORT_HELP,
-    )
-    token_parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        help=_HOME_GATEWAY_PORT_HELP,
-    )
-    token_parser.add_argument(
-        "--ttl",
-        default="20h",
-        help="How long it lasts: 30m, 20h, 7d (default: 20h; at most 90d, the limit for a "
-        "long-lived credential — longer is refused)",
     )
 
     # pair — mint an 8-digit pairing code so a new sender on a channel (Telegram,
@@ -1372,6 +1456,7 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     pair_parser.add_argument(
         "provider", help="Channel provider key (e.g. telegram, discord, email)"
     )
+    _add_explain(pair_parser, "who the code is for, how long it works and how it is used")
 
     # discover — the client half of LAN discovery. Read-only: it sends
     # one mDNS query and prints whatever answers. Finding nothing is a normal outcome.
@@ -1397,6 +1482,7 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         default=None,
         help=_HOME_GATEWAY_PORT_HELP,
     )
+    _add_json(status_parser, "whether the gateway runs, its stats and its service")
 
     # incident — the kill switch. Operates on the flag
     # file directly; a running gateway picks up the change via mtime within one
@@ -1408,7 +1494,8 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     inc_on = incident_sub.add_parser("on", help="Activate incident mode (suspend automation)")
     inc_on.add_argument("--reason", default="", help="Why the incident was declared")
     incident_sub.add_parser("off", help="Resume — re-enable unattended work")
-    incident_sub.add_parser("status", help="Show incident state")
+    inc_status = incident_sub.add_parser("status", help="Show incident state")
+    _add_json(inc_status, "whether incident mode is on, since when and why")
 
     # mcp-core (MCP server — spawned by an ACP agent, never typed by a user)
     _add_hidden_parser(sub, "mcp-core")
@@ -1463,9 +1550,10 @@ Examples:
         help="A folder's memory, by the id `personalclaw memory partitions` lists "
         "(default: the memory every chat shares)",
     )
-    mem_sub.add_parser(
+    mem_partitions = mem_sub.add_parser(
         "partitions", help="List every memory: the one every chat shares, then each folder's"
     )
+    _add_json(mem_partitions, "every memory, its id, its folder and what it holds")
     mem_sub.add_parser("list", help="Show semantic memory entries", parents=[in_memory])
     mem_search = mem_sub.add_parser("search", help="Search episodic memories", parents=[in_memory])
     mem_search.add_argument("query", help="Search query text")
@@ -1573,8 +1661,10 @@ Examples:
     # skills
     skills_parser = sub.add_parser("skills", help="Manage skills from the skills marketplace")
     skills_sub = skills_parser.add_subparsers(dest="skills_command")
-    skills_sub.add_parser("list", help="List locally installed skills")
+    skills_list = skills_sub.add_parser("list", help="List locally installed skills")
+    _add_json(skills_list, "every installed skill, its description, file and folder")
     skills_search = skills_sub.add_parser("search", help="Search skills.sh marketplace")
+    _add_json(skills_search, "every result, its id, source and install count")
     skills_search.add_argument("query", help="Search query")
     skills_search.add_argument(
         "--marketplace", default="skills.sh", help="Marketplace to search (default: skills.sh)"
@@ -2082,7 +2172,10 @@ def main() -> None:
     if args.command in _PROVIDER_BOOTSTRAP_COMMANDS:
         from personalclaw.providers.loader import bootstrap_cli_providers
 
-        bootstrap_cli_providers()
+        # An app that prints as it is imported must not reach this command's stdout, which may
+        # be one JSON document (`memory export`) or key TAB value lines (`doctor --paths`).
+        with contextlib.redirect_stdout(sys.stderr):
+            bootstrap_cli_providers()
 
     if args.command == "chat":
         _chat(args)
@@ -2297,7 +2390,7 @@ def _workflow_cmd(args) -> int:  # noqa: ANN001
         print(f"cannot replay: {terminal_text(str(exc))}", file=sys.stderr)
         return 1
 
-    if getattr(args, "json", False):
+    if getattr(args, "as_json", False):
         div = result.first_divergence
         print(
             _json.dumps(
@@ -2341,6 +2434,44 @@ def _workflow_cmd(args) -> int:  # noqa: ANN001
 _SKILL_FINDINGS_SHOWN = 8
 
 
+def _skills_list(*, as_json: bool) -> None:
+    """``skills list``: each installed skill on a line, or with *as_json* one document."""
+    from personalclaw.skills.marketplace import list_local_skills
+
+    skills = list_local_skills()
+    if as_json:
+        keys = ("name", "description", "path", "source")
+        print_json([{key: s[key] for key in keys} for s in skills])
+        return
+    if not skills:
+        print("No skills installed. Run: personalclaw skills install <id>")
+        return
+    for s in skills:
+        desc = s["description"]
+        print(f"  {terminal_text(str(s['name'])):<24} {terminal_text(str(desc[:60]))}")
+
+
+def _skills_search(args) -> None:  # noqa: ANN001
+    """``skills search``: each result on a line, or with ``--json`` one document."""
+    from personalclaw.skills.marketplace import get_default_skills_registry
+
+    query = args.query
+    marketplace_name = getattr(args, "marketplace", "skills.sh")
+    try:
+        mp = get_default_skills_registry().get(marketplace_name)
+    except KeyError:
+        _refuse(f"❌ Marketplace '{marketplace_name}' not registered")
+    results = mp.search(query)
+    if getattr(args, "as_json", False):
+        print_json([r.to_dict() for r in results])
+        return
+    if not results:
+        print(f"No results for '{query}' on {marketplace_name}")
+        return
+    for r in results:
+        print(f"  {terminal_text(str(r.id)):<40} {terminal_text(str(r.description[:50]))}")
+
+
 def _handle_skills(args) -> None:  # noqa: ANN001
     """Dispatch personalclaw skills subcommands.
 
@@ -2354,34 +2485,17 @@ def _handle_skills(args) -> None:  # noqa: ANN001
     # skills.sh moved to a standalone app (apps/skills-sh/); it registers via the app
     # loader when installed, so core no longer eager-imports it here.
     from personalclaw.skills.loader import SkillsLoader, skills_dir
-    from personalclaw.skills.marketplace import get_default_skills_registry, list_local_skills
+    from personalclaw.skills.marketplace import get_default_skills_registry
     from personalclaw.supply_chain import rule_gloss
 
     cmd = getattr(args, "skills_command", None)
 
     if cmd == "list" or cmd is None:
-        skills = list_local_skills()
-        if not skills:
-            print("No skills installed. Run: personalclaw skills install <id>")
-            return
-        for s in skills:
-            desc = s["description"]
-            print(f"  {terminal_text(str(s['name'])):<24} {terminal_text(str(desc[:60]))}")
+        _skills_list(as_json=cmd == "list" and bool(getattr(args, "as_json", False)))
         return
 
     if cmd == "search":
-        query = args.query
-        marketplace_name = getattr(args, "marketplace", "skills.sh")
-        try:
-            mp = get_default_skills_registry().get(marketplace_name)
-        except KeyError:
-            _refuse(f"❌ Marketplace '{marketplace_name}' not registered")
-        results = mp.search(query)
-        if not results:
-            print(f"No results for '{query}' on {marketplace_name}")
-            return
-        for r in results:
-            print(f"  {terminal_text(str(r.id)):<40} {terminal_text(str(r.description[:50]))}")
+        _skills_search(args)
         return
 
     if cmd == "install":
@@ -2523,6 +2637,16 @@ def _incident_cmd(args) -> None:  # noqa: ANN001
         print("✓ Incident mode OFF — unattended work re-enabled.")
     else:  # status (default)
         st = _inc.get_incident()
+        if getattr(args, "as_json", False):
+            # A state, not a check: exit 0 either way.
+            print_json(
+                {
+                    "active": bool(st.active),
+                    "started_at": st.started_at if st.active else None,
+                    "reason": st.reason if st.active else None,
+                }
+            )
+            return
         if st.active:
             print(
                 f"⛔ Incident mode ACTIVE since {st.started_at}\n   reason: "

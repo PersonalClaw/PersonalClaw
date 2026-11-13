@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -574,7 +575,7 @@ def footprint_cmd(args) -> int:  # noqa: ANN001
     space back now rather than at the next cadence.
     """
     home = _home()
-    as_json = bool(getattr(args, "json", False))
+    as_json = bool(getattr(args, "as_json", False))
 
     reclaimed: ReclaimResult | None = None
     if getattr(args, "reclaim", False):
@@ -582,14 +583,20 @@ def footprint_cmd(args) -> int:  # noqa: ANN001
 
         with single_flight("footprint-reclaim") as acquired:
             if not acquired:
-                print("⏭  Another reclaim is already running — skipping.")
-                return 0
-            reclaimed = reclaim(home)
-        stamp_reclaim(home)
+                skipped = "⏭  Another reclaim is already running — skipping."
+                if not as_json:
+                    print(skipped)
+                    return 0
+                # The document still prints, with no reclaim in it: the maintenance tick holds
+                # the same lock, so a script asking for one must still get one.
+                print(skipped, file=sys.stderr)
+            else:
+                reclaimed = reclaim(home)
+        if reclaimed is not None:
+            stamp_reclaim(home)
 
     data = report(home)
-    if reclaimed is not None:
-        data["reclaim"] = reclaimed.to_dict()
+    data["reclaim"] = reclaimed.to_dict() if reclaimed is not None else None
 
     if as_json:
         print(json.dumps(data, indent=2))
@@ -643,5 +650,5 @@ def footprint_cmd(args) -> int:  # noqa: ANN001
         else:
             print(f"Nothing to reclaim — {reclaimed.stores} database(s) already compact.")
         for store_id, reason in sorted(reclaimed.skipped.items()):
-            print(f"⚠️  skipped {store_id}: {terminal_text(str(reason))}")
+            print(f"⚠️  skipped {store_id}: {terminal_text(str(reason))}", file=sys.stderr)
     return 0
