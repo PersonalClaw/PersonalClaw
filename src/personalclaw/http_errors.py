@@ -1151,6 +1151,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "plan_not_complete": (
         "A fresh chat runs the whole plan, so approve every other step first; nothing was approved."
     ),
+    # `plan_step_reviewed_again` (409): a fresh chat is briefed with every step, and another step
+    # is not as you approved it (`planning.approval_seals`), so it waits for your review again and
+    # nothing was approved.
+    "plan_step_reviewed_again": (
+        "A step of this plan is not as you approved it, so it waits for your review again; "
+        "nothing was approved."
+    ),
     # ── saving an MCP server (dashboard/handlers/mcp.py — PUT /api/mcp/servers/{name}) ──
     # `invalid_env` (400) — the environment cannot be saved as sent: `env` is not a map of names
     # to strings, `plainEnv`/`keepEnv` is not a list of names, a variable asked to keep its saved

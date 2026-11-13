@@ -165,7 +165,7 @@ def _seed_session(cid: str) -> None:
     sess.steps[0].status = PS.StepStatus.AWAITING_REVIEW.value
     sess.steps[0].artifact = {"markdown": "ORIGINAL"}
     sess.design_error = "the planner timed out"
-    loop_files.write_plan_session(sess)
+    loop_files.write_plan_session(sess.project_id, sess)
 
 
 def _session_bytes(cid: str) -> str:
@@ -211,11 +211,18 @@ def _call(path: str, cid: str):
 
 def _edit_base(path: str, cid: str) -> dict[str, str] | None:
     """An edit replaces the step's whole markdown, so it names the draft it was made on — the
-    revision the plan-session read reports for the step (`personalclaw/stale_write.py`)."""
-    session = loop_files.read_plan_session(cid) if path.endswith("/plan/edit") else None
+    revision the plan-session read reports for the step (`personalclaw/stale_write.py`). An
+    approval names the step as its review showed it, the read's ``review_revision``
+    (`planning.approval_seals`)."""
+    from personalclaw.planning.approval_seals import review_revision
+
+    revision = {"/plan/edit": PS.step_revision, "/plan/approve": review_revision}.get(
+        path[path.rindex("/plan/") :]
+    )
+    session = loop_files.read_plan_session(cid) if revision else None
     if session is None or not session.steps:
         return None
-    return {"If-Match": f'"{PS.step_revision(session.steps[0])}"'}
+    return {"If-Match": f'"{revision(session.steps[0])}"'}
 
 
 def test_the_two_buckets_partition_the_status_vocabulary():

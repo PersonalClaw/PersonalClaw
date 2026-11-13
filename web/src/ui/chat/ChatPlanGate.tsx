@@ -122,6 +122,9 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
   const editedStep = useRef('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  // An approval refused because another step is not as you approved it moves the gate to that
+  // step, and the move would clear its sentence: kept through that one move.
+  const keepErr = useRef(false)
 
   // Re-read after every turn and every action, one read at a time: a newer one aborts the read
   // that is out (`useLatestRead`), so no turn leaves a read holding a connection behind it.
@@ -149,7 +152,11 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
   // A new draft of the step is a new revision, which starts with none: a new draft replaces
   // whatever was being written about the old one.
   const [comment, setComment, clearComment] = useKeptDraft(`chat-plan:${session}:${step?.id ?? ''}:${step?.revision ?? ''}`)
-  useEffect(() => { setEditText(null); setErr('') }, [awaiting])
+  useEffect(() => {
+    setEditText(null)
+    if (keepErr.current) keepErr.current = false
+    else setErr('')
+  }, [awaiting])
 
   const guard = useStaleWriteGuard<string>({
     read: async () => {
@@ -169,8 +176,11 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
 
   async function run(fn: () => Promise<unknown>) {
     if (busy) return
-    setBusy(true); setErr('')
-    try { await fn() } catch (e) { setErr(String((e as Error)?.message || e)) } finally { setBusy(false); load() }
+    setBusy(true); setErr(''); keepErr.current = false
+    try { await fn() } catch (e) {
+      keepErr.current = (e as { code?: unknown })?.code === 'plan_step_reviewed_again'
+      setErr(String((e as Error)?.message || e))
+    } finally { setBusy(false); load() }
   }
   // Not `run`: a refused edit keeps the editor and its text exactly as they are, and a re-read here
   // could close the editor (a redraft in flight changes `awaiting`) while the notice says the change
@@ -262,7 +272,7 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
             <div className="flex flex-wrap items-center gap-2">
               <ApproveSplit busy={busy} completes={completes}
                 approve={(how) => void run(async () => {
-                  const r = await api.chatPlanApprove(session, step.id, how)
+                  const r = await api.chatPlanApprove(session, step.id, how, step.review_revision ?? '')
                   if (r.complete) onTaskMode(r.task_mode)
                   if (r.fresh_session) onOpenChat?.(r.fresh_session)
                 })} />

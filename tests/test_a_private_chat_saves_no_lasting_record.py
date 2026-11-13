@@ -437,7 +437,7 @@ def _owners_loop_awaiting_review() -> tuple[str, str]:
         status=plan.StepStatus.AWAITING_REVIEW.value,
         artifact={"markdown": "Pick the roofer by Friday."},
     )
-    loop_files.write_plan_session(plan.PlanSession(project_id=made.id, steps=[step]))
+    loop_files.write_plan_session(made.id, plan.PlanSession(project_id=made.id, steps=[step]))
     return made.id, step.id
 
 

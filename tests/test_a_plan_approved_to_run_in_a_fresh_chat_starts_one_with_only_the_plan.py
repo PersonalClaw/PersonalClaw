@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from chat_plan_mode_shared import _app, _no_dispatch, _seed
+from chat_plan_mode_shared import _app, _no_dispatch, _seed, _shown
 from chat_test_helpers import _make_state
 
 from personalclaw.dashboard import chat_plan
@@ -60,6 +60,7 @@ async def test_the_fresh_chat_starts_with_the_plan_and_nothing_else(tmp_path, mo
         r = await client.post(
             "/api/chat/sessions/c1/plan/approve",
             json={"step_id": "chat-plan-1", "run": "fresh"},
+            headers=_shown("c1", "chat-plan-1"),
         )
         assert r.status == 200, await r.text()
         body = await r.json()
@@ -67,6 +68,7 @@ async def test_the_fresh_chat_starts_with_the_plan_and_nothing_else(tmp_path, mo
         again = await client.post(
             "/api/chat/sessions/c1/plan/approve",
             json={"step_id": "chat-plan-1", "run": "fresh"},
+            headers=_shown("c1", "chat-plan-1"),
         )
         assert again.status == 409, "a plan run in a fresh chat is not approved again here"
 
@@ -104,6 +106,7 @@ async def test_a_parked_run_is_not_resumed_in_the_planning_chat(tmp_path, monkey
             r = await client.post(
                 "/api/chat/sessions/c1/plan/approve",
                 json={"step_id": "chat-plan-1", "run": "fresh"},
+                headers=_shown("c1", "chat-plan-1"),
             )
             body = await r.json()
     finally:
@@ -129,6 +132,7 @@ async def test_a_fresh_chat_is_refused_while_a_step_still_waits_after_this_one(
         r = await client.post(
             "/api/chat/sessions/c1/plan/approve",
             json={"step_id": "chat-plan-1", "run": "fresh"},
+            headers=_shown("c1", "chat-plan-1"),
         )
         assert r.status == 409
         assert (await r.json())["error"]["code"] == "plan_not_complete"
@@ -147,6 +151,7 @@ async def test_an_unknown_way_to_run_is_refused(tmp_path, monkeypatch):
         r = await client.post(
             "/api/chat/sessions/c1/plan/approve",
             json={"step_id": "chat-plan-1", "run": "somewhere"},
+            headers=_shown("c1", "chat-plan-1"),
         )
         assert r.status == 400
 
@@ -186,7 +191,7 @@ async def test_only_you_run_a_plan_in_a_fresh_chat(tmp_path, monkeypatch, caller
         r = await client.post(
             "/api/chat/sessions/c1/plan/approve",
             json={"step_id": "chat-plan-1", "run": "fresh"},
-            headers=caller,
+            headers={**_shown("c1", "chat-plan-1"), **caller},
         )
         assert r.status == 403
     assert set(state._sessions) == before, "no chat was started"
@@ -213,6 +218,7 @@ async def test_a_fresh_chat_is_never_broader_than_the_chat_that_planned_it(
         r = await client.post(
             "/api/chat/sessions/c1/plan/approve",
             json={"step_id": "chat-plan-1", "run": "fresh"},
+            headers=_shown("c1", "chat-plan-1"),
         )
         fresh = state._sessions[(await r.json())["fresh_session"]]
     assert fresh.memory_mode == memory_mode

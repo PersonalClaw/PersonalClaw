@@ -42,6 +42,7 @@ import pytest
 from aiohttp import FormData, web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_craft_sel_shared import EMITTERS
+from chat_plan_mode_shared import _shown
 from chat_test_helpers import _make_state
 
 from personalclaw.dashboard import chat_plan
@@ -358,7 +359,9 @@ class TestPlanModeSel:
             )
             assert r.status == 200, await r.text()
             r = await client.post(
-                "/api/chat/sessions/s1/plan/approve", json={"step_id": "chat-plan-1"}
+                "/api/chat/sessions/s1/plan/approve",
+                json={"step_id": "chat-plan-1"},
+                headers=_shown("s1", "chat-plan-1"),
             )
             assert r.status == 200, await r.text()
             assert (await r.json())["complete"] is True
@@ -385,7 +388,9 @@ class TestPlanModeSel:
         async with TestClient(TestServer(self._app(state))) as client:
             assert (await client.post("/api/chat/sessions/s1/plan/activate")).status == 200
             r = await client.post(
-                "/api/chat/sessions/s1/plan/approve", json={"step_id": "chat-plan-1"}
+                "/api/chat/sessions/s1/plan/approve",
+                json={"step_id": "chat-plan-1"},
+                headers=_shown("s1", "chat-plan-1"),
             )
             assert r.status == 409, await r.text()
         assert _count("chat.plan_approve") == 0
@@ -719,7 +724,9 @@ class TestTheAuditIsComplete:
             session.drain()
             assert chat_plan.maybe_submit_plan_draft(state, session) is True
             r = await client.post(
-                "/api/chat/sessions/s1/plan/approve", json={"step_id": "chat-plan-1"}
+                "/api/chat/sessions/s1/plan/approve",
+                json={"step_id": "chat-plan-1"},
+                headers=_shown("s1", "chat-plan-1"),
             )
             assert r.status == 200, await r.text()
             session.task = _FakeTask()  # → session.running is True

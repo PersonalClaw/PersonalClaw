@@ -33,7 +33,10 @@ asked_at, age_secs, expires_at, current, interrupt, answer, route, project_id, l
   mute, quiet hours and its kind's notification rule, so every surface applies one policy: an
   approval's push, its toast and its cue follow it, and so does every reader that would ping.
 - ``answer`` is the owner's exact action: ``{method, path, takes, body}``, the source's own route
-  and what it takes. ``route`` is the dashboard address that shows it with its card.
+  and what it takes, and ``headers`` when the route reads one: a plan step's names the step as the
+  list read it in ``If-Match`` (its ``review_revision``, `approval_seals`), which its approve
+  checks, so the answer sent as given approves the step as read, and a step changed since is not
+  approved as it now is. ``route`` is the dashboard address that shows it with its card.
 - ``project_id`` is the project its work is in, ``""`` for none (``work_project``: a chat's, a
   loop's, a run's, a helper's parent's; never a trigger's), and ``loop_kind`` its loop's kind when
   the work is a loop or a run started as one (``code``, ``goal``, ``research``, ``design``,
@@ -173,8 +176,26 @@ def _work_route(work: str) -> str:
     return ""
 
 
-def _answer(method: str, path: str, takes: Iterable[Any], body: Mapping[str, Any] | None = None):
-    return {"method": method, "path": path, "takes": list(takes), "body": dict(body or {})}
+def _answer(
+    method: str,
+    path: str,
+    takes: Iterable[Any],
+    body: Mapping[str, Any] | None = None,
+    *,
+    headers: Mapping[str, str] | None = None,
+):
+    answer = {"method": method, "path": path, "takes": list(takes), "body": dict(body or {})}
+    if headers:
+        answer["headers"] = dict(headers)
+    return answer
+
+
+def _as_read(step: Any) -> dict[str, str]:
+    """The header a plan step's approve names the step in, as the list read it."""
+    from personalclaw.planning.approval_seals import review_revision
+    from personalclaw.stale_write import REVISION_HEADER
+
+    return {REVISION_HEADER: f'"{review_revision(step)}"'}
 
 
 def _item(
@@ -408,7 +429,11 @@ def _loop_plans(loops: list[Any], now: float) -> list[dict[str, Any]]:
                 },
                 consequence="asks",
                 answer=_answer(
-                    "POST", f"{base}/plan/approve", ("approve", "comment"), {"step_id": step.id}
+                    "POST",
+                    f"{base}/plan/approve",
+                    ("approve", "comment"),
+                    {"step_id": step.id},
+                    headers=_as_read(step),
                 ),
                 route=_loop_route(loop),
                 asked_at=float(getattr(sess, "updated_at", 0.0) or 0.0) or None,
@@ -449,6 +474,7 @@ def _chat_plans(now: float) -> list[dict[str, Any]]:
                     _path("/api/chat/sessions", chat, "plan", "approve"),
                     ("approve", "comment"),
                     {"step_id": step.id},
+                    headers=_as_read(step),
                 ),
                 route=_chat_route(chat),
                 asked_at=float(sess.updated_at or 0.0) or None,

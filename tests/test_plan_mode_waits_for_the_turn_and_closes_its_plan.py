@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from chat_plan_mode_shared import _app
+from chat_plan_mode_shared import _app, _shown
 
 from personalclaw import cli_run
 from personalclaw.dashboard import chat_plan
@@ -373,7 +373,9 @@ async def test_stop_and_plan_ends_a_headless_runs_trust_before_its_turn_is_asked
 
         await _turn(state, chat, "plan the report")
         r = await client.post(
-            f"/api/chat/sessions/{key}/plan/approve", json={"step_id": "chat-plan-1"}
+            f"/api/chat/sessions/{key}/plan/approve",
+            json={"step_id": "chat-plan-1"},
+            headers=_shown(key, "chat-plan-1"),
         )
         assert r.status == 200, await r.text()
         assert (await r.json())["resumed"] is True
@@ -478,7 +480,11 @@ async def test_leaving_plan_mode_lets_the_run_it_parked_go(tmp_path):
         assert chat_plan.read(chat.key)[1].get("parked") is True
         await _set_mode(client, "agent")
         await _turn(state, chat, "carry on")
-        r = await client.post("/api/chat/sessions/c1/plan/approve", json={"step_id": "chat-plan-1"})
+        r = await client.post(
+            "/api/chat/sessions/c1/plan/approve",
+            json={"step_id": "chat-plan-1"},
+            headers=_shown("c1", "chat-plan-1"),
+        )
     assert r.status == 404, "no plan is left to approve, and no parked run to send"
     assert chat_plan.read(chat.key) == (None, {})
 

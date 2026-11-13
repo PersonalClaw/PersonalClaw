@@ -197,7 +197,7 @@ def test_a_stop_mid_planning_ends_the_planner_and_the_loop_stays_stopped(monkeyp
 def test_no_pass_starts_for_a_loop_that_is_no_longer_planning(monkeypatch):
     loop = store.create(Loop(id="", name="", kind="code", task="stop escaping titles twice"))
     step = PlanStep(id="step-0", kind="problem_framing", title="Frame it", objective="o")
-    loop_files.write_plan_session(PlanSession(project_id=loop.id, steps=[step]))
+    loop_files.write_plan_session(loop.id, PlanSession(project_id=loop.id, steps=[step]))
     store.update_status(loop.id, LoopStatus.STOPPED)
     passes: list[str] = []
 
@@ -215,7 +215,7 @@ def test_no_pass_starts_for_a_loop_that_is_no_longer_planning(monkeypatch):
 def test_a_stop_between_a_pass_and_its_retry_skips_the_retry(monkeypatch):
     loop = store.create(Loop(id="", name="", kind="code", task="stop escaping titles twice"))
     step = PlanStep(id="step-0", kind="problem_framing", title="Frame it", objective="o")
-    loop_files.write_plan_session(PlanSession(project_id=loop.id, steps=[step]))
+    loop_files.write_plan_session(loop.id, PlanSession(project_id=loop.id, steps=[step]))
     store.update_status(loop.id, LoopStatus.PLANNING)
     passes: list[str] = []
 

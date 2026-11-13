@@ -715,6 +715,8 @@ def get_verdicts(loop_id: str) -> list[dict]:
 
 # Plan session (the stepwise planning walkthrough).
 _PLAN_SESSION_FILE = "plan_session.json"
+#: The planner's own folder inside a loop's (:func:`planner_dir`).
+_PLANNER_DIR = "planner"
 
 
 def read_plan_session(loop_id: str):
@@ -733,8 +735,27 @@ def read_plan_session(loop_id: str):
     return PlanSession.from_dict(data)
 
 
-def write_plan_session(session) -> None:
-    d = loop_dir(session.project_id)
+def planner_dir(loop_id: str) -> Path | None:
+    """The folder a loop's planner works in, inside the loop's own (created): its files' root,
+    apart from the files the gateway keeps for the loop."""
+    d = loop_dir(loop_id)
+    if d is None:
+        return None
+    p = d / _PLANNER_DIR
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def write_plan_session(loop_id: str, session) -> None:
+    """Write *session* as the plan of the loop *loop_id* names: the loop its caller is about, never
+    the one the session's own ``project_id`` names. A session that names another loop is not
+    written, and is said."""
+    if str(getattr(session, "project_id", "") or "") != loop_id:
+        logger.warning(
+            "a plan session of loop %r was not written as loop %r's", session.project_id, loop_id
+        )
+        return
+    d = loop_dir(loop_id)
     if d is not None:
         atomic_write(d / _PLAN_SESSION_FILE, json.dumps(session.to_dict(), indent=2))
         _waiting_moved()  # a step drafted for your review, or reviewed

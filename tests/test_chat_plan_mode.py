@@ -23,7 +23,7 @@ import asyncio
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from chat_plan_mode_shared import _app, _no_dispatch, _seed
+from chat_plan_mode_shared import _app, _no_dispatch, _seed, _shown
 from chat_test_helpers import _make_state
 from test_native_runtime import _defn, _drain, _ScriptedModel, _Tool
 
@@ -184,7 +184,9 @@ class TestApproveAndComment:
         async with TestClient(TestServer(_app(state))) as client:
             await client.post("/api/chat/sessions/c1/plan/activate")
             r = await client.post(
-                "/api/chat/sessions/c1/plan/approve", json={"step_id": "chat-plan-1"}
+                "/api/chat/sessions/c1/plan/approve",
+                json={"step_id": "chat-plan-1"},
+                headers=_shown("c1", "chat-plan-1"),
             )
             assert r.status == 409
             assert (await r.json())["error"]["code"] == "step_not_awaiting_review"
@@ -241,7 +243,11 @@ class TestApproveAndComment:
             chat.append("assistant", "plan v1", "msg msg-a")
             chat.drain()
             chat_plan.maybe_submit_plan_draft(state, chat)
-            await client.post("/api/chat/sessions/c1/plan/approve", json={"step_id": "chat-plan-1"})
+            await client.post(
+                "/api/chat/sessions/c1/plan/approve",
+                json={"step_id": "chat-plan-1"},
+                headers=_shown("c1", "chat-plan-1"),
+            )
             await client.post("/api/chat/sessions/c1/plan/activate")
         sess, binding = chat_plan.read("c1")
         assert [s.id for s in sess.steps] == ["chat-plan-1", "chat-plan-2"]
@@ -353,7 +359,9 @@ class TestTheGateNotThePrompt:
             chat.drain()
             chat_plan.maybe_submit_plan_draft(state, chat)
             r = await client.post(
-                "/api/chat/sessions/c1/plan/approve", json={"step_id": "chat-plan-1"}
+                "/api/chat/sessions/c1/plan/approve",
+                json={"step_id": "chat-plan-1"},
+                headers=_shown("c1", "chat-plan-1"),
             )
             assert r.status == 200
             body = await r.json()
@@ -423,7 +431,9 @@ class TestMidTurnParkAndResume:
                 chat.drain()
                 chat_plan.maybe_submit_plan_draft(state, chat)
                 r = await client.post(
-                    "/api/chat/sessions/c1/plan/approve", json={"step_id": "chat-plan-1"}
+                    "/api/chat/sessions/c1/plan/approve",
+                    json={"step_id": "chat-plan-1"},
+                    headers=_shown("c1", "chat-plan-1"),
                 )
                 assert r.status == 200
                 body = await r.json()
@@ -459,7 +469,9 @@ class TestMidTurnParkAndResume:
             chat_plan.maybe_submit_plan_draft(state, chat)
             before = len(chat.messages)
             r = await client.post(
-                "/api/chat/sessions/c1/plan/approve", json={"step_id": "chat-plan-1"}
+                "/api/chat/sessions/c1/plan/approve",
+                json={"step_id": "chat-plan-1"},
+                headers=_shown("c1", "chat-plan-1"),
             )
             assert (await r.json())["resumed"] is False
         assert seen == []
@@ -488,7 +500,11 @@ class TestADraftMustComeFromItsOwnTurn:
         chat.drain()
         assert chat_plan.maybe_submit_plan_draft(state, chat) is True
         async with TestClient(TestServer(_app(state))) as client:
-            await client.post("/api/chat/sessions/c1/plan/approve", json={"step_id": "chat-plan-1"})
+            await client.post(
+                "/api/chat/sessions/c1/plan/approve",
+                json={"step_id": "chat-plan-1"},
+                headers=_shown("c1", "chat-plan-1"),
+            )
             # A second activation: the mid-task re-plan.
             await client.post("/api/chat/sessions/c1/plan/activate")
 

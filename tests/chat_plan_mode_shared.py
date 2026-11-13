@@ -45,6 +45,16 @@ def _seed(state, name="c1"):
     return s
 
 
+def _shown(chat_key: str, step_id: str) -> dict[str, str]:
+    """The ``If-Match`` an approval of *step_id* names: the step as the plan's read shows it now
+    (``review_revision``), or none for a step the chat's plan does not hold."""
+    from personalclaw.planning.approval_seals import review_revision
+
+    sess, _binding = chat_plan.read(chat_key)
+    step = next((s for s in (sess.steps if sess else []) if s.id == step_id), None)
+    return {"If-Match": f'"{review_revision(step)}"'} if step is not None else {}
+
+
 def _no_dispatch(monkeypatch) -> list[str]:
     """Capture the prompts chat_plan would run a turn with, without running one."""
     seen: list[str] = []

@@ -441,6 +441,18 @@ def write_brief(loop: Loop) -> None:
     loop_files.write_brief(loop.id, body)
 
 
+def _forget_the_plans_approvals(loop_id: str) -> None:
+    """A launched loop's plan is built into its spec and runs, and nothing reads the yeses its
+    steps were approved by again (`approval_seals`): they end with it. A re-plan is a new plan,
+    under a key of its own."""
+    from personalclaw.planning import approval_seals
+
+    try:
+        approval_seals.forget(approval_seals.loop_scope(loop_id))
+    except Exception:  # noqa: BLE001 — the book only grows; the launch stands
+        logger.warning("loop %s: its plan's approvals were not forgotten", loop_id)
+
+
 async def start(state, svc, loop_id: str) -> Loop:
     """Start (or resume) a loop: write the brief, arm the worker session, grant
     per-session trust, and arm the autonudge loop. Used for both ``start`` and
@@ -492,6 +504,7 @@ async def start(state, svc, loop_id: str) -> Loop:
 
     write_brief(loop)
     updated = store.update_status(loop_id, LoopStatus.RUNNING)
+    _forget_the_plans_approvals(loop_id)
 
     d = loop_files.loop_dir(loop_id)
     cfg = AppConfig.load().loops

@@ -38,7 +38,9 @@ export interface WalkthroughConfig {
   api: {
     getSession: (id: string) => Promise<PlanSession | null>
     start: (id: string) => Promise<unknown>
-    approve: (id: string, stepId: string) => Promise<unknown>
+    /** Approve a step as it was shown: `base` is its `review_revision` as read, and a step changed
+     *  since is refused, not approved as it now is. */
+    approve: (id: string, stepId: string, base: string) => Promise<unknown>
     comment: (id: string, stepId: string, text: string) => Promise<unknown>
     /** Direct in-place edit of an artifact's markdown body (no planner round-trip). It replaces
      *  the whole body, so it names the draft it was made on — `base`, the step's `revision` as read
@@ -338,7 +340,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
     if (inFlight.current) return
     inFlight.current = true
     setBusy(true); setErr(null)
-    try { await cfg.api.approve(id, step.id); setComment('') }
+    try { await cfg.api.approve(id, step.id, step.review_revision ?? ''); setComment('') }
     catch (e) { setErr(`Couldn't approve this step: ${(e as Error).message || 'unknown error'}`) }
     finally { setBusy(false); inFlight.current = false }
     const s = await cfg.api.getSession(id).catch(() => null); if (s) setSession(s)

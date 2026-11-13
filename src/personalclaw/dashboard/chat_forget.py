@@ -170,6 +170,7 @@ def purge_chat(
             captures.close()
     except Exception:
         logger.warning("forget: learning capture purge failed for %s", history_key, exc_info=True)
+    _forget_its_plan(names | {history_key})
     from personalclaw.constants import dashboard_history_key
 
     # The skills it was taught and not yet kept, under the key its tools saw: a chat named again
@@ -202,6 +203,18 @@ def purge_chat(
         except OSError:
             logger.warning("forget: could not delete an attached file of %s", history_key)
     return Purge(attachments=deleted, transcript_kept=kept)
+
+
+def _forget_its_plan(keys: set[str]) -> None:
+    """The chat's plan, if it planned: the walkthrough it kept beside its transcript (`chat_plan`'s
+    sidecar, the plan's text) and the yeses recorded for its steps, under every form of its key."""
+    try:
+        from personalclaw.dashboard import chat_plan
+
+        for key in keys:
+            chat_plan.clear(key)
+    except Exception:
+        logger.warning("forget: plan removal failed for %s", sorted(keys), exc_info=True)
 
 
 def _transcript_left(log: ConversationLog, key: str) -> bool:

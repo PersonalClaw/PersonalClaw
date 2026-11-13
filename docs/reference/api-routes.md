@@ -367,7 +367,7 @@ The 966 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PATCH` | `/api/chat/sessions/{session}/pin` | toggle pinned state. |
 | `GET` | `/api/chat/sessions/{session}/plan-session` | the walkthrough state. |
 | `POST` | `/api/chat/sessions/{session}/plan/activate` | {stop?} — open the plan walkthrough. |
-| `POST` | `/api/chat/sessions/{session}/plan/approve` | {step_id, run?} — approve a step. |
+| `POST` | `/api/chat/sessions/{session}/plan/approve` | {step_id, run?} — approve a step (If-Match). |
 | `POST` | `/api/chat/sessions/{session}/plan/cancel` | abandon the walkthrough. |
 | `POST` | `/api/chat/sessions/{session}/plan/comment` | {step_id, text} — comment + redraft. |
 | `POST` | `/api/chat/sessions/{session}/plan/edit` | {step_id, markdown} — edit the plan. |
@@ -679,7 +679,7 @@ The 966 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/loops/{id}/merge` | {tips, confirm: true} — approve merging the work you reviewed. |
 | `POST` | `/api/loops/{id}/nudge` | {text, task_id?} — steer; resume if awaiting input. |
 | `GET` | `/api/loops/{id}/plan-session` | the stepwise planning walkthrough state. |
-| `POST` | `/api/loops/{id}/plan/approve` | {step_id} — approve a step + advance. |
+| `POST` | `/api/loops/{id}/plan/approve` | {step_id} — approve a step as read (If-Match) + advance. |
 | `POST` | `/api/loops/{id}/plan/comment` | {step_id, text} — comment + re-draft. |
 | `POST` | `/api/loops/{id}/plan/edit` | {step_id, markdown} — the user directly edits a |
 | `POST` | `/api/loops/{id}/plan/retry` | clear a recorded design failure + re-run the |

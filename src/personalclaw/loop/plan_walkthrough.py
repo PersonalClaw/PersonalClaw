@@ -179,8 +179,10 @@ def seed_steps(session: PlanSession, steps: list[dict]) -> PlanSession:
 
 
 def _loop_folder(loop) -> str:
-    """The loop's own folder: where the planner's files go, and the only place they are read."""
-    return str(loop_files.loop_dir(loop.id) or "")
+    """The planner's own folder, inside the loop's: where its files go, the only place they are
+    read, and its files' root, apart from the files the gateway keeps for the loop
+    (`loop_files.planner_dir`)."""
+    return str(loop_files.planner_dir(loop.id) or "")
 
 
 async def _run_pass(
@@ -283,7 +285,7 @@ def _hold_for_spend_cap(state, loop, session: PlanSession, result: PlannerPass) 
     from personalclaw.loop import spend_cap
 
     session.paused = spend_cap.planning_pause(result.refusal)
-    loop_files.write_plan_session(session)
+    loop_files.write_plan_session(loop.id, session)
     logger.info("planning %s: a spend ceiling refused the planner: %s", loop.id, result.refusal)
     spend_cap.raise_planning_item(state, loop, result.refusal)
 
@@ -377,7 +379,7 @@ async def run_design_pass(state, svc, loop_id: str) -> PlanSession | None:
             else "Retry planning, or edit the task to be more concrete."
         )
         session.design_error = f"{reason} {advice}"
-        loop_files.write_plan_session(session)
+        loop_files.write_plan_session(loop_id, session)
         return None
     _summary, steps = parsed
     session = loop_files.read_plan_session(loop_id) or PlanSession(
@@ -385,7 +387,7 @@ async def run_design_pass(state, svc, loop_id: str) -> PlanSession | None:
     )
     seed_steps(session, steps)
     session.design_error = ""
-    loop_files.write_plan_session(session)
+    loop_files.write_plan_session(loop_id, session)
     return session
 
 
@@ -407,7 +409,7 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
     last_failure = step.error
     if step.status == PS.StepStatus.PENDING.value:
         PS.mark_running(session, step_id)
-        loop_files.write_plan_session(session)
+        loop_files.write_plan_session(loop_id, session)
 
     approved = [s for s in session.steps if s.status == PS.StepStatus.APPROVED.value]
     artifact_path = os.path.join(_loop_folder(loop), ARTIFACT_SENTINEL)
@@ -469,14 +471,14 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
                 if declined:
                     # Paused, so neither a poll nor a restart runs the step again: only her Retry.
                     session.paused = {"by": DECLINED_PAUSE}
-                loop_files.write_plan_session(session)
+                loop_files.write_plan_session(loop_id, session)
         return None
     session = loop_files.read_plan_session(loop_id) or session
     step = next((s for s in session.steps if s.id == step_id), step)
     if step.status != PS.StepStatus.RUNNING.value:
         step.status = PS.StepStatus.RUNNING.value  # ensure submit precondition
     PS.submit_artifact(session, step_id, artifact)
-    loop_files.write_plan_session(session)
+    loop_files.write_plan_session(loop_id, session)
     return next((s for s in session.steps if s.id == step_id), None)
 
 
@@ -492,6 +494,10 @@ async def finalize_plan(loop_id: str) -> bool:
     loop, wt = _walkthrough_for(loop_id)
     session = loop_files.read_plan_session(loop_id)
     if loop is None or wt is None or session is None:
+        return False
+    # 🔴 NOTHING IS BUILT FROM A STEP YOU DID NOT APPROVE AS IT IS. Each yes is sealed to the step
+    # as its review showed it (`approval_seals`), and a step without its seal goes back to review.
+    if _reviewed_again(loop_id, session):
         return False
     spec = wt.project_to_spec(session)
     if spec:
@@ -509,6 +515,23 @@ async def finalize_plan(loop_id: str) -> bool:
     return True
 
 
+def _reviewed_again(loop_id: str, session: PlanSession) -> bool:
+    """Put each approved step of the loop's plan that is not as you approved it back to review
+    (every one, when a step you approved is gone from the plan), write the plan if any was, and
+    say whether any was (`approval_seals.reopen_unsealed`)."""
+    from personalclaw.planning import approval_seals
+
+    scope = approval_seals.loop_scope(loop_id)
+    reopened = approval_seals.reopen_unsealed(scope, session)
+    if reopened:
+        logger.warning(
+            "loop %s: steps %s are reviewed again before the plan is built", loop_id, reopened
+        )
+        loop_files.write_plan_session(loop_id, session)
+        approval_seals.forget_dropped(scope, session)
+    return bool(reopened)
+
+
 def mark_design_error(loop_id: str, message: str = "") -> None:
     """Record a recoverable design failure (a backstop if the fire-and-forget advance
     task throws). Idempotent + never raises — creates a session if none exists yet."""
@@ -522,7 +545,7 @@ def mark_design_error(loop_id: str, message: str = "") -> None:
             "Planning hit an unexpected error. Retry planning, or edit the task to be "
             "more concrete."
         )
-        loop_files.write_plan_session(session)
+        loop_files.write_plan_session(loop_id, session)
     except Exception:
         logger.debug("mark_design_error failed for %s", loop_id, exc_info=True)
 
@@ -544,7 +567,7 @@ def clear_design_error(loop_id: str) -> None:
             current.error = ""
     session.design_error = ""
     session.paused = {}
-    loop_files.write_plan_session(session)
+    loop_files.write_plan_session(loop_id, session)
     if was_paused:
         from personalclaw.inbox_providers.native_source import get_dashboard_state
         from personalclaw.loop import spend_cap
@@ -594,7 +617,9 @@ async def advance_plan(state, svc, loop_id: str) -> str:
                     pass
                 session = PS.PlanSession(project_id=loop_id, created_at=_time.time())
                 seed_steps(session, wt.default_steps())
-                loop_files.write_plan_session(session)
+                loop_files.write_plan_session(loop_id, session)
+        if _reviewed_again(loop_id, session):
+            return "gated"  # a step changed after your yes is yours to review again
         if PS.is_complete(session):
             return "finalized" if await finalize_plan(loop_id) else "failed"
         current = PS.current_step(session)

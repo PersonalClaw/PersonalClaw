@@ -53,7 +53,7 @@ def _code_loop(*, error: str = "") -> Loop:
     loop = store.create(Loop(id="", name="", kind="code", task="stop escaping titles twice"))
     step = PlanStep(id="step-0", kind="problem_framing", title="Frame it", objective="o")
     step.error = error
-    loop_files.write_plan_session(PlanSession(project_id=loop.id, steps=[step]))
+    loop_files.write_plan_session(loop.id, PlanSession(project_id=loop.id, steps=[step]))
     return loop
 
 

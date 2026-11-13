@@ -1703,9 +1703,10 @@ export interface WaitingItem {
   expires_at: string | null
   current: boolean
   interrupt: Interrupt
-  /** Your exact action: the source's own route and what it takes. An app or an agent reading the
-   *  list is handed the choices and no route or body: nobody else answers one. */
-  answer: { method: string; path: string; takes: unknown[]; body: Record<string, unknown> }
+  /** Your exact action: the source's own route and what it takes, and `headers` when the route
+   *  reads one (a plan step's `If-Match`, the step as the list read it). An app or an agent
+   *  reading the list is handed the choices and no route or body: nobody else answers one. */
+  answer: { method: string; path: string; takes: unknown[]; body: Record<string, unknown>; headers?: Record<string, string> }
   /** The dashboard address that shows it with its card. */
   route: string
   /** The project its work is in, decided once on the gateway (`work_project`), "" for none. */
@@ -7586,6 +7587,9 @@ export interface PlanStep {
   /** The revision an edit of this step's markdown names (`lib/staleWrite.ts`) — a digest of the
    *  draft as read, so an edit of a draft a redraft replaced is refused, not saved over it. */
   revision?: string
+  /** The revision an approval of this step names: of the whole step as its review shows it, so a
+   *  step changed after it was read is not approved as it now is (`409 stale_write`). */
+  review_revision?: string
 }
 /** What a loop waiting on its owner asks (`loop/files.write_question`): the question, why it is
  *  asked, and — when a spend ceiling refused its next call — `spend_cap` with the Settings page
@@ -9633,10 +9637,13 @@ export const api = {
   /** Approve a step. When it completes the walkthrough the reply carries the restored
    *  task mode, and `resumed` says whether a parked run was continued server-side. */
   /** Approve a plan step. `run: 'fresh'` runs the approved plan in a new chat whose only message
-   *  is the plan (`fresh_session` names it); only an approval that completes the plan may. */
-  chatPlanApprove: (session: string, stepId: string, run: 'here' | 'fresh' = 'here') =>
+   *  is the plan (`fresh_session` names it); only an approval that completes the plan may. It
+   *  names the step as it was shown (`base`, its `review_revision`): a step changed since is
+   *  refused `409 stale_write`, and a fresh run over a step not approved as it is now, `409
+   *  plan_step_reviewed_again`. */
+  chatPlanApprove: (session: string, stepId: string, run: 'here' | 'fresh', base: string) =>
     post<{ ok: boolean; session: PlanSession; complete: boolean; resumed: boolean; task_mode: TaskMode; fresh_session?: string | null }>(
-      `/api/chat/sessions/${encodeURIComponent(session)}/plan/approve`, run === 'fresh' ? { step_id: stepId, run } : { step_id: stepId }),
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/approve`, run === 'fresh' ? { step_id: stepId, run } : { step_id: stepId }, basedOn(base)),
   chatPlanCancel: (session: string) =>
     post<{ ok: boolean; task_mode: TaskMode }>(
       `/api/chat/sessions/${encodeURIComponent(session)}/plan/cancel`),
@@ -9887,7 +9894,8 @@ export const api = {
   uLoopPlanSession: (id: string) => get<{ session: PlanSession | null }>(`/api/loops/${encodeURIComponent(id)}/plan-session`).then((d) => d.session),
   uLoopPlanStart: (id: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/start`, {}),
   uLoopPlanRetry: (id: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/retry`, {}),
-  uLoopPlanApprove: (id: string, stepId: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/approve`, { step_id: stepId }),
+  // Names the step as it was shown (`PlanStep.review_revision`), like `chatPlanApprove`.
+  uLoopPlanApprove: (id: string, stepId: string, base: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/approve`, { step_id: stepId }, basedOn(base)),
   uLoopPlanComment: (id: string, stepId: string, text: string) => post<{ ok: boolean; planning: boolean }>(`/api/loops/${encodeURIComponent(id)}/plan/comment`, { step_id: stepId, text }),
   // Names the draft it was made on (`PlanStep.revision`), like `chatPlanEdit`.
   uLoopPlanEdit: (id: string, stepId: string, markdown: string, base: string) => post<{ ok: boolean; session: PlanSession }>(`/api/loops/${encodeURIComponent(id)}/plan/edit`, { step_id: stepId, markdown }, basedOn(base)),

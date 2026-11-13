@@ -174,7 +174,11 @@ def _planned(loop_id: str, sub_goals: list[str]) -> None:
     step.status = PS.StepStatus.APPROVED.value
     step.artifact = {"sub_goals": sub_goals}
     sess.steps = [step]
-    loop_files.write_plan_session(sess)
+    loop_files.write_plan_session(loop_id, sess)
+    # Your yes to it, as the approve route records it (`approval_seals`).
+    from personalclaw.planning import approval_seals
+
+    approval_seals.seal(approval_seals.loop_scope(loop_id), sess, step)
 
 
 @pytest.mark.asyncio
