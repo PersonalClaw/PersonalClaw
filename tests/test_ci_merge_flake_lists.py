@@ -245,20 +245,12 @@ def _bin(folder: Path, name: str, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-@pytest.mark.parametrize(
-    ("event", "with_list", "jobs_ok", "passed"),
-    [
-        pytest.param("pull_request", True, True, True, id="a pull request with both lists"),
-        pytest.param("pull_request", False, True, False, id="no changed list"),
-        pytest.param("pull_request", True, False, False, id="the jobs could not be listed"),
-        pytest.param("push", True, True, False, id="a push"),
-        pytest.param("merge_group", True, True, True, id="a queue commit with both lists"),
-        pytest.param("merge_group", False, True, False, id="a queue commit with no list"),
-    ],
-)
-def test_the_verdict_is_given_the_two_lists_only_on_a_pull_request_with_both(
-    tmp_path: Path, event: str, with_list: bool, jobs_ok: bool, passed: bool
-) -> None:
+def _verdict_step(
+    tmp_path: Path, *, event: str, attempt: str = "1", with_list: bool = True, answers: str
+) -> subprocess.CompletedProcess[str]:
+    """Run the results job's verdict step with stand-ins: ``gh`` answers main's verdict with one
+    that prints its arguments and the text of its ``--first-jobs`` file, and each listing as
+    *answers* (a ``case`` arm per path) says."""
     runner = tmp_path / "runner"
     (runner / "records").mkdir(parents=True)
     if with_list:
@@ -266,14 +258,19 @@ def test_the_verdict_is_given_the_two_lists_only_on_a_pull_request_with_both(
         (runner / "changes" / "changed.z").write_text("docs/a.md\0")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    # gh: main's verdict is a stand-in that prints its arguments; the jobs listing answers or not.
+    judge = (
+        "import sys\n"
+        'print("args:", *sys.argv[1:])\n'
+        "a = sys.argv[1:]\n"
+        'if "--first-jobs" in a:\n'
+        '    print("first:", open(a[a.index("--first-jobs") + 1]).read().strip())\n'
+    )
     _bin(
         bin_dir,
         "gh",
         'case "$*" in\n'
-        "  *contents/tools/ci/verdict.py*)\n"
-        "    printf 'import sys\\nprint(\"args:\", *sys.argv[1:])\\n';;\n"
-        f'  *attempts*) {"echo []" if jobs_ok else "exit 1"};;\n'
+        f"  *contents/tools/ci/verdict.py*) printf '%s' '{judge}';;\n"
+        f"{answers}"
         "  *) exit 1;;\n"
         "esac\n",
     )
@@ -286,7 +283,7 @@ def test_the_verdict_is_given_the_two_lists_only_on_a_pull_request_with_both(
         "GITHUB_EVENT_NAME": event,
         "GITHUB_REPOSITORY": "example/project",
         "GITHUB_RUN_ID": "4242",
-        "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_RUN_ATTEMPT": attempt,
         "GH_TOKEN": "",
         "NEEDS": "{}",
         "KEYS": "[]",
@@ -303,7 +300,74 @@ def test_the_verdict_is_given_the_two_lists_only_on_a_pull_request_with_both(
         timeout=60,
     )
     assert done.returncode == 0, done.stdout + done.stderr
-    [args] = [line for line in done.stdout.splitlines() if line.startswith("args:")]
+    return done
+
+
+def _said(done: subprocess.CompletedProcess[str], prefix: str) -> list[str]:
+    return [
+        line.removeprefix(prefix) for line in done.stdout.splitlines() if line.startswith(prefix)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("event", "with_list", "jobs_ok", "passed"),
+    [
+        pytest.param("pull_request", True, True, True, id="a pull request with both lists"),
+        pytest.param("pull_request", False, True, False, id="no changed list"),
+        pytest.param("pull_request", True, False, False, id="the jobs could not be listed"),
+        pytest.param("push", True, True, False, id="a push"),
+        pytest.param("merge_group", True, True, True, id="a queue commit with both lists"),
+        pytest.param("merge_group", False, True, False, id="a queue commit with no list"),
+    ],
+)
+def test_the_verdict_is_given_the_two_lists_only_on_a_pull_request_with_both(
+    tmp_path: Path, event: str, with_list: bool, jobs_ok: bool, passed: bool
+) -> None:
+    done = _verdict_step(
+        tmp_path,
+        event=event,
+        with_list=with_list,
+        answers=f'  *attempts*) {"echo []" if jobs_ok else "exit 1"};;\n',
+    )
+    [args] = _said(done, "args: ")
     given = "--changed" in args.split() and "--jobs" in args.split()
     assert given is passed, args
     assert ("--changed" in args) is passed and ("--jobs" in args) is passed
+
+
+@pytest.mark.parametrize("attempt", ["1", "2", "3"])
+@pytest.mark.parametrize("event", ["pull_request", "push", "merge_group"])
+def test_the_verdict_is_given_attempt_1_s_jobs_on_every_attempt(
+    tmp_path: Path, event: str, attempt: str
+) -> None:
+    """Attempt 1's jobs, on every attempt and every event: on attempt 1 they are the run's own,
+    and the verdict reads which planned jobs no runner took from them."""
+    done = _verdict_step(
+        tmp_path,
+        event=event,
+        attempt=attempt,
+        answers=(
+            "  *runs/4242/attempts/1/jobs*) echo '[\"attempt 1\"]';;\n"
+            f"  *runs/4242/attempts/{attempt}/jobs*) echo '[\"attempt {attempt}\"]';;\n"
+        ),
+    )
+    [args] = _said(done, "args: ")
+    assert args.split().count("--first-jobs") == 1, args
+    assert f"--attempt {attempt}" in args
+    assert _said(done, "first: ") == ['["attempt 1"]']
+    assert "no attempt 1 jobs" not in done.stdout
+
+
+def test_attempt_1_s_jobs_that_cannot_be_listed_are_not_given(tmp_path: Path) -> None:
+    done = _verdict_step(
+        tmp_path,
+        event="pull_request",
+        attempt="2",
+        answers="  *attempts/1/jobs*) exit 1;;\n  *attempts*) echo [];;\n",
+    )
+    [args] = _said(done, "args: ")
+    assert "--first-jobs" not in args.split(), args
+    assert _said(done, "first: ") == []
+    assert "::warning title=no attempt 1 jobs::" in done.stdout
+    # The flake rule's own listing is this attempt's, and is still given.
+    assert "--jobs" in args.split()

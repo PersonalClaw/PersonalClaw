@@ -15071,19 +15071,9 @@ if [ -n "$judged" ] && [ -f "$RUNNER_TEMP/changes/changed.z" ]; then
   fi
 fi
 """,  # noqa: E501
-        "main's verdict.py, given the flake rule's lists": r"""
-python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
-  --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \
-  --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
-  --key-partners "$RUNNER_TEMP/key-partners.json" \
-  ${proof:+--superseded "$proof"} \
-  ${flakes[@]+"${flakes[@]}"} \
-  --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
-""",  # noqa: E501
         # Attempt 1's jobs, on every attempt: on attempt 1 main's verdict names a planned job no
         # runner took (tools/ci/verdict.py's never_acquired), and on a rerun attempt 2's record
-        # may fill it. Listed before the workflows run it (#4584 step 4): until they do, the step
-        # above stands.
+        # may fill it.
         "attempt 1's jobs, on every attempt": r"""
 first=()
 if gh api --paginate --slurp \
@@ -15123,13 +15113,8 @@ fi
 #: line (publishing a plan before the check that refuses it) fails as an extra line does.
 #: The verdict step that gives main's verdict the flake rule's two lists, on a pull request's run
 #: and (0.4.0 A1) a queue commit's: the queue takes the pull request's flake rule.
+#: It also gives main's verdict attempt 1's jobs, on every attempt.
 _QUEUE_FLAKE_VERDICT = (
-    "the verdict's inputs, read",
-    "the flake rule's two lists, on a pull request or a queue commit only",
-    "main's verdict.py, given the flake rule's lists",
-)
-#: The same verdict step, also giving main's verdict attempt 1's jobs on every attempt.
-_FIRST_ATTEMPT_VERDICT = (
     "the verdict's inputs, read",
     "the flake rule's two lists, on a pull request or a queue commit only",
     "attempt 1's jobs, on every attempt",
@@ -15167,7 +15152,6 @@ _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("the runner's identity",),
         ("main's superseded.py, over the suite shards a newer push to main replaced",),
         _QUEUE_FLAKE_VERDICT,
-        _FIRST_ATTEMPT_VERDICT,
     ),
 }
 
@@ -15197,17 +15181,13 @@ _TIER_STEP_LINES: dict[str, dict[tuple[str, ...], tuple[str, ...]]] = {
 }
 #: The listed steps a tier workflow may run or leave out, by job: each is held to its listed lines
 #: when it runs. A step a row names lands in two merges (#4584 step 4): these rows first, with
-#: the step here, then the workflow, which takes it out of here. Two wait: the results job's
-#: verdict step that gives main's verdict attempt 1's jobs, and the verdict step it replaces. The
-#: one-of rule below holds each results job to exactly one of them either way.
-_TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {
-    _RESULTS_JOB: frozenset({_QUEUE_FLAKE_VERDICT, _FIRST_ATTEMPT_VERDICT}),
-}
+#: the step here, then the workflow, which takes it out of here. None waits today.
+_TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {}
 #: Listed steps of which each tier workflow's job runs exactly one: its plan step, and its results
 #: job's verdict.
 _TIER_ONE_OF: dict[str, frozenset[tuple[str, ...]]] = {
     _PLAN_JOB: frozenset({_PLAN_COMPARED}),
-    _RESULTS_JOB: frozenset({_QUEUE_FLAKE_VERDICT, _FIRST_ATTEMPT_VERDICT}),
+    _RESULTS_JOB: frozenset({_QUEUE_FLAKE_VERDICT}),
 }
 _STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
 #: The actions a stage job's steps use besides its two lines: the checkouts, the setup action,
@@ -15381,30 +15361,8 @@ def _tier_run(block: str) -> str:
     )
 
 
-#: The flake rule's lists and the verdict's call, as the workflows spell them (0.4.0 A1).
-_QUEUE_FLAKE_CALL = _tier_run(
-    _TIER_LINES[_RESULTS_JOB][
-        "the flake rule's two lists, on a pull request or a queue commit only"
-    ]
-) + _tier_run(_TIER_LINES[_RESULTS_JOB]["main's verdict.py, given the flake rule's lists"])
-
-
-def _wired(text: str) -> str:
-    """A tier workflow's text, which runs one of the listed verdict steps' calls."""
-    assert (
-        _QUEUE_FLAKE_CALL in text or _FIRST_ATTEMPT_CALL in text
-    ), "the workflow runs neither listed verdict step"
-    return text
-
-
-def _with_a_line_of_its_own(text: str) -> str:
-    text = _wired(text)
-    assert "          flakes=()\n" in text
-    return text.replace("          flakes=()\n", "          flakes=()\n          rm -rf ~\n", 1)
-
-
-#: The flake rule's lists, attempt 1's jobs and the verdict's call that gives main's verdict both.
-_FIRST_ATTEMPT_CALL = (
+#: The flake rule's lists, attempt 1's jobs and the verdict's call, as the workflows spell them.
+_QUEUE_FLAKE_CALL = (
     _tier_run(
         _TIER_LINES[_RESULTS_JOB][
             "the flake rule's two lists, on a pull request or a queue commit only"
@@ -15419,34 +15377,38 @@ _FIRST_ATTEMPT_CALL = (
 )
 
 
-def _first_attempt_wired(text: str) -> str:
-    """A tier workflow whose verdict step also gives main's verdict attempt 1's jobs, as listed,
-    whichever listed step it runs."""
-    return _wired(text).replace(_QUEUE_FLAKE_CALL, _FIRST_ATTEMPT_CALL, 1)
+def _wired(text: str) -> str:
+    """A tier workflow's text, which runs the listed verdict step's call."""
+    assert _QUEUE_FLAKE_CALL in text, "the workflow does not run the listed verdict step"
+    return text
 
 
-def _first_attempt_with_a_line_of_its_own(text: str) -> str:
-    text = _first_attempt_wired(text)
+def _with_a_line_of_its_own(text: str) -> str:
+    text = _wired(text)
+    assert "          flakes=()\n" in text
+    return text.replace("          flakes=()\n", "          flakes=()\n          rm -rf ~\n", 1)
+
+
+#: The verdict step's lines that give main's verdict attempt 1's jobs.
+_FIRST_JOBS_RUN = _tier_run(_TIER_LINES[_RESULTS_JOB]["attempt 1's jobs, on every attempt"])
+_FIRST_JOBS_ARG = '            ${first[@]+"${first[@]}"} \\\n'
+
+
+def _first_jobs_with_a_line_of_their_own(text: str) -> str:
+    text = _wired(text)
     return text.replace("          first=()\n", "          first=()\n          rm -rf ~\n", 1)
 
 
-def _no_verdict_call(text: str) -> str:
-    """The workflow's verdict step without its call, whichever listed step it runs."""
+def _without_first_jobs(text: str) -> str:
+    """The verdict step as it was before it gave main's verdict attempt 1's jobs."""
     text = _wired(text)
-    call = _FIRST_ATTEMPT_CALL if _FIRST_ATTEMPT_CALL in text else _QUEUE_FLAKE_CALL
-    return text.replace(call, "", 1)
+    assert _FIRST_JOBS_RUN in text and _FIRST_JOBS_ARG in text
+    return text.replace(_FIRST_JOBS_RUN, "", 1).replace(_FIRST_JOBS_ARG, "", 1)
 
 
-def _on_the_attempt_1_step(control: Control) -> Control:
-    """``control`` on a tree whose two workflows already run the verdict step that gives main's
-    verdict attempt 1's jobs, so each check holds on either listed step."""
-    wired = _both(_edited(_PR_YML, _first_attempt_wired), _edited(_MERGE_YML, _first_attempt_wired))
-    return Control(
-        f"{control.name}, on the step with attempt 1's jobs",
-        _both(wired, control.plant),
-        control.fails,
-        control.expect,
-    )
+def _no_verdict_call(text: str) -> str:
+    """The workflow's verdict step without its call."""
+    return _wired(text).replace(_QUEUE_FLAKE_CALL, "", 1)
 
 
 def _edited(rel: str, edit: Callable[[str], str]) -> Callable[[Path], None]:
@@ -15458,9 +15420,8 @@ def _edited(rel: str, edit: Callable[[str], str]) -> Callable[[Path], None]:
     return plant
 
 
-#: The verdict step's controls, each run on the tree as it is and on one already on the step that
-#: gives main's verdict attempt 1's jobs: the flake rule's wiring (tools/ci/verdict.py) is run,
-#: and each results job runs one verdict step.
+#: The verdict step's controls: the flake rule's wiring (tools/ci/verdict.py) and attempt 1's jobs
+#: are run, and each results job runs one verdict step.
 _VERDICT_STEP_CONTROLS = (
     Control("merge.yml running the flake rule's wiring, as listed, passes",
             _edited(_MERGE_YML, _wired), fails=False),
@@ -15485,8 +15446,8 @@ _VERDICT_STEP_CONTROLS = (
 
 def _twice(text: str) -> str:
     """merge.yml with a second verdict step before its own, running the same call."""
-    text = _wired(text)
-    call = _FIRST_ATTEMPT_CALL if _FIRST_ATTEMPT_CALL in text else _QUEUE_FLAKE_CALL
+    _wired(text)
+    call = _QUEUE_FLAKE_CALL
     name = "      - name: the verdict over the plan's keys and the run's records\n"
     assert name in text
     second = (
@@ -15567,26 +15528,14 @@ THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
                      "      - name: the partner heads the run tests against\n        id: partners\n"
                      "        run: |\n          set -uo pipefail\n" + _PARTNER_PUBLISH),
                 ), expect="merge.yml job changes step 'the partner heads the run tests against'"),
-        # The verdict step that gives main's verdict attempt 1's jobs is listed before the
-        # workflows run it: either verdict step passes, and each holds its lines.
-        Control("both workflows giving the verdict attempt 1's jobs, as listed, pass",
-                _both(_edited(_PR_YML, _first_attempt_wired),
-                      _edited(_MERGE_YML, _first_attempt_wired)), fails=False),
-        Control("one workflow giving the verdict attempt 1's jobs and one not passes",
-                _edited(_MERGE_YML, _first_attempt_wired), fails=False),
-        Control("attempt 1's jobs with a line of their own",
-                _edited(_MERGE_YML, _first_attempt_with_a_line_of_its_own),
-                expect="merge.yml job results runs 'rm -rf ~'"),
         *_VERDICT_STEP_CONTROLS,
-        *(_on_the_attempt_1_step(c) for c in _VERDICT_STEP_CONTROLS),
-        _plants("a results job running the old verdict step and the new", _MERGE_YML, (
-                    ("      - name: the verdict over the plan's keys and the run's records\n",
-                     "      - name: the verdict with attempt 1's jobs, beside the plain one\n"
-                     "        run: |\n"
-                     + _tier_run(_TIER_LINES[_RESULTS_JOB]["the verdict's inputs, read"])
-                     + _FIRST_ATTEMPT_CALL
-                     + "      - name: the verdict over the plan's keys and the run's records\n"),
-                ), expect="merge.yml job results runs 2 of its verdict steps"),
+        # The verdict step gives main's verdict attempt 1's jobs on every attempt.
+        Control("attempt 1's jobs with a line of their own",
+                _edited(_MERGE_YML, _first_jobs_with_a_line_of_their_own),
+                expect="merge.yml job results runs 'rm -rf ~'"),
+        Control("a verdict step that gives main's verdict no attempt 1's jobs",
+                _edited(_PR_YML, _without_first_jobs),
+                expect="pr.yml job results step \"the verdict over the plan's keys"),
     ),
 )  # fmt: skip
 
