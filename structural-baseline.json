@@ -263,6 +263,7 @@
       "notification_kinds",
       "notification_providers",
       "ocr",
+      "path_form",
       "periodic_sweep",
       "preference_facets",
       "pricing",

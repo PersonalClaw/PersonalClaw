@@ -18,12 +18,16 @@ each path that would run a command is driven with a stand-in that runs nothing.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import subprocess
+import unicodedata
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from names_matched_byte_for_byte import matched_byte_for_byte
 from test_an_off_list_host_is_asked_past_every_grant import (
     _answer,
     _asked,
@@ -524,3 +528,198 @@ def test_an_apps_hook_is_refused_a_delete_of_its_own_folder_before_anything_runs
 
     assert "it would delete the working folder" in str(refused.value)
     ran.assert_not_called()
+
+
+# ── One Unicode form ─────────────────────────────────────────────────────────────────────────────
+#
+# A folder's name can hold a letter written as one code point or as a base letter and a combining
+# mark (Unicode NFC and NFD), and a filesystem may keep or hand back either. A delete is compared
+# with each protected folder in one form, so the folder is named whichever spelling the delete uses.
+
+_FORMS = ["NFC", "NFD"]
+
+
+def _in(form: str, text: str) -> str:
+    return unicodedata.normalize(form, text)
+
+
+#: (what the case covers, the target under this test's folder, the folder it deletes)
+DELETES_BY_EITHER_SPELLING = [
+    ("the home folder", "Café/home", HOME),
+    ("a folder holding the home folder", "Café", HOME),
+    ("the working folder", "Café/work/app", WORKING),
+    ("a folder holding the working folder", "Café/work", WORKING),
+    ("everything in the working folder via a glob", "Café/work/app/*", WORKING),
+    ("everything in a folder holding both via a glob", "Café/*", HOME),
+]
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+@pytest.mark.parametrize(
+    ("target", "kind"),
+    [case[1:] for case in DELETES_BY_EITHER_SPELLING],
+    ids=[case[0] for case in DELETES_BY_EITHER_SPELLING],
+)
+def test_a_delete_of_a_protected_folder_is_named_in_either_unicode_form(
+    tmp_path, monkeypatch, kept, asked, target, kind
+):
+    from personalclaw.protected_folders import protected_delete
+
+    spelled = tmp_path / "spelled"
+    home = spelled / _in(kept, "Café") / "home"
+    work = spelled / _in(kept, "Café") / "work" / "app"
+    home.mkdir(parents=True)
+    work.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    found = protected_delete(f"rm -rf {spelled}/{_in(asked, target)}", cwd=str(work))
+    assert kind in found.kinds, (target, found)
+    build = _in(asked, "Café/work/app/build")
+    assert not protected_delete(f"rm -rf {spelled}/{build}", cwd=str(work))
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_a_delete_of_the_home_folder_names_it_once_in_either_unicode_form(
+    tmp_path, monkeypatch, kept, asked
+):
+    """The home folder going takes the working folder inside it with it: it is named as the one
+    folder, whichever spelling the delete uses."""
+    from personalclaw.protected_folders import protected_delete
+
+    home = tmp_path / _in(kept, "Zoë")
+    work = home / "work" / "app"
+    work.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    found = protected_delete(f"rm -rf {_in(asked, str(home))}", cwd=str(work))
+    assert found.kinds == (HOME,), found
+
+
+@pytest.mark.parametrize("matched", ["as-is", "bytes"])
+@pytest.mark.parametrize("named", _FORMS)
+def test_a_delete_of_the_home_folder_a_link_named_in_its_other_form_points_at_names_it(
+    tmp_path, monkeypatch, named, matched
+):
+    """`$HOME` a link kept in one form and named in the other: a filesystem that matches names byte
+    for byte follows the link only by the spelling it was made with
+    (:mod:`names_matched_byte_for_byte`), so the folder it points at is the home folder all the
+    same."""
+    from personalclaw.protected_folders import protected_delete
+
+    real = tmp_path / "linked-home"
+    real.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    link = tmp_path / _in("NFD" if named == "NFC" else "NFC", "Zoë")
+    link.symlink_to(real)
+    monkeypatch.setenv("HOME", _in(named, str(link)))
+
+    with (
+        matched_byte_for_byte(monkeypatch, tmp_path)
+        if matched == "bytes"
+        else contextlib.nullcontext()
+    ):
+        found = protected_delete(f"rm -rf {real}", cwd=str(elsewhere))
+        beside = protected_delete(f"rm -rf {tmp_path}/notes", cwd=str(elsewhere))
+    assert found.kinds == (HOME,), found
+    assert beside.kinds == (), beside
+
+
+# The shell compares a glob with a name as each is written, so `Cafe?` names a folder kept as a
+# base letter and a combining mark (tests/test_sensitive_path_guard_evasion.py measures that on
+# this machine's shell), `Caf?` one kept as one code point, and `Stra?e` a folder named `Straße`.
+# A delete through such a glob names the folder, whichever spelling the folder it runs in is
+# given by, and so does one in other letter case.
+
+
+@pytest.mark.parametrize("named", _FORMS)
+@pytest.mark.parametrize(
+    ("name", "kept", "glob"),
+    [
+        ("Café", "NFD", "Cafe?"),
+        ("Café", "NFD", "Cafe*"),
+        ("Café", "NFD", "C*"),
+        ("Café", "NFC", "Caf?"),
+        ("Café", "NFC", "Caf*"),
+        ("Café", "NFC", "cAF*"),
+        ("Straße", "NFC", "Stra?e"),
+    ],
+)
+def test_a_glob_deletes_a_working_folder_as_the_shell_expands_it(tmp_path, name, kept, glob, named):
+    from personalclaw.protected_folders import protected_delete
+
+    spelled = tmp_path / "spelled"
+    work = spelled / _in(kept, name) / "app"
+    work.mkdir(parents=True)
+    cwd = _in(named, str(work))
+
+    assert WORKING in protected_delete(f"rm -rf {spelled}/{glob}/app", cwd=cwd).kinds
+    assert not protected_delete(f"rm -rf {spelled}/{glob}/app/build", cwd=cwd)
+
+
+@pytest.mark.parametrize(("kept", "glob"), [("NFD", "Caf?"), ("NFC", "Cafe?")])
+def test_a_glob_written_for_a_names_other_form_names_the_folder_too(tmp_path, kept, glob):
+    """Wider than the shell, never narrower: a glob written for the name's other spelling, which
+    the shell would not expand to the folder, still names it."""
+    from personalclaw.protected_folders import protected_delete
+
+    work = tmp_path / "spelled" / _in(kept, "Café") / "app"
+    work.mkdir(parents=True)
+
+    assert WORKING in protected_delete(f"rm -rf {tmp_path}/spelled/{glob}/app", cwd=str(work)).kinds
+    assert not protected_delete(f"rm -rf {tmp_path}/spelled/{glob}/app/build", cwd=str(work))
+
+
+#: A folder's name kept with one letter composed and another decomposed, as a filesystem that keeps
+#: names as written holds whatever spelling made it.
+_MIXED = "Caf\u00e9Zoe\u0308"
+
+
+def test_the_shell_expands_a_glob_written_as_a_mixed_name_is_kept(tmp_path):
+    """What the row below rests on: the shell compares a glob with a name byte for byte, so a glob
+    that spells the name as it is kept expands to the folder."""
+    folder = tmp_path / _MIXED
+    folder.mkdir()
+    env = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
+    out = subprocess.run(
+        ["/bin/bash", "-c", f'printf "%s\\n" "{tmp_path}"/"{_MIXED}"*'],
+        capture_output=True, env=env, check=True, stdin=subprocess.DEVNULL,
+    ).stdout.decode("utf-8")  # fmt: skip
+    assert out.strip() == str(folder), ascii(out)
+
+
+def test_a_glob_deletes_a_working_folder_whose_name_is_kept_in_neither_form(tmp_path):
+    """🔴 Red before: the glob's part was matched against the name composed and decomposed, and
+    never as it is kept, so a glob written with the name's own letters named nothing, and its
+    delete ran without asking."""
+    from personalclaw.protected_folders import protected_delete
+
+    work = tmp_path / _MIXED
+    (work / "app").mkdir(parents=True)
+    glob = f"{tmp_path}/{_MIXED}*"
+
+    assert WORKING in protected_delete(f"rm -rf {glob}", cwd=str(work)).kinds
+    assert not protected_delete(f"rm -rf {glob}/app/build", cwd=str(work))
+
+
+#: A letter whose two spellings fold apart when case is folded before the letter is decomposed:
+#: alpha with an iota subscript, then a diaeresis.
+_SUBSCRIPT = "\u1fb3\u0308"
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_a_delete_of_the_home_folder_is_named_whichever_way_a_subscripted_letter_is_spelled(
+    tmp_path, monkeypatch, kept, asked
+):
+    from personalclaw.protected_folders import protected_delete
+
+    home = tmp_path / _in(kept, f"x{_SUBSCRIPT}y")
+    work = home / "work"
+    work.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    assert HOME in protected_delete(f"rm -rf {_in(asked, str(home))}", cwd=str(work)).kinds
+    assert not protected_delete(f"rm -rf {_in(asked, str(home))}/work/build", cwd=str(work))

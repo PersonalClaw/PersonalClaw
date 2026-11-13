@@ -16,7 +16,8 @@ path is resolved as the shell and the kernel would resolve it: the home shorthan
 ``~name``) and the home variable (``$HOME``, ``${HOME}``) are expanded, and so is the temporary
 folder's; a relative path is read from the folder the command runs in; the current and parent
 folders (``.``, ``..``), repeated separators and a trailing slash are normalised; links are
-followed; and every comparison ignores letter case, as the default macOS file system does. A glob
+followed; and every comparison ignores letter case and Unicode form (a letter written as one code
+point or as a base letter and a combining mark), as the default macOS file system does. A glob
 removes every path its expansion can be, so ``/*`` deletes a folder holding the home folder, and
 ``~/*`` everything inside it.
 
@@ -38,10 +39,12 @@ import fnmatch
 import os
 import posixpath
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
 from personalclaw.command_effects import Removal, command_effects
+from personalclaw.path_form import folded, kept_spellings
 
 #: The protected folders, in the order a sentence names them.
 ROOT = "root"
@@ -134,6 +137,14 @@ def _forms(path: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(_norm(p) for p in (path, real)))
 
 
+def _kept_forms(path: str) -> tuple[str, ...]:
+    """A protected folder's forms (:func:`_forms`) by every spelling the filesystem keeps its path
+    in (:func:`~personalclaw.path_form.kept_spellings`): a filesystem that matches names byte for
+    byte follows a link to the folder only by the spelling it was made with."""
+    spellings = dict.fromkeys([path, *kept_spellings(path)])
+    return tuple(dict.fromkeys(form for spelled in spellings for form in _forms(spelled)))
+
+
 def home_folders() -> tuple[str, ...]:
     """The owner's home folder, every way the shell or the system names it: ``$HOME``, and the
     folder this account's entry in the user database gives, when it is another."""
@@ -151,8 +162,8 @@ def _folders(cwd: str) -> tuple[_Folder, ...]:
     homes = home_folders()
     return (
         _Folder(ROOT, "/", ("/",)),
-        _Folder(HOME, homes[0] if homes else "", tuple(f for h in homes for f in _forms(h))),
-        _Folder(WORKING, _norm(cwd), _forms(cwd)),
+        _Folder(HOME, homes[0] if homes else "", tuple(f for h in homes for f in _kept_forms(h))),
+        _Folder(WORKING, _norm(cwd), _kept_forms(cwd)),
     )
 
 
@@ -205,10 +216,10 @@ def _physical(absolute: str) -> str:
 def _hits_of_path(absolute: str, folders: tuple[_Folder, ...]) -> list[Hit]:
     hits: list[Hit] = []
     for deleted in dict.fromkeys((_norm(absolute), _physical(absolute))):
-        gone = deleted.casefold()
+        gone = folded(deleted)
         for folder in folders:
             for form in folder.forms:
-                held = form.casefold()
+                held = folded(form)
                 if gone == held:
                     hits.append(Hit(folder.kind, folder.shown, ITSELF))
                 elif gone == "/" or held.startswith(gone.rstrip("/") + "/"):
@@ -284,6 +295,18 @@ def _for_fnmatch(pattern: str) -> str:
     return pattern.replace("[^", "[!").casefold()
 
 
+def _name_matches(pattern: str, name: str) -> bool:
+    """Whether the shell pattern *pattern* can match *name*, a folder's name, which the disk may
+    keep composed, decomposed or with some letters each way: as the shell compares them, the
+    pattern as written against the name as kept and in either form, and each pair also regardless
+    of case, so the answer can only be wider than the shell's."""
+    shell = pattern.replace("[^", "[!")
+    forms = (unicodedata.normalize(form, name) for form in ("NFC", "NFD"))
+    kept = list(dict.fromkeys([name, *forms]))
+    pairs = [(n, shell) for n in kept] + [(n.casefold(), shell.casefold()) for n in kept]
+    return any(fnmatch.fnmatchcase(n, p) for n, p in pairs)
+
+
 def _segments(path: str) -> list[str]:
     return [s for s in path.split("/") if s]
 
@@ -295,14 +318,13 @@ def _matches(parts: list[_Part], segments: list[str]) -> bool:
     if len(parts) != len(segments):
         return False
     for (text, pattern), segment in zip(parts, segments):
-        name = segment.casefold()
         if not pattern:
-            if text.casefold() != name:
+            if folded(text) != folded(segment):
                 return False
             continue
-        if name.startswith(".") and not text.startswith("."):
+        if segment.startswith(".") and not text.startswith("."):
             return False
-        if not fnmatch.fnmatchcase(name, _for_fnmatch(text)):
+        if not _name_matches(text, segment):
             return False
     return True
 
@@ -326,8 +348,8 @@ def _strongest(hits: list[Hit]) -> tuple[Hit, ...]:
     if (root := best.get(ROOT)) is not None and root.how in (ITSELF, CONTENTS):
         return (root,)  # everything on this computer goes with it
     # A holder that is itself a protected folder is that folder going: it is named as such.
-    gone = {h.folder.casefold() for h in best.values() if h.how == ITSELF}
-    kept = [h for h in best.values() if not (h.how == HOLDER and h.deleted.casefold() in gone)]
+    gone = {folded(h.folder) for h in best.values() if h.how == ITSELF}
+    kept = [h for h in best.values() if not (h.how == HOLDER and folded(h.deleted) in gone)]
     return tuple(sorted(kept, key=lambda h: _ORDER.index(h.kind)))
 
 

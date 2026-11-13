@@ -104,7 +104,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from personalclaw.command_paths import folded, kept_spellings
+from personalclaw.path_form import folded, kept_spellings
 
 #: The files, by name under the home.
 OWNER_ONLY_FILES: tuple[str, ...] = ("config.json", "mcp.json")
@@ -344,7 +344,7 @@ def _is_gits(spelling: str) -> bool:
 class _Places:
     """The owner-only places, resolved once for a check of many paths (every path a command
     names), with the home in use when *home* is None. Compared regardless of case and in one
-    Unicode form (``command_paths.folded``), since a case-insensitive disk opens ``CONFIG.JSON``
+    Unicode form (``path_form.folded``), since a case-insensitive disk opens ``CONFIG.JSON``
     as ``config.json``, and a disk may keep or hand back a letter composed or decomposed."""
 
     def __init__(self, home: Path | str | None = None) -> None:
