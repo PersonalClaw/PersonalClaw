@@ -423,6 +423,13 @@ grants, is refused before its message is sent, and the owner is told why.
   tools and the dashboard ask `is_sensitive_path`, the same declarations. What no
   reading of the text can see is
   [limitations §13](../security/limitations.md#13-the-agents-shell-is-screened-not-fenced-from-your-credential-files).
+  A walk over many paths can share one `SensitivePaths`: it makes one when it starts, asks it
+  about each path, and drops it when the walk ends. It resolves the protected places once, when
+  it is made. Each path it is asked about is still resolved on its own, so a link to a protected
+  file is refused as `is_sensitive_path` refuses it. A protected place that changes during the
+  walk, such as a folder made a link or a link added inside one, is seen by the next walk, not by
+  this one. The artifact store's list makes one for each list and asks it about the store's
+  root, every artifact's `meta.json` and, in a search, every `current.html` it reads.
 - **Redaction** — sensitive-path and credential redaction, including
   vendor-token detection patterns (e.g. `xox[bpas]-`). These vendor-shaped
   patterns are deliberate keeps: they are secret-*detection* data; renaming

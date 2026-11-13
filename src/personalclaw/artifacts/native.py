@@ -11,8 +11,9 @@ For file-backed artifacts (``source_path`` set) the live view reads/writes that
 Workspace file directly — the artifact is a *naming + versioning + lifecycle*
 layer over a single on-disk file, not a copy. The pointer is refused when it is set
 unless ``source_files`` admits it, and every read/write of it re-checks it there.
-The artifact's own files are gated by ``is_sensitive_path`` and re-checked to stay
-under the provider root.
+The artifact's own files are gated by ``is_sensitive_path`` (a list asks one
+``SensitivePaths`` about the root, every meta it reads and, in a search, every ``current.html``)
+and re-checked to stay under the provider root.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import json
 import logging
 import re
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -59,6 +60,7 @@ from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.config import loader as config_loader
 from personalclaw.security import (
     MaskConflict,
+    SensitivePaths,
     is_sensitive_path,
     keep_masked_spans,
     stored_name,
@@ -162,24 +164,28 @@ class NativeArtifactProvider(ArtifactProvider):
 
     # ── path helpers (security spine) ──
 
-    def _ensure_root(self) -> Path:
+    def _ensure_root(self, sensitive: Callable[[str], bool] | None = None) -> Path:
         root = self._root
-        if is_sensitive_path(str(root)):
+        if (sensitive or is_sensitive_path)(str(root)):
             raise PermissionError("artifact root resolves to a sensitive path")
         root.mkdir(parents=True, exist_ok=True)
         return root
 
-    def _artifact_dir(self, slug: str) -> Path:
+    def _artifact_dir(self, slug: str, root: Path | None = None) -> Path:
+        """*slug*'s folder under the root, which *root* gives when the caller has already
+        ensured it (:meth:`_ensure_root`) for a walk."""
         if not is_valid_slug(slug):
             raise ValueError(f"invalid slug: {slug!r}")
-        root = self._ensure_root()
+        if root is not None and root != self._root:
+            raise ValueError("a walk's root is not this provider's root")
+        root = root if root is not None else self._ensure_root()
         # Re-check the resolved path stays under root (defense in depth).
         if not (root / slug).resolve().is_relative_to(root.resolve()):
             raise ValueError(f"slug escapes artifact root: {slug!r}")
         return root / slug
 
-    def _read_text(self, path: Path) -> str | None:
-        if is_sensitive_path(str(path)):
+    def _read_text(self, path: Path, sensitive: Callable[[str], bool] | None = None) -> str | None:
+        if (sensitive or is_sensitive_path)(str(path)):
             return None
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -294,17 +300,30 @@ class NativeArtifactProvider(ArtifactProvider):
 
     # ── meta / version I/O ──
 
-    def _meta_path(self, slug: str) -> Path:
-        return self._artifact_dir(slug) / "meta.json"
+    def _meta_path(self, slug: str, root: Path | None = None) -> Path:
+        return self._artifact_dir(slug, root) / "meta.json"
 
-    def _read_meta(self, slug: str) -> Artifact | None:
-        path = self._meta_path(slug)
-        raw = self._read_text(path)
+    def _read_meta(
+        self,
+        slug: str,
+        *,
+        sensitive: Callable[[str], bool] | None = None,
+        root: Path | None = None,
+    ) -> Artifact | None:
+        """*slug*'s meta, or None when it is not there, not to be read or not a meta. A walk
+        passes one *sensitive* checker for all its reads and the *root* it ensured once
+        (:meth:`list`); alone, each read checks for itself."""
+        path = self._meta_path(slug, root)
+        raw = self._read_text(path, sensitive)
         if raw is None:
             return None
         try:
-            return Artifact.from_dict(json.loads(raw))
-        except (json.JSONDecodeError, ValueError, TypeError):
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                logger.warning("corrupt artifact meta (not an object): %s", path)
+                return None
+            return Artifact.from_dict(data)
+        except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
             logger.warning("corrupt artifact meta: %s", path)
             return None
 
@@ -313,22 +332,38 @@ class NativeArtifactProvider(ArtifactProvider):
         d.mkdir(parents=True, exist_ok=True)
         atomic_write(d / "meta.json", json.dumps(art.to_dict(persist=True), indent=2))
 
-    def _current_content(self, slug: str) -> str | None:
-        return self._read_text(self._artifact_dir(slug) / "current.html")
+    def _current_content(
+        self,
+        slug: str,
+        *,
+        sensitive: Callable[[str], bool] | None = None,
+        root: Path | None = None,
+    ) -> str | None:
+        return self._read_text(self._artifact_dir(slug, root) / "current.html", sensitive)
 
-    def _live_body(self, art: Artifact, places: Sequence[str] | None = None) -> str | None:
+    def _live_body(
+        self,
+        art: Artifact,
+        places: Sequence[str] | None = None,
+        *,
+        sensitive: Callable[[str], bool] | None = None,
+        root: Path | None = None,
+    ) -> str | None:
         """The body a live read of *art* shows — what ``get()`` hands out as ``content``.
 
         The raw-URL ref for a binary kind; for a file-backed artifact the file it points at, or
         ``current.html`` when that file cannot be read; else ``current.html``. One definition,
         because a body save's precondition (``update(expect_revision=…)``) must be compared
         against exactly what the read it was built from showed. *places* as
-        :meth:`_try_read_source_path` takes them.
+        :meth:`_try_read_source_path` takes them; *sensitive* and *root* as :meth:`_read_meta`
+        takes them, for ``current.html``.
         """
         if is_binary_kind(art.kind):
             return self._raw_ref(art.slug, art.version)
         live = self._try_read_source_path(art.source_path, places) if art.source_path else None
-        return live if live is not None else self._current_content(art.slug)
+        if live is not None:
+            return live
+        return self._current_content(art.slug, sensitive=sensitive, root=root)
 
     def _version_content(self, slug: str, version: int) -> str | None:
         return self._read_text(self._artifact_dir(slug) / "versions" / f"v{version}.html")
@@ -531,7 +566,14 @@ class NativeArtifactProvider(ArtifactProvider):
         # the artifact card shows body content; searching less than the card shows
         # makes visible text unfindable. Even then, metadata/collection matches
         # avoid the body read, and list-shaped responses still omit content.
-        root = self._ensure_root()
+        # One sensitive-path checker for the whole list, as `SensitivePaths` asks of a walk:
+        # `is_sensitive_path` resolves every protected location on each call, and two calls an
+        # artifact (its folder's root, its meta) were nearly all of a list's time. It is asked
+        # about the root, every meta and, in a search, every `current.html` it reads; each path
+        # is still resolved and refused on its own. A file-backed artifact's own file goes through
+        # `source_files.admitted`, which makes a checker of its own for each such file.
+        sensitive = SensitivePaths()
+        root = self._ensure_root(sensitive)
         with self._lock:
             slugs = [p.name for p in root.iterdir() if p.is_dir()] if root.exists() else []
         needle = q.casefold() if q else ""
@@ -540,7 +582,13 @@ class NativeArtifactProvider(ArtifactProvider):
         places: Sequence[str] | None = None
         out: list[Artifact] = []
         for slug in slugs:
-            art = self._read_meta(slug)
+            try:
+                art = self._read_meta(slug, sensitive=sensitive, root=root)
+            except ValueError:
+                # A folder that names no valid slug, or one that resolves out of the root: the
+                # rest of the store is still listed.
+                logger.warning("artifact list: skipped the folder %r", slug)
+                continue
             if art is None:
                 continue
             if tag and tag not in art.tags:
@@ -572,8 +620,18 @@ class NativeArtifactProvider(ArtifactProvider):
                 if needle not in metadata:
                     if places is None and art.source_path:
                         places = source_files.places()
-                    detail = self._get(art.slug, places=places)
-                    if detail is None or needle not in (detail.content or "").casefold():
+                    # The body alone, as a live read shows it (`get`'s), with the list's
+                    # checker: the row is this list's own, so a second meta read adds nothing.
+                    try:
+                        with self._lock:
+                            body = self._live_body(art, places, sensitive=sensitive, root=root)
+                    except ValueError:
+                        # A meta whose slug is no valid slug, or names a folder that resolves out
+                        # of the root: its body is not read, and the rest of the search still
+                        # answers.
+                        logger.warning("artifact list: skipped the body of %r", slug)
+                        continue
+                    if body is None or needle not in body.casefold():
                         continue
             art.content = None  # list omits content
             out.append(art)
@@ -621,12 +679,6 @@ class NativeArtifactProvider(ArtifactProvider):
         return None
 
     def get(self, slug: str, *, version: int | None = None) -> Artifact | None:
-        return self._get(slug, version=version)
-
-    def _get(
-        self, slug: str, *, version: int | None = None, places: Sequence[str] | None = None
-    ) -> Artifact | None:
-        """:meth:`get`, with the places a pointer may name already resolved by the caller."""
         with self._lock:
             art = self._read_meta(slug)
             if art is None:
@@ -653,7 +705,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 art.live_dirty = False
                 return art
             # Live view: disk for file-backed, else current.html.
-            live = self._live_body(art, places)
+            live = self._live_body(art)
             art.content = live
             nums = self._list_version_numbers(slug)
             latest_snap = self._version_content(slug, nums[-1]) if nums else None
