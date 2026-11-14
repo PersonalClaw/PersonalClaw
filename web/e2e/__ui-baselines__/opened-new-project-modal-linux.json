@@ -2,128 +2,42 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Bind\"",
-        "button \"Cancel\"",
-        "button \"Close\"",
-        "button \"Enter a project name first\"",
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input"
+        "button \"Close\""
       ],
       "390": [
-        "button \"Bind\"",
-        "button \"Cancel\"",
-        "button \"Close\"",
-        "button \"Enter a project name first\"",
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input",
-        "input \"Make it your default project — new tasks and loops start her\""
+        "button \"Close\""
       ],
       "412": [
-        "button \"Bind\"",
-        "button \"Cancel\"",
-        "button \"Close\"",
-        "button \"Enter a project name first\"",
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input",
-        "input \"Make it your default project — new tasks and loops start her\""
+        "button \"Close\""
       ],
       "768": [
-        "button \"Bind\"",
-        "button \"Cancel\"",
-        "button \"Close\"",
-        "button \"Enter a project name first\"",
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input",
-        "input \"Make it your default project — new tasks and loops start her\""
+        "button \"Close\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#",
-        "<span> \"New project\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "button \"Bind\"",
-        "button \"Cancel\"",
-        "button \"Close\"",
-        "button \"Enter a project name first\"",
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input"
+        "button \"Close\""
       ],
       "390": [
-        "button \"Bind\"",
-        "button \"Cancel\"",
-        "button \"Close\"",
-        "button \"Enter a project name first\"",
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input",
-        "input \"Make it your default project — new tasks and loops start her\""
+        "button \"Close\""
       ],
       "412": [
-        "button \"Bind\"",
-        "button \"Cancel\"",
-        "button \"Close\"",
-        "button \"Enter a project name first\"",
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input",
-        "input \"Make it your default project — new tasks and loops start her\""
+        "button \"Close\""
       ],
       "768": [
-        "button \"Bind\"",
-        "button \"Cancel\"",
-        "button \"Close\"",
-        "button \"Enter a project name first\"",
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\"",
-        "input",
-        "input \"Make it your default project — new tasks and loops start her\""
+        "button \"Close\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#",
-        "<span> \"New project\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ]
     }
   }

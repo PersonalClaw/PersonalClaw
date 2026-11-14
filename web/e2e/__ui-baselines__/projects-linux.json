@@ -1,37 +1,10 @@
 {
   "dark": {
     "targets": {
-      "320": [
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\""
-      ],
-      "390": [
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\""
-      ],
-      "412": [
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\""
-      ],
-      "768": [
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\""
-      ]
+      "320": [],
+      "390": [],
+      "412": [],
+      "768": []
     },
     "known": {
       "200% text zoom": [
@@ -41,37 +14,10 @@
   },
   "light": {
     "targets": {
-      "320": [
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\""
-      ],
-      "390": [
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\""
-      ],
-      "412": [
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"More actions\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\""
-      ],
-      "768": [
-        "button \"Import\"",
-        "button \"Loops\"",
-        "button \"New project\"",
-        "button[role=radio] \"Chats by project\"",
-        "button[role=radio] \"Projects\""
-      ]
+      "320": [],
+      "390": [],
+      "412": [],
+      "768": []
     },
     "known": {
       "200% text zoom": [
