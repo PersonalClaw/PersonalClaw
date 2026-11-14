@@ -12,12 +12,14 @@ looked up (`mcp_client.unresolved_host_text`), and a probe that ran out of time 
 once more, briefly, and names the lookup when it fails or hangs. An address, or a connection a
 proxy makes, is not looked up here, and reads that the server did not answer.
 
-Nothing here touches the network: every lookup is this test's own.
+Nothing here touches the network: every lookup is this test's own, the egress guard's too, which a
+start asks about the server's URL before it connects.
 """
 
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import socket
 from unittest.mock import patch
 
@@ -66,8 +68,20 @@ def test_a_connection_that_failed_on_its_name_says_the_host_could_not_be_looked_
     assert "Errno" not in said and words not in said
 
 
+def _guard_looks_up(host: str) -> list[str]:
+    """The egress guard's lookup of the server's host (``net.guard._resolve``), which the start
+    asks before it connects: an address is its own answer, and a name resolves to a public one,
+    so the start reaches the connection and the time the probe waits is its own."""
+    try:
+        return [str(ipaddress.ip_address(host))]
+    except ValueError:
+        return ["93.184.215.14"]
+
+
 class _Probe:
-    """``_probe_remote`` of a server that never answers, with this test's own name lookup."""
+    """``_probe_remote`` of a server that never answers, with this test's own name lookups: the
+    egress guard's, answered (:func:`_guard_looks_up`), and the probe's own once the server has
+    not answered (*look_up*)."""
 
     def __init__(self, url: str, look_up) -> None:
         self.server = McpServerInfo(name="paperless", url=url, transport="http")
@@ -87,6 +101,7 @@ class _Probe:
         # the probe says rather than on the patch.
         with (
             patch("personalclaw.mcp_discovery._get_probe_timeout", return_value=0.2),
+            patch("personalclaw.net.guard._resolve", _guard_looks_up),
             patch("personalclaw.mcp_discovery._look_up", look_up, create=True),
             patch("personalclaw.mcp_discovery._proxied", return_value=False, create=True),
             patch("personalclaw.mcp_client.McpServerConn._open_transport", never_answers),
@@ -133,6 +148,31 @@ async def test_an_address_is_never_looked_up():
     result = await probe.run()
     assert result.error == "127.0.0.1 did not answer within 0.2 seconds."
     assert probe.looked_up == []
+
+
+@pytest.mark.asyncio
+async def test_no_probe_here_asks_this_computers_resolver(monkeypatch) -> None:
+    """🔴 Before: the start's egress check looked the host up through this computer's resolver
+    (``net.guard._resolve``), inside the probe's 0.2 s, so a slow resolver read "Looking up
+    paperless.invalid did not finish within 0.2 seconds" where a probe here expects its own
+    sentence. With the resolver recording each name it is asked and answering at once that there
+    is no such name, every probe still says its own sentence, and none of them asked it."""
+    asked: list[str] = []
+
+    def no_such_name(host, *_args, **_kwargs):
+        asked.append(str(host))
+        raise socket.gaierror(-2, "Name or service not known")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_such_name)
+    for look_up, said in (
+        (_does_not_resolve, UNRESOLVED),
+        (_hangs, SLOW_LOOKUP),
+        (_resolves, "paperless.invalid did not answer within 0.2 seconds."),
+    ):
+        assert (await _Probe(URL, look_up).run()).error == said
+    address = await _Probe("http://192.0.2.1:9/mcp", _does_not_resolve).run()
+    assert address.error == "192.0.2.1 did not answer within 0.2 seconds."
+    assert "paperless.invalid" not in asked and "192.0.2.1" not in asked, asked
 
 
 def test_a_connection_a_proxy_makes_is_not_this_computers_lookup(monkeypatch) -> None:
