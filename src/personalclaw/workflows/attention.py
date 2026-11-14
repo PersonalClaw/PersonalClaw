@@ -349,7 +349,9 @@ def _announce_workflow_end(state: Any, run: Any, status: Any) -> str:
             item_kind=ItemKind.NEEDS_INPUT.value,
             title=title,
             body=f"{name} — {reason}" if reason else name,
-            refs={"workflow": run.id},
+            # The ending rides the refs, so the waiting list knows an escalated run by what only
+            # this raiser files (``waiting.inbox_kind``), never by its dedup key.
+            refs={"workflow": run.id, "ending": ending},
             dedup_key=f"workflow-run:{run.id}:{ending}",
         )
     except Exception:
@@ -440,7 +442,12 @@ def _announce_loop_end(state: Any, run: Any, status: Any, *, refused: bool = Fal
                     str(attention.get("cause") or ""), "Loop stopped before it finished"
                 ),
                 body=f"{title} — {said}" if said else title,
-                refs={"loop": run.id, "loop_kind": run.loop_kind, "workflow": run.id},
+                refs={
+                    "loop": run.id,
+                    "loop_kind": run.loop_kind,
+                    "workflow": run.id,
+                    "ending": "escalated",
+                },
                 dedup_key=f"loop-run:{run.id}:escalated",
             )
     except Exception:

@@ -22,7 +22,7 @@ from personalclaw.config.loader import AppConfig
 from personalclaw.declined_calls import named, said, under
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import kinds, posture, store
-from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
+from personalclaw.loop.loop import WAITS_ON_YOU, Loop, LoopStatus, LoopStopReason
 
 logger = logging.getLogger(__name__)
 
@@ -872,10 +872,11 @@ async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop 
     # The cycle this steer was sent at, projected off the ledger rather than read
     # from the retired `loops.total_cycles` column.
     loop_files.append_nudge(loop_id, text, sent_at_cycle=loop_files.cycles_completed(loop_id))
-    # A steer on a NEEDS_INPUT (awaiting answer) or BLOCKED (stall-paused, its nudge
-    # loop deactivated) loop must RE-ARM the worker so the steer is actually consumed
-    # (guidance.txt is read by no one while the loop is stopped).
-    if loop.status in (LoopStatus.NEEDS_INPUT.value, LoopStatus.BLOCKED.value):
+    # A steer on a NEEDS_INPUT (awaiting answer), BLOCKED (stall-paused, its nudge loop
+    # deactivated) or STAGNANT (cut off by the supervisor, which polls only running loops) loop
+    # must RE-ARM the worker so the steer is actually consumed (guidance.txt is read by no one
+    # while the loop is stopped). Each is listed as waiting on your answer (`waiting`).
+    if loop.status in WAITS_ON_YOU:
         # Don't re-arm into a missing workspace: start() re-provisions against it and
         # would run against nothing. If the user typed an answer instead of re-picking
         # a gone brownfield folder, keep them on NEEDS_INPUT with the re-pick prompt.

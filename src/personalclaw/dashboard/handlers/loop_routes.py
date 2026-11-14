@@ -28,6 +28,7 @@ from personalclaw.loop.loop import (
     KINDS,
     PRELAUNCH_STATUSES,
     REPORT_CHOICES,
+    WAITS_ON_YOU,
     Loop,
     LoopStatus,
 )
@@ -1021,9 +1022,13 @@ async def api_loop_action(request: web.Request) -> web.Response:
     if action not in ACTION_SOURCE_STATES:
         return web.json_response({"error": f"Unknown action: {action}"}, status=400)
     loop = store.get(cid)
-    if loop is not None and action == "start" and loop.status == LoopStatus.REVIEW.value:
-        # Launching a plan that waits in review is your answer to it: only you give it, never an
-        # agent's tool nor an app (`approval_answer`), as at every door to an ask.
+    # Launching a plan that waits in review, and resuming a loop that waits on you (its question,
+    # a stall, a block: ``WAITS_ON_YOU``), are your answer to it: only you give it, never an agent's
+    # tool nor an app (`approval_answer`), as at every door to an ask and as the nudge holds.
+    answers = (
+        action == "start" and loop is not None and loop.status == LoopStatus.REVIEW.value
+    ) or (action == "resume" and loop is not None and loop.status in WAITS_ON_YOU)
+    if answers:
         refused = approval_answer.forbidden(request, what=f"loop:{cid}", asked_by="")
         if refused is not None:
             return refused
@@ -1337,9 +1342,10 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
     if not text:
         return web.json_response({"error": "text required"}, status=400)
     proj = store.get(cid)
-    if proj is not None and proj.status == LoopStatus.NEEDS_INPUT.value:
-        # A nudge to a loop waiting on you is your answer to its question: only you give it,
-        # never an agent's tool nor an app (`approval_answer`), as at every door to an ask.
+    if proj is not None and proj.status in WAITS_ON_YOU:
+        # A nudge to a loop waiting on you is your answer to its question, or to the stall or
+        # block it stopped at (each listed as waiting on you, `waiting`): only you give it, never
+        # an agent's tool nor an app (`approval_answer`), as at every door to an ask.
         refused = approval_answer.forbidden(request, what=f"loop:{cid}", asked_by="")
         if refused is not None:
             return refused
@@ -1399,7 +1405,7 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
                 {"error": f"Unknown task id for this loop: {task_id}"}, status=400
             )
     # A steer on a loop that waits starts its worker again (`manager.nudge`), as a resume does.
-    if proj.status in (LoopStatus.NEEDS_INPUT.value, LoopStatus.BLOCKED.value):
+    if proj.status in WAITS_ON_YOU:
         blocked = await validation.worker_tools_blocker(proj)
         if blocked:
             return _cannot_use_tools(blocked)

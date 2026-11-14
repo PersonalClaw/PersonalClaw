@@ -354,7 +354,7 @@ def test_a_dismissed_proposal_does_not_come_back(home):
     store.items[item_id].status = ItemStatus.DISMISSED.value
 
     # Prove the premise: the inbox key would NOT dedup a dismissed row.
-    assert inbox_mod._find_open_by_dedup(store, key) is None
+    assert inbox_mod._find_open_by_dedup(store, key, "planning") is None
 
     # And prove the seen-set does. Touch the file so the fingerprint cannot be what saves us.
     pad.write_text("- [ ] plan the nursery renovation\n\n", encoding="utf-8")

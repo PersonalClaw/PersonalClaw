@@ -167,7 +167,9 @@ approval waiting on you, in any conversation, so it can show you each one. It an
 even to relay your answer: only you answer an approval (`approval_answer`). The waiting list is
 the same kind of exception: an app that declares `/api/waiting` reads everything waiting on you,
 from every source, each with its brief and the choices it takes, but with no route to answer it
-by and no token that answers it, and it answers none.
+by and no token that answers it, and it answers none. The asks only your Inbox raised (a folder
+waiting for your trust, a held action, a run waiting after you declined a step, an escalated run)
+are rows of your Inbox, which no app reads, so they are left out of an app's list.
 
 What your conversations say is yours to read, too. An app reads only the conversations it
 started: a transcript, its map, a tool's full output, an export, a draft skill or a
@@ -179,7 +181,7 @@ it, and an inbox item only if the app raised it (its own proposal). The approval
 one exception there too: it hears your approvals, which it already reads through
 `/api/approvals`. The waiting list's ring, `waiting_changed`, is the other: it says only that
 something waiting on you was asked or ended, and an app hears it only when its manifest declares
-`/api/waiting`, the list it already reads whole. An app also may not clear your notifications, mark
+`/api/waiting`, the list it already reads. An app also may not clear your notifications, mark
 them read or change what reaches you.
 
 What reached you is yours the same way. An app reads the notifications it raised and the
