@@ -1022,10 +1022,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # YOLO / auto-approve is process-global trust state owned by
         # personalclaw.trust_mode (single source of truth). The state object
         # delegates to it and registers a callback to clear per-session approval
-        # policies when YOLO turns off. See enable_yolo / is_yolo_active below.
-        from personalclaw import trust_mode as _trust
-
-        _trust.register_on_disable(self._on_yolo_disabled)
+        # policies when YOLO turns off, and rings your pages when it moves (`ws_state`).
+        self._listen_to_trust_mode()
         self.no_crons: bool = False  # --no-crons flag: cron execution disabled
         # The gateway's dispatch for an automation's fire, attached at boot: a webhook's fire and
         # a view's refresh run through it as every fire does (`gateway._fire_store_trigger`).
@@ -1473,9 +1471,6 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         downgraded by the dashboard toggle.
         """
         trust_mode.enable_yolo(ttl_secs=self._YOLO_TTL, from_config=from_config)
-        # The corner's YOLO mark reads the status again now (``YoloChip``); your own pages alone
-        # hear it (``ws_state.OWNER_REFRESH_KINDS``).
-        self.push_refresh("yolo")
 
     def disable_yolo(self) -> None:
         """Turn off YOLO mode. Per-session trust is untouched."""
@@ -1507,9 +1502,6 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
                 self._log.warning("SEL audit failed for YOLO %s", reason, exc_info=True)
         for session in self._sessions.values():
             self.push_chat_policy(session)
-        # Off, however it went (a toggle, its time running out, the config): the corner's YOLO
-        # mark goes now, on your own pages alone (``ws_state.OWNER_REFRESH_KINDS``).
-        self.push_refresh("yolo")
 
     def is_yolo_active(self) -> bool:
         """Return whether YOLO mode is currently active, auto-expiring after TTL."""
@@ -2624,9 +2616,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         ``mcp`` (what an MCP server's card says may have changed — ``mcp_status.announce``),
         ``suggestions`` / ``attachments`` (a suggestions refresh landed, an attachment was read),
         ``voice`` (a voice setting an open chat reads changed: ``voice.*`` or text-to-speech's
-        settings, whoever saved them), the self-update's ``update_available`` / ``updating`` /
-        ``update_failed``, and ``yolo`` (YOLO turned on or off: your own pages alone hear it,
-        ``ws_state.OWNER_REFRESH_KINDS``).
+        settings, whoever saved them), and the self-update's ``update_available`` / ``updating`` /
+        ``update_failed``.
         """
         self._broadcast({"_type": "refresh", "kinds": ",".join(kinds)})
 

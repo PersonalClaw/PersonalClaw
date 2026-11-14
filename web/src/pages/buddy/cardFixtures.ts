@@ -59,10 +59,14 @@ const alertOn = (kind: AlertKind, brief: string): Truth => {
 
 const base: Fixture = {
   focus: FOCUS, line: said({ kind: 'phase', phase: FOCUS.phase, work: FOCUS }), steps: STEPS, alert: null, inSight: IN_SIGHT.slice(0, 2),
-  openHref: '#/mission-control',
+  openHref: '#/dashboard',
 }
 
-export const CARD_FIXTURES: readonly { key: string; label: string; card: Fixture }[] = [
+/** What the live card links to (`liveCard.ts`): Needs you while something waits on you, else Home. */
+const opens = (card: Fixture): Fixture =>
+  ({ ...card, openHref: card.alert || (card.waiting ?? 0) > 0 ? '#/mission-control' : '#/dashboard' })
+
+const SCENES: readonly { key: string; label: string; card: Fixture }[] = [
   {
     key: 'approval', label: 'An approval, two more waiting',
     card: { ...base, focus: { ...FOCUS, phase: 'approval', line: 'Bash' }, line: said(alertOn('approval', 'Bash')), state: 'approval', alert: { kind: 'approval', row: APPROVAL, choices: [] }, waiting: 2 },
@@ -105,3 +109,6 @@ export const CARD_FIXTURES: readonly { key: string; label: string; card: Fixture
     },
   },
 ]
+
+export const CARD_FIXTURES: readonly { key: string; label: string; card: Fixture }[] =
+  SCENES.map((scene) => ({ ...scene, card: opens(scene.card) }))

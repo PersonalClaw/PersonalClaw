@@ -16,7 +16,7 @@ import json
 
 import pytest
 from chat_test_helpers import _make_state
-from test_ws_broadcast_gate import _app_socket, _FakeWS
+from test_ws_broadcast_gate import _FakeWS
 
 
 @pytest.fixture
@@ -74,8 +74,28 @@ def sockets(monkeypatch, tmp_path):
     monkeypatch.setattr(DashboardState, "_remove_ws", lambda self, ws: None, raising=False)
     owner = _FakeWS()
     st._ws_clients.append(owner)
-    app = _app_socket(st, "an-app", ["refresh"], monkeypatch)
-    return st, owner, app
+    # Two apps, each read by its own manifest: one declares `refresh`, and the differential's
+    # control, which declared none, hears none of it.
+    declared = {"an-app": ["refresh"], "a-quiet-app": []}
+    socks = {}
+    for name in declared:
+        socks[name] = _FakeWS()
+        st._ws_clients.append(socks[name])
+        st._ws_app[socks[name]] = name
+
+    class _Checker:
+        def __init__(self, events: list[str]) -> None:
+            self.events = events
+
+        def can_use_event(self, event_type: str) -> bool:
+            return event_type in self.events
+
+    monkeypatch.setattr(
+        "personalclaw.apps.permissions.checker_for",
+        lambda name: _Checker(declared.get(name, [])),
+        raising=False,
+    )
+    return st, owner, socks["an-app"], socks["a-quiet-app"]
 
 
 def _kinds(ws: _FakeWS) -> list[list[str]]:
@@ -83,10 +103,11 @@ def _kinds(ws: _FakeWS) -> list[list[str]]:
 
 
 def test_an_app_that_declares_refresh_never_hears_yolo(sockets):
-    state, owner, app = sockets
+    state, owner, app, quiet = sockets
     state.push_refresh("yolo")
     state.push_refresh("loops", "yolo")
     state.push_refresh("loops")
 
     assert _kinds(owner) == [["yolo"], ["loops", "yolo"], ["loops"]]
     assert _kinds(app) == [["loops"], ["loops"]], "an app heard that your YOLO moved"
+    assert _kinds(quiet) == [], "an app that declared no refresh heard one"

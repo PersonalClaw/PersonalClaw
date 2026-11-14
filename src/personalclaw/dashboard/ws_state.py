@@ -204,6 +204,24 @@ class DashboardWebSocketState:
     _notification_log: list[dict[str, Any]]
     notification_reaches: Callable[[str, dict[str, Any]], bool]
     _write_notifications: Callable[[], None]
+    # DashboardState's: what a YOLO that turned off undoes for each chat (``_on_yolo_disabled``),
+    # and the refresh hint every page reads (``push_refresh``).
+    _on_yolo_disabled: Callable[[str], None]
+    push_refresh: Callable[..., None]
+
+    def _listen_to_trust_mode(self) -> None:
+        """The state's two listeners on the process-wide YOLO (``personalclaw.trust_mode``): what
+        a YOLO that turned off undoes for each chat, and the ring that tells your pages it moved."""
+        from personalclaw import trust_mode
+
+        trust_mode.register_on_disable(self._on_yolo_disabled)
+        trust_mode.register_on_change(self._ring_yolo)
+
+    def _ring_yolo(self) -> None:
+        """YOLO turned on or off, however it went (a toggle, its time running out, the config): the
+        corner's YOLO mark reads the status again (``YoloChip``), on your own pages alone
+        (:data:`OWNER_REFRESH_KINDS`)."""
+        self.push_refresh("yolo")
 
     def next_stream_seq(self) -> int:
         """Stamp the next streamed text chunk — the ``seq`` every ``chat_chunk`` carries.
