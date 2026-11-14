@@ -44,10 +44,12 @@ import pytest
 from a_code_loops_git_runs_off_the_gateways_loop_shared import _held, _when
 
 from personalclaw.loop import files as loop_files
-from personalclaw.loop import gates, kinds, manager, store, tasks_link
+from personalclaw.loop import gates
+from personalclaw.loop import judge as loop_judge
+from personalclaw.loop import kinds, manager, store, tasks_link
 from personalclaw.loop import watchdog as W
 from personalclaw.loop import worktree
-from personalclaw.loop.kinds.sdlc import _BASE_KEY
+from personalclaw.loop.kinds.sdlc import _BASE_KEY, CodeKind
 from personalclaw.loop.loop import Loop, LoopStatus
 from personalclaw.loop.manager import session_key, task_session_key
 
@@ -944,10 +946,11 @@ class _LoopCtx:
         pass
 
 
-def _tracked_stage(tmp_path: Path) -> tuple[Loop, Path]:
+def _tracked_stage(tmp_path: Path, *, metric_pass: float | None = None) -> tuple[Loop, Path]:
     """A running Code loop with no task queued, whose worker changed digest.py in a workspace git
     tracks and wrote its finding, with the run's start point recorded: its next cycle is judged,
-    and its gate's build check compiles the project."""
+    and its gate's build check compiles the project. With *metric_pass*, a quality score gates the
+    stage too."""
     ws = _newsfold(tmp_path)
     base = _git(ws, "rev-parse", "HEAD").strip()
     (ws / "src" / "newsfold" / "digest.py").write_text(DIGEST_FIXED)
@@ -964,6 +967,7 @@ def _tracked_stage(tmp_path: Path) -> tuple[Loop, Path]:
                     "title": "Escape the title once",
                     "exit_criteria": [FIX],
                     "deliverable": "src/newsfold/digest.py",
+                    **({} if metric_pass is None else {"metric_pass": metric_pass}),
                 }
             ],
             phase_status={"implementation": "active"},
@@ -1101,3 +1105,118 @@ def test_a_loop_that_ends_while_its_gate_reads_the_stage_neither_judges_nor_adva
     now = _as_left(ctx, loop.id)
     assert now == left[0], f"the gate wrote to a {ending} loop: {left[0]} became {now}"
     assert not loop_files.pending_question(loop.id), f"the gate asked a {ending} loop's owner"
+
+
+# ── a Pause while the gate checks or judges the stage ─────────────────────────
+
+
+#: Where a loop pauses or goes while a gate that would pass waits, how it ends, and what the gate
+#: has done by then (the judge asked, a stage verdict recorded): while its check runs, while it
+#: reads the stage's tasks for its judge, while its judge rules (the loop paused, or its delete
+#: begun), and, for a stage a quality score gates too, while the score is given.
+_DURING = {
+    "check": (gates, "run_verify_command", "paused", 0, 0),
+    "evidence": (CodeKind, "_gate_evidence", "paused", 0, 0),
+    "judge": (gates, "judge_verdict", "paused", 1, 0),
+    "judge-deleted": (gates, "judge_verdict", "deleted", 1, 0),
+    "score": (loop_judge, "assess_cycle", "paused", 1, 1),
+}
+
+#: How each ending leaves the loop as the gate's re-read sees it: its status, and its delete begun.
+_LEFT_BY = {
+    "paused": (LoopStatus.PAUSED.value, False),
+    "deleted": (LoopStatus.RUNNING.value, True),
+}
+
+
+def _a_stage_that_passes(tmp_path: Path, monkeypatch, *, scored: bool) -> Loop:
+    """A stage whose gate passes: its check compiles the project and its judge sees the fix. When
+    *scored*, a quality score gates it too, and the quality judge gives it 5 of 5."""
+    loop, _ws = _tracked_stage(tmp_path, metric_pass=4.0 if scored else None)
+
+    async def five_of_five(*_args, **_kw):
+        return SimpleNamespace(
+            quality_score=5.0, done=True, marginal_value=0.0, regressed=False,
+            to_dict=lambda: {"quality_score": 5.0},
+        )  # fmt: skip
+
+    monkeypatch.setattr(loop_judge, "assess_cycle", five_of_five)
+    return loop
+
+
+def _stage_verdicts(loop_id: str) -> list[dict]:
+    return [v for v in loop_files.get_verdicts(loop_id) if v.get("gate") == "stage"]
+
+
+def _quality_verdicts(loop_id: str) -> list[dict]:
+    return [v for v in loop_files.get_verdicts(loop_id) if "quality_score" in v]
+
+
+@pytest.mark.parametrize("during", list(_DURING))
+def test_a_loop_paused_or_deleted_while_its_gate_waits_is_left_as_it_was_left(
+    tmp_path, monkeypatch, judge, _no_deletes_left, during
+):
+    """A Pause that lands while the gate's check runs, while it reads the stage's tasks for its
+    judge, while its judge rules, or while the stage's quality is scored, and a delete begun while
+    its judge rules: the stage is not marked done and the loop is not completed over it. The loop
+    keeps the status and the stage worker's nudge the ending left, its owner is asked nothing, and
+    from the ending on the gate asks no judge, writes no verdict and no score, and tells the loop's
+    page nothing."""
+    loop = _a_stage_that_passes(tmp_path, monkeypatch, scored=during == "score")
+    ctx = _LoopCtx()
+    _run(ctx.svc.add(session_name=session_key(loop.id), message="the stage worker's nudge"))
+    owner, name, ending, asked, recorded = _DURING[during]
+    real = getattr(owner, name)
+    left: list[tuple] = []
+    told: list[int] = []
+
+    async def ended_meanwhile(*args, **kwargs):
+        await _ENDINGS[ending](ctx, loop.id)
+        left.append(_as_left(ctx, loop.id))
+        told.append(len(ctx.events))
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, ended_meanwhile)
+
+    _run(kinds.get("code").on_new_cycle(store.get(loop.id), loop_files.get_findings(loop.id), ctx))
+
+    assert len(left) == 1, f"the loop was not {ending} during the gate's {during}"
+    assert (left[0][0], manager.being_deleted(loop.id)) == _LEFT_BY[ending]
+    after = store.get(loop.id)
+    assert after.phase_status == {
+        "implementation": "active"
+    }, f"the stage was marked done over a loop {ending} during its {during}"
+    now = _as_left(ctx, loop.id)
+    assert (
+        now == left[0]
+    ), f"the gate wrote to a loop {ending} during its {during}: {left[0]} -> {now}"
+    assert not loop_files.pending_question(loop.id), f"the gate asked a {ending} loop's owner"
+    events = [e for e, _ in ctx.events]
+    assert "stage_advance" not in events
+    since = events[told[0] :]
+    assert since == [], f"the gate told the page {since} after the loop was {ending}"
+    assert (len(judge), len(_stage_verdicts(loop.id))) == (asked, recorded), (
+        f"after the loop was {ending} during its {during} the gate asked its judge {len(judge)} "
+        f"times and recorded {len(_stage_verdicts(loop.id))} verdicts"
+    )
+    scores = (
+        store.get_quality_scores(loop.id),
+        _quality_verdicts(loop.id),
+        "cycle_verdict" in events,
+    )
+    assert scores == ([], [], False), f"a {ending} loop's stage was scored: {scores}"
+
+
+@pytest.mark.parametrize("scored", [False, True], ids=["unscored", "scored"])
+def test_with_no_pause_the_same_gate_passes_its_stage(tmp_path, monkeypatch, judge, scored):
+    """The rows' premise: with no Pause, the same stage passes its gate and is marked done, and a
+    stage a quality score gates is scored."""
+    loop = _a_stage_that_passes(tmp_path, monkeypatch, scored=scored)
+    ctx = _LoopCtx()
+
+    _run(kinds.get("code").on_new_cycle(store.get(loop.id), loop_files.get_findings(loop.id), ctx))
+
+    assert store.get(loop.id).phase_status == {"implementation": "done"}
+    assert len(judge) == 1 and len(_stage_verdicts(loop.id)) == 1
+    assert store.get_quality_scores(loop.id) == ([5.0] if scored else [])
+    assert len(_quality_verdicts(loop.id)) == int(scored)
