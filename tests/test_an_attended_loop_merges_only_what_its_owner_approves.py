@@ -27,12 +27,18 @@ from types import SimpleNamespace
 
 import pytest
 import source_index
+from a_code_loops_git_runs_off_the_gateways_loop_shared import (  # noqa: F401
+    _held,
+    _when,
+    hold,
+)
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import kinds, store, worktree
 from personalclaw.loop.loop import Loop, LoopStatus
+from personalclaw.loop.manager import session_key, task_session_key
 
 pytestmark = [
     pytest.mark.skipif(shutil.which("git") is None, reason="git not installed"),
@@ -41,6 +47,8 @@ pytestmark = [
 
 OWNER = ("Ada Example", "ada@example.com")
 TASK = "t-0a1b2c3d"
+#: A second finished task, queued after :data:`TASK`.
+OTHER = "t-4e5f6a7b"
 
 
 @pytest.fixture(autouse=True)
@@ -95,7 +103,7 @@ def _repo(tmp_path: Path, *, identity: bool = True) -> Path:
     return repo
 
 
-def _loop(repo: Path, *, attended: bool) -> Loop:
+def _loop(repo: Path, *, attended: bool, queued: tuple[str, ...] = (TASK,)) -> Loop:
     loop = store.create(
         Loop(
             id="",
@@ -105,7 +113,7 @@ def _loop(repo: Path, *, attended: bool) -> Loop:
             attended=attended,
             workspace_dir=str(repo),
             plan=[{"stage": "implementation", "title": "Fix"}],
-            kind_config={"entry_stage": "implementation", "queued_task_ids": [TASK]},
+            kind_config={"entry_stage": "implementation", "queued_task_ids": list(queued)},
         )
     )
     store.update_status(loop.id, LoopStatus.RUNNING)
@@ -615,3 +623,279 @@ def test_a_finished_task_that_changed_nothing_is_not_put_to_its_owner(tmp_path, 
     assert paused is False and loop_files.pending_question(loop.id) is None
     assert not worktree.branch_exists(str(repo), TASK)
     assert TASK not in store.get(loop.id).kind_config.get("queued_task_ids", [])
+
+
+# ── git runs off the gateway's event loop ────────────────────────────────────────────────
+
+
+def _beside(code, loop: Loop, ctx: _Ctx, signals, then):
+    """One scheduler pass, and *then* on the event loop once the held step began."""
+
+    async def both():
+        return await asyncio.gather(code.schedule(store.get(loop.id), ctx), _when(*signals, then))
+
+    return asyncio.get_event_loop().run_until_complete(both())
+
+
+def _approved(code, repo: Path, loop: Loop) -> None:
+    """An Attended loop whose owner read the review of its finished task and approved it, then
+    resumed the loop: what the review page's Merge does."""
+    _finished_task_worktree(repo)
+    _schedule(code, loop, _Ctx())
+    code.approve_merge(loop.id, {TASK: worktree.branch_tip(str(repo), TASK)})
+    loop_files.clear_question(loop.id)
+    store.update_status(loop.id, LoopStatus.RUNNING)
+
+
+def _another_name(repo: Path) -> None:
+    """A finished task whose worker committed under a name of its own."""
+    path = _finished_task_worktree(repo)
+    _git(path, "add", "digest.py")
+    _git(
+        path,
+        "-c",
+        "user.name=Loop Worker",
+        "-c",
+        "user.email=worker@example.invalid",
+        "commit",
+        "-qm",
+        "escape titles once",
+    )
+
+
+#: Each git step of landing a finished task, by the name the scheduler calls it by: an Attended
+#: loop's once its owner approved the merge, an Unattended loop's at once.
+_LAND_STEPS = [
+    ("attended", "branch_exists"),
+    ("attended", "commit_pending"),
+    ("attended", "commits_not_by"),
+    ("attended", "branch_tip"),
+    ("attended", "merge_worktree"),
+    ("unattended", "commits_not_by"),
+    ("unattended", "merge_worktree"),
+]
+
+
+@pytest.mark.parametrize(("posture", "step"), _LAND_STEPS, ids=[f"{p}-{s}" for p, s in _LAND_STEPS])
+def test_the_gateway_answers_while_an_approved_task_lands(
+    tmp_path, code, monkeypatch, hold, posture, step  # noqa: F811 - the imported fixture
+):
+    """Merging a task's work back is some 22 git processes, the last a `git worktree remove`,
+    and the gateway answered nothing while they ran. They run in a worker thread now: a request
+    the gateway gets meanwhile is answered before git is done, and the work lands as before."""
+    repo = _repo(tmp_path)
+    loop = _loop(repo, attended=posture == "attended")
+    if posture == "attended":
+        _approved(code, repo, loop)
+    else:
+        _finished_task_worktree(repo)
+    seen = _held(monkeypatch, step, *hold)
+
+    async def a_request():
+        return not seen.returned
+
+    _paused, answered_first = _beside(code, loop, _Ctx(), hold, a_request)
+
+    assert seen.on_loop is False, f"{step} ran on the gateway's event loop"
+    assert answered_first, "the request waited for git"
+    assert "escaped once" in (repo / "digest.py").read_text()
+    assert [m["task_id"] for m in loop_files.get_merges(loop.id)] == [TASK]
+
+
+@pytest.mark.parametrize("step", ["is_git_repo", "commit_identity", "start_point"])
+def test_the_gateway_answers_while_a_poll_asks_git_about_its_loop(
+    tmp_path, code, monkeypatch, hold, step  # noqa: F811 - the imported fixture
+):
+    """Every poll asks git whether the workspace is a repository, whom it commits as there, and,
+    at a run's first poll, where the run starts. A request the gateway gets meanwhile is
+    answered before git is done."""
+    repo = _repo(tmp_path)
+    loop = _loop(repo, attended=False)
+    seen = _held(monkeypatch, step, *hold)
+
+    async def a_request():
+        return not seen.returned
+
+    _paused, answered_first = _beside(code, loop, _Ctx(), hold, a_request)
+
+    assert seen.on_loop is False, f"{step} ran on the gateway's event loop"
+    assert answered_first, "the request waited for git"
+
+
+#: What the scheduler would ask its owner about, and the git step it waits on before it asks.
+_QUESTIONS = {
+    "no identity": "commit_identity",
+    "another name": "commits_not_by",
+    "the merge review": "base_branch",
+    "a conflict": "merge_worktree",
+}
+
+
+@pytest.mark.parametrize("ending", [LoopStatus.STOPPED, LoopStatus.PAUSED], ids=lambda s: s.value)
+@pytest.mark.parametrize("asked", list(_QUESTIONS))
+def test_a_loop_that_ends_while_git_reads_it_is_asked_nothing(
+    tmp_path, code, monkeypatch, hold, asked, ending  # noqa: F811 - the imported fixture
+):
+    """A Stop or a Pause that lands while git answers: the pass asks its owner nothing and says
+    the loop stopped running, and the loop stays as its owner left it."""
+    repo = _repo(tmp_path, identity=asked != "no identity")
+    loop = _loop(repo, attended=asked == "the merge review")
+    if asked == "another name":
+        _another_name(repo)
+    else:
+        _finished_task_worktree(repo)
+    if asked == "a conflict":  # the owner changed the same line meanwhile
+        (repo / "digest.py").write_text("TITLE = 'Q&amp;A'\n")
+        _git(repo, "commit", "-qam", "the owner's own edit")
+    before = _git(repo, "rev-parse", "main")
+    seen = _held(monkeypatch, _QUESTIONS[asked], *hold)
+
+    async def it_ends():
+        store.update_status(loop.id, ending)
+
+    paused, _ = _beside(code, loop, _Ctx(), hold, it_ends)
+
+    assert seen.on_loop is False
+    assert paused is True, "the pass did not say the loop stopped running"
+    assert loop_files.pending_question(loop.id) is None, "a loop that ended was asked something"
+    assert store.get(loop.id).status == ending.value
+    assert _git(repo, "rev-parse", "main") == before
+
+
+@pytest.mark.parametrize("ending", [LoopStatus.STOPPED, LoopStatus.PAUSED], ids=lambda s: s.value)
+def test_work_that_lands_while_its_loop_ends_is_recorded(
+    tmp_path, code, monkeypatch, hold, ending  # noqa: F811 - the imported fixture
+):
+    """A merge already under way when the loop stops or pauses goes in: what landed on the
+    owner's branch is recorded for the loop's page, and the pass says the loop stopped
+    running. It reads nothing of the next finished task on the queue, whose work stays on its
+    branch."""
+    repo = _repo(tmp_path)
+    loop = _loop(repo, attended=False, queued=(TASK, OTHER))
+    _finished_task_worktree(repo)
+    (Path(worktree.add_worktree(str(repo), OTHER)) / "feeds.py").write_text("FEEDS = []\n")
+    real_exists = worktree.branch_exists
+    read_of_other: list[str] = []
+
+    def exists(ws: str, task_id: str, *args, **kwargs) -> bool:
+        if task_id == OTHER:
+            read_of_other.append(task_id)
+        return real_exists(ws, task_id, *args, **kwargs)
+
+    monkeypatch.setattr(worktree, "branch_exists", exists)
+    seen = _held(monkeypatch, "merge_worktree", *hold)
+
+    async def it_ends():
+        store.update_status(loop.id, ending)
+
+    paused, _ = _beside(code, loop, _Ctx(), hold, it_ends)
+
+    assert seen.on_loop is False
+    assert paused is True, "the pass did not say the loop stopped running"
+    assert "escaped once" in (repo / "digest.py").read_text()
+    (merged,) = loop_files.get_merges(loop.id)
+    assert merged["head"] == _git(repo, "rev-parse", "main")
+    assert loop_files.pending_question(loop.id) is None
+    assert read_of_other == [], "the pass read the next task's git after its loop ended"
+    assert real_exists(str(repo), OTHER)
+
+
+@pytest.mark.parametrize(
+    ("posture", "step"), [("attended", "branch_tip"), ("unattended", "commits_not_by")]
+)
+def test_a_task_taken_off_the_queue_while_its_work_is_checked_is_not_merged(
+    tmp_path, code, monkeypatch, hold, posture, step  # noqa: F811 - the imported fixture
+):
+    """Its owner takes a finished task off the queue while git checks its work: nothing of it
+    is merged, and its work stays on its branch."""
+    repo = _repo(tmp_path)
+    loop = _loop(repo, attended=posture == "attended")
+    if posture == "attended":
+        _approved(code, repo, loop)
+    else:
+        _finished_task_worktree(repo)
+    before = _git(repo, "rev-parse", "main")
+    seen = _held(monkeypatch, step, *hold)
+
+    async def take_it_off():
+        store.unqueue_tasks(loop.id, [TASK])
+
+    _beside(code, loop, _Ctx(), hold, take_it_off)
+
+    assert seen.on_loop is False
+    assert _git(repo, "rev-parse", "main") == before, "a task off the queue was merged"
+    assert loop_files.get_merges(loop.id) == []
+    assert worktree.branch_exists(str(repo), TASK)
+
+
+class _Rows:
+    """The nudge service's rows for the sessions named, each armed, as ``manager.start`` leaves
+    them: one per session, switched off by ``update`` and taken away by ``remove``."""
+
+    def __init__(self, *sessions: str) -> None:
+        self.rows = {
+            name: SimpleNamespace(id=f"N{n}", session_name=name, active=True)
+            for n, name in enumerate(sessions)
+        }
+
+    def get_by_session(self, name: str):
+        return self.rows.get(name)
+
+    def list_all(self) -> list:
+        return list(self.rows.values())
+
+    async def update(self, row_id: str, **kw) -> None:
+        for row in self.rows.values():
+            if row.id == row_id:
+                vars(row).update(kw)
+
+    async def remove(self, row_id: str) -> None:
+        self.rows = {name: row for name, row in self.rows.items() if row.id != row_id}
+
+
+def test_no_stage_worker_cycle_starts_while_an_approved_task_merges(
+    tmp_path, code, monkeypatch, hold  # noqa: F811 - the imported fixture
+):
+    """Its owner's approval resumes the loop, and the Resume arms the stage worker again. The
+    next pass merges the approved task into the tree the stage worker writes in: the stage
+    worker stands down first, so none of its cycles starts while git merges, and once the merge
+    is in and no task worker is left, the pass stands it back up."""
+    repo = _repo(tmp_path)
+    loop = _loop(repo, attended=True)
+    _approved(code, repo, loop)
+    ctx = _Ctx()
+    ctx.svc = _Rows(session_key(loop.id))
+    stage = ctx.svc.get_by_session(session_key(loop.id))
+    _held(monkeypatch, "merge_worktree", *hold)
+
+    async def armed():
+        return stage.active
+
+    stopped, armed_while_merging = _beside(code, loop, ctx, hold, armed)
+
+    assert armed_while_merging is False, "the stage worker stayed armed while git merged"
+    assert [m["task_id"] for m in loop_files.get_merges(loop.id)] == [TASK]
+    assert stopped is False, "the pass said the loop stopped running"
+    assert stage.active is True, "the stage worker stayed stood down after the merge"
+
+
+def test_a_done_tasks_worker_cannot_fire_while_its_work_lands(
+    tmp_path, code, monkeypatch, hold  # noqa: F811 - the imported fixture
+):
+    """After a restart a done task's worker row can still be armed with no session open. The
+    pass removes it before it lands the task's work, so no turn of it starts in the worktree
+    git commits, merges and removes."""
+    repo = _repo(tmp_path)
+    loop = _loop(repo, attended=False)
+    _finished_task_worktree(repo)
+    ctx = _Ctx()
+    ctx.svc = _Rows(task_session_key(loop.id, TASK))
+    _held(monkeypatch, "merge_worktree", *hold)
+
+    async def there():
+        return ctx.svc.get_by_session(task_session_key(loop.id, TASK)) is not None
+
+    _paused, there_while_landing = _beside(code, loop, ctx, hold, there)
+
+    assert there_while_landing is False, "the done task's worker could fire while it landed"
+    assert [m["task_id"] for m in loop_files.get_merges(loop.id)] == [TASK]

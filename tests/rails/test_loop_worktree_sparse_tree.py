@@ -56,6 +56,62 @@ def test_sdlc_scheduler_calls_the_scoped_batch_api():
         assert own == [], f"git runs on the event loop in {fn.__name__}: {own}"
 
 
+#: Each function of the code kind's scheduler pass that runs on the gateway's event loop, and the
+#: worktree helpers it may call there: they only name a branch or a folder, and run no git.
+_PASS = (
+    "schedule",
+    "_is_parallel",
+    "_note_start_point",
+    "_ask_for_identity",
+    "_schedule_parallel",
+    "_fan_out",
+    "_keep_or_sweep",
+    "_land",
+    "_ask_about_another_name",
+    "_awaiting_merge",
+    "_ask_to_merge",
+    "_merged_prerequisites",
+    "_reap_merge_done",
+)
+_NAMES_ONLY = {"worktree.branch_name", "worktree.worktree_path"}
+
+
+def _own_worktree_calls(func) -> list[str]:
+    """The ``worktree.*`` calls *func* makes at its own level, and its own nested functions it
+    calls there: not inside a nested function or a lambda, which the pass hands to a worker
+    thread, and not a helper that runs no git."""
+    import ast
+    import inspect
+    import textwrap
+
+    (fn,) = ast.parse(textwrap.dedent(inspect.getsource(func))).body
+    nested = {n.name for n in ast.walk(fn) if isinstance(n, ast.FunctionDef) and n is not fn}
+    own, todo = [], list(ast.iter_child_nodes(fn))
+    while todo:
+        node = todo.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        todo.extend(ast.iter_child_nodes(node))
+        if isinstance(node, ast.Call):
+            name = ast.unparse(node.func)
+            if (name.startswith("worktree.") and name not in _NAMES_ONLY) or name in nested:
+                own.append(name)
+    return own
+
+
+def test_the_code_kinds_pass_runs_no_git_on_the_event_loop():
+    """The watchdog runs every running loop's pass on the gateway's event loop, and each git
+    helper is a blocking process: the pass hands every one to a worker thread, named or inside a
+    nested function, so the gateway keeps answering while git works. So does the conflict
+    question it asks, which is given what git said instead of asking again."""
+    from personalclaw.loop import conflicts
+    from personalclaw.loop.kinds import sdlc
+
+    found = {name: _own_worktree_calls(getattr(sdlc.CodeKind, name)) for name in _PASS}
+    found["conflicts.ask"] = _own_worktree_calls(conflicts.ask)
+    assert {name: calls for name, calls in found.items() if calls} == {}
+
+
 def test_a_redo_resets_the_worktree_then_falls_back_to_teardown():
     """The reuse pool's real CALL SITE, by AST: the redo its owner chose for a task whose work
     conflicted (``loop.conflicts._redo``), the one place a task's worktree is finished with and

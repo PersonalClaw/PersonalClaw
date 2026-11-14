@@ -1114,8 +1114,9 @@ def being_deleted(loop_id: str) -> bool:
 
 
 #: A loop's task-worktree git runs under one lock (:func:`git_lock`): a scheduler pass's cut
-#: and sweep (``CodeKind._fan_out``) and an ending's settle (:func:`_settle_worktrees`) wait
-#: for each other, so neither runs git on a worktree the other is still making or removing.
+#: and sweep (``CodeKind._fan_out``), its land's review and merge (``CodeKind._land``,
+#: ``CodeKind._reap_merge_done``) and an ending's settle (:func:`_settle_worktrees`) wait for
+#: each other, so none runs git on a worktree another is still committing, making or removing.
 _GIT_LOCKS: dict[str, asyncio.Lock] = {}
 
 

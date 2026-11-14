@@ -51,12 +51,14 @@ def question(title: str, branch: str, into: str, files: list[str]) -> str:
     )
 
 
-def ask(loop: Loop, task_id: str, title: str, ws: str, files: list[str]) -> None:
+def ask(
+    loop: Loop, task_id: str, title: str, ws: str, files: list[str], *, into: str, tip: str
+) -> None:
     """Put the conflict to *loop*'s owner, as the scheduler's question, with what it is about:
-    the task, its branch and the commit it is at, the branch it went into, the files it conflicted
-    on, and the worktree the branch is checked out in."""
+    the task, its branch and the commit it is at (*tip*), the branch it went into (*into*), the
+    files it conflicted on, and the worktree the branch is checked out in. Git was read when the
+    merge was tried, in a worker thread, so this runs none."""
     branch = worktree.branch_name(task_id)
-    into = worktree.base_branch(ws)
     loop_files.write_question(
         loop.id,
         question(title, branch, into, files),
@@ -65,7 +67,7 @@ def ask(loop: Loop, task_id: str, title: str, ws: str, files: list[str]) -> None
             "task_id": task_id,
             "title": title,
             "branch": branch,
-            "tip": worktree.branch_tip(ws, task_id),
+            "tip": tip,
             "into": into,
             "files": list(files),
             "path": worktree.worktree_path(ws, task_id, loop.tasks_project_id),
