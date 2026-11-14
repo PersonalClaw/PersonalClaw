@@ -352,10 +352,12 @@ class _Supervisor:
         return controller
 
     async def settle(self) -> None:
-        """Wait until every run it started, and every run those started, has ended."""
+        """Wait until every run it started, and every run those started, has ended and its
+        projected tasks are written (a run's task write lands on a thread of its own)."""
         done = 0
         while done < len(self.controllers):
             await self.controllers[done].wait_for_terminal(timeout=20)
+            await self.controllers[done].drain_projection_writes()
             done += 1
 
 
@@ -443,18 +445,45 @@ def _homes(home: Path) -> list[Path]:
     return sorted({home, Path(_runs_store()._dir).parent})
 
 
+#: How many times the home is listed and read before a scan that keeps losing files fails.
+_SCANS = 5
+
+
 def _holders(home: Path, values: tuple[str, ...] = ALL_VALUES) -> list[str]:
     """Every file that holds one of *values*, but the credential store's own: under the home, and
-    where the Triggers page's handlers write."""
-    found: list[str] = []
-    for root in _homes(home):
-        for path in sorted(root.rglob("*")):
-            if not path.is_file() or path.name == ".env":
-                continue
-            data = path.read_bytes()
-            if any(value.encode() in data for value in values):
-                found.append(str(path))
-    return found
+    where the Triggers page's handlers write.
+
+    What one listing holds, every file of it read. A store writes a file by renaming a temporary
+    file over it, and a new record is not in the listing until then, so a file listed and gone by
+    its check or its read sends the scan round again rather than being passed over. A file a round
+    read holding a value stays named though it is gone by the next round."""
+    held: set[str] = set()
+    gone: list[str] = []
+    for _ in range(_SCANS):
+        found: list[str] = []
+        gone = []
+        for root in _homes(home):
+            for path in sorted(root.rglob("*")):
+                if path.name == ".env":
+                    continue
+                if not path.is_file():
+                    # A folder, or a file gone since the listing: is_file() says no to both.
+                    if not os.path.lexists(path):
+                        gone.append(str(path))
+                    continue
+                try:
+                    data = path.read_bytes()
+                except FileNotFoundError:
+                    gone.append(str(path))
+                    continue
+                if any(value.encode() in data for value in values):
+                    found.append(str(path))
+        held.update(found)
+        if not gone:
+            return sorted(held)
+    raise AssertionError(
+        f"{_SCANS} scans of the home in a row lost a file before it was read: {gone}"
+    )
 
 
 def _secret_rows(run_id: str) -> list[tuple[str, str]]:
@@ -886,3 +915,33 @@ def test_a_value_no_stored_secret_holds_is_left_as_it_was(home):
 
     assert not input_secrets.redact_home()
     assert store.get(run_id).inputs == {"token": VALUE, "count": 3}
+
+
+# ── the scan ─────────────────────────────────────────────────────────────────
+
+
+def test_a_file_read_holding_a_value_stays_named_when_a_later_round_lost_it(home, monkeypatch):
+    """A round that loses a file goes round again, and a file that round read holding one of the
+    values is still named though it is gone by the next listing: the scan never drops a finding.
+    Here one temporary file holds the other secret's value and is removed just after its read,
+    and another is gone at its read, so the second round finds neither, and the scan says the
+    first held a value."""
+    tasks = home / "tasks"
+    tasks.mkdir(parents=True, exist_ok=True)
+    holder, lost = tasks / "tmp-a-holder.tmp", tasks / "tmp-b-lost.tmp"
+    holder.write_text(f"pushed with {OTHER_VALUE}", encoding="utf-8")
+    lost.write_text("{}", encoding="utf-8")
+    read = Path.read_bytes
+
+    def gone_after_its_read(self: Path) -> bytes:
+        if self == lost and lost.exists():
+            lost.unlink()
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        data = read(self)
+        if self == holder:
+            holder.unlink()
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", gone_after_its_read)
+
+    assert _holders(home) == [str(holder)]

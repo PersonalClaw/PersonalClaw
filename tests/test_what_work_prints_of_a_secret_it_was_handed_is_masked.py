@@ -89,18 +89,47 @@ def _homes(home: Path) -> list[Path]:
     return sorted({home, Path(_runs_store()._dir).parent})
 
 
+#: How many times the home is listed and read before a scan that keeps losing files fails.
+_SCANS = 5
+
+
 def _holders(home: Path, value: str = VALUE) -> list[str]:
     """Every file that holds *value*, as written or as JSON writes it, but the credential store's
-    own: under the home, and where the Triggers page's handlers write."""
+    own: under the home, and where the Triggers page's handlers write.
+
+    What one listing holds, every file of it read. A store writes a file by renaming a temporary
+    file over it (``atomic_write._replacing``), and a new record is not in the listing until then,
+    so a file listed and gone by its check or its read sends the scan round again rather than being
+    passed over: passed over, the record it became went unread. A file a round read holding the
+    value stays named though it is gone by the next round: the scan never drops a finding."""
     forms = {value.encode(), json.dumps(value)[1:-1].encode()}
-    found: list[str] = []
-    for root in _homes(home):
-        for path in sorted(root.rglob("*")):
-            if path.is_file() and path.name != ".env":
-                data = path.read_bytes()
+    held: set[str] = set()
+    gone: list[str] = []
+    for _ in range(_SCANS):
+        found: list[str] = []
+        gone = []
+        for root in _homes(home):
+            for path in sorted(root.rglob("*")):
+                if path.name == ".env":
+                    continue
+                if not path.is_file():
+                    # A folder, or a file gone since the listing: is_file() says no to both.
+                    if not os.path.lexists(path):
+                        gone.append(str(path))
+                    continue
+                try:
+                    data = path.read_bytes()
+                except FileNotFoundError:
+                    gone.append(str(path))
+                    continue
                 if any(form in data for form in forms):
                     found.append(str(path))
-    return found
+        held.update(found)
+        if not gone:
+            return sorted(held)
+    raise AssertionError(
+        f"{_SCANS} scans of the home in a row lost a file before it was read: {gone}"
+    )
 
 
 # ── the rule ─────────────────────────────────────────────────────────────────
@@ -403,9 +432,12 @@ class _Supervisor:
         return controller
 
     async def settle(self) -> None:
+        """Each run ended and its projected tasks written, as ``run_to_completion`` leaves it: a
+        run's task write is scheduled as it settles and lands on a thread of its own."""
         done = 0
         while done < len(self.controllers):
             await self.controllers[done].wait_for_terminal(timeout=20)
+            await self.controllers[done].drain_projection_writes()
             done += 1
 
 
@@ -799,3 +831,99 @@ def test_a_run_whose_definition_names_no_secret_is_left_as_it_was(home):
     assert not input_secrets.redact_home()
 
     assert {p: p.read_bytes() for p in store.runs_root().rglob("*") if p.is_file()} == before
+
+
+# ── the scan ─────────────────────────────────────────────────────────────────
+
+
+def test_a_file_a_store_renames_while_the_home_is_read_is_read_where_it_went(home, monkeypatch):
+    """Before, the scan read each file it had listed, and a temporary file a store had renamed over
+    its record by then raised FileNotFoundError (home/tasks/tmpk329j303.tmp, run 37587927263).
+    Here one temporary file becomes a new record holding the value and another is removed, each
+    just before its read, and the scan says the record holds the value."""
+    tasks = home / "tasks"
+    tasks.mkdir(parents=True, exist_ok=True)
+    renamed, removed = tasks / "tmp-renamed.tmp", tasks / "tmp-removed.tmp"
+    renamed.write_text(json.dumps({"note": f"pushed with {VALUE}"}), encoding="utf-8")
+    removed.write_text("{}", encoding="utf-8")
+    record = tasks / "t-0rchard.json"
+    read = Path.read_bytes
+
+    def moved_away(self: Path) -> bytes:
+        if self == renamed and renamed.exists():
+            os.replace(renamed, record)
+        elif self == removed and removed.exists():
+            removed.unlink()
+        return read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", moved_away)
+
+    assert _holders(home) == [str(record)]
+
+
+def test_a_file_a_store_renames_before_the_scan_checks_it_is_read_where_it_went(home, monkeypatch):
+    """Before, a temporary file the listing named and a store renamed over a new record before the
+    scan checked it was passed over in silence, since is_file() says no to a file that is gone,
+    and the record it became was never read. Here it is renamed just before its check, and the
+    scan says the record holds the value."""
+    tasks = home / "tasks"
+    tasks.mkdir(parents=True, exist_ok=True)
+    renamed = tasks / "tmp-renamed.tmp"
+    renamed.write_text(json.dumps({"note": f"pushed with {VALUE}"}), encoding="utf-8")
+    record = tasks / "t-0rchard.json"
+    is_file = Path.is_file
+
+    def moved_away(self: Path, **kwargs: Any) -> bool:
+        if self == renamed and renamed.exists():
+            os.replace(renamed, record)
+        return is_file(self, **kwargs)
+
+    monkeypatch.setattr(Path, "is_file", moved_away)
+
+    assert _holders(home) == [str(record)]
+
+
+def test_a_scan_whose_files_keep_going_fails_naming_them(home, monkeypatch):
+    """The scan reads again only so many times, and a file gone at every read fails it by name
+    rather than passing a scan that never read it."""
+    tasks = home / "tasks"
+    tasks.mkdir(parents=True, exist_ok=True)
+    flickers = tasks / "tmp-flickers.tmp"
+    flickers.write_text(VALUE, encoding="utf-8")
+    read = Path.read_bytes
+
+    def always_gone(self: Path) -> bytes:
+        if self == flickers:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", always_gone)
+
+    with pytest.raises(AssertionError, match="tmp-flickers.tmp"):
+        _holders(home)
+
+
+def test_a_file_read_holding_the_value_stays_named_when_a_later_round_lost_it(home, monkeypatch):
+    """A round that loses a file goes round again, and a file that round read holding the value is
+    still named though it is gone by the next listing: the scan never drops a finding. Here one
+    temporary file holds the value and is removed just after its read, and another is gone at its
+    read, so the second round finds neither, and the scan says the first held the value."""
+    tasks = home / "tasks"
+    tasks.mkdir(parents=True, exist_ok=True)
+    holder, lost = tasks / "tmp-a-holder.tmp", tasks / "tmp-b-lost.tmp"
+    holder.write_text(f"pushed with {VALUE}", encoding="utf-8")
+    lost.write_text("{}", encoding="utf-8")
+    read = Path.read_bytes
+
+    def gone_after_its_read(self: Path) -> bytes:
+        if self == lost and lost.exists():
+            lost.unlink()
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        data = read(self)
+        if self == holder:
+            holder.unlink()
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", gone_after_its_read)
+
+    assert _holders(home) == [str(holder)]
