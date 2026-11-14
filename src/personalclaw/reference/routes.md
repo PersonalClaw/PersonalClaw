@@ -767,6 +767,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/secrets` — remove one secret from the vault.
 - `GET /api/secrets` — the vault, presence only.
 - `POST /api/secrets` — store one secret's value. The response carries presence, not the value.
+- `POST /api/security-log/reported` — a security-log row an agent CLI's tool server reports.
 - `GET /api/security/audit` — a cursor-paginated page of filtered security events.
 - `GET /api/security/audit/verify` — HMAC-chain verification over the audit log.
 - `GET /api/security/credentials` — where the instance's secrets are stored.

@@ -57,7 +57,7 @@
 {"site": "src/personalclaw/dashboard/handlers_system.py::_collect_system_metrics", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 234, "complexity": 49}
 {"site": "src/personalclaw/dashboard/lifecycle_hooks.py::register_lifecycle_hooks", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 517, "complexity": 37}
 {"site": "src/personalclaw/dashboard/routes.py::register_dashboard_routes", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 1247, "complexity": 8}
-{"site": "src/personalclaw/dashboard/server.py::start_dashboard", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 568, "complexity": 50}
+{"site": "src/personalclaw/dashboard/server.py::start_dashboard", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 553, "complexity": 46}
 {"site": "src/personalclaw/dashboard/session_bulk.py::api_chat_sessions_bulk", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 138, "complexity": 32}
 {"site": "src/personalclaw/dashboard/token_auth.py::token_auth_middleware", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 414, "complexity": 62}
 {"site": "src/personalclaw/dashboard/token_auth.py::token_auth_middleware.middleware", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 261, "complexity": 47}
@@ -123,7 +123,7 @@
 {"site": "src/personalclaw/providers/entity_routes.py::handle_notification_rules_put", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 177, "complexity": 41}
 {"site": "src/personalclaw/providers/provider_bridge.py::_resolve_from_config_registry", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 178, "complexity": 32}
 {"site": "src/personalclaw/providers/provider_bridge.py::resolve_provider_for_use_case", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 446, "complexity": 57}
-{"site": "src/personalclaw/sandbox.py::_build_launcher_script", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 418, "complexity": 6}
+{"site": "src/personalclaw/sandbox.py::_build_launcher_script", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 366, "complexity": 6}
 {"site": "src/personalclaw/session.py::SessionManager.get_or_create", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 365, "complexity": 61}
 {"site": "src/personalclaw/shell_syntax.py::lex", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 180, "complexity": 64}
 {"site": "src/personalclaw/skills/surfacing.py::surface_skills #3", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 187, "complexity": 36}

@@ -34,12 +34,15 @@ from pathlib import Path
 from typing import TypedDict
 
 from personalclaw import memory_writes, session_keys
-from personalclaw.atomic_write import atomic_write, atomic_write_bytes
+from personalclaw.atomic_write import atomic_write, write_new_private
 from personalclaw.audit_subject import SUBJECT_MAX_CHARS, audit_text, subject_of
 
 logger = logging.getLogger(__name__)
 
 
+# The log's entries under its home. Each is declared, under the same name, with what the sandbox
+# keeps from an agent-started process of it (`owner_only.AUDIT_FENCED`); a rail holds every name
+# joined onto a home here to that declaration.
 _SEL_FILE = "security_events.jsonl"
 _RETENTION_DAYS = 365
 _HMAC_KEY_FILE = "sel_hmac.key"
@@ -53,6 +56,12 @@ _VERIFY_WINDOW = 5000
 #: log to `security_events.<ts>.bak.jsonl` beside it — a path no inventory entry claimed, so
 #: the one copy of the pre-rotation audit trail was missing from every snapshot.
 _ARCHIVE_DIR = "sel_archive"
+#: What an earlier release's manual rotate left beside the log, which the log adopts into its
+#: archive.
+_LOOSE_ARCHIVES = "security_events.*.bak.jsonl"
+#: Where a process that holds no key leaves the rows its gateway did not answer for
+#: (:func:`report_rows_to_the_gateway`), one file a row, for the gateway to sign (``sel_intake``).
+_SPOOL_DIR = "sel_spool"
 #: The live file rotates into the archive once it reaches this size. The size bound is what
 #: keeps reads and verification fast; rotating (rather than trimming the oldest rows out, as
 #: the entry cap this replaced did) keeps the evidence until retention says it may go.
@@ -435,10 +444,16 @@ class SecurityEventLog:
             self._path = self._dir / _SEL_FILE
             self._archive_dir = self._dir / _ARCHIVE_DIR
             self._lock = threading.Lock()
-            self._hmac_key = self._load_or_create_hmac_key()
-            self._last_hash = self._read_last_hash()
             self._forward_callback: Callable[[dict], None] | None = None
-            self._adopt_loose_archives()
+            if _REPORTER is not None:
+                # A process that hands its rows to its gateway holds no key and signs nothing,
+                # so it reads neither the key nor the chain it would sign onto.
+                self._hmac_key = b""
+                self._last_hash = ""
+            else:
+                self._hmac_key = self._load_or_create_hmac_key()
+                self._last_hash = self._read_last_hash()
+                self._adopt_loose_archives()
             self._initialized = True
 
     def _adopt_loose_archives(self) -> None:
@@ -449,7 +464,7 @@ class SecurityEventLog:
         rotate wrote (`security_events.<ts>.bak.jsonl`) is adopted.
         """
         try:
-            loose = sorted(self._dir.glob(f"{self._path.stem}.*.bak{self._path.suffix}"))
+            loose = sorted(self._dir.glob(_LOOSE_ARCHIVES))
         except OSError:
             return
         for path in loose:
@@ -467,16 +482,7 @@ class SecurityEventLog:
             self._forward_callback = callback
 
     def _load_or_create_hmac_key(self) -> bytes:
-        key_path = self._dir / _HMAC_KEY_FILE
-        self._dir.mkdir(parents=True, exist_ok=True)
-        if key_path.exists():
-            return key_path.read_bytes()
-        key = os.urandom(32)
-        # Created 0600 and renamed into place whole. `write_bytes` then `chmod` put the key on
-        # disk at the umask mode (0644) for the gap between the two calls — long enough for
-        # another account to open it and keep the descriptor — and a crash in that gap left it so.
-        atomic_write_bytes(key_path, key, mode=0o600, fsync=True)
-        return key
+        return read_or_make_key(self._dir)
 
     def _size(self) -> int:
         try:
@@ -583,24 +589,17 @@ class SecurityEventLog:
             from personalclaw.guardrails.audit import current_caller
 
             event.caller_scope = current_caller()
+        reporter = _REPORTER
+        if reporter is not None:
+            self._report(event, reporter)
+            return
         with self._lock:
             event.prev_hash = self._last_hash
             event.entry_hash = self._compute_hash(event)
-            try:
-                self._dir.mkdir(parents=True, exist_ok=True)
-                with open(self._path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(asdict(event)) + "\n")
-                    full = f.tell() >= _ROTATE_BYTES
-            except OSError as exc:
-                if not _UNWRITABLE_ROWS_SAID:
-                    raise
-                logger.warning(
-                    "The security log %s could not take this row (%s), so it is kept here: %s",
-                    self._path.name,
-                    exc.strerror or type(exc).__name__,
-                    json.dumps(redact_event(asdict(event))),
-                )
-                return
+            self._dir.mkdir(parents=True, exist_ok=True)
+            with open(self._path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(asdict(event)) + "\n")
+                full = f.tell() >= _ROTATE_BYTES
             self._last_hash = event.entry_hash
             callback = self._forward_callback
         if full:
@@ -610,6 +609,29 @@ class SecurityEventLog:
                 callback(redact_event(asdict(event)))
             except Exception:
                 logger.warning("forward_callback failed", exc_info=True)
+
+    def _report(self, event: SecurityEvent, send: Callable[[dict], bool]) -> None:
+        """Hand *event* to the gateway through *send* (:func:`report_rows_to_the_gateway`),
+        unsigned; on no answer leave it in the spool for the gateway to take; and if neither takes
+        it, say it in this process's own log, masked. What wrote it goes on either way: the row is
+        the record of a call, never the call."""
+        row = asdict(event)
+        for name in ("prev_hash", "entry_hash"):
+            row.pop(name, None)
+        try:
+            if send(row):
+                return
+        except Exception:  # noqa: BLE001 — an unreachable gateway is what the spool is for
+            logger.debug("the gateway did not take a security-log row", exc_info=True)
+        try:
+            spool_row(self._dir, row, process=_REPORTED_BY_PROCESS)
+        except OSError as exc:
+            logger.warning(
+                "The security log's gateway did not take this row and its spool could not (%s), "
+                "so it is kept here: %s",
+                exc.strerror or type(exc).__name__,
+                json.dumps(redact_event(row)),
+            )
 
     def _rotate_when_full(self) -> None:
         """Rotate the live file into the archive once it reached `_ROTATE_BYTES`, then record it.
@@ -1180,20 +1202,80 @@ async def sel_log_async(write: Callable[..., object], /, *args: object, **kwargs
     await asyncio.shield(asyncio.get_running_loop().run_in_executor(_WRITER, call))
 
 
-#: Whether a row the log's file cannot take is said in this process's own log instead of raised
-#: into what wrote it (:func:`say_rows_the_file_cannot_take`).
-_UNWRITABLE_ROWS_SAID = False
+class AuditKeyUnusable(OSError):
+    """The security log's key cannot be read, or is empty, so this process signs no row: no row
+    is ever signed with a key the gateway does not hold, and no process that cannot read the key
+    makes one (:func:`read_or_make_key`)."""
 
 
-def say_rows_the_file_cannot_take() -> None:
-    """From now on, a row this process cannot append to the log's file is said in this process's
-    own log, masked, with the row, and what wrote it goes on as if it had been written.
+def read_or_make_key(home: Path) -> bytes:
+    """The key that signs the rows of *home*'s security log: read, and made only when there is
+    none at all.
 
-    For the tool server an agent CLI runs (``mcp_core.run_mcp_core_server``) alone. It runs in the
-    CLI's sandbox, which on Linux lets it write the log's file only as it was when the CLI started:
-    once the gateway rotates the log, the file at its name is a new one that process can only read,
-    and a raised error took the call it was recording with it, and the server after it. Every other
-    process still raises: a control that refuses what it cannot record
-    (``security._emit_deny_exception_event``) refuses."""
-    global _UNWRITABLE_ROWS_SAID
-    _UNWRITABLE_ROWS_SAID = True
+    A new key is written whole, 0600 from its first byte, and linked into place
+    (``atomic_write.write_new_private``), so a key another process made first is never replaced:
+    renamed over, it put every row the first had signed past the log's check. A key that cannot be
+    read raises :class:`AuditKeyUnusable` instead of being made again: the sandbox keeps it from
+    an agent-started process (``owner_only.AUDIT_FENCED``), which on macOS reads "not permitted"
+    and on Linux an empty file in its place, and a key such a process made would sign rows the
+    gateway's check refuses, or replace the gateway's own. An empty key raises too."""
+    path = Path(home) / _HMAC_KEY_FILE
+    for _attempt in range(2):
+        try:
+            key = path.read_bytes()
+        except FileNotFoundError:
+            key = os.urandom(32)
+            try:
+                if write_new_private(path, key, fsync=True):
+                    return key
+            except OSError as exc:
+                raise AuditKeyUnusable(
+                    f"the security log's key {path} could not be made "
+                    f"({exc.strerror or type(exc).__name__}), so no row is signed here"
+                ) from exc
+            continue  # another process made it first: its key is the one
+        except OSError as exc:
+            raise AuditKeyUnusable(
+                f"the security log's key {path} cannot be read "
+                f"({exc.strerror or type(exc).__name__}), so no row is signed here and no other "
+                "key is made in its place"
+            ) from exc
+        if not key:
+            raise AuditKeyUnusable(
+                f"the security log's key {path} is empty, so no row is signed here and no other "
+                "key is made in its place"
+            )
+        return key
+    raise AuditKeyUnusable(f"the security log's key {path} came and went while it was read")
+
+
+#: How this process hands a security-log row to its gateway, when it holds no key
+#: (:func:`report_rows_to_the_gateway`): the row's fields in, whether the gateway took it out.
+_REPORTER: Callable[[dict], bool] | None = None
+#: What this process says it is, in each row it reports (``sel_intake.REPORTED_BY``).
+_REPORTED_BY_PROCESS = ""
+
+
+def report_rows_to_the_gateway(send: Callable[[dict], bool], *, process: str) -> None:
+    """From now on this process holds no key and writes no row: each row is handed, unsigned, to
+    the gateway through *send*, which signs it and records that *process* reported it
+    (``sel_intake``); a row the gateway did not take is left in the spool for it to take later
+    (:func:`spool_row`); and a row neither takes is said in this process's own log, masked.
+
+    For the tool server an agent CLI runs (``mcp_core.run_mcp_core_server``), alone: it runs in
+    the CLI's sandbox, which keeps the log's key from it and the log and its archive unchangeable
+    by it (``owner_only.AUDIT_FENCED``). Called before its first row."""
+    global _REPORTER, _REPORTED_BY_PROCESS
+    _REPORTER = send
+    _REPORTED_BY_PROCESS = process
+
+
+def spool_row(home: Path, row: dict, *, process: str) -> Path:
+    """Leave *row*, which the gateway did not take, in *home*'s spool, one file a row, written
+    whole: the gateway takes it in, signs it and records it as reported through the spool
+    (``sel_intake.take_in_spool``). Raises when the spool cannot take it."""
+    spool = Path(home) / _SPOOL_DIR
+    name = f"{os.getpid()}-{time.time_ns()}-{uuid.uuid4().hex[:12]}.json"
+    payload = {"row": row, "process": process, "pid": os.getpid()}
+    atomic_write(spool / name, json.dumps(payload, sort_keys=True))
+    return spool / name

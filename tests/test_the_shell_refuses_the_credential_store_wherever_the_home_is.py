@@ -330,11 +330,26 @@ def test_the_sandbox_hides_the_default_homes_store_beside_another(container, tmp
 
 
 def test_the_standard_sandbox_level_still_hides_no_single_file(container):
-    """Unchanged, and documented: the native shell's own level hides no file, so the screen above
-    is what refuses the store there."""
+    """Unchanged, and documented: the native shell's own level hides no file of the user's, so the
+    screen above is what refuses the store there. The one file it hides is the security log's
+    key, of each home the fence holds, in each spelling (``owner_only.AUDIT_FENCED``): every
+    single-file read deny is one rule for one of those paths, and nothing else."""
+    import re
+
+    from personalclaw.owner_only import AUDIT_KEY, audit_homes
     from personalclaw.sandbox import _build_seatbelt_profile
 
-    assert "(deny file-read* (literal" not in _build_seatbelt_profile("standard")
+    profile = _build_seatbelt_profile("standard")
+    hidden = re.findall(r'\(deny file-read\* \(literal "([^"]*)"\)\)', profile)
+    assert profile.count("(deny file-read* (literal") == len(
+        hidden
+    ), "a read deny names more than one file"
+    keys = [
+        os.path.join(spelling, AUDIT_KEY)
+        for home in audit_homes()
+        for spelling in dict.fromkeys((os.path.abspath(home), os.path.realpath(home)))
+    ]
+    assert sorted(hidden) == sorted(keys)
 
 
 def test_every_guard_reads_one_list_of_homes():

@@ -12,6 +12,11 @@
   every agent definition.
 * ``grants/`` — the owner's yes to what an agent wrote (``owner_grants``).
 
+**The security log's own entries** (:data:`AUDIT_FENCED`), in the home in use and the default
+one: the key that signs its rows, which the fence keeps unread as well as unwritten, and the log
+and its archive. The fence alone holds these (``sandbox``); the screens refuse the key by name as
+the reading rules' (``security.OWN_SECRET_BASENAMES``).
+
 **Git's own settings and hook scripts** (:data:`GIT`), which the owner's git reads, and runs what
 they name, whenever she uses a repository, outside any sandbox:
 
@@ -156,6 +161,47 @@ _TASK_STEER = re.compile(r"guidance_[a-z0-9_-]{1,64}\.txt")
 _LOOP_ID = re.compile(r"[0-9a-f]{8}")
 LOOPS_DB_NAMES: tuple[str, ...] = ("loops.db", "loops.db-wal", "loops.db-shm", "loops.db-journal")
 
+
+#: The security log's own entries under a home (``sel``), which the sandbox fences for the
+#: active home and the default one (:func:`audit_homes`). The key signs each row, so a process
+#: that read it could write rows that pass the log's check: it is neither read nor written from
+#: inside the sandbox. The log, its archive and the files an earlier release's rotate left
+#: beside it, which the log adopts into its archive, are read there and never changed, so no row
+#: in them is added, rewritten or removed. The files in the spool are left writable on purpose: a
+#: process that holds no key leaves there the rows its gateway did not answer for, and the
+#: gateway signs them as reported by it (``sel_intake``). The spool's own entry is held where it
+#: is.
+AUDIT_KEY = "sel_hmac.key"
+AUDIT_LOG = "security_events.jsonl"
+AUDIT_ARCHIVE = "sel_archive"
+AUDIT_LOOSE_ARCHIVES = "security_events.*.bak.jsonl"
+AUDIT_SPOOL = "sel_spool"
+
+
+@dataclass(frozen=True)
+class AuditEntry:
+    """One of the security log's entries under a home: its name (a ``fnmatch`` pattern when
+    *pattern*), whether it is a folder, and what the sandbox keeps from an agent-started process:
+    reading and writing it (*hidden*), or only writing it."""
+
+    name: str
+    is_dir: bool = False
+    hidden: bool = False
+    pattern: bool = False
+
+
+#: What the sandbox holds of the security log, at every level (``sandbox``).
+AUDIT_FENCED: tuple[AuditEntry, ...] = (
+    AuditEntry(AUDIT_KEY, hidden=True),
+    AuditEntry(AUDIT_LOG),
+    AuditEntry(AUDIT_ARCHIVE, is_dir=True),
+    AuditEntry(AUDIT_LOOSE_ARCHIVES, pattern=True),
+)
+
+#: Every name the security log keeps under a home: what the sandbox fences, and the spool, which
+#: it leaves open. A name the log's code joins onto its home is one of these (a rail holds it).
+AUDIT_NAMES: tuple[str, ...] = (*(entry.name for entry in AUDIT_FENCED), AUDIT_SPOOL)
+
 #: The kinds of owner-only place: PersonalClaw's own, in its home; git's; the shell's; the places
 #: whose entries run at login; and a loop's own records, in PersonalClaw's home.
 HOME = "home"
@@ -295,6 +341,16 @@ def loop_roots(home: Path | str | None = None) -> list[str]:
 
 _LOOP_FILES = frozenset(folded(name) for name in LOOP_RECORD_FILES)
 _LOOP_DIRS = frozenset(folded(name) for name in LOOP_RECORD_DIRS)
+
+
+def audit_homes() -> list[str]:
+    """The homes whose security log the sandbox fences (:data:`AUDIT_FENCED`), absolute: the
+    active one, and the default one when the active home is another folder, the homes every
+    credential guard covers (``security._pclaw_homes``). A dev gateway's or a test's home runs
+    beside the owner's own, and an agent of the first must not change the second's log either."""
+    from personalclaw.security import _pclaw_homes
+
+    return list(dict.fromkeys(os.path.abspath(home) for home in _pclaw_homes()))
 
 
 def _real(path: Path | str) -> str:

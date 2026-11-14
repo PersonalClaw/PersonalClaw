@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **974 registrations** over **789 distinct paths** — 967 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **975 registrations** over **790 distinct paths** — 968 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,7 +20,7 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 134 families the surface divides into, largest first.
+The 135 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
@@ -147,6 +147,7 @@ The 134 families the surface divides into, largest first.
 | `/api/reveal` | 1 | 1 |
 | `/api/sandbox` | 1 | 1 |
 | `/api/screenshot` | 1 | 1 |
+| `/api/security-log` | 1 | 1 |
 | `/api/sel` | 1 | 1 |
 | `/api/send-message` | 1 | 1 |
 | `/api/session-keepalive` | 1 | 1 |
@@ -161,7 +162,7 @@ The 134 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 967 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 968 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -926,6 +927,7 @@ The 967 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/secrets` | remove one secret from the vault. |
 | `GET` | `/api/secrets` | the vault, presence only. |
 | `POST` | `/api/secrets` | store one secret's value. The response carries presence, not the value. |
+| `POST` | `/api/security-log/reported` | a security-log row an agent CLI's tool server reports. |
 | `GET` | `/api/security/audit` | a cursor-paginated page of filtered security events. |
 | `GET` | `/api/security/audit/verify` | HMAC-chain verification over the audit log. |
 | `GET` | `/api/security/credentials` | where the instance's secrets are stored. |

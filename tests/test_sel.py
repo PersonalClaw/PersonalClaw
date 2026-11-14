@@ -79,21 +79,79 @@ class TestHmacKeyManagement:
                 seen.append(f"chmod found it on disk at {oct(key_path.stat().st_mode & 0o777)}")
             return real_chmod(path, mode, *args, **kwargs)
 
+        real_link = os.link
+
         def spy_replace(src, dst, *args, **kwargs):
             if Path(dst) == key_path:
                 seen.append(f"renamed into place at {oct(Path(src).stat().st_mode & 0o777)}")
             return real_replace(src, dst, *args, **kwargs)
 
+        def spy_link(src, dst, *args, **kwargs):
+            if Path(dst) == key_path:
+                seen.append(f"linked into place at {oct(Path(src).stat().st_mode & 0o777)}")
+            return real_link(src, dst, *args, **kwargs)
+
         monkeypatch.setattr(os, "chmod", spy_chmod)
         monkeypatch.setattr(os, "replace", spy_replace)
+        monkeypatch.setattr(os, "link", spy_link)
         previous_umask = os.umask(0o022)
         try:
             SecurityEventLog(base_dir=sel_dir)
         finally:
             os.umask(previous_umask)
 
-        assert seen == ["renamed into place at 0o600"]
+        # Linked, never renamed: a rename would replace a key another process made first.
+        assert seen == ["linked into place at 0o600"]
         assert len(key_path.read_bytes()) == 32
+        assert sorted(p.name for p in sel_dir.iterdir()) == ["sel_hmac.key"], "a temp file stayed"
+
+    def test_a_process_that_cannot_read_the_key_never_makes_one(self, sel_dir, monkeypatch):
+        """🔴 Red on main: a key that read as empty (the Linux sandbox binds an empty file over the
+        key for an agent-started process) was taken as the key, and every row signed with it
+        failed the gateway's check; and a key another process made between the check and the
+        write was renamed over, so every row it had signed failed too. Now a key that cannot be
+        read, or is empty, fails closed and nothing is made in its place, and a new key is linked
+        into place, so one already there is the key."""
+        import os
+
+        from personalclaw import sel as sel_module
+
+        key_path = sel_dir / "sel_hmac.key"
+        key_path.write_bytes(b"")
+        with pytest.raises(OSError, match="is empty, so no row is signed here"):
+            SecurityEventLog(base_dir=sel_dir)
+        assert key_path.read_bytes() == b""
+
+        SecurityEventLog._instance = None
+        key_path.write_bytes(b"k" * 32)
+        real_read = Path.read_bytes
+
+        def not_permitted(path: Path) -> bytes:
+            if path == key_path:
+                raise PermissionError(1, "Operation not permitted", str(path))
+            return real_read(path)
+
+        monkeypatch.setattr(Path, "read_bytes", not_permitted)
+        with pytest.raises(OSError, match="cannot be read .*no other key is made"):
+            SecurityEventLog(base_dir=sel_dir)
+        monkeypatch.setattr(Path, "read_bytes", real_read)
+        assert key_path.read_bytes() == b"k" * 32
+        assert sorted(p.name for p in sel_dir.iterdir()) == ["sel_hmac.key"]
+
+        SecurityEventLog._instance = None
+        key_path.unlink()
+        theirs = b"t" * 32
+        real_urandom = os.urandom
+
+        def another_process_makes_one_first(n: int) -> bytes:
+            key_path.write_bytes(theirs)
+            return real_urandom(n)
+
+        monkeypatch.setattr(sel_module.os, "urandom", another_process_makes_one_first)
+        log = SecurityEventLog(base_dir=sel_dir)
+
+        assert key_path.read_bytes() == theirs and log._hmac_key == theirs
+        assert sorted(p.name for p in sel_dir.iterdir()) == ["sel_hmac.key"]
 
     def test_reuses_existing_key(self, sel_dir):
         log1 = SecurityEventLog(base_dir=sel_dir)

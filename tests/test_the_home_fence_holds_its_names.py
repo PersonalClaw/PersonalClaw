@@ -29,6 +29,7 @@ and the owner's yes that an agent hook waits for.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import subprocess
@@ -230,6 +231,325 @@ def test_linux_the_shell_still_works_in_the_homes_folders(home):
     assert (home / "notes.jsonl").read_text() == "line\n"
 
     assert _launch(home, f'echo x > "{home}/new.txt"').returncode != 0
+
+
+# ── the security log's key, log and archive, in the home in use and the default one ──
+
+#: What each home's key holds, so a read of it is seen in what a command printed.
+_KEY = b"audit-key-0123456789abcdef-signs"
+_ROW = '{"event_id": "e1", "entry_hash": "h1"}\n'
+_ARCHIVED = '{"event_id": "e0", "entry_hash": "h0"}\n'
+_LEVELS = ("standard", "cc", "strict")
+
+
+@pytest.fixture
+def homes(tmp_path, monkeypatch):
+    """A dev home in use beside the owner's default one, each with a security log: its key, the
+    log, and one rotated file in its archive."""
+    user = tmp_path / "user"
+    active, default = user / "dev-home", user / ".personalclaw"
+    for home in (active, default):
+        (home / "workspace").mkdir(parents=True)
+        (home / "sel_archive").mkdir()
+        (home / "sel_spool").mkdir()
+        (home / "sel_hmac.key").write_bytes(_KEY)
+        (home / "security_events.jsonl").write_text(_ROW)
+        (home / "sel_archive" / "security_events.20261101T000000.000000Z.jsonl").write_text(
+            _ARCHIVED
+        )
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(active))
+    monkeypatch.setattr(loader, "config_dir", lambda: active)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: user))
+    return active, default
+
+
+def _sandboxed(level: str, command: str) -> subprocess.CompletedProcess:
+    """*command* through the real wrap at *level*: the macOS profile, or the Linux launcher."""
+    from personalclaw.sandbox import namespace_argv, sandbox_exec_argv
+
+    if sys.platform == "darwin":
+        argv, cleanup = sandbox_exec_argv(["/bin/sh", "-c", command], level)
+    else:
+        argv = namespace_argv(["/bin/sh", "-c", command], level)
+        cleanup = argv[1]
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    finally:
+        os.unlink(cleanup)
+
+
+def _a_real_sandbox():
+    if sys.platform == "darwin":
+        return pytest.mark.skipif(shutil.which("sandbox-exec") is None, reason="needs sandbox-exec")
+    return namespace_sandbox.needs_it()
+
+
+real_sandbox = _a_real_sandbox()
+
+
+@real_sandbox
+@pytest.mark.parametrize("level", _LEVELS)
+def test_a_sandboxed_child_cannot_read_the_audit_key(homes, level, tmp_path):
+    """🔴 Red on main: at every level the child printed the key that signs the security log, in
+    the home in use and in the default one, and could copy it out by a hard link, so a row it
+    wrote passed the log's check. Now macOS refuses the read and the link, and Linux shows an
+    empty file in the key's place."""
+    for home in homes:
+        key = home / "sel_hmac.key"
+        read = _sandboxed(level, f'cat "{key}"; echo; ln "{key}" "{tmp_path}/{home.name}.key"')
+
+        assert _KEY.decode() not in read.stdout, (home, level, read)
+        copied = tmp_path / f"{home.name}.key"
+        assert not copied.exists() or copied.read_bytes() != _KEY, (home, level)
+        assert key.read_bytes() == _KEY
+
+
+@real_sandbox
+@pytest.mark.parametrize("level", _LEVELS)
+def test_a_sandboxed_child_cannot_change_the_audit_log_or_its_archive(homes, level, tmp_path):
+    """🔴 Red on main: the child appended a row to the security log, truncated it, replaced it,
+    removed it, and did the same to the archive and to a file the log adopts into it, in both
+    homes. Each is now refused, and the floor holds: the spool and the home's other files are still
+    written."""
+    for home in homes:
+        log, archive = home / "security_events.jsonl", home / "sel_archive"
+        archived = archive / "security_events.20261101T000000.000000Z.jsonl"
+        (tmp_path / "forged.jsonl").write_text('{"event_id": "forged"}\n')
+        for command in (
+            f'echo forged >> "{log}"',
+            f': > "{log}"',
+            f'mv "{tmp_path}/forged.jsonl" "{log}"',
+            f'rm -f "{log}"',
+            f'echo forged >> "{archived}"',
+            f'rm -f "{archived}"',
+            f'mv "{archive}" "{home}/aside"',
+            f'echo forged > "{archive}/security_events.planted.jsonl"',
+            f'echo forged > "{home}/security_events.planted.bak.jsonl"',
+            f'ln "{log}" "{home}/workspace/log"',
+        ):
+            run = _sandboxed(level, command)
+            assert run.returncode != 0, (home, level, command)
+        assert log.read_text() == _ROW, (home, level)
+        assert archived.read_text() == _ARCHIVED, (home, level)
+        assert sorted(p.name for p in archive.iterdir()) == [archived.name]
+        assert not (home / "security_events.planted.bak.jsonl").exists()
+
+    active = homes[0]
+    floor = _sandboxed(
+        level,
+        f'echo row > "{active}/sel_spool/a.json" && echo x > "{active}/workspace/a.txt" && '
+        f'cat "{active}/security_events.jsonl"',
+    )
+    assert floor.returncode == 0, floor.stderr
+    assert floor.stdout == _ROW and (active / "sel_spool" / "a.json").read_text() == "row\n"
+
+
+@pytest.mark.parametrize("level", _LEVELS)
+def test_each_fence_holds_every_entry_the_security_log_declares(homes, level):
+    """🔴 Red on main: neither the macOS profile nor the Linux launcher named the security log's
+    key, log or archive. Both are built from one declaration (``owner_only.AUDIT_FENCED``), for
+    each home it is fenced in, both spellings of each on macOS."""
+    from personalclaw.owner_only import AUDIT_FENCED
+    from personalclaw.sandbox import _build_launcher_script, _build_seatbelt_profile
+
+    profile = _build_seatbelt_profile(level)
+    launcher = _build_launcher_script(level)
+    compile(launcher, "<launcher>", "exec")
+    reals = [os.path.realpath(home) for home in homes]
+    assert (
+        f"AUDIT_HOMES, AUDIT_KEY, AUDIT_NAMES, AUDIT_PATTERNS = [{json.dumps(reals)}, "
+        '"sel_hmac.key", ["security_events.jsonl", "sel_archive"], '
+        '["security_events.*.bak.jsonl"]]'
+    ) in launcher
+    for home in {*map(str, homes), *reals}:
+        for entry in AUDIT_FENCED:
+            path = os.path.join(home, entry.name)
+            if entry.pattern:
+                folder = (home + os.sep).replace(".", "\\.")
+                rule = (
+                    f'(deny file-write* (regex #"^{folder}security_events\\.[^/]*\\.bak\\.jsonl$"))'
+                )
+                assert rule in profile, rule
+                continue
+            kind = "subpath" if entry.is_dir else "literal"
+            assert f'(deny file-write* ({kind} "{path}"))' in profile, path
+            assert (f'(deny file-read* ({kind} "{path}"))' in profile) is entry.hidden, path
+    # The default home, which is not the one in use, is pinned where it is, as the active one is.
+    for spelling in {str(homes[1]), reals[1]}:
+        assert f'(deny file-write* (literal "{spelling}"))' in profile
+    # And each home's spool is held where it is, while the files in it are not.
+    for home in {*map(str, homes), *reals}:
+        spool = os.path.join(home, "sel_spool")
+        assert f'(deny file-write* (literal "{spool}"))' in profile, spool
+        assert f'(deny file-write* (subpath "{spool}"))' not in profile, spool
+
+
+@real_sandbox
+@pytest.mark.parametrize("level", _LEVELS)
+def test_a_sandboxed_child_cannot_move_the_spool_and_still_writes_in_it(homes, level):
+    """🔴 Red before this on macOS. The spool's own entry is held where it is, in each home, and
+    made before a launch when it is missing, so the child still leaves its rows in it."""
+    active = homes[0]
+    (active / "sel_spool").rmdir()
+    for home in homes:
+        spool = home / "sel_spool"
+        for command in (
+            f'rm -rf "{spool}"',
+            f'mv "{spool}" "{home}/aside"',
+            f'rm -rf "{spool}"; ln -s "{home}/workspace" "{spool}"',
+        ):
+            _sandboxed(level, command)
+            assert spool.is_dir() and not spool.is_symlink(), (home, level, command)
+            assert not (home / "aside").exists(), (home, level, command)
+
+    floor = _sandboxed(level, f'echo row > "{active}/sel_spool/b.json"')
+    assert floor.returncode == 0, floor.stderr
+    assert (active / "sel_spool" / "b.json").read_text() == "row\n"
+
+
+@real_sandbox
+@pytest.mark.parametrize("level", _LEVELS)
+def test_what_a_child_does_to_the_spool_leaves_the_intake_inside_it(homes, level):
+    """🔴 Red before this on macOS, at every level. Whatever the child does to the spool's entry
+    through the real wrap, the gateway's next intake reads and removes nothing outside the
+    spool."""
+    from personalclaw import sel_intake
+
+    active = homes[0]
+    kept = active / "grants"
+    kept.mkdir()
+    (kept / "kept.json").write_text('{"not": "a row"}')
+    spool = active / "sel_spool"
+    _sandboxed(level, f'rm -rf "{spool}"; ln -s "{kept}" "{spool}"')
+
+    sel_intake.take_in_spool()
+    assert sorted(p.name for p in kept.iterdir()) == ["kept.json"], level
+    assert (kept / "kept.json").read_text() == '{"not": "a row"}', level
+
+
+def test_the_spool_is_made_before_a_launch_and_an_entry_there_is_left(homes, tmp_path):
+    """🔴 Red before this: nothing made the spool before a launch, and a fence that holds its
+    entry would leave a home that had none with nowhere for its rows. It is made now, the
+    home's own; an entry already under its name is left as it is, for the gateway to judge."""
+    from personalclaw.sandbox import _make_the_audit_spool
+
+    active = homes[0]
+    (active / "sel_spool").rmdir()
+    _make_the_audit_spool()
+    assert (active / "sel_spool").is_dir() and not (active / "sel_spool").is_symlink()
+    assert (active / "sel_spool").stat().st_mode & 0o077 == 0
+
+    (active / "sel_spool").rmdir()
+    (active / "sel_spool").symlink_to(tmp_path, target_is_directory=True)
+    _make_the_audit_spool()
+    assert (active / "sel_spool").is_symlink()
+
+
+#: The Linux launcher run on any host against a kernel stood in for: each mount call is written to
+#: the log as ``[source, target, flags]`` and answered as done, except one onto a target the
+#: config names to fail, which is refused (EPERM).
+_UNDER_A_RECORDING_KERNEL = r"""
+import builtins, ctypes, errno, json, os, sys, types
+
+cfg = json.loads(sys.argv[1])
+
+
+class _Mount:
+    def __call__(self, source, target, _fstype, flags, _data):
+        real = os.path.realpath(target.decode())
+        with builtins.open(cfg["log"], "a") as log:
+            print(json.dumps([source and source.decode(), real, flags]), file=log)
+        if real in cfg["fail"]:
+            ctypes.set_errno(errno.EPERM)
+            return -1
+        return 0
+
+
+class RecordingKernel:
+    def __init__(self, *_args, **_kwargs):
+        self.unshare = lambda *_a: 0
+        self.mount = _Mount()
+
+
+def _open(path, *args, **kwargs):
+    if str(path).startswith("/proc/"):
+        return builtins.open(os.devnull, "w")
+    return builtins.open(path, *args, **kwargs)
+
+
+ctypes.CDLL = RecordingKernel
+launcher = types.ModuleType("launcher_under_test")
+launcher.open = _open
+exec(compile(open(cfg["script"]).read(), cfg["script"], "exec"), launcher.__dict__)
+launcher.RUNTIME_DIRS = cfg["runtime_dirs"]
+launcher._home_device = lambda: None
+sys.argv = [cfg["script"], *cfg["argv"]]
+launcher.main()
+"""
+
+_MS_BIND, _MS_REMOUNT, _MS_RDONLY = 4096, 32, 1
+
+
+def _launch_under_a_recording_kernel(tmp_path: Path, level: str, fail: list[str]):
+    from personalclaw.sandbox import _build_launcher_script
+
+    runtime = tmp_path / "run-user"
+    runtime.mkdir(exist_ok=True)
+    script = tmp_path / "launcher.py"
+    script.write_text(_build_launcher_script(level), encoding="utf-8")
+    log = tmp_path / "mounts.jsonl"
+    log.unlink(missing_ok=True)
+    cfg = {
+        "script": str(script),
+        "runtime_dirs": [str(runtime)],
+        "log": str(log),
+        "fail": fail,
+        "argv": ["/bin/sh", "-c", "echo ran"],
+    }
+    run = subprocess.run(
+        [sys.executable, "-c", _UNDER_A_RECORDING_KERNEL, json.dumps(cfg)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    mounts = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    return run, mounts, os.path.realpath(runtime)
+
+
+@pytest.mark.parametrize("level", _LEVELS)
+def test_the_linux_launcher_hides_each_key_and_binds_no_log_back(homes, level, tmp_path):
+    """🔴 Red on main: the launcher bound the security log and its archive back writable with
+    every other entry of the home in use, left the default home's open, and hid no key. Now each
+    home's key has an empty file of the launch's bound over it, at every level; neither home's log
+    or archive is bound back; and the default home is bound onto itself and made read-only."""
+    run, mounts, runtime = _launch_under_a_recording_kernel(tmp_path, level, fail=[])
+    assert run.returncode == 0 and run.stdout.strip() == "ran", run
+
+    for home in map(os.path.realpath, homes):
+        key = os.path.join(home, "sel_hmac.key")
+        hides = [m for m in mounts if m[1] == key]
+        assert len(hides) == 1 and hides[0][2] == _MS_BIND, (key, hides)
+        assert hides[0][0].startswith(runtime + os.sep), hides
+        bound_back = {m[1] for m in mounts if m[0] == m[1]}
+        for name in ("security_events.jsonl", "sel_archive", "sel_hmac.key"):
+            assert os.path.join(home, name) not in bound_back, (home, name)
+        assert os.path.join(home, "workspace") in bound_back, home
+        assert home in bound_back, f"{home} is not bound onto itself"
+        remounts = [m for m in mounts if m[1] == home and m[2] & _MS_REMOUNT]
+        assert remounts and remounts[-1][2] & _MS_RDONLY, (home, remounts)
+    # The key is hidden before either home is bound onto itself, so each home's bind carries it.
+    order = [m[1] for m in mounts]
+    for home in map(os.path.realpath, homes):
+        assert order.index(os.path.join(home, "sel_hmac.key")) < order.index(home)
+
+
+def test_the_linux_launcher_stops_where_a_key_cannot_be_hidden(homes, tmp_path):
+    """A key the launcher cannot hide stops the command: it never runs with the key readable."""
+    key = os.path.join(os.path.realpath(homes[1]), "sel_hmac.key")
+    run, _mounts, _runtime = _launch_under_a_recording_kernel(tmp_path, "standard", fail=[key])
+
+    assert run.returncode != 0 and "ran" not in run.stdout, run
+    assert "could not hide the security log's key" in run.stderr, run.stderr
 
 
 # ── with the sandbox off, the screen and the grants still hold ──

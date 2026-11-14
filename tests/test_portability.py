@@ -966,6 +966,12 @@ _SNAPSHOT_COVERAGE_GAPS: frozenset[str] = frozenset(
         # `inbound_clients` (the labels and bindings, token hashes only) is NOT here: that
         # one is real state a restore must return, and it exports.
         "inbound_audit",
+        # security: the security log's spool, the rows an agent CLI's tool server reported while
+        # its gateway did not answer, unsigned until that gateway signs them in at its next start.
+        # Carried nowhere on purpose: a spool restored into another home would be rows its gateway
+        # signs as reported to it that no process of its own reported. The rows it takes in are
+        # written to `security_events.jsonl`, which does travel.
+        "security_events_spool",
     }
 )
 

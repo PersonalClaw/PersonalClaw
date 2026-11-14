@@ -1642,6 +1642,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "artifacts_source": "The artifacts mirror is switched in Settings, not removed as a feed.",
     "unknown_project": "No project has that id.",
     "tags_missing": "Every tag the report reads was deleted, so it did not run.",
+    # a reported security-log row (handlers/security_audit.py `api_security_log_reported`)
+    "security_row_refused": "The body is not a security-log row, so nothing was written.",
 }
 
 

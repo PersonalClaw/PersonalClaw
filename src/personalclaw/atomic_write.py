@@ -40,6 +40,7 @@ owner hands it on by reading it, which 0600 allows), and
 writer to it.
 """
 
+import errno
 import json
 import logging
 import os
@@ -247,6 +248,59 @@ def atomic_write_bytes(
     not pass through text encoding.
     """
     _atomic_write(path, data, text=False, fsync=fsync, mode=mode)
+
+
+def write_new_private(path: Path | str, data: bytes, *, fsync: bool = True) -> bool:
+    """Write *data* to ``path`` only when nothing is there yet, whole and 0600 from its first
+    byte, and say whether this call wrote it.
+
+    The bytes go to a temp file beside ``path`` (``mkstemp``, its mode pinned to 0600), which is
+    then linked to ``path``: a link never replaces a file, so one another process put there first
+    is left as it is and this answers ``False``. A filesystem that keeps no hard links gets the
+    file made exclusively (``O_EXCL``) in its place instead. A write that cannot be made raises,
+    as every write here does."""
+    target = Path(path)
+    if is_in_home(target):
+        ensure_private_dir(target.parent)
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        os.fchmod(fd, PRIVATE_FILE_MODE)
+        _write_all(fd, data, fsync=fsync)
+        os.close(fd)
+        fd = -1
+        try:
+            os.link(tmp, target)
+        except FileExistsError:
+            return False
+        except OSError as exc:
+            if exc.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EMLINK):
+                raise
+            # No hard links here (some network and FAT volumes): made exclusively, so a file
+            # another process made first is still never replaced.
+            try:
+                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, PRIVATE_FILE_MODE)
+            except FileExistsError:
+                return False
+            _write_all(fd, data, fsync=fsync)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    _notify_post_write(target)
+    return True
+
+
+def _write_all(fd: int, data: bytes, *, fsync: bool) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view) :]
+    if fsync:
+        os.fsync(fd)
 
 
 #: The open flags :func:`open_streamed` takes for each mode it serves.

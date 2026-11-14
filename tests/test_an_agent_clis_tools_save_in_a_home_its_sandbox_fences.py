@@ -16,11 +16,13 @@ a Linux host through the real launcher, before this:
   Inbox row beside each proposal is a file at the top of the home;
 * an image the agent made was never charged to the usage ledger, a folder the first metered call
   makes;
-* once the gateway rotated the security log, the next call's row ended the server.
+* once the gateway rotated the security log, the next call's row ended the server; and the server
+  signed its rows with the log's key, which the sandbox now keeps from it.
 
 Each of those calls is now made by the gateway (``mcp_core.made_by_the_gateway``), through the door
 every sandboxed process of PersonalClaw's makes its tool calls by, as the chat's work; a call whose
-work fails says so; and a row the log no longer takes is said in the server's own log. The tool
+work fails says so; and each row the server records is handed to the gateway to sign
+(``sel_intake``), or left in the spool for it when the gateway does not answer. The tool
 server is started as the client declares it and spoken to over stdio, against the real gateway
 (``start_dashboard``, asking for a sign-in), with the sandbox's fence stood in for by
 ``home_fence``: what the real launcher fences is checked on Linux by
@@ -48,7 +50,14 @@ from test_an_agent_clis_workflow_tools_reach_the_gateway import (  # noqa: F401
     gateway,
 )
 
-from personalclaw import lasting_work, mcp_automation, mcp_core, mcp_shared, memory_writes
+from personalclaw import (
+    lasting_work,
+    mcp_automation,
+    mcp_core,
+    mcp_shared,
+    memory_writes,
+    sel_intake,
+)
 from personalclaw.acp.mcp_servers import core_mcp_servers
 from personalclaw.inbox import InboxStore
 from personalclaw.learning import proposals
@@ -141,11 +150,35 @@ def _data(text: str) -> dict[str, Any]:
     return json.loads(found.group(1))
 
 
+def _rows(home: Path, tool: str) -> list[dict[str, Any]]:
+    """Each security-log row for a call of *tool*, in order, the live file's after the archive's."""
+    files = sorted((home / "sel_archive").glob("*.jsonl")) + [home / "security_events.jsonl"]
+    rows = [json.loads(line) for f in files if f.exists() for line in f.read_text().splitlines()]
+    return [r for r in rows if r.get("operation") == tool]
+
+
 def _audited(home: Path, tool: str) -> list[tuple[str, str]]:
     """``(source, outcome)`` of each security-log row for a call of *tool*, in order."""
-    log = home / "security_events.jsonl"
-    rows = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-    return [(r["source"], r["outcome"]) for r in rows if r.get("operation") == tool]
+    return [(r["source"], r["outcome"]) for r in _rows(home, tool)]
+
+
+#: The row a tool server records when it cannot read its tool policy from the gateway, and goes on
+#: without it (``mcp_shared``).
+_POLICY_FAIL_OPEN = "tool_policy.resolution_failed"
+
+
+def _spooled(home: Path) -> list[str]:
+    """The rows waiting in the security log's spool, by file."""
+    spool = home / "sel_spool"
+    return sorted(p.name for p in spool.iterdir()) if spool.exists() else []
+
+
+def _spooled_operations(home: Path) -> list[str]:
+    """The operation of each row waiting in the security log's spool, sorted."""
+    spool = home / "sel_spool"
+    return sorted(
+        json.loads(p.read_text(encoding="utf-8"))["row"]["operation"] for p in spool.iterdir()
+    )
 
 
 def _stored(trigger_id: str) -> Any:
@@ -375,12 +408,17 @@ async def test_an_image_an_agent_cli_makes_is_charged_where_every_call_is(
 
 
 @pytest.mark.asyncio
-async def test_a_row_the_security_log_no_longer_takes_ends_no_call(
+async def test_the_tool_servers_rows_reach_the_log_through_the_gateway(
     gateway, tmp_path  # noqa: F811 - the imported fixture
 ):
-    """The gateway rotates its security log: the file at its name is a new one, which the CLI's
-    sandbox lets its tool server only read. 🔴 Red on main: the next call's row ended the
-    server."""
+    """The CLI's sandbox keeps the security log's key from its tool server and the log
+    unchangeable by it. 🔴 Red on main: the server signed each row with the key and appended it
+    itself, and once the gateway rotated the log, the file at its name was one it could only read.
+    Now each row is handed to the gateway, which signs it and stamps that the tool server
+    reported it, for the chat it serves, rotation or not: every row passes the log's check, none
+    is said only in the server's own log, and the fence refused the server nothing."""
+    from personalclaw.sel import sel
+
     log = gateway.home / "security_events.jsonl"
     log.touch()
     async with _ToolServer(gateway, tmp_path) as server:
@@ -393,11 +431,19 @@ async def test_a_row_the_security_log_no_longer_takes_ends_no_call(
         log.touch()
         ok, after = await server.call("skill_search", {"query": "release"})
         assert ok and after == before, after
-        ok, again = await server.call("skill_search", {"query": "checklist"})
-        assert ok, again
 
-    assert "could not take this row" in server.stderr, server.stderr[-2000:]
-    assert [r["path"] for r in server.refused] == [str(log.resolve())] * 2, server.refused
+    rows = [r for r in _rows(gateway.home, "skill_search") if r["source"] == "mcp"]
+    assert len(rows) == 2, rows
+    for row in rows:
+        stamp = row["metadata"]["reported_by"]
+        assert stamp["process"] == "mcp-core" and stamp["session"] == KEY, stamp
+        assert stamp["spooled"] is False and isinstance(stamp["pid"], int) and stamp["pid"] > 0
+        assert sel()._record_is_authentic(row), row
+    assert "could not take this row" not in server.stderr, server.stderr[-2000:]
+    assert _spooled(gateway.home) == []
+    # The row is the record: the request that carried it writes no access row beside it.
+    assert _rows(gateway.home, "POST /api/security-log/reported") == []
+    assert server.refused == [], server.refused
 
 
 @pytest.mark.asyncio
@@ -419,8 +465,17 @@ async def test_a_call_the_gateway_does_not_answer_says_so_and_saves_nothing(
         "Error: Could not make this call: PersonalClaw's gateway makes it, and it did not answer"
     ), made
     assert [r.trigger.id for r in TriggerStore().load()] == [r.trigger.id for r in before]
-    # Nothing else recorded it: the tool server's own row says it failed.
+    # Nothing else recorded it: the tool server's own row says it failed. No gateway answered
+    # it, so the row waits in the spool, and the gateway signs it in at its next intake.
+    # The tool server could not read its tool policy from the gateway either, so the policy's
+    # fail-open row waits beside the call's, and nothing else does.
+    assert _audited(gateway.home, "automation_create") == []
+    assert _spooled_operations(gateway.home) == ["automation_create", _POLICY_FAIL_OPEN]
+    assert sel_intake.take_in_spool() == 2 and _spooled(gateway.home) == []
     assert _audited(gateway.home, "automation_create") == [("mcp", "failed")]
+    (row,) = _rows(gateway.home, "automation_create")
+    assert row["metadata"]["reported_by"]["spooled"] is True
+    assert row["metadata"]["reported_by"]["process"] == "mcp-core"
     assert server.refused == [], server.refused
 
 
@@ -536,6 +591,11 @@ async def test_a_call_refused_before_the_route_is_recorded_once_by_the_tool_serv
     assert not ok and hooked.startswith("Error: Could not make this call: "), hooked
     assert "so the secret was not sent to it" in hooked, hooked
     assert webhook_callbacks.get("build-done") is None
+    # Its row is not handed over either, for the same proof: it waits in the spool, beside the
+    # fail-open row of the tool policy the gateway would not give it, and nothing else does.
+    assert _audited(gateway.home, "hook_register") == []
+    assert _spooled_operations(gateway.home) == ["hook_register", _POLICY_FAIL_OPEN]
+    assert sel_intake.take_in_spool() == 2 and _spooled(gateway.home) == []
     assert _audited(gateway.home, "hook_register") == [("mcp", "failed")]
     assert server.refused == [], server.refused
 
@@ -801,7 +861,8 @@ def test_only_the_agent_clis_tool_server_hands_a_call_to_the_gateway(tmp_path, m
 @pytest.mark.asyncio
 async def test_an_agent_clis_start_makes_the_folders_its_own_tools_write_in(tmp_path, monkeypatch):
     """Like the skills folder: the locks, artifacts and workflows folders the tools the server
-    makes itself write in are made before the CLI starts. 🔴 Red on main: none was made."""
+    makes itself write in are made before the CLI starts, and the security log's spool, where the
+    server leaves a row its gateway did not answer for. 🔴 Red on main: none was made."""
     import sys
 
     from personalclaw.acp.transport import AcpProcess
@@ -815,7 +876,7 @@ async def test_an_agent_clis_start_makes_the_folders_its_own_tools_write_in(tmp_
         "import json, os, sys; json.dump([os.path.isdir(p) for p in sys.argv[2:]], "
         "open(sys.argv[1], 'w'))"
     )
-    folders = [home / "skills", home / "locks", home / "artifacts", home / "workflows"]
+    folders = [home / name for name in ("skills", "locks", "artifacts", "workflows", "sel_spool")]
     agent = AcpProcess(
         command=[sys.executable, "-c", look, str(seen), *map(str, folders)],
         work_dir=tmp_path / "work",
@@ -826,4 +887,4 @@ async def test_an_agent_clis_start_makes_the_folders_its_own_tools_write_in(tmp_
         await asyncio.wait_for(agent.process.wait(), timeout=60)
     agent.teardown()
 
-    assert json.loads(seen.read_text()) == [True, True, True, True]
+    assert json.loads(seen.read_text()) == [True] * 5
