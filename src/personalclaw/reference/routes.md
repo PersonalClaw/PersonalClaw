@@ -465,7 +465,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/learning/identity-report` — compose, narrate, persist, surface.
 - `GET /api/learning/proposals` — the inbox across all six kinds.
 - `DELETE /api/learning/proposals/{id}` — dismiss it, and REMEMBER the decision.
-- `GET /api/learning/proposals/{id}` — one full record.
+- `GET /api/learning/proposals/{id}` — one full record, its words masked (`proposals.shown`).
 - `POST /api/learning/proposals/{id}/accept` — install it.
 - `GET /api/learning/staging/week` — the week-at-a-glance capture panel.
 - `GET /api/learning/summary` — the learning summary block.

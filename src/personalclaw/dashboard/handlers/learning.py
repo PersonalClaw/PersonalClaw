@@ -178,8 +178,23 @@ def _tier_for(prop) -> str:
     return ""
 
 
+def _reads(request: web.Request, session_key: object) -> bool:
+    """Whether the caller of *request* reads a proposal filed under *session_key*.
+
+    You read every proposal. An app reads only those learned from a conversation it started
+    (``_shared.caller_reads_filed_from``): a proposal quotes the chat it came from, and an app is
+    refused the transcript and the draft skills of every chat it didn't start, so it is refused
+    what was learned from them too. A proposal from no chat is yours."""
+    from personalclaw.dashboard.handlers._shared import caller_reads_filed_from
+
+    return caller_reads_filed_from(request, str(session_key or ""))
+
+
 async def api_learning_proposals(request: web.Request) -> web.Response:
     """GET /api/learning/proposals — the inbox across all six kinds.
+
+    An app is served only the proposals learned from a conversation it started (:func:`_reads`),
+    and every row's words are masked (`inbox.row_from_proposal`).
 
     `?kind=` / `?tier=` / `?flagged=1` map onto `inbox.filter_rows`. Counts ride the response so a
     filter chip can render its number without a second request — a chip a user must click to
@@ -211,6 +226,7 @@ async def api_learning_proposals(request: web.Request) -> web.Response:
             status=500,
         )
 
+    pending = [p for p in pending if _reads(request, getattr(p, "session_key", ""))]
     tiers = {str(getattr(p, "id", "")): _tier_for(p) for p in pending}
     view = build_view(
         pending,
@@ -218,12 +234,12 @@ async def api_learning_proposals(request: web.Request) -> web.Response:
         kind=kind,
         tier=tier,
         flagged_only=flagged,
-        skill_proposals_pending=_skill_proposals_pending(),
+        skill_proposals_pending=_skill_proposals_pending(request),
     )
     return web.json_response(view.to_dict())
 
 
-def _skill_proposals_pending() -> int:
+def _skill_proposals_pending(request: web.Request) -> int:
     """How many SKILL proposals await review — a COUNT and a pointer, never rows (#321).
 
     `personalclaw.skills.proposals` is a different store from this endpoint's
@@ -247,17 +263,17 @@ def _skill_proposals_pending() -> int:
     try:
         from personalclaw.skills import proposals as skill_store
 
-        return len(skill_store.list_pending())
+        return sum(1 for p in skill_store.list_pending() if _reads(request, p.session_key))
     except Exception:
         logger.warning("skill-proposal count failed", exc_info=True)
         return 0
 
 
 async def api_learning_proposal(request: web.Request) -> web.Response:
-    """GET /api/learning/proposals/{id} — one full record.
+    """GET /api/learning/proposals/{id} — one full record, its words masked (`proposals.shown`).
 
     The inbox row is a summary; the detail view needs the body and the change manifest a reviewer
-    actually reads before accepting.
+    actually reads before accepting. An app reads only a proposal from a conversation it started.
     """
     if not _enabled():
         return web.json_response({"error": "learning is disabled"}, status=404)
@@ -265,9 +281,11 @@ async def api_learning_proposal(request: web.Request) -> web.Response:
     from personalclaw.learning import proposals as store
 
     prop = store.get(request.match_info.get("id", ""))
-    if prop is None:
+    # Another chat's proposal is no proposal to an app: the same answer as an id never filed, so
+    # the refusal confirms nothing.
+    if prop is None or not _reads(request, prop.session_key):
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response(prop.to_dict())
+    return web.json_response(store.shown(prop))
 
 
 async def api_learning_proposal_accept(request: web.Request) -> web.Response:
@@ -575,7 +593,8 @@ async def api_learning_summary(request: web.Request) -> web.Response:
     The facts group is memory content, so work that reads no memory (a Temporary chat's, an
     app's without the memory permission: `memory_reads`) gets the summary WITHOUT it — matching
     `/api/lessons`, which lists no lesson for the same caller. The skill and proposal groups are
-    not memory and stay visible.
+    not memory and stay visible, an app's counting and naming only the proposals from a
+    conversation it started (`_reads`).
     """
     if not _enabled():
         return _off()
@@ -603,7 +622,11 @@ async def api_learning_summary(request: web.Request) -> web.Response:
         except Exception:
             logger.debug("learning summary: memory store unavailable", exc_info=True)
 
-    return web.json_response(compose_learning_summary(window_days=days, vs=vs).to_payload())
+    # An app is told only of the pending proposals from its own chats (`_reads`).
+    summary = compose_learning_summary(
+        window_days=days, vs=vs, reads=lambda key: _reads(request, key)
+    )
+    return web.json_response(summary.to_payload())
 
 
 def _report_window(request: web.Request) -> "int | None":

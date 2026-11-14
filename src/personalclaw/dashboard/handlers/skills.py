@@ -990,6 +990,24 @@ async def api_ephemeral_skill_discard(request: web.Request) -> web.Response:
 # ── Skill proposals inbox ────────────────────────────────────────────────────
 
 
+def _last_review_for(request: web.Request, review: dict | None) -> dict | None:
+    """The last ladder pass as the caller of *request* reads it: whole for you; for an app, without
+    the chat it reviewed and what it said about it unless the app started that chat
+    (:func:`_reads_proposal`), so the marker names no chat of yours."""
+    if review is None or _reads_proposal(request, str(review.get("session_key") or "")):
+        return review
+    return {**review, "session_key": "", "detail": ""}
+
+
+def _reads_proposal(request: web.Request, session_key: str) -> bool:
+    """Whether the caller of *request* reads a skill proposal filed from *session_key*: you read
+    every one, and an app only one from a conversation it started, the rule the Learning
+    proposals follow (``handlers.learning._reads``) and the draft skills already did."""
+    from ._shared import caller_reads_filed_from
+
+    return caller_reads_filed_from(request, session_key)
+
+
 async def api_skill_proposals_list(request: web.Request) -> web.Response:
     """GET /api/skills/proposals — the pending autonomous-synthesis proposals
     awaiting human review (propose-only; nothing here is installed).
@@ -999,13 +1017,20 @@ async def api_skill_proposals_list(request: web.Request) -> web.Response:
     to a question this route's own payload otherwise cannot answer: an empty
     ``proposals`` list with a ``lastReview`` is a working ladder that found nothing,
     and an empty list with ``lastReview: null`` is a ladder that never fired.
+
+    An app is served only the proposals from a conversation it started, and each row's words are
+    masked (``SkillProposal.summary``).
     """
     from personalclaw.skills import proposals
 
     return web.json_response(
         {
-            "proposals": [p.summary() for p in proposals.list_pending()],
-            "lastReview": proposals.last_review(),
+            "proposals": [
+                p.summary()
+                for p in proposals.list_pending()
+                if _reads_proposal(request, p.session_key)
+            ],
+            "lastReview": _last_review_for(request, proposals.last_review()),
         }
     )
 
@@ -1020,17 +1045,24 @@ async def api_skill_proposal_detail(request: web.Request) -> web.Response:
     approval surface showing a stale diff asks the user to approve a change they were not
     shown. Empty ``diff`` is meaningful: the target no longer resolves, or the refinement
     would change nothing.
+
+    Its words are masked for display (``SkillProposal.shown``), and an app reads only a proposal
+    from a conversation it started.
     """
+    from personalclaw.security import redact_for_display
     from personalclaw.skills import proposals, refine
 
     prop = proposals.get(request.match_info.get("id", ""))
-    if prop is None:
+    # Another chat's proposal is no proposal to an app: the answer an id never filed gets.
+    if prop is None or not _reads_proposal(request, prop.session_key):
         return web.json_response({"error": "not found"}, status=404)
-    payload = prop.to_dict()
+    payload = prop.shown()
     if prop.kind == "refine" and prop.refine_target:
         from personalclaw.skills import overlays
 
-        payload["diff"] = refine.proposal_diff(prop)
+        # Built from the proposal as filed, so its description is in it as written: masked like
+        # every other field here (the skill's own page shows its lines whole).
+        payload["diff"] = redact_for_display(refine.proposal_diff(prop))
         payload["version"] = overlays.next_version(prop.refine_target)
     return web.json_response(payload)
 
@@ -1042,17 +1074,27 @@ async def api_skill_proposal_accept(request: web.Request) -> web.Response:
     and leaves the skill's own files (an imported skill's lock among them) as they were; a new
     skill, or a refinement whose skill was removed since, is added under ``auto/``. Optional
     reviewer edits apply either way, and the proposal leaves the queue."""
+    from personalclaw.security import MaskConflict, keep_masked_spans
     from personalclaw.skills import proposals
 
     pid = request.match_info.get("id", "")
     body = await json_object_body(request)
     body = body if isinstance(body, dict) else {}
+    description = str(body["description"]) if body.get("description") else None
+    procedure_md = str(body["procedure_md"]) if body.get("procedure_md") else None
+    # An edit seeded from the masked read sends each marker back: it keeps the value it stood for,
+    # so a marker is never installed in place of what the proposal said.
+    stored = proposals.get(pid) if description is not None or procedure_md is not None else None
+    if stored is not None:
+        try:
+            if description is not None:
+                description = keep_masked_spans(description, stored.description)
+            if procedure_md is not None:
+                procedure_md = keep_masked_spans(procedure_md, stored.procedure_md)
+        except MaskConflict as exc:
+            return json_error("mask_conflict", message=str(exc), status=409)
     try:
-        result = proposals.accept(
-            pid,
-            description=(str(body["description"]) if body.get("description") else None),
-            procedure_md=(str(body["procedure_md"]) if body.get("procedure_md") else None),
-        )
+        result = proposals.accept(pid, description=description, procedure_md=procedure_md)
     except proposals.ProposalGone as exc:
         await sel_log_async(_sel_log, "skills.proposal_accept", "rejected", f"{pid}:{exc}", request)
         return json_error("skill_proposal_gone", status=404, error_extra={"id": pid})

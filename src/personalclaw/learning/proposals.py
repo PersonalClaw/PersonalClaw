@@ -54,7 +54,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
@@ -430,6 +430,29 @@ def list_pending(kind: str = "") -> list[Proposal]:
 
 def get(pid: str) -> Proposal | None:
     return _load(pid)
+
+
+#: The parts of a proposal a producer wrote in words: what a reader is shown masked (:func:`shown`).
+SHOWN_TEXT = ("title", "body", "source_excerpt")
+
+
+def shown(prop: Proposal) -> dict[str, Any]:
+    """*prop* as a read hands it out: :meth:`Proposal.to_dict`, its words masked for display
+    (``security.redact_for_display``), as every other view of what an agent wrote is.
+
+    A producer files its title, body and excerpt as written, and an excerpt quotes what the
+    proposal was learned from, often your own message. The record keeps them whole, since accepting
+    one installs what it says; a read never shows a credential in them. The change manifest and the
+    reasons it failed validation carry the producer's words too, so they are masked value by value.
+    """
+    from personalclaw.security import redact_for_display, redact_values_for_display
+
+    out = prop.to_dict()
+    for key in SHOWN_TEXT:
+        out[key] = redact_for_display(str(out.get(key) or ""))
+    out["change_manifest"] = redact_values_for_display(out.get("change_manifest") or {})
+    out["manifest_issues"] = [redact_for_display(str(i)) for i in out.get("manifest_issues") or []]
+    return out
 
 
 def newest_gate_for_target(target: str) -> dict | None:
@@ -867,10 +890,15 @@ def _surface_in_inbox(prop: Proposal) -> None:
         # of the inbox handler hard-wiring this queue by name. `refs["learning_proposal"]`
         # stays for the existing readers — the contract is additive, not a replacement.
         from personalclaw.proposals_contract import REFS_KEY, Proposal
+        from personalclaw.security import redact_for_display
 
+        # The row's copies of the proposal's words are masked as its own read is (`shown`): the
+        # row's text is copied into its notification, the log and the digest, and accepting goes
+        # through the stored proposal, never this copy (`editable=False`).
+        shown_title = redact_for_display(prop.title or "")
         payload = Proposal(
-            title=prop.title or title,
-            preview=prop.body or prop.title or "",
+            title=shown_title or title,
+            preview=redact_for_display(prop.body or prop.title or ""),
             preview_kind="text",
             provenance="learning",
             editable=False,
@@ -882,7 +910,7 @@ def _surface_in_inbox(prop: Proposal) -> None:
             kind="proposal",
             item_kind=ItemKind.PROPOSAL.value,
             title=title,
-            body=f"{prop.title}",
+            body=shown_title,
             refs={
                 "learning_proposal": prop.id,
                 "session": prop.session_key,
@@ -1093,8 +1121,52 @@ def withdraw_compiled(uids: Iterable[str]) -> list[tuple[str, list[str]]]:
     return given
 
 
+def withdraw_sessions(spelled: Callable[[str], bool]) -> list[str]:
+    """Withdraw every proposal still waiting that was learned from a chat *spelled* names (its
+    ``session_key``), as a deleted chat leaves. Returns the ids withdrawn.
+
+    A proposal quotes the chat it was learned from, in its title, body and excerpt, so deleting
+    the chat takes what is still waiting on your answer with it, its Inbox row and that row's
+    notification text too (:func:`_withdraw_inbox_item`). Withdrawn, not rejected: you decided
+    nothing. A decided proposal is the record of your decision and stays. Called on the gateway's
+    loop by a chat's delete, which its caller audits, as :func:`withdraw_compiled` is.
+    """
+    waiting = {Status.PENDING.value, Status.DRAFT.value}
+    gone: list[str] = []
+    for prop in _all():
+        if prop.status not in waiting or not prop.session_key or not spelled(prop.session_key):
+            continue
+        try:
+            _path(prop.id).unlink()
+        except OSError:
+            logger.warning("could not remove learning proposal %s", prop.id, exc_info=True)
+            continue
+        _withdraw_inbox_item(prop.id)
+        gone.append(prop.id)
+    return gone
+
+
+#: What a withdrawn proposal's notification says in place of the words it copied from its row.
+WITHDRAWN_NOTE = "Withdrawn: a chat it was learned from was deleted."
+
+
+def withdrawn_words(rows: Iterable[Any]) -> dict[str, tuple[str, str]]:
+    """Give each withdrawn proposal's Inbox row in *rows* :data:`WITHDRAWN_NOTE` as its body, its
+    title (the kind's label) kept, and return each row's new words for its notifications
+    (``DashboardState.retext_item_notifications``)."""
+    from personalclaw.security import redact_for_display
+
+    out: dict[str, tuple[str, str]] = {}
+    for row in rows:
+        title = redact_for_display(str(row.message or "").partition("\n\n")[0])
+        row.message = f"{title}\n\n{WITHDRAWN_NOTE}" if title else WITHDRAWN_NOTE
+        out[row.id] = (title, WITHDRAWN_NOTE)
+    return out
+
+
 def _withdraw_inbox_item(pid: str) -> None:
-    """Dismiss the withdrawn proposal's Inbox row, its copy of the proposal's body cleared."""
+    """Dismiss the withdrawn proposal's Inbox row, its copy of the proposal's body cleared, and
+    give the row's notifications :data:`WITHDRAWN_NOTE` in place of the words they copied."""
     try:
         from personalclaw.inbox import set_item_status
         from personalclaw.proposals_contract import REFS_KEY
@@ -1104,8 +1176,12 @@ def _withdraw_inbox_item(pid: str) -> None:
             payload = row.refs.get(REFS_KEY)
             if isinstance(payload, dict):
                 payload["preview"] = ""
+        words = withdrawn_words(rows)
         if rows and not set_item_status(state, store, rows, "dismissed"):
             store.save()  # already dismissed: the cleared preview is still written
+        retext = getattr(state, "retext_item_notifications", None)
+        if words and callable(retext):
+            retext(words)
     except Exception:
         logger.warning("could not withdraw learning proposal %s from the Inbox", pid, exc_info=True)
 

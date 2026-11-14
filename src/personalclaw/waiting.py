@@ -19,7 +19,10 @@ asked_at, age_secs, expires_at, current, interrupt, answer, route, project_id, l
   started.
 - ``brief`` is the source's own words, exactly as its own card shows them: an approval's registry
   row fields, a question's cards, a loop's question and why, a gate's ask and handoff, a park's
-  card. Security copy is never reworded here.
+  card. Security copy is never reworded here. Each is masked as its source's own view masks it:
+  a loop's name and task, a plan step's title and objective, a park's question, card and trigger
+  name, and a gate's ask and handoff are what a person or an agent wrote, and a read never shows
+  a credential in them.
 - ``consequence`` is what answering it lets happen (:data:`CONSEQUENCES`): ``destructive`` (an
   approval of a call that deletes or runs anything), ``changes`` (an approval, a gate's
   confirmation, a parked action, a merge or conflict, a browser grant, a bridge confirmation), or
@@ -149,6 +152,22 @@ APPROVAL_BRIEF = (
     "asked_by",
     "trigger_name",
 )
+
+
+def _shown(text: object) -> str:
+    """*text* as its source's own view shows it: masked for display (``redact_for_display``), as
+    the loop, plan, automation and run views mask what a person or an agent wrote."""
+    from personalclaw.security import redact_for_display
+
+    return redact_for_display(str(text or ""))
+
+
+def _shown_values(value: Any) -> Any:
+    """:func:`_shown` over a string, or over each string of a JSON-shaped value (a park's card, a
+    plan step's text as ``planning.session.wire`` masks it)."""
+    from personalclaw.security import redact_values_for_display
+
+    return redact_values_for_display(value)
 
 
 def _iso(epoch: float | None) -> str | None:
@@ -353,7 +372,7 @@ def _loop_questions(loops: list[Any], now: float) -> list[dict[str, Any]]:
         if str(getattr(loop.status, "value", loop.status)) != "needs_input":
             continue
         q = loop_files.pending_question(loop.id) or {}
-        brief: dict[str, Any] = {"name": loop.name, "question": q.get("question") or ""}
+        brief: dict[str, Any] = {"name": _shown(loop.name), "question": q.get("question") or ""}
         for key in ("why", "asked_by", "merge", "conflict", "spend_cap", "declined", "no_tools"):
             if key in q:
                 brief[key] = q[key]
@@ -397,7 +416,7 @@ def _loop_plans(loops: list[Any], now: float) -> list[dict[str, Any]]:
                     ident=f"loop:{loop.id}",
                     work=f"loop:{loop.id}",
                     session="",
-                    brief={"name": loop.name, "task": getattr(loop, "task", "")},
+                    brief={"name": _shown(loop.name), "task": _shown(getattr(loop, "task", ""))},
                     consequence="asks",
                     answer=_answer("PATCH", base, ("start",), {"action": "start"}),
                     route=_loop_route(loop),
@@ -419,12 +438,12 @@ def _loop_plans(loops: list[Any], now: float) -> list[dict[str, Any]]:
                 work=f"loop:{loop.id}",
                 session="",
                 brief={
-                    "name": loop.name,
+                    "name": _shown(loop.name),
                     "step": {
                         "id": step.id,
                         "kind": step.kind,
-                        "title": step.title,
-                        "objective": step.objective,
+                        "title": _shown_values(step.title),
+                        "objective": _shown_values(step.objective),
                     },
                 },
                 consequence="asks",
@@ -467,7 +486,13 @@ def _chat_plans(now: float) -> list[dict[str, Any]]:
                 ident=f"chat:{chat}:{step.id}",
                 work=f"chat:{chat}",
                 session=chat,
-                brief={"step": {"id": step.id, "title": step.title, "objective": step.objective}},
+                brief={
+                    "step": {
+                        "id": step.id,
+                        "title": _shown_values(step.title),
+                        "objective": _shown_values(step.objective),
+                    }
+                },
                 consequence="asks",
                 answer=_answer(
                     "POST",
@@ -491,7 +516,7 @@ _RUNS_PAGE = 200
 
 
 def _gates(now: float) -> list[dict[str, Any]]:
-    from personalclaw.workflows import human_input
+    from personalclaw.workflows import human_input, journal
     from personalclaw.workflows import store as runs
     from personalclaw.workflows.models import RunStatus
 
@@ -531,11 +556,13 @@ def _gates(now: float) -> list[dict[str, Any]]:
                         ident=f"{run.id}:{cont.confirmation_id or cont.node_id}:{cont.epoch}",
                         work=f"workflow:{root}",
                         session="",
+                        # The ask and the handoff as the run's cockpit shows them, through the
+                        # journal's redactor (``run_cockpit.introspect``).
                         brief={
                             "workflow": run.workflow_name,
                             "node_id": cont.node_id,
-                            "ask": dict(cont.ask),
-                            "handoff": dict(cont.handoff),
+                            "ask": journal.redact(dict(cont.ask)),
+                            "handoff": journal.redact(dict(cont.handoff)),
                         },
                         consequence="changes" if kind == "approval" else "asks",
                         answer=answer,
@@ -574,10 +601,11 @@ def _parks(now: float) -> list[dict[str, Any]]:
                 ident=park.trigger_id,
                 work=f"trigger:{park.trigger_id}",
                 session="",
+                # As the run history and the Automations list show a trigger's words: masked.
                 brief={
-                    "trigger_name": trigger_name(park.trigger_id),
-                    "question": park.question,
-                    "card": dict(park.card),
+                    "trigger_name": _shown(trigger_name(park.trigger_id)),
+                    "question": _shown(park.question),
+                    "card": _shown_values(dict(park.card)),
                 },
                 consequence="changes",
                 answer=_answer(

@@ -181,3 +181,24 @@ def _change_refused_for_the_app(
         error=refused,
     )
     return web.json_response({"error": refused}, status=403)
+
+
+def caller_reads_filed_from(request: web.Request, key: str) -> bool:
+    """Whether the caller of *request* reads what was filed from the conversation *key* (a
+    proposal learned from it, say): you read all of it, and an app only what came from a
+    conversation it started.
+
+    *key* is a chat's name in any spelling a store files it under: bare, or under its
+    ``dashboard:`` key. For an app, ``False`` for a conversation of yours, another app's, one that
+    no longer exists and a key that names none, as ``DashboardState.session_creating_app``
+    answers."""
+    app = request.get("app", "")
+    if not app:
+        return True
+    state = request.app.get("state")
+    if state is None or not key:
+        return False
+    from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
+
+    name = dashboard_history_key(key).removeprefix(DASHBOARD_SESSION_PREFIX)
+    return bool(name) and state.session_creating_app(name) == app

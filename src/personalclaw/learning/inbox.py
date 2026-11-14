@@ -283,14 +283,17 @@ def row_from_proposal(prop: Any, *, risk_tier: str = "") -> Row:
     tier = risk_tier or "review"
     from personalclaw.evals import gate as gate_lib
     from personalclaw.learning import replay as replay_lib
+    from personalclaw.security import redact_for_display
 
     return Row(
         id=str(getattr(prop, "id", "") or ""),
         kind=str(getattr(prop, "kind", "") or ""),
-        title=str(getattr(prop, "title", "") or ""),
+        # Masked for display, as the proposal's own read is (`proposals.shown`): a producer files
+        # its title and the excerpt it quotes as written, and the excerpt is often your message.
+        title=redact_for_display(str(getattr(prop, "title", "") or "")),
         provenance=str(getattr(prop, "provenance", "") or ""),
         source_cadence=str(getattr(prop, "source_cadence", "") or ""),
-        source_excerpt=str(getattr(prop, "source_excerpt", "") or ""),
+        source_excerpt=redact_for_display(str(getattr(prop, "source_excerpt", "") or "")),
         evidence_refs=[str(r) for r in (getattr(prop, "evidence_refs", None) or [])],
         # Read, never defaulted to a tier: an older record without the field is UNGRADED, and
         # substituting "correlated" would upgrade an unknown provenance to a claim nobody made.
@@ -298,7 +301,10 @@ def row_from_proposal(prop: Any, *, risk_tier: str = "") -> Row:
         reinforcements=int(getattr(prop, "reinforcements", 0) or 0),
         confidence=float(getattr(prop, "confidence", 0.0) or 0.0),
         manifest_valid=bool(getattr(prop, "manifest_valid", True)),
-        manifest_issues=[str(i) for i in (getattr(prop, "manifest_issues", None) or [])],
+        # The producer's words, masked as the proposal's own read masks them (`proposals.shown`).
+        manifest_issues=[
+            redact_for_display(str(i)) for i in (getattr(prop, "manifest_issues", None) or [])
+        ],
         risk_tier=tier,
         status=str(getattr(prop, "status", "pending") or "pending"),
         # Projected through `gate.summary`, which turns an ABSENT report into an honest
