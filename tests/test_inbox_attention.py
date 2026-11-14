@@ -294,10 +294,11 @@ def test_a_seen_item_still_suppresses(store, state):
 
 
 def test_dedup_picks_the_newest_open_match(store, state):
-    """Two open items with one key (possible before dedup existed) → newest wins."""
-    older = _channel_item(id="needs_input_aaaaaaaa_100.0", created_at=100.0)
+    """Two open items the raiser filed with one key (possible before dedup existed) → newest
+    wins. A key matches within its raiser's source, so both are the loop's own rows."""
+    older = _channel_item(id="needs_input_aaaaaaaa_100.0", created_at=100.0, source="loop")
     older.refs = {"dedup_key": "k"}
-    newer = _channel_item(id="needs_input_bbbbbbbb_200.0", created_at=200.0)
+    newer = _channel_item(id="needs_input_bbbbbbbb_200.0", created_at=200.0, source="loop")
     newer.refs = {"dedup_key": "k"}
     store.add(older)
     store.add(newer)

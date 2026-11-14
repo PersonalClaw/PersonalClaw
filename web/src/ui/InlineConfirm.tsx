@@ -20,9 +20,18 @@ export function wrapping(look: { className: string; role: string }): { className
 
 /** A card's answer whose words a server wrote (a run's choice), drawn in the kit's secondary pill
  *  made to wrap (`wrapping`), so a long one never runs past the card at 320 px. */
-export function WrappingAnswer({ children, ...button }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className' | 'type'> & { children: ReactNode }) {
+export function WrappingAnswer({ children, ariaLabel, ariaBusy, ...button }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className' | 'type' | 'aria-label' | 'aria-busy'> & {
+  children: ReactNode
+  /** The answer's name, "<verb> <subject>". */
+  ariaLabel?: string
+  /** While the answer is on its way. */
+  ariaBusy?: boolean
+}) {
   const look = wrapping(buttonLook('secondary', 'xs', 'pill'))
-  return <button {...button} type="button" data-type={look.role} className={look.className}>{children}</button>
+  return (
+    <button {...button} type="button" aria-label={ariaLabel} aria-busy={ariaBusy || undefined}
+      data-type={look.role} className={look.className}>{children}</button>
+  )
 }
 
 /** The one way a card asks once more before an answer it can't take back, the inline twin of a

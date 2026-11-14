@@ -21,6 +21,9 @@ async function answerNeedsYousReads(page: Page, waiting?: { current: unknown }):
 
 const list = (page: Page) => page.getByRole('region', { name: 'Needs you' })
 const cards = (page: Page) => list(page).locator('[data-need-card]')
+/** Open the first card's panel as a pointer does: a press on its body, away from its answers. The
+ *  card's own target lies under its content, which takes the pointer there. */
+const openFirst = (page: Page) => cards(page).first().click({ position: { x: 6, y: 6 } })
 
 /** How many distinct columns the cards of *group* sit in. */
 async function columnsOf(page: Page, group: 'waiting' | 'review'): Promise<number> {
@@ -46,7 +49,7 @@ test.describe('Needs you', () => {
     await expect(cards(page)).toHaveCount(6)
     expect(await columnsOf(page, 'waiting')).toBeGreaterThanOrEqual(2)
     // The first card's panel opens beside the list, which goes to one column.
-    await list(page).getByRole('button', { name: /^Show the details of / }).first().click()
+    await openFirst(page)
     await expect(page.getByRole('region', { name: 'bash' })).toBeVisible()
     await expect(list(page)).toBeVisible()
     expect(await columnsOf(page, 'waiting')).toBe(1)
@@ -64,7 +67,7 @@ test.describe('Needs you', () => {
     await page.setViewportSize({ width: 390, height: 844 })
     await answerNeedsYousReads(page)
     await gotoRoute(page, 'mission-control')
-    await list(page).getByRole('button', { name: /^Show the details of / }).first().click()
+    await openFirst(page)
     await expect(page.getByRole('region', { name: 'bash' })).toBeVisible()
     await expect(list(page)).toBeHidden()
     await page.goBack()
@@ -111,7 +114,7 @@ test.describe('Needs you', () => {
         await expect(cards(page)).toHaveCount(6)
         await shot(page, info, `needs-you-${w}-${theme}`)
         if (w === 390) return
-        await list(page).getByRole('button', { name: /^Show the details of / }).first().click()
+        await openFirst(page)
         await expect(page.getByRole('region', { name: 'bash' })).toBeVisible()
         await shot(page, info, `needs-you-${w}-${theme}-panel`)
       })

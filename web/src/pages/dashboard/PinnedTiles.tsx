@@ -46,11 +46,11 @@ export function artifactTiles(views: DashboardView[] | undefined): DashboardTile
  *  last-known tiles instantly on revisit, no blank flash, and revalidates in the background. The
  *  section's empty rule (`PinnedArtifacts`) reads the same copy. */
 export function useHomeTiles() {
-  const { data: views, refresh } = useQuery<DashboardView[]>(
+  const { data: views, error, refresh } = useQuery<DashboardView[]>(
     VIEWS_CACHE_KEY, () => api.dashboardViews().catch(() => [] as DashboardView[]), { persist: true },
   )
   const tiles = useMemo(() => artifactTiles(views), [views])
-  return { tiles, refresh }
+  return { tiles, error, refresh }
 }
 
 export function PinnedTiles() {

@@ -108,8 +108,14 @@ def test_a_loop_that_stopped_at_its_budget_raises_a_standing_row(raised: list) -
     assert call["title"] == "Loop stopped at its budget"
     assert "It used its budget of 6 cycles" in call["body"]
     assert call["body"].endswith("For more cycles, fork it."), call["body"]
-    # `loop` is what every loop surface deep-links by; `workflow` is what a delete resolves by.
-    assert call["refs"] == {"loop": "r1", "loop_kind": "general", "workflow": "r1"}
+    # `loop` is what every loop surface deep-links by; `workflow` is what a delete resolves by;
+    # the ending is how the waiting list knows an escalated run.
+    assert call["refs"] == {
+        "loop": "r1",
+        "loop_kind": "general",
+        "workflow": "r1",
+        "ending": "escalated",
+    }
     assert call["dedup_key"] == "loop-run:r1:escalated"
 
 

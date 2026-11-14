@@ -533,7 +533,7 @@ function liftedHead(rows: DayRow[], view: DayView): ReactNode {
   if (!asks && rest.length === 0) return null
   return (
     <>
-      {asks ? <TextLink href="#/mission-control" ink="emphasis">{needYou(asks)}</TextLink> : null}
+      {asks ? <TextLink href="#/mission-control" ink="emphasis" className={`inline-flex items-center ${TOUCH_TARGET}`}>{needYou(asks)}</TextLink> : null}
       {`${asks && rest.length ? ' · ' : ''}${rest.join(' · ')}`}
     </>
   )

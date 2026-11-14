@@ -12,7 +12,11 @@ import { SOURCE_WORDS } from '../pages/dashboard/NeedCards'
 export function nextNeedsYouRoute(read: Pick<NeedsYouRead, 'waiting' | 'items' | 'proposals'>): string | null {
   const [first] = needsYou(read.waiting, read.items, read.proposals)
   if (!first) return null
-  const own = first.origin === 'waiting' ? waitingRoute(first.item) : ''
+  // An approval of work no page answers (a webhook's, a schedule's, an app's: `work` is "") is
+  // served with its session's chat route, a chat that does not exist (`approvalDestination`).
+  // Needs you answers it, so it opens there.
+  const unanswered = first.origin === 'waiting' && first.item.kind === 'approval' && !first.item.work
+  const own = first.origin === 'waiting' && !unanswered ? waitingRoute(first.item) : ''
   if (own && own.split('?')[0] !== 'mission-control') return own
   return `mission-control?open=${encodeURIComponent(first.key)}`
 }

@@ -7,6 +7,7 @@ import { render, act, screen } from '@testing-library/react'
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
 import { PinnedTiles } from './PinnedTiles'
 import { invalidateKeys } from '../../lib/data'
+import { tipOf } from '../../test/tipOf'
 
 const BODY = '<div>sales: 42</div>'
 
@@ -110,8 +111,10 @@ describe('a failed refresh keeps the last-good paint (never an empty panel)', ()
     const link = document.querySelector('[data-testid="tile-ledger-link"]') as HTMLAnchorElement | null
     expect(link).not.toBeNull()
     expect(link?.getAttribute('href')).toContain('/tiles/refresh?ref=artifact%3Asales')
-    expect(link?.getAttribute('title')).toContain('the store is unreachable')
-    expect(link?.getAttribute('title')).toContain('0 tokens')
+    // Its themed tip, never a native title.
+    expect(link?.hasAttribute('title')).toBe(false)
+    expect(tipOf(link!)).toContain('the store is unreachable')
+    expect(tipOf(link!)).toContain('0 tokens')
   })
 })
 
@@ -128,8 +131,8 @@ describe('a healthy refresh reports zero cost', () => {
     await paint()
 
     expect(document.querySelector('[data-testid="tile-source-ok"]')).not.toBeNull()
-    const link = document.querySelector('[data-testid="tile-ledger-link"]')
-    expect(link?.getAttribute('title')).toContain('0 tokens · 8 ms')
+    const link = document.querySelector<HTMLElement>('[data-testid="tile-ledger-link"]')
+    expect(tipOf(link!)).toContain('0 tokens · 8 ms')
   })
 })
 

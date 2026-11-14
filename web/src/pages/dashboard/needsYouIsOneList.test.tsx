@@ -276,7 +276,7 @@ describe('the asks only some sources raised are cards like any other', () => {
   })
 
   it('a folder to trust names the folder from home, says why, and is trusted on its card', async () => {
-    waiting.mockResolvedValue(waitingList([inboxAsk('folder_trust', { dir: '/Users/sam/code/garden', body: 'A chat wants to work in this folder.' })]))
+    waiting.mockResolvedValue(waitingList([inboxAsk('folder_trust', { dir: '/Users/ada/code/garden', body: 'A chat wants to work in this folder.' })]))
     render(<NeedsYouHarness />)
     const card = (await within(await asksDrawn()).findByRole('button', { name: /^Show the details of Trust ~\/code\/garden\?/ })).parentElement!
     expect(within(card).getByText('Folder trust')).toBeInTheDocument()

@@ -230,11 +230,11 @@ describe('every list whose label states a total discloses its cap', () => {
     //
     // 🪤 THE RULE IS NARROWER THAN "EVERY WIDGET": disclose a residue only when the hidden items are
     // real, persistent things the user could otherwise reach — their own pins and the scheduled runs
-    // (open tasks were the third, until Home left tasks to their page). Each has a destination that
-    // lists them.
+    // (open tasks were a third, until Home left tasks to their page, and the Suggestions widget's
+    // list another, until Home stopped drawing it). Each has a destination that lists them.
     const widgets = join(SRC, 'pages/dashboard/widgets')
     const caps = cappedLists().filter((l) => l.rel.startsWith('pages/dashboard/widgets/'))
-    expect(caps.length, 'the widget caps must be found').toBeGreaterThanOrEqual(3)
+    expect(caps.length, 'the widget caps must be found').toBeGreaterThanOrEqual(2)
     const pins: Array<[string, RegExp]> = [
       ['pages/dashboard/widgets/ScheduleWidget.tsx', /<MoreRow total=\{visible\.length\} shown=\{6\} \/>/],
       ['pages/dashboard/widgets/PinnedArtifacts.tsx', /<MoreRow total=\{resolved\.length\} shown=\{6\} \/>/],

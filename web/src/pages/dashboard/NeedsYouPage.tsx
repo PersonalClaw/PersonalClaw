@@ -318,7 +318,7 @@ export function NeedsYouPage({ query, setQuery, navigate }: RouteProps) {
         {needs.error && needs.data ? <InlineLoadError what="what is waiting on you" error={needs.error} onRetry={needs.refresh} /> : null}
 
         {needs.loading && !needs.data ? (
-          <ListSkeleton rows={3} what="what needs you" />
+          <ListSkeleton rows={3} what="waiting list" />
         ) : failed ? (
           <Centred><LoadError what="waiting list" error={needs.error} onRetry={needs.refresh} /></Centred>
         ) : allClear ? (

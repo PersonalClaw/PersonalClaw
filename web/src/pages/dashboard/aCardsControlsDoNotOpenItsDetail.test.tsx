@@ -179,7 +179,6 @@ describe("a card's answers keep their keys: Enter or Space acts and opens nothin
     await press(await within(await approval()).findByRole('link', { name: 'Open project Garden' }), '{Enter}')
     await waitFor(() => expect(window.location.hash).toBe('#/projects/p-garden'))
     expect(opened()).toBe(false)
-    window.location.hash = ''
   })
 
   it("Enter on the card's own target opens its detail (the control)", async () => {

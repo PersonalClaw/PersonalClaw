@@ -306,6 +306,7 @@ const FIXTURE_NAMES: Record<string, string> = {
   'not-a-real-app': SAMPLE.app,
   'e2e-ui-fixture': SAMPLE.app,
   'not-a-real-item': SAMPLE.knowledge,
+  'e2e-ap-1': SAMPLE.approval,
 }
 
 function manifestAddresses(tiers: readonly (readonly { route: string }[])[]): string[] {

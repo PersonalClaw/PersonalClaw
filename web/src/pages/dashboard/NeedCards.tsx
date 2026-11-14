@@ -473,8 +473,8 @@ function QuestionActions({ question, subject, busy, onAnswer, off }: {
   return (
     <>
       {question.choices.map((choice) => (
-        <WrappingAnswer key={choice} disabled={busy || !!off} aria-busy={busy || undefined}
-          aria-label={`Answer ${subject} — ${choice}`} onClick={() => onAnswer(choice)}>
+        <WrappingAnswer key={choice} disabled={busy || !!off} ariaBusy={busy}
+          ariaLabel={`Answer ${subject} — ${choice}`} onClick={() => onAnswer(choice)}>
           {choice}
         </WrappingAnswer>
       ))}

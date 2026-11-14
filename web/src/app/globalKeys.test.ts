@@ -15,13 +15,20 @@ const read = (waiting = waitingList(), items: unknown[] = [], proposals: unknown
 
 describe('⌘⌥A', () => {
   it('a chat’s ask goes to its chat', () => {
-    expect(nextNeedsYouRoute(read(waitingList(waitingItem({ kind: 'approval', id: 'approval:a1', route: '#/chat/chat-1' }))))).toBe('chat/chat-1')
+    expect(nextNeedsYouRoute(read(waitingList(waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:chat-1', route: '#/chat/chat-1' }))))).toBe('chat/chat-1')
+  })
+
+  it('🔴 an approval of work no page answers opens on Needs you with its panel, never the chat its session names', () => {
+    // A webhook's approval: no chat, loop or run of it exists, and its route names its session's
+    // chat, which does not exist.
+    const list = waitingList(waitingItem({ kind: 'approval', id: 'approval:hook', work: '', session: 'hook:deploy', route: '#/chat/hook%3Adeploy' }))
+    expect(nextNeedsYouRoute(read(list))).toBe('mission-control?open=waiting%3Aapproval%3Ahook')
   })
 
   it('follows the list’s order, not the kind: a run’s step served first goes first', () => {
     const list = waitingList(
       waitingItem({ kind: 'gate', id: 'gate:run-7:push:1', route: '#/workflows/runs/run-7' }),
-      waitingItem({ kind: 'approval', id: 'approval:a1', route: '#/chat/chat-1' }),
+      waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:chat-1', route: '#/chat/chat-1' }),
     )
     expect(nextNeedsYouRoute(read(list))).toBe('workflows/runs/run-7')
   })

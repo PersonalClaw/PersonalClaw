@@ -95,10 +95,11 @@ describe('the guard consumes it', () => {
 
   it('clearing happens on a LATER branch, once the route has left onboarding', () => {
     // Last statement of the effect, reachable only once every route decision above declined — i.e.
-    // setup is not wanted, the route is not `#/onboarding`, and the shell can render it. Pinned with
-    // the dependency list so a new guard input cannot be added without this rail being re-read.
+    // setup is not wanted, the route is not `#/onboarding`, the shell can render it, and it is no
+    // old address of Home's two views (`view`, with an ask's `open`). Pinned with the dependency
+    // list so a new guard input cannot be added without this rail being re-read.
     expect(app()).toMatch(
-      /\n {4}clearOnboardingExit\(\)\n {2}\}, \[identityStatus, onboarded, setupRerun, route, sub, addressSearch, navigate\]\)/)
+      /\n {4}clearOnboardingExit\(\)\n {2}\}, \[identityStatus, onboarded, setupRerun, route, sub, addressSearch, navigate, query\.view, query\.open\]\)/)
   })
 
   it('the redirect INTO onboarding still holds the gate', () => {

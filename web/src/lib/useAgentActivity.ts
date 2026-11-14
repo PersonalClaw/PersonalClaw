@@ -294,10 +294,10 @@ export function useAgentActivity(): AgentActivityFeed {
   const load = useCallback(() => {
     const settle = <K extends keyof AgentActivitySources>(key: K, read: Promise<AgentActivitySources[K]>) =>
       read.then((value) => { if (alive.current) setSources((was) => ({ ...was, [key]: value })) })
-    settle('running', api.running()).then(
-      () => { if (alive.current) setError(null) },
-      (e) => { if (alive.current) setError(e) },
-    )
+    // The running list's own failure is recorded, and the rows it last read stay.
+    settle('running', api.running())
+      .then(() => { if (alive.current) setError(null) })
+      .catch((e) => { if (alive.current) setError(e) })
     // The background's own failure keeps what it last read: the scene loses a quiet chat, never a
     // live row.
     settle('sessions', api.chatSessions()).catch(() => {})

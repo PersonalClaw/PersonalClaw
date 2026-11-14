@@ -193,8 +193,9 @@ describe('every converged destination names itself', () => {
 //
 // An h1 fixes orientation only if what follows it is an h2. The dashboard rendered its page
 // greeting as h1 and then EVERY one of its seven sections as h3 — measured `h1 -> h3 "Needs you"`
-// — so a screen-reader user skipping by level fell straight past a missing tier. Both section
-// headers (the shared `Section` and the separately-authored `PinnedTiles`) are now h2.
+// — so a screen-reader user skipping by level fell straight past a missing tier. The section
+// header (the shared `Section`) is now h2. The tiles you keep on Home sit inside its "Pinned
+// artifacts" section, under its heading, and draw none of their own.
 
 describe('an entity is the destination when the URL says so', () => {
   const read = (rel: string) => readSource(join(SRC, rel))
@@ -279,7 +280,12 @@ describe('no destination skips a heading level', () => {
 
 describe('the dashboard does not skip a heading level', () => {
   // `Section` is the dashboard's section header, in a file of its own since Home's agents band holds one.
-  const files = ['pages/dashboard/Section.tsx', 'pages/dashboard/PinnedTiles.tsx']
+  const files = ['pages/dashboard/Section.tsx']
+
+  it('the tiles draw no heading of their own, so none can skip a level under the section\'s', () => {
+    const src = readSource(join(SRC, 'pages/dashboard/PinnedTiles.tsx'))
+    expect(src).not.toMatch(/<h[1-6][\s>]/)
+  })
 
   it.each(files)('%s renders its section header as h2', (rel) => {
     const src = readSource(join(SRC, rel))

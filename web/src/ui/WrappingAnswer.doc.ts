@@ -5,9 +5,11 @@ const doc: UiDoc = {
   name: 'WrappingAnswer',
   keywords: ['answer', 'choice', 'card', 'wrap', 'pill', 'button', 'needs you'],
   description:
-    "A card's answer whose words a server wrote (a workflow run's choice), drawn in the kit's secondary pill made to wrap (InlineConfirm's `wrapping`): `Button` never wraps, and a long choice must never run past a card at 320 px. Its height is a floor, it takes a 44 px box below 1024 px, and it has a transparent edge forced colours draw. It is a real `<button>` and takes every button attribute but its class and type.",
+    "A card's answer whose words a server wrote (a workflow run's choice), drawn in the kit's secondary pill made to wrap (InlineConfirm's `wrapping`): `Button` never wraps, and a long choice must never run past a card at 320 px. Its height is a floor, it takes a 44 px box below 1024 px, and it has a transparent edge forced colours draw. It is a real `<button>` and takes every button attribute but its class, its type and the two ARIA props it names itself.",
   props: [
-    { name: 'children', description: "The answer, in the words its server wrote. Name it with `aria-label` (\"Answer <ask> — <choice>\") so each choice in a list is told apart." },
+    { name: 'children', description: "The answer, in the words its server wrote." },
+    { name: 'ariaLabel', description: "Its name, \"Answer <ask> — <choice>\", so each choice in a list is told apart." },
+    { name: 'ariaBusy', description: 'True while the answer is on its way.' },
   ],
   bestPractices: [
     { guidance: true, description: 'Use it for answers whose words come from a server; an answer the app names keeps `Button`.' },

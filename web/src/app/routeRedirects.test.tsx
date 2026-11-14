@@ -245,6 +245,9 @@ const PAGE_LANDINGS: readonly { route: string; home?: ShippedRoute['home']; why:
   { route: `chat/new?attach=knowledge%3A${SAMPLE.knowledge}%2Cartifact%3A${SAMPLE.artifact}`, why: 'the chat reads its library items as chips and drops the key (linkAttachments)' },
   { route: `chat/new?project=${SAMPLE.project}&attach=knowledge%3A${SAMPLE.knowledge}`, why: 'the chat reads its library items as chips and drops the key (linkAttachments)' },
   { route: `chat/${SAMPLE.chat}?attach=artifact%3A${SAMPLE.artifact}`, why: 'the chat reads its library items as chips and drops the key (linkAttachments)' },
+  { route: 'dashboard?view=attention', why: 'Home\'s retired Attention view: the shell opens Needs you in its place, replacing the history entry, since the table matches a path and this landing is the view key\'s' },
+  { route: `dashboard?view=attention&open=waiting%3Aapproval%3A${SAMPLE.approval}`, why: 'Home\'s retired Attention view with an ask open: the shell opens Needs you with that ask\'s panel, replacing the history entry' },
+  { route: 'mission-control?view=overview', why: 'Needs you\'s old Overview view: the shell opens Home, which is the Overview, replacing the history entry' },
 ]
 
 const keyOf = (route: string, home?: ShippedRoute['home']): string => `${normal(route)}${home ? ` (${home} home)` : ''}`

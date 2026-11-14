@@ -68,7 +68,7 @@ describe("the shell's controls on a phone", () => {
     const chip = await screen.findByRole('button', { description: /running without a model/ })
     const controls = [
       screen.getByRole('button', { name: 'Open terminal' }),
-      screen.getByRole('button', { name: /waiting on you/ }),
+      screen.getByRole('button', { name: /, open Needs you$/ }),
       screen.getByRole('button', { name: /^Notifications/ }),
       screen.getByRole('button', { name: /^Theme: / }),
       chip,
