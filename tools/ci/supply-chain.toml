@@ -131,6 +131,12 @@ job = "contract"
 permission = "actions: write"
 steps = ["run main's contract.yml on it"]
 reason = "Dispatches main's contract.yml on the one contract-run branch the controller App just pointed at main's tip for a head that changes a CI definition (#3910, #4584 step 4), so main's CI contract judges its definitions. A workflow_run listener, so main's copy; it runs no candidate code and writes nothing else."
+[[audited_write]]
+workflow = "release-verify.yml"
+job = "report"
+permission = "issues: write"
+steps = ['Open, edit or close the "did not verify" issue']
+reason = "Keeps the one issue per tag that did not verify, closing it once a later run verifies the tag; it writes no other issue and runs nowhere else."
 
 [[audited_write]]
 workflow = "contract.yml"
