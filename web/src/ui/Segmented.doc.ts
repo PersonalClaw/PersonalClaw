@@ -17,6 +17,8 @@ const doc: UiDoc = {
     { name: 'disabled', description: 'Dim + block interaction on the whole group.' },
     { name: 'size', description: "'md' (default) or 'sm' — a compact, low-key strip (shorter, smaller text, muted surface) for inconspicuous secondary controls." },
     { name: 'collapse', description: "Responsive overflow behavior: unset (default) always the inline strip, no measuring; 'scroll' keeps the strip and scrolls it horizontally; 'menu' collapses below the fit threshold to one pill that opens the options in a Popover; 'wrap' lets the options wrap onto further rows inside the container so every one stays visible (a form field in a narrow panel)." },
+    { name: 'markCurrent', description: "The checked option draws `CURRENT_OUTLINE` (RowHitTarget.tsx) under forced colours, which drop the fill and weight it is told by. Off by default, so every other page's control looks as it did; HeaderSegmented and DestinationTabs pass it where the library asks." },
+    { name: 'optionClassName', description: "Extra classes on every option, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) on a strip that keeps its words on a phone (DestinationTabs' keepLabels)." },
     { name: 'collapsedClassName', description: "Extra classes on the folded pill (collapse='menu'), e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) the shell's destination tabs give it. The strip's own options keep their size." },
   ],
   bestPractices: [

@@ -7,6 +7,8 @@ import { useFocusTrap } from './useFocusTrap'
 import { spring, physics, expr } from '../design/motion'
 import { SURFACE_WIDTHS } from '../app/appearance'
 import { framesMayHaveMoved } from './framesMayHaveMoved'
+import { PhoneSheetRows } from './PhoneSheet'
+import { useIsMobile } from '../app/useIsMobile'
 
 /** Reusable centered modal with a scrim. Header carries the title and a single
  *  close (X) button; Escape and a scrim click also dismiss it.
@@ -20,7 +22,7 @@ import { framesMayHaveMoved } from './framesMayHaveMoved'
  *  in with it for depth. Pass `layoutId` to morph the sheet OUT of the element
  *  that opened it (a shared-element "grow from the trigger" transition) — the
  *  trigger must render a `motion.*` with the same `layoutId`. */
-export function Modal({ title, icon, onClose, children, layoutId, size = 'sheet', describedBy }: {
+export function Modal({ title, icon, onClose, children, layoutId, size = 'sheet', describedBy, phoneSheet = false }: {
   title: ReactNode
   icon?: ReactNode
   onClose: () => void
@@ -33,9 +35,14 @@ export function Modal({ title, icon, onClose, children, layoutId, size = 'sheet'
   size?: 'sheet' | 'compact'
   /** The id of the element that describes the dialog, as `aria-describedby`: its first line. */
   describedBy?: string
+  /** From 320 to 768 px, rise from the bottom as a phone sheet, full width with a grab line, its
+   *  `MenuRow`s and `FilterRow`s 44 px (`PhoneSheet`'s rows). Off by default; wider, it is centred. */
+  phoneSheet?: boolean
 }) {
   const trapRef = useFocusTrap<HTMLDivElement>()
   const reduce = useReducedMotion()
+  const isMobile = useIsMobile()
+  const asSheet = phoneSheet && isMobile
   // Gone from over the page's widget frames: they are coming to rest under the pointer again.
   useEffect(() => () => framesMayHaveMoved(), [])
   useEffect(() => {
@@ -46,7 +53,7 @@ export function Modal({ title, icon, onClose, children, layoutId, size = 'sheet'
   const enterScale = reduce ? 1 : 1 - expr(0.04, 0.5)
   const enterY = reduce ? 0 : expr(10, 0.4)
   return createPortal(
-    <motion.div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-2xl"
+    <motion.div className={asSheet ? 'fixed inset-0 z-[var(--z-modal)] flex flex-col justify-end' : 'fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-2xl'}
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects}>
       <motion.div className="absolute inset-0 bg-canvas/70 backdrop-blur-sm" onClick={onClose}
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects} />
@@ -54,8 +61,9 @@ export function Modal({ title, icon, onClose, children, layoutId, size = 'sheet'
         {...(layoutId ? { layoutId } : {})}
         aria-label={typeof title === 'string' ? title : undefined}
         aria-describedby={describedBy}
-        className="squircle relative flex max-h-full w-full flex-col overflow-hidden bg-surface shadow-sheet"
-        style={{ maxWidth: size === 'compact' ? SURFACE_WIDTHS.compactModal : SURFACE_WIDTHS.modal }}
+        data-phone-sheet={asSheet ? '' : undefined}
+        className={asSheet ? 'relative flex max-h-[85vh] w-full flex-col overflow-hidden rounded-t-xl bg-surface shadow-sheet' : 'squircle relative flex max-h-full w-full flex-col overflow-hidden bg-surface shadow-sheet'}
+        style={asSheet ? undefined : { maxWidth: size === 'compact' ? SURFACE_WIDTHS.compactModal : SURFACE_WIDTHS.modal }}
         initial={{ opacity: 0, scale: enterScale, y: enterY }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 6 }}
         transition={reduce ? spring.effects : physics.playful}>
         <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface/95 px-l py-m">
@@ -64,7 +72,8 @@ export function Modal({ title, icon, onClose, children, layoutId, size = 'sheet'
             <IconButton icon={X} label="Close" size={34} onClick={onClose} />
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">{children}</div>
+        {asSheet && <span aria-hidden data-grab-line className="absolute left-1/2 top-1.5 h-1 w-9 -translate-x-1/2 rounded-pill bg-outline" />}
+        <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">{asSheet ? <PhoneSheetRows>{children}</PhoneSheetRows> : children}</div>
       </motion.div>
     </motion.div>,
     document.body,

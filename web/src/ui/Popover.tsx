@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { framesMayHaveMoved } from './framesMayHaveMoved'
 import { overlayEnter } from '../design/motion'
+import { useIsMobile } from '../app/useIsMobile'
+import { PhoneSheet, useInPhoneSheet } from './PhoneSheet'
 
 /** Vertical room a menu needs before a side is considered viable. Matches the
  *  composer SlashMenu/MentionMenu flip threshold (`roomAbove < 160`) so every
@@ -47,7 +49,7 @@ const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:no
  *  already is for the other two — `portalPos` clamps `left` into the viewport. */
 export function Popover({
   trigger, children, align = 'left', width, placement = 'top', openSignal, portal = false, className,
-  followWhileTyping = false,
+  followWhileTyping = false, phoneSheet = false,
 }: {
   trigger: (open: boolean, toggle: () => void) => ReactNode
   children: (close: () => void) => ReactNode
@@ -66,8 +68,13 @@ export function Popover({
   followWhileTyping?: boolean
   /** Extra classes on the wrapper, e.g. `flex min-w-0` so a trigger in a tight row can shrink. */
   className?: string
+  /** From 320 to 768 px, open as a `PhoneSheet` (a bottom sheet over a scrim, named by the trigger,
+   *  its rows 44 px) in place of the anchored flyout. Off by default; wider, it is the flyout. */
+  phoneSheet?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const isMobile = useIsMobile()
+  const asSheet = phoneSheet && isMobile
   const ref = useRef<HTMLDivElement>(null)
   // Portaled mode: the trigger's viewport rect, measured when the menu opens.
   const [anchor, setAnchor] = useState<DOMRect | null>(null)
@@ -89,6 +96,8 @@ export function Popover({
   useEffect(() => {
     if (!open) return
     triggerFocusRef.current = ref.current?.querySelector<HTMLElement>('button, [tabindex]') ?? null
+    // A sheet owns its Escape, its scrim and its focus (`PhoneSheet`).
+    if (asSheet) return
     // Portaled flyout lives OUTSIDE ref — a click inside it must not count as
     // an outside-click, so check both containers.
     const onDoc = (e: MouseEvent) => {
@@ -125,7 +134,7 @@ export function Popover({
       document.removeEventListener('keydown', onEsc)
       if (portal) window.removeEventListener('scroll', onScroll, true)
     }
-  }, [open, portal, followWhileTyping])
+  }, [open, portal, followWhileTyping, asSheet])
 
   /** The side that actually has room for this menu.
    *
@@ -314,10 +323,22 @@ export function Popover({
     </AnimatePresence>
   )
 
+  const close = () => { setOpen(false); triggerFocusRef.current?.focus() }
+  // The sheet is named by its trigger, as the dialog it is.
+  const sheetName = () => {
+    const t = ref.current?.querySelector<HTMLElement>('button, [tabindex]')
+    return t?.getAttribute('aria-label') || t?.title || t?.textContent?.trim() || 'Menu'
+  }
   return (
     <div ref={ref} className={className ? `relative ${className}` : 'relative'}>
       {trigger(open, toggle)}
-      {portal ? createPortal(flyout, document.body) : flyout}
+      {asSheet
+        ? open && (
+          <PhoneSheet name={sheetName()} onClose={() => setOpen(false)} returnTo={ref.current?.querySelector<HTMLElement>('button, [tabindex]')}>
+            {children(close)}
+          </PhoneSheet>
+        )
+        : portal ? createPortal(flyout, document.body) : flyout}
     </div>
   )
 }
@@ -389,6 +410,8 @@ export function MenuRow({
    *  name is computed from what the row shows. */
   name?: string
 }) {
+  // A 44 px row in a phone sheet (`PhoneSheet`), its usual height elsewhere.
+  const inSheet = useInPhoneSheet()
   return (
     <button
       onClick={onClick}
@@ -402,7 +425,7 @@ export function MenuRow({
       // correct for an action row (Peek / Open / Pin) — nothing there is "on".
       aria-selected={role === 'option' ? !!selected : undefined}
       aria-checked={role === 'menuitemradio' ? !!selected : undefined}
-      className="group flex items-center gap-s w-full rounded-md px-m py-s text-left text-on-surface hover:bg-surface-high active:bg-surface-high transition-colors aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
+      className={`group flex items-center gap-s w-full rounded-md px-m py-s text-left text-on-surface hover:bg-surface-high active:bg-surface-high transition-colors aria-disabled:opacity-40 aria-disabled:cursor-not-allowed${inSheet ? ' min-h-11' : ''}`}
     >
       {icon && <span className="shrink-0 text-on-surface-var">{icon}</span>}
       <span className="flex-1 min-w-0">

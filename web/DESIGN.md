@@ -180,6 +180,7 @@ A restrained dark neutral ramp with a single committed coral accent and a warm g
 ### Named Rules
 **The One Voice Rule.** Coral is the only accent allowed to mean "the agent" — selection, focus, primary action, live activity. If coral appears where nothing is active, actionable, or alive, remove it.
 **The Tone-Not-Line Rule.** Depth and grouping come from the surface ramp; borders are 1px hairlines (#444746) or nothing. Never a colored side-stripe.
+**The Kind-Is-A-Word Rule.** What kind of thing an item is (a note, a document, a link, an image, a page, a report) is said by one neutral icon and its word, never by a colour of its own: no kind tones, tinted tiles or coloured words. A list that holds every kind, the library's, reads as one list; colour stays for the One Voice Rule and the status tones.
 
 The desktop buddy keeps the One Voice Rule and the Glow-Is-Alive Rule (§4): its orb takes coral only while an agent is alive and draws no glow, and the semantic colours reach it only as a badge or a wash, never as the whole orb ([`docs/design/buddy/character.md`](../docs/design/buddy/character.md#constraints)).
 

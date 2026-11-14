@@ -83,7 +83,12 @@ interface ChildReg {
 
 /** One row of the `…` menu. A control that opens a menu of its own (`HeaderMenu`) lists its rows
  *  there instead of itself, since a menu row cannot open a second menu. */
-interface OverflowRow { label: string; icon?: LucideIcon; hint?: string; danger?: boolean; disabled?: boolean; onSelect?: () => void }
+interface OverflowRow {
+  label: string; icon?: LucideIcon; hint?: string; danger?: boolean; disabled?: boolean; onSelect?: () => void
+  /** The row's group in the `…`: a break is drawn between two rows whose group differs, never at the
+   *  menu's top or foot. Unset on every row, the menu has no break (as before groups). */
+  group?: string
+}
 
 interface ClusterCtx {
   tier: Tier
@@ -419,11 +424,17 @@ export function railCeiling(
   return Math.max(0, inner - dots - title)
 }
 
-export function HeaderActions({ children, className, overflowClassName }: {
+export function HeaderActions({ children, className, overflowClassName, overflowWidth, overflowPhoneSheet }: {
   children: ReactNode
   className?: string
   /** Added to the `…` trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
   overflowClassName?: string
+  /** The `…` menu's width, for rows whose hints need more than the default 220 px to sit whole on
+   *  one line (the library's, 360). */
+  overflowWidth?: number
+  /** From 320 to 768 px, open the `…` as a phone sheet (`Popover`'s `phoneSheet`), its rows 44 px
+   *  and its group breaks kept. Off by default. */
+  overflowPhoneSheet?: boolean
 }) {
   const outerRef = useRef<HTMLDivElement>(null)
   // Offscreen probe rows, one per non-overflow tier — their scrollWidth is the
@@ -734,7 +745,7 @@ export function HeaderActions({ children, className, overflowClassName }: {
           <AnimatePresence>
             {overflowActions.length > 0 && (
               <motion.div key="overflow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.spatialFast}>
-                <HeaderOverflow actions={overflowActions} className={overflowClassName} />
+                <HeaderOverflow actions={overflowActions} className={overflowClassName} width={overflowWidth} phoneSheet={overflowPhoneSheet} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -756,10 +767,30 @@ function sameSet(a: Set<number> | null, b: Set<number>): boolean {
   return true
 }
 
+/** The `…` menu's width, and a `HeaderMenu`'s, unless a page asks for more. */
+const OVERFLOW_WIDTH = 220
+const MENU_WIDTH = 260
+
+/** Whether a break goes before row *i*: its group differs from the row before it. Never before the
+ *  first row, so a menu never opens on a break, and never after the last. Rows that name no group
+ *  draw no break between them. */
+function breaksBefore(rows: readonly { group?: string }[], i: number): boolean {
+  return i > 0 && (rows[i].group ?? '') !== (rows[i - 1].group ?? '')
+}
+
+/** A hairline between two groups of a menu's rows. In a `role="menu"` it is that menu's separator
+ *  (`announced`); in the role-less `…` it is drawn only, as the rows around it say what they are. A
+ *  static separator: not focusable, and the menu's cursor steps over it. */
+function MenuBreak({ announced }: { announced: boolean }) {
+  return announced
+    ? <div role="separator" data-menu-break className="mx-m my-0.5 h-px shrink-0 bg-outline-variant" />
+    : <div aria-hidden data-menu-break className="mx-m my-0.5 h-px shrink-0 bg-outline-variant" />
+}
+
 /** The internal `…` menu the container owns — the collapsed tail of the cluster. */
-export function HeaderOverflow({ actions, className }: { actions: (OverflowRow & { id: number; rows?: OverflowRow[] })[]; className?: string }) {
+export function HeaderOverflow({ actions, className, width = OVERFLOW_WIDTH, phoneSheet = false }: { actions: (OverflowRow & { id: number; rows?: OverflowRow[] })[]; className?: string; width?: number; phoneSheet?: boolean }) {
   return (
-    <Popover align="right" width={220} placement="bottom"
+    <Popover align="right" width={width} placement="bottom" phoneSheet={phoneSheet}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-label="More actions" title="More actions" aria-expanded={open}
           className={cx('inline-flex items-center justify-center size-10 rounded-pill shrink-0 transition-colors',
@@ -773,14 +804,18 @@ export function HeaderOverflow({ actions, className }: { actions: (OverflowRow &
       )}>
       {(close) => (
         <div className="flex flex-col gap-0.5">
-          {actions.map((a) => a.rows ? (
+          {actions.map((a, i) => [
+            // A break where the group changes; in this role-less popover it is drawn, not announced.
+            breaksBefore(actions, i) ? <MenuBreak key={`break-${a.id}`} announced={false} /> : null,
+            a.rows ? (
             // A control with a menu of its own lists its rows here, under its name as a heading,
             // since a row cannot open a second menu. The group carries the name for a screen reader.
             <div key={a.id} role="group" aria-label={a.label} className="flex flex-col gap-0.5">
               <div aria-hidden data-type="caption" className="px-m pb-0.5 pt-1.5 uppercase tracking-wide text-on-surface-low">{a.label}</div>
-              {a.rows.map((r, i) => <OverflowItem key={i} row={r} close={close} />)}
+              {a.rows.map((r, j) => <OverflowItem key={j} row={r} close={close} />)}
             </div>
-          ) : <OverflowItem key={a.id} row={a} close={close} />)}
+            ) : <OverflowItem key={a.id} row={a} close={close} />,
+          ])}
         </div>
       )}
     </Popover>
@@ -822,7 +857,7 @@ const variants: Record<Variant, string> = {
  *  in that case; the container draws the menu row from this control's declaration). */
 export function HeaderControl({
   icon: Icon, label, onClick, variant = 'ghost', active, ariaExpanded, disabled, disabledReason, danger,
-  priority = 'default', hint, title, className, inOverflow,
+  priority = 'default', hint, title, className, inOverflow, group,
 }: {
   icon?: LucideIcon
   label: string
@@ -853,6 +888,8 @@ export function HeaderControl({
   className?: string
   /** Always a row of the `…` menu, at every tier, never a button on the row. */
   inOverflow?: boolean
+  /** Its row's group in the `…` (`OverflowRow`'s `group`): a break is drawn where the group changes. */
+  group?: string
 }) {
   // Reachable-but-unavailable only when there is a reason to announce; otherwise stay native.
   const softOff = !!disabled && !!disabledReason
@@ -864,7 +901,7 @@ export function HeaderControl({
     canIcon: !!Icon,
     inOverflow,
     trailing: primary,
-    menu: { label, icon: Icon, hint: softOff ? disabledReason : hint, danger, disabled, onSelect: disabled ? undefined : onClick },
+    menu: { label, icon: Icon, hint: softOff ? disabledReason : hint, danger, disabled, onSelect: disabled ? undefined : onClick, group },
   })
   const placed = usePlaced(primary, mark, id)
   if (!visible) return mark(null) // container is showing this as a `…`-menu row
@@ -922,10 +959,11 @@ export function HeaderControl({
  *  The menu is a `role="menu"` of `menuitem`s with the shared cursor: it opens with focus on its
  *  first row, the arrows move, Enter picks, and Escape or Tab closes it with focus back on the
  *  control. Portaled, so the page body cannot paint over it. */
-export function HeaderMenu({ icon: Icon, label, items, priority = 'default', variant = 'ghost', title, disabled }: {
+export function HeaderMenu({ icon: Icon, label, items, priority = 'default', variant = 'ghost', title, disabled, className, width = MENU_WIDTH, phoneSheet = false }: {
   icon: LucideIcon
   label: string
-  items: { label: string; icon?: LucideIcon; hint?: string; onSelect: () => void }[]
+  /** The rows. A `group` on each draws a break where the group changes, never at the top or foot. */
+  items: HeaderMenuItem[]
   priority?: Priority
   /** As HeaderControl's: `primary` where the menu is the page's primary action (a project's New). */
   variant?: Variant
@@ -934,6 +972,14 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
   /** Unavailable for now (the Inbox's Digest while one is being written): the trigger, and its rows
    *  in the `…`. */
   disabled?: boolean
+  /** Added to the trigger, as `HeaderControl`'s: the compact widths' 44 px box (`TOUCH_TARGET`). */
+  className?: string
+  /** The open menu's width, for hints that need more than the default 260 px to sit whole on one
+   *  line (the library's Add, 384). */
+  width?: number
+  /** From 320 to 768 px, open as a phone sheet (`Popover`'s `phoneSheet`), its rows 44 px and its
+   *  breaks kept. Off by default. */
+  phoneSheet?: boolean
 }) {
   const primary = isThePrimary(variant, priority)
   const { visible, tier, mark, id } = useHeaderChild({
@@ -946,7 +992,7 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
   if (!visible) return mark(null)
   const iconOnly = tier === 'icon' || tier === 'overflow'
   return placed(
-    <Popover portal placement="bottom" align="right" width={260}
+    <Popover portal placement="bottom" align="right" width={width} phoneSheet={phoneSheet}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-haspopup="menu" aria-expanded={open} disabled={disabled}
           title={title ?? label} aria-label={iconOnly ? label : undefined}
@@ -956,6 +1002,7 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
             'transition-colors duration-(--duration-short) disabled:opacity-40 disabled:pointer-events-none',
             iconOnly ? 'size-10' : 'h-10 px-l',
             open && variant === 'ghost' ? variants.secondary : variants[variant],
+            className,
           )}
           style={fvs(470)}>
           <Icon size={16} />
@@ -969,10 +1016,18 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
   )
 }
 
-/** `HeaderMenu`'s open menu: its rows, with the shared keyboard cursor. */
+/** One row of a `HeaderMenu`. */
+export interface HeaderMenuItem {
+  label: string; icon?: LucideIcon; hint?: string; onSelect: () => void
+  /** The row's group: a break is drawn between two rows whose group differs. */
+  group?: string
+}
+
+/** `HeaderMenu`'s open menu: its rows, with the shared keyboard cursor, and a separator where the
+ *  rows' group changes. */
 function HeaderMenuRows({ label, items, close }: {
   label: string
-  items: { label: string; icon?: LucideIcon; hint?: string; onSelect: () => void }[]
+  items: HeaderMenuItem[]
   close: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -981,10 +1036,11 @@ function HeaderMenuRows({ label, items, close }: {
   return (
     <div ref={ref} role="menu" aria-label={label} className="flex flex-col gap-0.5"
       onKeyDown={(e) => { menuCursorKeydown(e.nativeEvent, { move, dismiss }) }}>
-      {items.map((it, i) => (
+      {items.map((it, i) => [
+        breaksBefore(items, i) ? <MenuBreak key={`break-${it.label}`} announced /> : null,
         <MenuRow key={it.label} role="menuitem" tabIndex={tabIndexFor(i)} icon={it.icon ? <it.icon size={16} /> : undefined}
-          label={it.label} hint={it.hint} onClick={() => { close(); it.onSelect() }} />
-      ))}
+          label={it.label} hint={it.hint} onClick={() => { close(); it.onSelect() }} />,
+      ])}
     </div>
   )
 }
@@ -1049,12 +1105,15 @@ export function HeaderPopover({ icon: Icon, label, title, width = 320, children 
  *  final rung `ArtifactCompare` and `LoopComposer` already use — the canonical form
  *  existed, this wrapper just never offered it. Widening the cap instead cannot work:
  *  even with the title fully yielded the box is 39px short of strip + `…`. */
-export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled }: {
+export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled, markCurrent }: {
   options: SegOption[]
   value: string
   onChange: (k: string) => void
   ariaLabel?: string
   disabled?: boolean
+  /** The current option draws the forced-colours outline (`Segmented`'s `markCurrent`): the
+   *  library's List or Grid. Unset, the switch is as before. */
+  markCurrent?: boolean
 }) {
   // Register with the cluster: it's a primary, never-overflow child (always visible;
   // collapses to icon-only rather than into the menu), and it can go icon-only only when every
@@ -1078,7 +1137,7 @@ export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled 
   // Folded to its pill, it takes the compact widths' 44 px hit box, as the header's search and
   // filter do, with the width marked important as `DestinationTabs`' pill has it.
   return mark(<Segmented options={options} value={value} onChange={onChange} ariaLabel={ariaLabel} disabled={disabled} iconOnly={iconOnly} collapse="menu"
-    collapsedClassName={`${TOUCH_TARGET} max-lg:min-w-11!`} />)
+    collapsedClassName={`${TOUCH_TARGET} max-lg:min-w-11!`} markCurrent={markCurrent} />)
 }
 
 /** A header mode control that shows ONLY the current selection, and expands on

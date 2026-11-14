@@ -51,8 +51,22 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 const files = () => walk(SRC).map((abs) => ({ rel: abs.slice(SRC.length + 1), src: strip(readSource(abs)) }))
 
+/** The `role="separator"` elements in *src* that claim to be a splitter: one a pointer or key moves,
+ *  or that names an orientation to be moved along. A static separator, a menu's hairline between two
+ *  groups of rows (`HeaderMenu`'s breaks), claims nothing: it is not focusable and holds no value. */
+function splitterClaims(src: string): string[] {
+  // Each element that names the role, read from its opening `<` to the end of its tag. A JSX
+  // attribute may hold an arrow (`=>`), so the tag's end is the first `/>` or `>` that is not one.
+  return [...src.matchAll(/role="separator"/g)].map((m) => {
+    const start = src.lastIndexOf('<', m.index)
+    const rest = src.slice(m.index)
+    const end = rest.search(/\/>|(?<!=)>/)
+    return src.slice(start, m.index + (end < 0 ? rest.length : end + 1))
+  }).filter((el) => /tabIndex|onKey|onPointer|onMouse|aria-orientation/.test(el))
+}
+
 describe('a declared splitter implements the splitter contract', () => {
-  const claimants = () => files().filter((f) => /role="separator"/.test(f.src))
+  const claimants = () => files().filter((f) => splitterClaims(f.src).length > 0)
 
   it('finds the claimants — not vacuous', () => {
     expect(claimants().map((f) => f.rel).sort()).toEqual([
@@ -102,7 +116,12 @@ describe('a declared splitter implements the splitter contract', () => {
   it('the matcher fires on the exact shape NavRail shipped', () => {
     // Sabotage, both directions: role + pointer handler only.
     const navRailBefore = '<div role="separator" aria-orientation="vertical" onMouseDown={() => {}} />'
-    expect(/role="separator"/.test(navRailBefore)).toBe(true)
+    expect(splitterClaims(navRailBefore)).toHaveLength(1)
+    // A pointer handler alone, or a key handler alone, is a claim too.
+    expect(splitterClaims('<div onPointerDown={start} role="separator" className="seam" />')).toHaveLength(1)
+    expect(splitterClaims('<div role="separator" onKeyDown={key} />')).toHaveLength(1)
+    // A menu's static break between two groups of rows is no splitter.
+    expect(splitterClaims('<div role="separator" data-menu-break className="mx-m my-0.5 h-px" />')).toEqual([])
     expect(/tabIndex=\{0\}/.test(navRailBefore)).toBe(false)
     expect(/aria-valuenow/.test(navRailBefore)).toBe(false)
   })

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { cx } from './cx'
+import { CURRENT_OUTLINE } from './RowHitTarget'
 
 /** A block-level clickable CARD/TILE — the kit's home for "the whole card is one
  *  click target" (library grids, gallery tiles). Distinct from {@link Button}
@@ -12,10 +13,16 @@ import { cx } from './cx'
  *  on a touch screen, where no hover precedes it, still acknowledges the press. It
  *  used to spring in like the rest of the button family; nothing in the family
  *  scales any more. */
-export function TileButton({ children, onClick, active, title, ariaLabel, className }: {
+export function TileButton({ children, onClick, active, current, title, ariaLabel, className }: {
   children: ReactNode
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
   active?: boolean
+  /** The tile whose detail is open beside its grid (a library card previewed): `aria-current`, in
+   *  place of `active`'s `aria-pressed`, since the tile opens a detail rather than toggling a choice,
+   *  and the selected border with `CURRENT_OUTLINE`, which forced colours keep. Pass it in
+   *  place of `active`: a tile is a choice or the open detail, never both. Unset, the tile is as
+   *  before. */
+  current?: boolean
   title?: string
   /** The accessible name, for a tile whose CONTENT is a document rather than a label.
    *
@@ -39,9 +46,11 @@ export function TileButton({ children, onClick, active, title, ariaLabel, classN
       // idiom for "one of N is chosen" (the Mode row 20 lines away, bento's `SegToggle`);
       // it is omitted entirely for a tile that is not selectable, because `active` is optional.
       aria-pressed={active}
+      aria-current={current ? 'true' : undefined}
       className={cx(
         'group flex flex-col overflow-hidden rounded-xl border text-left transition-colors',
-        active ? 'border-primary/60' : 'border-outline-variant/40 hover:border-outline-variant active:border-outline-variant',
+        active || current ? 'border-primary/60' : 'border-outline-variant/40 hover:border-outline-variant active:border-outline-variant',
+        current && CURRENT_OUTLINE,
         'bg-surface-container focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
         className,
       )}

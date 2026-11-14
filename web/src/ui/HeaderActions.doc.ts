@@ -13,6 +13,8 @@ const docs: UiDoc[] = [
       { name: 'children', description: 'The header controls (HeaderSearch / HeaderFilter / HeaderControl / HeaderMenu / HeaderSegmented / HeaderModePill / Button), rendered left→right in DOM order.' },
       { name: 'className', description: 'Extra classes on the cluster container (tokens only).' },
       { name: 'overflowClassName', description: "Extra classes on the `…` trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) where the page's header controls carry it." },
+      { name: 'overflowPhoneSheet', description: "From 320 to 768 px, open the … as a phone sheet (Popover's phoneSheet): its rows 44 px and its group breaks kept. Off by default." },
+      { name: 'overflowWidth', description: "The `…` menu's width in px (default 220), for rows whose hints need more to sit whole on one line (the library's, 360). Unset, the menu is as before." },
     ],
     bestPractices: [
       { guidance: true, description: "Every page-level control lives in this cluster, so no page draws a controls bar under its header: the page search is a HeaderSearch, its main view switch its one HeaderSegmented, and every other choice set (scope, status, kind, owner, sort) a section of its HeaderFilter." },
@@ -44,6 +46,7 @@ const docs: UiDoc[] = [
       { name: 'hint', description: 'Secondary hint text shown on the overflow menu row.' },
       { name: 'className', description: 'Extra classes (tokens only).' },
       { name: 'inOverflow', description: 'Always a row of the … menu, at every tier, never a button on the row: an action kept one click away without spending a slot (a thread\'s Save as starter). Its presence keeps the … on the row.' },
+      { name: 'group', description: "Its row's group in the …: a hairline is drawn between two rows whose group differs, never at the menu's top or foot, drawn only (the … is role-less). Unset on every control, the … has no break." },
     ],
     bestPractices: [
       { guidance: true, description: 'Always pass an icon if the control should survive the ICON tier — a label-only control can only reach TEXT before overflowing.' },
@@ -59,11 +62,14 @@ const docs: UiDoc[] = [
     props: [
       { name: 'icon', description: 'Lucide icon, shown beside the label and alone at the ICON tier.' },
       { name: 'label', description: 'The control\'s name and the menu\'s.' },
-      { name: 'items', description: 'The menu\'s rows: a label, an optional icon and hint, and what the row does.' },
+      { name: 'items', description: 'The menu\'s rows: a label, an optional icon and hint, what the row does, and an optional group: a separator (role="separator", static, stepped over by the cursor) is drawn between two rows whose group differs, never at the top or foot.' },
       { name: 'priority', description: "OVERFLOW shedding order, as HeaderControl's." },
       { name: 'variant', description: "The trigger's fill, as HeaderControl's: primary where the menu is the page's primary action." },
       { name: 'title', description: 'The tooltip, when the control says more than its label. Defaults to the label.' },
       { name: 'disabled', description: 'Unavailable for now: the trigger, and its rows in the …' },
+      { name: 'className', description: "Extra classes on the trigger, as HeaderControl's: the compact widths' 44 px box (`TOUCH_TARGET`) where the menu is a page's primary action. Unset, the trigger is the 40 px one." },
+      { name: 'width', description: "The open menu's width in px (default 260), for hints that need more to sit whole on one line (the library's Add, 384)." },
+      { name: 'phoneSheet', description: "From 320 to 768 px, open as a phone sheet (Popover's phoneSheet): its rows 44 px and its group breaks drawn. Off by default." },
     ],
     bestPractices: [
       { guidance: true, description: 'Use for a few actions of one kind that would otherwise each take a header slot.' },
@@ -93,6 +99,8 @@ const docs: UiDoc[] = [
     props: [
       { name: 'actions', description: 'The shed controls, in the row\'s order: a row each, or a named group of rows for a menu.' },
       { name: 'className', description: "Added to the … button, e.g. the compact widths' 44 px hit box." },
+      { name: 'width', description: "The menu's width in px (default 220): HeaderActions' overflowWidth." },
+      { name: 'phoneSheet', description: "Open as a phone sheet from 320 to 768 px: HeaderActions' overflowPhoneSheet." },
     ],
     bestPractices: [
       { guidance: false, description: 'Do not draw it in a page: put the control in HeaderActions, and the cluster sheds it here.' },
@@ -109,6 +117,7 @@ const docs: UiDoc[] = [
       { name: 'onChange', description: 'Fires with the newly selected value.' },
       { name: 'ariaLabel', description: 'Accessible name for the group.' },
       { name: 'disabled', description: 'Disable the whole group.' },
+      { name: 'markCurrent', description: "The current option draws the forced-colours outline (Segmented's markCurrent), where the fill and weight it is drawn with are dropped: the library's List or Grid. Unset, the switch is as before." },
     ],
     bestPractices: [
       { guidance: true, description: "Use for the page's main view switch: at most one per header. Every other choice set is a section of the page's HeaderFilter, whatever its size." },

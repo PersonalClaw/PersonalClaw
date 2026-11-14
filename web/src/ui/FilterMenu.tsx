@@ -8,6 +8,7 @@ import { fvs } from '../design/fontWeight'
 import { accentChip } from '../design/accent'
 import { cx } from './cx'
 import { EDGE } from './SearchField'
+import { useInPhoneSheet } from './PhoneSheet'
 
 /** One selectable choice within a filter section. */
 export interface FilterOption {
@@ -46,6 +47,9 @@ export interface FilterSectionDef {
   limit?: number
   /** What the choices are, for the "Show all 23 folders" row. */
   limitNoun?: string
+  /** In the panel form (`FilterSections`' `panel`): the column the section sits in, in order. A
+   *  section that names neither goes under both columns, two to a row. Unread outside the panel. */
+  column?: 1 | 2
 }
 
 /** The choices a section shows before its Show all row is pressed (`limit`): every chosen one, then
@@ -146,8 +150,27 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right', classN
 }
 
 /** The open menu's body: each section's choices, with its Clear, and Done. Shared by `FilterMenu`
- *  and the header's `HeaderFilter`, so the two are one menu. */
-export function FilterSections({ sections, close }: { sections: FilterSectionDef[]; close: () => void }) {
+ *  and the header's `HeaderFilter`, so the two are one menu.
+ *
+ *  `panel` is the panel form (the library's Filter, `HeaderFilter`'s `panel`): the sections in two
+ *  columns, each in the column it names (`column`), in order, and those that name neither under
+ *  both, two to a row, all scrolling as one; a multi section's choices draw a check box and a single
+ *  section's a radio (`FilterRow`'s `mark`), in place of the tint and the trailing check, each still
+ *  `aria-pressed` (a Show all row and an action row draw none); sections named as written, not in
+ *  capitals; and no Done, since Escape, Tab past the last row, a click outside and the trigger close
+ *  it, as any portaled `Popover`. Unset, the menu is as before. */
+export function FilterSections({ sections, close, panel = false, foot }: {
+  sections: FilterSectionDef[]
+  close: () => void
+  panel?: boolean
+  /** In a phone sheet, the counting foot in place of Done ("Show 3,344 items"): what the filter
+   *  leaves, which the page counts. Pressing it closes the sheet. Unread outside a sheet. */
+  foot?: string
+}) {
+  // In a phone sheet (`HeaderFilter`'s `phoneSheet`): one Clear at the top, which clears every
+  // section, in place of each section's own 24 px link, and the counting foot in place of Done.
+  const inSheet = useInPhoneSheet()
+  const anySet = sections.some((s) => s.value !== s.defaultKey)
   // The sections whose Show all row was pressed, by title: for as long as the menu is open.
   const [whole, setWhole] = useState<ReadonlySet<string>>(() => new Set())
   // The choices a limited section has shown, by title: a choice shown stays shown until the menu
@@ -170,15 +193,13 @@ export function FilterSections({ sections, close }: { sections: FilterSectionDef
     seen.current.set(s.title, keep)
     return s.options.filter((o) => keep.has(o.key))
   }
-  return (
-    <div ref={rootRef} className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto overscroll-contain">
-      {sections.map((s) => {
+  const section = (s: FilterSectionDef) => {
         const options = shownOf(s)
         return (
-        <Section key={s.title} title={s.title}
-          onClear={s.value !== s.defaultKey ? () => s.onChange(s.defaultKey) : undefined}>
+        <Section key={s.title} title={s.title} asWritten={panel}
+          onClear={!inSheet && s.value !== s.defaultKey ? () => s.onChange(s.defaultKey) : undefined}>
           {options.map((o) => (
-            <Row key={o.key} option={o} selected={isChosen(s, o.key)}
+            <Row key={o.key} option={o} selected={isChosen(s, o.key)} mark={panel ? (s.multi ? 'box' : 'radio') : undefined}
               onClick={() => s.onChange(s.multi ? toggledKey(s.value, o.key) : o.key)} />
           ))}
           {options.length < s.options.length && (
@@ -190,20 +211,45 @@ export function FilterSections({ sections, close }: { sections: FilterSectionDef
           ))}
         </Section>
         )
-      })}
-      <Button variant="ghost" size="sm" onClick={close} className="mt-1 w-full">Done</Button>
+  }
+  const clearAll = inSheet && anySet && (
+    <div className="flex justify-end">
+      <Button variant="ghost" size="sm" className="min-h-11" onClick={() => { for (const s of sections) if (s.value !== s.defaultKey) s.onChange(s.defaultKey) }}>Clear</Button>
+    </div>
+  )
+  const end = inSheet
+    ? <Button variant="primary" size="sm" onClick={close} className="mt-1 min-h-11 w-full">{foot || 'Done'}</Button>
+    : <Button variant="ghost" size="sm" onClick={close} className="mt-1 w-full">Done</Button>
+  if (panel && !inSheet) {
+    const inColumn = (c: 1 | 2) => sections.filter((s) => s.column === c)
+    const under = sections.filter((s) => s.column !== 1 && s.column !== 2)
+    return (
+      <div ref={rootRef} data-filter-panel className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto overscroll-contain">
+        <div className="grid grid-cols-2 gap-x-m gap-y-3">
+          <div data-filter-column="1" className="flex min-w-0 flex-col gap-3">{inColumn(1).map(section)}</div>
+          <div data-filter-column="2" className="flex min-w-0 flex-col gap-3">{inColumn(2).map(section)}</div>
+        </div>
+        {under.length > 0 && <div data-filter-under className="grid grid-cols-2 gap-x-m gap-y-3">{under.map(section)}</div>}
+      </div>
+    )
+  }
+  return (
+    <div ref={rootRef} className={inSheet ? 'flex flex-col gap-3' : 'flex flex-col gap-3 max-h-[70vh] overflow-y-auto overscroll-contain'}>
+      {clearAll}
+      {sections.map(section)}
+      {end}
     </div>
   )
 }
 
 /** One choice set of the menu: a group named by its title, so a screen reader says which set a
  *  row is in ("Type", "Shelf") as the old chip rows' groups did. */
-function Section({ title, onClear, children }: { title: string; onClear?: () => void; children: ReactNode }) {
+function Section({ title, onClear, children, asWritten = false }: { title: string; onClear?: () => void; children: ReactNode; asWritten?: boolean }) {
   const titleId = useId()
   return (
     <div role="group" aria-labelledby={titleId} data-section={title} className="flex flex-col gap-0.5">
       <div className="flex items-center justify-between px-2 pb-0.5">
-        <span id={titleId} data-type="caption" className="text-on-surface-low uppercase tracking-wide">{title}</span>
+        <span id={titleId} data-type="caption" className={asWritten ? 'text-on-surface-var' : 'text-on-surface-low uppercase tracking-wide'}>{title}</span>
         {onClear && <TextLink onClick={onClear} size="xs">Clear</TextLink>}
       </div>
       {children}
@@ -211,7 +257,7 @@ function Section({ title, onClear, children }: { title: string; onClear?: () => 
   )
 }
 
-function Row({ option, selected, onClick }: { option: FilterOption; selected: boolean; onClick: () => void }) {
+function Row({ option, selected, onClick, mark }: { option: FilterOption; selected: boolean; onClick: () => void; mark?: 'box' | 'radio' }) {
   const Icon = option.icon
   return (
     <>
@@ -221,8 +267,8 @@ function Row({ option, selected, onClick }: { option: FilterOption; selected: bo
           heard the same label for the chosen row and the rest (the chips these rows replaced
           announced it). */}
       <FilterRow label={option.label} count={option.count} icon={Icon} selected={selected} pressed={selected}
-        onClick={onClick}
-        trailing={selected ? <Check size={14} aria-hidden className="relative shrink-0 text-primary" /> : undefined} />
+        onClick={onClick} mark={mark}
+        trailing={selected && !mark ? <Check size={14} aria-hidden className="relative shrink-0 text-primary" /> : undefined} />
     </>
   )
 }

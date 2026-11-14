@@ -30,6 +30,23 @@
  *  The ring is drawn on the WRAPPER, not here: this button sits at `-z-10`, so its own ring
  *  would paint behind the row's background.
  */
+/** A current, selected or on state as forced colours draw it (`forced-colors: active`, the matrix's
+ *  high-contrast axis): a 2 px outline in the system's `Highlight`, inside the box. Forced colours
+ *  drop a fill and a border colour, so a state told by fill or weight alone vanishes there; the
+ *  outline is kept. Default off: a control carries it only where it opts in (`TileButton`'s
+ *  `current`, `Segmented`'s `markCurrent`). */
+export const CURRENT_OUTLINE = 'forced-colors:outline-2 forced-colors:outline-solid forced-colors:outline-[Highlight] forced-colors:-outline-offset-2'
+
+/** The row form of {@link CURRENT_OUTLINE}, for the WRAPPER of a row whose hit target is `selected`
+ *  (its button carries `aria-current`): the wrapper draws the outline, since this button sits under
+ *  the row's content. Pass it on the wrapper; it draws only while the row is the selected one. */
+export const SELECTED_ROW_OUTLINE = [
+  'forced-colors:has-[>button[aria-current=true]]:outline-2',
+  'forced-colors:has-[>button[aria-current=true]]:outline-solid',
+  'forced-colors:has-[>button[aria-current=true]]:outline-[Highlight]',
+  'forced-colors:has-[>button[aria-current=true]]:-outline-offset-2',
+].join(' ')
+
 export function RowHitTarget({ label, selected = false }: {
   /** What the row IS — normally the entity's title. Without it the row's accessible name
    *  is computed from its whole subtree; measured up to 2001 characters for one inbox row. */

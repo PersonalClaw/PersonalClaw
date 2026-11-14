@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { overlayEnter } from '../../design/motion'
 import { menuCursorKeydown, useMenuCursor } from '../../lib/useMenuCursor'
 import { MenuRow } from '../Popover'
+import { PhoneSheet } from '../PhoneSheet'
+import { useIsMobile } from '../../app/useIsMobile'
 
 export interface ContextMenuItem {
   icon?: ReactNode
@@ -27,9 +29,23 @@ export interface ContextMenuItem {
  *  across rows/cards — today menus are click-only Popovers.
  *
  *  An item's `checkMark` draws `MenuRow`'s decorative check at its row's end, for a row whose label
- *  already says the state it marks (a project row's "Default project"). */
-export function ContextMenu({ items, children, disabled }: { items: ContextMenuItem[]; children: ReactNode; disabled?: boolean }) {
+ *  already says the state it marks (a project row's "Default project").
+ *
+ *  `phoneSheet` (off by default): from 320 to 768 px the menu opens as a `PhoneSheet` instead, a
+ *  bottom sheet named `name` (the row it acts on) with 44 px rows, which Escape and its scrim close;
+ *  wider, it opens at the pointer as before. */
+export function ContextMenu({ items, children, disabled, phoneSheet = false, name = 'Actions' }: {
+  items: ContextMenuItem[]
+  children: ReactNode
+  disabled?: boolean
+  /** Open as a phone sheet from 320 to 768 px (above). */
+  phoneSheet?: boolean
+  /** The sheet's name: what its rows act on ("Router manual"). */
+  name?: string
+}) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const isMobile = useIsMobile()
+  const asSheet = phoneSheet && isMobile
   const menuRef = useRef<HTMLDivElement>(null)
   const longPress = useRef<number | undefined>(undefined)
   // The highlighted row is FOCUS, not a font weight — see lib/useMenuCursor for the measurement.
@@ -68,15 +84,16 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
       // activates it natively — handling it here too would fire `onSelect` TWICE per press.
       menuCursorKeydown(e, { move, dismiss: closeAndReturnFocus })
     }
-    document.addEventListener('mousedown', onDoc)
+    // A sheet closes on its scrim and is not anchored to anything a scroll could move.
+    if (!asSheet) document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
-    window.addEventListener('scroll', close, true)
+    if (!asSheet) window.addEventListener('scroll', close, true)
     return () => {
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onKey)
       window.removeEventListener('scroll', close, true)
     }
-  }, [pos, close, closeAndReturnFocus, move])
+  }, [pos, close, closeAndReturnFocus, move, asSheet])
 
   const bind = {
     onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); open(e.clientX, e.clientY) },
@@ -103,6 +120,38 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
     onTouchMove: () => { if (longPress.current) clearTimeout(longPress.current) },
   }
 
+  const rows = items.map((it, i) => (
+    <div key={it.label} className={it.danger && !it.disabled ? '[&_span]:!text-danger' : undefined} data-active={i === active || undefined}>
+      <MenuRow
+        // `menuitem`, not `menuitemradio`: these rows are ACTIONS (Peek / Open / Pin),
+        // so `selected` is a cursor rather than a state — an `aria-checked` on an
+        // action would claim something it does not have. The cursor's ARIA channel is
+        // FOCUS (roving tabindex below); `selected` now only paints what focus says.
+        role="menuitem"
+        tabIndex={tabIndexFor(i)}
+        disabled={it.disabled}
+        icon={it.icon}
+        label={it.label}
+        hint={it.hint}
+        checkMark={it.checkMark}
+        name={it.name}
+        selected={i === active}
+        onClick={() => { if (!it.disabled) { it.onSelect(); closeAndReturnFocus() } }}
+      />
+    </div>
+  ))
+  if (asSheet) {
+    return (
+      <>
+        <div {...bind}>{children}</div>
+        {pos && (
+          <PhoneSheet name={name} onClose={closeAndReturnFocus}>
+            <div ref={menuRef} role="menu" aria-orientation="vertical" aria-label={name} className="flex flex-col gap-0.5">{rows}</div>
+          </PhoneSheet>
+        )}
+      </>
+    )
+  }
   return (
     <>
       <div {...bind}>{children}</div>
@@ -117,26 +166,7 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
               className="glass fixed z-[var(--z-menu)] min-w-[200px] rounded-lgi p-s"
               style={{ left: pos.x, top: pos.y, transformOrigin: 'top left' }}
             >
-              {items.map((it, i) => (
-                <div key={it.label} className={it.danger && !it.disabled ? '[&_span]:!text-danger' : undefined} data-active={i === active || undefined}>
-                  <MenuRow
-                    // `menuitem`, not `menuitemradio`: these rows are ACTIONS (Peek / Open / Pin),
-                    // so `selected` is a cursor rather than a state — an `aria-checked` on an
-                    // action would claim something it does not have. The cursor's ARIA channel is
-                    // FOCUS (roving tabindex below); `selected` now only paints what focus says.
-                    role="menuitem"
-                    tabIndex={tabIndexFor(i)}
-                    disabled={it.disabled}
-                    icon={it.icon}
-                    label={it.label}
-                    hint={it.hint}
-                    checkMark={it.checkMark}
-                    name={it.name}
-                    selected={i === active}
-                    onClick={() => { if (!it.disabled) { it.onSelect(); closeAndReturnFocus() } }}
-                  />
-                </div>
-              ))}
+              {rows}
             </motion.div>
           )}
         </AnimatePresence>,

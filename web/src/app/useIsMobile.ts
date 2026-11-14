@@ -18,3 +18,18 @@ export function useIsMobile(): boolean {
   }, [])
   return mobile
 }
+
+/** Whether the window is narrower than *px* (`max-width: <px - 1>px`), reactive as `useIsMobile`. */
+export function useNarrowerThan(px: number): boolean {
+  const query = `(max-width: ${px - 1}px)`
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia(query).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(query)
+    const onChange = () => setNarrow(mq.matches)
+    mq.addEventListener('change', onChange)
+    onChange()
+    return () => mq.removeEventListener('change', onChange)
+  }, [query])
+  return narrow
+}
