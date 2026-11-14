@@ -1198,6 +1198,8 @@ def redact_exfiltration_urls(text: str) -> tuple[str, list[str]]:
 _TOKEN_UNIT = _escaped_run_unit("", escaped="'\"")
 _TOKEN_VALUE = rf"(?:\\['\"]{_TOKEN_UNIT}+(?:\\['\"])?|{_TOKEN_UNIT}+)"
 
+_ASSIGN = quoted_credentials.ASSIGN  # how a credential's name sets its value: `:`, `=`, `:=` ...
+
 #: A ``name = value`` credential's value: eight or more characters up to whitespace, a comma, a
 #: semicolon or a quote. The lookahead is the length test as it always read, so an escape changes
 #: only where the value ends, never whether it is masked.
@@ -1206,9 +1208,7 @@ _ASSIGNED_VALUE = r"(?=[^\s,;'\"]{8})" + _escaped_run_unit(r",;'\"") + "+"
 _CREDENTIAL_PATTERNS = re.compile(
     r"(?:"
     r"(?:AKIA|ASIA)[A-Z0-9]{16}"  # AWS access key ID
-    rf"|(?:SecretAccessKey|aws_secret_access_key)\s*[:=]\s*(?!\[REDACTED:){_TOKEN_VALUE}"
-    rf"|(?:SessionToken|aws_session_token)\s*[:=]\s*(?!\[REDACTED:){_TOKEN_VALUE}"
-    rf"|(?:AccessKeyId|aws_access_key_id)\s*[:=]\s*(?!\[REDACTED:){_TOKEN_VALUE}"
+    rf"|{quoted_credentials.AWS_NAMED}{_TOKEN_VALUE}|{quoted_credentials.AWS_BRACED_DEFAULT}"
     rf"|{private_key_blocks.HEADER_WORDS}"  # a key's header words, where no block is left
     r"|xox[bpas]-[0-9a-zA-Z-]{10,}"  # Slack token
     # LLM provider API keys. These are the credentials THIS project's users actually
@@ -1241,7 +1241,7 @@ _CREDENTIAL_PATTERNS = re.compile(
     # restored masks from such a view put the stored value back without its label. Each name a
     # mask can follow carries it (`pwd=`, the AWS names), so a second pass of `redact_credentials`,
     # or of `redact_for_display` and `redact_field` built on it, changes nothing.
-    rf"|(?i:{quoted_credentials.NAMES})\s*[:=]\s*(?!\[REDACTED:){_ASSIGNED_VALUE}"
+    rf"|(?i:{quoted_credentials.NAMES})\s*+{_ASSIGN}\s*+(?!\[REDACTED:){_ASSIGNED_VALUE}"
     rf"|(?:[Pp]wd=(?![/~])|PWD=(?![/~$]))(?!\[REDACTED:){_ASSIGNED_VALUE}"  # never a folder
     # `Authorization: Bearer <token>` / a bare bearer token.
     r"|(?i:bearer)\s+[A-Za-z0-9._~+/-]{16,}=*"

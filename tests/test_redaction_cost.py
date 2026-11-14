@@ -779,6 +779,16 @@ class TestTheQuotedPassStaysLinear:
         "blanks after a separator that no quote follows": ("password=", " ", 64_000),
         "backslashes before a quote that never comes": ('"password": ', "\\", 64_000),
         "a value in every unit that the other quote closes": ("", "password=\"abcdefgh'", 1_000),
+        "backslashes after an AWS name's opening quote that no $ follows": (
+            '"AWS_SECRET_ACCESS_KEY": "',
+            "\\",
+            64_000,
+        ),
+        "a value on the next line after an AWS key that is never closed": (
+            '"AWS_SESSION_TOKEN":\n"',
+            "a",
+            64_000,
+        ),
     }
 
     def _text(self, shape: str, units: int) -> str:
@@ -789,13 +799,76 @@ class TestTheQuotedPassStaysLinear:
         """Vacuity floor: each shape, at the size the bound below measures, comes out whole but for
         the lead's value. A shape the quoted pass never read, or one a pass masks part of, would
         pass the bound below on a tree without the quoted pass."""
-        assert len(self.SHAPES) == 7, "a shape was added or dropped: pin the new count"
+        assert len(self.SHAPES) == 9, "a shape was added or dropped: pin the new count"
         for shape, (_lead, _unit, units) in self.SHAPES.items():
             with row(subtests, shape=shape):
                 text = self._text(shape, units)
                 masked, _ = S.redact_credentials(text)
                 kept = f'password="{quoted_credentials.TAG}" ' + text[len(self.LEAD) :]
                 assert masked == kept, masked[-80:]
+
+    @pytest.mark.parametrize("shape", sorted(SHAPES))
+    def test_quadrupling_the_input_does_not_multiply_the_cost_by_sixteen(self, shape: str) -> None:
+        units = self.SHAPES[shape][2]
+        small, large = self._text(shape, units), self._text(shape, 4 * units)
+        ratio = _growth(S.redact_credentials, small, large)
+        assert (
+            ratio < _NOT_LINEAR
+        ), f"{shape}: cost grew ×{ratio:.1f} for ×4 input — that is not linear"
+
+
+class TestTheNamedValuePassStaysLinear:
+    """The pass for a value without quotes reads an AWS name's value through parts that scan a
+    run: the reference guard's lookaheads, the gap that lets a value sit on the next line, and the
+    alternative for a literal default inside ``${NAME...}``. Each is held to linear cost over a long
+    run, and each shape's text comes out as its floor says, so the bound measures the part."""
+
+    #: The text before the run, the unit it repeats, how many units the smaller input holds, the
+    #: text after the run, and what the text comes out as at that size (None: whole).
+    SHAPES = {
+        "backslashes after an AWS name that no $ follows": (
+            "AWS_SECRET_ACCESS_KEY=",
+            "\\",
+            64_000,
+            "x\n.",
+            "[REDACTED: credential]\n.",
+        ),
+        "a long value on the next line after an empty AWS key": (
+            "AWS_SESSION_TOKEN:\n",
+            "a",
+            64_000,
+            "\n.",
+            "[REDACTED: credential]\n.",
+        ),
+        "a braced reference after an AWS name that never closes": (
+            "AWS_SECRET_ACCESS_KEY=${",
+            "a",
+            64_000,
+            "\n.",
+            None,
+        ),
+        "an AWS name's empty default, over and over": (
+            "",
+            "${AWS_SECRET_ACCESS_KEY:-",
+            8_000,
+            "\n.",
+            None,
+        ),
+    }
+
+    def _text(self, shape: str, units: int) -> str:
+        lead, unit, _, tail, _ = self.SHAPES[shape]
+        return lead + unit * units + tail
+
+    def test_each_shape_reaches_its_part(self, subtests) -> None:
+        """Vacuity floor: each shape, at the size the bound below measures, comes out whole or
+        masked whole, as its row says. A shape no part of the pass reads would pass the bound below
+        on a tree without that part."""
+        assert len(self.SHAPES) == 4, "a shape was added or dropped: pin the new count"
+        for shape, (_lead, _unit, units, _tail, masked) in self.SHAPES.items():
+            with row(subtests, shape=shape):
+                text = self._text(shape, units)
+                assert S.redact_credentials(text)[0] == (text if masked is None else masked)
 
     @pytest.mark.parametrize("shape", sorted(SHAPES))
     def test_quadrupling_the_input_does_not_multiply_the_cost_by_sixteen(self, shape: str) -> None:
