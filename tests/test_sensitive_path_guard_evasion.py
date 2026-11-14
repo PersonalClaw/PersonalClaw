@@ -37,12 +37,17 @@ names; this guard is defence in depth.
 from __future__ import annotations
 
 import pathlib
+import subprocess
 import tempfile
+import unicodedata
 
 import pytest
+from names_matched_byte_for_byte import matched_byte_for_byte
 
+from personalclaw import command_paths, security
 from personalclaw.security import (
     _SENSITIVE_HOME_DIRS,
+    SensitivePaths,
     is_sensitive_bash_command,
     is_sensitive_path,
     is_system_path,
@@ -480,3 +485,422 @@ def test_a_walks_checker_answers_every_path_as_the_one_shot_guard_does(tmp_path,
     assert [walk(p) for p in paths] == one_shot
     # Vacuity: the set holds both answers, so agreeing is not agreeing on all-False.
     assert any(one_shot) and not all(one_shot)
+
+
+# ── one Unicode form ──────────────────────────────────────────────────────────
+#
+# A path can hold a letter written as one code point or as a base letter and a combining mark
+# (Unicode NFC and NFD), and a filesystem may keep or hand back either. The guard compares every
+# path, and every protected place and name, in one form, so a protected place is refused
+# whichever spelling it is asked by.
+
+_FORMS = ["NFC", "NFD"]
+
+
+def _in(form: str, text: str) -> str:
+    return unicodedata.normalize(form, text)
+
+
+@pytest.fixture(params=["as-is", "bytes"])
+def names_matched(request, monkeypatch, tmp_path):
+    """Each row on this filesystem as it is, and on one that matches names byte for byte, as
+    Linux's do (:mod:`names_matched_byte_for_byte`): on a Mac, a home folder kept in one Unicode
+    form and named in another is found by either spelling, and on Linux only by its own."""
+    if request.param == "bytes":
+        monkeypatch.setattr(security, "_LINKED_ENTRIES", {})
+        with matched_byte_for_byte(monkeypatch, tmp_path):
+            yield
+    else:
+        yield
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_a_protected_place_is_refused_in_either_unicode_form(
+    tmp_path, monkeypatch, names_matched, kept, asked
+):
+    home = tmp_path / _in(kept, "Zoë")
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    assert is_sensitive_path(_in(asked, f"{home}/.ssh/id_ed25519"))
+    assert is_sensitive_path(_in(asked, f"{home}/.aws/credentials"))
+    assert not is_sensitive_path(_in(asked, f"{home}/notes.txt"))
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+@pytest.mark.parametrize("entry", [".env", "credentials", "governance"])
+def test_the_own_homes_secrets_are_refused_in_either_unicode_form(
+    tmp_path, monkeypatch, names_matched, kept, asked, entry
+):
+    home = tmp_path / _in(kept, "Cåfé")
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+
+    assert is_sensitive_path(_in(asked, f"{home}/{entry}"))
+    assert is_sensitive_path(_in(asked, f"{home}/{entry}/nested-file"))
+    assert not is_sensitive_path(_in(asked, f"{home}/knowledge.db"))
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+def test_a_protected_name_is_refused_in_either_unicode_form_wherever_it_sits(tmp_path, asked):
+    folder = tmp_path / "Résumé"
+    for name in ("sel_hmac.key", ".local_secret", ".credentials.json"):
+        assert is_sensitive_path(_in(asked, f"{folder}/{name}")), name
+    assert not is_sensitive_path(_in(asked, f"{folder}/notes.txt"))
+
+
+#: A letter whose two spellings fold apart when case is folded before the letter is decomposed:
+#: alpha with an iota subscript, then a diaeresis. Composed, the subscript is part of the letter
+#: and folds to a separate iota, which the diaeresis then follows; decomposed, the diaeresis comes
+#: first.
+_SUBSCRIPT = "\u1fb3\u0308"
+
+
+def test_both_spellings_of_every_text_fold_to_one_form():
+    """The one form is one form: each code point, and each letter with an iota subscript and more
+    marks, folds to the same text whichever of its spellings it is given in."""
+    folded = command_paths.folded
+    apart = [
+        hex(code)
+        for code in range(0x110000)
+        if not 0xD800 <= code <= 0xDFFF
+        and folded(_in("NFC", chr(code))) != folded(_in("NFD", chr(code)))
+    ]
+    assert apart == []
+    for text in (
+        _SUBSCRIPT,
+        "\u1fb3\u0301\u0308",
+        "\u1f80\u0300",
+        "x\u1fb3\u0308y",
+        "\u1ff3\u0308",
+    ):
+        assert folded(_in("NFC", text)) == folded(_in("NFD", text)), ascii(text)
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_a_protected_place_is_refused_whichever_way_a_subscripted_letter_is_spelled(
+    tmp_path, monkeypatch, names_matched, kept, asked
+):
+    home = tmp_path / _in(kept, f"x{_SUBSCRIPT}y")
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    assert is_sensitive_path(_in(asked, f"{home}/.ssh/id_ed25519"))
+    assert not is_sensitive_path(_in(asked, f"{home}/notes.txt"))
+
+
+def test_an_ascii_path_is_answered_as_it_was():
+    assert is_sensitive_path(f"{_HOME}/.ssh/id_rsa")
+    assert is_sensitive_path(f"{_HOME}/.SSH/id_rsa")
+    assert not is_sensitive_path(f"{_HOME}/projects/notes.txt")
+
+
+def _spent() -> str:
+    """Enough globs to spend the screen's listing budget before the command after them."""
+    return " ".join(f"many/x{n}-*.txt" for n in range(4 * command_paths._MAX_LISTINGS))
+
+
+def _workspace(tmp_path) -> pathlib.Path:
+    """A folder the listing globs of :func:`_spent` list."""
+    ws = tmp_path / "ws"
+    (ws / "many").mkdir(parents=True)
+    (ws / "many" / "a.txt").write_text("ordinary\n")
+    return ws
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_a_protected_bare_name_is_named_in_either_unicode_form(tmp_path, monkeypatch, kept, asked):
+    monkeypatch.setenv("HF_TOKEN_PATH", str(tmp_path / "hf" / _in(kept, "clé")))
+    walk = SensitivePaths(home_credential_dirs=False)
+    assert walk.names_one(_in(asked, "clé"))
+    assert not walk.names_one("notes.txt")
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_the_shells_screen_refuses_a_protected_bare_name_in_either_unicode_form(
+    tmp_path, monkeypatch, names_matched, kept, asked
+):
+    folder = tmp_path / "hf"
+    folder.mkdir()
+    monkeypatch.setenv("HF_TOKEN_PATH", str(folder / _in(kept, "clé")))
+    assert is_sensitive_bash_command(_in(asked, f"cd {folder} && cat clé"))
+    assert is_sensitive_bash_command(f"cd {folder} && cat notes.txt") is None
+
+
+@pytest.mark.parametrize("command", ["cat", "grep -a .", "tar cf -"])
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_the_shells_screen_refuses_a_home_credential_read_in_either_unicode_form(
+    tmp_path, monkeypatch, names_matched, kept, asked, command
+):
+    home = tmp_path / _in(kept, "Zoë")
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".ssh" / "id_ed25519").write_text("not a key\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(security, "_SENSITIVE_RE", None)
+    assert is_sensitive_bash_command(_in(asked, f"{command} {home}/.ssh/id_ed25519"))
+    assert is_sensitive_bash_command(_in(asked, f"{command} {home}/notes.txt")) is None
+
+
+@pytest.mark.parametrize("spelling", ["~", "$HOME"])
+@pytest.mark.parametrize("kept", _FORMS)
+def test_the_shells_screen_refuses_a_home_credential_read_by_the_homes_spelling(
+    tmp_path, monkeypatch, names_matched, kept, spelling
+):
+    home = tmp_path / _in(kept, "Zoë")
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(security, "_SENSITIVE_RE", None)
+    assert is_sensitive_bash_command(f"cat {spelling}/.ssh/id_ed25519")
+    assert is_sensitive_bash_command(f"cat {spelling}/notes.txt") is None
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_the_shells_screen_refuses_listing_a_credential_folder_in_either_unicode_form(
+    tmp_path, monkeypatch, names_matched, kept, asked
+):
+    home = tmp_path / _in(kept, "Zoë")
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(security, "_SENSITIVE_RE", None)
+    assert is_sensitive_bash_command(_in(asked, f"ls {home}/.ssh"))
+    assert is_sensitive_bash_command(_in(asked, f"ls {home}/notes")) is None
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_a_link_into_a_protected_folder_is_refused_in_either_unicode_form(
+    tmp_path, monkeypatch, names_matched, kept, asked
+):
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    dotfiles = tmp_path / _in(kept, "Zoë-dotfiles")
+    dotfiles.mkdir()
+    (dotfiles / "id_ed25519").write_text("not a key\n")
+    (home / ".ssh" / "id_ed25519").symlink_to(dotfiles / "id_ed25519")
+    monkeypatch.setenv("HOME", str(home))
+    assert is_sensitive_path(_in(asked, str(dotfiles / "id_ed25519")))
+    assert not is_sensitive_path(_in(asked, str(dotfiles / "notes.txt")))
+
+
+@pytest.mark.parametrize("named", _FORMS)
+def test_a_link_in_a_credential_folder_of_a_home_named_in_its_other_form_is_refused(
+    tmp_path, monkeypatch, names_matched, named
+):
+    """`$HOME` written in one form, its folder kept in the other: a filesystem that keeps a name
+    as its bytes finds the folder, and the links inside it, only by the spelling it was made with,
+    so each is looked for by both."""
+    home = tmp_path / _in("NFD" if named == "NFC" else "NFC", "Zoë")
+    (home / ".ssh").mkdir(parents=True)
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    (dotfiles / "id_ed25519").write_text("not a key\n")
+    (home / ".ssh" / "id_ed25519").symlink_to(dotfiles / "id_ed25519")
+    monkeypatch.setenv("HOME", _in(named, str(home)))
+    assert is_sensitive_path(str(dotfiles / "id_ed25519"))
+    assert not is_sensitive_path(str(dotfiles / "notes.txt"))
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_the_shells_screen_refuses_a_glob_into_the_own_home_in_either_unicode_form(
+    tmp_path, monkeypatch, names_matched, kept, asked
+):
+    home = tmp_path / _in(kept, "Cåfé")
+    (home / "credentials").mkdir(parents=True)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    glob = f"{tmp_path}/{_in(asked, 'Cåf')}*"
+    assert is_sensitive_bash_command(f"cat {glob}/credentials/store.json")
+    assert is_sensitive_bash_command(f"cat {glob}/notes.txt") is None
+
+
+@pytest.mark.parametrize("asked", _FORMS)
+@pytest.mark.parametrize("kept", _FORMS)
+def test_the_shells_screen_refuses_a_glob_into_the_own_home_past_the_listing_budget(
+    tmp_path, monkeypatch, names_matched, kept, asked
+):
+    home = tmp_path / _in(kept, "Cåfé")
+    (home / "credentials").mkdir(parents=True)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    ws = _workspace(tmp_path)
+    glob = f"{tmp_path}/{_in(asked, 'Cåf')}*"
+    assert is_sensitive_bash_command(f"ls {_spent()}; cat {glob}/credentials/store.json", cwd=ws)
+    assert is_sensitive_bash_command(f"ls {_spent()}; cat {glob}/notes.txt", cwd=ws) is None
+
+
+# ── a glob, as the shell expands it ───────────────────────────────────────────
+#
+# The shell compares a glob with a name as each is written, so `Cafe*` names a folder kept as a
+# base letter and a combining mark. The screen matches such a glob as the shell does, as well as
+# regardless of case and of Unicode form.
+
+
+def _utf8_locale() -> str | None:
+    names = subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.split()
+    return next((n for n in ("C.UTF-8", "C.utf8", "en_US.UTF-8", "en_US.utf8") if n in names), None)
+
+
+def _is_bash(shell: str) -> bool:
+    out = subprocess.run([shell, "-c", "echo ${BASH_VERSION:-}"], capture_output=True, text=True)
+    return bool(out.stdout.strip())
+
+
+@pytest.mark.parametrize("shell", ["/bin/bash", "/bin/sh"])
+@pytest.mark.parametrize(
+    "name,glob", [("Café", "Cafe*"), ("Café", "Cafe?"), ("Zoë", "Zoe*"), ("Zoë", "Zo??")]
+)
+def test_the_shell_expands_a_glob_to_a_folder_kept_decomposed(tmp_path, shell, name, glob):
+    """What the rows below rest on, measured on this machine's shell."""
+    if not pathlib.Path(shell).exists() or not _is_bash(shell):
+        pytest.skip(f"{shell} is not bash here")
+    locale = _utf8_locale()
+    if locale is None:
+        pytest.skip("no UTF-8 locale here")
+    kept = _in("NFD", name)
+    (tmp_path / kept / "credentials").mkdir(parents=True)
+    env = {"LC_ALL": locale, "PATH": "/bin:/usr/bin", "HOME": str(tmp_path)}
+    out = subprocess.run(
+        [shell, "-c", f"cd {tmp_path} && printf '%s\\n' {glob}/credentials"],
+        capture_output=True, env=env, stdin=subprocess.DEVNULL,
+    ).stdout.decode("utf-8").strip()  # fmt: skip
+    assert out == f"{kept}/credentials", (shell, glob, ascii(out))
+
+
+@pytest.mark.parametrize("glob", ["Caf*", "Cafe*", "Cafe?", "C*"])
+@pytest.mark.parametrize("named", _FORMS)
+def test_the_shells_screen_refuses_a_glob_into_an_own_home_kept_decomposed(
+    tmp_path, monkeypatch, names_matched, named, glob
+):
+    home = tmp_path / _in("NFD", "Café")
+    (home / "credentials").mkdir(parents=True)
+    (home / "credentials" / "store.json").write_text("{}\n")
+    monkeypatch.setenv("PERSONALCLAW_HOME", _in(named, str(home)))
+    assert is_sensitive_bash_command(f"cat {tmp_path}/{glob}/credentials/store.json")
+    assert is_sensitive_bash_command(f"cat {tmp_path}/{glob}/notes.txt") is None
+
+
+@pytest.mark.parametrize("entry", ["governance/ceiling.yaml", "session_key", ".env"])
+@pytest.mark.parametrize("named", _FORMS)
+def test_the_shells_screen_refuses_a_glob_into_an_own_homes_other_secrets_kept_decomposed(
+    tmp_path, monkeypatch, names_matched, named, entry
+):
+    home = tmp_path / _in("NFD", "Café")
+    (home / "governance").mkdir(parents=True)
+    monkeypatch.setenv("PERSONALCLAW_HOME", _in(named, str(home)))
+    assert is_sensitive_bash_command(f"cat {tmp_path}/Cafe*/{entry}")
+    assert is_sensitive_bash_command(f"cat {tmp_path}/Cafe*/notes.txt") is None
+
+
+@pytest.mark.parametrize("glob", ["Zo*", "Zoe*", "Zo??"])
+@pytest.mark.parametrize("named", _FORMS)
+def test_the_shells_screen_refuses_a_glob_into_a_home_kept_decomposed(
+    tmp_path, monkeypatch, names_matched, named, glob
+):
+    home = tmp_path / _in("NFD", "Zoë")
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".ssh" / "id_ed25519").write_text("not a key\n")
+    monkeypatch.setenv("HOME", _in(named, str(home)))
+    monkeypatch.setattr(security, "_SENSITIVE_RE", None)
+    assert is_sensitive_bash_command(f"cat {tmp_path}/{glob}/.ssh/id_ed25519")
+    assert is_sensitive_bash_command(f"cat {tmp_path}/{glob}/notes.txt") is None
+
+
+#: A home folder's name with one letter decomposed and another composed, as a filesystem that
+#: matches names byte for byte keeps it as it was typed.
+_MIXED = "Zoe\u0308Ren\u00e9e"
+
+
+def test_the_shells_screen_refuses_a_glob_into_a_home_kept_in_mixed_form(
+    tmp_path, monkeypatch, names_matched
+):
+    home = tmp_path / _MIXED
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".ssh" / "id_ed25519").write_text("not a key\n")
+    monkeypatch.setenv("HOME", _in("NFC", str(home)))
+    monkeypatch.setattr(security, "_SENSITIVE_RE", None)
+    assert is_sensitive_bash_command(f"cat {tmp_path}/Zo*/.ssh/id_ed25519")
+    assert is_sensitive_bash_command(f"cat {tmp_path}/Zo*/notes.txt") is None
+
+
+def test_the_shells_screen_refuses_a_glob_into_a_home_named_in_another_case_and_form(
+    tmp_path, monkeypatch, names_matched
+):
+    """`$HOME` written in other letter case as well as the other form than its folder is kept in:
+    the one form folds case too, so the folder is found by its own spelling."""
+    home = tmp_path / _in("NFD", "Zoë")
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".ssh" / "id_ed25519").write_text("not a key\n")
+    monkeypatch.setenv("HOME", _in("NFC", str(tmp_path / "ZOË")))
+    monkeypatch.setattr(security, "_SENSITIVE_RE", None)
+    assert is_sensitive_bash_command(f"cat {tmp_path}/Zo*/.ssh/id_ed25519")
+    assert is_sensitive_bash_command(f"cat {tmp_path}/Zo*/notes.txt") is None
+
+
+def test_the_shells_screen_refuses_a_glob_into_an_ascii_home_as_it_did(
+    tmp_path, monkeypatch, names_matched
+):
+    home = tmp_path / "zoe"
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".ssh" / "id_ed25519").write_text("not a key\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(security, "_SENSITIVE_RE", None)
+    assert is_sensitive_bash_command(f"cat {tmp_path}/zo*/.ssh/id_ed25519")
+    assert is_sensitive_bash_command(f"cat {tmp_path}/zo*/notes.txt") is None
+
+
+def test_a_path_found_as_written_or_missing_only_ascii_parts_costs_what_it_did(
+    tmp_path, monkeypatch
+):
+    """A path that is ASCII, or there as written, or missing only parts that are ASCII, is looked
+    up at most twice and lists no folder: the walk is only for a part that is not ASCII and is
+    missing as written."""
+    home = tmp_path / _in("NFD", "Zoë")
+    home.mkdir()
+    looked: list[str] = []
+    lstat = security.os.lstat
+
+    def counted(path, *args, **kwargs):
+        looked.append(str(path))
+        return lstat(path, *args, **kwargs)
+
+    def listed(*_args, **_kwargs):
+        raise AssertionError("a folder was listed")
+
+    for path in (f"{tmp_path}/nowhere/.ssh", str(home), f"{home}/.aws/credentials"):
+        looked.clear()
+        with monkeypatch.context() as patched:
+            patched.setattr(security.os, "lstat", counted)
+            patched.setattr(security.os, "listdir", listed)
+            spellings = command_paths.kept_spellings(path)
+        assert spellings == [path]
+        assert len(looked) <= 2, looked
+
+
+@pytest.mark.parametrize("glob", ["Caf*", "Cafe*"])
+@pytest.mark.parametrize("named", _FORMS)
+def test_the_shells_screen_refuses_a_glob_into_an_own_home_kept_decomposed_past_the_budget(
+    tmp_path, monkeypatch, names_matched, named, glob
+):
+    home = tmp_path / _in("NFD", "Café")
+    (home / "credentials").mkdir(parents=True)
+    monkeypatch.setenv("PERSONALCLAW_HOME", _in(named, str(home)))
+    ws = _workspace(tmp_path)
+    cmd = f"ls {_spent()}; cat {tmp_path}/{glob}"
+    assert is_sensitive_bash_command(f"{cmd}/credentials/store.json", cwd=ws)
+    assert is_sensitive_bash_command(f"{cmd}/notes.txt", cwd=ws) is None
+
+
+def test_the_shells_screen_matches_a_glob_to_a_name_as_the_shell_does(tmp_path, monkeypatch):
+    """`?` names one letter as written, and a letter that casefolds to two is two to a folded
+    match: only the shell's own comparison names this folder."""
+    home = tmp_path / "Straße"
+    (home / "credentials").mkdir(parents=True)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    assert is_sensitive_bash_command(f"cat {tmp_path}/Stra?e*/credentials/store.json")
+    assert is_sensitive_bash_command(f"cat {tmp_path}/Stra?e*/notes.txt") is None

@@ -33,7 +33,7 @@ from test_the_credential_screen_checks_a_long_command_in_bounded_time import (
 )
 
 from personalclaw import security
-from personalclaw.command_paths import HOME_PATTERNS, named_paths, strip_shell_quotes
+from personalclaw.command_paths import HOME_PATTERNS, folded, named_paths, strip_shell_quotes
 
 pytestmark = pytest.mark.security
 
@@ -111,8 +111,8 @@ def _ops(node):
 
 def test_the_regex_is_the_one_the_screen_had(home):
     """Built from the same text as before the change, so the definition of the check is the
-    same."""
-    home_alts = "(?:" + "|".join((re.escape(str(Path.home())), "~", *HOME_PATTERNS)) + ")"
+    same. The home is in the one form the screen compares a command in (``folded``)."""
+    home_alts = "(?:" + "|".join((re.escape(folded(str(Path.home()))), "~", *HOME_PATTERNS)) + ")"
     dirs = "|".join(re.escape(d) for d in security._SENSITIVE_HOME_DIRS)
     before = (
         rf"(?:{security._READ_CMDS}.*|{OLD_SCRIPT_OPEN}.*|[<>|]\s*){home_alts}[+,\s]*/(?:{dirs})"

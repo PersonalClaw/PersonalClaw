@@ -24,8 +24,11 @@ import fnmatch
 import os
 import re
 import shlex
+import unicodedata
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
+
+from personalclaw.path_form import folded, kept_spellings  # noqa: F401 (security's)
 
 
 def strip_shell_quotes(command: str) -> str:
@@ -217,7 +220,9 @@ def _globbed(path: Path, budget: list[int], unexpanded: list[Path] | None = None
         if not _MAGIC.search(part):
             found = [os.path.join(prefix, part) for prefix in found]
             continue
-        wanted = part.casefold()
+        # As the shell compares (the name as kept, the part as written), and both casefolded, and
+        # both in the one form: an entry counts when any pair matches.
+        wanted = (part, part.casefold(), folded(part))
         matched: list[str] = []
         for prefix in found:
             if budget[0] <= 0:
@@ -226,7 +231,8 @@ def _globbed(path: Path, budget: list[int], unexpanded: list[Path] | None = None
             try:
                 with os.scandir(prefix) as entries:
                     for entry in entries:
-                        if fnmatch.fnmatchcase(entry.name.casefold(), wanted):
+                        names = (entry.name, entry.name.casefold(), folded(entry.name))
+                        if any(fnmatch.fnmatchcase(n, w) for n, w in zip(names, wanted)):
                             matched.append(os.path.join(prefix, entry.name))
                             if len(matched) > _MAX_MATCHES:
                                 return _left_unexpanded(path, unexpanded)
@@ -270,7 +276,14 @@ def glob_meets(one: str, other: str) -> bool:
     """Whether two glob components, either of them a plain name, can name one entry: there is a
     name both match. Regardless of case, and a dot first matched like any other character, so the
     answer can only be wider than the shell's."""
-    a, b = _glob_tokens(one.casefold()), _glob_tokens(other.casefold())
+    return any(
+        _tokens_meet(_glob_tokens(a), _glob_tokens(b))
+        for a, b in ((folded(one), folded(other)), (one.casefold(), other.casefold()))
+    )
+
+
+def _tokens_meet(a: list[str], b: list[str]) -> bool:
+    """Whether two glob components, as tokens (:func:`_glob_tokens`), can name one entry."""
     seen: dict[tuple[int, int], bool] = {}
 
     def meet(i: int, j: int) -> bool:
@@ -301,20 +314,22 @@ def glob_forms(glob: Path) -> list[tuple[str, ...]]:
     written = os.path.normpath(os.path.abspath(glob))
     parts = Path(written).parts
     first = next((n for n, part in enumerate(parts) if _MAGIC.search(part)), len(parts))
-    forms = {written.casefold()}
+    forms = {written}
     try:
         forms.add(os.path.join(os.path.realpath(os.path.join(*parts[:first])), *parts[first:]))
     except (OSError, ValueError):
         pass
-    return [Path(form.casefold()).parts for form in forms]
+    return list({Path(fold(form)).parts for form in forms for fold in (str.casefold, folded)})
 
 
 def glob_reaches(glob_parts: tuple[str, ...], location: str) -> bool:
     """Whether a glob, by its parts (:func:`glob_forms`), could name *location*, an absolute path,
     or a path inside it."""
-    wanted = Path(location.casefold()).parts
-    return len(glob_parts) >= len(wanted) and all(
-        glob_meets(part, name) for part, name in zip(glob_parts, wanted)
+    spellings = {Path(unicodedata.normalize(f, location.casefold())).parts for f in ("NFC", "NFD")}
+    return any(
+        len(glob_parts) >= len(wanted)
+        and all(glob_meets(part, name) for part, name in zip(glob_parts, wanted))
+        for wanted in spellings
     )
 
 
@@ -374,7 +389,7 @@ def named_paths(
     # From every part, repeats included: each `cd` moves the shell again.
     bases = _working_dirs(segments, start, user_home)
     # Regardless of case: on a case-insensitive filesystem `SESSION_KEY` opens `session_key`.
-    bare = frozenset(name.casefold() for name in names)
+    bare = frozenset(folded(name) for name in names)
     budget = [_MAX_LISTINGS]
     # What a part names depends on its text, *bases* and *bare*, all fixed for the call, and on the
     # listing budget left, which only goes down. A part whose reading listed no folder had no glob,
@@ -394,7 +409,7 @@ def named_paths(
             if not (
                 "/" in word
                 or word.startswith((".", "~"))
-                or word.casefold() in bare
+                or folded(word) in bare
                 or (named is not None and named(word))
             ):
                 continue

@@ -17,10 +17,12 @@ from urllib.parse import parse_qs
 from personalclaw import address_logins, private_key_blocks, quoted_credentials
 from personalclaw.command_paths import (
     HOME_PATTERNS,
+    folded,
     glob_forms,
     glob_meets,
     glob_reaches,
     is_glob,
+    kept_spellings,
     named_paths,
     shell_expands_to,
     strip_shell_quotes,
@@ -371,7 +373,7 @@ def _build_sensitive_regex() -> re.Pattern[str]:
     The home is matched as the command spells it: written out, as ``~``, or as a one-liner builds
     it (``command_paths.HOME_PATTERNS``, the vocabulary the path reading also uses).
     """
-    home = str(Path.home())
+    home = folded(str(Path.home()))
     home_alts = "(?:" + "|".join((re.escape(home), "~", *HOME_PATTERNS)) + ")"
     escaped_dirs = [re.escape(d) for d in _SENSITIVE_HOME_DIRS]
     dirs_pattern = "|".join(escaped_dirs)
@@ -531,8 +533,8 @@ class SensitivePaths:
         folders: dict[str, str] = {}
         self._own = tuple(set().union(*(_protected_forms(p, folders) for p in own_paths)))
         self._other = tuple(set().union(*(_protected_forms(p, folders) for p in other_paths)))
-        self._own_names = frozenset(n.casefold() for n in OWN_SECRET_BASENAMES)
-        self._sign_in_names = frozenset(n.casefold() for n in SIGN_IN_FILE_BASENAMES)
+        self._own_names = frozenset(folded(n) for n in OWN_SECRET_BASENAMES)
+        self._sign_in_names = frozenset(folded(n) for n in SIGN_IN_FILE_BASENAMES)
         #: The bare name of everything this refuses, for a reader of a command: a word like
         #: `session_key` names one of these files once a `cd` has moved the shell beside it.
         self.names = frozenset(
@@ -540,7 +542,7 @@ class SensitivePaths:
             | OWN_SECRET_BASENAMES
             | SIGN_IN_FILE_BASENAMES
         )
-        self._bare = frozenset(name.casefold() for name in self.names)
+        self._bare = frozenset(folded(name) for name in self.names)
 
     def __call__(self, path_str: str) -> bool:
         return bool(self.kind(path_str))
@@ -568,7 +570,7 @@ class SensitivePaths:
         # protected location (:func:`_path_forms`).
         expanded = os.path.expanduser(os.path.expandvars(path_str))
         requested = _path_forms(expanded)
-        # CASE-INSENSITIVE comparison, because the comparison is the control.
+        # CASE-INSENSITIVE comparison, in one Unicode form, because the comparison is the control.
         #
         # 🔴 Measured on macOS: `~/.SSH/id_rsa` was ALLOWED while `~/.ssh/id_rsa` was blocked,
         # and the default macOS filesystem (like Windows) is case-INSENSITIVE — a temp dir
@@ -620,7 +622,7 @@ class SensitivePaths:
     def names_one(self, word: str) -> bool:
         """Whether the bare *word* is the name of a file this refuses wherever it sits: a word a
         reader of a command reads as a path once a ``cd`` has moved the shell beside it."""
-        return word.casefold() in self._bare or is_project_secret_name(word)
+        return folded(word) in self._bare or is_project_secret_name(word)
 
 
 #: :meth:`SensitivePaths.kind`'s answer for PersonalClaw's own credential store and its auth and
@@ -637,7 +639,7 @@ def _under(forms: set[str], locations: tuple[str, ...]) -> bool:
 
 
 def _path_forms(path: str) -> set[str]:
-    """*path* as written and as the filesystem resolves it, both absolute and casefolded.
+    """*path* as written and as the filesystem resolves it, both absolute and folded (`folded`).
 
     As written means ``.`` and ``..`` folded and no link followed; resolved means every link
     followed. The credential guard compares both forms of a request with both forms of each
@@ -650,9 +652,9 @@ def _path_forms(path: str) -> set[str]:
 
     Comparing more forms can only refuse more, which is the direction this guard errs in.
     """
-    forms = {os.path.normpath(os.path.abspath(path)).casefold()}
+    forms = {folded(os.path.normpath(os.path.abspath(path)))}
     try:
-        forms.add(os.path.realpath(path).casefold())
+        forms.add(folded(os.path.realpath(path)))
     except (OSError, ValueError):
         pass
     return forms
@@ -671,22 +673,22 @@ def _protected_forms(path: str, folders: dict[str, str]) -> set[str]:
     *folders* holds each folder's real path once it is resolved, for the rest of the set: most
     protected locations share a folder with others (a home's secret entries, a tool's sign-in
     files), and resolving the same folder again for each was most of what building the set cost.
-    A location that is itself a link is resolved whole, so its target is still where it points.
-    """
+    A location that is itself a link is resolved whole, so its target is still where it points."""
     written = os.path.normpath(os.path.abspath(path))
-    forms = {written.casefold()}
-    try:
-        folder, name = os.path.split(written)
-        if not name or os.path.islink(written):
-            real = os.path.realpath(written)
-        else:
-            if folder not in folders:
-                folders[folder] = os.path.realpath(folder)
-            real = os.path.join(folders[folder], name)
-    except (OSError, ValueError):
-        return forms
-    forms.add(real.casefold())
-    return forms | _linked_entries(real)
+    forms = {folded(written)}
+    for spelled in kept_spellings(written):
+        try:
+            folder, name = os.path.split(spelled)
+            if not name or os.path.islink(spelled):
+                real = os.path.realpath(spelled)
+            else:
+                if folder not in folders:
+                    folders[folder] = os.path.realpath(folder)
+                real = os.path.join(folders[folder], name)
+        except (OSError, ValueError):
+            continue
+        forms |= {folded(real), *_linked_entries(real)}
+    return forms
 
 
 #: ``directory -> (signature, targets)`` for :func:`_linked_entries`. A few protected
@@ -695,7 +697,7 @@ _LINKED_ENTRIES: dict[str, tuple[tuple[int, int, int, int], frozenset[str]]] = {
 
 
 def _linked_entries(directory: str) -> frozenset[str]:
-    """Where the symlinks directly inside *directory* point, resolved and casefolded.
+    """Where the symlinks directly inside *directory* point, resolved and folded (`folded`).
 
     Read again whenever the directory's inode, mtime, size or link count moves, which adding,
     removing or replacing an entry does, and otherwise answered from the last read: this runs
@@ -717,7 +719,7 @@ def _linked_entries(directory: str) -> frozenset[str]:
             for entry in entries:
                 if entry.is_symlink():
                     try:
-                        targets.add(os.path.realpath(entry.path).casefold())
+                        targets.add(folded(os.path.realpath(entry.path)))
                     except (OSError, ValueError):
                         continue
     except OSError:
@@ -906,14 +908,13 @@ def _credential_folders() -> tuple[str, ...]:
     (:func:`_path_forms`): each :data:`_SENSITIVE_HOME_DIRS` entry that is a folder there.
 
     The entries that are files (``.netrc``, ``.kube/config``…) are used by their path, and a folder
-    that does not exist holds nothing a listing could show.
-    """
+    that does not exist holds nothing a listing could show."""
     home = str(Path.home())
     forms: set[str] = set()
     for entry in _SENSITIVE_HOME_DIRS:
-        location = os.path.join(home, entry)
-        if os.path.isdir(location):
-            forms |= _path_forms(location)
+        for location in kept_spellings(os.path.join(home, entry)):
+            if os.path.isdir(location):
+                forms |= _path_forms(location)
     return tuple(forms)
 
 
@@ -965,7 +966,7 @@ def is_sensitive_bash_command(
     Defence in depth: a command can build a path out of pieces no reading of its text sees.
     """
     normalised = strip_shell_quotes(_normalise_for_matching(command))
-    if _reads_credential_folder(normalised):
+    if _reads_credential_folder(folded(normalised)):
         return _SHELL_REFUSAL[CREDENTIAL]
     owned = SensitivePaths(home_credential_dirs=False)
     folders = _credential_folders()
