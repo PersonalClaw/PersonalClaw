@@ -25,8 +25,8 @@ import { idleRunState } from '../src/lib/workPhase'
 const KEY = 'widget-action-waits-1790000002'
 /** Where a widget's own controls sit: below the toolbar a chat's widget shows over its top edge. */
 const BELOW_THE_TOOLBAR = 'style="display:block;margin-top:56px"'
-/** Home's Attention view, where the owner's pinned tiles and its "Start something" field are. */
-const HOME = 'dashboard?view=attention'
+/** Home, where the owner's pinned tiles are (under Your agents today, in the Home section). */
+const HOME = 'dashboard'
 /** Every send the page makes, `/api/chat?ws=1` included. */
 const SEND = /\/api\/chat(\?.*)?$/
 

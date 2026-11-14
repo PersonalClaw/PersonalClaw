@@ -1,5 +1,5 @@
-/** Home › Overview's "Your agents today", in the built app: a row per agent on the hours around
- *  now, each with its state in words, an ask linked to Attention and answered nowhere else, and a
+/** Home's "Your agents today", in the built app: a row per agent on the hours around now, each
+ *  with its state in words, an ask linked to Needs you and answered nowhere else, and a
  *  loop that runs to a cycle and never to a guessed time. The band's reads are answered in the page
  *  itself, so it writes nothing to the run's home and reads nothing another spec counts. The shots
  *  it attaches, at 1440 and 390 in both themes, are the band as a person meets it. */
@@ -19,7 +19,7 @@ const BAND_CLIPPED_RING = CLIPPED_RING.replace(
 test.describe('Your agents today', () => {
   test('reads as a person meets it', async ({ page }) => {
     await answerTheBandsReads(page)
-    await gotoRoute(page, 'dashboard?view=overview')
+    await gotoRoute(page, 'dashboard')
     const list = band(page).getByRole('list', { name: 'Your agents' })
     await expect(list).toBeVisible()
 
@@ -27,22 +27,26 @@ test.describe('Your agents today', () => {
     await expect(rows.first()).toHaveAccessibleName(/^PersonalClaw, waiting on you: /)
     await expect(rows.nth(1)).toHaveAccessibleName(/^Code reviewer, waiting on you: /)
     await expect(list.getByRole('listitem', { name: /^Release helper, failed: Failed at \d\d:\d\d: Couldn’t reach api\.github\.com/ })).toBeVisible()
-    await expect(band(page).getByText('2 asks wait on you · 1 failed today')).toBeVisible()
+    await expect(band(page).locator('p', { hasText: /^2 need you · 1 running · 1 failed today$/ })).toBeVisible()
     await expect(band(page).getByText('· asked 2 min ago')).toBeVisible()
     await expect(list.getByRole('listitem', { name: /^Researcher, working: / })).toBeVisible()
     await expect(list.getByRole('listitem', { name: /^Scheduled, agent not named: / })).toBeVisible()
 
-    await expect(list.getByRole('link', { name: /^Answer in Attention/ })).toHaveCount(2)
-    await expect(list.getByRole('link', { name: 'Answer in Attention: PersonalClaw’s ask', exact: true })).toBeVisible()
-    await expect(list.getByRole('link', { name: 'Answer in Attention: Code reviewer’s ask', exact: true })).toBeVisible()
-    const answer = list.getByRole('link', { name: /^Answer in Attention/ }).first()
-    await expect(answer).toHaveAttribute('href', /^#\/dashboard\?view=attention&open=waiting%3Aapproval%3Ae2e-band-ap$/)
+    await expect(list.getByRole('link', { name: /^Answer:/ })).toHaveCount(2)
+    await expect(list.getByRole('link', { name: 'Answer: PersonalClaw’s ask', exact: true })).toBeVisible()
+    await expect(list.getByRole('link', { name: 'Answer: Code reviewer’s ask', exact: true })).toBeVisible()
+    const answer = list.getByRole('link', { name: /^Answer:/ }).first()
+    await expect(answer).toHaveAttribute('href', '#/mission-control?open=waiting%3Aapproval%3Ae2e-band-ap')
+    await expect(band(page).getByRole('link', { name: '2 need you' })).toHaveAttribute('href', '#/mission-control')
     await expect(band(page).getByRole('button', { name: /^(approve|allow|deny)/i })).toHaveCount(0)
     await expect(band(page).getByText('Runs to cycle 8')).toBeVisible()
     await expect(band(page).getByText(/On its own today: \$1\.79 of \$5/)).toBeVisible()
 
+    // It lands on Needs you with the ask's panel open.
     await answer.click()
-    await expect(page).toHaveURL(/view=attention/)
+    await expect(page).toHaveURL(/#\/mission-control\?open=waiting%3Aapproval%3Ae2e-band-ap$/)
+    await expect(page.getByRole('heading', { level: 1, name: 'Needs you' })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'write_file' })).toBeVisible()
   })
 
   // The 44 px rule for a touch screen, at the two phone widths; and each control's focus ring whole.
@@ -50,8 +54,8 @@ test.describe('Your agents today', () => {
     test(`its controls are ${MIN_TARGET_PX} px targets with whole focus rings at ${w}`, async ({ page }) => {
       await page.setViewportSize({ width: w, height: 1600 })
       await answerTheBandsReads(page)
-      await gotoRoute(page, 'dashboard?view=overview')
-      await expect(band(page).getByText('2 asks wait on you · 1 failed today')).toBeVisible()
+      await gotoRoute(page, 'dashboard')
+      await expect(band(page).locator('p', { hasText: /^2 need you · 1 running · 1 failed today$/ })).toBeVisible()
       const { measured, small } = await band(page).locator('a[href], button').evaluateAll((els, min) => {
         const shown = els.filter((el) => (el as HTMLElement).offsetParent !== null)
         return {
@@ -87,8 +91,8 @@ test.describe('Your agents today', () => {
     test(`passes axe with its asks and its failure in ${theme}`, async ({ page }) => {
       await seedTheme(page, theme)
       await answerTheBandsReads(page)
-      await gotoRoute(page, 'dashboard?view=overview')
-      await expect(band(page).getByText('2 asks wait on you · 1 failed today')).toBeVisible()
+      await gotoRoute(page, 'dashboard')
+      await expect(band(page).locator('p', { hasText: /^2 need you · 1 running · 1 failed today$/ })).toBeVisible()
       expect(await axeFindings(page, 'dashboard')).toEqual([])
     })
 
@@ -98,7 +102,7 @@ test.describe('Your agents today', () => {
         await page.setViewportSize({ width: w, height: h })
         await seedTheme(page, theme)
         await answerTheBandsReads(page)
-        await gotoRoute(page, 'dashboard?view=overview')
+        await gotoRoute(page, 'dashboard')
         await expect(band(page).getByRole('list', { name: 'Your agents' })).toBeVisible()
         // Two scheduled runs' names keep apart, each cut short at its share of the gap.
         const scheduled = band(page).getByRole('listitem', { name: /^Scheduled, agent not named: / })

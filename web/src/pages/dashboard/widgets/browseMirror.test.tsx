@@ -14,7 +14,7 @@ import type { BrowseStatus } from '../../../lib/api'
 //  · a browse is live while it takes steps: from a step until 30 s after the last one, and from
 //    the status read's `live` for a page that opened mid-browse; a read that fails says nothing
 //    is live rather than guessing;
-//  · it is observe-only: the grant prompt is answered in Attention, and the kill switch and the
+//  · it is observe-only: the grant prompt is answered on Needs you, and the kill switch and the
 //    expired sign-ins are in Settings › Guardrails, so the band has no control at all.
 
 const browseStatus = vi.fn<() => Promise<BrowseStatus>>()

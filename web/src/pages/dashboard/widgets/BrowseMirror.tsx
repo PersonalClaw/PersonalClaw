@@ -19,8 +19,8 @@ import { WidgetRow } from './kit'
  *  `GET /api/browse/status` (`live`, a step within the last 30 s, `browse/mirror.is_live`), which
  *  a page opened mid-browse reads, and each step frame says so at once. When no step has come for
  *  30 s the band goes. What used to sit beside the steps has a home that does not hide:
- *    · a per-task grant (a run parked until you allow it to use your browser) is answered in
- *      Attention, beside every other ask (`waiting.py`'s `browse_grant`);
+ *    · a per-task grant (a run parked until you allow it to use your browser) is answered on
+ *      Needs you, beside every other ask (`waiting.py`'s `browse_grant`);
  *    · the kill switch that stops all unattended browsing, and the sites whose saved sign-in
  *      expired, are in Settings › Security › Guardrails, with the explicit re-enable; a browse a
  *      chat started stops with that chat's own Stop.

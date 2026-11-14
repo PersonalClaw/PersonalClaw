@@ -40,7 +40,7 @@
  *     stays valid; pass nothing and Working is honestly empty rather than filled by a timestamp
  *     heuristic. **`laneFor` never returns `'working'`** — no single inbox item can prove it, and
  *     `laneFor` only sees inbox items. The thread rail reads its pips from this (`useThreads`);
- *     Mission Control's Working lane is the running list instead (`GET /api/running`, `RunningLane`),
+ *     Home's Your agents today is the running list instead (`GET /api/running`, `useAgentActivity`),
  *     which holds every kind of live work, and hands this none of it.
  *
  *  ── THE TWO `null`s, AND WHY UNKNOWN IS NOT `idle` ─────────────────────────────────────────────

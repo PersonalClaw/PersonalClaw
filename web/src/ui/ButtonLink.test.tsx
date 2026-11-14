@@ -11,10 +11,10 @@ const classes = (el: Element) => new Set(el.className.split(/\s+/).filter(Boolea
 
 describe('ButtonLink', () => {
   it('is a real link to its address, not a button', () => {
-    const { getByRole, queryByRole } = render(<ButtonLink href="#/dashboard?view=attention">Answer in Attention</ButtonLink>)
-    const a = getByRole('link', { name: 'Answer in Attention' })
+    const { getByRole, queryByRole } = render(<ButtonLink href="#/mission-control?open=waiting%3Aapproval%3Aa1">Answer</ButtonLink>)
+    const a = getByRole('link', { name: 'Answer' })
     expect(a.tagName).toBe('A')
-    expect(a).toHaveAttribute('href', '#/dashboard?view=attention')
+    expect(a).toHaveAttribute('href', '#/mission-control?open=waiting%3Aapproval%3Aa1')
     expect(queryByRole('button')).toBeNull()
     expect(a).not.toHaveAttribute('target')
   })

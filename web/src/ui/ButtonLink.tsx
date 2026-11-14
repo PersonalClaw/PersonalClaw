@@ -3,7 +3,7 @@ import { buttonLook, type ButtonSize, type ButtonVariant } from './Button'
 import { cx } from './cx'
 import { fvs } from '../design/fontWeight'
 
-/** A link drawn as a button: a navigation that is a row's one action ("Answer in Attention"), where
+/** A link drawn as a button: a navigation that is a row's one action (the band's "Answer"), where
  *  a text link would be too quiet and a button would be the wrong element. It is a real `<a href>`,
  *  so it opens in a new tab, shows where it goes, and reads as a link to assistive tech; a button
  *  that sets the hash in its click handler does none of that. It wears `Button`'s own variant, size

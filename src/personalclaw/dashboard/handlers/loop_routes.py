@@ -645,7 +645,7 @@ async def api_loop_list(request: web.Request) -> web.Response:
     Two homes, one listing: the loops-table rows AND the runs started as loops
     (`workflows.loop_view`), which carry a ``run_id``. A ported kind stopped writing a loops row,
     and every surface reading this route — the Loops list, Home's pulse and Active work,
-    Mission Control's Working lane, the nav badge — kept reading the loops table alone, so a running
+    Home's Your agents today, the nav badge — kept reading the loops table alone, so a running
     General loop was "No loops yet" everywhere except Agent world. One route answering for both is
     what keeps those surfaces from each having to learn a second source.
 

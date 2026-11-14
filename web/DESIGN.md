@@ -285,6 +285,8 @@ Controls are pill-shaped and tonal; every interactive component has default, hov
 - **Do** keep body text at #e3e3e3 (≥4.5:1 on all surface tiers) and reserve #9a9b9c for metadata.
 - **Do** scale every playful moment through `expr()`/bounciness and provide a reduced-motion path — springs become instant, sheens and halos disappear.
 - **Do** express emphasis with fractional variable weight (wght 470–500), and put the coral gradient only where the agent is alive.
+- **Do** say that a pane runs past its edge with `ScrollFade`, the app's one cue for it: a 24 px fade from the scroller's own ground over each cut edge, and none once nothing more lies that way. Scrollbars stay hidden (the 2026-07-07 tenet, `tokens.css`).
+- **Do** ask once more on a card through `InlineConfirm`, the one way a card does, the inline twin of a deliberate dialog: it opens under the control that asked, nothing is sent before it, and Yes answers only a press begun after a quiet second.
 
 ### Don't:
 - **Don't** ship hacker terminal cosplay — no green-on-black palettes, scanlines, CRT effects, or ASCII chrome (PRODUCT.md's named anti-reference); `data-ui="cli"` may tighten layout but never changes the palette.

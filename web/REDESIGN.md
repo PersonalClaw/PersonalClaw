@@ -95,7 +95,7 @@ new chrome.
 
 | Region | Its job |
 |---|---|
-| Toolbar | back, breadcrumb, the palette, one needs-you badge. In the desktop app the window's own controls sit inside it, so there is no second title bar. |
+| Toolbar | back, breadcrumb, the palette, one needs-you badge, and the YOLO chip while every tool call is approved without asking. In the desktop app the window's own controls sit inside it, so there is no second title bar. |
 | Sidebar | Home and the leading destinations, then the chat history, one list of every chat, goal loop and code session, which dominates; then Inbox, Library, Automations and Capabilities; Settings and diagnostics pinned at the bottom |
 | Page header | the title, at most 3 actions, an overflow menu |
 | Work surface | the one thing the page is for. The only region that grows. |
@@ -228,7 +228,7 @@ Keys are written for macOS. Elsewhere ⌘ is Ctrl and ⌥ is Alt.
 |---|---|
 | ⌘Enter | approves the request that has keyboard focus |
 | Esc | closes or cancels the current detail; it never decides an approval |
-| ⌘⌥A | jumps to the next thread that needs the owner, in Home's Needs you order (consequence, then age) |
+| ⌘⌥A | goes to the next thing that needs the owner, in Needs you's order (consequence, then age): to the page where it asks, or to Needs you with its panel open when it is answered there |
 | ⇧Esc | clears the unread markers |
 | ⌘K, ⌘⇧P | the command palette |
 | ⌘B | the sidebar |
@@ -243,6 +243,11 @@ Keys are written for macOS. Elsewhere ⌘ is Ctrl and ⌥ is Alt.
 Focus mode's and reading mode's keys were chosen against the keys browsers and the desktop app
 already take: ⌘⇧F, the first proposal, is a browser's full screen on a Mac, and ⌘⇧\ a browser's tab
 overview.
+
+Needs you's list has keys of its own, while a card has the focus and never from a field: ↑↓ to the
+card above or below, ←→ in reading order, Home and End to the first and last, Enter to open its
+panel and Esc to close it, the focus back on the card. With the panel open, ↑↓ move the selection
+and the panel follows.
 
 **Rules**
 

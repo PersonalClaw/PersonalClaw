@@ -49,8 +49,8 @@ const ROUTES = [
   ['14-projects',        '#/projects'],
   // One project's own page: the demo home's "Reading Pipeline" (scripts/generate_demo_home_fixture.py).
   ['15-project',         '#/projects/p-2d6f5c83'],
-  // Home's Attention view: Needs you and Running now, each item with its project's chip.
-  ['16-attention',       '#/dashboard?view=attention'],
+  // Needs you: every ask waiting on you, each card with its project's chip.
+  ['16-needs-you',       '#/mission-control'],
   // One loop's own cockpit: the demo home's goal loop, in Reading Pipeline.
   ['17-loop',            '#/loops/a17c3f92'],
 ];

@@ -970,7 +970,7 @@ approval gate. Its fire is refused, and the gate waits for you.
 **An `event` gate is woken, not answered.** Its ask is `event` (`human_input.AskKind.EVENT`, from
 the gate's own kind, whatever `ask_kind` says), and its answer is the wake's payload: whatever the
 trigger was armed with (`set_onetime_task` arms it with its `message`), or `true` when you press
-**Wake it now** on the run page, the Inbox row or Mission Control's card. Any payload moves the
+**Wake it now** on the run page, the Inbox row or its card on Needs you. Any payload moves the
 run on, and the gate's output records it as `answer`. It is never read as a verdict or a verb: a
 `false` does not decline the run, a `{"revise": …}` does not amend a step, an "always allow" is
 not remembered (`Ask.rememberable`), and the gate policy does not auto-approve it in an unattended

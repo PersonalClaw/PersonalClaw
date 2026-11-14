@@ -28,8 +28,8 @@ the chat history between them scrolls, so a long list never carries a shortcut o
 the chat history's floor (its pinned bar and one row) the sidebar scrolls as one column instead.
 
 1. **The top block:** the PersonalClaw icon and name, which is Home's link (#5880), then the leading
-   destinations. Home opens on Overview; its View control switches to Attention, which the
-   top-right needs-you shortcut also opens.
+   destinations. Home is its Overview. Needs you, every ask waiting on you, has no row: the
+   top-right needs-you badge opens it, and Home stays lit while it shows.
 2. **The chat history** (#5877): New chat with Open Chat history (lit on the Chat history page) at
    its end, then a search with a small Sort and filter menu, pinned at its top. Then every chat,
    goal loop and code session as one list, in the view the menu picks: Recent activity (the
@@ -81,7 +81,8 @@ and running work are untouched.
 - **Notifications** are a filter of the Inbox. The bell opens the Inbox on it (#3818).
 - **Discover** lives in empty states, first run and the palette (#3818).
 - **Plan and diff review** is a pane inside the thread, not a page (#3821).
-- **Mission Control** is Home. `#/mission-control` opens it (#3813).
+- **Needs you**, at `#/mission-control`, is every ask waiting on you (#6149). Mission Control and
+  Home's Attention view were it before; `#/dashboard?view=attention` lands there.
 
 **Old addresses keep working.** Every route the app has shipped resolves, as a redirect to its new
 home or tab. The redirect replaces the history entry, so Back never bounces through the old
@@ -102,7 +103,8 @@ opens it (#3818, #3819). Every route and substate round-trips through the URL, b
 
 | Screen | Primary job | Work surface | Header (at most 3) | Right pane |
 |---|---|---|---|---|
-| Home | see what needs you, what is running and what finished | A Start something line, then Needs you (sorted by consequence, then age), Running now (each row with its exact phase and last update), Recent/Completed, with a filter that shows one of them. An approval is answered inline, and an ask that takes words from its detail. | New chat, View (Overview or Attention) | the selected item's detail; a compact window opens it in place |
+| Home | see what your agents are doing and did today | the Overview: Your agents today (every live run, what waits on you and what failed, on the hours around now), the tiles and pins you keep on Home, the live views while one is live, Discover and recent activity, and your own overlays last | New chat | none |
+| Needs you | answer what waits on you | Waiting on your answer (every ask, in the order the waiting list serves it), then To review (proposals and notes), each answered on its card, in columns while nothing is open | the "…" | the ask's own content, beside the list from 840 px, in its place below |
 | Projects | see what is happening in each project, and open the one to work in | one list: a card per project with what needs you, what is running in it, when it last moved, and those rows under it, pinned first, then by activity, in columns on a wide screen; the projects a loop made for itself and the chats in no project fold at its end | Search, Show, New project, and the "…" | none |
 | Thread | delegate and converse | the reading column, folded work lines, artifact cards, the composer | the title (renamed inline), Share, overflow | activity, artifacts and sources, closed by default |
 | Goal loop | supervise an autonomous run | the run as a thread: the plan on top, cycles below, and at its foot a progress strip (its cycle, Start, Pause or Resume, a two-step Stop and how it reports) over the composer, which is its nudge | the title (renamed inline) and its link, Delete once it has ended, Details | plan review beside its planning; a cycle picked from Details, beside the thread, while Details keeps its list |
@@ -204,10 +206,10 @@ Top to bottom:
   nothing at 0), the chip row that repeats the sidebar, the system telemetry (to Settings ›
   System), and suggestions outside Needs you or the empty state. #3803 made the first cut, and
   #3813 made Home the three groups.
-- **To Home's Overview:** the bands that have no place in the three groups, your agents' day,
-  pinned artifacts, the desktop and browser live views, Discover and recent activity, are Home's
-  second view, View › Overview (`#/dashboard?view=overview`). What was pinned to Home and the
-  dashboard's surface overlays stay under the three groups.
+- **From Home's Attention view (#6149):** Needs you became a page of its own. Start something
+  (New chat, the sidebar and ⌘N start a chat), Running now (Your agents today shows every live
+  run), Recent and completed and Your chats (the band's done blocks and the sidebar), and the View
+  switch left with it. The tiles you keep on Home and your own overlays moved to the Overview.
 - **From the thread header:** the task-mode and permission-mode pills (to the composer and the
   Execution Boundary control), the agent and model selectors (one composer pill), Brief the agent (a
   row in the composer's `+` menu), the working directory (the Execution Boundary control), Save as
@@ -218,9 +220,9 @@ Top to bottom:
 
 | Indicator | Home | Escalates to |
 |---|---|---|
-| Pending approval | the inline card where the agent asked; Home's Needs you; one toolbar badge | the tray and the buddy while the window is not focused |
+| Pending approval | the inline card where the agent asked; Needs you; one toolbar badge | the tray and the buddy while the window is not focused |
 | Working, this thread | the orb and its status line at the turn head | none |
-| Working, another thread | a static pip on its sidebar row; Home's Running now | none |
+| Working, another thread | a static pip on its sidebar row; Home's Your agents today | none |
 | A loop waiting for input | Needs you; its sidebar pip | the buddy while the owner is away |
 | Permission mode | the Execution Boundary control beside the composer, wherever the agent can act (a new loop's Mode, beside the loop composer) | the approval card itself |
 | Task mode (autonomy) | the composer's footer, beside the Execution Boundary control | the plan review, while a plan waits |
@@ -229,7 +231,8 @@ Top to bottom:
 | Working directory, sandbox and network reach | the Execution Boundary control | none |
 | Sources and grounding | inline citations at the answer; the full list in the right pane | none |
 | Gateway connection and sync | the status line, quiet while connected; in words, with when it was last reached, while not. Focus mode hides the line unless the connection is lost | a banner, once the connection has stayed lost for 2 s, and gone when it is back |
-| Background helpers | inside the parent turn's folded steps; counted in Running now | none |
+| Background helpers | inside the parent turn's folded steps; counted on Home's Your agents today | none |
+| YOLO (every tool call approved without asking) | the YOLO chip in the shell's right corner, on every page | none |
 | Blocked or failed actions (the egress guard, the scanner, tool errors) | inline at the action; their history in Settings › Security | the blocked state of the orb and the buddy |
 
 ## The four rules
@@ -238,4 +241,4 @@ Top to bottom:
    makes this the default for notifications).
 2. Wherever the agent can act, its permission mode is visible next to the input.
 3. Configuration never appears in the sidebar or a thread header.
-4. Background work always shows in one of Home's groups, so chat is never the only lens.
+4. Background work always shows on Home's Your agents today, so chat is never the only lens.

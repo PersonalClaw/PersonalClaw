@@ -341,7 +341,7 @@ function IncidentSection() {
  *  started is stopped by that chat's own Stop.
  *
  *  The sites whose saved sign-in expired are listed under it: nothing asks you about them until a
- *  run needs one, and that run asks in Attention, beside every other ask, where it can be
+ *  run needs one, and that run asks on Needs you, beside every other ask, where it can be
  *  answered. */
 export function BrowseKillSection() {
   // `async`, so a call that throws as it is made is a failed read, never a thrown render.

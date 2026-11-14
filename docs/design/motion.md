@@ -692,9 +692,6 @@ counts), `ui/navRailIsInstant.test.tsx`, `design/countsDoNotPop.test.tsx`,
 | `pages/dashboard/widgets/Discover.tsx` | hover movement | list-row and card hover movement |
 | `pages/dashboard/widgets/HeroPulse.tsx` | `physics.playful` spring | a count pops on every change |
 | `pages/dashboard/widgets/HeroPulse.tsx` | pop on change (scale) | a count pops on every change |
-| `pages/dashboard/widgets/Suggestions.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
-| `pages/dashboard/widgets/Suggestions.tsx` | entrance (rise) | a list row rises in |
-| `pages/dashboard/widgets/Suggestions.tsx` | hover movement | list-row and card hover movement |
 | `pages/dashboard/widgets/kit.tsx` | hover movement | list-row and card hover movement |
 | `pages/dashboard/widgets/kit.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
 | `pages/discover/DiscoverPage.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |

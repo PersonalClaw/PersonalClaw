@@ -189,6 +189,58 @@ test.describe('the keymap, in the built app', () => {
   })
 })
 
+test.describe("Needs you's list", () => {
+  /** Three approvals, each in its own chat, so the list has cards to move between. */
+  const three = () => [1, 2, 3].map((n) => approvalRow({ id: `e2e-ap-${n}`, request_id: `e2e-ap-${n}`, tool: `task_create_${n}`, session: `e2e-keys-${n}` }))
+  /** The card the focus is on, by its key. */
+  const focusedKey = (page: Page) => page.evaluate(() => document.activeElement?.closest('[data-need-key]')?.getAttribute('data-need-key') ?? '')
+
+  test('Allow answers its card and opens nothing, and the list stays where it is', async ({ page }) => {
+    const decisions = await stubApprovals(page, [approvalRow()])
+    await gotoRoute(page, 'mission-control')
+    await card(page, 'task_create').getByRole('button', { name: /^Allow/ }).click()
+    await expect.poll(() => decisions.length).toBe(1)
+    await expect(page).toHaveURL(/#\/mission-control$/)
+    await expect(page.getByRole('region', { name: 'task_create' })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Needs you' })).toBeVisible()
+  })
+
+  test('↑↓ move between cards, Enter opens one, and Escape closes it with the focus back on its card', async ({ page }) => {
+    await stubApprovals(page, three())
+    await gotoRoute(page, 'mission-control')
+    const first = page.getByRole('button', { name: /^Show the details of task_create_1/ })
+    await first.focus()
+    await page.keyboard.press('ArrowDown')
+    await expect.poll(() => focusedKey(page)).toBe('waiting:approval:e2e-ap-2')
+    await page.keyboard.press('End')
+    await expect.poll(() => focusedKey(page)).toBe('waiting:approval:e2e-ap-3')
+    await page.keyboard.press('ArrowUp')
+    await expect.poll(() => focusedKey(page)).toBe('waiting:approval:e2e-ap-2')
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(/open=waiting%3Aapproval%3Ae2e-ap-2/)
+    const pane = page.getByRole('region', { name: 'task_create_2' })
+    await expect(pane).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(pane).toHaveCount(0)
+    await expect.poll(() => focusedKey(page)).toBe('waiting:approval:e2e-ap-2')
+  })
+
+  test('with the panel open, ↓ moves the selection, and one Back closes the panel', async ({ page }) => {
+    await stubApprovals(page, three())
+    await gotoRoute(page, 'mission-control')
+    await page.getByRole('button', { name: /^Show the details of task_create_1/ }).click()
+    await expect(page.getByRole('region', { name: 'task_create_1' })).toBeVisible()
+    await page.getByRole('button', { name: /^Show the details of task_create_1/ }).focus()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByRole('region', { name: 'task_create_2' })).toBeVisible()
+    await expect(page).toHaveURL(/open=waiting%3Aapproval%3Ae2e-ap-2/)
+    // The selection replaced its entry, so one Back closes the panel.
+    await page.goBack()
+    await expect(page).toHaveURL(/#\/mission-control$/)
+    await expect(page.getByRole('region', { name: /^task_create_/ })).toHaveCount(0)
+  })
+})
+
 test.describe('the approval key', () => {
   test('⌘Enter on the focused request sends one approve; Enter and Escape send nothing', async ({ page }) => {
     const decisions = await stubApprovals(page, [approvalRow()])

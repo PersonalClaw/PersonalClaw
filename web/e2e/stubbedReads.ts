@@ -156,3 +156,66 @@ export const PROJECTS_LIST: StubbedRead[] = [{
   },
   why: "the run's home has nothing running",
 }]
+
+// ── What waits on you, one of each shape (`FIXED_WAITING`), and Needs you's reads ─────────────────
+
+/** One waiting item as `GET /api/waiting` serves it, with the list's common fields. */
+const fixedWaiting = <T extends Record<string, unknown>>(over: T) => ({
+  work: '', session: '', risk: '', expires_at: null, current: true, interrupt: 'deliver', age_secs: 0, ...over,
+})
+
+/** What waits on you (`GET /api/waiting`), one of each shape a reader draws: a destructive approval,
+ *  a workflow's confirmation gate, a trigger's parked action and a loop's question, asked minutes
+ *  before the rows' fixed noon and waiting until answered. */
+export const FIXED_WAITING = {
+  waiting: [
+    fixedWaiting({
+      id: 'approval:e2e-ap-1', kind: 'approval', consequence: 'destructive', risk: 'destructive',
+      asked_at: '2026-11-02T11:58:00+00:00', route: '',
+      brief: { tool: 'bash', tool_input: 'rm -rf build', tool_purpose: 'Clear the build folder', source_label: 'automation “Nightly”', confirms: ['deletes'] },
+      answer: { method: 'POST', path: '/api/approvals/e2e-ap-1/{answer}', takes: ['approve', 'reject'], body: {} },
+    }),
+    fixedWaiting({
+      id: 'gate:r-e2e:conf-1:0', kind: 'gate', work: 'workflow:r-e2e', consequence: 'changes',
+      asked_at: '2026-11-02T11:50:00+00:00', route: '#/workflows/runs/r-e2e',
+      brief: { workflow: 'release', node_id: 'approve', ask: { kind: 'approval', prompt: 'Ship v1.2?', choices: [] } },
+      answer: { method: 'POST', path: '/api/workflows/runs/r-e2e/confirm', takes: ['approve', 'reject'], body: { resume_token: 'tok-e2e' } },
+    }),
+    fixedWaiting({
+      id: 'park:schedule:clock:e2e', kind: 'park', work: 'trigger:schedule:clock:e2e', consequence: 'changes',
+      asked_at: '2026-11-02T11:55:00+00:00', route: '#/triggers?open=schedule%3Aclock%3Ae2e',
+      brief: { trigger_name: 'Bank statements', question: 'Sign in to the bank’s site', card: {} },
+      answer: { method: 'POST', path: '/api/triggers/schedule%3Aclock%3Ae2e/answer', takes: [true, false], body: { resume_token: 'tok-park' } },
+    }),
+    fixedWaiting({
+      id: 'loop_question:l-e2e', kind: 'loop_question', work: 'loop:l-e2e', consequence: 'asks',
+      asked_at: '2026-11-02T11:40:00+00:00', route: '#/loops/l-e2e',
+      brief: { name: 'Sort the inbox', question: 'May I archive last year’s mail?' },
+      answer: { method: 'POST', path: '/api/loops/l-e2e/nudge', takes: ['text'], body: {} },
+    }),
+  ],
+  unreadable: [],
+}
+
+/** Needs you's three reads, fixed: the waiting list, one skill proposal and one Inbox proposal, so
+ *  both its groups draw. The run's home has nothing waiting on you and nothing to review, so the page
+ *  drew only its all-clear. What each card does is held by `src/pages/dashboard/needsYouIsOneList.test.tsx`. */
+export const NEEDS_YOU_READS: StubbedRead[] = [{
+  url: /\/api\/waiting(\?.*)?$/,
+  json: FIXED_WAITING,
+  why: "the run's home has nothing waiting on you",
+}, {
+  url: /\/api\/skills\/proposals(\?.*)?$/,
+  json: { proposals: [{
+    id: 'sp-e2e-1', slug: 'incident-writeup', description: 'Write up an incident from its timeline and its fixes.',
+    created_at: '2026-11-02T10:30:00+00:00', kind: 'new',
+  }], lastReview: null },
+  why: "the run's home has no skill proposal",
+}, {
+  url: /\/api\/inbox\/open(\?.*)?$/,
+  json: [{
+    id: 'ib-e2e-1', item_kind: 'proposal', status: 'pending', message: 'Keep a weekly digest of what the agents did',
+    context_summary: '', created_at: Date.parse('2026-11-02T10:45:00Z') / 1000, refs: {}, sender_name: 'Learning', channel_name: '',
+  }],
+  why: "the run's home has nothing open in the Inbox",
+}]

@@ -22,16 +22,16 @@ restarting** while a restart you asked for is under way. The tooltip says the sa
   agent's questions, a loop's question, a workflow's gate, an automation's parked action, a
   browser grant, a plan to review and a control-bridge confirmation. Each row says what kind
   it is and what it asks, in the app's own words, and opens where you answer it. The first 8
-  are listed, and one row for the rest opens Mission Control, which lists each with its
-  answer. With nothing waiting, the row says so and still opens Mission Control, so it is a
+  are listed, and one row for the rest opens Needs you, which lists each with its
+  answer. With nothing waiting, the row says so and still opens Needs you, so it is a
   way in rather than a row that greys out the moment you catch up.
-- **Running** — everything running now, the same list Mission Control's Working lane
+- **Running** — everything running now, the same list Home's Your agents today
   shows (`GET /api/running`): a chat's turn, a helper, a loop, a workflow run, an
   automation's fire and a webhook's turn, each once. Each entry says the work's name, its
   phase, what it is doing and when that last changed, and opens the work where it runs
-  (Mission Control for work no page opens). A blocked entry (queued for a slot, retrying,
+  (Home for work no page opens). A blocked entry (queued for a slot, retrying,
   waiting on a busy model) says so, and the row counts how many are; an entry that waits on
-  you says how much does. The first 8 are listed, and the rest open in Mission Control. With
+  you says how much does. The first 8 are listed, and the rest open on Home. With
   nothing running it says **Nothing running**; when the list cannot be read it says so; and
   while the gateway cannot be reached it keeps the last entries it read, as **Last known**.
 - **Just finished** — the last endings, each saying how it ended (done, or stopped with its
