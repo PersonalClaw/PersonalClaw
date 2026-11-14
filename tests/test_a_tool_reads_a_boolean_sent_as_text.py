@@ -439,16 +439,19 @@ async def _answers(subtests, tmp_path: Path, answer: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(120)
 async def test_every_tool_door_does_what_a_yes_says(subtests, tmp_path):
     await _answers(subtests, tmp_path, "yes")
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(120)
 async def test_every_tool_door_does_what_a_no_says(subtests, tmp_path):
     await _answers(subtests, tmp_path, "no")
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(120)
 async def test_every_tool_door_reads_what_spells_neither_as_its_safe_value_or_refuses_it(
     subtests, tmp_path
 ):
