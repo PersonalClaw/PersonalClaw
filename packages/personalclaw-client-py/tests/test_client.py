@@ -34,6 +34,13 @@ class TestErrors:
         assert "internal error" in str(err)
         assert err.status == 500
 
+    def test_the_gateways_error_envelope_gives_its_sentence(self):
+        """``{"error": {"code", "message"}}`` is read for its message, not shown as a dict."""
+        sentence = "A lesson takes no category, since no lesson stores one."
+        err = http_error(400, {"error": {"code": "bad_request", "message": sentence}})
+        assert (err.code, str(err), err.status) == (ErrorCode.VALIDATION_ERROR, sentence, 400)
+        assert str(http_error(403, {"error": "Not given your memory."})) == "Not given your memory."
+
     def test_to_dict(self):
         err = PersonalClawError(ErrorCode.NOT_FOUND, "not found", status=404)
         d = err.to_dict()
@@ -203,3 +210,77 @@ class TestAppDataDir:
         assert "my-tool" in str(d)
         assert ".personalclaw" in str(d)
         assert "apps" in str(d)
+
+
+class TestLessons:
+    """A lesson has no category: the gateway refuses one sent with it, and ``add_lesson`` sent
+    one on every call. ``add_lesson``'s other arguments are named, so an old call that passes a
+    category second is refused rather than sent as the scope; a ``workspace`` lesson names its
+    workspace. ``GET /api/lessons`` lists them under ``lessons``, and ``GET /api/spawn`` the
+    subagents under ``agents``, which ``list_lessons`` and ``list_subagents`` read as none."""
+
+    @staticmethod
+    def _gateway(saved: list[dict]) -> web.Application:
+        async def create(request: web.Request) -> web.Response:
+            body = await request.json()
+            if "category" in body:
+                return web.json_response(
+                    {"error": {"code": "bad_request", "message": "A lesson takes no category."}},
+                    status=400,
+                )
+            saved.append(body)
+            return web.json_response({"ok": True})
+
+        async def listed(request: web.Request) -> web.Response:
+            return web.json_response({"lessons": [{"rule": b["rule"]} for b in saved]})
+
+        async def agents(request: web.Request) -> web.Response:
+            return web.json_response({"agents": [{"id": "agent-9", "done": False}]})
+
+        app = web.Application()
+        app.router.add_post("/api/lessons", create)
+        app.router.add_get("/api/lessons", listed)
+        app.router.add_get("/api/spawn", agents)
+        return app
+
+    @pytest.mark.asyncio
+    async def test_a_lesson_is_saved_without_a_category_and_listed(self):
+        saved: list[dict] = []
+        async with TestServer(self._gateway(saved), host="127.0.0.1") as server:
+            async with PersonalClawClient(
+                base_url=str(server.make_url("/")), token="t", max_retries=0
+            ) as pc:
+                await pc.add_lesson("Answer in French.")
+                assert await pc.list_lessons() == [{"rule": "Answer in French."}]
+        assert saved == [{"rule": "Answer in French.", "scope": ""}]
+
+    @pytest.mark.asyncio
+    async def test_a_category_passed_second_as_before_is_refused_and_nothing_is_sent(self):
+        saved: list[dict] = []
+        async with TestServer(self._gateway(saved), host="127.0.0.1") as server:
+            async with PersonalClawClient(
+                base_url=str(server.make_url("/")), token="t", max_retries=0
+            ) as pc:
+                with pytest.raises(TypeError):
+                    await pc.add_lesson("Answer in French.", "preference")  # type: ignore[misc]
+        assert saved == []
+
+    @pytest.mark.asyncio
+    async def test_a_workspace_lesson_names_its_workspace(self):
+        saved: list[dict] = []
+        async with TestServer(self._gateway(saved), host="127.0.0.1") as server:
+            async with PersonalClawClient(
+                base_url=str(server.make_url("/")), token="t", max_retries=0
+            ) as pc:
+                await pc.add_lesson("Run make lint first.", scope="workspace", workspace="/w/app")
+        assert saved == [
+            {"rule": "Run make lint first.", "scope": "workspace", "workspace": "/w/app"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_subagents_are_listed_as_the_gateway_lists_them(self):
+        async with TestServer(self._gateway([]), host="127.0.0.1") as server:
+            async with PersonalClawClient(
+                base_url=str(server.make_url("/")), token="t", max_retries=0
+            ) as pc:
+                assert await pc.list_subagents() == [{"id": "agent-9", "done": False}]

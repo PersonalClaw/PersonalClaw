@@ -31,9 +31,6 @@ MAX_MEDIUM_STRING = 5_000  # messages, rules
 MAX_LONG_STRING = 50_000  # task specs, inline content
 MAX_RESPONSE_LEN = 100_000  # truncate tool responses
 
-# Allowed categories for lessons
-ALLOWED_LESSON_CATEGORIES = frozenset({"tool", "preference", "knowledge"})
-
 # The scopes a lesson can be saved under: every workspace, or the one working directory it
 # names. The lessons endpoint resolves the pair (``memory_service.resolve_lesson_scope``); this
 # is the shape an agent's call must have to get there.
@@ -434,7 +431,6 @@ LEARN_ADD_SCHEMA = ToolSchema(
     tool_name="memory_remember",
     fields=[
         FieldSpec("rule", str, required=True, max_len=MAX_SHORT_STRING),
-        FieldSpec("category", str, allowed=ALLOWED_LESSON_CATEGORIES, default="knowledge"),
         FieldSpec("negative", str, max_len=MAX_SHORT_STRING),
         FieldSpec("scope", str, allowed=ALLOWED_LESSON_SCOPES),
         FieldSpec("workspace", str, max_len=MAX_MEDIUM_STRING),

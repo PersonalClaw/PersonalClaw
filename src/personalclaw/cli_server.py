@@ -1282,9 +1282,13 @@ def _status(args: argparse.Namespace) -> None:
     """Query this home's running gateway for stats (``home_gateway.reach``), or say there is none.
     Each report names the service installed for this home, when there is one.
 
-    No gateway of this home running is a report, on stdout, exit 0. A port named with ``--port`` or
-    ``PERSONALCLAW_PORT`` that is not where this home's gateway answers is a refusal, on stderr
-    alone, exit 1: what answers there is not this home's, and its numbers are not this home's."""
+    A report is its answer: on stdout, exit 0 while this home's gateway runs, and exit 1 when none
+    does (none is running, or the one that was went away while it was asked), as the exit table says
+    of "no gateway is running". A gateway too busy to give its stats within 3 seconds is running,
+    exit 0, and its report says so (``stats_unavailable`` ``timeout``). A port named with
+    ``--port`` or ``PERSONALCLAW_PORT`` that is not where this home's gateway answers is a refusal,
+    on stderr alone, exit 1: what answers there is not this home's, and its numbers are not this
+    home's."""
     service = service_controller.this_homes_service()
     as_json = bool(getattr(args, "as_json", False))
 
@@ -1316,10 +1320,10 @@ def _status(args: argparse.Namespace) -> None:
     except home_gateway.NoGatewayRunning as exc:
         if as_json:
             report(False, None, None, None)
-            return
+            sys.exit(1)
         print(terminal_text(str(exc)))
         _print_service(service)
-        return
+        sys.exit(1)
     except home_gateway.GatewayError as exc:
         print(f"❌ {terminal_text(str(exc))}", file=sys.stderr)
         sys.exit(1)
@@ -1343,13 +1347,23 @@ def _status(args: argparse.Namespace) -> None:
             print(f"PersonalClaw gateway is running but returned HTTP {e.code}.")
         _print_service(service)
         return
-    except (urllib.error.URLError, OSError):
+    except (urllib.error.URLError, OSError) as exc:
+        if home_gateway.timed_out(exc):
+            # `reach` proved it running a moment ago; slow to give its stats is not gone.
+            if as_json:
+                report(True, gateway.port, None, "timeout")
+                return
+            print(
+                "PersonalClaw gateway is running but did not answer for its stats within 3 seconds."
+            )
+            _print_service(service)
+            return
         if as_json:
             report(False, gateway.port, None, "gone")
-            return
+            sys.exit(1)
         print(gateway.gone())
         _print_service(service)
-        return
+        sys.exit(1)
     except Exception:
         if as_json:
             report(True, gateway.port, None, "unexpected_response")

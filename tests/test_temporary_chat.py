@@ -251,7 +251,7 @@ class TestMcpSessionKeyPlumbing:
         mock_post.return_value = {"ok": True}
         from personalclaw.mcp_memory import _call_tool_inner
 
-        result = _call_tool_inner("memory_remember", {"rule": "test rule", "category": "knowledge"})
+        result = _call_tool_inner("memory_remember", {"rule": "test rule"})
         payload = mock_post.call_args[0][1]
         assert "session_key" not in payload
         assert "Saved" in result

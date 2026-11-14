@@ -237,10 +237,7 @@ def test_facts_read_facets_and_lessons_from_their_live_writers(home, tmp_path):
 
     vs = _memory(tmp_path)
     upsert_facet(vs, "style", "prefers terse replies", cue="explicit", now=NOW - timedelta(days=1))
-    assert (
-        MemoryService.over_vector_store(vs).write_lesson("always run make lint", category="process")
-        is True
-    )
+    assert MemoryService.over_vector_store(vs).write_lesson("always run make lint") is True
 
     summary = compose_learning_summary(now=NOW, vs=vs)
 
@@ -283,7 +280,7 @@ def test_everything_outside_the_window_is_excluded(home, tmp_path):
     _refine("auto/old-thing", refined_at=_iso(3))
     _enqueue("still-pending")
     upsert_facet(vs, "style", "prefers terse replies", cue="explicit", now=NOW - timedelta(days=1))
-    MemoryService.over_vector_store(vs).write_lesson("always run make lint", category="process")
+    MemoryService.over_vector_store(vs).write_lesson("always run make lint")
 
     inside = compose_learning_summary(now=NOW, vs=vs)
     assert (inside.new_skills.count, inside.refined_skills.count, inside.facts.count) == (1, 1, 2)
@@ -326,7 +323,7 @@ def test_composing_the_block_writes_nothing(home, tmp_path):
     _create("fresh-thing", created_at=_iso(2))
     _enqueue("still-pending")
     upsert_facet(vs, "style", "prefers terse replies", cue="explicit", now=NOW - timedelta(days=1))
-    MemoryService.over_vector_store(vs).write_lesson("always run make lint", category="process")
+    MemoryService.over_vector_store(vs).write_lesson("always run make lint")
 
     before = _snapshot(home / "skills")
     assert before, "the snapshot must see files or this proves nothing"

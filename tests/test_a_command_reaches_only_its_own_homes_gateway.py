@@ -44,7 +44,7 @@ from a_command_reaches_only_its_own_homes_gateway_shared import (
 )
 from fakes import GatewayStandIn, gateway_stand_in, home_fingerprint, released_port
 
-from personalclaw import cli, cli_server
+from personalclaw import cli, cli_server, cli_setup
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard import origin, token_auth
 from personalclaw.dashboard.handlers.core import api_logout, api_token_local
@@ -446,6 +446,7 @@ COMMANDS: dict[str, tuple[Callable[[], int], tuple[str, str]]] = {
     "cron trigger": (_cron_trigger, ("POST", "/api/triggers/schedule:clock:nightly/run")),
     "doctor": (_doctor, ("GET", "/api/model-providers")),
     "a dev tool": (_dev_tool, ("GET", "/api/token/local")),
+    "setup": (lambda: _exits(cli_setup._maybe_setup_custom_domain), ("GET", "/api/healthz")),
 }
 
 
@@ -495,7 +496,7 @@ def test_status_says_no_gateway_of_this_home_runs_rather_than_reporting_another_
     home's, running."""
     _point_the_default_at(monkeypatch, other_homes_gateway.port)
 
-    assert _status() == 0
+    assert _status() == 1
     out = capsys.readouterr().out
     assert f"No gateway is running for this home ({home.resolve()})" in out, out
     assert "PersonalClaw gateway is running" not in out, out
@@ -881,9 +882,15 @@ async def test_the_gateways_own_healthz_route_shows_it_is_this_homes(home):
     assert (reached.port, reached.home, reached.pid) == (port, home.resolve(), os.getpid())
 
 
-def test_every_command_asks_home_gateway(home, monkeypatch, no_transient_gateway):
+#: The commands that go on once ``reach`` refuses, saying what they can without a gateway of this
+#: home: ``setup`` names the port one binds (``cli_server._bind_port``), and sends nothing.
+_GO_ON_WITHOUT_ONE = frozenset({"setup"})
+
+
+def test_every_command_asks_home_gateway(home, monkeypatch, no_transient_gateway, capsys):
     """The one function every command asks: made to refuse, each command asks it once and stops
-    there (a command that found its gateway another way would go on)."""
+    there (a command that found its gateway another way would go on), apart from the ones that
+    need none, which go on with the port a gateway of this home binds."""
     from personalclaw import home_gateway
 
     asked: list[int | None] = []
@@ -893,10 +900,19 @@ def test_every_command_asks_home_gateway(home, monkeypatch, no_transient_gateway
         raise home_gateway.NotThisHomesGateway("refused by the test")
 
     monkeypatch.setattr(home_gateway, "reach", refuse)
+    recorded = released_port()
     (home / "gateway.runtime.json").write_text(
-        json.dumps({"port": released_port(), "pid": os.getpid()}), encoding="utf-8"
+        json.dumps({"port": recorded, "pid": os.getpid()}), encoding="utf-8"
     )
     for name in sorted(COMMANDS):
         before = len(asked)
-        assert COMMANDS[name][0]() != 0, f"{name} went on past a refusal"
+        capsys.readouterr()
+        code = COMMANDS[name][0]()
+        if name in _GO_ON_WITHOUT_ONE:
+            assert code == 0, f"{name} stopped at a refusal it goes on past"
+            said = capsys.readouterr().out
+            assert f":{cli_server._bind_port()}" in said, f"{name} named another port: {said!r}"
+            assert f":{recorded}" not in said, f"{name} took the record's port: {said!r}"
+        else:
+            assert code != 0, f"{name} went on past a refusal"
         assert len(asked) == before + 1, f"{name} did not ask home_gateway.reach()"

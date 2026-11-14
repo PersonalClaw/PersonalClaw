@@ -18,8 +18,8 @@ const FACTS: SemanticEntry[] = [
   { key: 'user.favorite_language', value_json: '"Python"', source: 'user_explicit', confidence: 1 },
 ]
 const LESSONS: Lesson[] = [
-  { rule: RULE, category: 'knowledge', ts: '2026-09-30T21:00:00Z' },
-  { rule: 'carrier-webhooks dedupes in Postgres.', category: 'knowledge', ts: '2026-09-30T21:05:00Z' },
+  { rule: RULE, ts: '2026-09-30T21:00:00Z' },
+  { rule: 'carrier-webhooks dedupes in Postgres.', ts: '2026-09-30T21:05:00Z' },
 ]
 
 async function mount() {

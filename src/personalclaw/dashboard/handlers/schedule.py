@@ -53,6 +53,12 @@ def _sel():
 #: The ``?partition=`` that names every memory she has: the global memory, then each folder's.
 EVERY_MEMORY = "*"
 
+#: Why a lesson sent with a category is refused.
+NO_CATEGORY = (
+    "A lesson takes no category, since no lesson stores one, so nothing was saved: send the rule "
+    "without it."
+)
+
 
 def _memories(
     request: web.Request, *, writes: bool = False
@@ -102,6 +108,10 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     refused = _change_refused_for_the_app(state, request, "memory_remember")
     if refused is not None:
         return refused
+    # No lesson stores a category, so one sent is refused rather than dropped: a caller that sent
+    # one would read the "ok" as its category kept. `personalclaw learn add` refuses it the same.
+    if "category" in body:
+        return json_error("bad_request", message=NO_CATEGORY, status=400)
     sk = work_of_request(request)
     if not sk:
         await sel_log_async(
@@ -185,7 +195,6 @@ async def api_lessons_create(request: web.Request) -> web.Response:
             {"error": f"memory write refused: scanner flagged dangerous content ({cats})"},
             status=400,
         )
-    category = body.get("category", "knowledge")
     # Write through the memory service onto memory.db ``lesson.*``. The store is
     # always present (see module docstring), so no JSONL fallback is needed; a
     # store with no embedder still persists the lesson (vector optional).
@@ -218,7 +227,7 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         # Off the event loop: the lesson is embedded, and may be judged against the lessons it
         # could contradict, each a round trip to a model.
         refusal = await asyncio.to_thread(
-            _save_lesson, svc, rule, category, negative, scope=scope, scope_ref=scope_ref
+            _save_lesson, svc, rule, negative, scope=scope, scope_ref=scope_ref
         )
         if refusal is None:
             state.push_refresh("lessons")
@@ -265,7 +274,6 @@ async def api_lessons_create(request: web.Request) -> web.Response:
 def _save_lesson(
     svc: "MemoryService",
     rule: str,
-    category: str,
     negative: str | None,
     *,
     scope: "MemoryScope | None",
@@ -274,7 +282,7 @@ def _save_lesson(
     """Write the lesson. None when memory holds it now, stored or said in full by a lesson it
     already held; otherwise why memory refused it (``MemoryService.lesson_refusal``), nothing
     having changed."""
-    if svc.write_lesson(rule, category, negative, scope=scope, scope_ref=scope_ref):
+    if svc.write_lesson(rule, negative=negative, scope=scope, scope_ref=scope_ref):
         return None
     return svc.lesson_refusal(rule, negative, scope=scope, scope_ref=scope_ref)
 
@@ -433,7 +441,6 @@ def _lesson_rows(svc: Any, rows: list[dict]) -> list[dict[str, Any]]:
                 # Masked as the memory list masks the same `lesson.*` fact. A delete by the
                 # masked rule finds the stored one (`api_lessons_delete`).
                 "rule": redact_values_for_display(rule),
-                "category": "knowledge",
                 "ts": e.get("updated_at", ""),
                 "scope": e.get("scope") or "global",
                 "workspace": e.get("scope_ref") or "",

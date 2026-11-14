@@ -64,6 +64,7 @@ import secrets
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -179,6 +180,36 @@ def _token_ttl(timeout: float) -> str:
     return f"{min(math.ceil(lasts / 60), MAX_LIFETIME_SECS // 60)}m"
 
 
+class _Drain:
+    """One of a child's pipes, read to its end on a thread of its own, keeping its last
+    *keep* characters for a message.
+
+    A pipe nobody reads fills (about 64 KB), and the child then blocks on its next write: a
+    transient gateway that logged that much stopped serving the ``run`` that started it, before or
+    after its ``PERSONALCLAW_READY`` line."""
+
+    def __init__(self, stream: Any, *, keep: int = 2000) -> None:
+        self._kept = ""
+        self._keep = keep
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(
+            target=self._read, args=(stream,), name="run-gateway-pipe", daemon=True
+        )
+        self._thread.start()
+
+    def _read(self, stream: Any) -> None:
+        with contextlib.suppress(Exception):  # the stream closed under it: the child is gone
+            for chunk in iter(lambda: stream.read(4096), ""):
+                with self._lock:
+                    self._kept = (self._kept + chunk)[-self._keep :]
+
+    def tail(self, wait: float = 2.0) -> str:
+        """What the pipe last carried, once it has ended or *wait* seconds have passed."""
+        self._thread.join(wait)
+        with self._lock:
+            return self._kept
+
+
 def start_transient_gateway() -> tuple[int, str, subprocess.Popen]:
     """Boot a gateway for the lifetime of one ``run`` and return ``(port, token, proc)``.
 
@@ -193,6 +224,10 @@ def start_transient_gateway() -> tuple[int, str, subprocess.Popen]:
     it by pid in ``_shutdown_transient``, so a headless invocation cannot leave a
     gateway running behind the operator's back. It is this install's own CLI
     (``self_update.cli_argv``).
+
+    Both of its pipes are read to their end while it runs (:class:`_Drain`): its stderr from the
+    start, and its stdout once the readiness line is read, so a gateway that logs never blocks on
+    a pipe nobody reads.
     """
     from personalclaw.env import gateway_env
     from personalclaw.self_update import cli_argv
@@ -208,13 +243,12 @@ def start_transient_gateway() -> tuple[int, str, subprocess.Popen]:
     )
     deadline = time.monotonic() + _BOOT_TIMEOUT_SECS
     assert proc.stdout is not None
+    errors = _Drain(proc.stderr) if proc.stderr is not None else None
     while time.monotonic() < deadline:
         line = proc.stdout.readline()
         if not line:
             if proc.poll() is not None:
-                err = ""
-                if proc.stderr is not None:
-                    err = (proc.stderr.read() or "")[-2000:]
+                err = errors.tail() if errors is not None else ""
                 raise RunError(
                     f"transient gateway exited with code {proc.returncode} before it was "
                     f"ready.\n{err}"
@@ -223,9 +257,11 @@ def start_transient_gateway() -> tuple[int, str, subprocess.Popen]:
         if line.startswith("PERSONALCLAW_READY:"):
             try:
                 payload = json.loads(line[len("PERSONALCLAW_READY:") :])
-                return int(payload["port"]), str(payload["token"]), proc
+                port, token = int(payload["port"]), str(payload["token"])
             except (ValueError, KeyError, TypeError) as exc:
                 raise RunError(f"unparseable readiness line from the gateway: {line!r}") from exc
+            _Drain(proc.stdout)  # what it prints after the line, read and let go
+            return port, token, proc
     _shutdown_transient(proc)
     raise RunError(
         f"transient gateway did not report ready within {_BOOT_TIMEOUT_SECS:.0f}s. "

@@ -122,8 +122,9 @@ def test_spawn_run_sends_the_minted_token_in_the_header(home, capsys):
 
 
 def test_spawn_run_polls_with_the_header_until_the_subagent_is_done(home, monkeypatch, capsys):
-    """The blocking form's poll loop is the third request and must authenticate the same way:
-    a poll the gateway refuses reads as "lost connection to gateway"."""
+    """The blocking form's poll loop is the third request and must authenticate the same way: a
+    poll the gateway refuses signs in again once, and a second refusal ends the wait saying the
+    sign-in was refused."""
     spawned = {"id": "agent-9", "task": "probe"}
     done = {"done": True, "result": "the subagent's answer"}
     routes = _auth_routes(home, spawned=spawned, polled=done)

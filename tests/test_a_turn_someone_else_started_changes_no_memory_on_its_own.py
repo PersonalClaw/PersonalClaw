@@ -309,7 +309,7 @@ async def test_a_colleagues_turn_that_asks_to_remember_writes_nothing_and_asks_t
     """🔴 Red on integration: the colleague's statement about her was saved as her own lesson,
     and nobody asked her."""
     async with _gateway(tmp_path, monkeypatch) as gw:
-        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER}))
         await gw.say(COLLEAGUE, f"Please remember this: {ABOUT_HER}")
         told = gw.agent.told()
         lessons = _lessons(gw.home)
@@ -339,9 +339,9 @@ async def test_what_the_owner_allows_is_kept_as_hers_and_a_deny_keeps_nothing(
 
     other = "Mira never wants calls after six in the evening."
     async with _gateway(tmp_path, monkeypatch) as gw:
-        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER}))
         await gw.say(COLLEAGUE, f"Please remember this: {ABOUT_HER}")
-        gw.agent.calls.append(("memory_remember", {"rule": other, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": other}))
         await gw.say(COLLEAGUE, f"And remember this: {other}")
         allow = next(e for e in _asks(gw.state, "memory_remember") if ABOUT_HER in e["tool_input"])
         deny = next(e for e in _asks(gw.state, "memory_remember") if other in e["tool_input"])
@@ -391,9 +391,9 @@ async def test_the_owners_own_turn_in_the_same_thread_still_remembers_at_once(
 ):
     """The control: her own message, through the same door into the same chat, is her word."""
     async with _gateway(tmp_path, monkeypatch) as gw:
-        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": ABOUT_HER}))
         await gw.say(COLLEAGUE, f"Please remember this: {ABOUT_HER}")
-        gw.agent.calls.append(("memory_remember", {"rule": HERS, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": HERS}))
         await gw.say(OWNER, f"Remember this: {HERS}")
         told = gw.agent.told()
         lessons = _lessons(gw.home)
@@ -411,7 +411,7 @@ async def test_a_dashboard_chat_still_remembers_at_once(tmp_path, monkeypatch):
     from personalclaw.turn_source import DASHBOARD_SOURCE
 
     async with _gateway(tmp_path, monkeypatch) as gw:
-        gw.agent.calls.append(("memory_remember", {"rule": HERS, "category": "preference"}))
+        gw.agent.calls.append(("memory_remember", {"rule": HERS}))
         session = gw.state.get_or_create_session("chat-31-1790700500")
         session.append("user", f"Remember this: {HERS}", "msg msg-u", source=DASHBOARD_SOURCE)
         await run_chat(gw.state, session, f"Remember this: {HERS}")
@@ -525,9 +525,7 @@ async def test_a_subagent_a_colleagues_turn_starts_changes_no_memory_on_its_own(
             memory_writes.hand_on(child, chat)
         token = mcp_core.set_current_session_key(child)
         try:
-            result = await create_memory_provider().invoke(
-                "memory_remember", {"rule": ABOUT_HER, "category": "preference"}
-            )
+            result = await create_memory_provider().invoke("memory_remember", {"rule": ABOUT_HER})
         finally:
             mcp_core.reset_current_session_key(token)
         await _settled(gw.state)
@@ -551,9 +549,7 @@ async def test_a_turn_a_channel_runs_itself_names_who_asked_for_it(tmp_path, mon
     async def _remember(rule: str) -> str:
         token = mcp_core.set_current_session_key(thread)
         try:
-            result = await create_memory_provider().invoke(
-                "memory_remember", {"rule": rule, "category": "preference"}
-            )
+            result = await create_memory_provider().invoke("memory_remember", {"rule": rule})
         finally:
             mcp_core.reset_current_session_key(token)
         assert result.success, result.error

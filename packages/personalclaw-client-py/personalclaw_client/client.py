@@ -329,8 +329,10 @@ class PersonalClawClient:
         return list(await asyncio.gather(*coros))
 
     async def list_subagents(self) -> list[dict[str, Any]]:
+        """The subagents, as the gateway lists them under ``agents``."""
         result = await self._get("/api/spawn")
-        return result if isinstance(result, list) else []
+        agents = result.get("agents") if isinstance(result, dict) else None
+        return agents if isinstance(agents, list) else []
 
     async def get_subagent_status(self, agent_id: str) -> dict[str, Any]:
         return await self._get(f"/api/spawn/{agent_id}")
@@ -358,12 +360,20 @@ class PersonalClawClient:
 
     # ── Lessons ──
 
-    async def add_lesson(self, rule: str, category: str, scope: str = "") -> None:
-        await self._post("/api/lessons", {"rule": rule, "category": category, "scope": scope})
+    async def add_lesson(self, rule: str, *, scope: str = "", workspace: str = "") -> None:
+        """Save *rule* as a lesson, for *scope*, and the *workspace* a ``workspace`` lesson names.
+        A lesson has no category: the gateway refuses one, and a call that still passes one second
+        in place raises ``TypeError``."""
+        body = {"rule": rule, "scope": scope}
+        if workspace:
+            body["workspace"] = workspace
+        await self._post("/api/lessons", body)
 
     async def list_lessons(self) -> list[dict[str, Any]]:
+        """The lessons, as the gateway lists them under ``lessons``."""
         result = await self._get("/api/lessons")
-        return result if isinstance(result, list) else []
+        lessons = result.get("lessons") if isinstance(result, dict) else None
+        return lessons if isinstance(lessons, list) else []
 
     async def remove_lesson(self, query: str) -> None:
         await self._delete_with_body("/api/lessons", {"rule": query})

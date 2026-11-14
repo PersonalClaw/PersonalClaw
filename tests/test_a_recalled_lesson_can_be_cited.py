@@ -35,7 +35,7 @@ def vs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> VectorMemoryStore:
 
 def test_each_recalled_lesson_is_numbered_and_resolvable(vs):
     for rule in (DEDUPE, TALK):
-        assert vs.write_lesson(rule, "knowledge", source="user_explicit") is True
+        assert vs.write_lesson(rule, source="user_explicit") is True
     cites: list[dict] = []
 
     block = vs.get_lessons_context(citations_out=cites)
@@ -50,7 +50,7 @@ def test_each_recalled_lesson_is_numbered_and_resolvable(vs):
 
 
 def test_without_a_manifest_the_lessons_block_is_unchanged(vs):
-    vs.write_lesson(DEDUPE, "knowledge", source="user_explicit")
+    vs.write_lesson(DEDUPE, source="user_explicit")
     block = vs.get_lessons_context()
     assert f"- {DEDUPE}" in block
     assert "[Lesson" not in block
@@ -58,7 +58,7 @@ def test_without_a_manifest_the_lessons_block_is_unchanged(vs):
 
 def test_a_lesson_held_below_the_gate_gets_no_reference(vs):
     """Only what reaches the prompt is citable: a retained lesson is not in the block."""
-    vs.write_lesson(DEDUPE, "knowledge", source="after_turn_review")
+    vs.write_lesson(DEDUPE, source="after_turn_review")
     cites: list[dict] = []
     assert vs.get_lessons_context(citations_out=cites) == ""
     assert cites == []

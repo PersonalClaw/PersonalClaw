@@ -65,9 +65,7 @@ def _lessons(home: Path) -> dict[str, dict]:
 
 
 async def _remember(asked_from: str) -> tuple[bool, str]:
-    return await _call(
-        "memory_remember", {"rule": TAUGHT, "category": "knowledge"}, asked_from=asked_from
-    )
+    return await _call("memory_remember", {"rule": TAUGHT}, asked_from=asked_from)
 
 
 @pytest.fixture(autouse=True)

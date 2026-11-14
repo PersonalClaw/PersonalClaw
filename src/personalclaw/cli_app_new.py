@@ -161,6 +161,19 @@ def _installed_counts() -> dict[str, int]:
     return counts
 
 
+def _load_installed_apps() -> None:
+    """Register the installed apps' providers in this process, as the gateway does at boot
+    (``providers.loader.register_extension_providers``): a CLI process registers none of its own,
+    so before this every type counted 0. An app that prints as it is imported reaches stderr, not
+    the table."""
+    import contextlib
+
+    from personalclaw.providers.loader import register_extension_providers
+
+    with contextlib.redirect_stdout(sys.stderr):
+        register_extension_providers()
+
+
 def _camel(type_name: str) -> str:
     return "".join(part.capitalize() for part in type_name.split("_") if part)
 
@@ -1478,6 +1491,8 @@ def app_cmd(args: argparse.Namespace) -> int:
     """``personalclaw app new`` — returns the process exit code. The parser refuses a bare
     ``app``; the usage errors below are the ones only this command can see, on stderr, exit 2."""
     if getattr(args, "list_types", False):
+        # Each type's providers are counted once the installed apps have registered theirs.
+        _load_installed_apps()
         print(render_type_table(provider_type_rows()))
         return 0
     template_url = getattr(args, "template_url", "") or ""

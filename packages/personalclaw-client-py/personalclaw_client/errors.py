@@ -1,4 +1,5 @@
 """Structured error types for personalclaw-client."""
+
 from __future__ import annotations
 
 from enum import Enum
@@ -58,7 +59,12 @@ def http_error(status: int, body: Any = None) -> PersonalClawError:
     if isinstance(body, str):
         message = body
     elif isinstance(body, dict) and "error" in body:
-        message = str(body["error"])
+        error = body["error"]
+        # The gateway's envelope, {"error": {"code", "message"}}, or a route's flat sentence.
+        if isinstance(error, dict) and "message" in error:
+            message = str(error["message"])
+        else:
+            message = str(error)
     else:
         message = f"HTTP {status}"
     return PersonalClawError(code, message, status=status, body=body)

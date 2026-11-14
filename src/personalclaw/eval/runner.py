@@ -157,7 +157,7 @@ def _seed_profile(ws: Path, seed: SeedProfile) -> None:
         vs.init()
         try:
             for rule in seed.lessons:
-                vs.write_lesson(rule, "knowledge", source="seed")
+                vs.write_lesson(rule, source="seed")
         finally:
             vs.close()
 

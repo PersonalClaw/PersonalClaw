@@ -244,10 +244,9 @@ def _fake_service(*, writes: bool, blocked: bool = False):
         def write_lesson(
             self,
             rule,
-            category="knowledge",
+            *,
             negative=None,
             source="",
-            *,
             scope=None,
             scope_ref=None,
         ):
@@ -269,12 +268,13 @@ def _fake_service(*, writes: bool, blocked: bool = False):
 
 def test_memory_write_fires_only_on_a_successful_write(spy_store):
     async def _run():
-        assert _fake_service(writes=True).write_lesson("always lint", category="workflow") is True
+        assert _fake_service(writes=True).write_lesson("always lint") is True
         await asyncio.sleep(0.05)
 
     asyncio.run(_run())
     assert [e for e, _c, _k in spy_store] == ["MemoryWrite"]
-    assert "key=workflow" in spy_store[0][1]
+    # A lesson has no category: every lesson's write is given the same key.
+    assert spy_store[0][1] == "kind=lesson key=lesson scope=user_explicit"
 
 
 def test_memory_write_is_silent_when_the_store_refuses(spy_store):

@@ -137,7 +137,7 @@ describe('⌘K content search', () => {
       { key: 'lesson.0d07ddd7ad40', value_json: '"Budget reviews stay under ten minutes."' },
       { key: 'slot.pending_items', value_json: '{"lines":[{"text":"budget sign-off by Friday"}]}' },
     ])
-    h.lessons.mockResolvedValue([{ rule: 'Budget reviews stay under ten minutes.', category: 'knowledge' }])
+    h.lessons.mockResolvedValue([{ rule: 'Budget reviews stay under ten minutes.' }])
     const { user, navigate } = await openAndType('budget')
     const memory = await screen.findByRole('group', { name: 'Memory' })
     expect(within(memory).getAllByRole('option', { name: /Budget reviews stay under ten minutes/ }), 'the lesson, once').toHaveLength(1)

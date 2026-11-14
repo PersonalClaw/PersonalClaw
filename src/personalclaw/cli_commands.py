@@ -1,10 +1,13 @@
 """CLI subcommand handlers — cron, spawn, app, agent, security, eval, learn, memory."""
 
 import argparse
+import contextlib
+import http.client
 import json
 import sys
 import time as _time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,7 +30,7 @@ from personalclaw.security import (
     terminal_line,
     terminal_text,
 )
-from personalclaw.security_audit import scan_history, scan_memory
+from personalclaw.security_audit import MemoryNotScanned, scan_history, scan_memory
 from personalclaw.sel import redact_event, sel
 from personalclaw.vector_memory import NO_INDEX_NOTE
 
@@ -122,7 +125,9 @@ def _spawn_list(gateway: home_gateway.HomeGateway, token: str, *, as_json: bool 
         except Exception:
             print(f"Error: {e.code} {terminal_text(str(e.reason))}", file=sys.stderr)
         sys.exit(1)
-    except (urllib.error.URLError, OSError):
+    except (urllib.error.URLError, OSError) as exc:
+        if home_gateway.timed_out(exc):
+            _refuse("Error: this home's gateway did not answer within 5 seconds.")
         _lost(gateway)
     agents = data.get("agents", [])
     if as_json:
@@ -154,7 +159,12 @@ def _spawn_run(args: argparse.Namespace, gateway: home_gateway.HomeGateway, toke
         except Exception:
             print(f"Error: {e.code} {terminal_text(str(e.reason))}", file=sys.stderr)
         sys.exit(1)
-    except (urllib.error.URLError, OSError):
+    except (urllib.error.URLError, OSError) as exc:
+        if home_gateway.timed_out(exc):
+            _refuse(
+                "Error: this home's gateway did not answer within 5 seconds, so the subagent may "
+                "have started: `personalclaw spawn list` shows it."
+            )
         _lost(gateway)
 
     agent_id = result["id"]
@@ -167,17 +177,24 @@ def _spawn_run(args: argparse.Namespace, gateway: home_gateway.HomeGateway, toke
     # Block: poll until done
 
     print(f"Spawned subagent {agent_id}, waiting for result...", file=sys.stderr)
-    poll = urllib.request.Request(
-        f"{gateway.url}/api/spawn/{agent_id}", headers=owner_headers(token)
-    )
+    silent = 0
     while True:
-        _time.sleep(2)
-        try:
-            with home_gateway.open_loopback(poll, timeout=5) as resp:
-                status = json.loads(resp.read())
-        except Exception:
-            print("Error: lost connection to gateway", file=sys.stderr)
-            sys.exit(1)
+        if not silent:
+            # A poll that timed out has waited its own 5 seconds already.
+            _time.sleep(2)
+        status, token = _spawn_status(gateway, token, str(agent_id))
+        if status is None:
+            # A poll that timed out: the gateway may be busy, so it is asked again, until it has
+            # not answered for as long as `reach` waits on a port that says nothing.
+            silent += 1
+            if silent >= _SILENT_POLLS:
+                _refuse(
+                    f"Error: this home's gateway did not answer for subagent "
+                    f"{terminal_text(str(agent_id))} within "
+                    f"{_SILENT_POLLS * _POLL_TIMEOUT_SECS} seconds; it may still be working on it."
+                )
+            continue
+        silent = 0
         if status.get("done"):
             if status.get("error"):
                 print(f"Error: {terminal_text(str(status['error']))}", file=sys.stderr)
@@ -185,6 +202,73 @@ def _spawn_run(args: argparse.Namespace, gateway: home_gateway.HomeGateway, toke
             # A subagent's reply: words its model wrote.
             print(terminal_text(str(status.get("result", ""))))
             return
+
+
+#: How long one poll of ``spawn run``'s wait waits for the gateway, and how many in a row may time
+#: out before the wait ends: 30 seconds, the bound ``home_gateway.reach`` gives a silent port.
+_POLL_TIMEOUT_SECS = 5
+_SILENT_POLLS = 6
+
+
+def _spawn_status(
+    gateway: home_gateway.HomeGateway, token: str, agent_id: str
+) -> tuple[dict | None, str]:
+    """One read of the subagent ``spawn run`` waits for, and the token it was read with: ``None``
+    for a read that timed out, which the wait asks again. A wait that cannot go on ends here,
+    saying why, exit 1.
+
+    The token this command signed in with lasts an hour (``mint_local_token``), and an agent may
+    work longer: a refused read signs in again once, and is refused only if the new token is too.
+    An agent this home's gateway no longer holds, or a gateway that stopped answering, ends the
+    wait with its reason: before, each read as "lost connection to gateway"."""
+    url = f"{gateway.url}/api/spawn/{urllib.parse.quote(agent_id, safe='')}"
+    fresh = False
+    while True:
+        req = urllib.request.Request(url, headers=owner_headers(token))
+        try:
+            with home_gateway.open_loopback(req, timeout=_POLL_TIMEOUT_SECS) as resp:
+                answer = json.loads(resp.read())
+            if not isinstance(answer, dict):
+                _refuse(
+                    f"Error: this home's gateway answered for subagent {terminal_text(agent_id)} "
+                    "with something that is not a JSON object."
+                )
+            return answer, token
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                if fresh:
+                    _refuse(
+                        "Error: this home's gateway refused this command's sign-in for "
+                        f"{terminal_text(agent_id)}."
+                    )
+                try:
+                    token = mint_local_token(gateway)
+                except RunError as exc:
+                    _refuse(f"Error: {terminal_text(str(exc))}")
+                fresh = True
+                continue
+            if e.code == 404:
+                _refuse(
+                    f"Error: subagent {terminal_text(agent_id)} is no longer on this home's "
+                    "gateway (it was removed, or the gateway restarted without it), so it has no "
+                    "result to give."
+                )
+            _refuse(
+                f"Error: this home's gateway answered HTTP {e.code} for subagent "
+                f"{terminal_text(agent_id)}: {terminal_text(str(e.reason))}."
+            )
+        except (urllib.error.URLError, OSError) as exc:
+            if home_gateway.timed_out(exc):
+                return None, token
+            _lost(gateway)
+        except http.client.HTTPException:
+            # It took the connection and broke off its answer (`IncompleteRead`, `BadStatusLine`).
+            _lost(gateway)
+        except ValueError:
+            _refuse(
+                f"Error: this home's gateway answered for subagent {terminal_text(agent_id)} "
+                "with something that is not JSON."
+            )
 
 
 _AGENT_TABLE_HEADERS = ("NAME", "PROVIDER_AGENT", "DEFAULT_DIR", "MEMORY_STORE")
@@ -823,19 +907,28 @@ def _security(args: argparse.Namespace) -> None:
 
     action = getattr(args, "sec_action", None)
     if action == "deny-list":
+        # Read before anything prints, so a config.json it cannot read is a refusal with stdout
+        # empty, not a traceback after the built-in list.
+        extra = _configured_deny_patterns(config_dir() / "config.json")
         print("🔒 Built-in deny patterns (always enforced):")
         for p in BUILTIN_DENY_PATTERNS:
             print(f"  ✗ {p}")
-        cfg_path = config_dir() / "config.json"
-        if cfg_path.exists():
-            data = json.loads(cfg_path.read_text())
-            extra = data.get("hooks", {}).get("auto_deny_tools", [])
-            if extra:
-                print("\n🔧 User-configured deny patterns:")
-                for p in extra:
-                    print(f"  ✗ {p}")
+        if extra:
+            print("\n🔧 User-configured deny patterns:")
+            for p in extra:
+                print(f"  ✗ {terminal_text(str(p))}")
     elif action == "audit":
-        _audit_report(scan_history(config_dir() / "history"), scan_memory())
+        findings = scan_history(config_dir() / "history")
+        try:
+            mem_findings = scan_memory()
+        except MemoryNotScanned as exc:
+            # History's report stands; memory's scan never ran, which is not a clean one.
+            _audit_report(findings, [], memory_scanned=False)
+            _refuse(_memory_not_scanned(exc))
+        _audit_report(findings, mem_findings)
+        # The report is the answer, and its exit says it: 1 when the scan found something.
+        if findings or mem_findings:
+            sys.exit(1)
     elif action == "events":
 
         limit = getattr(args, "limit", 20)
@@ -877,9 +970,46 @@ def _security(args: argparse.Namespace) -> None:
         _verify_verdict(total, valid)
 
 
-def _audit_report(findings: list[dict], mem_findings: list[dict]) -> None:
+def _configured_deny_patterns(cfg_path: Path) -> list:
+    """The deny patterns ``hooks.auto_deny_tools`` in *cfg_path* adds, ``[]`` for none, no file or
+    an empty one (the config loader reads an empty file as none, so the gateway enforces the
+    built-in list alone). A file that is not a JSON object is refused with a sentence, exit 1."""
+    if not cfg_path.exists():
+        return []
+    try:
+        raw = cfg_path.read_text(encoding="utf-8")
+        if not raw.strip():
+            return []
+        data = json.loads(raw)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        _refuse(
+            f"❌ {cfg_path} could not be read as JSON ({terminal_text(str(exc))}), so its deny "
+            "patterns are not known."
+        )
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or (hooks is not None and not isinstance(hooks, dict)):
+        _refuse(
+            f"❌ {cfg_path} is not a JSON object with a hooks object, so its deny patterns are "
+            "not known."
+        )
+    extra = (hooks or {}).get("auto_deny_tools") or []
+    return list(extra) if isinstance(extra, list) else []
+
+
+def _memory_not_scanned(exc: MemoryNotScanned) -> str:
+    """What an audit says when memory could not be opened to scan."""
+    return (
+        f"Error: memory could not be opened to scan ({terminal_text(exc.why)}), so nothing in it "
+        "was checked."
+    )
+
+
+def _audit_report(
+    findings: list[dict], mem_findings: list[dict], *, memory_scanned: bool = True
+) -> None:
     """``security audit``'s report: what the history scan and the memory scan found, on stdout.
-    Its ⚠ lines are its findings, not warnings about the command."""
+    Its ⚠ lines are its findings, not warnings about the command. A memory scan that never ran
+    (*memory_scanned* false) is not reported as clean."""
     if findings:
         print(f"⚠️  {len(findings)} suspicious entries found:\n")
         for f in findings:
@@ -894,7 +1024,7 @@ def _audit_report(findings: list[dict], mem_findings: list[dict]) -> None:
         for f in mem_findings:
             print(f"  [{f['type']}] {terminal_text(str(f['key']))}: {f['warning']}")
             print(f"    {terminal_text(str(f['value'][:120]))}\n")
-    elif findings:
+    elif findings and memory_scanned:
         print("✅ No suspicious content in vector memory.")
 
 
@@ -1032,6 +1162,9 @@ async def _run_eval(args: argparse.Namespace) -> None:
     atomic_json_write(json_path, json_data)
 
     print(f"\nResults saved to:\n  {report_path}\n  {json_path}")
+    # The report is the answer, and its exit says it: 1 while any scenario failed.
+    if overall < len(results):
+        sys.exit(1)
 
 
 def _parse_csv_ints(raw: str, default: tuple[int, ...]) -> tuple[int, ...]:
@@ -1514,6 +1647,9 @@ def _eval_gate(args: argparse.Namespace) -> None:
         print(f"Error: no proposal {pid!r}.", file=sys.stderr)
         raise SystemExit(1)
     _print_gate_report(report)
+    # The report is the answer, and its exit says it: 1 when the proposal regressed.
+    if report.regressed:
+        raise SystemExit(1)
 
 
 def _print_gate_report(report) -> None:
@@ -1774,14 +1910,12 @@ def _learn(args: argparse.Namespace) -> None:
         with memory_locality.record_stores([memory_locality.global_partition()]) as opened:
             svc = MemoryService.over_vector_store(opened[0][1])
             rule = args.rule
-            category = args.category
             negative = getattr(args, "negative", None)
-            saved = svc.write_lesson(rule, category, negative)
+            saved = svc.write_lesson(rule, negative=negative)
             refused = None if saved else svc.lesson_refusal(rule, negative)
         if refused is not None:
             _refuse(f"Not saved, and nothing in memory changed: {terminal_text(str(refused[1]))}.")
         neg = f" ({negative})" if negative else ""
-        # Not the category: the write does not store it, so echoing one would claim it did.
         print(f"Saved: {terminal_text(str(rule))}{terminal_text(neg)}")
         return
     with memory_locality.record_stores(memory_locality.partitions()) as opened:
@@ -1794,7 +1928,8 @@ def _learn(args: argparse.Namespace) -> None:
             for part, e in rows:
                 val = json.loads(e["value_json"])
                 kept = "" if part.is_global else f" (kept in {_memory_named(part)})"
-                print(f"  [knowledge] {terminal_text(str(val))}{kept}")
+                # No category: a lesson stores none, so a tag here would claim one.
+                print(f"  {terminal_text(str(val))}{kept}")
         elif action == "remove":
             removed = [part for part, svc in services if svc.delete_lesson(args.query)]
             if not removed:
@@ -1866,7 +2001,16 @@ def _memory_cmd(args: argparse.Namespace) -> None:
         _refuse(
             f"No folder's memory has the id {asked}: personalclaw memory partitions lists them."
         )
-    with memory_locality.record_stores([part], writes=action in ("import", "migrate")) as opened:
+    with contextlib.ExitStack() as stack:
+        try:
+            opened = stack.enter_context(
+                memory_locality.record_stores([part], writes=action in ("import", "migrate"))
+            )
+        except Exception as exc:
+            if action != "audit":
+                raise
+            # An audit of a memory that cannot be opened checked nothing: not a clean scan.
+            _refuse(_memory_not_scanned(MemoryNotScanned(f"{type(exc).__name__}: {exc}")))
         if not opened:  # a folder's memory that keeps no records yet
             if action == "export":
                 # Still one document, so `memory export > f.json` is one a script can read.
@@ -1952,7 +2096,14 @@ def _memory_action(action: str | None, args: argparse.Namespace, store: Any, svc
         print(f"  Audit events: {stats['events_count']}")
 
     elif action == "audit":
-        _memory_audit_report(scan_memory())
+        try:
+            findings = scan_memory()
+        except MemoryNotScanned as exc:
+            _refuse(_memory_not_scanned(exc))
+        _memory_audit_report(findings)
+        # The report is the answer, and its exit says it: 1 when the scan found something.
+        if findings:
+            sys.exit(1)
 
     elif action == "export":
         _memory_export(
@@ -1978,7 +2129,13 @@ def _memory_action(action: str | None, args: argparse.Namespace, store: Any, svc
         path = Path(import_file)
         if not path.is_file():
             _refuse(f"File not found: {import_file}")
-        data = json.loads(safe_read_file(str(path)))
+        try:
+            data = json.loads(safe_read_file(str(path)))
+        except (UnicodeDecodeError, ValueError) as exc:
+            _refuse(
+                f"Error: {terminal_text(import_file)} is not JSON ({terminal_text(str(exc))}), "
+                "so nothing was imported."
+            )
         if not isinstance(data, dict):
             _refuse(f"Error: {import_file} must contain a JSON object")
         counts = store.import_memory(data)

@@ -490,9 +490,7 @@ async def test_a_lesson_taught_in_two_chats_survives_deleting_either(
         for chat in (TRAIN_CHAT, TRIP_CHAT):
             _transcript(gw.home, chat, "Planning the trip.")
             for rule in (BOTH, ONLY_IN[chat]):
-                ok, said = await _call(
-                    "memory_remember", {"rule": rule, "category": "preference"}, asked_from=chat
-                )
+                ok, said = await _call("memory_remember", {"rule": rule}, asked_from=chat)
                 assert ok, said
         held = _lessons_held(gw.home)
         assert held[ONLY_IN[deleted]]["source_session"] == deleted, "filed under its chat"
@@ -634,12 +632,12 @@ def test_a_record_other_work_also_stands_behind_is_filed_under_no_one_chat(tmp_p
 
     try:
         with _scoped(TRAIN_CHAT):
-            assert store.write_lesson(BOTH, "preference")
+            assert store.write_lesson(BOTH)
             assert store.set_semantic("user.pref.seat", "window", 0.9, "c") is None
             assert store.set_semantic("project.trip.dates", "February", 0.9, "c") is None
             assert store.write_episodic(SKI_EPISODE, conversation_id=TRAIN_CHAT)
             # Its own work again changes nothing.
-            assert not store.write_lesson(BOTH, "preference")
+            assert not store.write_lesson(BOTH)
             assert store.set_semantic("user.pref.seat", "window", 0.9, "c") is None
         lesson = next(r["key"] for r in store.get_lessons())
         episode = store.db.execute("SELECT id FROM episodic_memories").fetchone()[0]
@@ -647,7 +645,7 @@ def test_a_record_other_work_also_stands_behind_is_filed_under_no_one_chat(tmp_p
         assert filed("semantic_memory", "key", "user.pref.seat") == TRAIN_CHAT
         assert filed("episodic_memories", "id", episode) == TRAIN_CHAT
         with _scoped(TRIP_CHAT):
-            assert not store.write_lesson(BOTH, "preference"), "a lesson said again"
+            assert not store.write_lesson(BOTH), "a lesson said again"
             assert not store.write_episodic(SKI_EPISODE, conversation_id=TRIP_CHAT)
             candidates = mf.gather(
                 store, [mf.Candidate(index=0, key="project.trip.dates", value="February")]

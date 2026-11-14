@@ -145,7 +145,7 @@ class TestMemoryInjectionAllAgents:
         mem.init()
         vs = VectorMemoryStore(db_path=tmp_path / "mem.db")
         vs.init()
-        vs.write_lesson("always use pytest-asyncio strict mode", "tool")
+        vs.write_lesson("always use pytest-asyncio strict mode")
         mem.vector_store = vs
         builder = _builder(tmp_path, memory=mem)
         ctx = builder.build_session_context(agent="my-custom-agent")
@@ -244,7 +244,7 @@ class TestSemanticMemoryInSessionContext:
         store = MemoryStore(workspace=ws)
         vs = VectorMemoryStore(db_path=tmp_path / "mem.db")
         vs.init()
-        vs.write_lesson("always run tests before committing", "tool")
+        vs.write_lesson("always run tests before committing")
         store._vector_store = vs
         builder = _builder(tmp_path, memory=store)
         ctx = builder.build_session_context(agent="my-custom-agent")
@@ -287,7 +287,7 @@ class TestCrossSessionMemory:
         db = tmp_path / "mem.db"
         s1 = VectorMemoryStore(db_path=db)
         s1.init()
-        s1.write_lesson("always use type hints", "preference")
+        s1.write_lesson("always use type hints")
         s1.close()
 
         s2 = VectorMemoryStore(db_path=db)
@@ -467,7 +467,7 @@ class TestLessonEmbeddingStorage:
         s.init()
         # Mock embed_fn to return a known vector
         s.embed_fn = lambda text: [0.1, 0.2, 0.3]
-        s.write_lesson("always write tests", "preference")
+        s.write_lesson("always write tests")
 
         row = s.db.execute(
             "SELECT embedding FROM semantic_memory WHERE key LIKE 'lesson.%'"
@@ -483,7 +483,7 @@ class TestLessonEmbeddingStorage:
         db = tmp_path / "mem.db"
         s = VectorMemoryStore(db_path=db)
         s.init()
-        assert s.write_lesson("no embedding available", "knowledge")
+        assert s.write_lesson("no embedding available")
 
         row = s.db.execute(
             "SELECT embedding FROM semantic_memory WHERE key LIKE 'lesson.%'"
@@ -500,7 +500,7 @@ class TestLessonEmbeddingStorage:
 
         # Write first lesson with embedding
         s.embed_fn = lambda text: [1.0, 0.0, 0.0]
-        s.write_lesson("always use type hints in Python", "preference")
+        s.write_lesson("always use type hints in Python")
 
         # Track embed calls — should only be called once (for the new rule)
         call_count = 0
@@ -514,7 +514,7 @@ class TestLessonEmbeddingStorage:
         s.embed_fn = counting_embed
 
         # Write a second lesson — dedup loop should read stored embedding, not recompute
-        s.write_lesson("something completely different", "knowledge")
+        s.write_lesson("something completely different")
         # 1 call for the new rule's embedding, 0 for existing lessons
         assert call_count == 1
         # Both lessons survive (different text, sim=1.0 but second is longer → first deleted, second saved)  # noqa: E501
@@ -528,7 +528,7 @@ class TestLessonEmbeddingStorage:
         s.init()
 
         # Write first lesson WITHOUT embed_fn (simulates legacy)
-        s.write_lesson("legacy rule without embedding", "preference")
+        s.write_lesson("legacy rule without embedding")
         row = s.db.execute(
             "SELECT embedding FROM semantic_memory WHERE key LIKE 'lesson.%'"
         ).fetchone()
@@ -536,7 +536,7 @@ class TestLessonEmbeddingStorage:
 
         # Now enable embed_fn and write a second lesson
         s.embed_fn = lambda text: [0.5, 0.5, 0.5]
-        s.write_lesson("totally new unrelated rule", "knowledge")
+        s.write_lesson("totally new unrelated rule")
 
         # Legacy lesson should now have an embedding (backfilled)
         rows = s.db.execute(
@@ -553,12 +553,10 @@ class TestLessonEmbeddingStorage:
 
         # embed_fn returns near-identical vectors for any text
         s.embed_fn = lambda text: [0.9, 0.1, 0.0]
-        s.write_lesson("prefer composition over inheritance in design", "preference")
+        s.write_lesson("prefer composition over inheritance in design")
 
         # Second lesson: semantically similar embedding but no substring/keyword overlap
-        s.write_lesson(
-            "favor composing objects rather than inheriting from base classes", "preference"
-        )
+        s.write_lesson("favor composing objects rather than inheriting from base classes")
         # Longer rule replaces shorter → first deleted, second saved
         lessons = [
             dict(r)
@@ -589,7 +587,7 @@ class TestLessonEmbeddingStorage:
             "elasticsearch indexes searchable documents",
         ]
         for t in topics:
-            s.write_lesson(t, "knowledge")
+            s.write_lesson(t)
 
         # Enable embed_fn (returns unique orthogonal vectors to avoid cosine dedup)
         _vecs = {}
@@ -612,7 +610,7 @@ class TestLessonEmbeddingStorage:
             return _vecs[text]
 
         s.embed_fn = _orthogonal_embed
-        s.write_lesson("redis caches frequently accessed data", "knowledge")
+        s.write_lesson("redis caches frequently accessed data")
 
         rows = s.db.execute(
             "SELECT embedding FROM semantic_memory WHERE key LIKE 'lesson.%' AND is_deleted = 0"
@@ -628,7 +626,7 @@ class TestLessonEmbeddingStorage:
         s.init()
 
         # Write a legacy lesson without embedding
-        s.write_lesson("short rule about composing", "preference")
+        s.write_lesson("short rule about composing")
         assert (
             s.db.execute(
                 "SELECT embedding FROM semantic_memory WHERE key LIKE 'lesson.%'"
@@ -638,10 +636,7 @@ class TestLessonEmbeddingStorage:
 
         # Enable embed_fn, write longer rule that triggers cosine dedup → deletes short one
         s.embed_fn = lambda text: [0.9, 0.1, 0.0]
-        s.write_lesson(
-            "a much longer rule about composing objects in software design patterns",
-            "preference",
-        )
+        s.write_lesson("a much longer rule about composing objects in software design patterns")
 
         # Only the longer lesson should survive, with embedding
         rows = s.db.execute(

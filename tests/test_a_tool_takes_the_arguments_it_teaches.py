@@ -70,7 +70,6 @@ def test_a_workspace_lesson_goes_through_the_validator_to_the_endpoint(posted):
         "memory_remember",
         {
             "rule": "this repo runs its tests with uv run pytest",
-            "category": "tool",
             "scope": "workspace",
             "workspace": "/srv/example/project",
         },
@@ -83,7 +82,6 @@ def test_a_workspace_lesson_goes_through_the_validator_to_the_endpoint(posted):
             "/api/lessons",
             {
                 "rule": "this repo runs its tests with uv run pytest",
-                "category": "tool",
                 "scope": "workspace",
                 "workspace": "/srv/example/project",
             },
@@ -94,7 +92,7 @@ def test_a_workspace_lesson_goes_through_the_validator_to_the_endpoint(posted):
 def test_the_scope_the_prompt_calls_the_default_is_accepted_by_name(posted):
     out = mcp_memory._call_tool(
         "memory_remember",
-        {"rule": "answer in British English", "category": "preference", "scope": "global"},
+        {"rule": "answer in British English", "scope": "global"},
     )
 
     assert out == "Saved lesson (global): answer in British English"
@@ -102,9 +100,7 @@ def test_the_scope_the_prompt_calls_the_default_is_accepted_by_name(posted):
 
 
 def test_an_unknown_scope_is_still_refused_by_the_validator(posted):
-    out = mcp_memory._call_tool(
-        "memory_remember", {"rule": "x", "category": "preference", "scope": "everywhere"}
-    )
+    out = mcp_memory._call_tool("memory_remember", {"rule": "x", "scope": "everywhere"})
 
     assert "scope" in out and "not allowed" in out, out
     assert posted == []
@@ -115,7 +111,6 @@ def test_what_not_to_do_reaches_the_endpoint(posted):
         "memory_remember",
         {
             "rule": "leave secrets out of a quoted log",
-            "category": "preference",
             "negative": "never paste a street address back",
         },
     )

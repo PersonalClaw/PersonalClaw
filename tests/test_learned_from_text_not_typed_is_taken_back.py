@@ -71,8 +71,8 @@ def _reviews() -> list[proposals.Proposal]:
 
 
 def test_a_lesson_quoted_from_a_saved_prompts_text_is_retracted_and_hers_are_kept(store):
-    store.write_lesson(BODY_LESSON, category="preference", source="after_turn_review")
-    store.write_lesson(TYPED_LESSON, category="preference", source="after_turn_review")
+    store.write_lesson(BODY_LESSON, source="after_turn_review")
+    store.write_lesson(TYPED_LESSON, source="after_turn_review")
     store.write_lesson(EXPLICIT_LESSON, source="user_explicit")
 
     report = composed_text.settle(store)
@@ -82,14 +82,14 @@ def test_a_lesson_quoted_from_a_saved_prompts_text_is_retracted_and_hers_are_kep
 
 
 def test_taking_it_back_twice_changes_nothing(store):
-    store.write_lesson(BODY_LESSON, category="preference", source="after_turn_review")
+    store.write_lesson(BODY_LESSON, source="after_turn_review")
     composed_text.settle(store)
 
     assert composed_text.settle(store) == {"retracted": 0, "offered": 0}
 
 
 def test_memory_history_can_undo_the_retraction(store):
-    store.write_lesson(BODY_LESSON, category="preference", source="after_turn_review")
+    store.write_lesson(BODY_LESSON, source="after_turn_review")
     composed_text.settle(store)
 
     (event,) = [
@@ -131,9 +131,7 @@ def test_memory_history_can_undo_the_retraction(store):
 )
 def test_every_shape_the_platform_composed_is_recognized(store, quoted):
     store.write_lesson(
-        f"{composed_text.CORRECTION_PREFIX}{quoted}"[:266],
-        category="preference",
-        source="after_turn_review",
+        f"{composed_text.CORRECTION_PREFIX}{quoted}"[:266], source="after_turn_review"
     )
 
     assert composed_text.settle(store)["retracted"] == 1
@@ -147,7 +145,7 @@ def test_a_correction_that_only_mentions_the_platforms_words_is_kept(store):
         f"{composed_text.CORRECTION_PREFIX}that's not what I meant: don't write "
         "'Execute the following instructions:' at the top of the handoff"
     )
-    store.write_lesson(rule, category="preference", source="after_turn_review")
+    store.write_lesson(rule, source="after_turn_review")
 
     assert composed_text.settle(store)["retracted"] == 0
     assert _rules(store) == [rule]
@@ -201,11 +199,7 @@ def _seed_learned_from_the_standup(vs) -> None:
     memory_slots.append(
         vs, "glossary", "Yesterday — the last working day before today", source="after_turn_review"
     )
-    vs.write_lesson(
-        "Never quote ticket numbers from the private tracker",
-        category="preference",
-        source="facet_veto",
-    )
+    vs.write_lesson("Never quote ticket numbers from the private tracker", source="facet_veto")
 
 
 def test_what_matches_a_saved_prompts_text_is_offered_for_review_and_accept_removes_it(store):
@@ -264,7 +258,7 @@ def test_a_waiting_review_is_not_filed_a_second_time(store):
 def test_what_matches_no_composed_text_is_not_offered(store):
     _save_prompt("standup", STANDUP)
     memory_slots.append(store, "glossary", "CR — a code review", source="after_turn_review")
-    store.write_lesson("Never deploy on a Friday", category="preference", source="facet_veto")
+    store.write_lesson("Never deploy on a Friday", source="facet_veto")
 
     assert composed_text.settle(store) == {"retracted": 0, "offered": 0}
     assert _reviews() == []
@@ -273,7 +267,7 @@ def test_what_matches_no_composed_text_is_not_offered(store):
 def test_a_rule_a_theme_taught_is_offered_with_the_theme_named(store):
     """A theme's persona says "Never abbreviate an identifier the user has to type"; the veto
     detector cut that at the line break, and the clause it learned is that text's, not hers."""
-    store.write_lesson("Never abbreviate an", category="preference", source="facet_veto")
+    store.write_lesson("Never abbreviate an", source="facet_veto")
 
     assert composed_text.settle(store)["offered"] == 1
     (review,) = _reviews()

@@ -51,8 +51,18 @@ def scan_history(history_dir: Path, last_n: int = 100) -> list[dict]:
     return findings
 
 
+class MemoryNotScanned(Exception):
+    """Memory could not be opened to scan, so nothing in it was checked: not a clean scan."""
+
+    def __init__(self, why: str) -> None:
+        super().__init__(why)
+        self.why = why
+
+
 def scan_memory() -> list[dict]:
-    """Scan memory for suspicious content via the memory service. Returns findings."""
+    """Scan memory for suspicious content via the memory service. Returns findings, and raises
+    :class:`MemoryNotScanned` with the reason when memory cannot be opened: a scan that never ran
+    is not one that found nothing."""
     from personalclaw.memory_service import MemoryService
     from personalclaw.vector_memory import VectorMemoryStore, _contains_injection
 
@@ -60,8 +70,8 @@ def scan_memory() -> list[dict]:
     try:
         store = VectorMemoryStore()
         store.init()
-    except Exception:
-        return findings
+    except Exception as exc:
+        raise MemoryNotScanned(f"{type(exc).__name__}: {exc}") from exc
     svc = MemoryService.over_vector_store(store)
 
     # Scan semantic values

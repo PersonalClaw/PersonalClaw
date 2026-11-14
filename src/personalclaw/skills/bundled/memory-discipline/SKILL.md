@@ -68,9 +68,9 @@ persistent memory exists to remove.
 - **One durable rule per entry**, phrased as a standing instruction or fact, not
   a narration of an event. ✅ *"Prefers TypeScript strict mode."* ❌ *"Today we
   turned on strict mode."*
-- **Categorize** by kind (preference / fact / correction) and **scope** it
-  appropriately — workspace/project-specific facts scoped to that project, global
-  preferences scoped broadly — so recall surfaces the right thing in context.
+- **Scope** it appropriately: workspace/project-specific facts scoped to that
+  project, global preferences scoped broadly, so recall surfaces the right thing in
+  context.
 - **Supersede, don't duplicate.** If a new preference contradicts an old one,
   update/forget the stale entry rather than leaving both — contradictory memory
   is worse than none.

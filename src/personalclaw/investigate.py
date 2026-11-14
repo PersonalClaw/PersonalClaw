@@ -831,8 +831,8 @@ def _resolve_memory_lesson(entity_id: str, state) -> InvestigateContext | None:
     the real history of how this belief changed).
 
     Addressable EITHER by the ``lesson.<hash>`` key or by the rule TEXT. The text
-    form matters: ``GET /api/lessons`` returns only ``{rule, category, ts}``, so the
-    frontend never holds the key — and re-deriving the hash client-side would
+    form matters: ``GET /api/lessons`` returns each lesson's rule, scope and standing but not
+    its key, so the frontend never holds the key — and re-deriving the hash client-side would
     duplicate a server-side identity rule in the browser. Resolving the text here
     keeps that rule in one place.
 

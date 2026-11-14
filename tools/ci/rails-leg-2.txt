@@ -155,3 +155,5 @@ tests/rails/test_a_nested_pytest_keeps_a_basetemp_of_its_own_tree.py
 tests/rails/test_no_route_the_shell_polls_opens_a_database_on_the_event_loop.py
 tests/rails/test_a_warning_prints_on_stderr_tree.py
 tests/rails/test_output_flags_are_documented_tree.py
+tests/rails/test_a_lesson_has_no_category_tree.py
+tests/rails/test_a_lesson_is_written_without_a_category_tree.py

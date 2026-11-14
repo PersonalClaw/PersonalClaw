@@ -147,7 +147,7 @@ def test_project_import_says_what_it_wrote_once_it_has(an_archive, monkeypatch, 
         argparse.Namespace(archive=str(archive), passphrase="", dry_run=False)
     )
     out, err = capsys.readouterr()
-    assert code == 0
+    assert code == 1, "what it left unchanged was not imported, so it exits 1, as restore does"
     assert out.startswith(import_summary(plan, written=2, left=["the link at x"]) + "\n"), out
     assert "would be imported" not in out
     assert "Left unchanged: the link at x" in err
@@ -272,7 +272,7 @@ def test_cron_pause_refused_for_a_job_that_is_there_says_why(monkeypatch, capsys
 def test_learn_add_echoes_no_category_it_did_not_store(capsys):
     from personalclaw.cli_commands import _learn
 
-    _learn(_args("learn", "add", "Prefer short replies", "--category", "preference"))
+    _learn(_args("learn", "add", "Prefer short replies"))
     assert capsys.readouterr().out == "Saved: Prefer short replies\n"
 
 

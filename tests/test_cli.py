@@ -827,7 +827,9 @@ class TestStatus:
         """No gateway of this home running is reported, with the command that starts one."""
         from personalclaw.cli_server import _status
 
-        _status(self._make_args())
+        with pytest.raises(SystemExit) as stop:
+            _status(self._make_args())
+        assert stop.value.code == 1, "no gateway running is exit 1, its report on stdout"
         out = capsys.readouterr().out
         assert "No gateway is running for this home" in out
         assert "Start it with: personalclaw" in out

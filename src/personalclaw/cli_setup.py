@@ -629,8 +629,35 @@ def _maybe_setup_dashboard_url() -> str | None:
 
 def _maybe_setup_custom_domain() -> None:
     """Tell the user the dashboard's address: the one the gateway listens on
-    (``origin.gateway_link_host``), never a name that could resolve to another."""
+    (``origin.gateway_link_host``), never a name that could resolve to another, at the port it
+    serves (:func:`_served_port`)."""
     from personalclaw.dashboard.origin import gateway_link_host
 
     print("\n── Dashboard ──\n")
-    print(f"  Dashboard available at http://{gateway_link_host()}:{DASHBOARD_PORT}\n")
+    try:
+        port = _served_port()
+    except ValueError:
+        # A `dashboard.url` saved as typed, with a port no URL can hold (`:80800`, `:abc`): a
+        # client reads such a port as none (`gateway_base._configured_port`), but the gateway's
+        # own bind refuses it, and setup still finishes.
+        print(
+            "  ⚠️  dashboard.url names no valid port, so a gateway of this home cannot start with "
+            "it.\n"
+            "     Set it with: personalclaw config set dashboard.url http://<host>:<port>\n",
+            file=sys.stderr,
+        )
+        return
+    print(f"  Dashboard available at http://{gateway_link_host()}:{port}\n")
+
+
+def _served_port() -> int:
+    """The port this home's gateway serves: the running gateway's (``home_gateway.reach``), else
+    the one a gateway of this home binds when it starts (``cli_server._bind_port``, as ``restart``
+    reads it: ``PERSONALCLAW_PORT``, else the port in ``dashboard.url``, else the default)."""
+    from personalclaw import home_gateway
+    from personalclaw.cli_server import _bind_port
+
+    try:
+        return home_gateway.reach(None).port
+    except home_gateway.GatewayError:
+        return _bind_port()

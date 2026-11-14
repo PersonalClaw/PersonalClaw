@@ -1800,13 +1800,13 @@ class TestGrillSaveSeam:
         Asserts on the rules reaching `write_lesson`, not on the call happening — a seam that calls
         the store with nothing in it is the inert shape this whole change is about.
         """
-        written: list[tuple[str, str]] = []
+        written: list[tuple[str, dict]] = []
 
         class _Svc:
             has_vector = True
 
-            def write_lesson(self, rule, category="knowledge", source="user_explicit", **kw):
-                written.append((rule, category))
+            def write_lesson(self, rule, **kw):
+                written.append((rule, kw))
                 return True
 
         monkeypatch.setattr(
@@ -1845,8 +1845,9 @@ class TestGrillSaveSeam:
         )
         assert r.status == 200
         assert written, "the launch settled answers but persisted no decision — the seam is inert"
-        assert all(cat == "decision" for _rule, cat in written), written
-        assert any("sqlite" in rule for rule, _cat in written), written
+        # Named as the user's own answer, and with no category: a lesson keeps none.
+        assert all(kw == {"source": "user_explicit"} for _rule, kw in written), written
+        assert any("sqlite" in rule for rule, _kw in written), written
 
     def test_a_launch_with_no_grill_answers_writes_nothing(self, state, monkeypatch):
         """The refusal path. An ordinary spec edit must not manufacture decisions."""

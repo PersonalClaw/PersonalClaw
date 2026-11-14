@@ -127,8 +127,6 @@ def test_the_lesson_tool_says_why_the_gateway_refused_the_lesson(gateway):
     from personalclaw import mcp_memory
     from personalclaw.tool_providers.base import ToolFailure
 
-    out = mcp_memory._call_tool_inner(
-        "memory_remember", {"rule": "Answer in French.", "category": "preference"}
-    )
+    out = mcp_memory._call_tool_inner("memory_remember", {"rule": "Answer in French."})
     assert isinstance(out, ToolFailure), "a lesson that was not saved is a failure, not a reply"
     assert out == f"Error: {memory_writes.REFUSAL}", out

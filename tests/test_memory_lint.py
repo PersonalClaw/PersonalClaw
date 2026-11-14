@@ -89,7 +89,7 @@ def test_recent_superseded_not_purged(vs):
 
 
 def test_lessons_excluded_from_checks(vs):
-    vs.write_lesson("a lesson rule that is quite old and never recalled", "tool")
+    vs.write_lesson("a lesson rule that is quite old and never recalled")
     # Age it; lessons must not be flagged stale by this scan (they ride their own path).
     vs.db.execute(
         "UPDATE semantic_memory SET updated_at='2020-01-01T00:00:00+00:00' WHERE key LIKE 'lesson.%'"  # noqa: E501

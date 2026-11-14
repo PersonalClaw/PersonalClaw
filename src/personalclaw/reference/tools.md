@@ -1607,7 +1607,6 @@ Save a learned correction or preference that persists across all future sessions
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
-- `category` (string, required) — Category: tool, preference, or knowledge
 - `negative` (string, optional) — What NOT to do (optional)
 - `rule` (string, required) — The lesson to remember
 - `scope` (string, optional) — Where to save: 'global' (default, all workspaces) or 'workspace' (active workspace only)
@@ -1617,7 +1616,6 @@ Save a learned correction or preference that persists across all future sessions
 
 ```json
 {
-  "category": "preference",
   "rule": "Prefer concise commit messages"
 }
 ```
