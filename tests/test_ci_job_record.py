@@ -234,119 +234,131 @@ def test_a_record_with_seconds_that_are_no_number_is_never_written(seconds: floa
         _record(steps=[(["uv", "run", "pytest"], 0, seconds)])
 
 
-@pytest.mark.parametrize(
-    ("text", "why"),
-    [
-        ("[]", "must be an object"),
-        ("{", "is not JSON"),
-        ('{"key": "a", "key": "b"}', "job record 1 repeats the key 'key'"),
-        (_with(extra=1), "must hold exactly"),
-        (_with(schema="other/1"), "has schema"),
-        (_with(key=""), "names no job key"),
-        (_with(result="passed"), "which is no job's"),
-        # A word of another JSON type is refused by name, never a crash.
-        (_with(result=["success"]), "which is no job's"),
-        (_with(result={}), "which is no job's"),
-        (_with(head_sha="a" * 39), "head_sha must be a full object id"),
-        (_with(head_sha=HEAD + "\n"), "head_sha must be a full object id"),
-        (_with(external_revisions={"apps-partner": "short"}), "must be a full object id"),
-        (_with(external_revisions=[]), "external_revisions must be an object"),
-        (_with(attempt=0), "attempt must be a whole number from 1"),
-        (_with(attempt=True), "attempt must be a whole number from 1"),
-        (_with(run_id=0), "run_id must be a whole number from 1, or null"),
-        (_with(run_id=-1), "run_id must be a whole number from 1, or null"),
-        (_with(run_id=True), "run_id must be a whole number from 1, or null"),
-        (_with(run_id="7"), "run_id must be a whole number from 1, or null"),
-        (_with(run_id=7.0), "run_id must be a whole number from 1, or null"),
-        # A record of the schema before the run id: it names no run, so it is never read.
-        (_with(schema="personalclaw.ci.job-record/1"), "has schema"),
-        (_with(rerun="no"), "rerun must be null or an object"),
-        (_with(rerun=False), "rerun must be null or an object"),
-        (_with(quarantined=[""]), "quarantined must be a list of test ids"),
-        (_with(quarantined=None), "quarantined must be a list of test ids"),
-        (_with(plan="guessed"), "plan is 'guessed'"),
-        (_with(plan=["ci"]), "plan is \\['ci'\\]"),
-        (_with(workers=0), "workers must be a whole number from 1"),
-        (_with(steps={}), "steps must be a list"),
-        (_with(steps=[{"argv": ["x"], "exit": 0}]), "each step holds exactly"),
-        (_with(steps=[{"argv": [], "exit": 0, "seconds": 0}]), "non-empty list of strings"),
-        (_with(steps=[{"argv": ["x"], "exit": 0.5, "seconds": 0}]), "exit must be a whole"),
-        (_with(steps=[{"argv": ["x"], "exit": 0, "seconds": -1}]), "seconds must be a number"),
-        (_with(steps=[{"argv": ["x"], "exit": 2, "seconds": 0}]), "a step exited non-zero"),
-        (
-            _with(steps=[{"argv": ["x"], "exit": 0, "seconds": 0, "x": 1}]),
-            "each step holds exactly",
+#: Records this cannot read, each with the words its refusal says. A case is named by those words
+#: (and its number among the cases that say the same), not by its record: a test's id is at most
+#: 1,000 characters (tests/conftest.py), and a record held whole in an id runs close to that.
+_UNREADABLE = [
+    ("[]", "must be an object"),
+    ("{", "is not JSON"),
+    ('{"key": "a", "key": "b"}', "job record 1 repeats the key 'key'"),
+    (_with(extra=1), "must hold exactly"),
+    (_with(schema="other/1"), "has schema"),
+    (_with(key=""), "names no job key"),
+    (_with(result="passed"), "which is no job's"),
+    # A word of another JSON type is refused by name, never a crash.
+    (_with(result=["success"]), "which is no job's"),
+    (_with(result={}), "which is no job's"),
+    (_with(head_sha="a" * 39), "head_sha must be a full object id"),
+    (_with(head_sha=HEAD + "\n"), "head_sha must be a full object id"),
+    (_with(external_revisions={"apps-partner": "short"}), "must be a full object id"),
+    (_with(external_revisions=[]), "external_revisions must be an object"),
+    (_with(attempt=0), "attempt must be a whole number from 1"),
+    (_with(attempt=True), "attempt must be a whole number from 1"),
+    (_with(run_id=0), "run_id must be a whole number from 1, or null"),
+    (_with(run_id=-1), "run_id must be a whole number from 1, or null"),
+    (_with(run_id=True), "run_id must be a whole number from 1, or null"),
+    (_with(run_id="7"), "run_id must be a whole number from 1, or null"),
+    (_with(run_id=7.0), "run_id must be a whole number from 1, or null"),
+    # A record of the schema before the run id: it names no run, so it is never read.
+    (_with(schema="personalclaw.ci.job-record/1"), "has schema"),
+    (_with(rerun="no"), "rerun must be null or an object"),
+    (_with(rerun=False), "rerun must be null or an object"),
+    (_with(quarantined=[""]), "quarantined must be a list of test ids"),
+    (_with(quarantined=None), "quarantined must be a list of test ids"),
+    (_with(plan="guessed"), "plan is 'guessed'"),
+    (_with(plan=["ci"]), "plan is \\['ci'\\]"),
+    (_with(workers=0), "workers must be a whole number from 1"),
+    (_with(steps={}), "steps must be a list"),
+    (_with(steps=[{"argv": ["x"], "exit": 0}]), "each step holds exactly"),
+    (_with(steps=[{"argv": [], "exit": 0, "seconds": 0}]), "non-empty list of strings"),
+    (_with(steps=[{"argv": ["x"], "exit": 0.5, "seconds": 0}]), "exit must be a whole"),
+    (_with(steps=[{"argv": ["x"], "exit": 0, "seconds": -1}]), "seconds must be a number"),
+    (_with(steps=[{"argv": ["x"], "exit": 2, "seconds": 0}]), "a step exited non-zero"),
+    (
+        _with(steps=[{"argv": ["x"], "exit": 0, "seconds": 0, "x": 1}]),
+        "each step holds exactly",
+    ),
+    (_with(steps=[{"argv": ["x", 1], "exit": 0, "seconds": 0}]), "non-empty list of strings"),
+    (_with(workers=True), "workers must be a whole number from 1"),
+    (_with(steps=[{"argv": ["x"], "exit": False, "seconds": 0}]), "exit must be a whole"),
+    (_with(steps=[{"argv": ["x"], "exit": 0, "seconds": True}]), "seconds must be a number"),
+    (_with().replace('"seconds": 1.5', '"seconds": 1e999'), "seconds must be a number"),
+    (_with().replace('"seconds": 1.5', '"seconds": NaN'), "NaN, which is not JSON"),
+    (_with().replace('"seconds": 1.5', '"seconds": Infinity'), "Infinity, which is not JSON"),
+    (_with().replace('"attempt": 1', '"attempt": -Infinity'), "-Infinity, which is not JSON"),
+    # What the job ran on (#3919): null, or exactly the four names, as text, the label, OS
+    # and architecture not empty; and a toolchain of text by toolchain word.
+    (_with(runner=[]), "runner must be null or name exactly"),
+    (_with(runner={**_RUNNER, "host": "x"}), "runner must be null or name exactly"),
+    (_with(runner={k: v for k, v in _RUNNER.items() if k != "image"}), "runner must be null"),
+    (_with(runner={**_RUNNER, "image": 1}), "runner must be null or name exactly"),
+    (_with(runner={**_RUNNER, "label": ""}), "runner must be null or name exactly"),
+    (_with(runner={**_RUNNER, "arch": ""}), "runner must be null or name exactly"),
+    (_with(toolchain=[]), "toolchain must be null or an object of strings"),
+    (_with(toolchain={"": "x"}), "toolchain must be null or an object of strings"),
+    (_with(toolchain={"python": 3}), "toolchain must be null or an object of strings"),
+    # A version-3 record without them, and a version-2 record with them.
+    (_without("runner"), "must hold exactly"),
+    (_with(schema="personalclaw.ci.job-record/2"), "must hold exactly"),
+    # How many planned steps never started: only version 4 says, as a whole number from 0,
+    # and a success started every one.
+    (_with(schema="personalclaw.ci.job-record/4"), "must hold exactly"),
+    (_with(unstarted_steps=0), "must hold exactly"),
+    (_with(schema="personalclaw.ci.job-record/4", unstarted_steps=-1), "a whole number from 0"),
+    (
+        _with(schema="personalclaw.ci.job-record/4", unstarted_steps=1.0),
+        "a whole number from 0",
+    ),
+    (
+        _with(schema="personalclaw.ci.job-record/4", unstarted_steps=True),
+        "a whole number from 0",
+    ),
+    (
+        _with(schema="personalclaw.ci.job-record/4", unstarted_steps=None),
+        "a whole number from 0",
+    ),
+    (_with(schema="personalclaw.ci.job-record/4", unstarted_steps=1), "never started"),
+    # How each rerun test first failed: only version 5 says, on every rerun test, and only
+    # one of the two words.
+    (_five("timeout"), "first_failure is 'timeout', not 'failed' or 'timed out'"),
+    (_five("error"), "first_failure is 'error', not 'failed' or 'timed out'"),
+    (_five(None), "first_failure is None"),
+    (_five(""), "first_failure is ''"),
+    (_five(1), "first_failure is 1"),
+    (_five([]), "first_failure is \\[\\]"),
+    (_five({}), "first_failure is \\{\\}"),
+    (_without_first(), "holds exactly test, rerun_result, why and first_failure"),
+    (
+        _with_test(first_result="error"),
+        "holds exactly test, rerun_result, why and first_failure",
+    ),
+    (_five(schema="personalclaw.ci.job-record/4"), "holds exactly test, rerun_result and why"),
+    (_three_with_first(), "holds exactly test, rerun_result and why"),
+    (
+        _five(
+            unstarted_steps=1,
+            result=verdict.SUCCESS,
+            rerun=None,
+            steps=[{"argv": ["x"], "exit": 0, "seconds": 0}],
         ),
-        (_with(steps=[{"argv": ["x", 1], "exit": 0, "seconds": 0}]), "non-empty list of strings"),
-        (_with(workers=True), "workers must be a whole number from 1"),
-        (_with(steps=[{"argv": ["x"], "exit": False, "seconds": 0}]), "exit must be a whole"),
-        (_with(steps=[{"argv": ["x"], "exit": 0, "seconds": True}]), "seconds must be a number"),
-        (_with().replace('"seconds": 1.5', '"seconds": 1e999'), "seconds must be a number"),
-        (_with().replace('"seconds": 1.5', '"seconds": NaN'), "NaN, which is not JSON"),
-        (_with().replace('"seconds": 1.5', '"seconds": Infinity'), "Infinity, which is not JSON"),
-        (_with().replace('"attempt": 1', '"attempt": -Infinity'), "-Infinity, which is not JSON"),
-        # What the job ran on (#3919): null, or exactly the four names, as text, the label, OS
-        # and architecture not empty; and a toolchain of text by toolchain word.
-        (_with(runner=[]), "runner must be null or name exactly"),
-        (_with(runner={**_RUNNER, "host": "x"}), "runner must be null or name exactly"),
-        (_with(runner={k: v for k, v in _RUNNER.items() if k != "image"}), "runner must be null"),
-        (_with(runner={**_RUNNER, "image": 1}), "runner must be null or name exactly"),
-        (_with(runner={**_RUNNER, "label": ""}), "runner must be null or name exactly"),
-        (_with(runner={**_RUNNER, "arch": ""}), "runner must be null or name exactly"),
-        (_with(toolchain=[]), "toolchain must be null or an object of strings"),
-        (_with(toolchain={"": "x"}), "toolchain must be null or an object of strings"),
-        (_with(toolchain={"python": 3}), "toolchain must be null or an object of strings"),
-        # A version-3 record without them, and a version-2 record with them.
-        (_without("runner"), "must hold exactly"),
-        (_with(schema="personalclaw.ci.job-record/2"), "must hold exactly"),
-        # How many planned steps never started: only version 4 says, as a whole number from 0,
-        # and a success started every one.
-        (_with(schema="personalclaw.ci.job-record/4"), "must hold exactly"),
-        (_with(unstarted_steps=0), "must hold exactly"),
-        (_with(schema="personalclaw.ci.job-record/4", unstarted_steps=-1), "a whole number from 0"),
-        (
-            _with(schema="personalclaw.ci.job-record/4", unstarted_steps=1.0),
-            "a whole number from 0",
-        ),
-        (
-            _with(schema="personalclaw.ci.job-record/4", unstarted_steps=True),
-            "a whole number from 0",
-        ),
-        (
-            _with(schema="personalclaw.ci.job-record/4", unstarted_steps=None),
-            "a whole number from 0",
-        ),
-        (_with(schema="personalclaw.ci.job-record/4", unstarted_steps=1), "never started"),
-        # How each rerun test first failed: only version 5 says, on every rerun test, and only
-        # one of the two words.
-        (_five("timeout"), "first_failure is 'timeout', not 'failed' or 'timed out'"),
-        (_five("error"), "first_failure is 'error', not 'failed' or 'timed out'"),
-        (_five(None), "first_failure is None"),
-        (_five(""), "first_failure is ''"),
-        (_five(1), "first_failure is 1"),
-        (_five([]), "first_failure is \\[\\]"),
-        (_five({}), "first_failure is \\{\\}"),
-        (_without_first(), "holds exactly test, rerun_result, why and first_failure"),
-        (
-            _with_test(first_result="error"),
-            "holds exactly test, rerun_result, why and first_failure",
-        ),
-        (_five(schema="personalclaw.ci.job-record/4"), "holds exactly test, rerun_result and why"),
-        (_three_with_first(), "holds exactly test, rerun_result and why"),
-        (
-            _five(
-                unstarted_steps=1,
-                result=verdict.SUCCESS,
-                rerun=None,
-                steps=[{"argv": ["x"], "exit": 0, "seconds": 0}],
-            ),
-            "never started",
-        ),
-        (_five(unstarted_steps=-1), "a whole number from 0"),
-        # A later version is no version this reads: held to version 3's fields, it is refused.
-        (_five(schema="personalclaw.ci.job-record/6"), "must hold exactly"),
-    ],
-)
+        "never started",
+    ),
+    (_five(unstarted_steps=-1), "a whole number from 0"),
+    # A later version is no version this reads: held to version 3's fields, it is refused.
+    (_five(schema="personalclaw.ci.job-record/6"), "must hold exactly"),
+]
+
+
+def _named_by_their_refusal(cases: list[tuple[str, str]]) -> list[str]:
+    seen: dict[str, int] = {}
+    names = []
+    for _, why in cases:
+        seen[why] = seen.get(why, 0) + 1
+        names.append(why if seen[why] == 1 else f"{why} ({seen[why]})")
+    return names
+
+
+@pytest.mark.parametrize(("text", "why"), _UNREADABLE, ids=_named_by_their_refusal(_UNREADABLE))
 def test_a_record_it_cannot_read_is_refused(text: str, why: str) -> None:
     with pytest.raises(verdict.Refused, match=why):
         verdict.from_job_records([text])

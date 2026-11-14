@@ -1196,7 +1196,11 @@ def test_a_live_job_breadth_runs_every_night_is_planned_by_its_inputs() -> None:
     assert reached.reasons["audit"] == ["pyproject.toml: a declared input"], reached.reasons
 
 
-@pytest.mark.parametrize("main_text, planned", [(_WITH_TWIN, True), (_NIGHTLY, False)])
+@pytest.mark.parametrize(
+    "main_text, planned",
+    [(_WITH_TWIN, True), (_NIGHTLY, False)],
+    ids=["main-lacks-the-mark", "main-carries-the-mark"],
+)
 def test_a_nightly_mark_lets_the_job_out_only_once_main_carries_it(
     tmp_path, main_text: str, planned: bool
 ) -> None:
