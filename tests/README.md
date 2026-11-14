@@ -267,6 +267,10 @@ stale, and `--prune` deletes it.
   [docs/maintainers/testing.md](../docs/maintainers/testing.md); otherwise it is a row of one
   `subtests` table test
 - Test files: `tests/test_<module>.py`
+- A test's node id is at most 1,000 characters (`NODE_ID_LIMIT` in `tests/conftest.py`). pytest
+  builds a parametrized test's id from its values, whole, so a case whose value is long (a file, a
+  log, a hostile input) takes a short id (`ids=`); a module or class that holds a longer one fails
+  its collection, naming each such test by its file and line
 - pytest-asyncio is configured in strict mode — every async test needs
   `@pytest.mark.asyncio`
 - Use the `tmp_path` fixture for filesystem tests. `tests/conftest.py` overrides it to name each

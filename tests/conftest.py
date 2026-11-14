@@ -434,6 +434,42 @@ def pytest_ignore_collect(collection_path, config):
     return shard_list.ignore_collect(collection_path, config)
 
 
+#: The longest node id a test may have. pytest builds a parametrized test's id from its values,
+#: whole, and every log line that names the test carries it: three upload cases whose ids held a
+#: whole file (359,560 to 894,546 characters) stopped `gh run view --log` at their first line.
+NODE_ID_LIMIT = 1_000
+
+
+def _ids_past_the_limit(nodes) -> str:
+    """Why a collector whose result holds a test past :data:`NODE_ID_LIMIT` fails, naming each by
+    its file, line and the start of its id, never the whole id; ``""`` when none is past it."""
+    past = [n for n in nodes if isinstance(n, pytest.Item) and len(n.nodeid) > NODE_ID_LIMIT]
+    if not past:
+        return ""
+    lines = [
+        f"{len(past)} test id(s) here are over {NODE_ID_LIMIT:,} characters, and every log line "
+        "that names a test carries its id whole: give each parametrize case a short id (`ids=`)"
+    ]
+    for item in past:
+        path, line, _ = item.location
+        where = path if line is None else f"{path}:{line + 1}"
+        lines.append(f"  {where}: {item.nodeid[:80]}… ({len(item.nodeid):,} characters)")
+    return "\n".join(lines)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(collector):  # noqa: ARG001 — hook signature
+    """A module or class holding a test whose node id is past :data:`NODE_ID_LIMIT` fails its
+    collection, naming the test, and the test is never collected, so its id is never printed.
+    A failed report, not an exception: one raised from an xdist worker's collection ends the run
+    as an INTERNALERROR that names some other test, and not why."""
+    report = yield
+    why = _ids_past_the_limit(report.result) if report.passed else ""
+    if why:
+        report.outcome, report.longrepr, report.result = "failed", why, []
+    return report
+
+
 def pytest_collection_finish(session):
     shard_list.collection_finish(session)
     # The code map's grammars, fetched once before the first test when a test this process will run

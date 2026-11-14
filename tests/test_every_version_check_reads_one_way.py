@@ -77,7 +77,9 @@ def test_every_unreadable_version_orders_below_every_readable_one():
 
 
 @pytest.mark.parametrize(
-    "text", ["1" * 5000, "1." * 5000, "0.1.0+" + "a" * 10_000, "0.1.0-rc." + "9" * 5000]
+    "text",
+    ["1" * 5000, "1." * 5000, "0.1.0+" + "a" * 10_000, "0.1.0-rc." + "9" * 5000],
+    ids=["5000-digits", "5000-dotted-parts", "a-10000-character-build", "a-5000-digit-pre-release"],
 )
 def test_reading_a_hostile_version_never_raises(text):
     from personalclaw.versions import parse_version

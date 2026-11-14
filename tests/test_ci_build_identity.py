@@ -114,6 +114,13 @@ def test_ansi_colour_in_the_log_is_read_through() -> None:
             "actions/checkout@v7 with no SHA",
         ),
     ],
+    ids=[
+        "a-nested-action-with-no-sha",
+        "no-runner-image-version",
+        "no-runner-image",
+        "no-action-downloaded",
+        "an-immutable-action-with-no-sha",
+    ],
 )
 def test_a_set_up_log_that_lacks_an_identity_is_refused(planted: str, says: str) -> None:
     with pytest.raises(bi.Refused, match=says):

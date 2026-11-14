@@ -662,6 +662,7 @@ def test_empty_file_reports_rather_than_raising(tmp_path: Path) -> None:
         # An SSE dump declared as jsonl: 'data: {...}' is not JSON.
         ("jsonl", _sse_dump(), "invalid JSON"),
     ],
+    ids=["jsonl-declared-as-json", "json-declared-as-sse", "sse-declared-as-jsonl"],
 )
 def test_wrong_declared_format_reports_rather_than_raising(
     tmp_path: Path, fmt: str, body: str, expected: str
