@@ -12,6 +12,7 @@ import type { WsMessage } from '../../../lib/useChatSocket'
 // gateway's start (`useCutOff`), as "Interrupted at 10:42: The gateway restarted while it ran.",
 // counted in the head as "1 cut off by a restart". It goes once its work is live again, after ten
 // minutes, and two restarts never say it twice. A reconnect to the same gateway cuts off nothing.
+// While the socket is down, the rows stay and a line says they may be out of date.
 
 const running = vi.fn<() => Promise<RunningList>>()
 const status = vi.fn<() => Promise<{ start_time?: number; uptime_secs?: number }>>()
@@ -102,6 +103,18 @@ describe('work a restart cut off', () => {
     await waitFor(() => expect(workingRow()).toBeNull())
     expect(cutRows()).toHaveLength(0)
     expect(screen.queryByText(/cut off by a restart/)).toBeNull()
+  })
+})
+
+describe('while the socket is down', () => {
+  it('the rows stay, and a line says they may be out of date until it is back', async () => {
+    await mount()
+    expect(screen.queryByText(/Reconnecting/)).toBeNull()
+    act(() => { connected(false) })
+    expect(screen.getByText('Reconnecting… what shows here may be out of date.').getAttribute('role')).toBe('status')
+    expect(workingRow()).not.toBeNull()
+    act(() => { connected(true) })
+    expect(screen.queryByText(/Reconnecting/)).toBeNull()
   })
 })
 

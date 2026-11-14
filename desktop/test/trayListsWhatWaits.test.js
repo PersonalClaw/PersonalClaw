@@ -10,7 +10,7 @@ const { DEEP_LINKS, MAX_LISTED_ROWS, ROW_MAX, WAITING_KIND_LABEL, buildTrayMenuT
 // The room budget's tray menu (`docs/design/buddy/surfaces.md`): everything waiting on the owner,
 // in the list's order, then live work, each one line. Each waiting item is its own row, in the
 // app's own words for its kind and its text, at most `ROW_MAX` characters, opening its route; past
-// the menu's cap, the rest is one row that opens Mission Control, where every one of them is.
+// the menu's cap, the rest is one row that opens Needs you, where every one of them is.
 
 const GATE = { id: "gate:r1", kind: "gate", brief: { ask: { prompt: "Deploy the release now?" }, workflow: "release" }, route: "#/workflows/runs/r1" };
 const QUESTION = { id: "loop_question:l1", kind: "loop_question", brief: { question: "Which branch should the sweep use?", name: "Sweep" }, route: "#/loops/l1" };
@@ -46,7 +46,7 @@ describe("each waiting item is its own row", () => {
     assert.deepStrictEqual(calls, ["#/workflows/runs/r1", "#/loops/l1"]);
   });
 
-  it("an item with no route opens Mission Control, where every item is", () => {
+  it("an item with no route opens Needs you, where every item is", () => {
     const { template, calls } = menu([{ ...GATE, route: "" }]);
     template.find((r) => (r.label || "").startsWith("Workflow:")).click();
     assert.deepStrictEqual(calls, [DEEP_LINKS.waiting]);
@@ -60,7 +60,7 @@ describe("each waiting item is its own row", () => {
     assert.ok(row.label.endsWith("…"), "a cut row says it was cut");
   });
 
-  it("past the cap, the rest is one row that opens Mission Control", () => {
+  it("past the cap, the rest is one row that opens Needs you", () => {
     const many = Array.from({ length: MAX_LISTED_ROWS + 3 }, (_, i) => ({ ...GATE, id: `gate:r${i}`, brief: { ask: { prompt: `Step ${i}?` } }, route: `#/workflows/runs/r${i}` }));
     const { template, calls } = menu(many);
     const text = labelsOf(template);

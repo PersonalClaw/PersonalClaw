@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { FIXED_CLOCK } from '../../e2e/fixedClock'
-import { AUDIT_VERIFIED, BOOT_ROOTS, FILE_ROOTS, LEARNING_WEEK, SYSTEM_READING, weekEndingOn } from '../../e2e/stubbedReads'
+import { AUDIT_VERIFIED, BOOT_ROOTS, FILE_ROOTS, FIXED_WAITING, LEARNING_WEEK, SYSTEM_READING, weekEndingOn } from '../../e2e/stubbedReads'
 import { verifiedScope } from '../pages/settings/AuditPanel'
 import { waitedFor } from '../pages/chat/approvalRow'
 
@@ -110,8 +110,7 @@ describe("the buddy's approval card", () => {
   // the approval was asked, and minutes after it (run 41439170764).
   it('reads its wait in seconds under its fixed clock, as its committed tree has it', () => {
     const e2e = join(resolve(__dirname, '../..'), 'e2e')
-    const spec = readFileSync(join(e2e, 'surfaces.spec.ts'), 'utf8')
-    const asked = /id: 'approval:e2e-ap-1'[^\n]*\n\s*asked_at: '([^']+)'/.exec(spec)?.[1]
+    const asked = FIXED_WAITING.waiting.find((w) => w.id === 'approval:e2e-ap-1')?.asked_at
     expect(asked, "FIXED_WAITING's approval and when it was asked").toBeDefined()
     expect(FIXED_CLOCK.buddy, 'the buddy route runs under a fixed clock').toBeDefined()
 

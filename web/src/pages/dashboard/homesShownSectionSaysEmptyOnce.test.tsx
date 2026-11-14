@@ -61,7 +61,7 @@ describe("Home's section of what you keep on it", () => {
   it('🔴 holding a tile and no pin, draws the tile and says nothing of being empty', async () => {
     views.tiles = [TILE]
     render(<HomeOverview {...route} />)
-    await within(section()).findByRole('region', { name: 'Tiles on Home' })
+    await waitFor(() => expect(section().querySelector('[data-testid="pinned-tiles"]')).not.toBeNull())
     await waitFor(() => expect(within(section()).getByRole('button', { name: 'Remove from Home' })).toBeInTheDocument())
     expect(within(section()).queryByText(EMPTY)).toBeNull()
   })
@@ -71,6 +71,6 @@ describe("Home's section of what you keep on it", () => {
     render(<HomeOverview {...route} />)
     expect(await within(section()).findByText('Quarterly report')).toBeInTheDocument()
     expect(within(section()).queryByText(EMPTY)).toBeNull()
-    expect(within(section()).queryByRole('region', { name: 'Tiles on Home' })).toBeNull()
+    expect(section().querySelector('[data-testid="pinned-tiles"]')).toBeNull()
   })
 })

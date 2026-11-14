@@ -76,8 +76,8 @@ export function PinnedTiles() {
 
   return (
     // Under the Overview section that holds what you keep on Home, whose heading it shares: no
-    // heading of its own.
-    <section aria-label="Tiles on Home" className="flex min-w-0 flex-col gap-s" data-testid="pinned-tiles">
+    // heading and no name of its own, so it adds no landmark inside that section.
+    <section className="flex min-w-0 flex-col gap-s" data-testid="pinned-tiles">
       {safe ? (
         <>
           {/* Said out loud, not inferred from missing controls: a band that quietly stopped

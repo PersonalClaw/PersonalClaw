@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { RunningRow } from '../../lib/api'
@@ -12,8 +12,10 @@ import { FinishedRows, RunningLane } from './RunningLane'
 // work every reader shares (Home's band, `agents/AgentDay.tsx`, draws all of it). Each row shows the
 // work's name, its exact phase as text, what it is doing, the agent doing it, its last update and a
 // route that opens it. A blocked row says so, apart from working, and a row that waits on you says
-// how much does. Rendered here alone: each state the lane is handed is fed, and each assertion names
-// what it fed, so an empty lane cannot pass for any of them. (What a restart cut off is told on the
+// how much does. A card names its work's project (`projectOf`) with the project's chip at its top
+// right, plain text from 320 to 768 px, and none for work in no project. Rendered here alone: each
+// state the lane is handed is fed, and each assertion names what it fed, so an empty lane cannot
+// pass for any of them. (What a restart cut off is told on the
 // band: `agents/AgentDay.restart.test.tsx`.)
 
 const UPDATED = '2026-10-21T10:04:00Z'
@@ -141,5 +143,49 @@ describe('the just-finished tail', () => {
   it('nothing ended: it draws nothing', () => {
     const { container } = render(<FinishedRows finished={[]} interrupted={[]} />)
     expect(container.textContent).toBe('')
+  })
+})
+
+describe("a running card names its work's project", () => {
+  const code = row({
+    work: 'loop:l1', kind: 'loop', loop_kind: 'code', session: '', name: 'Fix the irrigation sensor tests',
+    agent: 'Code agent', route: '#/code/l1', project_id: 'p-garden',
+  })
+  const loose = row({ work: 'chat:c9', session: 'c9', name: 'File the receipts', route: '#/chat/c9' })
+  const garden = (r: RunningRow) => (r.project_id === 'p-garden' ? { id: 'p-garden', name: 'Garden' } : null)
+  const card = (name: RegExp) => within(working()).getByRole('listitem', { name })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('carries its chip at its top right and says what kind of work it is', () => {
+    lane([code, loose], { projectOf: garden })
+    const fix = card(/Fix the irrigation sensor tests/)
+    const chip = within(fix).getByRole('link', { name: 'Open project Garden' })
+    expect(chip.getAttribute('href')).toBe('#/projects/p-garden')
+    expect(chip.parentElement?.textContent).toContain('Fix the irrigation sensor tests')
+    // A long project name never takes the name's line: the name keeps at least half of it.
+    expect(fix.querySelector('p[data-type="label-m"]')?.className).toContain('min-w-[50%]')
+    // The kind leads the meta line, each part after a dot.
+    const kind = within(fix).getByText('Code session')
+    expect(kind.nextElementSibling?.textContent).toBe('·')
+    expect(within(fix).getByText('Code agent')).toBeTruthy()
+    expect(within(fix).getByRole('link', { name: 'Open Fix the irrigation sensor tests — code session' })).toBeTruthy()
+  })
+
+  it('work in no project draws no chip', () => {
+    lane([code, loose], { projectOf: garden })
+    expect(within(card(/Fix the irrigation sensor tests/)).getByRole('link', { name: 'Open project Garden' })).toBeTruthy()
+    expect(within(card(/File the receipts/)).queryByRole('link', { name: /^Open project/ })).toBeNull()
+  })
+
+  it('from 320 to 768 px the chip is plain text, so a card gains no target under 44 px', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(max-width: 768px)', media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {},
+      dispatchEvent: () => false,
+    }))
+    lane([code], { projectOf: garden })
+    const fix = card(/Fix the irrigation sensor tests/)
+    expect(within(fix).getByText('Garden')).toBeTruthy()
+    expect(within(fix).queryByRole('link', { name: 'Open project Garden' })).toBeNull()
   })
 })

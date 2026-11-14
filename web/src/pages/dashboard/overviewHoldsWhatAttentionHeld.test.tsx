@@ -51,7 +51,7 @@ beforeEach(() => { resetDataStore(); sessionStorage.clear(); localStorage.clear(
 describe("the Overview holds what Home's Attention view held", () => {
   it('draws the tiles you keep on Home under Your agents today, in the Home section', async () => {
     render(<HomeOverview {...route} />)
-    const tiles = await screen.findByRole('region', { name: 'Tiles on Home' })
+    const tiles = await screen.findByTestId('pinned-tiles')
     const agents = screen.getByRole('heading', { name: 'Your agents today' })
     expect(agents.compareDocumentPosition(tiles) & Node.DOCUMENT_POSITION_FOLLOWING, 'the tiles come after the band').toBeTruthy()
     const section = screen.getByRole('heading', { name: 'Pinned artifacts' }).closest('section')!
@@ -60,7 +60,7 @@ describe("the Overview holds what Home's Attention view held", () => {
 
   it('keeps each tile’s controls: Keep on Home and Dismiss on a proposed one, Remove from Home on yours', async () => {
     render(<HomeOverview {...route} />)
-    const tiles = await screen.findByRole('region', { name: 'Tiles on Home' })
+    const tiles = await screen.findByTestId('pinned-tiles')
     await waitFor(() => expect(within(tiles).getAllByRole('button', { name: 'Refresh tile' })).toHaveLength(2))
     expect(within(tiles).getAllByRole('button', { name: 'Remove from Home' })).toHaveLength(1)
     await userEvent.click(within(tiles).getByRole('button', { name: 'Keep on Home' }))
@@ -73,7 +73,7 @@ describe("the Overview holds what Home's Attention view held", () => {
 
   it('draws your own overlays for Home last', async () => {
     const { container } = render(<HomeOverview {...route} />)
-    await screen.findByRole('region', { name: 'Tiles on Home' })
+    await screen.findByTestId('pinned-tiles')
     const overlay = screen.getByTestId('overlay-dashboard')
     const column = overlay.parentElement!
     expect(column.lastElementChild).toBe(overlay)

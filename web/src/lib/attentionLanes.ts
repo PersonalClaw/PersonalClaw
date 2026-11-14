@@ -1,7 +1,7 @@
 /** Which attention lane an item belongs to, as a pure function over the wire types.
  *
- *  Mission Control renders four lanes (Needs-approval / Your-turn / Working / Idle). This module
- *  owns the RULE; the component owns the pixels. Split out deliberately: lane assignment is the part
+ *  The lanes (Needs-approval / Your-turn / Working / Idle) that the sidebar's pips and Needs you's
+ *  sources read. This module owns the RULE; the components own the pixels. Split out deliberately: lane assignment is the part
  *  most likely to be subtly wrong, and a wrong lane is invisible in a screenshot — everything still
  *  renders, just in the wrong column, with counts that read as authoritative.
  *

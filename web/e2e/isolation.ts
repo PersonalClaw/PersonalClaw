@@ -43,6 +43,7 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   },
   'appSurface.spec.ts': { mode: 'shared', why: 'reads the fixture app the boot installs' },
   'agentsBand.spec.ts': { mode: 'shared', why: 'answers the agents band\'s reads in the page itself, so it writes nothing and reads nothing another spec counts' },
+  'needsYou.spec.ts': { mode: 'shared', why: 'answers Needs you\'s reads in the page itself (`NEEDS_YOU_READS`), so it writes nothing and reads nothing another spec counts' },
   'theCodeStripFitsAPhone.spec.ts': { mode: 'shared', why: 'answers its code session\'s reads with route stubs, measures its strip and writes nothing' },
   'settingsRowsFitAPhone.spec.ts': { mode: 'shared', why: 'reads each settings page as the run\'s gateway answers it, measures its rows and writes nothing' },
   'theProjectsTitleReadsWholeOnAPhone.spec.ts': { mode: 'shared', why: 'answers the Projects list\'s reads with route stubs, measures its title and writes nothing' },

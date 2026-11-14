@@ -315,7 +315,7 @@ export async function readThreads(): Promise<ThreadLists> {
 
 /** The frames that change a thread or its pip: a chat's run state, an approval, an Inbox row, and
  *  the gateway's listing hint naming the loops, or the workflow runs a loop may run on (as Home and
- *  Mission Control read it): a loop's newest cycle places it. */
+ *  Needs you read it): a loop's newest cycle places it. */
 function changesThreads(m: WsMessage): boolean {
   const type = m.type
   if (type === 'refresh') return refreshKinds(m).some((k) => k === 'loops' || k === 'workflow_runs')

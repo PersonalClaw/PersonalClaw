@@ -9,8 +9,8 @@ import type { WaitingList } from '../../lib/api'
 // you card draws it as the project's chip, a link to the project's page: on an approval at the end
 // of the approval card's own tag line ("Permission needed · From …"), on a question at the end of
 // its asker's line; inside neither card's answers. From 320 to 768 px the chip is plain text, since
-// the card is itself a control. Work in no project draws none. (What runs is on Home's band, whose
-// own tests read its rows.)
+// the card is itself a control. Work in no project draws none. (A running card's chip is read with
+// its lane, `RunningLane.test.tsx`.)
 
 const lists = vi.hoisted(() => ({
   waiting: { waiting: [], unreadable: [] } as WaitingList,

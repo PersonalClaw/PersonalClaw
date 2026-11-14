@@ -149,6 +149,10 @@ const WAITING_KIND_LABEL = Object.freeze({
   browse_grant: "Browser",
   plan_review: "Plan",
   bridge_confirmation: "Control bridge",
+  folder_trust: "Folder trust",
+  held_action: "Held action",
+  declined_wait: "Declined step",
+  escalated_run: "Escalated run",
 });
 
 const textOf = (value) => (typeof value === "string" ? value.trim() : "");
@@ -181,6 +185,12 @@ function waitingText(kind, brief) {
     }
     case "bridge_confirmation":
       return textOf(b.body) || textOf(b.action) || "A control-bridge action waits for you";
+    case "folder_trust":
+      return textOf(b.dir) ? `Trust ${textOf(b.dir)}?` : "A folder waits for your trust";
+    case "held_action":
+    case "declined_wait":
+    case "escalated_run":
+      return textOf(b.title) || "It waits on you in the Inbox";
     default:
       return "";
   }

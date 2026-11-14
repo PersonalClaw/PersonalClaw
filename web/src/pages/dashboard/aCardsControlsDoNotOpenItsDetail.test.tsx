@@ -13,7 +13,9 @@ import { RunningLane } from './RunningLane'
 // the list's place, so answering one card took you off the list. The owner's ruling: a card's
 // action buttons take the action and never open the panel. Allow, Deny, a run's choice, a
 // proposal's Accept, the reply field on a loop's card and the project chip each keep their press;
-// a press on the card's body opens it. A running card's controls keep theirs too.
+// a press on the card's body opens it. The keyboard is held to the same ruling: Enter or Space on
+// an answer takes its action and opens nothing, and Enter on the card's own target opens it. A
+// running card's controls keep theirs too.
 
 const resolveApproval = vi.fn()
 const resumeWorkflowRun = vi.fn()
@@ -130,6 +132,66 @@ describe("a card's controls keep their press", () => {
     atWidth(true)
     const { opened } = mount()
     await userEvent.click(await within(await screen.findByRole('group', { name: /Permission needed to run/ })).findByRole('button', { name: /^Allow/ }))
+    await waitFor(() => expect(resolveApproval).toHaveBeenCalled())
+    expect(opened()).toBe(false)
+    expect(list()).toBeInTheDocument()
+  })
+})
+
+describe("a card's answers keep their keys: Enter or Space acts and opens nothing", () => {
+  /** Put the focus on *el* and press *key* there, as a keyboard user does. */
+  async function press(el: HTMLElement, key: string) {
+    el.focus()
+    expect(document.activeElement).toBe(el)
+    await userEvent.keyboard(key)
+  }
+  const approval = async () => screen.findByRole('group', { name: /Permission needed to run/ })
+
+  it.each([
+    ['Enter on Allow', /^Allow/, '{Enter}'],
+    ['Space on Allow', /^Allow/, ' '],
+    ['Enter on Deny', /^Deny/, '{Enter}'],
+    ['Space on Deny', /^Deny/, ' '],
+  ])('%s answers the approval and opens nothing', async (_what, name, key) => {
+    const { opened } = mount()
+    await press(await within(await approval()).findByRole('button', { name }), key)
+    await waitFor(() => expect(resolveApproval).toHaveBeenCalled())
+    expect(opened(), 'the panel opened').toBe(false)
+  })
+
+  it.each([['Enter', '{Enter}'], ['Space', ' ']])("%s on a run's choice answers it and opens nothing", async (_what, key) => {
+    const { opened } = mount()
+    await press(await screen.findByRole('button', { name: /^Answer Which branch should I push\? .*Ship it$/ }), key)
+    await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalled())
+    expect(opened()).toBe(false)
+  })
+
+  it.each([['Enter', '{Enter}'], ['Space', ' ']])("%s on a proposal's Accept takes it and opens nothing", async (_what, key) => {
+    skillProposals.mockResolvedValue({ proposals: [{ id: 'p1', slug: 'tidy-notes', description: 'Tidy the notes', created_at: '2026-11-13T09:00:00Z' }], lastReview: null })
+    const { opened } = mount()
+    await press(await screen.findByRole('button', { name: /^Accept/ }), key)
+    await waitFor(() => expect(acceptSkillProposal).toHaveBeenCalled())
+    expect(opened()).toBe(false)
+  })
+
+  it('Enter on the project chip goes to the project and opens nothing', async () => {
+    const { opened } = mount()
+    await press(await within(await approval()).findByRole('link', { name: 'Open project Garden' }), '{Enter}')
+    await waitFor(() => expect(window.location.hash).toBe('#/projects/p-garden'))
+    expect(opened()).toBe(false)
+    window.location.hash = ''
+  })
+
+  it("Enter on the card's own target opens its detail (the control)", async () => {
+    const { onQuery } = mount()
+    await press(await screen.findByRole('button', { name: /^Show the details of Which branch should I push\?/ }), '{Enter}')
+    await waitFor(() => expect(onQuery).toHaveBeenCalledWith({ open: 'waiting:gate:run-77:gate.push:1' }, false))
+  })
+
+  it('at 390 px Enter on Allow keeps you on the list', async () => {
+    atWidth(true)
+    const { opened } = mount()
+    await press(await within(await approval()).findByRole('button', { name: /^Allow/ }), '{Enter}')
     await waitFor(() => expect(resolveApproval).toHaveBeenCalled())
     expect(opened()).toBe(false)
     expect(list()).toBeInTheDocument()

@@ -190,7 +190,7 @@ export function AgentDay() {
   const settling = (loading && !data && !error) || feed.loading || (needs.loading && !needs.error)
   return (
     <AgentDayView view={view} failed={failed} settling={settling} narrow={narrow} unread={unread} onRetry={retry}
-      budget={meter.error ? 'unknown' : meter.data ?? null} filter={filter} onFilter={setFilter} />
+      reconnecting={cut.reconnecting} budget={meter.error ? 'unknown' : meter.data ?? null} filter={filter} onFilter={setFilter} />
   )
 }
 
@@ -211,7 +211,7 @@ function spendLine(b: UsageBudget | 'unknown' | null): string {
   return b.max_dollars_per_day ? `On its own today: ${spent} of $${b.max_dollars_per_day}` : `On its own today: ${spent}`
 }
 
-export function AgentDayView({ view, failed, settling, narrow, unread = [], onRetry, budget, filter, onFilter }: {
+export function AgentDayView({ view, failed, settling, narrow, unread = [], onRetry, reconnecting = false, budget, filter, onFilter }: {
   view: DayView
   failed: boolean
   settling: boolean
@@ -219,6 +219,8 @@ export function AgentDayView({ view, failed, settling, narrow, unread = [], onRe
   /** The reads that failed, in words: named in a line of their own, with Retry. */
   unread?: string[]
   onRetry?: () => void
+  /** The socket is down: the rows stay, and a line says they may be out of date until it is back. */
+  reconnecting?: boolean
   budget: UsageBudget | 'unknown' | null
   filter: Filter
   onFilter: (f: Filter) => void
@@ -261,6 +263,11 @@ export function AgentDayView({ view, failed, settling, narrow, unread = [], onRe
         {head && <p data-type="label-m" className={`text-on-surface ${INSET}`} style={fvs(600)}>{head}</p>}
         {/* A read that failed leaves its part out, and says so in the shared one-line way. */}
         {unread.length > 0 && <div className={INSET}><InlineLoadError what={joined(unread)} onRetry={onRetry} /></div>}
+        {reconnecting && (
+          <p role="status" data-type="body-s" className={`text-on-surface-low ${INSET}`}>
+            Reconnecting… what shows here may be out of date.
+          </p>
+        )}
         <Axis view={view} lifted={lifted.length > 0} />
         {view.empty && (
           <p data-type="body-m" className="text-on-surface-var">
@@ -292,7 +299,7 @@ export function AgentDayView({ view, failed, settling, narrow, unread = [], onRe
           // count is all of them, and its link already opens them.
           <p data-type="body-s" className="text-on-surface-var">
             <TextLink href="#/mission-control" ink="emphasis" className={`inline-flex items-center ${TOUCH_TARGET}`}>
-              {`${view.unattributed} more need you`}
+              {needYou(view.unattributed, 'more ')}
             </TextLink>
           </p>
         )}
@@ -503,6 +510,12 @@ function FailedAt({ row }: { row: DayRow }) {
 
 const isLifted = (r: DayRow) => r.key !== 'scheduled' && (r.state === 'waiting' || r.state === 'failed')
 
+/** "1 needs you", "2 need you", and "1 more needs you" after *more*, as a project's pulse and the
+ *  buddy count them (`pulseWords`, `buddy/copy.ts`). */
+function needYou(n: number, more = ''): string {
+  return `${n} ${more}${n === 1 ? 'needs' : 'need'} you`
+}
+
 /** The count over the band: '2 need you · 3 running · 1 blocked · 1 failed today · 1 cut off by a
  *  restart', each part at 0 left out. The asks are the ones the badge counts, those on no row too,
  *  so the two always agree, and they link to Needs you; the runs are live runs, moving and held up;
@@ -520,7 +533,7 @@ function liftedHead(rows: DayRow[], view: DayView): ReactNode {
   if (!asks && rest.length === 0) return null
   return (
     <>
-      {asks ? <TextLink href="#/mission-control" ink="emphasis">{`${asks} need you`}</TextLink> : null}
+      {asks ? <TextLink href="#/mission-control" ink="emphasis">{needYou(asks)}</TextLink> : null}
       {`${asks && rest.length ? ' · ' : ''}${rest.join(' · ')}`}
     </>
   )

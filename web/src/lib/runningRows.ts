@@ -3,8 +3,8 @@ import { WORK_PHASE_LOOKS, workPhaseOf, type PhaseTone } from './workPhase'
 
 // ── A running list row, in words ─────────────────────────────────────────────────────────────────
 //
-// What every reader of the running list (`GET /api/running`) says of one row, so Mission Control's
-// Working lane and the phone's Running section name a row the same way: its phase in the one phase
+// What every reader of the running list (`GET /api/running`) says of one row, so Home's band, Running
+// now and the phone's Running section name a row the same way: its phase in the one phase
 // table's words (`workPhase.ts`), what it is doing, and the kind of work it is.
 
 /** What it says of work a restart cut off (`useCutOff`). */

@@ -185,7 +185,7 @@ describe('what you act on comes first', () => {
   it('puts the rows that wait on you and the rows that failed on top, under a count of them', () => {
     show(evening(failing))
 
-    expect(headText()).toBe('1 need you · 2 running · 1 failed today')
+    expect(headText()).toBe('1 needs you · 2 running · 1 failed today')
     const rows = within(screen.getByRole('list', { name: 'Your agents' })).getAllByRole('listitem')
     expect(rows.map((r) => r.dataset.lifted ?? '')).toEqual(['waiting', 'failed', '', '', ''])
     expect(rows[1]).toHaveAccessibleName(expect.stringMatching(/^Release helper, failed: Failed at \d\d:\d\d: Couldn’t reach/))
@@ -239,7 +239,7 @@ describe('what you act on comes first', () => {
       started: at(16, 10) / 1000, ended: at(16, 12) / 1000, error: 'Couldn’t reach api.github.com' } as never
     show(evening({ helpers: [helper] }))
 
-    expect(headText()).toBe('1 need you · 2 running · 1 failed today')
+    expect(headText()).toBe('1 needs you · 2 running · 1 failed today')
   })
 
   it('draws a linked name’s focus ring inside it, and gives an unlinked name the same box', () => {
@@ -279,7 +279,7 @@ describe('what you act on comes first', () => {
     ), [], [])
     show(evening({ asks }))
 
-    expect(screen.getByRole('link', { name: '1 more need you' }).className).toContain('max-lg:min-h-11')
+    expect(screen.getByRole('link', { name: '1 more needs you' }).className).toContain('max-lg:min-h-11')
   })
 
   it('keeps an ask’s age whole when its words are cut short', () => {
@@ -296,12 +296,12 @@ describe('what you act on comes first', () => {
     const asks = needsYou(waitingList(waitingItem({ kind: 'question', id: 'question:x', work: 'chat:nobody-runs-this' })), [], [])
     show(evening({ asks }))
 
-    expect(headText()).toBe('1 need you · 2 running')
-    expect(screen.getByRole('link', { name: '1 need you' })).toHaveAttribute('href', '#/mission-control')
+    expect(headText()).toBe('1 needs you · 2 running')
+    expect(screen.getByRole('link', { name: '1 needs you' })).toHaveAttribute('href', '#/mission-control')
     expect(document.querySelector('[data-lifted]')).toBeNull()
     // No row holds an ask, so no line says "1 more": the count is the head's alone.
-    expect(screen.queryByText(/more need you/)).toBeNull()
-    expect(screen.getAllByRole('link', { name: /need you$/ })).toHaveLength(1)
+    expect(screen.queryByText(/more needs? you/)).toBeNull()
+    expect(screen.getAllByRole('link', { name: /needs? you$/ })).toHaveLength(1)
   })
 
   it('counts the asks as Needs you does, the one on no row too', () => {
@@ -313,14 +313,27 @@ describe('what you act on comes first', () => {
 
     expect(headText()).toBe('2 need you · 2 running')
     expect(document.querySelectorAll('[data-lifted]')).toHaveLength(1)
-    expect(screen.getByRole('link', { name: '1 more need you' })).toHaveAttribute('href', '#/mission-control')
+    expect(screen.getByRole('link', { name: '1 more needs you' })).toHaveAttribute('href', '#/mission-control')
+  })
+
+  it('says the plural past one: "3 need you" and "2 more need you"', () => {
+    const asks = needsYou(waitingList(
+      waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:lisbon', brief: { tool: 'write_file' }, asked_at: iso(at(18, 18)) }),
+      waitingItem({ kind: 'question', id: 'question:x', work: 'chat:nobody-runs-this' }),
+      waitingItem({ kind: 'question', id: 'question:y', work: 'chat:nobody-runs-that' }),
+    ), [], [])
+    show(evening({ asks }))
+
+    expect(headText()).toBe('3 need you · 2 running')
+    expect(screen.getByRole('link', { name: '3 need you' })).toHaveAttribute('href', '#/mission-control')
+    expect(screen.getByRole('link', { name: '2 more need you' })).toHaveAttribute('href', '#/mission-control')
   })
 
   it('shows only the filter’s rows under a filter, and still counts what Needs you counts', () => {
     show(evening(), { filter: 'working' })
 
     expect(document.querySelector('[data-lifted]')).toBeNull()
-    expect(headText()).toMatch(/^1 need you · /)
+    expect(headText()).toMatch(/^1 needs you · /)
   })
 
   it('lifts nothing and counts nothing when nothing waits on you and nothing failed', () => {

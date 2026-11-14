@@ -99,7 +99,7 @@ describe('the band shows all live work', () => {
     render(<AgentDay />)
     const ask = await within(await screen.findByRole('list', { name: 'Your agents' })).findByRole('listitem', { name: /^Docs agent, waiting on you: Docs has stalled/ })
     expect(within(ask).getByRole('link', { name: /^Answer:/ })).toHaveAttribute('href', '#/mission-control?open=waiting%3Aloop_question%3Al1')
-    expect(screen.getByRole('link', { name: '1 need you' })).toHaveAttribute('href', '#/mission-control')
+    expect(screen.getByRole('link', { name: '1 needs you' })).toHaveAttribute('href', '#/mission-control')
   })
 
   it('an agent’s second run has its own Open', async () => {
