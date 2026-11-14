@@ -188,7 +188,9 @@ def test_the_same_key_lands_in_lock_order(home):
     _release(home, [first], ["first"])
     _wait_for(home / "holding-first", [first])
     second = _spawn(home, _HOLDING_WORKER, "second", 0.0, "second")
-    _wait_for(home / "ready-second", [first, second])
+    # The first worker may finish and exit 0 while the second interpreter is still starting;
+    # that is not an early exit, so only the second worker is watched here.
+    _wait_for(home / "ready-second", [second])
     _finish([first, second])
 
     assert _document(home)["winner"] == "second"
