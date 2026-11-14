@@ -1,6 +1,7 @@
 import { api } from '../../lib/api'
 import { confirm } from '../../ui/dialog'
 import { reportingWrite } from '../../app/reportingWrite'
+import { yoloChanged } from '../../lib/yoloSignal'
 
 /** The consent YOLO mode asks for — moved here verbatim from the Agent defaults panel (#753), so
  *  every surface that can turn it on shows the same sentence. Security copy: move it, don't
@@ -40,5 +41,8 @@ export async function setAgentYolo(next: boolean): Promise<boolean> {
     confirmLabel: YOLO_CONFIRM.confirmLabel,
     danger: true,
   }))) return false
-  return reportingWrite(next ? 'turn on YOLO mode' : 'turn off YOLO mode', () => api.setAgentYolo(next))
+  const took = await reportingWrite(next ? 'turn on YOLO mode' : 'turn off YOLO mode', () => api.setAgentYolo(next))
+  // The corner's chip reads the status again now, not at the gateway's next ring.
+  if (took) yoloChanged()
+  return took
 }

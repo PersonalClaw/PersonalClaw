@@ -7,6 +7,7 @@ import { useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { noteMeta, relTime, firstLine, toneChipBg, notificationsAddress } from '../pages/notifications/notificationMeta'
 import { RowHitTarget } from './RowHitTarget'
+import { Tooltip } from './Tooltip'
 import { UnreadRail } from '../pages/notifications/UnreadRail'
 import { rowSubject } from '../lib/rowSubject'
 import { fvs, withWeight } from '../design/fontWeight'
@@ -110,38 +111,41 @@ export function NotificationBell({ navigate, className }: {
 
   return (
     <div ref={ref} className="relative">
-      <button type="button" onClick={() => setOpen((o) => !o)}
-        // 🪤 NO `aria-haspopup="menu"` — measured with the shade open: **0** `role="menu"` and **0**
-        // menuitems. What opens is a panel of notification ROWS (each with its own hit target and two
-        // actions), which is not a menu and should not claim to be; a screen-reader
-        // user told "menu" then finds a list of buttons with no menu navigation. `aria-expanded` alone
-        // honestly describes the disclosure.
-        aria-expanded={open}
-        aria-label={unknown ? `Notifications, ${UNKNOWN_READING}` : unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
-        title={unknown ? UNKNOWN_READING : unread > 0 ? `${unread} unread notification${unread === 1 ? '' : 's'}` : 'Notifications'}
-        className={`relative grid size-7 place-items-center rounded-pill transition-colors${className ? ` ${className}` : ''}`}
-        style={open
-          ? accentChip
-          : { color: 'var(--color-on-surface-low)' }}>
-        <Bell size={16} />
-        {/* The unknown mark: a muted dash where the count would sit. Neutral and still, not coral
-            and not danger: nothing is known to be unread, only that the read failed. */}
-        {unknown && (
-          <span data-type="caption" aria-hidden
-            className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill bg-surface-high px-1 leading-none text-on-surface-low">
-            —
-          </span>
+      <Tooltip text={unknown ? UNKNOWN_READING : unread > 0 ? `${unread} unread notification${unread === 1 ? '' : 's'}` : 'Notifications'} describes={false}>
+        {(tip) => (
+        <button {...tip} type="button" onClick={() => setOpen((o) => !o)}
+          // 🪤 NO `aria-haspopup="menu"` — measured with the shade open: **0** `role="menu"` and **0**
+          // menuitems. What opens is a panel of notification ROWS (each with its own hit target and two
+          // actions), which is not a menu and should not claim to be; a screen-reader
+          // user told "menu" then finds a list of buttons with no menu navigation. `aria-expanded` alone
+          // honestly describes the disclosure.
+          aria-expanded={open}
+          aria-label={unknown ? `Notifications, ${UNKNOWN_READING}` : unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
+          className={`relative grid size-7 place-items-center rounded-pill transition-colors${className ? ` ${className}` : ''}`}
+          style={open
+            ? accentChip
+            : { color: 'var(--color-on-surface-low)' }}>
+          <Bell size={16} />
+          {/* The unknown mark: a muted dash where the count would sit. Neutral and still, not coral
+              and not danger: nothing is known to be unread, only that the read failed. */}
+          {unknown && (
+            <span data-type="caption" aria-hidden
+              className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill bg-surface-high px-1 leading-none text-on-surface-low">
+              —
+            </span>
+          )}
+          {/* The unread badge. It swaps its number in place: it used to re-mount and pop on a playful
+              bounce at every change, and an unread count ticks too often for each tick to be an event. */}
+          {unread > 0 && (
+            <span data-type="caption"
+              className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 leading-none"
+              style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
+              {unread > 9 ? '9+' : unread}
+            </span>
+          )}
+        </button>
         )}
-        {/* The unread badge. It swaps its number in place: it used to re-mount and pop on a playful
-            bounce at every change, and an unread count ticks too often for each tick to be an event. */}
-        {unread > 0 && (
-          <span data-type="caption"
-            className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 leading-none"
-            style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
-            {unread > 9 ? '9+' : unread}
-          </span>
-        )}
-      </button>
+      </Tooltip>
       <AnimatePresence>
         {open && (
           <motion.div

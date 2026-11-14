@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { DegradedChip } from './DegradedChip'
 import { api } from '../lib/api'
+import { tipOf } from '../test/tipOf'
 
 // ── A bound chat provider that is DOWN must not read as "everything is fine" ─────────────────────
 //
@@ -71,7 +72,7 @@ describe('the chat provider half of the degraded chip', () => {
     } as never)
     render(<DegradedChip />)
     const chip = await screen.findByRole('button', { name: /chat provider not answering/i })
-    expect(chip.getAttribute('title')).toContain('and 1 surface is running without a model')
+    expect(tipOf(chip)).toContain('and 1 surface is running without a model')
     fireEvent.click(chip)
     const panel = await screen.findByRole('dialog')
     expect(panel.textContent).toContain("Your chat model's provider, my-anthropic, isn't answering.")

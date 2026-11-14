@@ -1,6 +1,7 @@
 import { Hand } from 'lucide-react'
 import { withWeight } from '../design/fontWeight'
 import { useNeedsYou } from '../lib/useNeedsYou'
+import { Tooltip } from './Tooltip'
 
 /** The toolbar's needs-you badge: how many things wait on you, on every page, opening Home on its
  *  Attention view (#5880), where they are.
@@ -22,23 +23,27 @@ export function NeedsYouBadge({ navigate, className }: {
   const label = !unknown ? `${n} waiting on you`
     : error ? 'What waits on you couldn’t be read' : 'What waits on you is not read yet'
   return (
-    <button type="button" onClick={() => navigate('dashboard?view=attention')}
-      aria-label={`${label} — open Attention`} title={label}
-      className={`relative grid size-7 place-items-center rounded-pill transition-colors${className ? ` ${className}` : ''}`}
-      style={{ color: 'var(--color-on-surface-low)' }}>
-      <Hand size={16} aria-hidden />
-      {unknown ? (
-        <span data-type="caption" aria-hidden
-          className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill bg-surface-high px-1 leading-none text-on-surface-low">
-          —
-        </span>
-      ) : (
-        <span data-type="caption" aria-hidden
-          className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 leading-none"
-          style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
-          {n > 9 ? '9+' : n}
-        </span>
+    <Tooltip text={label} describes={false}>
+      {(tip) => (
+      <button {...tip} type="button" onClick={() => navigate('dashboard?view=attention')}
+        aria-label={`${label} — open Attention`}
+        className={`relative grid size-7 place-items-center rounded-pill transition-colors${className ? ` ${className}` : ''}`}
+        style={{ color: 'var(--color-on-surface-low)' }}>
+        <Hand size={16} aria-hidden />
+        {unknown ? (
+          <span data-type="caption" aria-hidden
+            className="absolute -right-0.5 -top-0.5 grid min-w-[15px] min-h-[0.9375rem] place-items-center rounded-pill bg-surface-high px-1 leading-none text-on-surface-low">
+            —
+          </span>
+        ) : (
+          <span data-type="caption" aria-hidden
+            className="absolute -right-0.5 -top-0.5 grid min-w-[15px] min-h-[0.9375rem] place-items-center rounded-pill px-1 leading-none"
+            style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
+            {n > 9 ? '9+' : n}
+          </span>
+        )}
+      </button>
       )}
-    </button>
+    </Tooltip>
   )
 }

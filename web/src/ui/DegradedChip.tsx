@@ -4,6 +4,7 @@ import { api, type ChatProviderConnection, type DegradedSurface } from '../lib/a
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { useIsMobile } from '../app/useIsMobile'
 import { TextLink } from './TextLink'
+import { Tooltip } from './Tooltip'
 
 // Prettify a use-case slug the map below does not know ("some_new_case" → "Some new case").
 function prettify(slug: string): string {
@@ -165,33 +166,36 @@ export function DegradedChip({ className }: {
   const FaceIcon = calm ? Sparkles : CloudOff
   return (
     <div className="relative">
-      <button ref={triggerRef} type="button" onClick={() => setOpen((o) => !o)}
-        data-type="caption"
-        className={`flex min-h-6 items-center gap-1.5 rounded-pill py-1 transition-colors hover:brightness-110 ${isMobile ? 'px-1.5' : 'px-2.5'}${className ? ` ${className}` : ''}`}
-        // 16%, like every other warn-toned chip in the app (ToolInspector's "needs approval",
-        // bento's warn tile). This chip was the ONLY 20% site, and that extra 4% is what put
-        // warn ink on a warn-hued tint under AA: axe measured it FAILING at 20% and PASSING at
-        // 16% on #/learning in light mode (4.35:1 vs the 4.5 floor — same hue on same hue, so
-        // deepening the tint darkens the ground toward the ink).
-        //
-        // The `--color-warn-container` var it used to reach for DOES NOT EXIST — no theme
-        // defines it and this was its only reference, so the fallback was always what shipped.
-        // Naming a token that isn't there hid the real value from anyone reading the line;
-        // dropping it makes the tint depth visible and lints alongside its siblings.
-        //
-        // Setup-land trades the warn pair for the info pair at the SAME 16% budget — the
-        // tone changes, the tint math doesn't.
-        style={calm
-          ? { background: 'color-mix(in srgb, var(--color-info) 16%, transparent)', color: 'var(--color-info)' }
-          : { background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}
-        aria-expanded={open}
-        // Icon-only has no visible text, so the name must come from aria-label — a title
-        // alone is not an accessible name for AT in every engine.
-        aria-label={isMobile ? summary : undefined}
-        title={detail}>
-        <FaceIcon size={13} className="shrink-0" />
-        {!isMobile && <span>{summary}</span>}
-      </button>
+      <Tooltip text={detail}>
+        {(tip) => (
+        <button {...tip} ref={(el) => { tip.ref(el); triggerRef.current = el }} type="button" onClick={() => setOpen((o) => !o)}
+          data-type="caption"
+          className={`flex min-h-6 items-center gap-1.5 rounded-pill py-1 transition-colors hover:brightness-110 ${isMobile ? 'px-1.5' : 'px-2.5'}${className ? ` ${className}` : ''}`}
+          // 16%, like every other warn-toned chip in the app (ToolInspector's "needs approval",
+          // bento's warn tile). This chip was the ONLY 20% site, and that extra 4% is what put
+          // warn ink on a warn-hued tint under AA: axe measured it FAILING at 20% and PASSING at
+          // 16% on #/learning in light mode (4.35:1 vs the 4.5 floor — same hue on same hue, so
+          // deepening the tint darkens the ground toward the ink).
+          //
+          // The `--color-warn-container` var it used to reach for DOES NOT EXIST — no theme
+          // defines it and this was its only reference, so the fallback was always what shipped.
+          // Naming a token that isn't there hid the real value from anyone reading the line;
+          // dropping it makes the tint depth visible and lints alongside its siblings.
+          //
+          // Setup-land trades the warn pair for the info pair at the SAME 16% budget — the
+          // tone changes, the tint math doesn't.
+          style={calm
+            ? { background: 'color-mix(in srgb, var(--color-info) 16%, transparent)', color: 'var(--color-info)' }
+            : { background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}
+          aria-expanded={open}
+          // Icon-only has no visible text, so the name must come from aria-label — a title
+          // alone is not an accessible name for AT in every engine.
+          aria-label={isMobile ? summary : undefined}>
+          <FaceIcon size={13} className="shrink-0" />
+          {!isMobile && <span>{summary}</span>}
+        </button>
+        )}
+      </Tooltip>
       {open && (
         <>
           {/* click-away scrim */}

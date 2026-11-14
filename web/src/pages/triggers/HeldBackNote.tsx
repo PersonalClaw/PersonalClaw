@@ -4,7 +4,14 @@ import { reportingWrite } from '../../app/reportingWrite'
 import { api, type HeldBack } from '../../lib/api'
 import { Button } from '../../ui/Button'
 import { confirm } from '../../ui/dialog'
+import { InlineConfirm } from '../../ui/InlineConfirm'
+import { TOUCH_TARGET } from '../../ui/Toggle'
 import { BUSY_REASON } from '../../ui/unavailable'
+
+/** What trusting a folder does, in the words its confirmation says, dialog or inline. */
+const TRUST_WORDS = 'An automation that works in this folder then gets the write access its own step asks '
+  + 'for: it may change files and run commands in it, the folder’s own scripts included. '
+  + 'An automation that only reads is not affected, and no other folder is.'
 
 /** Trust one project folder (`guardrails/project_trust.py`), asking first: an automation working
  *  in it then gets the write access its own step asks for, where Preview held it to reading.
@@ -12,21 +19,19 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  Shown where a folder's Preview is said: the panel of a trigger it holds back (`HeldBackNote`) and
  *  the Inbox request the folder raised on its first such run. Until this control existed that
  *  request asked "Trust this project folder?" and offered nothing to answer it with. */
-export function TrustFolderButton({ folder, onTrusted, busy = false }: {
+export function TrustFolderButton({ folder, onTrusted, busy = false, inline = false }: {
   /** The folder as the gateway resolved it (`HeldBack.folder`, a request's `refs.dir`). */
   folder: string
   onTrusted: () => void
   busy?: boolean
+  /** Ask once more on the card, under the button (`InlineConfirm`, its yes "Yes, trust it"), rather
+   *  than in a dialog: for a card in a list that holds still (Needs you). The button is a touch target
+   *  there and never moves, and every press of it only asks again. Its other callers keep the dialog. */
+  inline?: boolean
 }) {
   const [trusting, setTrusting] = useState(false)
-  async function trust() {
-    if (!(await confirm({
-      title: `Trust ${folder}?`,
-      body: 'An automation that works in this folder then gets the write access its own step asks '
-        + 'for: it may change files and run commands in it, the folder’s own scripts included. '
-        + 'An automation that only reads is not affected, and no other folder is.',
-      confirmLabel: 'Trust this folder',
-    }))) return
+  const [asking, setAsking] = useState(false)
+  async function write() {
     setTrusting(true)
     try {
       if (await reportingWrite(`trust ${folder}`, () => api.trustProjectFolder(folder))) onTrusted()
@@ -34,10 +39,30 @@ export function TrustFolderButton({ folder, onTrusted, busy = false }: {
       setTrusting(false)
     }
   }
-  return (
-    <Button variant="secondary" size="sm" onClick={trust} loading={trusting} disabled={busy} disabledReason={BUSY_REASON}>
+  async function trust() {
+    if (inline) { setAsking(true); return }
+    if (!(await confirm({
+      title: `Trust ${folder}?`,
+      body: TRUST_WORDS,
+      confirmLabel: 'Trust this folder',
+    }))) return
+    await write()
+  }
+  const button = (
+    <Button variant="secondary" size="sm" onClick={trust} loading={trusting} disabled={busy} disabledReason={BUSY_REASON}
+      className={inline ? TOUCH_TARGET : undefined}>
       Trust this folder
     </Button>
+  )
+  if (!inline) return button
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-s">
+      {button}
+      {asking && (
+        <InlineConfirm sentence={`${TRUST_WORDS} Trust ${folder}?`} verb="trust it"
+          onYes={() => { setAsking(false); void write() }} onBack={() => setAsking(false)} />
+      )}
+    </div>
   )
 }
 

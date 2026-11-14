@@ -3,6 +3,7 @@ import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-libra
 import { EditorView } from '@codemirror/view'
 import { runState } from '../test/runState'
 import { PALETTE_SEARCH_LABEL } from './paletteSearchLabel'
+import { tipOf } from '../test/tipOf'
 
 // ── Focus mode and reading mode ─────────────────────────────────────────────────────────────────
 //
@@ -156,7 +157,7 @@ describe('focus mode', () => {
     await waitFor(() => expect(rail()).not.toBeNull())
     fireEvent.keyDown(window, FOCUS_KEY)
     const leave = await screen.findByRole('button', { name: 'Leave focus mode' })
-    expect(leave.getAttribute('title')).toContain('Ctrl+\\')
+    expect(tipOf(leave)).toContain('Ctrl+\\')
     fireEvent.click(leave)
     await waitFor(() => expect(rail()).not.toBeNull())
     expect(screen.queryByRole('button', { name: 'Leave focus mode' })).toBeNull()
@@ -291,7 +292,7 @@ describe('the shell\'s own toggles', () => {
   it('show their keys in their tooltips, as the keymap writes them', async () => {
     renderApp()
     await waitFor(() => expect(rail()).not.toBeNull())
-    expect(screen.getByRole('button', { name: 'Collapse sidebar' }).getAttribute('title')).toBe('Collapse sidebar (Ctrl+B)')
-    expect(screen.getByRole('button', { name: 'Open terminal' }).getAttribute('title')).toBe('Open terminal (Ctrl+J or Ctrl+`)')
+    expect(tipOf(screen.getByRole('button', { name: 'Collapse sidebar' }))).toBe('Collapse sidebar (Ctrl+B)')
+    expect(tipOf(screen.getByRole('button', { name: 'Open terminal' }))).toBe('Open terminal (Ctrl+J or Ctrl+`)')
   })
 })

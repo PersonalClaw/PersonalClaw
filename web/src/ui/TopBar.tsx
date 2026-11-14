@@ -185,5 +185,6 @@ export function ThemeControl({ className }: {
   className?: string
 } = {}) {
   const { icon, label, cycle } = useThemeCycle()
-  return <IconButton icon={icon} label={label} size={36} className={className} onClick={cycle} />
+  // Its tip in the themed Tooltip, like every control in the corner: no native title there.
+  return <IconButton icon={icon} label={label} tip={label} size={36} className={className} onClick={cycle} />
 }

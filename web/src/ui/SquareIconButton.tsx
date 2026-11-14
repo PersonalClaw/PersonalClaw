@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { Loader2, type LucideIcon } from 'lucide-react'
 import { cx } from './cx'
+import { Tooltip, type TooltipTriggerProps } from './Tooltip'
 import { spring, physics } from '../design/motion'
 
 /** Dense square icon button — the compact sibling of the round {@link IconButton}.
@@ -19,7 +20,7 @@ import { spring, physics } from '../design/motion'
  *  red with no fill — the restrained treatment those buttons already ship. */
 export function SquareIconButton({
   icon: Icon, children, label, title, onClick, on, ariaExpanded, disabled, disabledReason, loading = false,
-  tone = 'neutral', iconSize = 14, className,
+  tone = 'neutral', iconSize = 14, className, tip = false,
 }: {
   icon?: LucideIcon
   children?: React.ReactNode
@@ -77,15 +78,21 @@ export function SquareIconButton({
   /** Glyph size for the `icon` form (default 14). `children` size themselves. */
   iconSize?: number
   className?: string
+  /** Say the label (or `title`, and a `disabledReason`) in the themed `Tooltip` rather than a
+   *  native `title`, as `IconButton`'s `tip` does: a page with no browser tooltip passes it. */
+  tip?: boolean
 }) {
   // One guard for both inert reasons, exactly as `Button` spells it — otherwise `loading` would
   // trade a false "unavailable" for a double-fire.
   const off = !!disabled || loading
   // The tint means "this is the live one" for both questions; the ARIA state is the one that differs.
   const lit = on || ariaExpanded
-  return (
+  const hint = disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)
+  const tipText = tip ? (disabled && disabledReason ? `${title ?? label}. ${disabledReason}.` : (title ?? label)) : ''
+  const render = (trigger?: TooltipTriggerProps) => (
     <button
       type="button"
+      {...trigger}
       aria-label={label}
       aria-disabled={disabled || undefined}
       // `on` means "selected/toggled" and drove only the coral tint — the fifth primitive in this family
@@ -97,7 +104,8 @@ export function SquareIconButton({
       // "Working", not "unavailable". It is the only signal a screen-reader user gets: the spinner
       // is aria-hidden and the name deliberately never changes, so the action stays findable.
       aria-busy={loading || undefined}
-      title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
+      // With a tip, the tooltip says it and the native title would say it twice.
+      title={tipText ? undefined : hint}
       onClick={off ? undefined : onClick}
       className={cx(
         // `relative`: the loading spinner is an `absolute inset-0` overlay, and without a
@@ -141,4 +149,5 @@ export function SquareIconButton({
       </AnimatePresence>
     </button>
   )
+  return tipText ? <Tooltip text={tipText}>{(trigger) => render(trigger)}</Tooltip> : render()
 }

@@ -65,7 +65,7 @@ describe("the shell's controls on a phone", () => {
 
   it("so does every control in the right corner", async () => {
     render(<ShellCornerRight terminalOpen={false} onToggleTerminal={() => {}} navigate={() => {}} />)
-    const chip = await screen.findByTitle(/running without a model/)
+    const chip = await screen.findByRole('button', { description: /running without a model/ })
     const controls = [
       screen.getByRole('button', { name: 'Open terminal' }),
       screen.getByRole('button', { name: /waiting on you/ }),
@@ -124,7 +124,7 @@ describe('below 768 px the right corner folds the terminal and the theme into on
   it('shows one 44 px More in their place', async () => {
     windowOf(390)
     render(<ShellCornerRight terminalOpen={false} onToggleTerminal={() => {}} navigate={() => {}} />)
-    await screen.findByTitle(/running without a model/)
+    await screen.findByRole('button', { description: /running without a model/ })
     expect(screen.queryByRole('button', { name: 'Open terminal' })).toBeNull()
     expect(screen.queryByRole('button', { name: /^Theme: / })).toBeNull()
     const more = screen.getByRole('button', { name: 'More' })
