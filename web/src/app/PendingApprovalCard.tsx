@@ -18,7 +18,7 @@ import { approvalDestination } from './approvalDestination'
  *  card offers this call alone. *opensSource* links the source to where that work is answered in
  *  full, for a surface that lists approvals from everywhere.
  */
-export function PendingApprovalCard({ approval, onDecide, busy, opensSource = false, sourceHref, form, tagEnd }: {
+export function PendingApprovalCard({ approval, onDecide, busy, opensSource = false, sourceHref, form, tagEnd, answersReplacedBy }: {
   approval: ApprovalCardInput
   onDecide: (action: 'approve' | 'reject') => void | Promise<unknown>
   busy?: boolean
@@ -30,6 +30,8 @@ export function PendingApprovalCard({ approval, onDecide, busy, opensSource = fa
   form?: ApprovalForm
   /** The queue form's tag row end: the card's project chip and its time left. */
   tagEnd?: ReactNode
+  /** The queue form only: what stands where its answers were, the outcome or the panel's line. */
+  answersReplacedBy?: ReactNode
 }) {
   const source = approval.source_label || undefined
   // A queue holds one card per call, so the verbs' names carry who asked and what the call does.
@@ -46,6 +48,7 @@ export function PendingApprovalCard({ approval, onDecide, busy, opensSource = fa
       busy={busy}
       form={form}
       tagEnd={tagEnd}
+      answersReplacedBy={answersReplacedBy}
       onAct={(_id, action) => onDecide(action === 'rejected' ? 'reject' : 'approve')}
     />
   )

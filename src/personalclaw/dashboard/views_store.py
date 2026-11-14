@@ -93,21 +93,17 @@ _OVERVIEW_CORE_REFS = (
 )
 
 
-#: The Mission Control preset id — the attention-triage surface.
+#: The Needs you preset id (``#/mission-control``): every ask waiting on your answer. The id is a
+#: persisted overlay key and every link's address, so it keeps its old name.
 PRESET_MISSION_CONTROL_ID = "mission-control"
 
-#: Home's three groups, in the order they are read: what waits on YOU to answer, what is
-#: running now, and what finished recently. Same DECLARED-composition contract as
-#: ``_OVERVIEW_CORE_REFS`` — the FE renders a fixed layout for these ``core:`` refs (``GROUP_REFS``
-#: in ``web/src/pages/dashboard/Home.tsx``), sourcing Needs you from the waiting list and Running
-#: now from the running list, so the schema is composition-ready without making the render
-#: dynamic. The ``group-`` segment is load bearing: it keeps a group ref from colliding with a
-#: same-named Overview widget.
-_MISSION_CONTROL_CORE_REFS = (
-    "core:group-needs-you",
-    "core:group-running-now",
-    "core:group-recent",
-)
+#: Needs you's one group ref: what waits on YOU to answer, then what to review. Same
+#: DECLARED-composition contract as ``_OVERVIEW_CORE_REFS`` — the FE renders a fixed layout for this
+#: ``core:`` ref (``GROUP_REFS`` in ``web/src/pages/dashboard/NeedsYouPage.tsx``), sourced from the
+#: waiting list, so the schema is composition-ready without making the render dynamic. Running work
+#: and what finished moved to Home's Overview. The ``group-`` segment is load bearing: it keeps a
+#: group ref from colliding with a same-named Overview widget.
+_MISSION_CONTROL_CORE_REFS = ("core:group-needs-you",)
 
 
 class PresetLockedError(Exception):
@@ -337,7 +333,7 @@ def _overview_preset(data: dict) -> DashboardView:
 
 
 def _mission_control_preset(data: dict) -> DashboardView:
-    """Build the locked Mission Control preset: Home's three groups + persisted overlay."""
+    """Build the locked Needs you preset: its one group + persisted overlay."""
     core = [
         DashboardTile(ref=ref, size="m", order=i, added_by="user")
         for i, ref in enumerate(_MISSION_CONTROL_CORE_REFS)
@@ -348,8 +344,8 @@ def _mission_control_preset(data: dict) -> DashboardView:
         t.order = len(core) + j
     return DashboardView(
         id=PRESET_MISSION_CONTROL_ID,
-        name="Mission Control",
-        icon="Radar",
+        name="Needs you",
+        icon="Hand",
         nav_pinned=True,
         preset=True,
         tiles=core + overlay,

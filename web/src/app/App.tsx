@@ -3,7 +3,7 @@ import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
 import { installPushCuePlayback } from './pushCuePlayback'
-import { Bell, Blocks, BookOpen, Brain, Compass, Database, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, Library, ListChecks, Loader2, MessageSquare, Plus, Puzzle, Radar, Repeat, Settings, Smartphone, Sparkles, Store, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
+import { Bell, Blocks, BookOpen, Brain, Compass, Database, FileCode, FileText, Files, FolderKanban, Hand, Inbox, LayoutDashboard, Library, ListChecks, Loader2, MessageSquare, Plus, Puzzle, Repeat, Settings, Smartphone, Sparkles, Store, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellThreadRail, threadNumberRoute } from './threadRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
@@ -34,7 +34,8 @@ import { reportingWrite } from './reportingWrite'
 import { CommandPalette, keymapCommands, type Command } from './CommandPalette'
 import { THREAD_NUMBERS, useBoundRunner, useKeyBinding, type CommandId } from './keymap'
 import { useRailFocus } from './railFocus'
-import { nextNeedsYouRoute } from './globalKeys'
+import { nextNeedsYouRoute, unreadNeedsYou } from './globalKeys'
+import { readNeedsYou } from '../lib/useNeedsYou'
 import { notify } from './appSdk'
 import { TerminalDrawer, fullTerminalRoute } from '../pages/terminal/TerminalDrawer'
 import { Toaster } from '../ui/Toaster'
@@ -84,6 +85,7 @@ const AppsSection = lazy(() => import('../pages/apps/AppsSection').then((m) => (
 const AppHostPage = lazy(() => import('../pages/apps/AppHostPage').then((m) => ({ default: m.AppHostPage })))
 const TerminalPage = lazy(() => import('../pages/terminal/TerminalPage').then((m) => ({ default: m.TerminalPage })))
 const Home = lazy(() => import('../pages/dashboard/Home').then((m) => ({ default: m.Home })))
+const NeedsYouPage = lazy(() => import('../pages/dashboard/NeedsYouPage').then((m) => ({ default: m.NeedsYouPage })))
 const DiscoverPage = lazy(() => import('../pages/discover/DiscoverPage').then((m) => ({ default: m.DiscoverPage })))
 const CompanionPage = lazy(() => import('../pages/companion/CompanionPage').then((m) => ({ default: m.CompanionPage })))
 
@@ -119,9 +121,10 @@ const NAV: NavItem[] = [
 // dedicated nav tile — loops are launched from within Projects (and surfaced as
 // chat-session widgets) — but its detail/history/planning sub-routes
 // (#/loop, #/loops/<id>, #/code/<id>, …) stay reachable.
-// `mission-control` is routable but NOT in `NAV`: it is the locked DASHBOARD VIEW the server
-// registers (`views_store._mission_control_preset`), and Home is that view (#3813), so the address
-// opens Home. It stays routable because every address the app has shipped keeps resolving.
+// `mission-control` is routable but NOT in `NAV`: it is Needs you, the locked DASHBOARD VIEW the
+// server registers (`views_store._mission_control_preset`). The badge is its one entry, and Home's
+// link stays lit while it shows. It keeps its address because every address the app has shipped
+// keeps resolving.
 // The six pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`), and so
 // do Library's four (`libraryTabs.ts`) and Automations' Workflows tab; the list's address from
 // before it was Automations, `#/triggers`, still opens it (`automationTabs.ts`).
@@ -172,9 +175,9 @@ function renderPage(active: string, r: RouteProps) {
   // Every page receives the full RouteProps bundle so its sub-pages, tabs,
   // filters, search, and open-panel state can all be URL-addressable.
   switch (active) {
-    // Home opens on Overview (#5880); `#/mission-control` is Home on its Attention view (#3813).
+    // Home is its Overview; `#/mission-control` is Needs you, every ask waiting on your answer.
     case 'dashboard': return <Home {...r} />
-    case 'mission-control': return <Home {...r} defaultView="attention" />
+    case 'mission-control': return <NeedsYouPage {...r} />
     case 'chat': return <ChatPage {...r} />
     case 'loop': return <LoopSection {...r} />
     case 'loops': return <LoopsSection {...r} />
@@ -266,7 +269,8 @@ function AppInner() {
   // treating it as one would suppress every approval toast while a room is open by
   // claiming a session named "room/<id>" is on screen).
   const activeChatSession = route === 'chat' && sub && sub !== 'new' && sub !== 'history' && !sub.startsWith('room/') && sub !== 'room' ? sub : ''
-  useApprovalToasts(activeChatSession)
+  // Needs you lists every approval, so while it shows, an approval raises neither toast nor cue.
+  useApprovalToasts(activeChatSession, route === 'mission-control')
   // The `native` notification target. Mounted in the shell because it must
   // hold for every route, not just the notifications page: the gateway decides which notes
   // are native and this relays them to the Electron shell, which raises the OS banner and
@@ -541,8 +545,15 @@ function AppInner() {
     // `renderable`, not `ROUTABLE.has` — `#/companion` is rendered by an early return below and is
     // the PWA's `start_url`, so correcting it away made an installed app open on the wrong surface.
     if (route && !renderable(route)) { navigate('dashboard', { replace: true }); return }
+    // Home's two views became two pages: an old address for either lands on the page it now is,
+    // with a replace, so Back does not return to the old one.
+    if (route === 'dashboard' && query.view === 'attention') {
+      navigate(query.open ? `mission-control?open=${encodeURIComponent(query.open)}` : 'mission-control', { replace: true })
+      return
+    }
+    if (route === 'mission-control' && query.view === 'overview') { navigate('dashboard', { replace: true }); return }
     clearOnboardingExit()
-  }, [identityStatus, onboarded, setupRerun, route, sub, addressSearch, navigate])
+  }, [identityStatus, onboarded, setupRerun, route, sub, addressSearch, navigate, query.view, query.open])
 
   // The REAL route to render (loops/code keep their own sections for detail/history/
   // planning sub-routes; only the BARE route was folded into the #/loop composer).
@@ -559,7 +570,7 @@ function AppInner() {
   // composer or a #/loops/<id> / #/code/<id> deep-link lights the Projects tile.
   // Highlight-only — must NOT change which page renders.
   const active = (rendered === 'loop' || rendered === 'loops' || rendered === 'code') ? 'projects'
-    : rendered === 'mission-control' ? HOME.id  // Home on its Attention view lights Home's link
+    : rendered === 'mission-control' ? HOME.id  // Needs you lights Home's link: it has no row of its own
     : rendered === 'app' ? `app/${(sub ?? '').split('/')[0]}`  // light the specific app tile
       : isCapabilityRoute(rendered) ? 'capabilities'  // each tab lights its destination
         : isLibraryRoute(rendered) ? 'library'
@@ -585,11 +596,11 @@ function AppInner() {
   // read fresh while no rail shows them.
   const toggleDrawer = () => setTermDrawer((v) => !v)
   const goNeedsYou = () => {
-    Promise.all([api.inboxOpen(), api.approvals()])
-      .then(([items, approvals]) => {
-        const to = nextNeedsYouRoute(items, approvals)
+    readNeedsYou()
+      .then((read) => {
+        const to = nextNeedsYouRoute(read)
         if (to) navigate(to)
-        else notify('Nothing is waiting on you.', 'info')
+        else notify(unreadNeedsYou(read) || 'Nothing is waiting on you.', 'info')
       })
       .catch(() => notify("Couldn't read what is waiting on you.", 'error'))
   }
@@ -836,7 +847,7 @@ function AppInner() {
     ...NAV.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: n.section ?? '', run: () => navigate(n.id) })),
     // pinned app tiles are nav destinations too — same "Go to" contract
     ...appNavItems.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: 'app', run: () => navigate(n.id) })),
-    { id: 'go:mission-control', label: 'Mission Control', hint: 'Go to', icon: Radar, keywords: 'home attention needs you running now recent completed approvals', run: () => navigate('mission-control') },
+    { id: 'go:mission-control', label: 'Needs you', hint: 'Go to', icon: Hand, keywords: 'attention mission control approvals questions proposals waiting', run: () => navigate('mission-control') },
     // A filter of the Inbox, not a page of its own (#3818).
     { id: 'go:notifications', label: 'Notifications', hint: 'Go to', icon: Bell, keywords: 'alerts feed inbox', run: () => navigate('inbox?filter=notifications') },
     // Every project's tasks: a project's own are its Tasks view (#3818).

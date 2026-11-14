@@ -234,6 +234,7 @@ function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean, alone: b
  */
 export function ApprovalCard({
   seg, onAct, scopeWords = 'chat', answers = 'scoped', source, sourceHref, subject, busy, density, form = 'chat', tagEnd,
+  answersReplacedBy,
 }: {
   seg: ApprovalSegment
   /** Returns the request when there is one: until it settles, a key press sends nothing more. */
@@ -258,6 +259,8 @@ export function ApprovalCard({
   form?: ApprovalForm
   /** The queue form's tag row end: the card's project chip and its time left. */
   tagEnd?: ReactNode
+  /** The queue form only: what stands where its answers were (`ApprovalPrompt`). */
+  answersReplacedBy?: ReactNode
 }) {
   const queue = form === 'queue'
   // The narrowest scope is the initial one: a click on Allow with nothing else touched
@@ -308,6 +311,7 @@ export function ApprovalCard({
       density={density}
       form={form}
       tagEnd={tagEnd}
+      answersReplacedBy={answersReplacedBy}
       // A segment built without the field (an older build's) fails closed (`confirmsOf`).
       confirms={seg.confirms ?? confirmsOf(undefined, seg.risk)}
       tool={seg.tool}

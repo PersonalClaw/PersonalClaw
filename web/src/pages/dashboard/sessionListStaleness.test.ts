@@ -37,12 +37,6 @@ const codeOf = (rel: string) => readSource(join(SRC, rel))
 beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 
 describe('every reader of the chat-session collection shares its namespace', () => {
-  it('Home reads it under the collection prefix, not a surface name', () => {
-    const dash = codeOf('pages/dashboard/Home.tsx')
-    expect(dash, 'the key must sit in the collection namespace').toMatch(/'chat:sessions:recent'/)
-    expect(dash, 'the surface-named key is gone').not.toMatch(/dashboard:recent-sessions/)
-  })
-
   it('no reader of api.chatSessions() sits outside the prefix', () => {
     // The check that would have caught this originally: enumerate the READERS, then confirm each
     // one's key is reachable by the collection's bust.

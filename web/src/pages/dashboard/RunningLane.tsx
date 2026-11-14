@@ -12,7 +12,10 @@ import { RowHitTarget } from '../../ui/RowHitTarget'
 import { MarkdownLine } from '../../ui/MarkdownLine'
 import { previewLine } from '../../lib/previewText'
 
-// ── Home's Running now: the running list ─────────────────────────────────────────────────────────
+// ── Running now: the running list ────────────────────────────────────────────────────────────────
+//
+// The lane a project's page draws for its live work (Home shows all of it on its band, "Your agents
+// today", `agents/AgentDay.tsx`). Its `openable()` is every card's press target, Needs you's too.
 //
 // Every row is one piece of live work as `GET /api/running` names it (`running_now`): its name, its
 // exact phase as text (the tone only summarises it), what it is doing in the gateway's words, the
@@ -116,12 +119,33 @@ export function FinishedRows({ finished, interrupted, onOpen, selected }: {
   )
 }
 
+/** Where a click that must keep to itself can begin: a control, a field, an element with an
+ *  interactive role, or anywhere in an open second confirmation (its sentence included). */
+const KEEPS_ITS_CLICK = [
+  'a[href]', 'button', 'input', 'textarea', 'select', 'summary', '[contenteditable="true"]',
+  ...['button', 'link', 'checkbox', 'radio', 'switch', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+    'tab', 'textbox', 'combobox', 'option', 'slider', 'spinbutton', 'searchbox'].map((r) => `[role="${r}"]`),
+  '[data-inline-confirm]',
+].join(', ')
+
+/** Whether a click on a row's wrapper began in one of its own controls: then it is that control's
+ *  click, and the row opens nothing. The row's own hit target (`RowHitTarget`) is the one control
+ *  whose click is the row's. */
+export function beganInAControl(e: { target: EventTarget | null; currentTarget: EventTarget | null }): boolean {
+  const start = e.target instanceof Element ? e.target.closest(KEEPS_ITS_CLICK) : null
+  if (!start || !(e.currentTarget instanceof Element) || !e.currentTarget.contains(start)) return false
+  return !start.hasAttribute('data-row-hit-target')
+}
+
 /** What makes a row open its detail: the row-wide hit target (`RowHitTarget`) and its wrapper's
- *  click, with the focus ring drawn on the row. Nothing when the page has no detail to open. */
+ *  click, with the focus ring drawn on the row. Nothing when the page has no detail to open. A click
+ *  that begins in one of the row's own controls (an answer, a link, a field, a second confirmation)
+ *  is that control's, and opens nothing (`beganInAControl`): a `Button` stops nothing, so Allow
+ *  would otherwise open the panel too and, on a phone, replace the list. */
 export function openable(name: string, onOpen?: () => void, selected = false) {
   if (!onOpen) return { props: {}, target: null, className: '' }
   return {
-    props: { tabIndex: -1, onClick: onOpen },
+    props: { tabIndex: -1, onClick: (e: React.MouseEvent<HTMLElement>) => { if (!beganInAControl(e)) onOpen() } },
     target: <RowHitTarget label={`Show the details of ${name}`} selected={selected} />,
     className: `relative cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary ${selected ? 'ring-1 ring-primary' : ''}`,
   }

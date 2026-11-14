@@ -10,12 +10,13 @@ interface Stop extends SpotlightStep {
   route: string | null
 }
 
-/** The five stops (rail → chat → inbox → approvals → settings), each a row the sidebar shows. */
+/** The five stops (rail → chat → inbox → approvals → settings): the sidebar, two pages it opens,
+ *  Needs you, which the badge at the top opens on every page, and Settings. */
 const STOPS: Stop[] = [
   {
     id: 'rail', anchor: 'rail', route: null, icon: PanelLeft,
     title: 'The sidebar is the whole app',
-    body: 'It starts with five essentials. Any other surface joins it the first time you open one — nothing is locked away.',
+    body: 'Every page PersonalClaw has is here, for everyone, and its search finds any of them. Nothing is locked away.',
   },
   {
     id: 'chat', anchor: 'chat', route: 'chat', icon: MessageSquare,
@@ -28,9 +29,9 @@ const STOPS: Stop[] = [
     body: 'Messages, reminders and finished runs queue up here instead of chasing you across the app.',
   },
   {
-    id: 'approvals', anchor: 'approvals', route: 'dashboard?view=attention', icon: ShieldCheck,
+    id: 'approvals', anchor: 'approvals', route: 'mission-control', icon: ShieldCheck,
     title: 'Anything risky waits for you here',
-    body: '"Needs you" on your home screen holds everything waiting on your answer: approvals, questions, runs stopped at a step and skill proposals. Approve or reject it in one click.',
+    body: 'Needs you holds everything waiting on your answer: approvals, questions, runs stopped at a step and proposals. The badge at the top counts them on every page. Answer each one from its card.',
   },
   {
     id: 'settings', anchor: 'settings', route: 'settings', icon: SlidersHorizontal,

@@ -160,6 +160,13 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
 
   // ── Home ──────────────────────────────────────────────────────────────────────────────────────
   { route: 'dashboard?safe=1', from: ['documented'] },
+  // Home's Attention view became Needs you, a page of its own: its old address lands there with a
+  // replace, an open card kept, and Needs you's old Overview address lands on Home.
+  { route: 'dashboard?view=attention', from: ['documented'], lands: 'mission-control' },
+  { route: `dashboard?view=attention&open=waiting%3Aapproval%3A${S.approval}`, from: ['documented'], lands: `mission-control?open=waiting%3Aapproval%3A${S.approval}` },
+  { route: 'mission-control?view=overview', from: ['documented'], lands: 'dashboard' },
+  // An ask opened on Needs you with its panel: the band's Answer, ⌘⌥A on a grant, a proposal or a note.
+  { route: `mission-control?open=waiting%3Aapproval%3A${S.approval}`, from: ['documented'] },
 
   // ── Chat ──────────────────────────────────────────────────────────────────────────────────────
   { route: 'chat/new', from: ['palette', 'documented'] },

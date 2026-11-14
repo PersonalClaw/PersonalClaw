@@ -77,12 +77,36 @@ NOTIFICATION_FRAMES: frozenset[str] = frozenset(
 _UNHEARD = object()
 
 
+def _without_owner_kinds(data: object) -> object:
+    """A refresh frame's *data* without :data:`OWNER_REFRESH_KINDS`, or :data:`_UNHEARD` when no
+    other kind is left."""
+    if not isinstance(data, dict):
+        return _UNHEARD
+    kinds = data.get("kinds")
+    if not isinstance(kinds, list):
+        return _UNHEARD
+    kept = [k for k in kinds if k not in OWNER_REFRESH_KINDS]
+    return {**data, "kinds": kept} if kept else _UNHEARD
+
+
+#: The refresh hint's frame (``DashboardState.push_refresh``), which an app's socket that declares
+#: it hears without :data:`OWNER_REFRESH_KINDS`.
+REFRESH_FRAMES: frozenset[str] = frozenset({"refresh"})
+
+#: Refresh kinds only your own pages hear: an app's socket that declares ``refresh`` gets the
+#: frame's other kinds, never these. ``yolo`` says your chats started or stopped running tool calls
+#: without asking (``DashboardState.enable_yolo``), which no app is told: the session list stopped
+#: carrying your YOLO state for the same reason.
+OWNER_REFRESH_KINDS: frozenset[str] = frozenset({"yolo"})
+
+
 def _has_app_view(event_type: str) -> bool:
     """Whether an app's socket gets *event_type* in a view of its own rather than as sent."""
     return (
         event_type in CONVERSATION_LIST_FRAMES
         or event_type in NOTIFICATION_FRAMES
         or event_type in RUNNING_LIST_FRAMES
+        or event_type in REFRESH_FRAMES
     )
 
 
@@ -421,6 +445,8 @@ class DashboardWebSocketState:
             return self._own_rows(app, event_type, data)
         if event_type in RUNNING_LIST_FRAMES:
             return self._own_changes(app, data)
+        if event_type in REFRESH_FRAMES:
+            return _without_owner_kinds(data)
         return self._own_notifications(app, event_type, data)
 
     def _own_changes(self, app: str, data: object) -> object:

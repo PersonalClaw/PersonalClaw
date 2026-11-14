@@ -11,6 +11,7 @@ import { TextLink } from './TextLink'
 import { TOUCH_TARGET } from './Toggle'
 import { Tooltip, type TooltipTriggerProps } from './Tooltip'
 import { bindingLabel, matchBinding } from '../app/keymap'
+import { useHeldHeight } from '../lib/useHeldHeight'
 
 /** ONE renderer for "the agent is blocked waiting on your permission".
  *
@@ -99,8 +100,9 @@ export function confirmSentences(confirms: readonly string[]): string[] {
   return [...new Set(confirms.map((k) => CONFIRM_WORDS[k] ?? CONFIRM_WORDS.undeclared))]
 }
 
-/** Whether a key pressed on *el* is typed into a text field: an input, a text area or an editor. */
-function typesText(el: EventTarget | null): boolean {
+/** Whether a key pressed on *el* is typed into a text field: an input, a text area or an editor. A
+ *  list's own keys (Needs you's) are never taken from one either. */
+export function typesText(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
   if (el.isContentEditable || el.closest('[contenteditable="true"],[role="textbox"]')) return true
   const tag = el.tagName
@@ -125,7 +127,7 @@ function unseen(el: HTMLElement): boolean {
 
 export function ApprovalPrompt({
   tool, args, purpose, source, sourceHref, badge, meta, scope, choices, density = 'compact', className,
-  confirms = [], form = 'chat', tagEnd,
+  confirms = [], form = 'chat', tagEnd, answersReplacedBy,
 }: {
   tool: string
   /** The tool's arguments, raw. `compact` cuts them at a word and shows all of them on demand;
@@ -164,9 +166,15 @@ export function ApprovalPrompt({
   form?: ApprovalForm
   /** The queue form's tag row end, right-aligned: the card's project chip and its time left. */
   tagEnd?: ReactNode
+  /** The queue form only: what stands where the answers were, at the height they and their second
+   *  confirmation took, so nothing under the card moves: the outcome once it is answered, or, while
+   *  its panel is open, the line that says to answer it there. */
+  answersReplacedBy?: ReactNode
 }) {
   const roomy = density === 'roomy'
   const queue = form === 'queue'
+  const answersRef = useRef<HTMLDivElement>(null)
+  const held = useHeldHeight(answersRef, queue && !answersReplacedBy)
   const rootRef = useRef<HTMLDivElement>(null)
   const yesRef = useRef<HTMLButtonElement>(null)
   // One request per decision, whichever choice it is: set when an answer is sent, and kept once it
@@ -245,17 +253,23 @@ export function ApprovalPrompt({
         {purpose && <p data-type="body-s" className="break-words text-on-surface">{purpose}</p>}
         {meta}
         {scope}
-        <div className="flex flex-wrap items-center gap-s">
-          {choices.map((c) => (
-            <ApprovalChoiceButton key={c.key} roomy={false} queue
-              choice={{ ...c, onClick: () => (c.approves ? approve(c) : send(c)) }} />
-          ))}
-        </div>
-        {armed && approving && (
-          // Under the pressed control, and nothing is sent before it: every press of Allow only asks
-          // again, and Yes answers a press begun after a quiet moment (`InlineConfirm`).
-          <InlineConfirm sentence={`${confirmSentences(confirms).join(' ')} Run it?`} verb="run it"
-            onYes={() => send(approving)} onBack={() => setArmed(false)} />
+        {answersReplacedBy ? (
+          <div data-held-answers="" style={held ? { minHeight: held } : undefined}>{answersReplacedBy}</div>
+        ) : (
+          <div ref={answersRef} className="flex min-w-0 flex-col gap-xs">
+            <div className="flex flex-wrap items-center gap-s">
+              {choices.map((c) => (
+                <ApprovalChoiceButton key={c.key} roomy={false} queue
+                  choice={{ ...c, onClick: () => (c.approves ? approve(c) : send(c)) }} />
+              ))}
+            </div>
+            {armed && approving && (
+              // Under the pressed control, and nothing is sent before it: every press of Allow only
+              // asks again, and Yes answers a press begun after a quiet moment (`InlineConfirm`).
+              <InlineConfirm sentence={`${confirmSentences(confirms).join(' ')} Run it?`} verb="run it"
+                onYes={() => send(approving)} onBack={() => setArmed(false)} />
+            )}
+          </div>
         )}
       </div>
     )

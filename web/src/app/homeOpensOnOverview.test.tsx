@@ -1,16 +1,17 @@
-/** The PersonalClaw icon and name are Home's link, Home opens on Overview, and Attention opens only
- *  when it is asked for (#5880).
+/** The PersonalClaw icon and name are Home's link, Home is its Overview, and Needs you is a page of
+ *  its own (#5880).
  *
  *  The sidebar spent a row on Home while the icon and name at its top only labelled the app, and Home
  *  opened on Attention, so Overview took a switch every time. Now the icon and name are the rail's
- *  first control, named for Home, and open Home on Overview; there is no Home row. `#/dashboard`
- *  shows Overview. Attention opens from what asks for it by name: the shell's needs-you shortcut,
- *  `#/mission-control`, and `?view=attention`. Home's own View switch still moves between the two,
- *  and the address follows it.
+ *  first control, named for Home, and open Home; there is no Home row. `#/dashboard` is Home's
+ *  Overview, with no View switch. What waits on your answer is Needs you, `#/mission-control`, which
+ *  the badge, the band, ⌘⌥A and the palette open; Home stays lit while it shows, since it has no
+ *  row of its own. An old `#/dashboard?view=attention` lands on Needs you, its `open` kept, and an
+ *  old `#/mission-control?view=overview` on Home, each with a replace.
  *
  *  The real shell is booted as `main.tsx` boots it, on a set-up home whose reads are still on their
- *  way, at each address, and asserted on what a person sees: the view Home's switch has checked, the
- *  sidebar's rows and the one that is lit, and the address the bar holds.
+ *  way, at each address, and asserted on what a person sees: the page's heading, the sidebar's rows
+ *  and the one that is lit, and the address the bar holds.
  */
 import { StrictMode } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -49,7 +50,7 @@ installAppSdk()
 registerBuiltinContentTypes()
 
 beforeAll(async () => {
-  await Promise.all([import('../pages/dashboard/Home'), import('../pages/ChatPage')])
+  await Promise.all([import('../pages/dashboard/Home'), import('../pages/dashboard/NeedsYouPage'), import('../pages/ChatPage')])
 }, 120_000)
 
 beforeEach(() => {
@@ -79,44 +80,55 @@ async function settle() {
   let still = 0
   for (let tick = 0; tick < 600 && still < 3; tick++) {
     await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
-    const now = `${location.hash}|${homeView()}|${document.querySelector('main h1')?.textContent ?? ''}`
+    const now = `${location.hash}|${page()}`
     still = now === last && document.querySelector('main') ? still + 1 : 0
     last = now
   }
 }
 
-/** The view Home's View switch has checked, or '' where Home is not drawn. */
-function homeView(): string {
-  const group = screen.queryByRole('radiogroup', { name: 'View' })
-  if (!group) return ''
-  return within(group).getAllByRole('radio').filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.textContent).join(', ')
+/** The page drawn, by its heading: Home's greeting is its Overview. */
+function page(): string {
+  const h1 = document.querySelector('main h1')?.textContent ?? ''
+  return /^Good (morning|afternoon|evening)/.test(h1) ? 'Home' : h1
 }
 const rail = () => document.querySelector('nav[data-tour="rail"]') as HTMLElement
 const railButtons = () => within(rail()).getAllByRole('button')
 const railLit = () => railButtons().filter((b) => b.getAttribute('aria-current') === 'page').map((b) => b.getAttribute('aria-label'))
 
-describe('Home opens on Overview, and Attention when it is asked for', () => {
+describe('Home is its Overview, and Needs you a page of its own', () => {
   it.each([
-    ['dashboard', 'Overview'],
-    ['dashboard?view=overview', 'Overview'],
-    ['dashboard?view=attention', 'Attention'],
-    ['mission-control', 'Attention'],
-    ['mission-control?view=overview', 'Overview'],
-  ])('#/%s shows %s', async (address, view) => {
+    ['dashboard', 'Home', '#/dashboard'],
+    ['dashboard?view=attention', 'Needs you', '#/mission-control'],
+    ['dashboard?view=attention&open=waiting%3Aapproval%3Aa1', 'Needs you', '#/mission-control?open=waiting%3Aapproval%3Aa1'],
+    ['mission-control', 'Needs you', '#/mission-control'],
+    ['mission-control?view=overview', 'Home', '#/dashboard'],
+  ])('#/%s shows %s at %s', async (address, shown, lands) => {
     await open(address)
-    expect(homeView()).toBe(view)
+    expect(page()).toBe(shown)
+    expect(location.hash).toBe(lands)
   })
 
-  it('Home\'s View switch moves between the two, and the address follows it', async () => {
-    await open('dashboard')
-    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'View' })).getByRole('radio', { name: /Attention/ }))
+  it('an old address lands with a replace, so Back never returns to it', async () => {
+    await open('chat')
+    const before = history.length
+    history.pushState(null, '', '#/dashboard?view=attention')
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
     await settle()
-    expect(homeView()).toBe('Attention')
-    expect(location.hash).toBe('#/dashboard?view=attention')
-    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'View' })).getByRole('radio', { name: /Overview/ }))
-    await settle()
-    expect(homeView()).toBe('Overview')
-    expect(location.hash).toBe('#/dashboard')
+    expect(location.hash).toBe('#/mission-control')
+    expect(history.length, 'the old address was replaced, not pushed over').toBe(before + 1)
+  })
+
+  it('no page draws a View switch', async () => {
+    for (const address of ['dashboard', 'mission-control']) {
+      await open(address)
+      expect(screen.queryByRole('radiogroup', { name: 'View' }), address).toBeNull()
+    }
+  })
+
+  it('Needs you lights Home, since it has no row of its own', async () => {
+    await open('mission-control')
+    expect(railLit()).toEqual(['PersonalClaw, Home'])
+    expect(railButtons().filter((b) => /Needs you|Mission Control|Attention/.test(b.getAttribute('aria-label') ?? '')), 'no row').toHaveLength(0)
   })
 })
 
@@ -128,15 +140,13 @@ describe('the icon and name are Home\'s link', () => {
     expect(railButtons().filter((b) => b.getAttribute('aria-label') === 'Home'), 'no Home row').toHaveLength(0)
   })
 
-  it('opens Home on Overview, and is lit while Home is open', async () => {
+  it('opens Home, and is lit while Home is open', async () => {
     await open('chat')
     fireEvent.click(railButtons()[0])
     await settle()
     expect(location.hash).toBe('#/dashboard')
-    expect(homeView()).toBe('Overview')
+    expect(page()).toBe('Home')
     expect(railLit()).toEqual(['PersonalClaw, Home'])
-    await open('dashboard?view=attention')
-    expect(railLit(), 'Home is the page in either view').toEqual(['PersonalClaw, Home'])
   })
 
   it('on the collapsed rail, the icon alone does the same, named Home', async () => {
@@ -147,12 +157,13 @@ describe('the icon and name are Home\'s link', () => {
     fireEvent.click(icon)
     await settle()
     expect(location.hash).toBe('#/dashboard')
-    expect(homeView()).toBe('Overview')
+    expect(page()).toBe('Home')
   })
 
-  it('the palette still goes to Home, and #/dashboard still opens', async () => {
+  it('the palette still goes to Home and to Needs you, and #/dashboard still opens', async () => {
     await open('chat')
     expect(rows.find((r) => r.id === 'go:dashboard')?.label).toBe('Home')
+    expect(rows.find((r) => r.id === 'go:mission-control')?.label).toBe('Needs you')
     await open('dashboard')
     expect(location.hash).toBe('#/dashboard')
   })

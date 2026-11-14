@@ -3,14 +3,16 @@ import { withWeight } from '../design/fontWeight'
 import { useNeedsYou } from '../lib/useNeedsYou'
 import { Tooltip } from './Tooltip'
 
-/** The toolbar's needs-you badge: how many things wait on you, on every page, opening Home on its
- *  Attention view (#5880), where they are.
+/** The toolbar's needs-you badge: how many asks wait on your answer, on every page, opening Needs you
+ *  (`#/mission-control`), where they are answered.
  *
- *  It counts the rows of Home's Needs you from the same read (`useNeedsYou`), so the badge and the
- *  group can never disagree about how many there are. It shows nothing at 0: a counter reading 0
- *  is a claim nobody needs to read (`web/REDESIGN.md` §3, rule 3). And since its absence says
- *  nothing waits, a count not known is never absent: before the first read lands, and after a read
- *  that failed, the badge keeps a muted dash where the number would sit. */
+ *  It counts Needs you's first group, "Waiting on your answer", from the same read (`useNeedsYou`),
+ *  the number the tray and the buddy count, so the badge and the page can never disagree. With none
+ *  waiting and proposals or notes to review, it shows how many muted, as its unknown dash is drawn:
+ *  nothing is blocked on them. It shows nothing when both are 0: a counter reading 0 is a claim
+ *  nobody needs to read (`web/REDESIGN.md` §3, rule 3). And since its absence says nothing waits, a
+ *  count not known is never absent: before the first read lands, and after a read that failed, the
+ *  badge keeps a muted dash where the number would sit. */
 export function NeedsYouBadge({ navigate, className }: {
   navigate: (path: string) => void
   /** Added to the badge, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
@@ -18,28 +20,32 @@ export function NeedsYouBadge({ navigate, className }: {
 }) {
   const { rows, data, error } = useNeedsYou()
   const unknown = !data
-  const n = rows.length
-  if (!unknown && n === 0) return null
-  const label = !unknown ? `${n} waiting on you`
-    : error ? 'What waits on you couldn’t be read' : 'What waits on you is not read yet'
+  const asks = rows.filter((r) => r.origin === 'waiting').length
+  const review = rows.length - asks
+  if (!unknown && asks === 0 && review === 0) return null
+  const label = unknown ? (error ? 'What waits on you couldn’t be read' : 'What waits on you is not read yet')
+    : asks > 0 ? `${asks} waiting on your answer` : `${review} to review`
+  const muted = unknown || asks === 0
+  const count = asks > 0 ? asks : review
+  const shown = unknown ? '—' : count > 9 ? '9+' : String(count)
   return (
     <Tooltip text={label} describes={false}>
       {(tip) => (
-      <button {...tip} type="button" onClick={() => navigate('dashboard?view=attention')}
-        aria-label={`${label} — open Attention`}
+      <button {...tip} type="button" onClick={() => navigate('mission-control')}
+        aria-label={`${label}, open Needs you`}
         className={`relative grid size-7 place-items-center rounded-pill transition-colors${className ? ` ${className}` : ''}`}
         style={{ color: 'var(--color-on-surface-low)' }}>
         <Hand size={16} aria-hidden />
-        {unknown ? (
-          <span data-type="caption" aria-hidden
+        {muted ? (
+          <span data-type="caption" aria-hidden data-badge-muted=""
             className="absolute -right-0.5 -top-0.5 grid min-w-[15px] min-h-[0.9375rem] place-items-center rounded-pill bg-surface-high px-1 leading-none text-on-surface-low">
-            —
+            {shown}
           </span>
         ) : (
           <span data-type="caption" aria-hidden
             className="absolute -right-0.5 -top-0.5 grid min-w-[15px] min-h-[0.9375rem] place-items-center rounded-pill px-1 leading-none"
             style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
-            {n > 9 ? '9+' : n}
+            {shown}
           </span>
         )}
       </button>

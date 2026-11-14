@@ -13,7 +13,8 @@ import { buildDay, type DayInput } from './agentDayModel'
 // ── Home's "Your agents today", as a person meets it ─────────────────────────────────────────────
 //
 // Each row reads as one sentence, its track is decoration the sentence already says, an ask is
-// answered in Attention and never here, and nothing on it moves.
+// answered on Needs you and never here, and nothing on it moves. It is where running work shows:
+// each of an agent's runs, held-up work, and what a restart cut off.
 
 const at = (hh: number, mm: number) => new Date(2026, 10, 3, hh, mm).getTime()
 const NOW = at(18, 20)
@@ -52,6 +53,9 @@ function show(input: DayInput, props: Partial<Parameters<typeof AgentDayView>[0]
 }
 
 afterEach(() => vi.restoreAllMocks())
+
+/** The count over the band, as one line of text. */
+const headText = () => document.querySelector('p[data-type="label-m"]')?.textContent ?? ''
 
 /** A day with a failed helper beside the evening's work, so every row state is drawn. */
 const failing = { helpers: [{ id: 'h1', task: 'cut the release', done: true, agent: 'Release helper',
@@ -137,11 +141,11 @@ describe('a row', () => {
     for (const r of rows) expect(r.querySelector('[aria-hidden="true"] span')).not.toBeNull()
   })
 
-  it('links an ask to Attention and offers no way to answer it here', () => {
+  it('links an ask to Needs you with its panel open, and offers no way to answer it here', () => {
     show(evening())
 
-    const link = screen.getByRole('link', { name: /^Answer in Attention/ })
-    expect(link).toHaveAttribute('href', expect.stringMatching(/^#\/dashboard\?view=attention&open=waiting%3Aapproval%3Aa1$/))
+    const link = screen.getByRole('link', { name: /^Answer:/ })
+    expect(link).toHaveAttribute('href', '#/mission-control?open=waiting%3Aapproval%3Aa1')
     expect(screen.queryByRole('button', { name: /approve|allow|deny|answer/i })).toBeNull()
   })
 
@@ -158,7 +162,7 @@ describe('a row', () => {
 
     const pc = order.indexOf('PersonalClaw')
     expect(pc).toBeGreaterThanOrEqual(0)
-    expect(order[pc + 1]).toBe('Answer in Attention')
+    expect(order[pc + 1]).toBe('Answer')
   })
 
   it('says its state in words beside its mark', () => {
@@ -181,7 +185,7 @@ describe('what you act on comes first', () => {
   it('puts the rows that wait on you and the rows that failed on top, under a count of them', () => {
     show(evening(failing))
 
-    expect(screen.getByText('1 ask waits on you · 1 failed today')).toBeInTheDocument()
+    expect(headText()).toBe('1 need you · 2 running · 1 failed today')
     const rows = within(screen.getByRole('list', { name: 'Your agents' })).getAllByRole('listitem')
     expect(rows.map((r) => r.dataset.lifted ?? '')).toEqual(['waiting', 'failed', '', '', ''])
     expect(rows[1]).toHaveAccessibleName(expect.stringMatching(/^Release helper, failed: Failed at \d\d:\d\d: Couldn’t reach/))
@@ -205,19 +209,19 @@ describe('what you act on comes first', () => {
     expect(screen.getByText('· asked 2 min ago')).toBeInTheDocument()
   })
 
-  it('answers in Attention through a link drawn as a button, never a button that sets the address', () => {
+  it('answers on Needs you through a link drawn as a button, never a button that sets the address', () => {
     show(evening())
 
-    const link = screen.getByRole('link', { name: /^Answer in Attention/ })
+    const link = screen.getByRole('link', { name: /^Answer:/ })
     expect(link.tagName).toBe('A')
     expect(link.className).toContain('rounded-pill')
-    expect(screen.queryByRole('button', { name: /Answer in Attention/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Answer/ })).toBeNull()
   })
 
   it('names each link for the ask it opens, its visible words first', () => {
     show(evening())
 
-    expect(screen.getByRole('link', { name: 'Answer in Attention: PersonalClaw’s ask' })).toHaveTextContent('Answer in Attention')
+    expect(screen.getByRole('link', { name: 'Answer: PersonalClaw’s ask' })).toHaveTextContent('Answer')
   })
 
   it('names the link for the first of a row’s asks when it holds two', () => {
@@ -227,7 +231,7 @@ describe('what you act on comes first', () => {
     ), [], [])
     show(evening({ asks }))
 
-    expect(screen.getByRole('link', { name: 'Answer in Attention: PersonalClaw’s first of 2 asks' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Answer: PersonalClaw’s first of 2 asks' })).toBeInTheDocument()
   })
 
   it('counts a row that failed today and waits on you now as failed, as its sentence says', () => {
@@ -235,7 +239,7 @@ describe('what you act on comes first', () => {
       started: at(16, 10) / 1000, ended: at(16, 12) / 1000, error: 'Couldn’t reach api.github.com' } as never
     show(evening({ helpers: [helper] }))
 
-    expect(screen.getByText('1 ask waits on you · 1 failed today')).toBeInTheDocument()
+    expect(headText()).toBe('1 need you · 2 running · 1 failed today')
   })
 
   it('draws a linked name’s focus ring inside it, and gives an unlinked name the same box', () => {
@@ -253,7 +257,7 @@ describe('what you act on comes first', () => {
       started: at(9, 0) / 1000, ended: at(9, 10) / 1000, error: 'boom' } as never
     show(evening({ asks: [], helpers: [helper] }))
 
-    expect(screen.getByText('1 failed today')).toBeInTheDocument()
+    expect(headText()).toBe('2 running · 1 failed today')
     const row = screen.getByRole('listitem', { name: /^Researcher, working:/ })
     expect(within(row).getByText('· failed at 09:10')).toBeInTheDocument()
     expect(row).not.toHaveAttribute('data-lifted')
@@ -262,17 +266,20 @@ describe('what you act on comes first', () => {
   it('gives the link a 44 px target on a touch screen, as the band’s other controls have', () => {
     show(evening())
 
-    const link = screen.getByRole('link', { name: /^Answer in Attention/ })
+    const link = screen.getByRole('link', { name: /^Answer:/ })
     expect(link.className).toContain('max-lg:min-h-11')
     // A linked name is a target too: its row opens there.
     expect(screen.getByRole('link', { name: 'PersonalClaw' }).className).toContain('max-lg:min-h-11')
   })
 
   it('gives the more-asks line’s link a 44 px target on a touch screen', () => {
-    const asks = needsYou(waitingList(waitingItem({ kind: 'question', id: 'question:x', work: 'chat:nobody-runs-this' })), [], [])
+    const asks = needsYou(waitingList(
+      waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:lisbon', brief: { tool: 'write_file' }, asked_at: iso(at(18, 18)) }),
+      waitingItem({ kind: 'question', id: 'question:x', work: 'chat:nobody-runs-this' }),
+    ), [], [])
     show(evening({ asks }))
 
-    expect(screen.getByRole('link', { name: 'Attention' }).className).toContain('max-lg:min-h-11')
+    expect(screen.getByRole('link', { name: '1 more need you' }).className).toContain('max-lg:min-h-11')
   })
 
   it('keeps an ask’s age whole when its words are cut short', () => {
@@ -281,7 +288,7 @@ describe('what you act on comes first', () => {
     const age = screen.getByText('· asked 2 min ago')
     expect(age.className.split(/\s+/)).toContain('shrink-0')
     expect(age.className.split(/\s+/)).not.toContain('truncate')
-    // Its line clips at its edge, so a long age never draws under "Answer in Attention".
+    // Its line clips at its edge, so a long age never draws under "Answer".
     expect((age.parentElement as HTMLElement).className.split(/\s+/)).toContain('overflow-hidden')
   })
 
@@ -289,38 +296,92 @@ describe('what you act on comes first', () => {
     const asks = needsYou(waitingList(waitingItem({ kind: 'question', id: 'question:x', work: 'chat:nobody-runs-this' })), [], [])
     show(evening({ asks }))
 
-    expect(screen.getByText('1 ask waits on you')).toBeInTheDocument()
+    expect(headText()).toBe('1 need you · 2 running')
+    expect(screen.getByRole('link', { name: '1 need you' })).toHaveAttribute('href', '#/mission-control')
     expect(document.querySelector('[data-lifted]')).toBeNull()
-    // No row holds an ask, so it is not "1 more".
-    expect(screen.getByText(/^1 ask in/)).toBeInTheDocument()
-    expect(screen.queryByText(/more ask/)).toBeNull()
+    // No row holds an ask, so no line says "1 more": the count is the head's alone.
+    expect(screen.queryByText(/more need you/)).toBeNull()
+    expect(screen.getAllByRole('link', { name: /need you$/ })).toHaveLength(1)
   })
 
-  it('counts the asks as Attention does, the one on no row too', () => {
+  it('counts the asks as Needs you does, the one on no row too', () => {
     const asks = needsYou(waitingList(
       waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:lisbon', brief: { tool: 'write_file' }, asked_at: iso(at(18, 18)) }),
       waitingItem({ kind: 'question', id: 'question:x', work: 'chat:nobody-runs-this' }),
     ), [], [])
     show(evening({ asks }))
 
-    expect(screen.getByText('2 asks wait on you')).toBeInTheDocument()
+    expect(headText()).toBe('2 need you · 2 running')
     expect(document.querySelectorAll('[data-lifted]')).toHaveLength(1)
-    expect(screen.getByText(/1 more ask in/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '1 more need you' })).toHaveAttribute('href', '#/mission-control')
   })
 
-  it('shows only the filter’s rows under a filter, and still counts what Attention counts', () => {
+  it('shows only the filter’s rows under a filter, and still counts what Needs you counts', () => {
     show(evening(), { filter: 'working' })
 
     expect(document.querySelector('[data-lifted]')).toBeNull()
-    expect(screen.getByText('1 ask waits on you')).toBeInTheDocument()
+    expect(headText()).toMatch(/^1 need you · /)
   })
 
   it('lifts nothing and counts nothing when nothing waits on you and nothing failed', () => {
     show(evening({ asks: [] }))
 
     expect(screen.getByRole('listitem', { name: /^PersonalClaw, working:/ })).toBeInTheDocument()
-    expect(screen.queryByText(/wait on you|waits on you|failed today/)).toBeNull()
+    expect(headText(), 'the head counts only what runs').toBe('2 running')
     expect(document.querySelector('[data-lifted]')).toBeNull()
+  })
+})
+
+describe('where running work shows', () => {
+  const second = live({ id: 'loop:api', kind: 'loop', work: 'loop:api', agent: 'Researcher', since: iso(at(18, 5)),
+    title: 'Update the API reference', refs: { link: '#/loops/api' } })
+
+  it('an agent with two runs names each, each with its own Open, and its name opens the one its line names', () => {
+    const base = evening({ asks: [] })
+    show({ ...base, live: [...base.live, second] })
+
+    const row = screen.getByRole('listitem', { name: /^Researcher, working: Compare three standing desks · and 1 more\. Also Update the API reference\./ })
+    expect(within(row).getByRole('link', { name: 'Researcher' })).toHaveAttribute('href', '#/loops/desks')
+    expect(within(row).getByRole('link', { name: 'Open Compare three standing desks' })).toHaveAttribute('href', '#/loops/desks')
+    expect(within(row).getByRole('link', { name: 'Open Update the API reference' })).toHaveAttribute('href', '#/loops/api')
+    expect(headText()).toBe('3 running')
+  })
+
+  it('an agent with one run draws no Open: its name opens it', () => {
+    show(evening({ asks: [] }))
+
+    expect(screen.queryByRole('link', { name: /^Open / })).toBeNull()
+  })
+
+  it('held-up work says Blocked with the gateway’s reason, in the blocked tone, and is counted apart', () => {
+    const base = evening({ asks: [] })
+    show({ ...base, live: [base.live[0], live({ ...base.live[1], state: 'blocked', line: 'Waiting for a model slot',
+      phaseSince: iso(at(18, 10)) })] })
+
+    const row = screen.getByRole('listitem', { name: /^Researcher, blocked: Blocked: Waiting for a model slot\./ })
+    expect(within(row).getByText('Blocked')).toBeInTheDocument()
+    expect(row.querySelector('[data-mark="blocked"]')).not.toBeNull()
+    expect(row.querySelector('[data-state-family]')?.getAttribute('data-state-family')).toBe('blocked')
+    expect(headText()).toBe('1 running · 1 blocked')
+  })
+
+  it('work a restart cut off says Interrupted, when, and why, and the head counts it', () => {
+    show(evening({ asks: [], cut: [{ at: at(18, 12), row: { work: 'chat:w', kind: 'chat', session: 'w', phase: 'tool', line: '', since: null,
+      name: 'Draft the post', agent: 'Writer agent', started_at: null, route: '#/chat/w', blocked: false, waiting: [], project_id: '', loop_kind: '' } }] }))
+
+    const row = screen.getByRole('listitem', { name: 'Writer agent, interrupted: Interrupted at 18:12: The gateway restarted while it ran..' })
+    expect(within(row).getByRole('link', { name: 'Writer agent' })).toHaveAttribute('href', '#/chat/w')
+    expect(headText()).toBe('2 running · 1 cut off by a restart')
+  })
+
+  it('a read that failed is named in its own line with Retry, and the rows it did not need still draw', async () => {
+    const onRetry = vi.fn()
+    show(evening({ scheduled: [] }), { unread: ['the schedule'], onRetry })
+
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load the schedule.")
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('listitem', { name: /^Researcher, working:/ })).toBeInTheDocument()
   })
 })
 

@@ -172,6 +172,16 @@ describe('approval requested → useApprovalToasts', () => {
     expect(toasts).toHaveLength(1)
     expect(playCue).toHaveBeenCalledWith('approval_needed')
   })
+
+  it('raises no toast and no cue while Needs you shows: it lists every approval', () => {
+    const { rerender } = renderHook(({ listed }) => useApprovalToasts('', listed), { initialProps: { listed: true } })
+    expect(toastsDuring(() => act(() => onMessage!(frame())))).toEqual([])
+    expect(playCue).not.toHaveBeenCalled()
+    // Off the page, the next one nudges as ever.
+    rerender({ listed: false })
+    expect(toastsDuring(() => act(() => onMessage!(frame({ id: 'ap-2' }))))).toHaveLength(1)
+    expect(playCue).toHaveBeenCalledWith('approval_needed')
+  })
 })
 
 describe('error toast → Toaster', () => {

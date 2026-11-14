@@ -129,7 +129,7 @@ describe("buildTrayMenuTemplate", () => {
     const row = template.slice(1).find((r) => /2 waiting on you/.test(r.label || ""));
     row.click();
     assert.deepStrictEqual(a.calls, [["deepLink", DEEP_LINKS.waiting]]);
-    assert.equal(DEEP_LINKS.waiting, "#/mission-control", "Mission Control lists everything waiting on you");
+    assert.equal(DEEP_LINKS.waiting, "#/mission-control", "Needs you lists everything waiting on you");
   });
 
   it("stays click-through at zero instead of becoming a dead end", () => {

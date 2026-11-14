@@ -1,12 +1,14 @@
-"""The locked Mission Control preset.
+"""The locked Needs you preset (``#/mission-control``).
 
 The dashboard-as-views registry first shipped with ONE preset and a comment reserving
 the second for this one (gated on unifying the inbox and notifications, now done). This covers
-the server third of the feature: a **locked** "Mission Control" view whose
-DECLARED composition is Home's three groups, in the order they are read (#3813).
+the server third of the feature: a **locked** "Needs you" view whose DECLARED composition is its
+one group, what waits on your answer and then what to review. Running work and what finished
+moved to Home's Overview; the id stays ``mission-control``, a persisted overlay key and every
+link's address.
 
-The group refs asserted here are a CONTRACT with the frontend — ``Home.tsx`` renders by these
-exact strings, so a rename is a breaking change on both sides, not a local edit.
+The group ref asserted here is a CONTRACT with the frontend — ``NeedsYouPage.tsx`` renders by this
+exact string, so a rename is a breaking change on both sides, not a local edit.
 
 Isolation: every test binds an isolated home via ``PERSONALCLAW_HOME`` AND
 monkeypatches the store's imported ``config_dir`` symbol, so nothing touches the real
@@ -21,14 +23,10 @@ import pytest
 
 from personalclaw.dashboard import views_store as store
 
-#: The three group refs, verbatim, in their order. Duplicated from the module ON PURPOSE:
-#: asserting against ``store._MISSION_CONTROL_CORE_REFS`` alone would pass through any
-#: rename, and the FE codes against these literals.
-GROUP_REFS = [
-    "core:group-needs-you",
-    "core:group-running-now",
-    "core:group-recent",
-]
+#: The group ref, verbatim. Duplicated from the module ON PURPOSE: asserting against
+#: ``store._MISSION_CONTROL_CORE_REFS`` alone would pass through any rename, and the FE codes
+#: against this literal.
+GROUP_REFS = ["core:group-needs-you"]
 
 #: The eight Overview refs, verbatim — a second preset must not perturb the first.
 OVERVIEW_REFS = [
@@ -55,13 +53,13 @@ def _isolate_home(tmp_path, monkeypatch):
 # ── The preset resolves, and is locked ──────────────────────────────────────
 
 
-def test_mission_control_resolves_as_a_locked_preset_with_three_groups():
+def test_needs_you_resolves_as_a_locked_preset_with_its_one_group():
     view = store.get_view(store.PRESET_MISSION_CONTROL_ID)
     assert view is not None
     assert view.id == "mission-control"
-    assert view.name == "Mission Control"
+    assert view.name == "Needs you"
     assert view.preset is True
-    # Exactly the three groups, in their declared order — nothing more on a fresh home.
+    # Exactly its one group — nothing more on a fresh home.
     assert [t.ref for t in view.tiles] == GROUP_REFS
     assert store._MISSION_CONTROL_CORE_REFS == tuple(GROUP_REFS)
 
@@ -71,7 +69,7 @@ def test_mission_control_is_nav_pinned_with_a_resolvable_icon():
     lucide-react export (``resolveAppIcon`` falls back to a generic block otherwise)."""
     view = store.get_view(store.PRESET_MISSION_CONTROL_ID)
     assert view.nav_pinned is True
-    assert view.icon == "Radar"
+    assert view.icon == "Hand"
 
 
 def test_mission_control_refuses_edit():
@@ -103,7 +101,7 @@ def test_both_presets_listed_and_overview_is_unchanged():
 # ── Overlay ordering (the Overview invariant, held for the new preset) ───────
 
 
-def test_overlay_tile_orders_after_the_three_core_groups():
+def test_overlay_tile_orders_after_the_core_group():
     store.add_tile(store.PRESET_MISSION_CONTROL_ID, "artifact:board")
     view = store.get_view(store.PRESET_MISSION_CONTROL_ID)
     refs = [t.ref for t in view.tiles]
@@ -133,7 +131,7 @@ def test_presets_are_exactly_two_and_a_bogus_id_does_not_resolve():
 
 
 def test_preset_never_round_trips_to_disk_as_a_user_view():
-    """If Mission Control landed in ``dashboard_views.json`` under ``views`` it would
+    """If Needs you landed in ``dashboard_views.json`` under ``views`` it would
     become editable and the lock would be a fiction."""
     # Force a write, and add an overlay tile so the file definitely exists.
     store.add_tile(store.PRESET_MISSION_CONTROL_ID, "artifact:board")
@@ -152,7 +150,7 @@ def test_preset_never_round_trips_to_disk_as_a_user_view():
 
 def test_a_user_view_named_like_the_preset_is_still_not_a_preset():
     """Same-name user view must not inherit the lock or displace the preset."""
-    created = store.create_view("Mission Control")
+    created = store.create_view("Needs you")
     assert created.id != "mission-control"
     assert created.preset is False
     ids = [v.id for v in store.load_views()]
@@ -163,7 +161,7 @@ def test_a_user_view_named_like_the_preset_is_still_not_a_preset():
     store.delete_view(created.id)
 
 
-def test_the_frontend_names_the_same_three_refs_as_the_registry():
+def test_the_frontend_names_the_same_ref_as_the_registry():
     """The cross-language drift rail — the ONLY check that can fail on this mismatch.
 
     The registry and the view that renders it were built on separate branches against a
@@ -180,17 +178,19 @@ def test_the_frontend_names_the_same_three_refs_as_the_registry():
     import pathlib
     import re
 
-    tsx = pathlib.Path(__file__).resolve().parents[1] / "web/src/pages/dashboard/Home.tsx"
+    tsx = pathlib.Path(__file__).resolve().parents[1] / "web/src/pages/dashboard/NeedsYouPage.tsx"
     assert tsx.exists(), f"{tsx} moved — re-point this rail"
     body = tsx.read_text()
     block = re.search(r"export const GROUP_REFS[^{]*\{(.*?)\n\}", body, re.S)
-    assert block, "GROUP_REFS is no longer a literal object in Home.tsx — re-derive this rail"
+    assert (
+        block
+    ), "GROUP_REFS is no longer a literal object in NeedsYouPage.tsx — re-derive this rail"
     fe_refs = set(re.findall(r"'(core:[^']+)'", block.group(1)))
     # Vacuity floor: a regex that matched an empty block would make the comparison below
     # trivially true against an empty set, which is exactly how a rail reads clean forever.
-    assert len(fe_refs) == 3, f"parsed {len(fe_refs)} refs out of GROUP_REFS, expected 3: {fe_refs}"
+    assert len(fe_refs) == 1, f"parsed {len(fe_refs)} refs out of GROUP_REFS, expected 1: {fe_refs}"
     assert fe_refs == set(store._MISSION_CONTROL_CORE_REFS), (
-        "the Mission Control view's GROUP_REFS and the registry's _MISSION_CONTROL_CORE_REFS name "
+        "the Needs you view's GROUP_REFS and the registry's _MISSION_CONTROL_CORE_REFS name "
         f"different tiles.\n  frontend: {sorted(fe_refs)}\n  registry: "
         f"{sorted(store._MISSION_CONTROL_CORE_REFS)}"
     )

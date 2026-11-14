@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { resetDataStore } from '../../lib/data'
 import { ApiError, type InboxItem, type SkillProposal } from '../../lib/api'
 import { proposalSummary, proposalTitle } from '../../lib/attentionLanes'
-import { HomeHarness, gateItem, waitingItem, waitingList } from '../../test/homeHarness'
+import { NeedsYouHarness, gateItem, waitingItem, waitingList } from '../../test/needsYouHarness'
 
 // ── Home answers each ask at its own route ──────────────────────────────────────────────────────
 //
@@ -50,7 +50,6 @@ vi.mock('../../lib/useChatSocket', async (orig) => ({ ...(await orig<Record<stri
 vi.mock('../../app/identity', () => ({ useIdentity: () => ({ name: '' }), firstNameOf: (n: string) => n }))
 vi.mock('./PinnedTiles', () => ({ PinnedTiles: () => null }))
 vi.mock('../../ui/surfaces/SurfaceOverlay', () => ({ SurfaceOverlay: () => null }))
-vi.mock('./widgets/Suggestions', () => ({ Suggestions: () => null }))
 
 const ApiErrorOf = async () => (await import('../../lib/api')).ApiError
 
@@ -84,19 +83,22 @@ describe('an approval', () => {
 
   it('shows what it would allow, the whole input a click away, and which loop asked', async () => {
     waiting.mockResolvedValue(waitingList([loopWrite]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     const c = await card('write_file')
     expect(within(c).getByText(/^write_file\(\{"path": "docs\/README\.md"/)).toBeTruthy()
     expect(within(c).getByText('Caution')).toBeTruthy()
     expect(within(c).getByRole('list', { name: /What this can touch/ }).textContent).toBe('Writes files')
     await userEvent.click(within(c).getByRole('button', { name: 'Show all of what write_file would run' }))
     expect(within(c).getByRole('group', { name: 'Tool arguments' }).textContent).toBe(WRITE)
-    expect(within(c).getByRole('link', { name: 'Open loop “Fix the README”' }).getAttribute('href')).toBe('#/loops/0a1b2c3d')
+    // Who asked, on the card in its own words as plain text: the card is one of a queue, and its
+    // panel is where the asking work is opened.
+    expect(within(c).getByText('From loop “Fix the README”').tagName).toBe('SPAN')
+    expect(within(c).queryByRole('link')).toBeNull()
   })
 
   it('Allow answers the call by the registry id its own route names, and the card reads answered', async () => {
     waiting.mockResolvedValue(waitingList([loopWrite]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     await userEvent.click(within(await card('write_file')).getByRole('button', { name: /^Allow write_file/ }))
     await waitFor(() => expect(resolveApproval).toHaveBeenCalledWith('loop-0a1b2c3d:req-1', 'approve'))
     expect(await within(needsYou()).findByText('Approved.')).toBeTruthy()
@@ -104,7 +106,7 @@ describe('an approval', () => {
 
   it('Deny sends the reject', async () => {
     waiting.mockResolvedValue(waitingList([loopWrite]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     await userEvent.click(within(await card('write_file')).getByRole('button', { name: /^Deny write_file/ }))
     await waitFor(() => expect(resolveApproval).toHaveBeenCalledWith('loop-0a1b2c3d:req-1', 'reject'))
   })
@@ -112,7 +114,7 @@ describe('an approval', () => {
   it('a failed answer says why and leaves the card answerable, and a second press sends again', async () => {
     resolveApproval.mockRejectedValueOnce(new Error('the gateway is restarting'))
     waiting.mockResolvedValue(waitingList([loopWrite]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     const allow = () => within(needsYou()).getByRole('button', { name: /^Allow write_file/ })
     await card('write_file')
     await userEvent.click(allow())
@@ -125,7 +127,7 @@ describe('an approval', () => {
     const ApiError = await ApiErrorOf()
     resolveApproval.mockRejectedValue(new ApiError('The loop that asked has ended, so nothing ran.', 409, 'approval_owner_ended'))
     waiting.mockResolvedValue(waitingList([loopWrite]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     await userEvent.click(within(await card('write_file')).getByRole('button', { name: /^Allow write_file/ }))
     expect(await within(needsYou()).findByText('The loop that asked has ended, so nothing ran.')).toBeTruthy()
     expect(within(needsYou()).queryByText(/try again/)).toBeNull()
@@ -133,7 +135,7 @@ describe('an approval', () => {
 
   it('is not answered here when its route is not an approval’s', async () => {
     waiting.mockResolvedValue(waitingList([waitingItem({ answer: { method: 'POST', path: '/api/elsewhere', takes: [], body: {} } })]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     expect(await within(needsYou()).findByRole('link', { name: /^Answer it where it asks/ })).toHaveAttribute('href', '#/chat/chat-1')
     expect(within(needsYou()).queryByRole('button', { name: /^Allow/ })).toBeNull()
   })
@@ -142,7 +144,7 @@ describe('an approval', () => {
 describe('a run’s gate', () => {
   it('offers its options as answers, and resumes the run with the chosen one and its token', async () => {
     waiting.mockResolvedValue(waitingList([gateItem()]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     expect(await within(needsYou()).findByText('Workflow · release')).toBeTruthy()
     await userEvent.click(within(needsYou()).getByRole('button', { name: /Ship it$/ }))
     await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: 'Ship it', resume_token: 'tok-9' }))
@@ -152,7 +154,7 @@ describe('a run’s gate', () => {
   it('a failed answer says so and keeps the options clickable', async () => {
     resumeWorkflowRun.mockRejectedValue(new Error('the run moved on'))
     waiting.mockResolvedValue(waitingList([gateItem()]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     await userEvent.click(await within(needsYou()).findByRole('button', { name: /Hold$/ }))
     expect(await within(needsYou()).findByText(/Could not send that answer: the run moved on/)).toBeTruthy()
     expect(within(needsYou()).getByRole('button', { name: /Hold$/ })).toBeEnabled()
@@ -160,7 +162,7 @@ describe('a run’s gate', () => {
 
   it('with no preset options, says where to answer it instead of faking a text box', async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: 'Name the release' })]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     const link = await within(needsYou()).findByRole('link', { name: /^Open the run/ })
     expect(link.getAttribute('href')).toBe('#/workflows/runs/run-77')
     expect(within(needsYou()).queryByRole('textbox')).toBeNull()
@@ -168,7 +170,7 @@ describe('a run’s gate', () => {
 
   it('an approval gate is a yes or a no: Approve sends true, Deny false', async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'approval', prompt: 'Push to main?' })]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Deny/ }))
     await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: false, resume_token: 'tok-9' }))
   })
@@ -177,7 +179,7 @@ describe('a run’s gate', () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'approval', prompt: 'Send the email?' }, {
       answer: { method: 'POST', path: '/api/workflows/runs/run-77/confirm', takes: ['approve', 'reject', 'skip', 'quit'], body: { resume_token: 'tok-9' } },
     })]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Approve/ }))
     await waitFor(() => expect(confirmWorkflowRun).toHaveBeenCalledWith('run-77', { verb: 'approve', resume_token: 'tok-9' }))
     expect(resumeWorkflowRun).not.toHaveBeenCalled()
@@ -185,7 +187,7 @@ describe('a run’s gate', () => {
 
   it('a parked run is woken, and offers nothing to decide', async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'event', prompt: 'Waiting for the next check' })]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Wake .* now$/ }))
     await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: true, resume_token: 'tok-9' }))
     expect(within(needsYou()).queryByRole('button', { name: /^Deny/ })).toBeNull()
@@ -200,7 +202,7 @@ describe('the other asks', () => {
       answer: { method: 'POST', path: '/api/triggers/t1/answer', takes: [true, false], body: { resume_token: 'pk' } },
       route: '#/automations?open=t1',
     })]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     expect(await within(needsYou()).findByText('Trigger · Check my balance')).toBeTruthy()
     await userEvent.click(within(needsYou()).getByRole('button', { name: /^Approve/ }))
     await waitFor(() => expect(answerTriggerPark).toHaveBeenCalledWith('t1', { resume_token: 'pk', answer: true }))
@@ -213,7 +215,7 @@ describe('the other asks', () => {
       id: 'browse_grant:g1', kind: 'browse_grant', work: '', session: '', brief: { task: 'Order the groceries', scope: 'shop.example' },
       answer: { method: 'POST', path: '/api/browse/grants/g1/{answer}', takes: ['approve', 'reject'], body: {} }, route: '#/dashboard',
     })]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Refuse Order the groceries/ }))
     await waitFor(() => expect(browseGrantResolve).toHaveBeenCalledWith('g1', 'reject'))
   })
@@ -223,7 +225,7 @@ describe('the other asks', () => {
       id: 'bridge_confirmation:abc', kind: 'bridge_confirmation', work: '', session: '', brief: { action: 'Open the garage', asked_by: 'Home assistant' },
       answer: { method: 'POST', path: '/api/external-access/bridge/confirmations/tok-bridge', takes: [true, false], body: {} }, route: '#/inbox',
     })]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     expect(await within(needsYou()).findByText('Home assistant')).toBeTruthy()
     await userEvent.click(within(needsYou()).getByRole('button', { name: /^Run it once/ }))
     await waitFor(() => expect(answerBridgeConfirmation).toHaveBeenCalledWith('tok-bridge', true))
@@ -238,7 +240,7 @@ describe('the other asks', () => {
       waitingItem({ id: 'plan_review:loop:l2', kind: 'plan_review', work: 'loop:l2', session: '', consequence: 'asks', brief: { name: 'Split', task: 'Split the module' },
         answer: { method: 'PATCH', path: '/api/loops/l2', takes: ['start'], body: { action: 'start' } }, route: '#/loops/l2' }),
     ]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     const links = await within(needsYou()).findAllByRole('link', { name: /^Answer it where it asks/ })
     expect(links.map((a) => a.getAttribute('href'))).toEqual(['#/chat/chat-1', '#/loops/l1', '#/loops/l2'])
     expect(within(needsYou()).getByText('Loop · Docs')).toBeTruthy()
@@ -266,7 +268,7 @@ describe('a skill proposal and a note, after every waiting item', () => {
       id: 'note-1', channel: 'native', channel_name: '', sender_id: 'me', sender_name: 'me', message: 'Call the bank',
       classification: '', confidence: '', status: 'pending', item_kind: 'user_note', created_at: 200, refs: {},
     } as InboxItem])
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     expect(await within(needsYou()).findByText(proposalTitle(WRITEUP))).toBeTruthy()
     expect(within(needsYou()).getByText(proposalSummary(WRITEUP))).toBeTruthy()
     expect(within(needsYou()).queryByText('Refine a skill')).toBeNull()
@@ -283,7 +285,7 @@ describe('a skill proposal and a note, after every waiting item', () => {
   it('says why an Accept failed, and keeps the card to try again', async () => {
     acceptSkillProposal.mockRejectedValue(new Error('the skill folder is read-only'))
     skillProposals.mockResolvedValue({ proposals: [WRITEUP], lastReview: null })
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     await userEvent.click(await within(needsYou()).findByRole('button', { name: new RegExp(`^Accept ${proposalTitle(WRITEUP)}`) }))
     expect(await within(needsYou()).findByText(/Could not accept this proposal: the skill folder is read-only/)).toBeTruthy()
     expect(within(needsYou()).getByRole('button', { name: new RegExp(`^Reject ${proposalTitle(WRITEUP)}`) })).toBeEnabled()
@@ -295,7 +297,7 @@ describe('a skill proposal and a note, after every waiting item', () => {
       409, 'skill_proposal_not_installed',
     ))
     skillProposals.mockResolvedValue({ proposals: [WRITEUP], lastReview: null })
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     const accept = () => within(needsYou()).findByRole('button', { name: new RegExp(`^Accept ${proposalTitle(WRITEUP)}`) })
     await userEvent.click(await accept())
     expect(await within(needsYou()).findByText(
@@ -321,7 +323,7 @@ describe('an item is answered on its own route alone', () => {
         answer: asA('/api/workflows/runs/r1/resume'), route: '#/automations?open=t1',
       }),
     ]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     await within(needsYou()).findByText('Ship v1.2?')
     for (const verb of [/^Allow/, /^Deny/, /^Approve/, /^Decline/, /^Confirm/]) {
       expect(within(needsYou()).queryByRole('button', { name: verb })).toBeNull()

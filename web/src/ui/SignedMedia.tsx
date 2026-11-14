@@ -63,7 +63,7 @@ export function SignedObject({ data, children, onError, ...rest }: ObjectHTMLAtt
 
 /** A link the browser follows itself (a download, a new tab). Until it is signed it is drawn
  *  without an `href`, so a press can't open the unsigned URL. */
-export function SignedAnchor({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
+export function SignedAnchor({ href, children, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { href: string; ref?: React.Ref<HTMLAnchorElement> }) {
   const signed = useSignedUrl(href)
   return <a href={signed} aria-disabled={signed ? undefined : true} {...rest}>{children}</a>
 }

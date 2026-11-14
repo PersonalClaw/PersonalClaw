@@ -3,14 +3,15 @@ import type { Loop, SpawnedAgent } from '../../../lib/api'
 import { needsYou } from '../../../lib/needsYou'
 import type { AgentActivityEntity } from '../../../lib/useAgentActivity'
 import { waitingItem, waitingList } from '../../../test/waiting'
+import type { RunningRow } from '../../../lib/api'
 import { MAX_ROWS, ago, buildDay, clock, type DayInput } from './agentDayModel'
 
 // ── Home's "Your agents today": the band's rows, read off what the gateway already says ──────────
 //
 // A row per agent, on a window of time around now. What it did comes from its model calls (the day
-// read), what it is doing from the live feed, what waits on you from Needs you (the read Attention
-// counts), what failed from its helpers and loops, and what comes next from the schedule. No time is
-// written that no source gave.
+// read), what it is doing from every row of the running list, what waits on you from Needs you (the
+// asks the badge counts), what failed from its helpers and loops and what a restart cut off, and
+// what comes next from the schedule. No time is written that no source gave.
 
 const at = (hh: number, mm: number, day = 3) => new Date(2026, 10, day, hh, mm).getTime()
 const NOW = at(18, 20)
@@ -32,6 +33,10 @@ function live(over: Partial<AgentActivityEntity> & Pick<AgentActivityEntity, 'id
 function block(start: number, end: number, session = 'dashboard:lisbon', source = 'chat') {
   return { start: iso(start), end: iso(end), session, source }
 }
+
+/** A row of the running list, as a restart's cut holds it. */
+const running = (over: Partial<RunningRow>): RunningRow => ({ work: 'chat:c', kind: 'chat', session: 'c', phase: 'tool', line: '',
+  since: null, name: 'Work', agent: '', started_at: null, route: '', blocked: false, waiting: [], project_id: '', loop_kind: '', ...over })
 
 const loop = (over: Partial<Loop>): Loop => ({ id: 'desks', name: 'Compare three standing desks', status: 'running',
   agent: 'Researcher', max_cycles: 8, total_cycles: 3, completed_at: null, ...over } as Loop)
@@ -77,7 +82,7 @@ describe('the rows', () => {
     const [row] = view.rows
     expect(row.state).toBe('waiting')
     expect(row.marks.map((m) => m.kind)).toContain('waiting')
-    expect(row.attention).toBe(`#/dashboard?view=attention&open=${encodeURIComponent(asks[0].key)}`)
+    expect(row.answer).toBe(`#/mission-control?open=${encodeURIComponent(asks[0].key)}`)
     expect(row.say).toContain('write_file')
     expect(row.asked).toBe('2 min')
     expect(row.sentence).toMatch(/ Asked 2 min ago\.$/)
@@ -99,7 +104,7 @@ describe('the rows', () => {
       .toEqual(['1 min', '2 min', '1 h', '1 h 10 min', '1 day', '2 days'])
   })
 
-  it('counts what waits on you exactly as Attention does, from the same rows', () => {
+  it('counts what waits on you exactly as Needs you does, from the same rows', () => {
     const asks = needsYou(waitingList(
       waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:lisbon' }),
       waitingItem({ kind: 'loop_question', id: 'loop_question:fix', work: 'loop:fix', brief: { merge: true } }),
@@ -512,20 +517,22 @@ describe('the window', () => {
 })
 
 describe('many agents', () => {
-  it('sorts waiting, then failed, then working, then idle', () => {
+  it('sorts waiting, then failed, then working, then blocked, then interrupted, then idle', () => {
     const asks = needsYou(waitingList(waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:w' })), [], [])
     const view = buildDay(input({
       day: { since: iso(at(14, 20)), until: iso(NOW), cut: 0, agents: [{ agent: 'Idle one', blocks: [block(at(15, 0), at(15, 5))], before: null }] },
       live: [
+        live({ id: 'session:held', work: 'chat:held', agent: 'Held', state: 'blocked' }),
         live({ id: 'session:busy', work: 'chat:busy', agent: 'Busy' }),
         live({ id: 'session:w', work: 'chat:w', agent: 'Waiter' }),
       ],
+      cut: [{ at: at(18, 0), row: running({ work: 'chat:cut', agent: 'Cut one' }) }],
       asks,
       helpers: [{ id: 'h', task: 't', done: true, agent: 'Broke', started: at(16, 0) / 1000, ended: at(16, 1) / 1000, error: 'x' }],
     }))
 
     expect(view.rows.map((r) => [r.name, r.state])).toEqual([
-      ['Waiter', 'waiting'], ['Broke', 'failed'], ['Busy', 'working'], ['Idle one', 'idle'],
+      ['Waiter', 'waiting'], ['Broke', 'failed'], ['Busy', 'working'], ['Held', 'blocked'], ['Cut one', 'interrupted'], ['Idle one', 'idle'],
     ])
   })
 
@@ -561,5 +568,83 @@ describe('a row read aloud', () => {
     }))
 
     expect(view.rows[0].sentence).toMatch(/^PersonalClaw, waiting on you: .*write_file/)
+  })
+})
+
+describe('where running work shows', () => {
+  it('draws every live run, never a scene budget\'s cut of them', () => {
+    const runs = Array.from({ length: 80 }, (_, i) => live({ id: `session:c${i}`, work: `chat:c${i}`, agent: `Agent ${i}`, title: `Chat ${i}` }))
+    const view = buildDay(input({ live: runs }))
+
+    expect(view.rows.filter((r) => r.state === 'working')).toHaveLength(80)
+    expect(view.running).toBe(80)
+  })
+
+  it('names an agent\'s second run after its first, keeps each with its own link, and links the name to the first', () => {
+    const view = buildDay(input({ live: [
+      live({ id: 'loop:a', kind: 'loop', work: 'loop:a', agent: 'Code agent', title: 'Fix the flaky upload test', refs: { link: '#/code/a' } }),
+      live({ id: 'loop:b', kind: 'loop', work: 'loop:b', agent: 'Code agent', title: 'Update the API reference', refs: { link: '#/code/b' } }),
+    ] }))
+
+    const [row] = view.rows
+    expect(row.say).toBe('Fix the flaky upload test · and 1 more')
+    expect(row.link).toBe('#/code/a')
+    expect(row.runs).toEqual([{ title: 'Fix the flaky upload test', link: '#/code/a' }, { title: 'Update the API reference', link: '#/code/b' }])
+    expect(row.sentence).toBe('Code agent, working: Fix the flaky upload test · and 1 more. Also Update the API reference.')
+    expect(row.marks.filter((m) => m.kind === 'working')).toHaveLength(2)
+  })
+
+  it('says held-up work is Blocked with the gateway\'s reason, working until its phase began and blocked since', () => {
+    const view = buildDay(input({ live: [live({ id: 'session:d', work: 'chat:d', agent: 'Docs agent', state: 'blocked',
+      since: iso(at(17, 0)), phaseSince: iso(at(18, 10)), line: 'Waiting for a model slot' })] }))
+
+    const [row] = view.rows
+    expect(row.state).toBe('blocked')
+    expect(row.say).toBe('Blocked: Waiting for a model slot')
+    expect(row.marks.map((m) => [m.kind, m.start, m.end])).toEqual([['working', at(17, 0), at(18, 10)], ['blocked', at(18, 10), NOW]])
+    expect([view.running, view.blocked]).toEqual([0, 1])
+  })
+
+  it('a row with a moving run and a held one is working, and counts each', () => {
+    const view = buildDay(input({ live: [
+      live({ id: 'session:h', work: 'chat:h', agent: 'Docs agent', state: 'blocked', title: 'Held', line: 'Queued' }),
+      live({ id: 'session:m', work: 'chat:m', agent: 'Docs agent', title: 'Moving' }),
+    ] }))
+
+    const [row] = view.rows
+    expect(row.state).toBe('working')
+    expect(row.say).toBe('Moving · and 1 more')
+    expect([view.running, view.blocked]).toEqual([1, 1])
+  })
+
+  it('says what a restart cut off as Interrupted, when, and why, linked to its work', () => {
+    const view = buildDay(input({ cut: [{ at: at(18, 12), row: running({ work: 'chat:w', agent: 'Writer agent', route: '#/chat/w' }) }] }))
+
+    const [row] = view.rows
+    expect(row.state).toBe('interrupted')
+    expect(row.say).toBe('Interrupted at 18:12: The gateway restarted while it ran.')
+    expect(row.link).toBe('#/chat/w')
+    expect(row.marks.map((m) => [m.kind, m.start])).toEqual([['failed', at(18, 12)]])
+    expect(view.interrupted).toBe(1)
+    expect(view.empty).toBe('')
+  })
+
+  it('a row cut off that runs again says it after its line', () => {
+    const view = buildDay(input({
+      live: [live({ id: 'session:n', work: 'chat:n', agent: 'Writer agent', title: 'Draft again' })],
+      cut: [{ at: at(18, 12), row: running({ work: 'chat:w', agent: 'Writer agent' }) }],
+    }))
+
+    const [row] = view.rows
+    expect(row.state).toBe('working')
+    expect(row.sentence).toBe('Writer agent, working: Draft again. Interrupted at 18:12: The gateway restarted while it ran.')
+  })
+
+  it('opens the first ask on Needs you with its panel open', () => {
+    const asks = needsYou(waitingList(waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:lisbon' })), [], [])
+    const view = buildDay(input({ live: [live({ id: 'session:lisbon', work: 'chat:lisbon', agent: '', state: 'waiting_approval' })], asks }))
+
+    expect(view.rows[0].answer).toBe('#/mission-control?open=waiting%3Aapproval%3Aa1')
+    expect(view.running, 'a run that waits on you is not running').toBe(0)
   })
 })

@@ -75,11 +75,12 @@ describe("each row says what the work is doing, and opens it", () => {
       ["Plan the garden", "grep the tree", "nightly", "Friday digest", "Deploy hook"]);
   });
 
-  it("work no page opens takes you to Mission Control, where every piece of live work is", () => {
+  it("work no page opens takes you to Home, whose band shows every piece of live work", () => {
     const a = actions();
     const parent = running(menu(summarizePresence([], list([row({ route: "" })])), a));
     parent.submenu[0].click();
-    assert.deepStrictEqual(a.calls, [DEEP_LINKS.missionControl]);
+    assert.deepStrictEqual(a.calls, [DEEP_LINKS.dashboard]);
+    assert.equal(DEEP_LINKS.dashboard, "#/dashboard");
   });
 
   it("🔴 a queued helper reads blocked, with its reason, and the count says how many are", () => {
@@ -123,16 +124,16 @@ describe("every state of the list", () => {
     assert.equal(parent.enabled, false);
   });
 
-  it("large: the count is all of it, the first rows show, and the rest open in Mission Control", () => {
+  it("large: the count is all of it, the first rows show, and the rest open on Home", () => {
     const a = actions();
     const many = Array.from({ length: 30 }, (_, i) => row({ work: `subagent:h${i}`, kind: "subagent", name: `Helper ${i}` }));
     const parent = running(menu(summarizePresence([], list(many)), a));
     assert.equal(parent.label, "30 running");
     const more = parent.submenu.at(-1);
-    assert.equal(more.label, `${30 - MAX_LISTED_ROWS} more in Mission Control…`);
+    assert.equal(more.label, `${30 - MAX_LISTED_ROWS} more on Home…`);
     assert.equal(parent.submenu.filter((i) => / — /.test(i.label || "")).length, MAX_LISTED_ROWS);
     more.click();
-    assert.deepStrictEqual(a.calls, [DEEP_LINKS.missionControl]);
+    assert.deepStrictEqual(a.calls, [DEEP_LINKS.dashboard]);
   });
 
   it("a list that cannot be read is said so, never as nothing running", () => {
@@ -154,7 +155,7 @@ describe("every state of the list", () => {
     const ended = "2026-10-21T10:06:00Z";
     const p = summarizePresence([], list([], [
       row({ work: "workflow:r9", kind: "workflow", session: "", name: "nightly", phase: "done", line: "Done in 12 seconds", since: ended, route: "#/workflows/runs/r9" }),
-      row({ work: "subagent:h2", kind: "subagent", name: "fetch the page", phase: "error", line: "Stopped: the site refused", since: ended }),
+      row({ work: "subagent:h2", kind: "subagent", name: "fetch the page", phase: "error", line: "Stopped: the site refused", since: ended, route: "" }),
     ]));
     const template = menu(p, a);
     assert.equal(running(template).label, "Nothing running");
@@ -164,6 +165,9 @@ describe("every state of the list", () => {
     assert.equal(tail.submenu[1].label, `fetch the page — Stopped: Stopped: the site refused · ${clock(ended)}`);
     tail.submenu[0].click();
     assert.deepStrictEqual(a.calls, ["#/workflows/runs/r9"]);
+    // An ending no page opens takes you to Home, where the band says how it ended.
+    tail.submenu[1].click();
+    assert.deepStrictEqual(a.calls, ["#/workflows/runs/r9", DEEP_LINKS.dashboard]);
   });
 
   it("interrupted: work a restart cut off is said once, opens the work, and goes when it is live again", () => {

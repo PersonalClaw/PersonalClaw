@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { matchBinding } from '../app/keymap'
 import { buttonLook } from './Button'
 import { ARM_MS } from './dialog/DialogShell'
@@ -16,6 +16,13 @@ export function wrapping(look: { className: string; role: string }): { className
     .replace(/\bwhitespace-nowrap\b/, 'whitespace-normal')
     .replace(/\bh-7\b/, 'min-h-7')
   return { className: `${className} max-w-full border border-transparent text-left ${TOUCH_TARGET}`, role: look.role }
+}
+
+/** A card's answer whose words a server wrote (a run's choice), drawn in the kit's secondary pill
+ *  made to wrap (`wrapping`), so a long one never runs past the card at 320 px. */
+export function WrappingAnswer({ children, ...button }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className' | 'type'> & { children: ReactNode }) {
+  const look = wrapping(buttonLook('secondary', 'xs', 'pill'))
+  return <button {...button} type="button" data-type={look.role} className={look.className}>{children}</button>
 }
 
 /** The one way a card asks once more before an answer it can't take back, the inline twin of a

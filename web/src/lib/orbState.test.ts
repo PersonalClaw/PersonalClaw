@@ -91,9 +91,10 @@ describe('a sidebar row is drawn from its pip', () => {
 })
 
 describe("a Home agent row is drawn from its row's state", () => {
-  it('working is working, waiting the clasp, failed done with its ×, and idle the open ring', () => {
+  it('working is working, blocked thinking, waiting the clasp, failed and interrupted done with its ×, and idle the open ring', () => {
     expect(Object.fromEntries(Object.entries(ORB_STATE_OF_AGENT_ROW).map(([row, look]) => [row, [look.state, look.badge ?? null]]))).toEqual({
-      working: ['working', null], waiting: ['waiting', null], failed: ['done', 'error'], idle: ['ready', null],
+      working: ['working', null], blocked: ['thinking', null], waiting: ['waiting', null], failed: ['done', 'error'],
+      interrupted: ['done', 'error'], idle: ['ready', null],
     })
     for (const look of Object.values(ORB_STATE_OF_AGENT_ROW)) expect(look.bloom, 'a list mark blooms').toBe(false)
     expect(Object.isFrozen(ORB_STATE_OF_AGENT_ROW)).toBe(true)

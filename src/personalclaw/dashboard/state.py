@@ -1473,6 +1473,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         downgraded by the dashboard toggle.
         """
         trust_mode.enable_yolo(ttl_secs=self._YOLO_TTL, from_config=from_config)
+        # The corner's YOLO mark reads the status again now (``YoloChip``); your own pages alone
+        # hear it (``ws_state.OWNER_REFRESH_KINDS``).
+        self.push_refresh("yolo")
 
     def disable_yolo(self) -> None:
         """Turn off YOLO mode. Per-session trust is untouched."""
@@ -1504,6 +1507,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
                 self._log.warning("SEL audit failed for YOLO %s", reason, exc_info=True)
         for session in self._sessions.values():
             self.push_chat_policy(session)
+        # Off, however it went (a toggle, its time running out, the config): the corner's YOLO
+        # mark goes now, on your own pages alone (``ws_state.OWNER_REFRESH_KINDS``).
+        self.push_refresh("yolo")
 
     def is_yolo_active(self) -> bool:
         """Return whether YOLO mode is currently active, auto-expiring after TTL."""
@@ -2618,8 +2624,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         ``mcp`` (what an MCP server's card says may have changed — ``mcp_status.announce``),
         ``suggestions`` / ``attachments`` (a suggestions refresh landed, an attachment was read),
         ``voice`` (a voice setting an open chat reads changed: ``voice.*`` or text-to-speech's
-        settings, whoever saved them), and the self-update's ``update_available`` / ``updating`` /
-        ``update_failed``.
+        settings, whoever saved them), the self-update's ``update_available`` / ``updating`` /
+        ``update_failed``, and ``yolo`` (YOLO turned on or off: your own pages alone hear it,
+        ``ws_state.OWNER_REFRESH_KINDS``).
         """
         self._broadcast({"_type": "refresh", "kinds": ",".join(kinds)})
 
