@@ -235,6 +235,11 @@ const PAGE_LANDINGS: readonly { route: string; home?: ShippedRoute['home']; why:
   { route: 'chat/new?prompt=draft+this', why: 'a link\'s own word for the draft, written as the chat\'s (linkState.ts)' },
   { route: 'chat/new?pane=history', why: 'a link\'s own word for the pane, written as the chat\'s (linkState.ts)' },
   { route: `chat/${SAMPLE.chat}?pane=activity&file=src%2Fapp.py`, why: 'a link\'s own word for the pane, written as the chat\'s (linkState.ts)' },
+  { route: `projects/${SAMPLE.project}?rename=1`, why: 'a row\'s Rename: the project\'s page opens its title in edit mode and drops the key' },
+  { route: 'projects?new=1', why: 'the palette\'s New project: the list opens its New project dialog and drops the key' },
+  { route: 'projects?import=1', why: 'the palette\'s Import a project: the list opens the file picker within the press and drops the key' },
+  { route: 'projects?view=chats&q=garden', why: 'the retired Chats by project view: the list keeps the search and drops the view, replacing the history entry' },
+  { route: `projects?peek=${SAMPLE.project}`, why: 'the retired peek: the list opens that project\'s own page in its place, replacing the history entry' },
 ]
 
 const keyOf = (route: string, home?: ShippedRoute['home']): string => `${normal(route)}${home ? ` (${home} home)` : ''}`

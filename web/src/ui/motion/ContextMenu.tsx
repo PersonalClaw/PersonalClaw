@@ -13,13 +13,21 @@ export interface ContextMenuItem {
   /** Danger-toned row (e.g. delete). */
   danger?: boolean
   disabled?: boolean
+  /** A decorative check at the row's end (`MenuRow`'s `checkMark`): the label says the state. */
+  checkMark?: boolean
+  /** The row's accessible name when its label is short (`MenuRow`'s `name`): "Delete project…"
+   *  named "Delete project: Garden". */
+  name?: string
 }
 
 /** Right-click / long-press context menu. Wraps any child; on contextmenu (or a
  *  ~500ms touch long-press) it opens a portaled, glass menu at the pointer,
  *  clamped to the viewport. Keyboarded (↑/↓/Enter/Esc) and closes on
  *  outside-click/scroll. This is the scoped-actions primitive the redesign adds
- *  across rows/cards — today menus are click-only Popovers. */
+ *  across rows/cards — today menus are click-only Popovers.
+ *
+ *  An item's `checkMark` draws `MenuRow`'s decorative check at its row's end, for a row whose label
+ *  already says the state it marks (a project row's "Default project"). */
 export function ContextMenu({ items, children, disabled }: { items: ContextMenuItem[]; children: ReactNode; disabled?: boolean }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -110,7 +118,7 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
               style={{ left: pos.x, top: pos.y, transformOrigin: 'top left' }}
             >
               {items.map((it, i) => (
-                <div key={it.label} className={it.danger ? '[&_span]:!text-danger' : undefined} data-active={i === active || undefined}>
+                <div key={it.label} className={it.danger && !it.disabled ? '[&_span]:!text-danger' : undefined} data-active={i === active || undefined}>
                   <MenuRow
                     // `menuitem`, not `menuitemradio`: these rows are ACTIONS (Peek / Open / Pin),
                     // so `selected` is a cursor rather than a state — an `aria-checked` on an
@@ -122,6 +130,8 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
                     icon={it.icon}
                     label={it.label}
                     hint={it.hint}
+                    checkMark={it.checkMark}
+                    name={it.name}
                     selected={i === active}
                     onClick={() => { if (!it.disabled) { it.onSelect(); closeAndReturnFocus() } }}
                   />

@@ -7,7 +7,7 @@ import {
   seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel, settleDom, settleEntranceAnimations, type SettleReport,
 } from './helpers'
 import { FIXED_CLOCK } from './fixedClock'
-import { AUDIT_VERIFIED, BOOT_ROOTS, FILE_ROOTS, LEARNING_WEEK, SYSTEM_READING, answerStubbedRead, type StubbedRead } from './stubbedReads'
+import { AUDIT_VERIFIED, BOOT_ROOTS, FILE_ROOTS, LEARNING_WEEK, PROJECTS_LIST, SYSTEM_READING, answerStubbedRead, type StubbedRead } from './stubbedReads'
 
 // ── Visual-regression baselines — every nav route × both themes ─────────────
 // This is the safety rail. Its baselines are made and compared against the pinned image's browser
@@ -92,6 +92,7 @@ test.use({ actionTimeout: 30_000 })
 const VISUAL_STUBS: Record<string, StubbedRead[]> = {
   files: [FILE_ROOTS],
   learning: [LEARNING_WEEK],
+  projects: PROJECTS_LIST,
   settings: [AUDIT_VERIFIED, SYSTEM_READING],
 }
 

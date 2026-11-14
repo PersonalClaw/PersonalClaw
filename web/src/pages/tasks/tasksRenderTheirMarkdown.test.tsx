@@ -270,11 +270,10 @@ describe('no file that draws a task draws its title raw', () => {
   ]
   const read = (rel: string) => readFileSync(join(process.cwd(), 'src', rel), 'utf8')
 
-  /** Titles in these files that are not a task's: a project's chats and its knowledge, which render
-   *  in the change that renders chat and knowledge titles. */
-  const NOT_A_TASK: Record<string, string[]> = {
-    'pages/projects/ProjectsSection.tsx': ['{c.title || c.key}', '{k.title || k.kind || k.id}'],
-  }
+  /** Titles in these files that are not a task's, which render in the change that renders their
+   *  kind's titles. None now: the Projects list's peek, which drew a project's chats and knowledge
+   *  in `ProjectsSection.tsx`, is retired for each project's own page. */
+  const NOT_A_TASK: Record<string, string[]> = {}
 
   const FIELDS = ['title', 'description', 'content']
   const raw = (rel: string, source = read(rel)) =>

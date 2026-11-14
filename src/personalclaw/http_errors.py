@@ -80,6 +80,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # A switch or a consent sent as anything but the JSON literal true or false: the text
     # "false" is truthy, so a reader that guessed would have read it as yes.
     "field_not_a_boolean": "A request field must be the JSON true or false; the message names it.",
+    # A list field (the Projects list's pins) sent as anything but a JSON array.
+    "field_not_a_list": "A request field must be a JSON list; the message names it.",
     "invalid_id": "A record id is not a single path segment (separators, '..' or over-long).",
     # ── dashboard file I/O (handlers/files.py) ──
     # The refusal `_validate_dashboard_path` produces: not a path under any root the dashboard
@@ -437,7 +439,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "one_link_required": "A one-link target is required.",
     "one_link_rejected": "The submitted one-link target was rejected.",
     "project_not_found": "No such project.",
-    # `PUT /api/projects/settings` (the default project). 409 rather than 404: the project exists
+    # `PUT /api/projects/settings` (the default project, or a pin). 409 rather than 404: it exists
     # and the request is valid once it is restored — an archived project is off every picker, so
     # it cannot be where new work starts.
     "project_archived": "The project is archived; restore it before new work can start in it.",

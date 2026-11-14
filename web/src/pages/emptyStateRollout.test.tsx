@@ -240,7 +240,7 @@ const EMPTY_STATE_CENSUS: {
   { surface: 'Memory', file: 'pages/settings/MemoryPanel.tsx', verdict: 'on-ramp', why: '"Add a fact" — opens the memory editor in place.' },
   { surface: 'Skills', file: 'pages/skills/SkillsPage.tsx', verdict: 'on-ramp', why: 'Browse skills — conditional on `!q`, the shape this file\'s actionExprs() comment defends.' },
   { surface: 'Agents', file: 'pages/agents/AgentsListPage.tsx', verdict: 'on-ramp', why: '"New agent" — onCreate, the same flow as the header.' },
-  { surface: 'Projects', file: 'pages/projects/ProjectsSection.tsx', verdict: 'on-ramp', why: '"New project" — onCreate, the same flow as the header.' },
+  { surface: 'Projects', file: 'pages/projects/ProjectList.tsx', verdict: 'on-ramp', why: '"New project" — onCreate, the same flow as the header.' },
   { surface: 'Prompts', file: 'pages/prompts/PromptsListPage.tsx', verdict: 'on-ramp', why: '"New prompt" — onCreate, the same flow as the header.' },
   { surface: 'Chat', file: 'pages/chat/history/ChatHistoryPage.tsx', verdict: 'on-ramp', why: '"New chat" — the same route the composer opens.' },
   { surface: 'Chat › a chat that does not exist', file: 'pages/chat/MissingChat.tsx', verdict: 'on-ramp', why: '"Start a new chat", carrying the draft the dead link held.' },
@@ -273,7 +273,6 @@ const EMPTY_STATE_CENSUS: {
   { surface: 'Memory › Digests', file: 'pages/settings/MemoryPanel.tsx', verdict: 'produced', why: 'Digests are generated on a cadence.' },
   // ── a projection of a collection owned elsewhere ──
   { surface: 'Tasks › Graph', file: 'pages/tasks/TaskGraph.tsx', verdict: 'derived', why: 'A view of tasks. The create flow lives on the list, one segmented control away.' },
-  { surface: 'Projects › Chats by project', file: 'pages/projects/ChatsByProject.tsx', verdict: 'derived', why: 'A view of the chats, by project. New chat is at the top of the sidebar\'s chat history and on Home.' },
   { surface: 'Companion › sections', file: 'pages/companion/CompanionSections.tsx', verdict: 'derived',
     why: 'Four projections (what is running, open tasks, pending inbox, recent notifications) of collections owned by Mission Control and #/loops, #/tasks, #/inbox and #/notifications. A phone triages what already exists; the create flows belong to those surfaces, and the page footer links out to them rather than growing four CTAs that would each be a second entrance to someone else\'s flow.' },
   { surface: 'Files', file: 'pages/files/FilesSection.tsx', verdict: 'derived', why: '"No file open" is a selection state, not an empty collection.' },

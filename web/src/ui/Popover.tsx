@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Check } from 'lucide-react'
 import { fvs } from '../design/fontWeight'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -349,7 +350,7 @@ function portalPos(anchor: DOMRect, placement: 'top' | 'bottom' | 'right', align
  *  is a high-frequency surface, and the icon nudge and press squish it used to have only
  *  made a dense list wobble under the pointer. */
 export function MenuRow({
-  icon, label, hint, selected, onClick, role, tabIndex, disabled, title, nameIsLabel,
+  icon, label, hint, selected, onClick, role, tabIndex, disabled, title, nameIsLabel, checkMark, name,
 }: {
   icon?: ReactNode; label: string; hint?: string; selected?: boolean; onClick?: () => void
   /** The ITEM role required by the popup's container role, when it declares one.
@@ -378,12 +379,21 @@ export function MenuRow({
    *  only reads…"): with `title`, the hint is then read as the row's description. For a pick-one
    *  row whose label is the value a reader is choosing. */
   nameIsLabel?: boolean
+  /** A check at the row's end, for a row whose label already says the state it marks ("Default
+   *  project" while it is, "Make default project" while it is not). Decoration only, `aria-hidden`:
+   *  the label carries the state, so the row announces no `aria-checked` and its name stays its
+   *  label. Off by default. */
+  checkMark?: boolean
+  /** The row's accessible name, for a short label that names a specific thing out of sight: a
+   *  "Delete project…" row named "Delete project: Garden". Wins over `nameIsLabel`. Unset, the
+   *  name is computed from what the row shows. */
+  name?: string
 }) {
   return (
     <button
       onClick={onClick}
       title={title}
-      aria-label={nameIsLabel ? label : undefined}
+      aria-label={name ?? (nameIsLabel ? label : undefined)}
       role={role}
       tabIndex={tabIndex}
       aria-disabled={disabled || undefined}
@@ -399,6 +409,7 @@ export function MenuRow({
         <span data-type="label-s" className="block truncate" style={fvs(selected ? 500 : 400)}>{label}</span>
         {hint && <span data-type="caption" className="block text-on-surface-low truncate">{hint}</span>}
       </span>
+      {checkMark && <Check size={14} aria-hidden data-menu-check className="shrink-0 text-on-surface-var" />}
       {selected && <span className="size-1.5 shrink-0 rounded-pill bg-primary" />}
     </button>
   )

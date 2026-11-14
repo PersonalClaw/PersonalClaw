@@ -105,7 +105,14 @@ describe('every list whose label states a total discloses its cap', () => {
     const lists = cappedLists()
     expect(lists.length, 'the sweep must find the capped lists').toBeGreaterThanOrEqual(25)
     const stated = lists.filter((l) => l.totalStated)
-    expect(stated.length, 'and the label-states-a-total subset').toBeGreaterThanOrEqual(8)
+    // Named, so a list whose label loses its total cannot leave the census unseen. Eight at first;
+    // four of them were the Projects list's peek panel, retired for each project's own page.
+    expect(stated.map((l) => `${l.rel} (${l.base})`).sort(), 'and the label-states-a-total subset').toEqual([
+      'pages/chat/toolRenderers/native.tsx (arr)',
+      'pages/knowledge/KnowledgeDetailPage.tsx (entities)',
+      'pages/knowledge/KnowledgeDetailPage.tsx (related)',
+      'pages/knowledge/KnowledgeDetailPage.tsx (relations)',
+    ])
     const silent = stated.filter((l) => !rowFor(l)).map((l) => `${l.rel} (${l.base})`)
     expect(silent, 'a label that promises N above a list of fewer owes the difference').toEqual([])
   })

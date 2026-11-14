@@ -219,7 +219,7 @@ describe('SquareIconButton asks the right question of the right caller', () => {
   })
 })
 
-describe('the SquareIconButton state family is classified, all thirteen of it', () => {
+describe('the SquareIconButton state family is classified, all fourteen of it', () => {
   const SRC = join(process.cwd(), 'src')
   const walkTsx = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
@@ -247,7 +247,10 @@ describe('the SquareIconButton state family is classified, all thirteen of it', 
     return out
   }
 
-  it('is 7 disclosures and 6 toggles — and nothing unclassified', () => {
+  it('is 8 disclosures and 6 toggles — and nothing unclassified', () => {
+    // 8, not 7: a project card's "…" on the Projects list joined the family. It is a disclosure
+    // because it opens the card's menu below it.
+    //
     // 7, not 6: `ContentSurface`'s Export menu joined the family. It was the ONE genuine defect in
     // the seven-site worklist `rawToggleState` had recorded — a disclosure claiming no state at all
     // — and it is a disclosure rather than a toggle because it reveals the export list below it.
@@ -258,8 +261,8 @@ describe('the SquareIconButton state family is classified, all thirteen of it', 
     // 6 toggles, not 5: the per-server trust in an MCP server's read-only labels joined it beside
     // that grant, for the same reason: whether the labels are trusted is the whole answer.
     const all = stateBearing()
-    expect(all.length, 'the state-bearing population').toBe(13)
-    expect(all.filter((x) => x.kind === 'disclosure').length, 'disclosures').toBe(7)
+    expect(all.length, 'the state-bearing population').toBe(14)
+    expect(all.filter((x) => x.kind === 'disclosure').length, 'disclosures').toBe(8)
     expect(all.filter((x) => x.kind === 'toggle').length, 'toggles').toBe(6)
   })
 
@@ -289,6 +292,7 @@ describe('the SquareIconButton state family is classified, all thirteen of it', 
       ['ui/widget/WidgetFrame.tsx', /ariaExpanded=\{railOpen\}/],
       ['pages/chat/history/ChatHistoryPage.tsx', /ariaExpanded=\{open\}/],
       ['ui/content/ContentSurface.tsx', /ariaExpanded=\{exportOpen\}/],
+      ['pages/projects/ProjectList.tsx', /ariaExpanded=\{open\}/],
     ]
     for (const [rel, re] of pairs) {
       expect(readSource(join(SRC, rel)), `${rel} must bind ${re}`).toMatch(re)

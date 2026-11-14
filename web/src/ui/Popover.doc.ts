@@ -19,14 +19,17 @@ const docs: UiDoc[] = [
       { name: 'disabled', description: 'The row cannot act right now. Rendered as `aria-disabled` (never the `disabled` attribute) so a focus-driven menu can still land on it — a disabled item stays reachable and announced instead of leaving a silent gap in the list — and dimmed at the kit\'s control level (40).' },
       { name: 'title', description: 'The whole sentence behind a hint the row truncates, shown on hover and read as the row\'s description.' },
       { name: 'nameIsLabel', description: 'Name the row by its label alone, so its hint is not run into the name; with `title` the hint is read as the description instead. For a pick-one row whose label is the value being chosen.' },
+      { name: 'checkMark', description: 'A decorative 14 px check at the row\'s end, `aria-hidden`, for a row whose label already says the state it marks ("Default project" while it is, "Make default project" while it is not). The label carries the state, so the row announces no `aria-checked` and its name stays its label. Off by default, so every other menu draws no check. `ContextMenuItem` takes the same `checkMark`.' },
+      { name: 'name', description: 'The row\'s accessible name, for a short label that names a specific thing out of sight: a "Delete project…" row named "Delete project: Garden". Wins over `nameIsLabel`. Unset, the name is computed from what the row shows. `ContextMenuItem` takes the same `name`.' },
       { name: 'role', description: "The ITEM role required by the popup container's role, when it declares one: `option` inside a role=listbox, `menuitem` for an action row inside a role=menu, `menuitemradio` for a pick-one row. Omit inside a role-less popover, where a bare button is correct (28 of the 30 call sites). Passing it also publishes the selected state in that role's vocabulary — `aria-selected` for an option, `aria-checked` for a radio item, and deliberately nothing for a plain menuitem." },
     ],
     bestPractices: [
       { guidance: true, description: 'Use MenuRow for options inside a Popover rather than styling a raw <button> — the hover and press tints and the selected treatment stay consistent across every menu.' },
       { guidance: true, description: "Pass `role` whenever the enclosing popup declares role=menu or role=listbox. Measured before it existed: the collapsed Segmented announced a list box with 0 options and the row context menu a menu with 0 menuitems, because this row rendered a bare button." },
+      { guidance: false, description: 'Do not let `checkMark` carry a state on its own: it is hidden from assistive tech, so the label must say it ("Default project", not a bare check beside the project\'s name).' },
       { guidance: false, description: 'Do not hardcode colors or px — tone, surface, and radius route through design tokens (the token-lint ratchet fails the build otherwise).' },
     ],
-    anatomy: ['button (hover and press by colour)', 'leading icon span', 'label + optional hint', 'trailing selected dot'],
+    anatomy: ['button (hover and press by colour)', 'leading icon span', 'label + optional hint', 'optional trailing check (checkMark, aria-hidden)', 'trailing selected dot'],
   },
   {
     name: 'Popover',

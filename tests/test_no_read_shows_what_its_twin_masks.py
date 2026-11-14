@@ -881,6 +881,209 @@ def test_a_projects_board_names_its_loops_masked(loops):
     assert "sk-ant-" not in json.dumps(rows)
 
 
+# ── A project a loop makes: its name, and the loop it names ────────────────────────────────
+
+
+@pytest.fixture
+def projects_home(tmp_path):
+    from personalclaw.tasks import registry
+
+    registry._providers.clear()
+    with (
+        patch("personalclaw.tasks.native.config_dir", return_value=tmp_path),
+        patch("personalclaw.tasks.hierarchy.config_dir", return_value=tmp_path),
+        patch("personalclaw.providers.entity_routes.config_dir", return_value=tmp_path),
+        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
+        patch("personalclaw.loop.files.config_dir", return_value=tmp_path),
+        patch("personalclaw.dashboard.state.config_dir", return_value=tmp_path),
+    ):
+        yield tmp_path
+    registry._providers.clear()
+
+
+async def _project_reads(pid: str) -> str:
+    """Both of a project's reads, as one text: the list's row and its own."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+    from personalclaw.tasks.handlers import register_task_routes
+
+    app = web.Application(middlewares=[request_boundary_middleware()])
+    register_task_routes(app)
+    async with TestClient(TestServer(app)) as client:
+        listed = await client.get("/api/projects")
+        own = await client.get(f"/api/projects/{pid}")
+        assert listed.status == 200 and own.status == 200
+        rows = [r for r in (await listed.json())["projects"] if r["id"] == pid]
+        assert rows, "precondition: the list carries the project"
+        return json.dumps(rows) + json.dumps(await own.json())
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"name": "", "task": f"deploy with {SECRET}"}, {"name": f"Rotate {SECRET}", "task": "rotate"}],
+    ids=["named from its task", "named from its name"],
+)
+@pytest.mark.asyncio
+async def test_a_project_a_loop_makes_is_named_as_the_loop_is_shown(projects_home, fields):
+    from personalclaw.loop import store, tasks_link
+    from personalclaw.loop.loop import Loop
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    stage = {"stage": "implementation", "title": "Impl", "objective": "do it", "exit_criteria": []}
+    loop = store.create(
+        Loop(
+            id="",
+            kind="code",
+            plan=[stage],
+            kind_config={"entry_stage": "implementation"},
+            **fields,
+        )
+    )
+    pid = tasks_link.provision(loop.id).tasks_project_id
+    assert pid, "precondition: the loop made its own project"
+    project = HierarchyStore().get_project(pid)
+    assert "sk-ant-" not in project.name and MASK in project.name
+    reads = await _project_reads(pid)
+    assert "sk-ant-" not in reads and MASK in reads
+
+
+@pytest.mark.asyncio
+async def test_a_project_named_that_way_before_is_named_masked_at_the_next_boot(projects_home):
+    from personalclaw.projects import backfill_made_for
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    for pid, name, locked in (
+        ("p-0000000a", f"deploy with {SECRET}", False),
+        ("p-0000000b", "Garden", False),
+    ):
+        folder = projects_home / "projects" / pid
+        folder.mkdir(parents=True)
+        record = {"id": pid, "name": name, "status": "active", "name_locked": locked, "brief": ""}
+        (folder / "project.json").write_text(json.dumps(record))
+    backfill_made_for()
+    assert HierarchyStore().get_project("p-0000000a").name == f"deploy with {MASK}"
+    assert HierarchyStore().get_project("p-0000000b").name == "Garden"
+    assert "sk-ant-" not in await _project_reads("p-0000000a")
+
+
+#: A task longer than a project's name. A release before this one named its project from the
+#: task's first 80 characters.
+LONG_TASK = "Deploy the irrigation sensor service to the homelab with the key " + SECRET
+
+
+def _old_file(home, pid: str, name: str, locked: bool = False) -> None:
+    """A project file as a release before this one wrote it: no `made_for` key."""
+    folder = home / "projects" / pid
+    folder.mkdir(parents=True)
+    record = {"id": pid, "name": name, "status": "active", "name_locked": locked, "brief": ""}
+    (folder / "project.json").write_text(json.dumps(record))
+
+
+@pytest.mark.asyncio
+async def test_a_project_named_from_a_long_task_before_is_named_as_the_loop_is_shown(projects_home):
+    from personalclaw.loop import store
+    from personalclaw.loop.loop import Loop
+    from personalclaw.projects import backfill_made_for
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    _old_file(projects_home, "p-0000000c", LONG_TASK[:80].strip())
+    assert (
+        HierarchyStore().get_project("p-0000000c").name.endswith("sk-ant-api03-AA")
+    ), "precondition"
+    loop = store.create(Loop(id="", kind="code", name="", task=LONG_TASK))
+    store.set_tasks_links(loop.id, tasks_project_id="p-0000000c", task_list_ids={})
+    backfill_made_for()
+    assert "sk-ant-api03-" not in HierarchyStore().get_project("p-0000000c").name
+    assert "sk-ant-api03-" not in await _project_reads("p-0000000c")
+
+
+@pytest.mark.asyncio
+async def test_a_project_named_from_a_loop_renamed_since_is_named_as_its_task_is_shown(
+    projects_home,
+):
+    """The old name was made from the loop's task at its first provision. A loop renamed after
+    that reads its new name now, which never renamed its project, so the task's own cut is what
+    the old name is matched against."""
+    from personalclaw.loop import store
+    from personalclaw.loop.loop import Loop
+    from personalclaw.projects import backfill_made_for
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    _old_file(projects_home, "p-00000010", LONG_TASK[:80].strip())
+    loop = store.create(Loop(id="", kind="code", name="", task=LONG_TASK))
+    store.set_tasks_links(loop.id, tasks_project_id="p-00000010", task_list_ids={})
+    store.rename(loop.id, "Irrigation deploy")
+    backfill_made_for()
+    assert "sk-ant-api03-" not in HierarchyStore().get_project("p-00000010").name
+    assert "sk-ant-api03-" not in await _project_reads("p-00000010")
+
+
+#: A task whose 80-character cut keeps ten characters after the key's prefix, so that cut
+#: shortened for a ` (2)` suffix still reads as a key.
+CLASH_TASK = "Rotate the sprinkler controller credentials for the yard " + SECRET
+
+
+def test_a_clash_suffixed_old_name_is_named_as_the_loop_is_shown(projects_home):
+    from personalclaw.loop import store
+    from personalclaw.loop.loop import Loop
+    from personalclaw.projects import backfill_made_for
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    cut = CLASH_TASK[:80].strip()
+    assert len(CLASH_TASK.split("sk-ant-api03-")[0]) == 57, "precondition: a 57-character lead"
+    assert "sk-ant-api03-" in cut[:76], "precondition: the suffixed cut still reads as a key"
+    for pid, name in (("p-00000011", cut), ("p-00000012", cut[:76] + " (2)")):
+        _old_file(projects_home, pid, name)
+        loop = store.create(Loop(id="", kind="code", name="", task=CLASH_TASK))
+        store.set_tasks_links(loop.id, tasks_project_id=pid, task_list_ids={})
+    backfill_made_for()
+    first = HierarchyStore().get_project("p-00000011").name
+    second = HierarchyStore().get_project("p-00000012").name
+    assert "sk-ant-api03-" not in first and "sk-ant-api03-" not in second, (first, second)
+    assert first != second
+
+
+def test_a_project_a_loop_makes_from_a_long_task_is_named_with_the_key_masked(projects_home):
+    from personalclaw.loop import store, tasks_link
+    from personalclaw.loop.loop import Loop
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    stage = {"stage": "implementation", "title": "Impl", "objective": "do it", "exit_criteria": []}
+    loop = store.create(
+        Loop(
+            id="",
+            kind="code",
+            name="",
+            task=LONG_TASK,
+            plan=[stage],
+            kind_config={"entry_stage": "implementation"},
+        )
+    )
+    pid = tasks_link.provision(loop.id).tasks_project_id
+    assert "sk-ant-api03-" not in HierarchyStore().get_project(pid).name
+
+
+def test_the_boot_leaves_a_name_the_owner_chose_as_written(projects_home):
+    from personalclaw.projects import backfill_made_for
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    _old_file(projects_home, "p-0000000d", f"deploy with {SECRET}", locked=True)
+    backfill_made_for()
+    assert HierarchyStore().get_project("p-0000000d").name == f"deploy with {SECRET}"
+
+
+def test_two_old_names_that_read_the_same_masked_stay_two_names(projects_home):
+    from personalclaw.projects import backfill_made_for
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    _old_file(projects_home, "p-0000000e", f"deploy with {SECRET}")
+    _old_file(projects_home, "p-0000000f", f"deploy with {SECRET[:-1]}Z")
+    backfill_made_for()
+    assert HierarchyStore().get_project("p-0000000e").name == f"deploy with {MASK}"
+    assert HierarchyStore().get_project("p-0000000f").name == f"deploy with {MASK} (2)"
+
+
 # ── A workflow run: its list, status, live events and node output ──────────────────────────
 
 

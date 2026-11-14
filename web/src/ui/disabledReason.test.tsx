@@ -147,7 +147,7 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !
 describe('the migrated submits pass a reason', () => {
   const ADOPTERS = [
     // The five create-submits that proved the primitive
-    'pages/projects/ProjectsSection.tsx',
+    'pages/projects/NewProjectDialog.tsx',
     'pages/tasks/TaskForm.tsx',
     'pages/tasks/TaskCreatePage.tsx',
     'pages/agents/AgentCreatePage.tsx',

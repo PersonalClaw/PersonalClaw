@@ -28,7 +28,7 @@ const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && 
 //     🔑 Its local name was `FilterMenu` too, so a grep for the primitive's call sites returned the
 //     shadow as a hit. A shadow that shares its primitive's name hides from the search you would use.
 //
-//   Field (projects/ProjectsSection)         ALREADY JUDGED — as an OPEN OWNER TASTE CALL, but in a
+//   Field (projects/NewProjectDialog)        ALREADY JUDGED — as an OPEN OWNER TASTE CALL, but in a
 //     different file. `design/rawFormControls.test.tsx` pins that local Field and records the reason:
 //     its hint-above-in-sentence-case layout is the owner's to rule on, and swapping it for the shared
 //     Field moves 27.9% of the modal's pixels. This cycle converged it, measured the result, and
@@ -168,7 +168,7 @@ describe('the census is DERIVED, so a ninth shadow cannot arrive unnoticed', () 
     // 13px / none / `wght 600` / on-surface → 12px / uppercase / 0.3px tracking / on-surface-low.
     // That verdict living in a DIFFERENT file from this census is the reason the census read as
     // complete while two sites went unlisted.
-    'Field @ pages/projects/ProjectsSection.tsx': 'owner-taste-call',
+    'Field @ pages/projects/NewProjectDialog.tsx': 'owner-taste-call',
   }
 
   it('the derived shadow list holds no unjudged name', () => {
@@ -197,14 +197,14 @@ describe('the census is DERIVED, so a ninth shadow cannot arrive unnoticed', () 
     // verdict was in another file. Keeping BOTH pins means the next pass finds it in either place.
     const raw = read('design/rawFormControls.test.tsx')
     expect(raw, "the taste call's own pin must still exist").toMatch(/the local Field is a kept layout, not drift/)
-    expect(read('pages/projects/ProjectsSection.tsx'), 'and the layout it pins is still there')
+    expect(read('pages/projects/NewProjectDialog.tsx'), 'and the layout it pins is still there')
       .toMatch(/function Field\(\{ label, hint, children \}/)
   })
 
-  it("ProjectsSection's kept Field still honours the contract it is allowed to keep", () => {
+  it("the New project dialog's kept Field still honours the contract it is allowed to keep", () => {
     // The layout is the owner's call; publishing a label id its children can claim is NOT. A local
     // wrapper is only tolerable while it keeps that contract, so assert the contract, not the style.
-    const src = read('pages/projects/ProjectsSection.tsx')
+    const src = read('pages/projects/NewProjectDialog.tsx')
     expect(src).toMatch(/import \{[^}]*\bFieldLabelProvider\b[^}]*\} from '\.\.\/\.\.\/ui\/forms'/)
     expect(src).toMatch(/<FieldLabelProvider value=\{labelId\}>/)
   })

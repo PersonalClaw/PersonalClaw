@@ -21,7 +21,10 @@ import { join } from 'node:path'
 // Comments are stripped before every assertion — this file's own prose, and the explanatory
 // comments left at both fix sites, name the deleted strings on purpose.
 
-const SRC = readFileSync(join(process.cwd(), 'src', 'pages', 'projects', 'ProjectsSection.tsx'), 'utf8')
+// The project page renames it; the New project dialog (its own file since the list became one list)
+// creates it. Both are read, as the one surface they are.
+const SRC = ['ProjectsSection.tsx', 'NewProjectDialog.tsx']
+  .map((f) => readFileSync(join(process.cwd(), 'src', 'pages', 'projects', f), 'utf8')).join('\n')
 const strip = (s: string) =>
   s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 const CODE = strip(SRC)
@@ -56,13 +59,15 @@ describe('#451 the name field no longer promises a path it refuses', () => {
   })
 
   it('it still names the field', () => {
-    expect(CODE).toContain('placeholder="Project name…"')
+    expect(CODE).toContain('placeholder="Project name"')
   })
 
   it('the validator the copy now agrees with is still there — the control', () => {
     // Both halves of the refusal. Were either dropped, the placeholder would be understating
     // rather than matching, and this rail would be asserting nothing.
-    expect(CODE).toContain('disabled={!name.trim() || busy}')
-    expect(CODE).toMatch(/if\s*\(!name\s*\|\|\s*busy\)\s*return/)
+    // A blank name is the dialog's first reason, said on screen and on the Create button.
+    expect(CODE).toContain("const why = !trimmed ? 'Give it a name first.'")
+    expect(CODE).toContain('disabled={!!why || busy}')
+    expect(CODE).toMatch(/if\s*\(why\s*\|\|\s*busy\)\s*return/)
   })
 })

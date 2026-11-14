@@ -243,7 +243,7 @@ const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surfac
  *  screen-reader user tabbing the field heard nothing about it and discovered the requirement by failing.
  *  (WCAG 3.3.2, level A: instructions are provided when content requires user input.) A VISIBLE marker is
  *  a separate, owner-facing decision; this is the invisible half, which is unambiguous. */
-export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, onBlur, name, id, ariaLabel, required, size = 'lg', surface = 'container', type, mono, spellCheck, leadingIcon, trailingSlot, disabled, disabledReason, maxLength, minLength, pattern, min, max, step, autoComplete = 'off' }: {
+export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, onBlur, name, id, ariaLabel, required, size = 'lg', surface = 'container', type, mono, spellCheck, leadingIcon, trailingSlot, disabled, disabledReason, maxLength, minLength, pattern, min, max, step, autoComplete = 'off', className }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
@@ -319,6 +319,9 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
    *  so without it a keyboard user tabs past a dead field with no way to learn what is
    *  missing. Applied only WHILE disabled — a tooltip on a working field would be noise. */
   disabledReason?: string
+  /** Classes on the input itself, after the size and surface: for a box the size scale has no
+   *  tier for, such as the compact widths' 44 px target (`TOUCH_TARGET`) in a dialog. */
+  className?: string
 }) {
   const labelId = useFieldLabelId()
   const { describedBy, invalid } = useFieldDescription()
@@ -351,7 +354,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
       title={disabled ? disabledReason || undefined : undefined}
       onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} onBlur={onBlur} spellCheck={spellCheck} placeholder={placeholder}
       data-type={FIELD_ROLE[size]}
-      className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], padX, mono && 'font-mono', disabled && 'opacity-50')} />
+      className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], padX, mono && 'font-mono', disabled && 'opacity-50', className)} />
   )
   if (!leadingIcon && !trailingSlot) return input
   // The canonical leading-icon geometry (icon at left-3, input pl-9) — the shape

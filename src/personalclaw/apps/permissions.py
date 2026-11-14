@@ -1259,7 +1259,8 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "and the project's sessions are given them"
     ),
     "PUT /api/projects/settings": OwnerOnly(
-        "choosing the project your new tasks and loops start in"
+        "choosing the project your new tasks and loops start in, and the projects pinned at the "
+        "top of your Projects list"
     ),
     "POST /api/projects/{project_id}/work/claim": OwnerOnly(
         "claiming a run or task on a project's Work board — it is held for whoever the claim "

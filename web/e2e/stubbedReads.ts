@@ -111,3 +111,48 @@ export const FILE_ROOTS: StubbedRead = {
   patch: (live: { roots?: { label: string }[] }) => ({ ...live, roots: (live.roots ?? []).filter((r) => BOOT_ROOTS.includes(r.label)) }),
   why: "a root is listed only where its folder exists, and other specs make Uploads and a project's context in the shared home",
 }
+
+// ── The Projects list (`projects` in both specs) ─────────────────────────────────────────────────
+
+/** The Projects list's reads, each answered whole: the projects, what waits on you and what is
+ *  running. The run's home makes Personal and Repeatable at boot, stamped with that moment, and a
+ *  quiet project's "Active …" reads it, so a live list drew the run's own boot time against
+ *  `FIXED_CLOCK.projects`; and it has nothing waiting or running, so no card drew a pulse. Garden
+ *  carries its folder, a brief and one of each live row: an approval, its call and purpose, and a
+ *  code session at work. What the list does with each is held by
+ *  `src/pages/projects/theProjectsPageIsOneList.test.tsx` and its siblings. */
+export const PROJECTS_LIST: StubbedRead[] = [{
+  url: /\/api\/projects(\?.*)?$/,
+  json: {
+    projects: [
+      { id: 'p-0b1c2d3e', name: 'Personal', is_builtin: true, status: 'active', workspace_dir: '', brief: '', task_list_count: 0, made_for: null, folder_state: '', created_at: '2026-10-01T09:00:00+00:00', updated_at: '2026-11-01T09:00:00+00:00' },
+      { id: 'p-0c1d2e3f', name: 'Repeatable', is_builtin: true, status: 'active', workspace_dir: '', brief: '', task_list_count: 0, made_for: null, folder_state: '', created_at: '2026-10-01T09:00:00+00:00', updated_at: '2026-11-01T09:00:00+00:00' },
+      { id: 'p-0a1b2c3d', name: 'Garden', is_builtin: false, status: 'active', workspace_dir: '/srv/code/garden', brief: 'Plan and grow the spring beds, and keep the soil sensors working. The beds go in by April.', task_list_count: 2, made_for: null, folder_state: 'ok', created_at: '2026-10-01T09:00:00+00:00', updated_at: '2026-11-02T11:57:00+00:00' },
+    ],
+  },
+  why: "the run's home stamps its built-in projects with its own boot time, and has no project with a folder",
+}, {
+  url: /\/api\/waiting(\?.*)?$/,
+  json: {
+    waiting: [{
+      id: 'approval:e2e-garden-ap', kind: 'approval', work: 'loop:e2e0beds', session: '', consequence: 'blocks', risk: '',
+      brief: { tool: 'bash', tool_input: 'npm run sensor:calibrate', tool_purpose: 'Calibrate the soil sensors after the rain' },
+      asked_at: '2026-11-02T11:54:00+00:00', age_secs: 360, expires_at: null, current: true, interrupt: 'none',
+      answer: { method: 'POST', path: '/api/approvals/e2e-garden-ap/{answer}', takes: ['allow', 'deny'], body: {} },
+      route: '#/loops/e2e0beds', project_id: 'p-0a1b2c3d', loop_kind: 'goal',
+    }],
+    unreadable: [],
+  },
+  why: "the run's home has nothing waiting on you",
+}, {
+  url: /\/api\/running(\?.*)?$/,
+  json: {
+    running: [{
+      work: 'loop:e2e0fenc', kind: 'loop', session: '', phase: 'tool', line: '18 of 24 passed', since: '2026-11-02T11:48:00+00:00',
+      name: 'Fix the irrigation sensor tests', agent: '', started_at: '2026-11-02T11:30:00+00:00', route: '#/code/e2e0fenc',
+      blocked: false, waiting: [], project_id: 'p-0a1b2c3d', loop_kind: 'code',
+    }],
+    finished: [],
+  },
+  why: "the run's home has nothing running",
+}]

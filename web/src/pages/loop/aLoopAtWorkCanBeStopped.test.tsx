@@ -152,7 +152,7 @@ describe('a project\'s Work board', () => {
   })
 
   it('each row opens where its own page is', async () => {
-    const { workRoute } = await import('../projects/ProjectsSection')
+    const { workRoute } = await import('../projects/ProjectWorkRow')
     expect(workRoute(row({}))).toBe('code/c0ffee01')
     expect(workRoute(row({ kind: 'goal' }))).toBe('loops/c0ffee01')
     expect(workRoute(row({ source: 'run', run_id: 'run-7' }))).toBe('workflows/runs/run-7')

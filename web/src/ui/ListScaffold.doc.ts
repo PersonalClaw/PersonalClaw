@@ -145,7 +145,7 @@ const docs: UiDoc[] = [
     description:
       'The uniform empty state for a list/panel — a centered icon (the Spark claw mark by default, or a supplied Lucide icon in a tinted tile), a headline, an optional subline, and an optional call-to-action Button. Use it wherever a collection is empty so every zero state reads the same.',
     props: [
-      { name: 'action', description: 'Optional CTA ({ label, onClick, icon? }) rendered as a Button below the text.' },
+      { name: 'action', description: 'Optional CTA ({ label, onClick, icon?, className?, disabledReason? }) rendered as a Button below the text. `disabledReason` turns it off while the page cannot do it (offline, say) and says why, keeping it reachable.' },
       { name: 'footer', description: 'Optional content under the action: what else the page offers while it is empty, such as a Discover tip.' },
       { name: 'hint', description: 'Optional subline explaining the empty state or how to fill it.' },
       { name: 'icon', description: 'Optional Lucide icon shown in a tinted tile; omit to fall back to the Spark claw mark.' },

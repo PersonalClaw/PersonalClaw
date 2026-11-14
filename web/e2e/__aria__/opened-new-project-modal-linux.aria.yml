@@ -25,33 +25,36 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Projects" [level=#]
-  - button "Search projects"
-  - radiogroup "View":
-    - radio "Projects" [checked]
-    - radio "Chats by project"
-  - button "All tasks"
-  - button "Loops"
-  - button "Import"
+  - searchbox "Search projects and chats"
+  - 'button "Show: Active"'
+  - button "More actions"
   - button "New project"
+  - paragraph: # projects
   - status
-  - button "Personal"
-  - text: Personal Built-in no workspace · # lists
-  - button "Repeatable"
-  - text: Repeatable Built-in no workspace · # lists
+  - list "Projects":
+    - listitem "Personal, active <when>":
+      - button "Personal"
+      - heading "Personal, active <when>" [level=#]: Personal
+      - text: Built-in Active <when> Tasks with no other project go here.
+      - button "More actions for Personal"
+    - listitem "Repeatable, active <when>":
+      - button "Repeatable"
+      - heading "Repeatable, active <when>" [level=#]: Repeatable
+      - text: Built-in Active <when> Task lists you reset and run again.
+      - button "More actions for Repeatable"
+  - paragraph: Projects keep related work together. Each one shows what needs you, what is running and what its work made.
+  - button "New project"
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"
 - dialog "New project":
   - text: New project
   - button "Close"
+  - paragraph: A project keeps related chats, loops, tasks and files together.
   - text: Name
   - textbox "Name":
-    - /placeholder: Project name…
-  - text: Brief The goal, scope, and background — shared as context with every agent working on this project's sessions and loops.
-  - textbox "Brief":
-    - /placeholder: What is this project for? What does success look like?
-  - text: Workspace Optional — the directory loops + code work in. You can bind or change it later. No workspace bound
-  - button "Bind"
-  - checkbox "Make it your default project — new tasks and loops start here, on every device" [checked]
-  - text: Make it your default project — new tasks and loops start here, on every device
+    - /placeholder: Project name
+  - text: Folder Optional. Chats and loops here work in this folder.
+  - button "Choose a folder"
+  - text: Give it a name first.
   - button "Cancel"
   - button "Create project" [disabled]

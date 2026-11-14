@@ -27,6 +27,7 @@ const doc: UiDoc = {
     { name: 'revealKey', description: 'rowKey of a row to bring into the window and into view WITHOUT moving focus: the row the page shows, as a sidebar lights the one the address opens. Changing it reveals it; the same key again, or clearing it, leaves the user\'s scroll alone. A key not listed yet is revealed once its row arrives.' },
     { name: 'overscan', description: 'Rows kept mounted above and below the viewport (default 8). This is what stops a fast scroll flashing empty; every extra row is back on the cost curve.' },
     { name: 'className', description: 'Applied to the list container — pass the same layout classes the un-windowed <div> had (flex flex-col gap-s), so a short list is unchanged.' },
+    { name: 'ariaLabel', description: 'The list\'s name, for a list the page names (the Projects list\'s "Projects"), so a screen reader hears the same list windowed or not. Unnamed by default.' },
     { name: 'enableRowKeyboard', description: 'Set false only for a list whose rows are not individually focusable (a log tail). Otherwise the primitive owns Arrow/Home/End/PageUp/PageDown and reaches un-rendered rows.' },
     { name: 'children', description: 'Render function (item, index, ctx). ctx.windowed says whether the window is engaged — adopters pass index={ctx.windowed ? 0 : i} to ListRow, because a windowed row REMOUNTS on every scroll-back and an index-keyed entrance stagger would replay the fade forever.' },
   ],

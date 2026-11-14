@@ -133,12 +133,12 @@ describe('the THIRD pill family — the project picker — agrees', () => {
   // overlap. The rail below is what keeps the two labels apart, since neither file can see the other.
   it('names the dimension and the value', () => {
     render(<ProjectPicker value="" onChange={() => {}} />)
-    expect(screen.getByRole('button', { name: 'Project: New project' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Project: No project' })).toBeTruthy()
   })
 
   it('follows the caller\'s empty label rather than inventing one', () => {
-    render(<ProjectPicker value="" onChange={() => {}} emptyLabel="No project" />)
-    expect(screen.getByRole('button', { name: 'Project: No project' })).toBeTruthy()
+    render(<ProjectPicker value="" onChange={() => {}} emptyLabel="Every project" />)
+    expect(screen.getByRole('button', { name: 'Project: Every project' })).toBeTruthy()
   })
 
   it('says just "Project" when the value would repeat the dimension', () => {
@@ -150,7 +150,7 @@ describe('the THIRD pill family — the project picker — agrees', () => {
 
   it('leaves the VISIBLE label alone (a naming fix, not a redesign)', () => {
     const { container } = render(<ProjectPicker value="" onChange={() => {}} />)
-    expect(container.querySelector('button')!.textContent!.trim()).toBe('New project')
+    expect(container.querySelector('button')!.textContent!.trim()).toBe('No project')
   })
 
   it('the trigger carries no aria-label-shaped title fallback confusion', () => {
@@ -244,8 +244,8 @@ describe('the cockpit header row paints no label twice', () => {
       clash,
       `LoopComposer paints ${JSON.stringify(clash)}, which is also what ProjectPicker paints when no ` +
         `project is bound — two adjacent controls in the same header row with the same words and ` +
-        `different jobs. Rename the composer's label; the picker's is product vocabulary the backend ` +
-        `honours ("${pickerDefault} (auto-named)" auto-creates one).`,
+        `different jobs. Rename the composer's label; the picker's says what an empty project means ` +
+        `("${pickerDefault}").`,
     ).toEqual([])
   })
 

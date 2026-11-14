@@ -46,10 +46,11 @@ function mount(status: ProjectItem['status'], isDefault = false) {
   // resolves to "none" there, which this mock mirrors.
   vi.spyOn(api, 'projectSettings').mockImplementation(async () => ({
     default_project_id: project.status === 'archived' ? '' : defaultProjectId,
+    pinned_project_ids: [],
   }))
   updateProjectSettings = vi.spyOn(api, 'updateProjectSettings').mockImplementation(async (body) => {
-    defaultProjectId = body.default_project_id
-    return body
+    defaultProjectId = body.default_project_id ?? defaultProjectId
+    return { default_project_id: defaultProjectId, pinned_project_ids: body.pinned_project_ids ?? [] }
   })
 
   render(

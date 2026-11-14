@@ -4,6 +4,7 @@ levels of the task hierarchy)."""
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.record_ids import UnsafeRecordId
 from personalclaw.request_validation import (
     MISSING,
+    RequestValidationError,
     bool_field,
     json_object_body,
     optional_bool,
@@ -139,7 +141,88 @@ def _workspace_refusal(workspace_dir: str) -> web.Response | None:
     return None
 
 
-def _project_payload(store: HierarchyStore, project, *, list_counts: dict | None = None) -> dict:
+#: ``_made_for``'s *loops* when one project's read asks for its one loop.
+_READ_ITS_LOOP: Any = object()
+
+
+def _made_for(project, loops: dict[str, Any] | None = _READ_ITS_LOOP) -> dict | None:
+    """``made_for`` as the reads serve it: ``{work, kind, name}`` with the loop's own kind and
+    name, masked as the loop's reads mask them, ``""`` for both once the loop is gone, or None
+    for a project no loop made for itself.
+
+    *loops* is the list read's one pass over the loops (``{id: loop}``), or None when that pass
+    could not read them; by default one project's read asks for its one loop. A loop store that
+    cannot be read serves the kind as unknown, ``None``, and the name ``""``, never the deleted
+    loop's form, and the rest of the read still answers."""
+    from personalclaw.security import redact_for_display
+
+    work = project.made_for
+    if not work:
+        return None
+    loop_id = work.removeprefix("loop:")
+    if loops is _READ_ITS_LOOP:
+        try:
+            from personalclaw.loop import store as loop_store
+
+            loop = loop_store.get(loop_id)
+        except Exception:  # noqa: BLE001 - a read that labels a project never fails on it
+            logger.warning("a project's loop could not be read", exc_info=True)
+            return {"work": work, "kind": None, "name": ""}
+    elif loops is None:
+        return {"work": work, "kind": None, "name": ""}
+    else:
+        loop = loops.get(loop_id)
+    if loop is None:
+        return {"work": work, "kind": "", "name": ""}
+    name = redact_for_display(loop.name) if loop.name else redact_for_display(loop.task or "")[:60]
+    return {"work": work, "kind": str(loop.kind or ""), "name": name}
+
+
+def _loops_by_id(projects) -> dict[str, Any] | None:
+    """Every loop by id, read once for the list; ``{}`` when no project carries a mark, and None
+    when the loops cannot be read."""
+    if not any(p.made_for for p in projects):
+        return {}
+    try:
+        from personalclaw.loop import store as loop_store
+
+        return {lp.id: lp for lp in loop_store.list_all()}
+    except Exception:  # noqa: BLE001 - the list still answers; each mark reads its loop unknown
+        logger.warning("loops unreadable; each project's loop mark reads its loop unknown")
+        return None
+
+
+def _folder_state(workspace_dir: str, sensitive: Callable[[str], bool]) -> str:
+    """Whether a project's folder is there, by the rule the folder picker (``GET /api/browse-dirs``)
+    answers a path with: not there or a file is ``missing`` (its 404), a location it will not open
+    (a credential location or a system root, its 403) or cannot reach (its 400) is
+    ``unreadable``, a folder it would open is ``ok``; ``""`` for a project bound to none.
+    *sensitive* is one :class:`~personalclaw.security.SensitivePaths` for the whole list."""
+    import os
+
+    from personalclaw.file_roots import is_system_root
+
+    bound = str(workspace_dir or "").strip()
+    if not bound:
+        return ""
+    try:
+        base = os.path.realpath(os.path.expanduser(bound))
+        if not os.path.isdir(base):
+            return "missing" if not os.path.exists(base) or os.path.isfile(base) else "unreadable"
+        if sensitive(base) or is_system_root(base):
+            return "unreadable"
+    except (ValueError, OSError):  # a path the OS cannot take (an embedded NUL): this row only
+        return "unreadable"
+    return "ok"
+
+
+def _project_payload(
+    store: HierarchyStore,
+    project,
+    *,
+    list_counts: dict | None = None,
+    loops: dict[str, Any] | None = _READ_ITS_LOOP,
+) -> dict:
     """Serialize a project for the API, enriched with its context dir path + a
     task-list count. ``list_counts`` lets the list endpoint pass a precomputed
     {project_id: count} map so it isn't recomputed per project.
@@ -155,6 +238,7 @@ def _project_payload(store: HierarchyStore, project, *, list_counts: dict | None
     else:
         d["task_list_count"] = list_counts.get(project.id, 0)
     d["revisions"] = {_TEMPLATE_FIELD: revision_of(project.agent_instructions_template)}
+    d["made_for"] = _made_for(project, loops)
     return d
 
 
@@ -199,16 +283,31 @@ async def api_projects_list(request: web.Request) -> web.Response:
     """GET /api/projects
 
     Read off the event loop: it reads every project's file and every task list, and the shell
-    reads it on each load (the sidebar names each loop's project from it)."""
+    reads it on each load (the sidebar names each loop's project from it).
+
+    Each row carries ``folder_state`` (:func:`_folder_state`), so the list says a folder is gone
+    with no probe per row. An app's read carries none: whether a folder is there is the owner's to
+    read, as a project's ``folder`` is (:func:`_project_folder`)."""
+    from personalclaw.apps.permissions import request_app
+
+    for_an_app = bool(request_app())
 
     def read() -> list[dict]:
+        from personalclaw.security import SensitivePaths
+
         store = _store()
         projects = store.list_projects()
         # Precompute task-list counts once (one pass over all lists) for the UI.
         counts: dict[str, int] = {}
         for tl in store.list_task_lists():
             counts[tl.project_id] = counts.get(tl.project_id, 0) + 1
-        return [_project_payload(store, p, list_counts=counts) for p in projects]
+        loops = _loops_by_id(projects)
+        rows = [_project_payload(store, p, list_counts=counts, loops=loops) for p in projects]
+        if not for_an_app:
+            sensitive = SensitivePaths()
+            for row, p in zip(rows, projects):
+                row["folder_state"] = _folder_state(p.workspace_dir, sensitive)
+        return rows
 
     return web.json_response({"projects": await asyncio.to_thread(read)})
 
@@ -296,69 +395,156 @@ async def api_projects_get(request: web.Request) -> web.Response:
 _PROJECT_SETTINGS_ENTITY = "projects"
 
 
-def _effective_default_project_id(store: HierarchyStore) -> str:
-    """The stored default, if it still names an ACTIVE project; else "".
+def _starts_new_work(store: HierarchyStore, pid: str) -> bool:
+    """True when *pid* names a project that exists and is not archived."""
+    try:
+        project = store.get_project(pid)
+    except UnsafeRecordId:  # a hand-edited id that is not one path segment
+        return False
+    return project is not None and project.status != "archived"
 
-    Resolved at read time rather than cleaned up at write time, so a delete, an archive or a
-    hand-edited file can never leave the setting naming a project new work cannot start in —
-    and a restored project is the default again, which is what the user last chose.
 
-    Fail-OPEN, the availability-surface rule: an unreadable file reads as "no default", whose
-    only effect is that a create form pre-selects Personal. Nothing irreversible hangs off it.
+def _project_settings(store: HierarchyStore) -> dict[str, Any]:
+    """The default project and the pins, each as it reads today.
+
+    Both are resolved at read time rather than cleaned up at write time, so a delete, an
+    archive or a hand-edited file can never leave the setting naming a project new work
+    cannot start in, and a restored project is the default again, or pinned again where it
+    was, which is what the user last chose. The stored file is left as written.
+
+    Fail-OPEN, the availability-surface rule: an unreadable file reads as no default and no
+    pins, whose only effects are that a create form pre-selects Personal and the Projects
+    list orders every project by activity. Nothing irreversible hangs off either.
     """
     from personalclaw.providers.entity_routes import _load_entity_settings
 
-    stored = (_load_entity_settings(_PROJECT_SETTINGS_ENTITY) or {}).get("default_project_id")
-    if not isinstance(stored, str) or not stored:
-        return ""
+    stored = _load_entity_settings(_PROJECT_SETTINGS_ENTITY) or {}
+    default = stored.get("default_project_id")
+    if not isinstance(default, str) or not default or not _starts_new_work(store, default):
+        default = ""
+    raw_pins = stored.get("pinned_project_ids")
+    pins: list[str] = []
+    for pid in raw_pins if isinstance(raw_pins, list) else ():
+        if isinstance(pid, str) and pid and pid not in pins and _starts_new_work(store, pid):
+            pins.append(pid)
+    return {"default_project_id": default, "pinned_project_ids": pins}
+
+
+def _project_refusal(store: HierarchyStore, pid: str, what: str) -> web.Response | None:
+    """Why *pid* cannot be *what* (the default, or a pin), or None when it can."""
     try:
-        project = store.get_project(stored)
-    except UnsafeRecordId:  # a hand-edited id that is not one path segment
-        return ""
-    if project is None or project.status == "archived":
-        return ""
-    return stored
+        project = store.get_project(pid)
+    except UnsafeRecordId:
+        return json_error("invalid_id", status=400)
+    if project is None:
+        return json_error("project_not_found", message=f"no project {pid!r}", status=400)
+    if project.status == "archived":
+        return json_error(
+            "project_archived",
+            message=f"{project.name!r} is archived. Restore it before making it {what}.",
+            status=409,
+        )
+    return None
+
+
+def _wanted_pins(body: dict[str, Any]) -> list[str]:
+    """The body's ``pinned_project_ids``: a list of ids, in order, a repeat dropped."""
+    raw = body["pinned_project_ids"]
+    if not isinstance(raw, list):
+        raise RequestValidationError(
+            "field_not_a_list", "pinned_project_ids must be a list of project ids."
+        )
+    pins: list[str] = []
+    for pid in raw:
+        if not isinstance(pid, str) or not pid.strip():
+            raise RequestValidationError(
+                "field_not_a_string", "each of pinned_project_ids must be a project id."
+            )
+        if pid.strip() not in pins:
+            pins.append(pid.strip())
+    return pins
+
+
+def _kept_archived_pins(store: HierarchyStore, stored: Any, wanted: list[str]) -> list[str]:
+    """*wanted*, with each stored pin that names an archived project and is not in it put back at
+    its stored place (or the end). The read hides an archived pin and a page writes back the list
+    it read, so without this any pin change while a project is archived would unpin it for good.
+    A stored id that names no project drops, as the read drops it."""
+    kept = list(wanted)
+    for at, pid in enumerate(stored if isinstance(stored, list) else ()):
+        if not isinstance(pid, str) or not pid or pid in kept:
+            continue
+        try:
+            project = store.get_project(pid)
+        except UnsafeRecordId:
+            continue
+        if project is not None and project.status == "archived":
+            kept.insert(min(at, len(kept)), pid)
+    return kept
 
 
 async def api_projects_settings_get(request: web.Request) -> web.Response:
-    """GET /api/projects/settings — the user's default project (`""` when none)."""
-    return web.json_response({"default_project_id": _effective_default_project_id(_store())})
+    """GET /api/projects/settings: the default project (`""` when none) and the pins, in order."""
+    now = await asyncio.to_thread(_project_settings, _store())
+    return web.json_response(
+        {
+            "default_project_id": now["default_project_id"],
+            "pinned_project_ids": now["pinned_project_ids"],
+        }
+    )
 
 
 async def api_projects_settings_put(request: web.Request) -> web.Response:
-    """PUT /api/projects/settings — set the default project; `""` or null clears it."""
+    """PUT /api/projects/settings: set the default project, the pins, or both.
+
+    Either key alone is a whole request and leaves the other as it was. `""` or null clears
+    the default; `[]` clears the pins the read shows; an archived project's pin stays for its
+    restore (:func:`_kept_archived_pins`).
+    """
     from personalclaw.providers.entity_routes import (
         _load_entity_settings,
         _save_entity_settings,
     )
 
     body = await json_object_body(request)
-    if "default_project_id" not in body:
+    if "default_project_id" not in body and "pinned_project_ids" not in body:
         # An empty body is not a request to clear: a client that sends nothing must not wipe
-        # the user's choice. Clearing is an explicit "".
+        # the user's choice. Clearing is an explicit "" or [].
         return json_error(
             "field_required",
-            message='default_project_id is required ("" clears the default).',
+            message='default_project_id or pinned_project_ids is required ("" or [] clears).',
             status=400,
         )
-    wanted = string_field(body, "default_project_id")
+    changes: dict[str, Any] = {}
     store = _store()
-    if wanted:
-        try:
-            project = store.get_project(wanted)
-        except UnsafeRecordId:
-            return json_error("invalid_id", status=400)
-        if project is None:
-            return json_error("project_not_found", message=f"no project {wanted!r}", status=400)
-        if project.status == "archived":
-            return json_error(
-                "project_archived",
-                message=f"{project.name!r} is archived — restore it before making it the default.",
-                status=409,
-            )
+    if "default_project_id" in body:
+        wanted = string_field(body, "default_project_id")
+        refusal = wanted and _project_refusal(store, wanted, "the default")
+        if refusal:
+            return refusal
+        changes["default_project_id"] = wanted
+    if "pinned_project_ids" in body:
+        pins = _wanted_pins(body)
+        for pid in pins:
+            refusal = _project_refusal(store, pid, "a pin")
+            if refusal:
+                return refusal
+        changes["pinned_project_ids"] = pins
+
+    # Read and write with no await between, so two PUTs, one per key, cannot lose either.
     stored = _load_entity_settings(_PROJECT_SETTINGS_ENTITY) or {}
-    _save_entity_settings(_PROJECT_SETTINGS_ENTITY, {**stored, "default_project_id": wanted})
-    return web.json_response({"default_project_id": wanted})
+    if "pinned_project_ids" in changes:
+        changes["pinned_project_ids"] = _kept_archived_pins(
+            store, stored.get("pinned_project_ids"), changes["pinned_project_ids"]
+        )
+    _save_entity_settings(_PROJECT_SETTINGS_ENTITY, {**stored, **changes})
+    now = await asyncio.to_thread(_project_settings, store)
+    return web.json_response(
+        {
+            "default_project_id": now["default_project_id"],
+            "pinned_project_ids": now["pinned_project_ids"],
+        }
+    )
 
 
 async def api_projects_linked(request: web.Request) -> web.Response:
@@ -843,6 +1029,14 @@ async def api_projects_update(request: web.Request) -> web.Response:
         )
         if stale is not None:
             return stale
+    if (
+        "name" in body
+        or bool_field(body, "name_locked", default=False)
+        or str(body.get("brief") or "").strip()
+    ):
+        # The owner named it or wrote what it is for: it is theirs now, not the loop's it was made
+        # for, and it leaves the "Made for goal loops" fold.
+        body["made_for"] = None
     try:
         project = store.update_project(pid, **body)
     except ValueError as e:

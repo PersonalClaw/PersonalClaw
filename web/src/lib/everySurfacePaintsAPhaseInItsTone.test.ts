@@ -7,7 +7,7 @@ import { LOOP_STATUS_PHASES, loopStatusLook } from './loopStatus'
 import { runLook } from '../pages/workflows/workflowMeta'
 import { ITEM_KINDS } from '../pages/inbox/inboxMeta'
 import { kindMeta } from '../pages/notifications/notificationMeta'
-import { NEEDS_YOU_DOT } from '../pages/projects/ProjectsSection'
+import { NEEDS_YOU_DOT } from '../pages/projects/ProjectWorkRow'
 import { MIC_TONE } from '../ui/MicCaptureChip'
 
 // ── One tone per phase, on every surface that paints one (#3833) ───────────────────────────────

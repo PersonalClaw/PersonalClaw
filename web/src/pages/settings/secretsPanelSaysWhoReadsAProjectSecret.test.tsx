@@ -68,6 +68,8 @@ async function mount(rows: Row[], projects: () => Promise<unknown> = async () =>
     api: {
       secrets: async () => payload(rows),
       projects,
+      // The project picker lists the pinned projects first.
+      projectSettings: async () => ({ default_project_id: '', pinned_project_ids: [] }),
       putSecret,
       deleteSecret,
     },

@@ -35,8 +35,9 @@ import { openable } from './RunningLane'
 // could not read (`NeedsUnreadable`), the one sentence that stands in for "nothing is waiting" while
 // the list is incomplete.
 
-/** A waiting source's kind, in words, for "Could not read …". */
-const SOURCE_WORDS: Record<string, string> = {
+/** A waiting source's kind, in words, for "Could not read …". Exported for the Projects list's
+ *  note, which says the same sources in the same words. */
+export const SOURCE_WORDS: Record<string, string> = {
   approval: 'approvals',
   question: 'agents’ questions',
   loop_question: 'loops’ questions',

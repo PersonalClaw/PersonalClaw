@@ -21,22 +21,39 @@
 - main:
   - button "Collapse sidebar"
   - button "Open terminal"
+  - button "# waiting on you — open Attention"
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Projects" [level=#]
-  - button "Search projects"
-  - radiogroup "View":
-    - radio "Projects" [checked]
-    - radio "Chats by project"
-  - button "All tasks"
-  - button "Loops"
-  - button "Import"
+  - searchbox "Search projects and chats"
+  - 'button "Show: Active"'
+  - button "More actions"
   - button "New project"
+  - paragraph: # projects
   - status
-  - button "Personal"
-  - text: Personal Built-in no workspace · # lists
-  - button "Repeatable"
-  - text: Repeatable Built-in no workspace · # lists
+  - list "Projects":
+    - listitem "Garden, # needs you, # running, active <when>":
+      - button "Garden"
+      - heading "Garden, # needs you, # running, active <when>" [level=#]: Garden
+      - text: # needs you # running Active <when> code/garden Plan and grow the spring beds, and keep the soil sensors working.
+      - button "More actions for Garden"
+      - list:
+        - listitem:
+          - 'button "Goal loop: bash(npm run sensor:calibrate), waiting on you"'
+          - text: Waiting on you bash(npm run sensor:calibrate) Calibrate the soil sensors after the rain Goal loop · # min
+        - listitem:
+          - 'button "Code session: Fix the irrigation sensor tests, working"'
+          - text: Working Fix the irrigation sensor tests # of # passed Code session · # min
+    - listitem "Personal, active yesterday":
+      - button "Personal"
+      - heading "Personal, active yesterday" [level=#]: Personal
+      - text: Built-in Active yesterday Tasks with no other project go here.
+      - button "More actions for Personal"
+    - listitem "Repeatable, active yesterday":
+      - button "Repeatable"
+      - heading "Repeatable, active yesterday" [level=#]: Repeatable
+      - text: Built-in Active yesterday Task lists you reset and run again.
+      - button "More actions for Repeatable"
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

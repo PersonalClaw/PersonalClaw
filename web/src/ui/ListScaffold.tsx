@@ -101,8 +101,9 @@ export function EmptyState({ icon: Icon, title, hint, action, footer }: {
   icon?: LucideIcon
   title: string
   hint?: string
-  /** `className` is added to the action's button, e.g. the compact widths' 44 px hit box. */
-  action?: { label: string; onClick: () => void; icon?: LucideIcon; className?: string }
+  /** `className` is added to the action's button, e.g. the compact widths' 44 px hit box.
+   *  `disabledReason` turns the action off while the page cannot do it, and says why. */
+  action?: { label: string; onClick: () => void; icon?: LucideIcon; className?: string; disabledReason?: string }
   /** Under the action: what else the page offers while it is empty, such as a Discover tip. */
   footer?: ReactNode
 }) {
@@ -115,7 +116,8 @@ export function EmptyState({ icon: Icon, title, hint, action, footer }: {
         {hint && <p data-type="body-m" className="mt-1 max-w-[420px] text-on-surface-low">{hint}</p>}
       </div>
       {action && (
-        <Button onClick={action.onClick} className={action.className}>{action.icon && <action.icon size={16} />} {action.label}</Button>
+        <Button onClick={action.onClick} className={action.className}
+          disabled={!!action.disabledReason} disabledReason={action.disabledReason}>{action.icon && <action.icon size={16} />} {action.label}</Button>
       )}
       {footer}
     </div>

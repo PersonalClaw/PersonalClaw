@@ -6,7 +6,7 @@ import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, SUBSTATE_ROUTES, 
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
 import { idleRunState } from '../src/lib/workPhase'
 import { BASELINED_STEPS, runMatrix, stepVerdict, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
-import { LEARNING_WEEK, STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
+import { LEARNING_WEEK, PROJECTS_LIST, STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
 import { FIXED_CLOCK } from './fixedClock'
 import { apiGet } from './pairedApi'
 
@@ -201,6 +201,8 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
   // The capture week, moved to end on the day Learning's clock reads (`FIXED_CLOCK`): the gateway
   // buckets it by its own date, so the page and its clock name the same days in both specs.
   learning: [LEARNING_WEEK],
+  // The Projects list, its projects and what waits and runs in them, whole (`PROJECTS_LIST`).
+  projects: PROJECTS_LIST,
   // The chat the Session Map row opens. The run's home holds no chat long enough for a map, and
   // one driven through real turns would differ by the scripted provider's timing. The rail's
   // behaviour is held by `src/pages/chat/SessionMapRail*.test.tsx`.

@@ -42,6 +42,16 @@ const KINDS: { id: LoopKind; label: string; blurb: string }[] = [
 
 const COMPOSER_CONTROLS: ComposerControls = { agent: false, model: false, reasoning: false, attach: false, mic: true, optimize: true }
 const GRANULARITIES: Granularity[] = ['quick', 'balanced', 'exhaustive', 'forever']
+/** What the picker's empty option means for each kind: a code session makes its own project, named
+ *  from its task; a goal loop does when its plan has sub-goals to split; the others make none. */
+export const OWN_PROJECT: Record<LoopKind, string> = {
+  code: 'Its own project (named from the task)',
+  goal: 'Its own project (if its plan has sub-goals)',
+  research: 'No project',
+  design: 'No project',
+  general: 'No project',
+}
+
 const PLACEHOLDER: Record<LoopKind, string> = {
   general: 'Describe the iterative task…',
   goal: 'Describe the goal — a report, a green build, an investigation…',
@@ -287,7 +297,8 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
     // design (they must keep their natural size), so the row can only fit by each wide control
     // having its OWN collapse strategy — which only the granularity dial had.
     <div className="flex min-w-0 items-center gap-s [&>*]:shrink-0">
-      <ProjectPicker value={projectId} onChange={(id) => { projectChosen.current = true; setProjectId(id) }} disabled={busy} />
+      <ProjectPicker value={projectId} onChange={(id) => { projectChosen.current = true; setProjectId(id) }} disabled={busy}
+        emptyLabel={OWN_PROJECT[kind]} emptyHint="" emptyMakesProject={kind === 'code' || kind === 'goal'} />
       {/* Goal-only: the stop-granularity dial. 4 options → collapses to a menu when narrow. */}
       {kind === 'goal' && (
         <Segmented ariaLabel="Granularity" disabled={busy} collapse="menu" value={granularity} onChange={(v) => setGranularity(v as Granularity)}

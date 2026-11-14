@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent, screen, within } from '@testing-library/react'
-import { WorkBoardColumn, WORK_OUTCOME_LOOK, WORK_STATE_LABEL } from './ProjectsSection'
+import { WorkBoardColumn } from './ProjectsSection'
+import { WORK_OUTCOME_LOOK, WORK_STATE_LABEL } from './ProjectWorkRow'
 import { statusMeta } from '../tasks/taskMeta'
 import type { WorkBoard, WorkGroup, WorkRow } from '../../lib/api'
 

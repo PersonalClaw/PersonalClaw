@@ -17,6 +17,9 @@ export const FIXED_CLOCK: Record<string, string> = {
   // filter does.
   notifications: '2026-11-02T12:00:00Z',
   'projects/p-0a1b2c3d?tab=tasks': '2026-11-02T12:00:00Z',
+  // The Projects list says when each project last did something ("Active 3 min ago") and how long
+  // each live row has waited or run, against its fixed reads (`PROJECTS_LIST`).
+  projects: '2026-11-02T12:00:00Z',
   // What waits on you says how long each item has waited.
   'mission-control': '2026-11-02T12:00:00Z',
   companion: '2026-11-02T12:00:00Z',

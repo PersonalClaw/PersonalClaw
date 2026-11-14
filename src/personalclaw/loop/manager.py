@@ -458,6 +458,18 @@ async def start(state, svc, loop_id: str) -> Loop:
     if strat is None:
         raise ValueError(f"no strategy for loop kind {loop.kind!r}")
 
+    if loop.project_id:
+        # Launched by choice into a project another loop made for itself: the owner made it
+        # theirs, whatever this loop's kind and whether or not it provisions tasks
+        # (`tasks_link.ensure_project` clears it only for the kinds that do).
+        from personalclaw import projects as projects_svc
+
+        await asyncio.to_thread(
+            projects_svc.clear_made_for,
+            loop.project_id,
+            unless=projects_svc.made_for_loop(loop.id),
+        )
+
     # Provision the backing Tasks Project + per-phase TaskLists, then seed the
     # planner's tasks (idempotent — a resume re-provisions harmlessly + never
     # re-seeds a non-empty list). The loop's plan becomes real, trackable Tasks.

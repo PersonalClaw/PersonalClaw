@@ -294,19 +294,19 @@ describe("a project's page lists its chats, and the pages they came from still o
   })
 
   // 🔴 Red before (#5877): the Projects page had no view of the chats by project; the sidebar was it.
-  it("the Projects page's Chats by project view lists every project's chats, No project last, and opens each at its address", async () => {
+  // The list is that view now: each project with its live work, the chats in no project folded
+  // last, and its search finds a project's chats under it.
+  it("the Projects page lists each project, Not in a project last, and its search finds a project's chats, opening each at its address", async () => {
     location.hash = '#/projects'
     const user = userEvent.setup()
     renderApp()
     const main = () => document.querySelector('main') as HTMLElement
-    const view = await within(main()).findByRole('radiogroup', { name: 'View' })
-    await user.click(within(view).getByRole('radio', { name: /^Chats by project/ }))
-    await waitFor(() => expect(location.hash).toBe('#/projects?view=chats'))
-    const sections = async () => (await within(main()).findAllByRole('heading', { level: 2 })).map((h) => h.textContent)
-    expect(await sections()).toEqual(['Personal · 0', 'Garden · 3', 'No project · 1'])
-    expect(within(main()).getByRole('button', { name: 'Chat: A question about tax' })).toBeInTheDocument()
-    await user.type(within(main()).getByRole('searchbox', { name: 'Search chats' }), 'gate')
-    await waitFor(async () => expect(await sections()).toEqual(['Garden · 1']))
+    const headings = async () => (await within(main()).findAllByRole('heading', { level: 2 })).map((h) => h.textContent)
+    expect(await headings()).toEqual(expect.arrayContaining(['Personal', 'Garden']))
+    expect(within(main()).getByRole('button', { name: /^Not in a project, 1 chat/ })).toBeInTheDocument()
+    await user.type(within(main()).getByRole('searchbox', { name: 'Search projects and chats' }), 'gate')
+    await waitFor(async () => expect(await headings()).toEqual(['Garden']))
+    expect(within(main()).queryByRole('button', { name: /^Not in a project/ }), 'no chat in no project matches').toBeNull()
     await user.click(within(main()).getByRole('button', { name: 'Code session: Fence gate, failed' }))
     await waitFor(() => expect(location.hash).toBe('#/code/e5f6a7b8'))
   })

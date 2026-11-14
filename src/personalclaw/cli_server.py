@@ -1411,6 +1411,7 @@ def _boot_config() -> AppConfig:
         print(f"Created default config: {config_path()}")
 
     from personalclaw.config.migrations import load_and_persist_migrations
+    from personalclaw.projects import backfill_made_for
     from personalclaw.reply_style import backfill_home
     from personalclaw.routing.rates import adopt_prices_set_before
 
@@ -1421,6 +1422,11 @@ def _boot_config() -> AppConfig:
         backfill_home()
     except Exception:  # noqa: BLE001 - a backfill that cannot run never blocks startup
         logging.getLogger(__name__).warning("Reply style backfill failed", exc_info=True)
+    # Projects written before a loop's mark existed get it once, before anything reads them.
+    try:
+        backfill_made_for()
+    except Exception:  # noqa: BLE001 - a backfill that cannot run never blocks startup
+        logging.getLogger(__name__).warning("Project loop-mark backfill failed", exc_info=True)
     return load_and_persist_migrations()
 
 

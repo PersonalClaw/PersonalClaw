@@ -45,6 +45,22 @@ names the loop on each phase list (`loop_id`, `""` for any other list, the share
 included), and `GET /api/projects/{id}/work` lists neither the phase tasks nor the sub-goals of a
 loop it lists: the loop's row stands for its steps there.
 
+A project a loop makes for itself, because none was chosen (a code session at launch, a goal loop
+when its plan's sub-goals are split), carries the loop it was made for, `made_for: "loop:<id>"` on
+its `project.json` (`tasks_link.ensure_project`), and the Projects list folds it under "Made for
+goal loops". `GET /api/projects` and `GET /api/projects/{id}` serve it as `made_for: {work, kind,
+name}`, the loop's kind and name as the loop's own reads show them, both `""` once the loop is
+deleted, which clears nothing, and a `null` kind when the loops cannot be read. Renaming the
+project, locking its name, writing its brief, starting a chat in it (not an Incognito, throwaway or
+app's chat), or starting another loop of any kind in it by choice (`manager.start`) takes the mark
+off. No request body sets it, and an import never reads it from an archive, though an export copies
+`project.json` whole. The project is named as the loop is shown, from the loop's name, else its
+task. A project made before the field existed gets its answer once, at the gateway's boot
+(`projects.backfill_made_for`), by the same rule read off the loops: made for the oldest loop whose
+`tasks_project_id` names it while its `project_id` is empty, when the owner has not named it,
+briefed it or chosen it for a loop. The same pass names such a file's project as the loop is shown
+when its name is not the owner's.
+
 **The supervisor is NOT part of that plugin seam.** How a loop
 converges is *declared*, not coded: `workflows/supervisor_policy.py` holds the
 `ConvergenceSpec` type, the closed `DONE_SIGNALS` vocabulary
