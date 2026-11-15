@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1042,34 +1043,47 @@ class TestProbeRemoteTimeout:
         assert time.monotonic() - started < 5, "the probe outlived its configured timeout"
 
 
+def _write_script(path):
+    """Write an executable ``#!/bin/sh`` script at *path*, its folders included, and return it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\nexit 0\n")
+    path.chmod(0o755)
+    return path
+
+
 class TestFixStaleManagedCommand:
     """Tests for _fix_stale_managed_command."""
 
     @pytest.fixture(autouse=True)
     def _reset_cache(self):
+        import personalclaw.agent as _a
         import personalclaw.mcp_discovery as _d
 
+        old_bin = _a._PERSONALCLAW_BIN
         _d._resolved_managed_bin = None
+        _a._PERSONALCLAW_BIN = None
         yield
         _d._resolved_managed_bin = None
+        _a._PERSONALCLAW_BIN = old_bin
 
-    def test_resolves_to_running_binary_via_which(self):
-        """Resolve managed-server command to the personalclaw binary on PATH."""
+    def test_resolves_to_the_gateways_own_binary(self):
+        """The managed server's command becomes the binary the agent config's resolver answers."""
         from personalclaw.mcp_discovery import _fix_stale_managed_command
 
         spec = {"command": "/stale/build/bin/personalclaw", "args": ["mcp-core"]}
         with patch(
-            "personalclaw.mcp_discovery.shutil.which", return_value="/runtime/bin/personalclaw"
+            "personalclaw.agent._resolve_personalclaw_bin",
+            return_value="/runtime/bin/personalclaw",
         ):
             _fix_stale_managed_command("personalclaw-core", spec)
         assert spec["command"] == "/runtime/bin/personalclaw"
 
     def test_no_resolution_leaves_command_unchanged(self):
-        """When `personalclaw` is not on PATH, the stored command is left as-is."""
+        """When the resolver finds no file (it answers the bare name), the stored command stays."""
         from personalclaw.mcp_discovery import _fix_stale_managed_command
 
         spec = {"command": "/old/personalclaw", "args": ["mcp-core"]}
-        with patch("personalclaw.mcp_discovery.shutil.which", return_value=None):
+        with patch("personalclaw.agent._resolve_personalclaw_bin", return_value="personalclaw"):
             _fix_stale_managed_command("personalclaw-core", spec)
         assert spec["command"] == "/old/personalclaw"
 
@@ -1081,7 +1095,7 @@ class TestFixStaleManagedCommand:
         assert spec["command"] == "/nonexistent/path/other"
 
     def test_always_re_resolves_to_running_binary(self, tmp_path):
-        """Even if the stored path exists, re-resolve to the running binary."""
+        """Even if the stored path exists, it is replaced by the gateway's own binary."""
         from personalclaw.mcp_discovery import _fix_stale_managed_command
 
         real = tmp_path / "personalclaw"
@@ -1091,23 +1105,26 @@ class TestFixStaleManagedCommand:
         # test assert against a no-op.
         spec = {"command": str(real), "args": ["mcp-core"]}
         with patch(
-            "personalclaw.mcp_discovery.shutil.which", return_value="/new/path/personalclaw"
+            "personalclaw.agent._resolve_personalclaw_bin",
+            return_value="/new/path/personalclaw",
         ):
             _fix_stale_managed_command("personalclaw-core", spec)
         assert spec["command"] == "/new/path/personalclaw"
 
     def test_no_change_when_already_correct(self):
+        """A command that already is the gateway's own binary is kept."""
         from personalclaw.mcp_discovery import _fix_stale_managed_command
 
         spec = {"command": "/current/bin/personalclaw", "args": ["mcp-core"]}
         with patch(
-            "personalclaw.mcp_discovery.shutil.which", return_value="/current/bin/personalclaw"
+            "personalclaw.agent._resolve_personalclaw_bin",
+            return_value="/current/bin/personalclaw",
         ):
             _fix_stale_managed_command("personalclaw-core", spec)
         assert spec["command"] == "/current/bin/personalclaw"
 
     def test_resolution_is_cached_across_calls(self):
-        """The resolved binary is cached so later managed servers reuse it."""
+        """The resolved binary is cached, so a later listing does not ask the resolver again."""
         from personalclaw.mcp_discovery import _fix_stale_managed_command
 
         # Two calls for the SAME managed server rather than two different ones: `personalclaw-core`
@@ -1116,14 +1133,109 @@ class TestFixStaleManagedCommand:
         spec1 = {"command": "/old/personalclaw", "args": ["mcp-core"]}
         spec2 = {"command": "/old/personalclaw", "args": ["mcp-core"]}
         with patch(
-            "personalclaw.mcp_discovery.shutil.which", return_value="/resolved/personalclaw"
-        ) as mock_which:
+            "personalclaw.agent._resolve_personalclaw_bin",
+            return_value="/resolved/personalclaw",
+        ) as mock_resolve:
             _fix_stale_managed_command("personalclaw-core", spec1)
             _fix_stale_managed_command("personalclaw-core", spec2)
         assert spec1["command"] == "/resolved/personalclaw"
         assert spec2["command"] == "/resolved/personalclaw"
-        # Second call uses the cache — which() is only invoked once.
-        assert mock_which.call_count == 1
+        # Second call uses the cache — the resolver is only asked once.
+        assert mock_resolve.call_count == 1
+
+    def test_two_listings_after_a_miss_keep_the_stored_command_and_ask_again(self):
+        """A lookup that finds no file is not kept: the next listing asks the resolver again, and
+        both leave the stored command. A miss kept as the bare name would make the next listing
+        rewrite the command to ``personalclaw``, which the probe then finds on the augmented PATH.
+        """
+        from personalclaw.mcp_discovery import _fix_stale_managed_command
+
+        spec1 = {"command": "/old/personalclaw", "args": ["mcp-core"]}
+        spec2 = {"command": "/old/personalclaw", "args": ["mcp-core"]}
+        with patch(
+            "personalclaw.agent._resolve_personalclaw_bin", return_value="personalclaw"
+        ) as mock_resolve:
+            _fix_stale_managed_command("personalclaw-core", spec1)
+            _fix_stale_managed_command("personalclaw-core", spec2)
+        assert spec1["command"] == "/old/personalclaw"
+        assert spec2["command"] == "/old/personalclaw"
+        assert mock_resolve.call_count == 2
+
+    @staticmethod
+    def _own_install(tmp_path, monkeypatch, *, with_script=True):
+        """Build the gateway's own install under *tmp_path* and make this process look like it.
+
+        Returns the stand-in ``personalclaw`` package and the install's script path."""
+        own = tmp_path / "own"
+        pkg = own / "lib" / "python3.12" / "site-packages" / "personalclaw"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("")
+        (own / "pyvenv.cfg").write_text("include-system-site-packages = false\n")
+        script = own / "bin" / "personalclaw"
+        if with_script:
+            _write_script(script)
+        monkeypatch.setattr("personalclaw.agent.sys.executable", str(own / "bin" / "python"))
+        monkeypatch.setattr("personalclaw.agent.sys.prefix", str(own))
+        stand_in = MagicMock()
+        stand_in.__file__ = str(pkg / "__init__.py")
+        return stand_in, script
+
+    @pytest.mark.parametrize("own_first", [True, False], ids=["own-first", "other-first"])
+    def test_the_core_server_runs_the_gateways_own_install_whatever_path_says(
+        self, tmp_path, monkeypatch, own_first
+    ):
+        """Another install in ~/.local/bin or on PATH does not take the gateway's own server."""
+        from personalclaw.mcp_discovery import _fix_stale_managed_command
+
+        stand_in, own_script = self._own_install(tmp_path, monkeypatch)
+        other_script = _write_script(tmp_path / "other" / "bin" / "personalclaw")
+        home = tmp_path / "home"
+        _write_script(home / ".local" / "bin" / "personalclaw")
+        monkeypatch.setenv("HOME", str(home))
+        folders = [str(own_script.parent), str(other_script.parent)]
+        if not own_first:
+            folders.reverse()
+        monkeypatch.setenv("PATH", os.pathsep.join(folders))
+
+        spec = {"command": str(other_script), "args": ["mcp-core"]}
+        with patch.dict("sys.modules", {"personalclaw": stand_in}):
+            _fix_stale_managed_command("personalclaw-core", spec)
+        assert spec["command"] == str(own_script)
+
+    def test_a_frozen_bundle_runs_its_own_launcher(self, tmp_path, monkeypatch):
+        """The desktop app's server is its own launcher, not a personalclaw in ~/.local/bin."""
+        from personalclaw.mcp_discovery import _fix_stale_managed_command
+
+        monkeypatch.setattr("sys.frozen", True, raising=False)
+        monkeypatch.setattr(
+            "sys._MEIPASS", "/Applications/PersonalClaw.app/Contents/Resources", raising=False
+        )
+        launcher = _write_script(tmp_path / "bundle" / "personalclaw-backend")
+        monkeypatch.setattr("personalclaw.agent.sys.executable", str(launcher))
+        home = tmp_path / "home"
+        local_script = _write_script(home / ".local" / "bin" / "personalclaw")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("PATH", str(local_script.parent))
+
+        spec = {"command": str(local_script), "args": ["mcp-core"]}
+        _fix_stale_managed_command("personalclaw-core", spec)
+        assert spec["command"] == str(launcher)
+
+    def test_with_no_script_of_its_own_the_first_personalclaw_on_path_is_used(
+        self, tmp_path, monkeypatch
+    ):
+        """An install with no personalclaw script of its own runs the first one on PATH."""
+        from personalclaw.mcp_discovery import _fix_stale_managed_command
+
+        stand_in, _ = self._own_install(tmp_path, monkeypatch, with_script=False)
+        other_script = _write_script(tmp_path / "other" / "bin" / "personalclaw")
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("PATH", str(other_script.parent))
+
+        spec = {"command": "/stale/bin/personalclaw", "args": ["mcp-core"]}
+        with patch.dict("sys.modules", {"personalclaw": stand_in}):
+            _fix_stale_managed_command("personalclaw-core", spec)
+        assert spec["command"] == str(other_script)
 
 
 class TestSharedServerToolsRegistration:
