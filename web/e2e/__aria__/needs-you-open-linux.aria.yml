@@ -1,0 +1,96 @@
+- navigation:
+  - button "PersonalClaw, Home":
+    - img "PersonalClaw"
+    - text: PersonalClaw
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Chat history":
+    - button "New chat"
+    - button "Open Chat history"
+    - searchbox "Search chats"
+    - 'button "Sort and filter: Recent activity · Active"'
+    - status
+    - text: No chats yet
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - button "# waiting on your answer, open Needs you"
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - heading "Needs you" [level=#]
+  - button "More actions"
+  - region "Needs you":
+    - region "Waiting on your answer #":
+      - heading "Waiting on your answer #" [level=#]
+      - list:
+        - listitem:
+          - button "Show the details of bash"
+          - group "Permission needed to run bash":
+            - text: Permission needed Destructive From automation “Nightly”
+            - paragraph: bash(rm -rf build)
+            - paragraph: Clear the build folder
+            - paragraph: Answer it in the panel
+        - listitem:
+          - button "Show the details of Ship v#.#?"
+          - paragraph: Workflow · release
+          - paragraph: Ship v#.#?
+          - button "Approve Ship v#.#? — Workflow · release": Approve
+          - button "Deny Ship v#.#? — Workflow · release": Deny
+        - listitem:
+          - button "Show the details of Sign in to the bank’s site"
+          - paragraph: Trigger · Bank statements
+          - paragraph: Sign in to the bank’s site
+          - button "Approve Sign in to the bank’s site — Trigger · Bank statements": Approve
+          - button "Deny Sign in to the bank’s site — Trigger · Bank statements": Deny
+        - listitem:
+          - button "Show the details of May I archive last year’s mail?"
+          - paragraph: Loop · Sort the inbox
+          - paragraph: May I archive last year’s mail?
+          - 'link "Answer it where it asks: May I archive last year’s mail? — Loop · Sort the inbox"':
+            - /url: "#/loops/l-e#e"
+            - text: Answer it where it asks
+          - textbox "Reply to May I archive last year’s mail? — Loop · Sort the inbox":
+            - /placeholder: "Reply in one line: Enter sends"
+    - region "To review #":
+      - heading "To review #" [level=#]
+      - list:
+        - listitem:
+          - 'button "Show the details of Skill: incident-writeup"'
+          - paragraph: Skills
+          - paragraph: "Skill: incident-writeup"
+          - paragraph: Write up an incident from its timeline and its fixes.
+          - 'link "Review it in Skills: Skill: incident-writeup — Skills — Write up an inciden…"':
+            - /url: "#/skills?mode=proposals"
+            - text: Review it in Skills
+          - 'button "Accept Skill: incident-writeup — Skills — Write up an inciden…"': Accept
+          - 'button "Reject Skill: incident-writeup — Skills — Write up an inciden…"': Reject
+        - listitem:
+          - button "Show the details of Keep a weekly digest of what the agents did"
+          - paragraph: Learning
+          - paragraph: Keep a weekly digest of what the agents did
+          - 'link "Open it in the Inbox: Keep a weekly digest of what the agents did — Learning"':
+            - /url: "#/inbox?open=ib-e#e-#"
+            - text: Open it in the Inbox
+  - region "bash":
+    - button "Close"
+    - heading "bash" [level=#]
+    - group "Permission needed to run bash":
+      - text: Permission needed Destructive From automation “Nightly”
+      - paragraph: bash(rm -rf build)
+      - paragraph: Clear the build folder
+      - button "Allow bash — automation “Nightly” — Clear the build folder": Allow
+      - button "Deny bash — automation “Nightly” — Clear the build folder": Deny
+    - term: Asked by
+    - definition: Automation “Nightly”
+    - term: Asked
+    - definition: #:# <am/pm>
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"
