@@ -75,6 +75,23 @@ test.describe('Needs you', () => {
     await expect(page.getByRole('region', { name: 'bash' })).toHaveCount(0)
   })
 
+  test('at 390 px, the name has its own line under the shell corners, and every answer is 44 px tall', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await answerNeedsYousReads(page)
+    await gotoRoute(page, 'mission-control')
+    await expect(cards(page)).toHaveCount(6)
+    const title = page.getByRole('heading', { level: 1, name: 'Needs you' })
+    // The bar's row went under the corners, and the name is drawn whole there.
+    await expect(page.locator('header[data-stacked]').filter({ has: title })).toHaveCount(1)
+    expect(await title.evaluate((h) => h.scrollWidth <= h.clientWidth)).toBe(true)
+    // Every button and the reply box on the list's cards: their own boxes, not the card's target.
+    const boxes = await list(page).locator('[data-need-card] button:visible, [data-need-card] input:visible').evaluateAll((els) => els
+      .filter((e) => !e.hasAttribute('data-row-hit-target'))
+      .map((e) => ({ name: e.getAttribute('aria-label') ?? e.textContent?.trim() ?? '', height: Math.round(e.getBoundingClientRect().height) })))
+    expect(boxes.length).toBeGreaterThan(0)
+    expect(boxes.filter((b) => b.height < 44)).toEqual([])
+  })
+
   test('a cut edge fades, and an uncut one does not', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 520 })
     await answerNeedsYousReads(page)

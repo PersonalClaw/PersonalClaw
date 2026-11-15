@@ -285,7 +285,11 @@ export function NeedsYouPage({ query, setQuery, navigate }: RouteProps) {
       contentAligned
       left={(
         <div className="flex min-w-0 items-center gap-s">
-          <PageTitle>Needs you</PageTitle>
+          {/* The name is a part the title cannot shed (`data-title-keep`): the bar counts it whole in
+              the slot's minimum, so where the band between the shell corners cannot hold it beside the
+              `…` (390 px), the row goes under the corners and the name keeps its own line, instead of
+              reading "Nee…". */}
+          <PageTitle><span data-title-keep className="whitespace-nowrap">Needs you</span></PageTitle>
           {fresh > 0 ? (
             // Outside the list's scroller, so it covers and moves nothing in it.
             <p role="status" data-type="label-m" className="flex min-w-0 items-center gap-xs text-on-surface-var">
