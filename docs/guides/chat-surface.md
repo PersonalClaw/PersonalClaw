@@ -329,9 +329,11 @@ a reply still streaming in, stay exactly as they were.
 This searches the conversation you are in. To search *across* conversations, use **Search chats**
 in the sessions list, which looks at titles and everything said in every session, or press `⌘K`
 (`Ctrl+K`) anywhere. Past two characters the palette also searches inside your chats, memory,
-knowledge and tasks, grouped under those headings below the pages and actions. A chat opens with
-this find bar already holding what you typed. A source that could not be searched says so in the
-palette instead of showing nothing.
+library and tasks, grouped under those headings below the pages and actions. A chat opens with
+this find bar already holding what you typed. The **Library** group is one search over your notes,
+files, links, pages and documents, the reports your schedules write, and what your intents found;
+each opens at its own page, a report at its write-up, and what an intent found on that intent's
+findings. A source that could not be searched says so in the palette instead of showing nothing.
 
 Your agent can search your earlier chats too, with its `chat_search` tool: ask it what you
 discussed or decided before, and a handoff, a standup or a weekly review looks there as well as in
@@ -470,6 +472,22 @@ not here.
 The captured region is saved into your uploads directory like any attachment and recorded in
 the security log as the file write that it is — there is no separate "screenshot" event, and
 no ongoing capture to audit, because the capture ends before the crop overlay even opens.
+
+## Attach from your library
+
+A link can open a chat with things from your library already attached: notes, files, links,
+pages and documents. `#/chat/new?attach=knowledge:<id>,artifact:<slug>` opens a new chat with
+them, and `#/chat/<chat>?attach=<item>` adds them to a chat you were in. Each one is a chip above
+the composer, the same chip an **@** mention or **Add knowledge to prompt** gives, and nothing is
+sent until you send: the agent reads them with your message, and **✕** takes one out. What you
+had typed stays as it was. A link that also names a project (`project=`) opens the new chat in
+that project, with the chips. The chat reads the link's items once and takes them off the
+address, so a chip you take out stays out when you reload the page or come back to it.
+
+A report attaches as its write-up, the note its runs rewrite. What an intent found is a running
+log rather than an item, so it can't be a chip: the chat says so and offers **Ask about this**,
+a new chat that reads it. An item your library doesn't have, or can't read just then, is left
+out, and the line above the composer says how many were.
 
 ---
 

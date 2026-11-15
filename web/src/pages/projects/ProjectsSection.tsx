@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { chatLaunchPath } from '../../app/linkState'
 import { AnimatePresence } from 'framer-motion'
 import { FolderKanban, Plus, Loader2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, Pencil, Check, ListChecks, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, AlertTriangle, RefreshCw, Square, Download, Archive, ArchiveRestore, type LucideIcon } from 'lucide-react'
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
@@ -215,7 +216,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
   const launchKind = (kind?: LoopKind) => {
     navigate(`loop?project=${encodeURIComponent(id)}` + (kind ? `&kind=${kind}` : ''))
   }
-  const launchChat = () => { navigate(`chat?project=${encodeURIComponent(id)}`) }
+  const launchChat = () => { navigate(chatLaunchPath({ project: id })) }
   // Icons are the canonical per-kind glyphs (loopKind.ts) so the New menu reads the
   // same identity as the widgets, list, and cockpits. `general` deep-links with no kind.
   const NEW_KINDS: { kind?: LoopKind; label: string; hint: string; icon: LucideIcon }[] = [

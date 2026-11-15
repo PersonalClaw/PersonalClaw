@@ -37,6 +37,7 @@ import { useInvestigate } from '../lib/investigate'
 import { openSocket, pairFetch } from '../lib/pair'
 import { bindSignedSource, signUrl } from '../lib/signedUrl'
 import { basedOn, isStaleWrite } from '../lib/staleWrite'
+import { chatLaunchPath } from './linkState'
 // The host's own design-system primitives, re-exported to apps under
 // `@personalclaw/app-sdk/ui`. Imported by identity — an app page built from
 // these is built from the SAME components a native page is, not from copies.
@@ -537,13 +538,10 @@ export function ChatEmbed(props: {
   style?: React.CSSProperties
 }) {
   const { session, prompt, agent, className, style } = props
-  const qs = new URLSearchParams()
-  if (prompt) qs.set('seed', prompt)
-  if (agent) qs.set('agent', agent)
-  qs.set('embed', '1')  // render just the chat surface, not the whole app shell
-  const q = qs.toString()
-  const base = session ? `chat/${encodeURIComponent(session)}` : 'chat/new'
-  const src = `${location.origin}/#/${base}?${q}`
+  // The chat's address from its one writer (`linkState.ts`), then `embed=1`, which renders just the
+  // chat surface rather than the whole app shell.
+  const chat = chatLaunchPath({ session, seed: prompt, agent })
+  const src = `${location.origin}/#/${chat}${chat.includes('?') ? '&' : '?'}embed=1`
   return createElement('iframe', {
     src,
     title: 'PersonalClaw chat',

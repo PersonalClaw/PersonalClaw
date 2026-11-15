@@ -9,6 +9,7 @@ import { stopLoop } from '../loop/stopLoop'
 import { LoopCockpitPage } from './LoopCockpitPage'
 import { DesignCockpitPage } from './DesignCockpitPage'
 import type { RouteProps } from '../../app/useQueryState'
+import { chatLaunchPath } from '../../app/linkState'
 import { api, type Loop } from '../../lib/api'
 import { invalidateKeys } from '../../lib/data'
 import { loopRoute } from '../../lib/loopKind'
@@ -215,7 +216,7 @@ function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<
         // Route to chat/new (a fresh chat) so the seed always lands — a bare #/chat with
         // no project falls to the history page (seed lost). project= is honored on both
         // the project-bound and project-less new-chat paths.
-        navigate(`chat/new?project=${encodeURIComponent(pid)}&seed=${encodeURIComponent(seed)}`)
+        navigate(chatLaunchPath({ project: pid, seed }))
       }}
       query={query} setQuery={setQuery} />
   }

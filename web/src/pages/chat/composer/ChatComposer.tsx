@@ -193,7 +193,9 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
         onRemove={(p) => { setMentionedFiles((prev) => prev.filter((x) => x !== p)); setAttachedPaths((prev) => prev.filter((x) => x !== p)) }}
         onOpen={setOpenFile} />
       <KnowledgeChips items={mentionedKnowledge}
-        onRemove={(id) => setMentionedKnowledge((prev) => prev.filter((k) => k.id !== id))} />
+        onRemove={(id) => setMentionedKnowledge((prev) => prev.filter((k) => k.id !== id))}
+        artifacts={mentionedArtifacts}
+        onRemoveArtifact={(slug) => setMentionedArtifacts((prev) => prev.filter((a) => a.slug !== slug))} />
       <PasteCards blocks={livePasteBlocks} onRemove={removePaste} />
       {/* The optimizer at work, said where the rewrite will land: Optimize this draft, ⌘↵ and
           `/optimize` have no button of their own in the footer to show it on. Always mounted, so a

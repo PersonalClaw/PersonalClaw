@@ -8,6 +8,7 @@ import { projectOrder, projectPulse, pulseWords } from '../lib/projectPulse'
 import { useNeedsYou } from '../lib/useNeedsYou'
 import { useRunningList } from '../lib/useRunningList'
 import type { Command } from './CommandPalette'
+import { chatLaunchPath } from './linkState'
 
 /** The palette's rows for projects: one Go to row per unarchived project, its mark in its icon's
  *  place and its pulse after the "Go to" ("Go to · 2 need you · 2 running", "Go to" alone when
@@ -27,7 +28,7 @@ export function projectCommands(
     })),
     ...open.map((p) => ({
       id: `act:chat-in:${p.id}`, label: `Start a chat in ${p.name}`, hint: 'Action', icon: MessageSquare,
-      keywords: 'new chat project talk', run: () => navigate(`chat/new?project=${encodeURIComponent(p.id)}`),
+      keywords: 'new chat project talk', run: () => navigate(chatLaunchPath({ project: p.id })),
     })),
     // The dialog and the import's file input live on the Projects list, so these reach it through
     // its address, which it reads once and drops.

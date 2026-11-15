@@ -84,6 +84,10 @@ export const SAMPLE = {
   loop: 'a17c3f92',
   code: '950626ff',
   knowledge: 'k-0a1b2c3d',
+  /** A knowledge item id as the store writes them (a uuid4): a report's write-up, which a report's
+   *  notification opens only for an id of this shape. */
+  writeUp: '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d',
+  intent: 'cheap-ways-to-cut-the-power-bill',
   artifact: 'report-1',
   run: '11b9a34c',
   node: 'synthesize',
@@ -176,6 +180,12 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: `chat/new?project=${S.project}`, from: ['deep-link', 'palette'] },
   { route: 'chat/new?mode=plan', from: ['deep-link'] },
   { route: `chat/${S.chat}?pane=activity&file=src%2Fapp.py`, from: ['deep-link', 'documented'], lands: `chat/${S.chat}?file=src%2Fapp.py&activity=1` },
+  // Library items a link attaches (`attach`, `linkState.ts`): chips in the composer of a new chat
+  // or a chat you were in, never sent; read together with `project`. The chat takes the key off
+  // the address once it has read it (`linkAttachments`), so a chip taken out stays out.
+  { route: `chat/new?attach=knowledge%3A${S.knowledge}%2Cartifact%3A${S.artifact}`, from: ['documented'], lands: 'chat/new' },
+  { route: `chat/new?project=${S.project}&attach=knowledge%3A${S.knowledge}`, from: ['documented'], lands: `chat/new?project=${S.project}` },
+  { route: `chat/${S.chat}?attach=artifact%3A${S.artifact}`, from: ['documented'], lands: `chat/${S.chat}` },
 
   // ── Projects ──────────────────────────────────────────────────────────────────────────────────
   { route: `projects/${S.project}`, from: ['palette', 'documented'] },
@@ -195,17 +205,22 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
 
   // ── Knowledge ─────────────────────────────────────────────────────────────────────────────────
   { route: 'knowledge/new', from: ['documented'] },
-  { route: `knowledge/item/${S.knowledge}`, from: ['gateway', 'documented'] },
+  { route: `knowledge/item/${S.knowledge}`, from: ['palette', 'gateway', 'documented'] },
+  // A report's write-up: the palette's report hit, the Inbox finding, and the report's notification.
+  { route: `knowledge/item/${S.writeUp}`, from: ['palette', 'notification'] },
   { route: `knowledge/item/${S.knowledge}?read=1`, from: ['documented'] },
   { route: `knowledge/item/${S.knowledge}?loc=p3`, from: ['gateway'] },
   { route: 'knowledge/sources', from: ['documented'] },
   { route: 'knowledge/sources/new', from: ['documented'] },
-  { route: 'knowledge/reports', from: ['documented'] },
+  // Also where a palette hit on a report opens while its write-up can't be found.
+  { route: 'knowledge/reports', from: ['palette', 'documented'] },
   { route: 'knowledge?view=graph', from: ['documented'] },
   { route: 'knowledge?view=home', from: ['documented'] },
   // The item list's own key, from when the view was called Library; the view is All items now.
   { route: 'knowledge?view=library', from: ['documented'] },
   { route: 'knowledge?view=intents', from: ['documented'] },
+  // What an intent found has no page of its own yet: the palette opens the Intents view on it.
+  { route: `knowledge?view=intents&intent=${S.intent}`, from: ['palette'] },
   { route: 'knowledge?view=tags', from: ['documented'] },
   { route: 'knowledge?view=conflicts', from: ['documented'] },
   { route: 'knowledge?view=decisions', from: ['documented'] },
@@ -250,7 +265,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   // An artifact's link from before artifacts had their own page, kept in old transcripts.
   { route: `files/${S.artifact}`, from: ['documented'], lands: `artifacts/${S.artifact}` },
   { route: 'files?file=src%2Fapp.py', from: ['documented'] },
-  { route: `artifacts/${S.artifact}`, from: ['deep-link', 'documented'] },
+  { route: `artifacts/${S.artifact}`, from: ['palette', 'deep-link', 'documented'] },
   { route: `artifacts/${S.artifact}?v=2`, from: ['documented'] },
 
   // ── Memory ────────────────────────────────────────────────────────────────────────────────────

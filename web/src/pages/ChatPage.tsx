@@ -12,6 +12,7 @@ import { useIdentity } from '../app/identity'
 import { spring } from '../design/motion'
 import { useChatVoice } from './chat/useChatVoice'
 import { useChatComposer } from './chat/composer/useChatComposer'
+import { useLinkAttachments } from './chat/composer/linkAttachments'
 import { taskModeFromQuery, useTaskModeInUrl } from './chat/composer/taskModeInUrl'
 import { ChatComposer } from './chat/composer/ChatComposer'
 import { ComposerFold, FOLD_ROOM } from './chat/composer/ComposerFold'
@@ -33,6 +34,7 @@ import { ChatHero } from './chat/hero/ChatHero'
 import { MissingChat } from './chat/MissingChat'
 import { TurnStatusRow } from '../ui/TurnStatusRow'
 import { type RouteProps } from '../app/useQueryState'
+import { readChatLaunch } from '../app/linkState'
 import { useViewModes } from '../app/viewModes'
 
 /** Chat routing — the nav target (#/chat) lands on the HISTORY list by default;
@@ -65,14 +67,14 @@ export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub
   // that path does not read) (#3444). `streamingAtMount` is the ONE place that decides
   // whether a handoff belongs to this mount.
   const [liveRun, setLiveRun] = useState('')
-  // A ?project=<id> on the bare/new route opens a fresh chat PRE-BOUND to that project
-  // (the project page's "Chat" launch). It takes precedence over the history landing.
-  const projectId = query?.project || ''
-  // ?seed=<text> pre-fills the composer of a fresh chat (e.g. the design cockpit's
-  // "Build with chat" hands the agent the loop id + token system + canvas contract).
-  const seed = query?.seed || ''
-  // ?agent=<name> pre-selects the agent on a fresh chat (SDK launchChat option).
-  const agentParam = query?.agent || ''
+  // The chat's launch keys, read by their one reader (`app/linkState.ts`):
+  // · ?project=<id> on the bare/new route opens a fresh chat PRE-BOUND to that project (the
+  //   project page's "Chat" launch). It takes precedence over the history landing.
+  // · ?seed=<text> pre-fills the composer of a fresh chat (e.g. the design cockpit's "Build with
+  //   chat" hands the agent the loop id + token system + canvas contract).
+  // · ?agent=<name> pre-selects the agent on a fresh chat (SDK launchChat option).
+  // · ?attach=<ref>,<ref> holds library items as chips, never sent (`ChatSession` reads it).
+  const { project: projectId, seed, agent: agentParam } = readChatLaunch(query)
   // The session's own view-panels (activity rail, open-file) ride ?activity / ?file
   // so they're Back-closable + refresh-stable. Threaded down to ChatSession.
   const q = query ?? {}
@@ -135,16 +137,26 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const started = turns.length > 0
   // The chat is seen while it is in front of you, on the gateway's record (`chat/useSeenWhileInView`).
   useSeenWhileInView(sessionRef.current ?? sessionId, stream.streaming)
+  // What the address names for this chat to start from (`app/linkState.ts`).
+  const launch = readChatLaunch(query)
   // The composer: the draft and what it carries, the selection, Stop, and `send`, which every region
   // sends through (`chat/composer/useChatComposer`).
   const composer = useChatComposer({
     // A widget's message carried here (`?from_widget=1`, MissingChat), and the nonce of a widget
     // action the shell staged on the owner's yes (`?widget_action=`).
-    sessionId, navigate, seed, seedFromWidget: query?.from_widget === '1', widgetActionNonce: query?.widget_action || '', initialProjectId, initialAgent, initialTaskMode: taskModeFromQuery(query) ?? 'agent',
+    sessionId, navigate, seed, seedFromWidget: launch.fromWidget, widgetActionNonce: launch.widgetAction, initialProjectId, initialAgent, initialTaskMode: taskModeFromQuery(query) ?? 'agent',
     pendingRouting, setRoutingSuggestion, setLiveRun, started, stream,
     followNewTurn: () => followNewTurn(), oweSpokenReply: (sid) => oweSpokenReply(sid),
   })
   const { adoptDetail, applyTemplate, composerFocused, composerRef, draftUnderWay, focusComposerSoon, input, memoryMode, notice, quoteToComposer, replaceDraft, selection, send, setInput, setSelection } = composer
+  // The library items the address attaches (`?attach=`): chips in the draft, never sent
+  // (`chat/composer/linkAttachments`).
+  useLinkAttachments({
+    refs: launch.attach, notice,
+    onRead: () => setQuery({ attach: null }, { replace: true }),
+    addKnowledge: composer.onMentionKnowledge,
+    addArtifact: (a) => composer.setMentionedArtifacts((prev) => (prev.some((x) => x.slug === a.slug) ? prev : [...prev, a])),
+  })
   // The task mode in the address (`?mode=`), for what is shown only (`chat/composer/taskModeInUrl`).
   // A new thread the address moves to another mode is set up as one a link opens: in that mode,
   // with approval back to Normal.

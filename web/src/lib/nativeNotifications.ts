@@ -28,6 +28,7 @@ import { desktopBridge, type DesktopBridge } from './desktopBridge'
 import { useChatSocket, type WsMessage } from './useChatSocket'
 import { stillOrbPng } from '../ui/buddy/paintOrb'
 import { previewLine, previewText } from './previewText'
+import { isKnowledgeItemId } from './itemRef'
 
 /** Where a tap should land, by notification SOURCE.
  *
@@ -88,6 +89,16 @@ export function routeForNote(note: Record<string, unknown>): string {
   return NOTIFICATION_SOURCE_ROUTES[source] || DEFAULT_NOTIFICATION_ROUTE
 }
 
+/** The item route a note names for itself, '' when it names none: a scheduled report's finding
+ *  (a `knowledge` note) carries the write-up its run rewrote, `knowledge_item_id`, copied from its
+ *  Inbox row's refs, and opens that write-up's page. Only an id in a shape the store mints a
+ *  knowledge item's id in is taken (`isKnowledgeItemId`); any other note keeps its source's route. */
+export function itemRouteForNote(note: Record<string, unknown>): string {
+  const id = note.knowledge_item_id
+  if (note.source !== 'knowledge' || !isKnowledgeItemId(id)) return ''
+  return `knowledge/item/${id}`
+}
+
 /** True only when the gateway said THIS note is a native one.
  *
  *  Reads `native.deliver` and nothing else — deliberately not "does the note have a
@@ -104,10 +115,17 @@ export function shouldDeliverNatively(note: Record<string, unknown>): boolean {
 /** Every route this module will ever navigate to. A tap payload outside it is dropped. */
 const KNOWN_ROUTES = new Set(Object.values(NOTIFICATION_SOURCE_ROUTES))
 
-/** The item routes this window's alert banners named (the chat, the run, the loop an alert is
- *  about): a tap may open one of those too, and nothing else. The most recent few only. */
+/** The item routes this window's banners named (the chat, the run, the loop an alert is about; the
+ *  write-up a report's note is about): a tap may open one of those too, and nothing else. The most
+ *  recent few only. */
 const ISSUED_ROUTES: string[] = []
 const MAX_ISSUED = 32
+
+/** Let a tap open `route`: this window's banner named it. The most recent few only. */
+function issue(route: string): void {
+  ISSUED_ROUTES.push(route)
+  if (ISSUED_ROUTES.length > MAX_ISSUED) ISSUED_ROUTES.shift()
+}
 
 /** The waiting item *note* is about, read from the list now; null when the list holds none, or
  *  when it cannot be read, and the banner says what the note itself says. Never "nothing waits":
@@ -129,10 +147,7 @@ async function itemFor(note: Record<string, unknown>): Promise<WaitingItem | nul
 async function raiseAlert(bridge: NonNullable<DesktopBridge['notifications']>, note: Record<string, unknown>, alert: AlertKind) {
   const banner = alertBanner(note, alert, await itemFor(note))
   const route = banner.route || routeForNote(note)
-  if (banner.route) {
-    ISSUED_ROUTES.push(banner.route)
-    if (ISSUED_ROUTES.length > MAX_ISSUED) ISSUED_ROUTES.shift()
-  }
+  if (banner.route) issue(banner.route)
   await bridge.show({ ...banner, route, alert, icon: stillOrbPng(ALERT_STATE[alert]) })
 }
 
@@ -154,13 +169,16 @@ export function useNativeNotifications(navigate: (route: string) => void): void 
     const alert = alertOf(note)
     // A refused banner is not an error worth surfacing here either: the bell has the note.
     if (alert) return void raiseAlert(bridge.notifications, note, alert).catch(() => {})
+    // A note about one item (a report's write-up) opens that item, issued as an alert's route is.
+    const item = itemRouteForNote(note)
+    if (item) issue(item)
     bridge.notifications
       // The OS shows plain text: a note's marks are read off, never shown (its title by `previewLine`,
       // its body by `previewText`).
       .show({
         title: previewLine(String(note.title ?? '')),
         body: previewText(String(note.body ?? '')),
-        route: routeForNote(note),
+        route: item || routeForNote(note),
       })
       // A refused banner is not an error worth surfacing: the note is already in the feed
       // and the bell has already counted it.

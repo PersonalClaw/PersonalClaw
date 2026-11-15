@@ -49,7 +49,7 @@ export function keymapCommands(runners: Partial<Record<CommandId, () => void>>):
 }
 
 const SOURCE_ICON: Record<ContentSource, LucideIcon> = {
-  chats: MessageSquare, memory: Brain, knowledge: BookOpen, tasks: ListChecks,
+  chats: MessageSquare, memory: Brain, library: BookOpen, tasks: ListChecks,
 }
 
 /** The commands *q* finds, best first; every command when it is blank.
@@ -83,7 +83,7 @@ export function rankCommands(commands: Command[], q: string): Command[] {
 type Row = { id: string; label: string; hint?: string; detail?: string; icon: LucideIcon; mark?: string; run: () => void; disabledReason?: string }
 
 /** ⌘K / Ctrl+K command palette — search + run navigation and actions, and search what is IN the
- *  app: chats, memory, knowledge and tasks (`paletteSearch.ts`). The single keyboard entry point
+ *  app: chats, memory, the library and tasks (`paletteSearch.ts`). The single keyboard entry point
  *  (designed for THIS featureset: 16 destinations + global actions, no per-page chord soup). Opens
  *  on ⌘K, closes on Esc, arrows to move, Enter to run. Mounted once at the app shell; `navigate`
  *  is the shell's, and a content hit opens through it. */
@@ -229,7 +229,7 @@ export function CommandPalette({ commands, navigate, projectRowsAfter }: {
                 how much. */}
             {(searchingContent || failures.length > 0 || notes.length > 0) && (
               <div role="status" data-type="caption" className="flex flex-col gap-0.5 border-t border-outline-variant/40 px-l py-2">
-                {searchingContent && <span className="text-on-surface-low">Searching chats, memory, knowledge and tasks…</span>}
+                {searchingContent && <span className="text-on-surface-low">Searching chats, memory, the library and tasks…</span>}
                 {failures.map((f) => <span key={f} className="text-danger">{f}</span>)}
                 {notes.map((note) => <span key={note} data-partial="true" className="text-on-surface-low">{note}</span>)}
               </div>

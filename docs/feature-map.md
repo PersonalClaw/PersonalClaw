@@ -12,7 +12,7 @@ file and the app differ.
 | Route | Opens | In the sidebar | Palette | Linked from |
 |---|---|---|---|---|
 | `#/dashboard` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 8 more |
-| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/paletteProjectRows.tsx`, `app/threadRail.tsx`, `lib/api.ts` and 18 more |
+| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 16 more |
 | `#/projects` | Projects | Projects | Projects | `app/paletteProjectRows.tsx`, `pages/code/CodeSection.tsx`, `pages/tasks/TasksSection.tsx`, `ui/ProjectChip.tsx` |
 | `#/library` | Library | Library | Library | none |
 | `#/knowledge` | Knowledge | Library, its Knowledge tab | Knowledge | `lib/rowSubject.ts`, `pages/discover/DiscoverPage.tsx`, `pages/loop/LoopComposer.tsx`, `pages/schedule/ScheduleDetail.tsx` and 5 more |
