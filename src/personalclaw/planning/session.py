@@ -329,13 +329,16 @@ _STEP_TEXT = ("title", "objective", "artifact", "comments", "error")
 
 def wire(session: PlanSession) -> dict[str, Any]:
     """``session`` as a read hands it out: :meth:`PlanSession.to_dict` with each step carrying
-    the ``revision`` an edit of it must name. Not persisted — a revision is derived, never
-    stored, so no writer can forget to bump one.
+    the ``revision`` an edit of it must name, and the ``review_revision`` an approval of it must
+    name (`planning.approval_seals`: of the whole step its review shows, structured fields
+    included). Not persisted — a revision is derived, never stored, so no writer can forget to
+    bump one.
 
     Masked for display. A step is drafted from the task, which can carry a key the loop's own read
     masks, and its comments are the user's words. An edit puts back each marker it sends
     (:func:`keep_masked_markdown`).
     """
+    from personalclaw.planning.approval_seals import review_revision
     from personalclaw.security import redact_for_display, redact_values_for_display
 
     out = session.to_dict()
@@ -344,6 +347,7 @@ def wire(session: PlanSession) -> dict[str, Any]:
         for key in _STEP_TEXT:
             row[key] = redact_values_for_display(row[key])
         row["revision"] = step_revision(step)
+        row["review_revision"] = review_revision(step)
     return out
 
 

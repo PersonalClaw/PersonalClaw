@@ -1339,7 +1339,7 @@ def test_a_loops_plan_is_masked_and_an_edit_made_from_it_keeps_the_key(loops):
     loop, _folder = _goal_loop()
     sess = PS.PlanSession(project_id=loop.id, created_at=1.0)
     sess.steps = [_plan_step(f"Call the API with {SECRET}.")]
-    loop_files.write_plan_session(sess)
+    loop_files.write_plan_session(sess.project_id, sess)
     state = MagicMock()
     read = _body(
         _run(H.api_loop_plan_session(_req("GET", "/x", state, match_info={"id": loop.id})))

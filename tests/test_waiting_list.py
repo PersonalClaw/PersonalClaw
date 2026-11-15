@@ -205,6 +205,7 @@ async def _everything(tmp_path):
         Loop(id="", name="Plan the move", kind="goal", task="plan", status="planning")
     )
     loop_files.write_plan_session(
+        planning.id,
         PlanSession(
             project_id=planning.id,
             steps=[
@@ -215,7 +216,7 @@ async def _everything(tmp_path):
                     status=StepStatus.AWAITING_REVIEW.value,
                 )
             ],
-        )
+        ),
     )
     ready = loops.create(
         Loop(id="", name="Tidy the repo", kind="goal", task="tidy", status="review")
@@ -327,7 +328,12 @@ async def test_every_source_appears_once_with_its_brief_and_answer_route(tmp_pat
     step = items[f"plan_review:loop:{ids['planning']}:s1"]
     assert step["brief"]["step"]["title"] == "Choose the movers"
     assert step["answer"]["path"] == f"/api/loops/{ids['planning']}/plan/approve"
+    from personalclaw.loop import files as loop_files
+    from personalclaw.planning.approval_seals import review_revision
+
+    shown = review_revision(loop_files.read_plan_session(ids["planning"]).steps[0])
     assert step["answer"]["body"] == {"step_id": "s1"}
+    assert step["answer"]["headers"] == {"If-Match": f'"{shown}"'}
     launch = items[f"plan_review:loop:{ids['ready']}"]
     assert launch["answer"] == {
         "method": "PATCH",
@@ -354,7 +360,10 @@ async def test_every_item_says_its_action_work_consequence_risk_age_and_whether_
         assert set(item) == set(waiting.ITEM_FIELDS), item["id"]
         assert item["consequence"] in waiting.CONSEQUENCES, item["id"]
         assert item["current"] is True, item["id"]
-        assert set(item["answer"]) == {"method", "path", "takes", "body"}, item["id"]
+        keys = {"method", "path", "takes", "body"}
+        if item["kind"] == "plan_review" and item["answer"]["path"].endswith("/plan/approve"):
+            keys.add("headers")  # the If-Match a plan step's approve checks
+        assert set(item["answer"]) == keys, item["id"]
         if item["asked_at"] is not None:
             assert isinstance(item["age_secs"], int) and item["age_secs"] >= 0, item["id"]
 
@@ -744,7 +753,7 @@ async def _ask_loop_step(w, ids):
     w.frames.clear()
     step = PlanStep(id="s1", kind="design", title="Pick", status=StepStatus.AWAITING_REVIEW.value)
     ids["loop"], ids["plan"] = loop.id, PlanSession(project_id=loop.id, steps=[step])
-    loop_files.write_plan_session(ids["plan"])
+    loop_files.write_plan_session(ids["plan"].project_id, ids["plan"])
     return f"plan_review:loop:{loop.id}:s1"
 
 
@@ -753,7 +762,7 @@ async def _approve_loop_step(w, ids):
     from personalclaw.planning.session import StepStatus
 
     ids["plan"].steps[0].status = StepStatus.APPROVED.value
-    loop_files.write_plan_session(ids["plan"])
+    loop_files.write_plan_session(ids["plan"].project_id, ids["plan"])
 
 
 async def _ask_launch(w, ids):

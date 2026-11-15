@@ -485,7 +485,7 @@ def _planning_loop() -> Loop:
     loop = store.create(Loop(id="", name="Fix the feed titles", kind="code", task="fix it"))
     store.update_status(loop.id, LoopStatus.PLANNING)
     step = PlanStep(id="step-0", kind="problem_framing", title="Frame it", objective="o")
-    loop_files.write_plan_session(PlanSession(project_id=loop.id, steps=[step]))
+    loop_files.write_plan_session(loop.id, PlanSession(project_id=loop.id, steps=[step]))
     return loop
 
 

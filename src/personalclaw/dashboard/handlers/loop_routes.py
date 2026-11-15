@@ -1138,6 +1138,13 @@ async def api_loop_delete(request: web.Request) -> web.Response:
         except Exception:
             logger.debug("loop teardown-for-delete failed for %s", cid, exc_info=True)
     deleted = store.delete(cid)
+    if deleted:
+        from personalclaw.planning import approval_seals
+
+        try:
+            approval_seals.forget(approval_seals.loop_scope(cid))  # its plan's approvals
+        except Exception:
+            logger.debug("loop plan approvals not forgotten for %s", cid, exc_info=True)
     # Reap the loop's dashboard sessions + their transcripts. teardown_for_delete stops
     # the autonudge WORKER loop + cleans worktrees, but the worker/planner chat sessions
     # (and their .jsonl history) lingered registered after delete — orphans that pile up
@@ -1899,7 +1906,10 @@ async def api_loop_plan_retry(request: web.Request) -> web.Response:
 
 
 async def api_loop_plan_approve(request: web.Request) -> web.Response:
-    """POST /api/loops/{id}/plan/approve {step_id} — approve a step + advance."""
+    """POST /api/loops/{id}/plan/approve {step_id} — approve a step as read (If-Match) + advance.
+
+    The request names the revision of the step it was shown (``If-Match``, the row's
+    ``review_revision``)."""
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
@@ -1915,14 +1925,27 @@ async def api_loop_plan_approve(request: web.Request) -> web.Response:
     refusal = _refuse_replan(cid)
     if refusal is not None:
         return refusal
+    from personalclaw.planning import approval_seals
     from personalclaw.planning import session as PS
 
     session = loop_files.read_plan_session(cid)
     if session is None:
         return web.json_response({"error": "No planning session"}, status=404)
-    if not PS.approve_step(session, step_id):
+    # 🔴 A STEP IS APPROVED ONLY AS IT WAS SHOWN. A step can change between your read and your
+    # press, so the request names the revision of what its review showed you (`approval_seals`),
+    # read, compared and written with nothing awaited; and your yes is sealed to it, so a step
+    # that is not as you approved it goes back to you before the plan is built.
+    step = next((s for s in session.steps if s.id == step_id), None)
+    if step is not None and step.status == PS.StepStatus.AWAITING_REVIEW.value:
+        stale = approval_seals.stale_refusal(request, step)
+        if stale is not None:
+            return stale
+    if step is None or not PS.approve_step(session, step_id):
         return web.json_response({"error": "Step not awaiting review"}, status=409)
-    loop_files.write_plan_session(session)
+    # Sealed before the plan is written, so a book that cannot be read (answered by the request
+    # boundary) leaves the step awaiting review on disk.
+    approval_seals.seal(approval_seals.loop_scope(cid), session, step)
+    loop_files.write_plan_session(cid, session)
     return _kick_plan_advance(request, cid)
 
 
@@ -1931,6 +1954,10 @@ async def api_loop_plan_comment(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
+    # Your review of the loop's plan: only you give it, as its approval (`approval_answer`).
+    refused = approval_answer.forbidden(request, what=f"loop:{cid}", asked_by="")
+    if refused is not None:
+        return refused
     body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
@@ -1950,7 +1977,7 @@ async def api_loop_plan_comment(request: web.Request) -> web.Response:
         return web.json_response({"error": "No planning session"}, status=404)
     if not PS.comment_step(session, step_id, text, at=_time.time()):
         return web.json_response({"error": "Step not awaiting review"}, status=409)
-    loop_files.write_plan_session(session)
+    loop_files.write_plan_session(cid, session)
     return _kick_plan_advance(request, cid)
 
 
@@ -1960,6 +1987,10 @@ async def api_loop_plan_edit(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
+    # Your review of the loop's plan: only you give it, as its approval (`approval_answer`).
+    refused = approval_answer.forbidden(request, what=f"loop:{cid}", asked_by="")
+    if refused is not None:
+        return refused
     body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
@@ -1992,7 +2023,7 @@ async def api_loop_plan_edit(request: web.Request) -> web.Response:
             return web.json_response({"error": str(exc)}, status=409)
     if not PS.edit_artifact(session, step_id, markdown):
         return web.json_response({"error": "Step not awaiting review"}, status=409)
-    loop_files.write_plan_session(session)
+    loop_files.write_plan_session(cid, session)
     return web.json_response({"ok": True, "session": PS.wire(session)})
 
 

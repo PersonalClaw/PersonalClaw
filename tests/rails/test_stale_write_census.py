@@ -3,7 +3,9 @@ every base the dashboard sends is checked.
 
 ``stale_write_refusal`` (``personalclaw/stale_write.py``) guards a write only when the route's
 handler asks it, and asks it about a base only the client names: no ``If-Match`` is ``428
-revision_required``, a stale one ``409 stale_write``. Each half used to be proven route by route,
+revision_required``, a stale one ``409 stale_write``. An approval of a plan step names its base the
+same way, the step as its review showed it, and asks ``approval_seals.stale_refusal``, which gives
+the same two codes in an approval's words. Each half used to be proven route by route,
 a pair of tests per route; the families in ``tests/test_stale_write*.py`` now keep one 428 and one
 409 each. What stands in for the rest is this equality, read from both ends:
 
@@ -34,9 +36,13 @@ from typing import Any
 from aiohttp import web
 from rails_repo import REPO
 
+from personalclaw.planning.approval_seals import stale_refusal as approval_stale_refusal
 from personalclaw.stale_write import stale_write_refusal
 
 API_TS = REPO / "web" / "src" / "lib" / "api.ts"
+
+#: What refuses a write whose base is not current: a whole document's, and a plan step's approval.
+REFUSALS = (stale_write_refusal, approval_stale_refusal)
 
 
 # ── the router ────────────────────────────────────────────────────────────────
@@ -72,8 +78,8 @@ def _resolve(expr: ast.expr, names: dict[str, Any]) -> Any:
 
 
 def asks_for_a_base(handler: Callable[..., Any]) -> bool:
-    """Whether *handler*, or a helper of its own module or the dashboard's it calls, calls the
-    refusal."""
+    """Whether *handler*, or a helper of its own module or the dashboard's it calls, calls a
+    refusal (:data:`REFUSALS`)."""
     origin = getattr(inspect.unwrap(handler), "__module__", None)
     seen: set[Any] = set()
     todo = [inspect.unwrap(getattr(handler, "func", handler))]
@@ -91,7 +97,7 @@ def asks_for_a_base(handler: Callable[..., Any]) -> bool:
             if not isinstance(node, ast.Call):
                 continue
             target = _resolve(node.func, names)
-            if target is stale_write_refusal:
+            if any(target is refusal for refusal in REFUSALS):
                 return True
             module = getattr(target, "__module__", "") or ""
             if inspect.isfunction(target) and (
@@ -234,9 +240,11 @@ def test_every_refusing_route_is_one_the_dashboard_sends_a_base_to_and_back() ->
     guarded, mismatches = census(gateway_routes(), API_TS.read_text(encoding="utf-8"))
     assert mismatches == []
     # The floors: the census read a real router and a real client, a wrapper and a union among them.
-    assert len(guarded) == 35, sorted(h.__qualname__ for h in guarded)
+    assert len(guarded) == 37, sorted(h.__qualname__ for h in guarded)
     names = {n for writes in guarded.values() for n in writes}
     assert {"savePrompt", "saveMemoryDoc", "updateSchedule", "saveProviderConfig"} <= names
+    # Both plans' approvals, checked by the approval's own refusal.
+    assert {"chatPlanApprove", "uLoopPlanApprove"} <= names
 
 
 # ── planted: a route on each side of the equality ─────────────────────────────
@@ -254,6 +262,14 @@ async def _planted_checked_tags(request: web.Request) -> web.Response:
 
 async def _planted_unchecked(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
+
+
+async def _planted_checked_as_an_approval(request: web.Request) -> web.Response:
+    from personalclaw.planning.session import PlanStep
+
+    step = PlanStep(id="s1", kind="analysis", title="Brief", objective="")
+    refused = approval_stale_refusal(request, step)
+    return refused or web.json_response({"ok": True})
 
 
 def _helper_that_checks(request: web.Request) -> web.Response | None:
@@ -286,6 +302,11 @@ def test_the_planted_pair_agrees() -> None:
     # Through a helper of the handler's own module, too.
     _, mismatches = census(
         _app([("PUT", "/api/notes/{id}", _planted_checked_through_a_helper)]), _PLANTED_API
+    )
+    assert mismatches == []
+    # And an approval's check of the step as it was shown.
+    _, mismatches = census(
+        _app([("PUT", "/api/notes/{id}", _planted_checked_as_an_approval)]), _PLANTED_API
     )
     assert mismatches == []
 

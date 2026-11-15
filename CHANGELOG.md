@@ -37,6 +37,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The credential guard, the refusal of a change to what runs as you, and the question before a delete of your home folder, the filesystem root or the working folder compare a path in one Unicode form, so each is caught whether a letter in its path is written composed or decomposed.**
 - **The credential mask reads an AWS secret key's or session token's name in any case, the session token's older `AWS_SECURITY_TOKEN` included, and an access key id's before a value without quotes, so `AWS_SECRET_ACCESS_KEY=…` as an env file, `printenv` or the AWS CLI's env export writes it is masked as `aws_secret_access_key = …` is, with or without quotes. After an AWS name, a value that starts with `$` and names where a secret is kept, such as a CI workflow's `${{ secrets.X }}`, a shell's `$(…)`, `$VAR` or an empty default, stays as it is, while `$'…'` and a literal default are masked, and an empty value never takes the next line's key as its value.**
 - **A credential set with `:=`, as Go and Make write it, or with Make's `::=`, `?=` or `+=`, is masked by its name, and so is a quoted value after a map's `=>`, as PHP, Perl and Ruby write it, under every name.**
+- **A plan step is approved only as it was shown: a change to a step after you read it, or after you approved it, is put to you again before anything builds or runs it, and so is a plan a step you approved is gone from. A deleted chat's plan goes with it.**
 
 ### Added
 
@@ -52,6 +53,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The agent orb shows each state in a form of its own: ready holds still, thinking swells, working turns two rings, waiting on you locks into a clasp, and done closes into the claw mark, with one bloom when the turn completed; a finished turn's line now shows it before it goes. A row's state in the sidebar, a project's chats and Home's agents is the orb's still mark.**
 - **Pages that list or search your artifacts answer faster when you have many: the Library's Artifacts tab and its search, Home's Pinned artifacts, the chat's artifact picker, and a project's or a loop's page.**
 - **The Projects page is one list. Each project says what needs you, what is running and when it last moved, with those rows under it, and opens in one click.**
+- **Approving a plan step names the step as you read it, in `If-Match` (its `review_revision` in the plan's read), as editing one names its draft. An approval without one is refused `428 revision_required`, and one of a step that changed since its read `409 stale_write`. Needs you's plan rows carry it in their answer's `headers`, so an answer sent as given approves the step as read.**
 
 ## [0.3.8] — 2026-11-11
 

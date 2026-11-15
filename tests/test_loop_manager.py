@@ -150,6 +150,22 @@ class TestStopFromAPreLaunchState:
 
 
 class TestStartArmsWorker:
+    def test_a_launch_forgets_the_yeses_its_plan_was_approved_by(self):
+        """A launched loop's plan is built into its spec and runs: nothing reads the yeses its
+        steps were approved by again, so they end with the launch. Another loop's are kept."""
+        from personalclaw.planning import approval_seals
+        from personalclaw.planning.session import PlanSession, PlanStep
+
+        g, other = _goal(), _goal()
+        sess = PlanSession(project_id=g.id, created_at=1.0)
+        step = PlanStep(id="step-0", kind="intent", title="Intent")
+        for loop_id in (g.id, other.id):
+            approval_seals.seal(approval_seals.loop_scope(loop_id), sess, step)
+        _run(manager.start(_FakeState(), _FakeSvc(), g.id))
+        keys = approval_seals.BOOK.keys()
+        assert not any(k.startswith(approval_seals.loop_scope(g.id) + ":") for k in keys)
+        assert any(k.startswith(approval_seals.loop_scope(other.id) + ":") for k in keys)
+
     def test_start_writes_brief_arms_session_and_nudge(self):
         g = _goal()
         state, svc = _FakeState(), _FakeSvc()

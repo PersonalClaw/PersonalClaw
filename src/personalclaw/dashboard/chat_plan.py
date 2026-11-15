@@ -119,9 +119,12 @@ def write(session: PlanSession, binding: dict[str, Any]) -> None:
 
 
 def clear(chat_key: str) -> None:
-    """Drop the chat's walkthrough entirely (the user cancelled plan mode)."""
+    """Drop the chat's walkthrough entirely (the user cancelled plan mode), and the approvals
+    recorded for it (`approval_seals`)."""
     from personalclaw import waiting
+    from personalclaw.planning import approval_seals
 
+    approval_seals.forget(approval_seals.chat_scope(chat_key))
     f = _path(chat_key)
     try:
         f.unlink()
@@ -404,6 +407,19 @@ async def api_chat_plan_activate(request: web.Request) -> web.Response:
     )
 
 
+def _agent_refused(request: web.Request, chat: _ChatSession) -> web.Response | None:
+    """The refusal of an agent's tool reviewing a chat's plan: the review is your answer to what
+    the plan's agent drafted, never that agent's own (`approval_answer`, rule 2). An app reviews in
+    a chat it started (its route row), as it approves there."""
+    from personalclaw import approval_answer
+
+    by = approval_answer.of_request(request)
+    if by.kind != approval_answer.AGENT:
+        return None
+    why = approval_answer.check(by, what=f"plan:{chat.key}", asked_by="")
+    return json_error("approval_owner_only", message=why, status=403)
+
+
 async def api_chat_plan_edit(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/plan/edit {step_id, markdown} — edit the plan.
 
@@ -418,6 +434,9 @@ async def api_chat_plan_edit(request: web.Request) -> web.Response:
     if isinstance(resolved, web.Response):
         return resolved
     _state, chat = resolved
+    refused = _agent_refused(request, chat)
+    if refused is not None:
+        return refused
     body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
@@ -465,6 +484,9 @@ async def api_chat_plan_comment(request: web.Request) -> web.Response:
     if isinstance(resolved, web.Response):
         return resolved
     state, chat = resolved
+    refused = _agent_refused(request, chat)
+    if refused is not None:
+        return refused
     body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
@@ -487,8 +509,49 @@ async def api_chat_plan_comment(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "session": PS.wire(sess)})
 
 
+def _not_approvable(
+    request: web.Request,
+    state: DashboardState,
+    sess: PlanSession,
+    binding: dict[str, Any],
+    step_id: str,
+    scope: str,
+    *,
+    fresh: bool,
+) -> web.Response | None:
+    """The refusal of an approval of *step_id* before anything is approved, else ``None``. Read,
+    compared and written with nothing awaited, so nothing lands between the check and the yes."""
+    from personalclaw.planning import approval_seals
+
+    # 🔴 A STEP IS APPROVED ONLY AS IT WAS SHOWN. A step can change between your read and your
+    # press, so the request names the revision of what its review showed you (`approval_seals`).
+    step = next((s for s in sess.steps if s.id == step_id), None)
+    if step is not None and step.status == StepStatus.AWAITING_REVIEW.value:
+        stale = approval_seals.stale_refusal(request, step)
+        if stale is not None:
+            return stale
+    if fresh and any(s.id != step_id and s.status != StepStatus.APPROVED.value for s in sess.steps):
+        return json_error(
+            "plan_not_complete",
+            message="A fresh chat runs the whole plan, so every other step is approved first",
+            status=409,
+        )
+    # A fresh chat is briefed with every step, so every other step is one you approved as it is
+    # now: any other waits for your review again first.
+    if fresh and approval_seals.reopen_unsealed(scope, sess, but=step_id):
+        write(sess, binding)
+        approval_seals.forget_dropped(scope, sess)
+        state.push_sessions_update()
+        return json_error(
+            "plan_step_reviewed_again",
+            message="A step of this plan is not as you approved it, so it waits for your review",
+            status=409,
+        )
+    return None
+
+
 async def api_chat_plan_approve(request: web.Request) -> web.Response:
-    """POST /api/chat/sessions/{session}/plan/approve {step_id, run?} — approve a step.
+    """POST /api/chat/sessions/{session}/plan/approve {step_id, run?} — approve a step (If-Match).
 
     Routes through ``PS.approve_step``. When that completes the walkthrough
     (``PS.is_complete``) the chat leaves the plan posture: the remembered task mode is
@@ -502,6 +565,11 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
     planning chat runs nothing (a run the plan parked there is let go) and says where the plan
     runs. Only an approval that completes the plan may take it: one with a step still waiting
     after it is refused ``plan_not_complete`` and approves nothing.
+
+    The request names the revision of the step it was shown in ``If-Match`` (the row's
+    ``review_revision``), and your yes is sealed to it (`approval_seals`). A fresh chat is briefed
+    with every step, so one whose other steps are not all as you approved them is refused
+    ``plan_step_reviewed_again``, and those steps wait for your review again.
     """
     resolved = _resolve(request)
     if isinstance(resolved, web.Response):
@@ -512,10 +580,10 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
     # agent's tool approves in none.
     from personalclaw import approval_answer
 
+    refused = _agent_refused(request, chat)
+    if refused is not None:
+        return refused
     by = approval_answer.of_request(request)
-    if by.kind == approval_answer.AGENT:
-        why = approval_answer.check(by, what=f"plan:{chat.key}", asked_by="")
-        return json_error("approval_owner_only", message=why, status=403)
     body = await json_object_body(request)
     step_id = str(body.get("step_id", "")).strip()
     if not step_id:
@@ -533,25 +601,28 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
             message="Only you can run an approved plan in a fresh chat",
             status=403,
         )
+    from personalclaw.planning import approval_seals
+
     sess, binding = read(chat.key)
     if sess is None:
         return json_error(
             "plan_session_missing", message="This chat has no plan session", status=404
         )
-    if run_in == _FRESH and any(
-        s.id != step_id and s.status != StepStatus.APPROVED.value for s in sess.steps
-    ):
-        return json_error(
-            "plan_not_complete",
-            message="A fresh chat runs the whole plan, so every other step is approved first",
-            status=409,
-        )
-    if not PS.approve_step(sess, step_id):
+    scope = approval_seals.chat_scope(chat.key)
+    approved = next((s for s in sess.steps if s.id == step_id), None)
+    refused = _not_approvable(request, state, sess, binding, step_id, scope, fresh=run_in == _FRESH)
+    if refused is not None:
+        return refused
+    if approved is None or not PS.approve_step(sess, step_id):
         return json_error(
             "step_not_awaiting_review", message="That step is not awaiting review", status=409
         )
-    approved = next((s for s in sess.steps if s.id == step_id), None)
-    markdown = str((approved.artifact or {}).get("markdown", "")) if approved else ""
+    # Only your yes is sealed (an app's approves in its own chat, and is not yours). Sealed before
+    # anything runs or is written, so a book that cannot be read (answered by the request
+    # boundary) changes nothing.
+    if by.kind in approval_answer.ANSWERERS:
+        approval_seals.seal(scope, sess, approved)
+    markdown = str((approved.artifact or {}).get("markdown", ""))
     complete = PS.is_complete(sess)
     resumed = False
     restored = ""
@@ -564,12 +635,16 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
             binding.pop("parked_at", None)
             binding.pop("parked_messages", None)
         if run_in == _FRESH:
-            fresh = _run_in_a_fresh_chat(state, chat, sess, app=str(request.get("app", "") or ""))
+            fresh = _run_in_a_fresh_chat(
+                state, chat, sess, scope, app=str(request.get("app", "") or "")
+            )
             binding["runs_in"] = fresh.key
         elif parked:
             _dispatch(state, chat, _resume_prompt(markdown), own_words="")
             resumed = True
     write(sess, binding)
+    if complete:
+        _approvals_end(scope)
     try:
         sel().log_api_access(
             caller="dashboard:chat-plan",
@@ -596,15 +671,35 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
     )
 
 
+def _approvals_end(scope: str) -> None:
+    """Forget the yeses a completed plan was approved by: its brief is built from them, and nothing
+    reads them again (`approval_seals`). A later re-plan of the chat puts its earlier steps to you
+    once more before a fresh chat is briefed with them."""
+    from personalclaw.planning import approval_seals
+
+    try:
+        approval_seals.forget(scope)
+    except Exception:  # noqa: BLE001 — the book only grows; the approval stands
+        logger.warning("%s: the completed plan's approvals were not forgotten", scope)
+
+
 #: Where an approved plan runs: here (the planning chat, the default) or in a fresh chat.
 _FRESH = "fresh"
 _RUN_IN: tuple[str, ...] = ("here", _FRESH)
 
 
-def _fresh_prompt(sess: PlanSession) -> str:
+def _fresh_prompt(sess: PlanSession, scope: str) -> str:
     """A fresh chat's brief: the approved plan, its steps' markdown in order, and nothing of the
-    conversation that produced it."""
-    parts = [PS.step_markdown(s).strip() for s in sess.steps]
+    conversation that produced it. Only steps you approved as they are (`approval_seals`): the
+    approval refuses a plan with any other, and a step that is not one is left out, never run."""
+    from personalclaw.planning import approval_seals
+
+    yours = [s for s in sess.steps if approval_seals.sealed(scope, sess, s)]
+    if len(yours) != len(sess.steps):
+        logger.warning(
+            "chat %s: a plan step not approved as it is was left out of its brief", scope
+        )
+    parts = [PS.step_markdown(s).strip() for s in yours]
     return (
         "Carry out the plan below. It was reviewed and approved in another chat; "
         "do not re-plan it.\n\n" + "\n\n".join(p for p in parts if p)
@@ -612,7 +707,7 @@ def _fresh_prompt(sess: PlanSession) -> str:
 
 
 def _run_in_a_fresh_chat(
-    state: DashboardState, chat: _ChatSession, sess: PlanSession, *, app: str
+    state: DashboardState, chat: _ChatSession, sess: PlanSession, scope: str, *, app: str
 ) -> _ChatSession:
     """Start a chat that carries out the approved plan, beside the one that planned it: the same
     project, folder, agent and model, the plan as its first message, one turn dispatched. The
@@ -640,7 +735,7 @@ def _run_in_a_fresh_chat(
         fresh.workspace_dir = str(getattr(chat, "workspace_dir", "") or "")
     fresh.acp_provider = str(getattr(chat, "acp_provider", "") or "")
     fresh.acp_provider_agent = str(getattr(chat, "acp_provider_agent", "") or "")
-    _dispatch(state, fresh, _fresh_prompt(sess), own_words="")
+    _dispatch(state, fresh, _fresh_prompt(sess, scope), own_words="")
     chat.append(
         "assistant",
         "The approved plan runs in a fresh chat.",

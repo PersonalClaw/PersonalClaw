@@ -20,7 +20,7 @@ function makeCfg(loopId: string): WalkthroughConfig {
       getSession: (id) => api.uLoopPlanSession(id),
       start: (id) => api.uLoopPlanStart(id),
       retry: (id) => api.uLoopPlanRetry(id),
-      approve: (id, sid) => api.uLoopPlanApprove(id, sid),
+      approve: (id, sid, base) => api.uLoopPlanApprove(id, sid, base),
       comment: (id, sid, text) => api.uLoopPlanComment(id, sid, text),
       edit: (id, sid, md, base) => api.uLoopPlanEdit(id, sid, md, base),
       isReady: (id) => api.uLoop(id).then((l) => l.status === 'review').catch(() => false),

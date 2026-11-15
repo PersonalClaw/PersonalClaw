@@ -705,7 +705,11 @@ class TestALoopSaveFromAStaleCopy:
         step.status = PS.StepStatus.APPROVED.value
         step.artifact = {"sub_goals": ["profile the hot path", "compare against last week"]}
         sess.steps = [step]
-        loop_files.write_plan_session(sess)
+        loop_files.write_plan_session(sess.project_id, sess)
+        # Your yes to it, as the approve route records it (`approval_seals`).
+        from personalclaw.planning import approval_seals
+
+        approval_seals.seal(approval_seals.loop_scope(cid), sess, step)
         assert _run(pw.finalize_plan(cid)) is True
         planned = ["profile the hot path", "compare against last week"]
         assert store.get(cid).kind_config["sub_goals"] == planned  # positive control
@@ -736,7 +740,7 @@ def _seed_step(cid: str, markdown: str = "ORIGINAL") -> None:
     step.status = PS.StepStatus.AWAITING_REVIEW.value
     step.artifact = {"markdown": markdown}
     sess.steps = [step]
-    loop_files.write_plan_session(sess)
+    loop_files.write_plan_session(sess.project_id, sess)
 
 
 def _loop_step(cid: str) -> dict:

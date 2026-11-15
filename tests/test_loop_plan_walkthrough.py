@@ -258,7 +258,7 @@ class TestStepPassRetry:
                 ),
             ],
         )
-        loop_files.write_plan_session(session)
+        loop_files.write_plan_session(session.project_id, session)
         return loop
 
     def test_retries_once_then_succeeds(self, monkeypatch):

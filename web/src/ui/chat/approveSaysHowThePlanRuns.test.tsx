@@ -12,7 +12,7 @@ import { ChatPlanGate } from './ChatPlanGate'
 
 const step = (id: string, status = 'awaiting_review') => ({
   id, kind: 'chat_plan', title: 'Plan', objective: '', status,
-  artifact: { markdown: '### Plan\n1. first' }, comments: [],
+  artifact: { markdown: '### Plan\n1. first' }, comments: [], review_revision: 'v1',
 })
 
 const chatPlanSession = vi.fn()
@@ -48,7 +48,7 @@ describe('Approve & run it says how the plan runs', () => {
     const user = userEvent.setup()
     render(<ChatPlanGate session="c1" refreshKey={0} onTaskMode={() => {}} />)
     await user.click(await screen.findByRole('button', { name: /Approve & run it/ }))
-    await waitFor(() => expect(chatPlanApprove).toHaveBeenCalledWith('c1', 'chat-plan-1', 'here'))
+    await waitFor(() => expect(chatPlanApprove).toHaveBeenCalledWith('c1', 'chat-plan-1', 'here', 'v1'))
   })
 
   it('its menu names each way to run the plan, and none that is not built yet', async () => {
@@ -70,7 +70,7 @@ describe('Approve & run it says how the plan runs', () => {
     render(<ChatPlanGate session="c1" refreshKey={0} onTaskMode={() => {}} onOpenChat={onOpenChat} />)
     await user.click(await screen.findByRole('button', { name: 'More ways to approve' }))
     await user.click(screen.getByRole('menuitem', { name: /run it in a fresh chat/ }))
-    await waitFor(() => expect(chatPlanApprove).toHaveBeenCalledWith('c1', 'chat-plan-1', 'fresh'))
+    await waitFor(() => expect(chatPlanApprove).toHaveBeenCalledWith('c1', 'chat-plan-1', 'fresh', 'v1'))
     await waitFor(() => expect(onOpenChat).toHaveBeenCalledWith('chat-9-1792387100'))
   })
 
