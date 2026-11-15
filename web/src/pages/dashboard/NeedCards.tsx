@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
-import { api, ApiError, hasApiCode } from '../../lib/api'
+import { api, ApiError, hasApiCode, type OrganizeProposal } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { clockTime } from '../../lib/epoch'
 import type { NeedsYouRow } from '../../lib/needsYou'
@@ -13,7 +13,7 @@ import { StatusPill } from '../../ui/StatusPill'
 import { rowSubject } from '../../lib/rowSubject'
 import { PendingApprovalCard } from '../../app/PendingApprovalCard'
 import { Button } from '../../ui/Button'
-import { WrappingAnswer } from '../../ui/InlineConfirm'
+import { InlineConfirm, WrappingAnswer } from '../../ui/InlineConfirm'
 import { ProjectChip } from '../../ui/ProjectChip'
 import { EDGE } from '../../ui/SearchField'
 import { TOUCH_TARGET } from '../../ui/Toggle'
@@ -67,7 +67,40 @@ export type Outcome =
 export function failureText(verb: string, err: unknown): string {
   const detail = err instanceof Error && err.message ? err.message : String(err ?? 'unknown error')
   // A server sentence ends in its own full stop; this one adds the next sentence's.
-  return `Could not ${verb}: ${detail.replace(/[.\s]+$/, '')}. Nothing was recorded — it still needs you, so try again.`
+  return `Could not ${verb}: ${detail.replace(/[.\s]+$/, '')}. Nothing was recorded, so it still needs you; try again.`
+}
+
+/** What Learning being off means for a learning card: nothing here can decide it. */
+export const LEARNING_OFF = "Learning is off, so this can't be decided here."
+
+/** The refusals that keep a card waiting with the server's sentence and no "try again": a taken
+ *  name doesn't free itself, and a budget doesn't raise itself. */
+const KEPT_WITH_ITS_SENTENCE = new Set([
+  'learning_proposal_not_installed', 'learning_proposal_not_applied', 'skill_proposal_not_installed', 'at_budget',
+])
+
+/** What a refused answer means for its card, by the gateway's code (on main every 404 read as
+ *  "answered or ended somewhere else" and every other refusal as "try again"):
+ *  - Learning off: its sentence, and the card's verbs go;
+ *  - a 404 (decided or ended somewhere else) or an answered or ended question: ended;
+ *  - work that moved since it asked: ended, sent to the panel;
+ *  - an install that was refused, a budget, an autonomy grant refused: still waiting, the server's
+ *    sentence;
+ *  - anything else: still waiting, `failureText`. */
+export function outcomeFor(err: unknown, verb: string): Outcome {
+  if (hasApiCode(err, 'learning_disabled')) return { state: 'ended', text: LEARNING_OFF }
+  const ended = endedText(err)
+  if (ended) return { state: 'ended', text: ended }
+  if (hasApiCode(err, 'question_answered') || hasApiCode(err, 'question_ended')) {
+    return { state: 'ended', text: (err as Error).message }
+  }
+  if (hasApiCode(err, 'loop_merge_moved') || hasApiCode(err, 'loop_conflict_moved')) {
+    return { state: 'ended', text: 'It changed since it asked. Review it in the panel.' }
+  }
+  if (err instanceof ApiError && (KEPT_WITH_ITS_SENTENCE.has(err.code) || (err.status === 400 && err.code.startsWith('autonomy'))) && err.message) {
+    return { state: 'failed', text: err.message }
+  }
+  return { state: 'failed', text: failureText(verb, err) }
 }
 
 /** When an answer is refused because there is nothing left to decide, the sentence for it, or
@@ -75,20 +108,22 @@ export function failureText(verb: string, err: unknown): string {
  *  was answered or ended somewhere else (404). Retrying either would change nothing. */
 export function endedText(err: unknown): string | null {
   if (hasApiCode(err, 'approval_owner_ended') && err instanceof Error) return err.message
-  if (err instanceof ApiError && err.status === 404) {
-    return 'It is no longer waiting: it was answered or ended somewhere else.'
-  }
+  if (err instanceof ApiError && err.status === 404) return ENDED_ELSEWHERE
   return null
 }
 
+/** What a card says once what it asked was decided or ended somewhere else: a proposal is decided,
+ *  an ask answered, a run ended. */
+export const ENDED_ELSEWHERE = 'It is no longer waiting: it was decided or ended somewhere else.'
+
 /** What a gate's or a park's answer did, in words. */
 export function answeredText(q: CardQuestion, value: string | boolean): string {
-  if (q.event) return 'Woken — the run is moving again.'
-  if (!q.approval) return `Answered “${String(value)}” — the run is moving again.`
+  if (q.event) return 'Woken. The run is moving again.'
+  if (!q.approval) return `Answered “${String(value)}”. The run is moving again.`
   if (q.triggerId) {
-    return value === true ? 'Approved — it is running again.' : 'Declined — it asks again the next time it stops.'
+    return value === true ? 'Approved. It is running again.' : 'Declined. It asks again the next time it stops.'
   }
-  return value === true ? 'Approved — the run is moving again.' : 'Declined — the run ends here.'
+  return value === true ? 'Approved. The run is moving again.' : 'Declined. The run ends here.'
 }
 
 /** An approval's title is a tool's name or the command itself: it stays as written wherever it is
@@ -176,7 +211,14 @@ export interface CardActions {
   question: (key: string, q: CardQuestion, value: string | boolean) => void
   grant: (key: string, id: string, action: 'approve' | 'reject') => void
   bridge: (key: string, token: string, run: boolean) => void
-  proposal: (key: string, id: string, action: 'accept' | 'reject') => void
+  /** A skill proposal's answer; *done* is what its outcome says (its card's verb, done). */
+  proposal: (key: string, id: string, action: 'accept' | 'reject', done?: string) => void
+  /** A learning proposal's answer, through the learning routes; *done* as above. */
+  learning?: (key: string, id: string, action: 'accept' | 'reject', done?: string) => void
+  /** An app's proposal: Approve applies it (the Inbox's apply), Reject dismisses its row. */
+  appProposal?: (key: string, itemId: string, action: 'approve' | 'reject') => void
+  /** A chat to file: Accept or Decline, the proposal rebuilt from its row. */
+  organize?: (key: string, session: string, proposal: OrganizeProposal, action: 'accept' | 'decline') => void
   /** A typed line for a free-text ask; true once it is sent, so the field empties only then. */
   reply: (key: string, target: ReplyTarget, text: string) => Promise<boolean>
   /** A folder's trust, recorded by its own button (`TrustFolderButton`): the card says so. */
@@ -373,6 +415,7 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
   const question = item ? waitingQuestion(item) : null
   const answerId = item ? waitingAnswerId(item) : ''
   const proposal = row.origin === 'proposal' ? row.proposal : null
+  const answersHere = noteAnswer(row)
   const trustsFolder = item?.kind === 'folder_trust' && typeof item.brief.dir === 'string' && item.brief.dir !== ''
     ? item.brief.dir : ''
   const inTheInbox = item && ANSWERED_IN_THE_INBOX.has(item.kind) && item.route ? item.route : ''
@@ -380,7 +423,7 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
   const reply = item ? waitingReply(item) : null
   // A loop's question, and a stalled or blocked loop, take their one line on the card.
   const cardReply = reply?.kind === 'loop' ? reply : null
-  const answerable = !!(proposal || question || cardReply || trustsFolder
+  const answerable = !!(proposal || answersHere || question || cardReply || trustsFolder
     || ((item?.kind === 'browse_grant' || item?.kind === 'bridge_confirmation') && answerId))
   return (
     <div className="flex min-w-0 flex-col gap-xs">
@@ -411,12 +454,7 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
           Open it in the Inbox
         </TextLink>
       ) : null}
-      {proposal ? (
-        <TextLink href="#/skills?mode=proposals" ink="emphasis" size="sm" aria-label={`Review it in Skills: ${subject}`}>
-          Review it in Skills
-        </TextLink>
-      ) : null}
-      {row.origin === 'note' ? (
+      {row.origin === 'note' && !answersHere ? (
         <TextLink href={`#/inbox?open=${encodeURIComponent(row.note.id)}`} ink="emphasis" size="sm" aria-label={`Open it in the Inbox: ${subject}`}>
           Open it in the Inbox
         </TextLink>
@@ -431,10 +469,22 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
           {cardReply || !answerable ? null : (
             <div className="flex min-w-0 flex-wrap items-start gap-xs">
               {proposal ? (
-                // A skill proposal's accept installs it: the one tinted answer a card draws.
-                <YesNo subject={subject} busy={busy} off={off} yes="Accept" no="Reject" yesVariant="tonal"
-                  onYes={() => actions.proposal(row.key, proposal.id, 'accept')}
-                  onNo={() => actions.proposal(row.key, proposal.id, 'reject')} />
+                <SkillAnswers proposal={proposal} subject={subject} busy={busy} off={off}
+                  onAnswer={(action, done) => actions.proposal(row.key, proposal.id, action, done)} />
+              ) : null}
+              {answersHere?.kind === 'learning' && actions.learning ? (
+                <LearningAnswers pid={answersHere.pid} card={answersHere.card} subject={subject} busy={busy} off={off}
+                  onAnswer={(action, done) => actions.learning?.(row.key, answersHere.pid, action, done)} />
+              ) : null}
+              {answersHere?.kind === 'app' && actions.appProposal ? (
+                <YesNo subject={subject} busy={busy} off={off} yes="Approve" no="Reject"
+                  onYes={() => actions.appProposal?.(row.key, answersHere.itemId, 'approve')}
+                  onNo={() => actions.appProposal?.(row.key, answersHere.itemId, 'reject')} />
+              ) : null}
+              {answersHere?.kind === 'organize' && actions.organize ? (
+                <YesNo subject={subject} busy={busy} off={off} yes="Accept" no="Decline"
+                  onYes={() => actions.organize?.(row.key, answersHere.session, answersHere.proposal, 'accept')}
+                  onNo={() => actions.organize?.(row.key, answersHere.session, answersHere.proposal, 'decline')} />
               ) : null}
               {question ? (
                 <QuestionActions question={question} subject={subject} busy={busy} off={off}
@@ -463,6 +513,181 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
       )}
       {outcome?.state === 'failed' ? <CardOutcome outcome={outcome} /> : null}
     </div>
+  )
+}
+
+/** What a note row answers on its card, by what its Inbox row carries: a learning proposal (its
+ *  card, or none for a row filed before it), an app's proposal, a chat to file. `null` for a row
+ *  only the Inbox answers (your note). */
+type NoteAnswer =
+  | { kind: 'learning'; pid: string; card: Record<string, unknown> | null }
+  | { kind: 'app'; itemId: string }
+  | { kind: 'organize'; session: string; proposal: OrganizeProposal }
+
+function noteAnswer(row: NeedsYouRow): NoteAnswer | null {
+  if (row.origin !== 'note' || row.note.item_kind !== 'proposal') return null
+  const refs = (row.note.refs ?? {}) as Record<string, unknown>
+  if (typeof refs.learning_proposal === 'string' && refs.learning_proposal) {
+    return { kind: 'learning', pid: refs.learning_proposal, card: learningCardOf(row) }
+  }
+  if (refs.app && refs.proposal) return { kind: 'app', itemId: row.note.id }
+  if (refs.session_organize && typeof refs.session === 'string') {
+    // The proposal rebuilt from the row; the route checks every field again against the live
+    // folders and tags at the press.
+    const tags = typeof refs.tags === 'string' ? refs.tags.split(',').filter(Boolean) : []
+    return {
+      kind: 'organize', session: refs.session,
+      proposal: { session: refs.session, folder_id: String(refs.folder_id ?? ''), folder_name: '', tags, source: '', reason: '' },
+    }
+  }
+  return null
+}
+
+/** A proposal's verb, done, for its outcome ("Template saved."). */
+const DONE: Record<string, string> = {
+  'Save template': 'Template saved', 'Install skill': 'Skill installed', 'Add refinement': 'Refinement added',
+  'Apply changes': 'Changes applied', 'Add instruction': 'Instruction added', 'Write file': 'File written',
+  'Create skill': 'Skill created', 'Save prompt': 'Prompt saved', 'Save agent': 'Agent saved',
+  'Save principle': 'Principle saved', 'Use the learned one': 'The learned one replaced yours', 'Remove them': 'Removed',
+  'Keep mine': 'Kept yours', 'Keep them': 'Kept', 'Reject': 'Rejected', 'Reject them': 'Rejected',
+}
+const done = (verb: string) => `${DONE[verb] ?? 'Accepted'}.`
+
+/** A learning proposal's reject, named as its panel names it. */
+function rejectVerb(variant: string): string {
+  if (variant === 'lesson.conflict') return 'Keep mine'
+  if (variant === 'retirement.text_not_typed') return 'Keep them'
+  if (variant === 'lesson.captures') return 'Reject them'
+  return 'Reject'
+}
+
+/** A learning proposal's pair on its card, in its decide bar's words (its card's `accept`): an
+ *  accept that installs or applies is `tonal`, one that only records is `secondary`, and one nothing
+ *  here can accept is no button but its sentence, beside Reject. Every accept's press reads the
+ *  proposal's review first, so a change since the list was read (a file now there) is caught: one
+ *  that replaces or removes what is there asks once more, inline, in the review's words, and nothing
+ *  is sent before its yes. A row filed before the card (no `refs.card`) can't tell from its kind
+ *  what its Accept does, so its Accept always asks once more. */
+function LearningAnswers({ pid, card, subject, busy, off, onAnswer }: {
+  pid: string; card: Record<string, unknown> | null; subject: string; busy: boolean; off?: string
+  onAnswer: (action: 'accept' | 'reject', done: string) => void
+}) {
+  const accept = (card?.accept ?? {}) as { effect?: string; verb?: string; sentence?: string }
+  const variant = String(card?.variant ?? '')
+  const [asking, setAsking] = useState<{ sentence: string; verb: string } | null>(null)
+  const [told, setTold] = useState<Told | null>(null)
+  const [reading, setReading] = useState(false)
+  const verb = card ? accept.verb || 'Accept' : 'Accept'
+  const no = rejectVerb(variant)
+  if (asking) {
+    return (
+      <InlineConfirm sentence={asking.sentence} verb={asking.verb.toLowerCase()} onBack={() => setAsking(null)}
+        onYes={() => { setAsking(null); onAnswer('accept', done(asking.verb)) }} />
+    )
+  }
+  if (told?.state === 'ended') return <ReadSaid told={told} />
+  const press = () => {
+    setReading(true)
+    setTold(null)
+    void api.learningProposalReview(pid).then((review) => {
+      setReading(false)
+      if (review.accept.effect === 'none') { setTold({ state: 'none', text: review.accept.sentence }); return }
+      if (review.accept.confirm || !card) { setAsking({ sentence: review.accept.sentence, verb: review.accept.verb || 'Accept' }); return }
+      onAnswer('accept', done(review.accept.verb || verb))
+    }).catch((err: unknown) => {
+      setReading(false)
+      setTold(toldBy(err, 'read this proposal'))
+    })
+  }
+  const none = told?.state === 'none' || (card && accept.effect === 'none')
+  return (
+    <>
+      {none ? (
+        <p data-type="body-s" className="basis-full text-on-surface">{told?.state === 'none' ? told.text : accept.sentence}</p>
+      ) : (
+        <Button size="xs" variant={card && (accept.effect === 'installs' || accept.effect === 'applies') ? 'tonal' : 'secondary'}
+          loading={busy || reading} disabled={!!off} disabledReason={off} ariaLabel={`${verb}: ${subject}`} onClick={press} className={ANSWER}>
+          <Check size={13} aria-hidden="true" /> {verb}
+        </Button>
+      )}
+      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+        ariaLabel={`${no}: ${subject}`} onClick={() => onAnswer('reject', done(no))} className={ANSWER}>
+        <X size={13} aria-hidden="true" /> {no}
+      </Button>
+      {told?.state === 'failed' ? <ReadSaid told={told} /> : null}
+    </>
+  )
+}
+
+/** What a proposal's read before its Accept said, when it sent nothing: there is nothing here to
+ *  accept (`none`, beside Reject), it was decided or ended somewhere else or Learning is off
+ *  (`ended`, its verbs gone), or the read failed (`failed`, its verbs kept to try again). */
+type Told = { state: 'none' | 'ended' | 'failed'; text: string }
+
+function toldBy(err: unknown, verb: string): Told {
+  const outcome = outcomeFor(err, verb)
+  return { state: outcome.state === 'ended' ? 'ended' : 'failed', text: 'text' in outcome ? outcome.text : '' }
+}
+
+function ReadSaid({ told }: { told: Told }) {
+  return told.state === 'failed' ? (
+    <p role="alert" data-type="body-s" className="flex basis-full min-w-0 items-start gap-xs text-on-surface">
+      <AlertTriangle size={14} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
+      {told.text}
+    </p>
+  ) : (
+    <p role="status" data-type="body-s" className="basis-full text-on-surface-var">{told.text}</p>
+  )
+}
+
+/** A skill proposal's pair on its card: its card's verb (Add refinement, Install skill), `tonal`,
+ *  and Reject. The press reads the proposal again first: a skill removed since the list was read
+ *  means accepting installs it as new, which it asks once more about. */
+function SkillAnswers({ proposal, subject, busy, off, onAnswer }: {
+  proposal: NonNullable<Extract<NeedsYouRow, { origin: 'proposal' }>['proposal']>
+  subject: string; busy: boolean; off?: string
+  onAnswer: (action: 'accept' | 'reject', done: string) => void
+}) {
+  const verb = proposal.card?.accept.verb || 'Accept'
+  const [asking, setAsking] = useState<string | null>(null)
+  const [told, setTold] = useState<Told | null>(null)
+  const [reading, setReading] = useState(false)
+  if (asking) {
+    return (
+      <InlineConfirm sentence={asking} verb="install it" onBack={() => setAsking(null)}
+        onYes={() => { setAsking(null); onAnswer('accept', done('Install skill')) }} />
+    )
+  }
+  if (told?.state === 'ended') return <ReadSaid told={told} />
+  const press = () => {
+    // A proposal read before its card says what it always said.
+    if (!proposal.card) { onAnswer('accept', 'Accepted. The skill is saved.'); return }
+    if (!proposal.target_resolves) { onAnswer('accept', done(verb)); return }
+    setReading(true)
+    setTold(null)
+    void api.skillProposalDetail(proposal.id).then((now) => {
+      setReading(false)
+      const gone = (now as { target_resolves?: boolean }).target_resolves === false
+      if (gone) setAsking(`It is no longer installed, so accepting installs auto/${proposal.slug.replace(/^auto\//, '')} as a new skill.`)
+      else onAnswer('accept', done(verb))
+    }).catch((err: unknown) => {
+      // Not read, so not known to be there: nothing is sent blind.
+      setReading(false)
+      setTold(toldBy(err, 'read this proposal'))
+    })
+  }
+  return (
+    <>
+      <Button size="xs" variant="tonal" loading={busy || reading} disabled={!!off} disabledReason={off}
+        ariaLabel={`${verb}: ${subject}`} onClick={press} className={ANSWER}>
+        <Check size={13} aria-hidden="true" /> {verb}
+      </Button>
+      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+        ariaLabel={`Reject: ${subject}`} onClick={() => onAnswer('reject', 'Rejected.')} className={ANSWER}>
+        <X size={13} aria-hidden="true" /> Reject
+      </Button>
+      {told ? <ReadSaid told={told} /> : null}
+    </>
   )
 }
 

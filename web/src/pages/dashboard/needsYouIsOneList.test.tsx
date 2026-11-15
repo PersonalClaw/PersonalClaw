@@ -213,7 +213,7 @@ describe('every state', () => {
     waiting.mockResolvedValue(waitingList([waitingItem()]))
     render(<NeedsYouHarness />)
     await userEvent.click(await within(page()).findByRole('button', { name: /^Allow/ }))
-    expect(await within(page()).findByText('It is no longer waiting: it was answered or ended somewhere else.')).toBeInTheDocument()
+    expect(await within(page()).findByText('It is no longer waiting: it was decided or ended somewhere else.')).toBeInTheDocument()
     expect(within(page()).queryByRole('button', { name: /^Allow/ })).toBeNull()
   })
 
@@ -231,7 +231,7 @@ describe('every state', () => {
   it('a gone ?open= says it is no longer waiting, in the panel', async () => {
     render(<NeedsYouHarness query={{ open: 'waiting:approval:gone' }} />)
     const pane = await screen.findByRole('region', { name: 'This is no longer waiting on you' })
-    expect(within(pane).getByText(/It was answered or ended somewhere else/)).toBeInTheDocument()
+    expect(within(pane).getByText(/It was decided or ended somewhere else/)).toBeInTheDocument()
   })
 
   it('a frame that something waits reads the list again, and the new ask shows', async () => {

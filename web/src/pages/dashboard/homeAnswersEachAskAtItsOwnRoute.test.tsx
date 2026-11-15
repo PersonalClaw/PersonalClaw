@@ -148,7 +148,7 @@ describe('a run’s gate', () => {
     expect(await within(needsYou()).findByText('release')).toBeTruthy()
     await userEvent.click(within(needsYou()).getByRole('button', { name: /^Ship it: / }))
     await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: 'Ship it', resume_token: 'tok-9' }))
-    expect(await within(needsYou()).findByText('Answered “Ship it” — the run is moving again.')).toBeTruthy()
+    expect(await within(needsYou()).findByText('Answered “Ship it”. The run is moving again.')).toBeTruthy()
   })
 
   it('a failed answer says so and keeps the options clickable', async () => {
@@ -279,7 +279,7 @@ describe('a skill proposal and a note, after every waiting item', () => {
 
     await userEvent.click(within(needsYou()).getByRole('button', { name: new RegExp(`^Accept: ${proposalTitle(WRITEUP)}`) }))
     await waitFor(() => expect(acceptSkillProposal).toHaveBeenCalledWith('proposal_a'))
-    expect(await within(needsYou()).findByText('Accepted — the skill is saved.')).toBeTruthy()
+    expect(await within(needsYou()).findByText('Accepted. The skill is saved.')).toBeTruthy()
   })
 
   it('says why an Accept failed, and keeps the card to try again', async () => {
@@ -301,12 +301,12 @@ describe('a skill proposal and a note, after every waiting item', () => {
     const accept = () => within(needsYou()).findByRole('button', { name: new RegExp(`^Accept: ${proposalTitle(WRITEUP)}`) })
     await userEvent.click(await accept())
     expect(await within(needsYou()).findByText(
-      "Could not accept this proposal: The skill could not be installed (could not write skill 'incident-writeup' (invalid, oversized, or exists)), so the proposal is still waiting. Nothing was recorded — it still needs you, so try again.",
+      "The skill could not be installed (could not write skill 'incident-writeup' (invalid, oversized, or exists)), so the proposal is still waiting.",
     )).toBeTruthy()
 
     acceptSkillProposal.mockRejectedValueOnce(new ApiError('This proposal was already answered somewhere else.', 404, 'skill_proposal_gone'))
     await userEvent.click(await accept())
-    expect(await within(needsYou()).findByText('It is no longer waiting: it was answered or ended somewhere else.')).toBeTruthy()
+    expect(await within(needsYou()).findByText('It is no longer waiting: it was decided or ended somewhere else.')).toBeTruthy()
   })
 })
 

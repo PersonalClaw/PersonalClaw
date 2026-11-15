@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
 import { invalidateKeys } from '../../lib/data'
-import { answeredText, endedText, failureText, type CardActions, type Outcome } from './NeedCards'
+import { answeredText, failureText, outcomeFor, type CardActions, type Outcome } from './NeedCards'
 
 /** ── Needs you's answers ─────────────────────────────────────────────────────────────────────────
  *
@@ -33,13 +33,10 @@ export function useNeedActions(refreshNeeds: () => void): {
         return true
       })
       .catch((err) => {
-        const ended = endedText(err)
-        if (ended) {
-          mark(key, { state: 'ended', text: ended })
-          refreshNeeds()
-          return false
-        }
-        mark(key, { state: 'failed', text: failureText(verb, err) })
+        // Each refusal says what it means for this card, by its code (`outcomeFor`).
+        const outcome = outcomeFor(err, verb)
+        mark(key, outcome)
+        if (outcome.state === 'ended') refreshNeeds()
         return false
       })
   }, [mark, refreshNeeds])
@@ -55,29 +52,52 @@ export function useNeedActions(refreshNeeds: () => void): {
       void send(key, sent, answeredText(q, value), 'send that answer')
     },
     grant: (key, id, action) => {
-      void send(key, api.browseGrantResolve(id, action), action === 'approve' ? 'Allowed — the browser task goes on.' : 'Refused — the browser task stops here.', `${action} this`)
+      void send(key, api.browseGrantResolve(id, action), action === 'approve' ? 'Allowed. The browser task goes on.' : 'Refused. The browser task stops here.', `${action} this`)
     },
     bridge: (key, token, run) => {
-      void send(key, api.answerBridgeConfirmation(token, run), run ? 'Confirmed — it ran once.' : 'Dropped — nothing ran.', 'send that answer')
+      void send(key, api.answerBridgeConfirmation(token, run), run ? 'Confirmed. It ran once.' : 'Dropped. Nothing ran.', 'send that answer')
     },
-    proposal: (key, id, action) => {
+    proposal: (key, id, action, done) => {
       const sent = action === 'accept' ? api.acceptSkillProposal(id) : api.rejectSkillProposal(id)
-      void send(key, sent, action === 'accept' ? 'Accepted — the skill is saved.' : 'Rejected.', `${action} this proposal`,
+      void send(key, sent, done ?? (action === 'accept' ? 'Accepted. The skill is saved.' : 'Rejected.'), `${action} this proposal`,
         () => invalidateKeys('skill-proposals', true))
+    },
+    learning: (key, id, action, done) => {
+      const sent = action === 'accept' ? api.acceptLearningProposal(id) : api.rejectLearningProposal(id)
+      void send(key, sent, done ?? (action === 'accept' ? 'Accepted.' : 'Rejected.'), `${action} this proposal`,
+        () => invalidateKeys('inbox', true))
+    },
+    appProposal: (key, itemId, action) => {
+      // Approve applies it through the Inbox's apply; Reject dismisses its row, as the Inbox does.
+      const sent = action === 'approve'
+        ? api.applyInboxProposal(itemId).then((r) => {
+          if (r && typeof r === 'object' && 'ok' in r && (r as { ok?: boolean }).ok === false) {
+            throw new Error(String((r as { error?: unknown }).error ?? 'it was not applied'))
+          }
+          return r
+        })
+        : api.updateInboxItem(itemId, { status: 'dismissed' })
+      void send(key, sent, action === 'approve' ? 'Approved. It was applied.' : 'Rejected.', `${action} this`,
+        () => invalidateKeys('inbox', true))
+    },
+    organize: (key, session, proposal, action) => {
+      const sent = action === 'accept' ? api.organizeAccept(session, proposal) : api.organizeDecline(session, proposal)
+      void send(key, sent, action === 'accept' ? 'Accepted. The chat is organized as suggested.' : 'Declined. It won’t be suggested again.',
+        `${action} this`, () => invalidateKeys('inbox', true))
     },
     reply: (key, target, text) => {
       if (target.kind === 'gate') {
         return send(key, api.resumeWorkflowRun(target.runId, { answer: text, resume_token: target.resumeToken || undefined }),
-          `Answered “${text}” — the run is moving again.`, 'send that answer')
+          `Answered “${text}”. The run is moving again.`, 'send that answer')
       }
       if (target.kind === 'loop') return send(key, api.uLoopNudge(target.loopId, text), 'Sent to the loop.', 'send that answer')
       // The chat's own card sends a typed answer as `other`; one it no longer waits on is ended.
       const sent = api.answerChatQuestion(target.session, target.questionId, { answers: [{ selected: [], other: text }] })
         .then((r) => {
           if (r.outcome === 'answered') return r
-          throw new ApiError('it was answered or ended somewhere else', 404)
+          throw new ApiError('it was decided or ended somewhere else', 404)
         })
-      return send(key, sent, 'Answered — the agent carries on.', 'send that answer')
+      return send(key, sent, 'Answered. The agent carries on.', 'send that answer')
     },
     trusted: (key) => {
       mark(key, { state: 'done', text: 'Trusted.' })
