@@ -158,6 +158,40 @@ def _api_base() -> str:
     return gateway_base.resolve_api_base()
 
 
+def _save_template_schema() -> dict[str, Any]:
+    """The save tool's arguments (``save_template_from_session``), a fresh copy per list: its own
+    function, so the tool list stays a list of tools."""
+    return {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Proposed template name: lowercase, digits, hyphens.",
+            },
+            "steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "The procedure, one step per entry, in order. Use {{placeholders}} "
+                    "for values that change between runs."
+                ),
+            },
+            "description": {
+                "type": "string",
+                "description": "One line on what the procedure accomplishes.",
+            },
+            "why": {
+                "type": "string",
+                "description": (
+                    "Optional: one line on why it is worth a template. The user reads it "
+                    "as yours when they decide."
+                ),
+            },
+        },
+        "required": ["name", "steps"],
+    }
+
+
 def _list_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -313,35 +347,7 @@ def _list_tools() -> list[dict[str, Any]]:
                 "would differ on the next run — steps with nothing parameterizable are a "
                 "recording of one run, not a template, and get declined."
             ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Proposed template name: lowercase, digits, hyphens.",
-                    },
-                    "steps": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "The procedure, one step per entry, in order. Use {{placeholders}} "
-                            "for values that change between runs."
-                        ),
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "One line on what the procedure accomplishes.",
-                    },
-                    "why": {
-                        "type": "string",
-                        "description": (
-                            "Optional: one line on why it is worth a template. The user reads it "
-                            "as yours when they decide."
-                        ),
-                    },
-                },
-                "required": ["name", "steps"],
-            },
+            "inputSchema": _save_template_schema(),
         },
         {
             "name": "project_context_review",
