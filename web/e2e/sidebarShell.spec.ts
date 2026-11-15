@@ -157,7 +157,9 @@ test.describe('the icon and name', () => {
     await expect(home).not.toHaveAttribute('aria-current', 'page')
     await home.click()
     await expect.poll(() => page.evaluate(() => location.hash)).toBe('#/dashboard')
-    await expect(page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: /Overview/ })).toBeChecked()
+    // Home is its Overview, with no view switch (what waits on you is Needs you's own page): its first band shows.
+    await expect(page.getByRole('heading', { level: 2, name: 'Your agents today' })).toBeVisible()
+    await expect(page.getByRole('radiogroup', { name: 'View' }), 'Home has no view switch').toHaveCount(0)
     await expect(home).toHaveAttribute('aria-current', 'page')
     await expect(page.locator(RAIL).getByRole('button', { name: /^Home(,|$)/ }), 'and Home has no row of its own').toHaveCount(0)
   })

@@ -117,7 +117,9 @@ describe('§1 "nothing waiting on you" is said only by the surface that read the
 
 describe('§2 the group is named for what it holds', () => {
   it('the page that holds the whole waiting list is named "Needs you", and so is its palette row', () => {
-    expect(page()).toMatch(/<PageTitle>Needs you<\/PageTitle>/)
+    // The name sits in the span that keeps it whole on a phone (`data-title-keep`), and is still all
+    // the title says.
+    expect(page()).toMatch(/<PageTitle>(?:<span [^>]*>)?Needs you(?:<\/span>)?<\/PageTitle>/)
     expect(app()).toMatch(/id: 'go:mission-control', label: 'Needs you'/)
   })
 

@@ -29,6 +29,9 @@ DELEGATES = {
     "personalclaw.trust_mode.register_on_disable": (
         "personalclaw.trust_mode._TrustMode.register_on_disable"
     ),
+    "personalclaw.trust_mode.register_on_change": (
+        "personalclaw.trust_mode._TrustMode.register_on_change"
+    ),
 }
 
 _CORE_SLOT = (
