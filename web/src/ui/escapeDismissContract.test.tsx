@@ -68,7 +68,9 @@ describe('DegradedChip is dismissible from the keyboard', () => {
   it('the trigger carries the ref that focus returns to', () => {
     // Without this the handler would call `.focus()` on a null ref — the fix would look complete
     // and drop focus to <body>, which is the shape `ui/Popover`'s comment warns about.
-    expect(src).toMatch(/<button ref=\{triggerRef\}/)
+    // The ref is the trigger's own, or shared with its tooltip's (`ref={(el) => { tip.ref(el);
+    // triggerRef.current = el }}`): either way the button is what focus returns to.
+    expect(src).toMatch(/<button (\{\.\.\.tip\} )?ref=\{(triggerRef\}|\(el\) => \{ tip\.ref\(el\); triggerRef\.current = el \}\})/)
   })
 
   it('Escape is consumed so one press does not close two layers', () => {

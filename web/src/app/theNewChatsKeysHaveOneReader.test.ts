@@ -212,7 +212,7 @@ describe("the new chat's launch keys", () => {
     // Each page that opens a chat with something to start from goes through the writer.
     const through = callers(SOURCES)
     for (const rel of ['app/App.tsx', 'app/appSdk.tsx', 'app/paletteProjectRows.tsx', 'pages/chat/MissingChat.tsx',
-      'pages/dashboard/widgets/Suggestions.tsx', 'pages/loops/LoopsSection.tsx', 'pages/projects/ProjectList.tsx',
+      'pages/loops/LoopsSection.tsx', 'pages/projects/ProjectList.tsx',
       'pages/projects/ProjectsSection.tsx']) expect(through, rel).toContain(rel)
     expect(read('pages/ChatPage.tsx')).toContain('readChatLaunch(query)')
   })

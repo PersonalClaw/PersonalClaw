@@ -22,6 +22,7 @@ const doc: UiDoc = {
     { name: 'tone', description: "'neutral' (default) or 'danger'; danger tints the glyph red on hover with no fill (the restrained destructive treatment). Ignored while on." },
     { name: 'iconSize', description: 'Glyph size for the icon form (default 14); the children form sizes itself.' },
     { name: 'className', description: 'Extra classes (tokens only — no raw hex/px).' },
+    { name: 'tip', description: "Say the label (or title, and a disabledReason) in the themed Tooltip instead of a native title, as IconButton's tip does. Pages with no browser tooltip (Home's tiles) pass it." },
   ],
   bestPractices: [
     { guidance: true, description: 'Reach for SquareIconButton in dense action clusters (list rows, card headers, content toolbars) where the 40px round IconButton is too large.' },

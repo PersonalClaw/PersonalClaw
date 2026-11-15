@@ -7,10 +7,10 @@ const doc: UiDoc = {
   name: 'ButtonLink',
   keywords: ['link', 'button', 'anchor', 'navigation', 'cta', 'href', 'tonal', 'pill'],
   description:
-    'A link drawn as a button: a real <a href> for a navigation that is a row’s one action ("Answer in Attention"), where a TextLink would be too quiet and a Button would be the wrong element. It wears Button’s own variant, size and shape (buttonLook), so the two never drift. A link opens in a new tab, shows where it goes and reads as a link to assistive tech, which a button that sets the hash in its click handler does not. It has no disabled or loading state, because a link has neither.',
+    'A link drawn as a button: a real <a href> for a navigation that is a row’s one action (the band’s "Answer"), where a TextLink would be too quiet and a Button would be the wrong element. It wears Button’s own variant, size and shape (buttonLook), so the two never drift. A link opens in a new tab, shows where it goes and reads as a link to assistive tech, which a button that sets the hash in its click handler does not. It has no disabled or loading state, because a link has neither.',
   props: [
     { name: 'children', description: 'The label (and an optional leading icon).' },
-    { name: 'href', description: 'Where it goes: an in-app hash route ("#/dashboard?view=attention") or, with external, an off-app URL.' },
+    { name: 'href', description: 'Where it goes: an in-app hash route ("#/mission-control?open=…") or, with external, an off-app URL.' },
     { name: 'external', description: 'For off-app URLs — adds target=_blank + rel="noopener noreferrer". Omit for in-app hash links.' },
     { name: 'variant', description: "Button's variants, painted the same: 'primary' (default) for the page's main action, 'tonal' for a primary-tinted chip CTA in a row, 'secondary'/'ghost' quieter, 'ghost-accent' and 'danger' as Button draws them." },
     { name: 'size', description: "Button's height/padding tiers: 'xs' dense chrome, 'sm'/'md' most actions (md default), 'lg' hero." },

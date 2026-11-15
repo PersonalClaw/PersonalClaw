@@ -11,9 +11,12 @@ asked_at, age_secs, expires_at, current, interrupt, answer, route, project_id, l
 
 - ``kind`` is the source: ``approval`` (a tool call, a helper's start and a tool server's question
   among them), ``question`` (an agent's question in a chat), ``loop_question`` (a loop's, a Code
-  loop's merge and conflict among them), ``gate`` (a workflow run's), ``park`` (a trigger's parked
-  action), ``browse_grant``, ``plan_review`` (a loop's plan step or a plan ready to launch, a
-  chat's plan step) and ``bridge_confirmation``.
+  loop's merge and conflict among them, and a loop that stalled or is blocked, whose brief says
+  which in ``status`` and why in ``why``, answered by a steer), ``gate`` (a workflow run's),
+  ``park`` (a trigger's parked action), ``browse_grant``, ``plan_review`` (a loop's plan step or
+  a plan ready to launch, a chat's plan step), ``bridge_confirmation``, and the asks only the
+  Inbox raised (:data:`INBOX_KINDS`: ``folder_trust``, ``held_action``, ``declined_wait``,
+  ``escalated_run``).
 - ``work`` is the work it belongs to (``chat:``, ``loop:``, ``workflow:``, ``subagent:``,
   ``trigger:``), ``""`` for none; ``session`` the chat it is shown in, ``""`` for work no chat
   started.
@@ -52,8 +55,9 @@ destructive first, then what changes something, then the asks.
 
 **Who reads what** (:class:`Reach`): you read everything. An app reads the list only when its
 manifest declares ``/api/waiting`` (the permission middleware refuses it otherwise, as it does
-``/api/approvals``), and then reads all of it, as the approval relay reads every approval; an agent
-reads its own chat's items. Neither ever answers one (``approval_answer``), so neither is handed
+``/api/approvals``), and then reads all of it, as the approval relay reads every approval, but the
+asks only your Inbox raised (:data:`INBOX_KINDS`), rows of an Inbox no app reads; an agent reads
+its own chat's items. Neither ever answers one (``approval_answer``), so neither is handed
 a route to answer it by, nor what answers one: a gate's or a park's resume token and a bridge
 confirmation's token are yours alone (:func:`for_reader`).
 
@@ -364,15 +368,77 @@ def _loop_route(loop: Any) -> str:
     return f"#/code/{loop.id}" if getattr(loop, "kind", "") == "code" else f"#/loops/{loop.id}"
 
 
+def _stopped_why(loop: Any, status: str) -> tuple[str, float]:
+    """Why a stalled or blocked *loop* stopped, and when, as its own views say it: a stall's from
+    its last breaker trip on the ledger (the watchdog writes the status with no reason on the
+    row), a block's from the row's ``error_message``. The time is the trip's, else when the
+    status was written (``status.json``). ``("", 0.0)`` when it says nothing."""
+    from personalclaw.loop import files as loop_files
+
+    if status == "stagnant":
+        why, at = _last_trip(loop.id)
+    else:
+        why, at = str(getattr(loop, "error_message", "") or ""), 0.0
+    return why, at or loop_files.status_since(loop.id, status)
+
+
+#: Each stalled loop's last breaker trip, kept with the size and the time of the ledger it was
+#: read from: the list is read again on every ring (the badge, the tray, the buddy), and a loop
+#: that ran for days before it stalled has a long ledger. Keyed by the ledger's path, so a second
+#: home never reads the first's.
+_TRIPS: dict[str, tuple[tuple[int, int], tuple[str, float]]] = {}
+_TRIPS_KEPT = 256
+
+
+def _last_trip(loop_id: str) -> tuple[str, float]:
+    """A stalled loop's last breaker trip: its reason and its time, read again only when its
+    ledger has changed since."""
+    from personalclaw.ledger import EVENTS_FILE
+    from personalclaw.loop import files as loop_files
+    from personalclaw.loop import journal
+    from personalclaw.loop.journal import BREAKER_TRIP
+    from personalclaw.workflows.models import stamp_epoch
+
+    d = loop_files.safe_loop_dir(loop_id)
+    if d is None:
+        return "", 0.0
+    path = d / EVENTS_FILE
+    try:
+        st = path.stat()
+    except OSError:
+        return "", 0.0
+    seen = (st.st_size, st.st_mtime_ns)
+    kept = _TRIPS.get(str(path))
+    if kept is not None and kept[0] == seen:
+        return kept[1]
+    trips = journal.ledger(loop_id, kinds={BREAKER_TRIP})
+    last = trips[-1] if trips else {}
+    found = (str(last.get("reason") or ""), stamp_epoch(str(last.get("ts") or "")))
+    if len(_TRIPS) >= _TRIPS_KEPT:
+        _TRIPS.clear()
+    _TRIPS[str(path)] = (seen, found)
+    return found
+
+
 def _loop_questions(loops: list[Any], now: float) -> list[dict[str, Any]]:
     from personalclaw.loop import files as loop_files
+    from personalclaw.loop.loop import WAITS_ON_YOU
 
     out = []
     for loop in loops:
-        if str(getattr(loop.status, "value", loop.status)) != "needs_input":
+        status = str(getattr(loop.status, "value", loop.status))
+        if status not in WAITS_ON_YOU:
             continue
-        q = loop_files.pending_question(loop.id) or {}
+        if status == "needs_input":
+            q = loop_files.pending_question(loop.id) or {}
+        else:
+            # A stalled or blocked loop asks for a steer to start it again, its reason the why:
+            # masked as a question's why is (``pending_question``).
+            why, at = _stopped_why(loop, status)
+            q = {"why": _shown(why), "ts": at}
         brief: dict[str, Any] = {"name": _shown(loop.name), "question": q.get("question") or ""}
+        if status != "needs_input":
+            brief["status"] = status
         for key in ("why", "asked_by", "merge", "conflict", "spend_cap", "declined", "no_tools"):
             if key in q:
                 brief[key] = q[key]
@@ -623,6 +689,117 @@ def _parks(now: float) -> list[dict[str, Any]]:
     return out
 
 
+# ── 9. what only the Inbox asked ─────────────────────────────────────────────────────────────
+
+#: The kinds of Inbox row that wait on your answer and that only the Inbox raised: a folder that
+#: waits for your trust (``guardrails.project_trust``), an action held for your OK
+#: (``guardrails.rungs.announce_withheld``), a run waiting after you declined one of its steps
+#: and an escalated run (``workflows.attention``). A failed run that waits on no answer is none
+#: of them: it stays on Overview.
+INBOX_KINDS = ("folder_trust", "held_action", "declined_wait", "escalated_run")
+
+
+#: What an escalated run's row files on its refs, and only its raisers do (``workflows.attention``):
+#: the run's ending. A key a caller chooses (a dedup key) never decides a kind.
+ESCALATED = "escalated"
+
+
+def inbox_kind(refs: Mapping[str, Any], item_kind: str = "", source: str = "") -> str:
+    """Which of :data:`INBOX_KINDS` an Inbox row with *refs* is, by what only its raiser files on
+    it, or ``""`` for a row the list does not read (a message, a proposal, a gate's row: a gate is
+    listed from its run, :func:`_gates`). A row an app raised is none of them, whatever it files:
+    each is raised by the gateway itself."""
+    if refs.get("app") or source.startswith("app:"):
+        return ""
+    if refs.get("guardrail") == "project_trust" and refs.get("dir"):
+        return "folder_trust"
+    if refs.get("action_type") and refs.get("rung") and item_kind == "agent_request":
+        return "held_action"
+    if refs.get("declined_wait") and refs.get("workflow"):
+        return "declined_wait"
+    if (
+        refs.get("ending") == ESCALATED
+        and (refs.get("workflow") or refs.get("loop"))
+        and item_kind == "needs_input"
+    ):
+        return "escalated_run"
+    return ""
+
+
+def _inbox_rows(state: Any) -> list[dict[str, Any]]:
+    """The live Inbox's open rows of :data:`INBOX_KINDS`, masked as the Inbox serves them. The
+    live Inbox is the gateway's memory, so this runs in :func:`taken`, on its event loop."""
+    from personalclaw import inbox
+
+    store = inbox.live_store(state)
+    if store is None:
+        return []
+    return [
+        inbox.redact_item(row.to_dict())
+        for row in list(store.items.values())
+        if row.status in inbox.OPEN_STATUSES and inbox_kind(row.refs, row.item_kind, row.source)
+    ]
+
+
+def _inbox_work(refs: Mapping[str, Any]) -> tuple[str, str]:
+    """The work an Inbox row is about, and the chat it is shown in."""
+    if refs.get("loop"):
+        return f"loop:{refs['loop']}", ""
+    if refs.get("workflow"):
+        return f"workflow:{refs['workflow']}", ""
+    from personalclaw import work_phases
+
+    session = work_phases.chat_of(str(refs.get("session") or ""))
+    return (f"chat:{session}", session) if session else ("", "")
+
+
+def _inbox_asks(rows: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
+    """Each row of :data:`INBOX_KINDS` as an item. Its brief is the row's own words, as
+    ``inbox.redact_item`` returned them, and the refs its card reads. A folder's trust is answered
+    on its own route (``POST /api/guardrails/project-trust``); the others are answered in the Inbox,
+    so their answer is empty and their route opens the row there."""
+    out = []
+    for row in rows:
+        refs = dict(row.get("refs") or {})
+        kind = inbox_kind(refs, str(row.get("item_kind") or ""), str(row.get("source") or ""))
+        if not kind:
+            continue
+        ident = str(row.get("id") or "")
+        title, _, body = str(row.get("message") or "").partition("\n\n")
+        brief: dict[str, Any] = {"title": title, "body": body, "inbox_item": ident}
+        for key in ("dir", "action_type", "rung", "workflow", "workflow_name", "loop", "loop_kind"):
+            if refs.get(key):
+                brief[key] = refs[key]
+        work, session = _inbox_work(refs)
+        if kind == "folder_trust":
+            # Your Trust, the folder's own door (``api_project_trust``), which only you answer.
+            consequence = "changes"
+            answer = _answer(
+                "POST",
+                "/api/guardrails/project-trust",
+                ("trust",),
+                {"dir": str(refs.get("dir")), "trusted": True},
+            )
+        else:
+            # Answered in the Inbox: an answer with no route, shaped as every other one.
+            consequence, answer = "asks", _answer("", "", ())
+        out.append(
+            _item(
+                kind=kind,
+                ident=ident,
+                work=work,
+                session=session,
+                brief=brief,
+                consequence=consequence,
+                answer=answer,
+                route=f"#/inbox?open={quote(ident, safe='')}",
+                asked_at=float(row.get("created_at") or 0.0) or None,
+                now=now,
+            )
+        )
+    return out
+
+
 # ── 6. a browser grant, and 8. a bridge confirmation ─────────────────────────────────────────
 
 
@@ -701,6 +878,9 @@ class Snapshot:
     questions: list[dict[str, Any]] = field(default_factory=list)
     grants: list[dict[str, Any]] = field(default_factory=list)
     confirmations: list[dict[str, Any]] = field(default_factory=list)
+    #: The open Inbox rows that wait on your answer and that no other source lists
+    #: (:func:`inbox_kind`), as ``inbox.redact_item`` returns them.
+    inbox: list[dict[str, Any]] = field(default_factory=list)
     window: float = 0.0
     unreadable: list[str] = field(default_factory=list)
     places: work_project.Memory = field(default_factory=work_project.Memory)
@@ -740,6 +920,7 @@ def taken(state: Any, *, places: bool = True) -> Snapshot:
     snap.confirmations = _taken(
         "bridge_confirmation", bridge.pending_confirmations, snap.unreadable, []
     )
+    snap.inbox = _taken("inbox", lambda: _inbox_rows(state), snap.unreadable, [])
     if places:
         snap.places = work_project.taken(state, project_readers())
     return snap
@@ -796,6 +977,7 @@ def read(snap: Snapshot) -> tuple[list[dict[str, Any]], list[str]]:
     items += _taken("park", lambda: _parks(now), unreadable, [])
     items += _browse_grants(snap.grants, now)
     items += _bridge_confirmations(snap.confirmations, now)
+    items += _taken("inbox", lambda: _inbox_asks(snap.inbox, now), unreadable, [])
     live = [i for i in items if i["current"]]
     live.sort(key=_order)
     project_of = work_project.ProjectOf(snap.places, project_readers())
@@ -838,8 +1020,12 @@ class Reach:
     chat: str = ""
 
     def sees(self, item: Mapping[str, Any]) -> bool:
-        if self.everyone or self.app:
+        if self.everyone:
             return True
+        if self.app:
+            # The asks only the Inbox raised are rows of your Inbox, which no app reads
+            # (``GET /api/inbox`` is yours alone): an app reads every other item.
+            return item.get("kind") not in INBOX_KINDS
         chat = self.chat.removeprefix(session_keys.DASHBOARD.prefix)
         return bool(chat) and str(item.get("session") or "") == chat
 

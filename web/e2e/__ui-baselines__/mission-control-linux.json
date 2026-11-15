@@ -3,56 +3,27 @@
     "targets": {
       "320": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
-        "button \"Approve Ship v#.#? — Workflow · release\"",
-        "button \"Approve Sign in to the bank’s site — Trigger · Bank statemen\"",
-        "button \"Deny Ship v#.#? — Workflow · release\"",
-        "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
-        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "input \"Start something\""
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
+        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
       ],
       "390": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
-        "button \"Approve Ship v#.#? — Workflow · release\"",
-        "button \"Approve Sign in to the bank’s site — Trigger · Bank statemen\"",
-        "button \"Deny Ship v#.#? — Workflow · release\"",
-        "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
-        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "input \"Start something\""
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
+        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
       ],
       "412": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
-        "button \"Approve Ship v#.#? — Workflow · release\"",
-        "button \"Approve Sign in to the bank’s site — Trigger · Bank statemen\"",
-        "button \"Deny Ship v#.#? — Workflow · release\"",
-        "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
-        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "input \"Start something\""
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
+        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
       ],
       "768": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
-        "button \"Approve Ship v#.#? — Workflow · release\"",
-        "button \"Approve Sign in to the bank’s site — Trigger · Bank statemen\"",
-        "button \"Deny Ship v#.#? — Workflow · release\"",
-        "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
-        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "input \"Start something\""
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
+        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"Good <time of day>, Alex\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ]
     }
@@ -61,56 +32,27 @@
     "targets": {
       "320": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
-        "button \"Approve Ship v#.#? — Workflow · release\"",
-        "button \"Approve Sign in to the bank’s site — Trigger · Bank statemen\"",
-        "button \"Deny Ship v#.#? — Workflow · release\"",
-        "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
-        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "input \"Start something\""
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
+        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
       ],
       "390": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
-        "button \"Approve Ship v#.#? — Workflow · release\"",
-        "button \"Approve Sign in to the bank’s site — Trigger · Bank statemen\"",
-        "button \"Deny Ship v#.#? — Workflow · release\"",
-        "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
-        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "input \"Start something\""
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
+        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
       ],
       "412": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
-        "button \"Approve Ship v#.#? — Workflow · release\"",
-        "button \"Approve Sign in to the bank’s site — Trigger · Bank statemen\"",
-        "button \"Deny Ship v#.#? — Workflow · release\"",
-        "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
-        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "input \"Start something\""
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
+        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
       ],
       "768": [
         "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "button \"Allow bash — automation “Nightly” — Clear the build folder\"",
-        "button \"Approve Ship v#.#? — Workflow · release\"",
-        "button \"Approve Sign in to the bank’s site — Trigger · Bank statemen\"",
-        "button \"Deny Ship v#.#? — Workflow · release\"",
-        "button \"Deny Sign in to the bank’s site — Trigger · Bank statements\"",
-        "button \"Deny bash — automation “Nightly” — Clear the build folder\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "input \"Start something\""
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
+        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<h#> \"Good <time of day>, Alex\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ]
     }

@@ -383,7 +383,10 @@ class TestOneOpenStatusVocabulary:
             row = _raise_row(live, "L1")
             store.items[row].status = status
             suppresses = (
-                inbox_mod._find_open_by_dedup(store, store.items[row].refs["dedup_key"]) is not None
+                inbox_mod._find_open_by_dedup(
+                    store, store.items[row].refs["dedup_key"], store.items[row].source
+                )
+                is not None
             )
             store.items[row].status = status  # _find_open_by_dedup does not mutate; be explicit
             closes = inbox_mod.resolve_attention_items(live, {"loop": "L1"}) == 1

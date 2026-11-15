@@ -161,10 +161,9 @@ export function useChatHistory({ navigate, query, setQuery }: { navigate: (p: st
 
   const load = useCallback(() => {
     // Every reader of this collection, in one call: an archive/restore moves a session BETWEEN the
-    // two lists so the one we are not looking at is stale too, and the dashboard's recent-sessions
-    // list reads the same collection under `chat:sessions:recent`. Prefix mode covers a reader added
-    // later, which is exactly how the dashboard's was missed. It does NOT touch `chat:suggestions`
-    // and friends — the prefix is the collection, not the namespace.
+    // two lists so the one we are not looking at is stale too. Prefix mode covers a reader added
+    // later, which is exactly how the dashboard's old recent-sessions list was missed. It does NOT
+    // touch `chat:suggestions` and friends — the prefix is the collection, not the namespace.
     invalidateKeys('chat:sessions', true)
     refreshSessions(); refreshFolders(); refreshTags()
   }, [refreshSessions, refreshFolders, refreshTags])

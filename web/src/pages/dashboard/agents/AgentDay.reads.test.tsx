@@ -12,6 +12,8 @@ let needsLoading = false
 let week: { start: string; end: string; occurrences: { trigger_id: string; trigger_name: string; at: number }[]; truncated?: string[] } =
   { start: '', end: '', occurrences: [] }
 const socket: { message?: (m: WsMessage) => void; reconnect?: (() => void) | null } = {}
+/** The live feed, answered and empty: one object, as the hook's own result is stable between reads. */
+const FEED = vi.hoisted(() => ({ entities: [], live: [], running: { running: [], finished: [] }, truncated: 0, error: null, loading: false, refresh: () => {} }))
 
 vi.mock('../../../lib/api', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../../lib/api')>()
@@ -36,7 +38,7 @@ vi.mock('../../../lib/useChatSocket', () => ({
 }))
 vi.mock('../../../lib/useAgentActivity', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  useAgentActivity: () => ({ entities: [], error: null, loading: false }),
+  useAgentActivity: () => FEED,
 }))
 vi.mock('../../../lib/useNeedsYou', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),

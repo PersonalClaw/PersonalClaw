@@ -3,6 +3,7 @@ import { MoreRow } from '../../../ui/MoreRow'
 import { AnimatePresence } from 'framer-motion'
 import { Package, PinOff } from 'lucide-react'
 import { api, type Artifact, type PinnedArtifact } from '../../../lib/api'
+import { useHomeTiles } from '../PinnedTiles'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
 
@@ -20,6 +21,8 @@ import type { RouteProps } from '../../../app/useQueryState'
  *  card that navigates nowhere. That self-healing is the reason the pin holds no copy. */
 export function PinnedArtifacts({ navigate }: RouteProps) {
   const [pins, setPins] = useState<PinnedArtifact[] | null>(null)
+  // The artifact tiles on Overview, read through the same shared cache the tiles paint from.
+  const { tiles } = useHomeTiles()
   /** Resolution index, or `null` when the artifact list read FAILED — the two are different facts
    *  and `resolved` below only drops a pin when the index is trustworthy. */
   const [byslug, setBySlug] = useState<Record<string, Artifact> | null>({})
@@ -79,6 +82,9 @@ export function PinnedArtifacts({ navigate }: RouteProps) {
     )
   }
   if (pins === null) return null
+  // The section holds the tiles you keep on Home too (`PinnedTiles`, above this list): with a tile
+  // there, no pin is not an empty section, and its sentence would say so under the tiles.
+  if (resolved.length === 0 && tiles.length > 0) return null
   if (resolved.length === 0) {
     return (
       <SlotEmptyState icon={Package}>

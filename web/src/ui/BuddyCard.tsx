@@ -10,7 +10,7 @@
  *    (`approvalRowFields`, shared with the phone companion) and the choices the host passes, built
  *    on the app's existing answer path (#3832). The card wires no Allow or Deny itself. A question
  *    is the chat's question card, and an error has Open and Dismiss; those two raise `onAnswer`.
- *  - **In sight** is the running list's rows (`GET /api/running`, read the way Mission Control reads
+ *  - **In sight** is the running list's rows (`GET /api/running`, read the way Home's band reads
  *    it): each row's agent orb, its kind's glyph, its one line, its exact phase, its last update and
  *    the route that opens it. The list's own states show as such: reconnecting, could not be read,
  *    interrupted by a restart, just finished, and many (the first `IN_SIGHT_SHOWN`, then all).
@@ -112,7 +112,7 @@ function Facts({ w, ended, cut }: { w: CardWork; ended?: string; cut?: boolean }
 }
 
 /** One row in sight: the orb, the kind's glyph, the one line, its facts and the route that opens
- *  it, as Mission Control's Working lane says a row. An ended row's line is its name: the facts say
+ *  it, as every reader of the running list says a row (`runningRows.ts`). An ended row's line is its name: the facts say
  *  how it ended. */
 function Row({ w, ended, cut }: { w: CardWork; ended?: string; cut?: boolean }) {
   const said = ended ? clipWords(w.name, IN_SIGHT_LINE) : lineOfWork(w, 'inSightRow')

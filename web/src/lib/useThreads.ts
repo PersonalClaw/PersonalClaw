@@ -7,6 +7,7 @@ import { epochSeconds, sessionRecencyMs } from './epoch'
 import { loopRoute } from './loopKind'
 import { loopProjectId, useProjectList } from './loopProject'
 import { sessionTitle } from './sessionTitle'
+import { channelOf } from '../pages/chat/FromChannel'
 import { refreshKinds, useChatSocket, type WsMessage } from './useChatSocket'
 
 /** ── The threads the sidebar lists, under their projects (#3814) ──────────────────────────────
@@ -80,6 +81,9 @@ export interface Thread {
   createdAt?: number
   /** The app that started the chat (`StartedByApp`), absent on one of yours. */
   startedBy?: AppStarted
+  /** The chat channel it came in on ("Telegram", `FromChannel`'s `channelOf`), absent on one of
+   *  yours. */
+  channel?: string
 }
 
 export interface ProjectThreads {
@@ -89,7 +93,7 @@ export interface ProjectThreads {
 
 /** The chat list's fields the join reads. */
 export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id' | 'pinned' | 'attention' | 'folder_id' | 'tags'>
-  & Partial<Pick<ChatSessionSummary, 'created' | 'lifecycle' | 'created_by_app' | 'created_by_app_name'>>
+  & Partial<Pick<ChatSessionSummary, 'created' | 'lifecycle' | 'created_by_app' | 'created_by_app_name' | 'origin' | 'source_label'>>
 /** The loop list's fields the join reads. */
 export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'>
   & Partial<Pick<Loop, 'tasks_project_id' | 'created_at' | 'completed_at' | 'last_cycle_at' | 'broken'>>
@@ -140,15 +144,17 @@ function chatPip(s: ThreadChat): ThreadPip | null {
 }
 
 /** What a chat's row says beyond its place in the list: archived, when it was made, the app that
- *  started it. Each only when the row says it. */
-function chatFacts(s: ThreadChat): Pick<Thread, 'archived' | 'createdAt' | 'startedBy'> {
+ *  started it, the channel it came in on. Each only when the row says it. */
+function chatFacts(s: ThreadChat): Pick<Thread, 'archived' | 'createdAt' | 'startedBy' | 'channel'> {
   // The one parser: a time with no zone names no moment, so it gives none.
   const created = epochSeconds(s.created)
   const app = str(s.created_by_app)
+  const channel = channelOf({ origin: s.origin, source_label: str(s.source_label) })
   return {
     ...(s.lifecycle === 'archived' ? { archived: true } : {}),
     ...(created !== undefined ? { createdAt: created * 1000 } : {}),
     ...(app !== '' ? { startedBy: { created_by_app: app, ...(str(s.created_by_app_name) ? { created_by_app_name: str(s.created_by_app_name) } : {}) } } : {}),
+    ...(channel !== '' ? { channel } : {}),
   }
 }
 
@@ -309,7 +315,7 @@ export async function readThreads(): Promise<ThreadLists> {
 
 /** The frames that change a thread or its pip: a chat's run state, an approval, an Inbox row, and
  *  the gateway's listing hint naming the loops, or the workflow runs a loop may run on (as Home and
- *  Mission Control read it): a loop's newest cycle places it. */
+ *  Needs you read it): a loop's newest cycle places it. */
 function changesThreads(m: WsMessage): boolean {
   const type = m.type
   if (type === 'refresh') return refreshKinds(m).some((k) => k === 'loops' || k === 'workflow_runs')

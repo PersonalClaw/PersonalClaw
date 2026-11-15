@@ -87,6 +87,9 @@ export const VIEW_ROUTES: RouteEntry[] = [
   { route: 'tools', id: 'tools', label: 'Capabilities › Tools', needsData: true },
   { route: 'prompts', id: 'prompts', label: 'Capabilities › Prompts', needsData: true },
   { route: 'apps', id: 'apps', label: 'Capabilities › Apps', needsData: true },
+  // Needs you (#6149): every ask waiting on you, a page of its own the badge opens. The sidebar has
+  // no row for it; Home stays lit while it shows. It was a non-nav page while it was Mission Control.
+  { route: 'mission-control', id: 'mission-control', label: 'Home › Needs you', needsData: true },
   { route: 'knowledge', id: 'knowledge', label: 'Library › Knowledge', needsData: true },
   // All tasks, every project's: a project's own are its Tasks view (#3818), and the sidebar has no
   // Tasks row. It keeps the address, the visual baseline and the scans it had as a row.
@@ -141,6 +144,9 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   // The phone companion's view two (#3898): the push link opens the one approval it names, owning
   // the screen. View one is `companion` itself, in NON_NAV_ROUTES; both read the same stubbed list.
   { route: 'companion?approval=ap-0a1b2c3d', id: 'companion-one-work', label: 'Companion › one piece of work', needsData: true },
+  // Needs you with an ask's panel open beside the list (#6149), as the band's Answer opens it: the
+  // panel at every width, and in the list's place below 840 px.
+  { route: 'mission-control?open=waiting%3Aapproval%3Ae2e-ap-1', id: 'needs-you-open', label: 'Needs you › an ask in its panel', needsData: true },
   // The composer's voice mode (#4963) has no address: it is `composer voice mode` in `OPENERS`.
   // A chat long enough for its Session Map (#4776): six questions, one bookmarked, the rail showing.
   // Its transcript is a stub (`MAPPED_CHAT` in `surfaces.spec.ts`), under the catalogue's sample id.
@@ -192,10 +198,9 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
 // The criterion says EVERY authenticated route, so the test is whether
 // the harness CAN reach the page — not whether it has a nav tile. `App.tsx`'s `renderPage`
 // switches on the FIRST route segment, so a bare `#/<id>` renders the page component for
-// every entry here. The three below need no path parameter, no fixture and no interaction
-// recipe, so nothing but the missing list entry was keeping them unscanned:
-//   · mission-control — locked dashboard view the server registers as a preset
-//     (`views_store._mission_control_preset`), reached from the command palette.
+// every entry here. The two below need no path parameter, no fixture and no interaction
+// recipe, so nothing but the missing list entry was keeping them unscanned (mission-control was a
+// third until it became Needs you, in VIEW_ROUTES above):
 //   · notifications   — retired to the Inbox's Notifications filter (#3818); the visit opens the
 //                       filter through its redirect, which is the address a stored link still has.
 //   · discover        — store/discovery surface, reached from Apps.
@@ -240,7 +245,6 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
 // iterates ROUTES + VIEW_ROUTES, so adding a page here buys an a11y scan WITHOUT
 // minting a visual baseline that would need platform-qualified review.
 export const NON_NAV_ROUTES: RouteEntry[] = [
-  { route: 'mission-control', label: 'Mission Control', needsData: true },
   // The phone companion: a full-screen page the shell returns early for (`App.tsx`), reached from a
   // push notification or its own address. It lists what waits on you first (#3888).
   { route: 'companion', label: 'Companion', needsData: true },

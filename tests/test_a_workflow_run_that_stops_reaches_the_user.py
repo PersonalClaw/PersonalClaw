@@ -73,7 +73,8 @@ def test_an_escalated_run_raises_a_row_that_opens_it(raised: list) -> None:
     [call] = raised
     assert call["title"] == "Workflow run stopped before it finished"
     assert call["body"] == f"deep-research — {_ENDING}"
-    assert call["refs"] == {"workflow": "run-7f3c"}
+    # The ending rides the refs: the waiting list knows an escalated run by it.
+    assert call["refs"] == {"workflow": "run-7f3c", "ending": "escalated"}
     assert call["dedup_key"] == "workflow-run:run-7f3c:escalated"
     # The pair a workflow gate rides: the user's rule for "a run needs you" decides how loudly.
     assert (call["source"], call["kind"], call["item_kind"]) == (
@@ -185,5 +186,5 @@ def test_the_engine_announces_a_workflow_run_that_escalated(raised: list) -> Non
 
     assert live_runs.run(_go()) is RunStatus.ESCALATED
     assert [(c["title"], c["refs"]) for c in raised] == [
-        ("Workflow run stopped before it finished", {"workflow": run.id})
+        ("Workflow run stopped before it finished", {"workflow": run.id, "ending": "escalated"})
     ], raised

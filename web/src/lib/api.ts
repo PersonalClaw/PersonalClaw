@@ -1671,11 +1671,13 @@ export interface RunningCount { live: number; blocked: number; waiting: number; 
 
 /** The sources of what waits on you (`waiting.py`): an approval (a tool call, a helper's start and a
  *  tool server's question among them), an agent's question, a loop's question (a Code loop's merge
- *  and conflict among them), a workflow run's gate, an automation's parked action, a browser grant,
- *  a plan review and a control-bridge confirmation. */
+ *  and conflict, and a loop that stalled or is blocked, among them), a workflow run's gate, an
+ *  automation's parked action, a browser grant, a plan review and a control-bridge confirmation; and
+ *  the four asks only the Inbox raised (`waiting.INBOX_KINDS`): a folder waiting for your trust, an
+ *  action held for your OK, a run waiting after you declined one of its steps, and an escalated run. */
 export type WaitingKind =
   | 'approval' | 'question' | 'loop_question' | 'gate' | 'park' | 'browse_grant' | 'plan_review'
-  | 'bridge_confirmation'
+  | 'bridge_confirmation' | 'folder_trust' | 'held_action' | 'declined_wait' | 'escalated_run'
 
 /** What answering an item lets happen, most consequential first: the list's first order. */
 export type WaitingConsequence = 'destructive' | 'changes' | 'asks'

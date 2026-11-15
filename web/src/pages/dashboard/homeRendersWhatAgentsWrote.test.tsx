@@ -1,21 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ChatSessionSummary } from '../../lib/api'
-import { HomeHarness, gateItem, runningRow, waitingItem, waitingList } from '../../test/homeHarness'
-import { BLOCKS, HOSTILE, HOSTILE_BODY, LEADING, MD_BLOCK, MD_LINE, inert, plain, rawSinks, rendersBlock, rendersLine } from '../../test/markdownSinks'
+import { NeedsYouHarness, gateItem, runningRow, waitingItem, waitingList } from '../../test/needsYouHarness'
+import { HOSTILE, HOSTILE_BODY, LEADING, MD_BLOCK, MD_LINE, inert, rawSinks, rendersBlock, rendersLine } from '../../test/markdownSinks'
 import { findGenUiBlock } from '../../ui/widget/blocks'
 import { firstLine } from '../../lib/attentionLanes'
 import { registerBuiltinContentTypes } from '../../ui/content/registerBuiltins'
 
-// ── Home shows what agents wrote, rendered ─────────────────────────────────────────────────────
+// ── Needs you shows what agents wrote, rendered ────────────────────────────────────────────────
 //
-// 🔴 An ask's title, a gate's prompt, a running row's line, a chat's title and last words and the
-// conversation an ask came from are written by agents and people, and carry markdown: Home showed
-// each with its marks on the page. Each now renders in the form its sink holds (a line, an excerpt,
-// a body), and every name built from one reads it as plain text. An approval's title is a tool's
-// name and a browse grant's second line is ours: both stay text.
+// 🔴 An ask's title, a gate's prompt and the conversation an ask came from are written by agents
+// and people, and carry markdown: the page showed each with its marks. Each now renders in the form
+// its sink holds (a line, a body), and every name built from one reads it as plain text. An
+// approval's title is a tool's name and a browse grant's second line is ours: both stay text. (What
+// runs and your chats moved to Home's band and the sidebar, whose own tests read them.)
 
 const waiting = vi.fn()
 const running = vi.fn()
@@ -39,7 +39,6 @@ vi.mock('../../lib/useChatSocket', async (orig) => ({ ...(await orig<Record<stri
 vi.mock('../../app/identity', () => ({ useIdentity: () => ({ name: 'Sam Rivera' }), firstNameOf: (n: string) => n.split(' ')[0] }))
 vi.mock('./PinnedTiles', () => ({ PinnedTiles: () => null }))
 vi.mock('../../ui/surfaces/SurfaceOverlay', () => ({ SurfaceOverlay: () => null }))
-vi.mock('./widgets/Suggestions', () => ({ Suggestions: () => null }))
 
 // The app registers its content types at startup (`main.tsx`), so a body that ran its widget blocks
 // would draw them here as it does in the app.
@@ -88,26 +87,26 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
-describe('Attention renders what agents wrote', () => {
-  it("an ask's title, a running row's name and line, and a chat's title render as lines", async () => {
-    render(<HomeHarness />)
-    await waitFor(() => expect(linesOf().length).toBeGreaterThanOrEqual(4))
+describe('Needs you renders what agents wrote', () => {
+  it("an ask's title renders as a line", async () => {
+    render(<NeedsYouHarness />)
+    await waitFor(() => expect(linesOf().length).toBeGreaterThanOrEqual(1))
     for (const line of linesOf()) expect(rendersLine(line), line.outerHTML).toEqual([])
   })
 
-  it('every name built from them is plain text', async () => {
-    render(<HomeHarness />)
-    await waitFor(() => expect(linesOf().length).toBeGreaterThanOrEqual(4))
+  it('every name built from it is plain text', async () => {
+    render(<NeedsYouHarness />)
+    await waitFor(() => expect(linesOf().length).toBeGreaterThanOrEqual(1))
     for (const name of names()) expect(name, 'a name carries a mark').not.toMatch(/`|\*\*published/)
   })
 
   it("an approval's title is a tool's name, and stays the text it is", async () => {
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     expect(await screen.findByText('shell.run_**now**')).toBeInTheDocument()
   })
 
   it("a gate's prompt renders as a body, without its widget block", async () => {
-    render(<HomeHarness query={{ open: 'waiting:gate:run-9:g:1' }} />)
+    render(<NeedsYouHarness query={{ open: 'waiting:gate:run-9:g:1' }} />)
     await waitFor(() => expect(document.querySelector('pre')).not.toBeNull())
     expect(findGenUiBlock(GATE_PROMPT), 'the fixture holds a block Home would find').not.toBeNull()
     const prompt = document.querySelector('pre')!.closest('div[data-type="body-s"]')!
@@ -119,26 +118,26 @@ describe('Attention renders what agents wrote', () => {
 
   it("the reply field is named for the ask in plain text", async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: MD_LINE }, { id: 'gate:run-9:g:3' })]))
-    render(<HomeHarness query={{ open: 'waiting:gate:run-9:g:3' }} />)
+    render(<NeedsYouHarness query={{ open: 'waiting:gate:run-9:g:3' }} />)
     expect(await screen.findByRole('textbox', { name: `Reply to ${SEEN}` })).toBeInTheDocument()
   })
 
   it("a hostile gate prompt is inert in its body", async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: `Notes\n\n${HOSTILE}\n\n${HOSTILE_BODY}` }, { id: 'gate:run-9:g:2' })]))
-    render(<HomeHarness query={{ open: 'waiting:gate:run-9:g:2' }} />)
+    render(<NeedsYouHarness query={{ open: 'waiting:gate:run-9:g:2' }} />)
     const sink = (await screen.findAllByText(/open the report/))[0].closest('div[data-type="body-s"]')!
     expect(sink, "the prompt's body").not.toBeNull()
     expect(inert(sink, { body: true })).toEqual([])
   })
 
   it("a question card's list renders each question as a line, a leading mark kept", async () => {
-    render(<HomeHarness query={{ open: 'waiting:question:q-1' }} />)
+    render(<NeedsYouHarness query={{ open: 'waiting:question:q-1' }} />)
     const item = await screen.findByText('# of retries')
     expect(item.closest('li')).not.toBeNull()
   })
 
   it('the conversation an ask came from renders as the transcript does, cut at a block', async () => {
-    render(<HomeHarness query={{ open: 'waiting:question:q-1' }} />)
+    render(<NeedsYouHarness query={{ open: 'waiting:question:q-1' }} />)
     const region = await screen.findByRole('region', { name: 'The conversation it came from' })
     await waitFor(() => expect(region.querySelector('pre')).not.toBeNull())
     expect(rendersBlock(region)).toEqual([])
@@ -146,24 +145,16 @@ describe('Attention renders what agents wrote', () => {
     expect(region.querySelector('br'), 'your lines keep their breaks').not.toBeNull()
   })
 
-  it("a chat's last words render, the gateway's cut repaired", async () => {
-    render(<HomeHarness query={{ open: 'thread:chat-9' }} />)
-    const strong = await screen.findByText('Key poin')
-    expect(strong.tagName).toBe('STRONG')
-    expect(document.body.textContent).not.toContain('**Key')
-    expect(strong.closest('p.min-w-0')!.querySelector(BLOCKS), 'an excerpt is a line').toBeNull()
-  })
-
-  it('the detail pane heads with the rendered title, and its name and tooltip are plain', async () => {
-    render(<HomeHarness query={{ open: 'thread:chat-9' }} />)
+  it('the panel heads with the rendered title, wrapping in full with no native tooltip', async () => {
+    render(<NeedsYouHarness query={{ open: 'waiting:question:q-1' }} />)
     const heading = await screen.findByRole('heading', { level: 2, name: SEEN })
     expect(rendersLine(heading)).toEqual([])
-    expect(heading.getAttribute('title')).toBe(SEEN)
+    expect(heading.hasAttribute('title')).toBe(false)
   })
 
   it('a hostile title is inert where it is drawn', async () => {
     waiting.mockResolvedValue(waitingList([waitingItem({ id: 'question:q-2', kind: 'question', brief: { questions: [{ question: HOSTILE }] } })]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     const lines = await screen.findAllByText(/open the report/)
     // The sink is the card's title line, not the link's own span inside it.
     const sinks = [...new Set(lines.map((line) => line.closest('p[data-type="label-m"]')))]
@@ -175,7 +166,7 @@ describe('Attention renders what agents wrote', () => {
 
   it("a title naming a tool keeps the tool's double underscores in its names", async () => {
     waiting.mockResolvedValue(waitingList([waitingItem({ id: 'question:q-4', kind: 'question', brief: { questions: [{ question: 'Run mcp__github__create_issue for **triage**?' }] } })]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     expect(await screen.findByRole('button', { name: /^Show the details of Run mcp__github__create_issue for triage\?/ })).toBeInTheDocument()
   })
 
@@ -183,21 +174,11 @@ describe('Attention renders what agents wrote', () => {
     waiting.mockResolvedValue(waitingList([waitingItem({ id: 'question:q-3', kind: 'question', brief: { questions: [{ question: text }] } })]))
     running.mockResolvedValue({ running: [], finished: [] })
     chatSessions.mockResolvedValue([])
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     const card = (await screen.findByRole('button', { name: /^Show the details of / })).parentElement!
     expect(card.querySelector('p[data-type="label-m"]')!.textContent).toBe(firstLine(text))
   })
 
-  it("a finished row's name and line render as lines, and its names are plain", async () => {
-    render(<HomeHarness />)
-    const tail = await screen.findByRole('list', { name: 'Just finished' })
-    const ended = within(tail).getByRole('listitem')
-    expect(linesOf(ended)).toHaveLength(2)
-    for (const line of linesOf(ended)) expect(rendersLine(line), line.outerHTML).toEqual([])
-    const named = Array.from(ended.querySelectorAll('[aria-label], [title]')).map((el) => el.getAttribute('aria-label') ?? el.getAttribute('title') ?? '')
-    expect(named.length, 'its hit target, its tooltip and its Open link').toBeGreaterThanOrEqual(3)
-    for (const name of named) expect(plain(name), name).toEqual([])
-  })
 })
 
 describe("an approval's title is a tool's name: text in its card, its pane and its names", () => {
@@ -206,55 +187,30 @@ describe("an approval's title is a tool's name: text in its card, its pane and i
 
   it('a tool name with double underscores is named as written', async () => {
     waiting.mockResolvedValue(waitingList([tool('mcp', 'mcp__github__create_issue')]))
-    render(<HomeHarness />)
+    render(<NeedsYouHarness />)
     expect(await screen.findByRole('button', { name: /^Show the details of mcp__github__create_issue/ })).toBeInTheDocument()
   })
 
   it("the pane heads with the tool's name as text, and its names say it as written", async () => {
     waiting.mockResolvedValue(waitingList([tool('run', 'shell.run_**now**')]))
-    render(<HomeHarness query={{ open: 'waiting:approval:run' }} />)
+    render(<NeedsYouHarness query={{ open: 'waiting:approval:run' }} />)
     const heading = await screen.findByRole('heading', { level: 2, name: 'shell.run_**now**' })
     expect(heading.querySelector('strong, code')).toBeNull()
-    expect(heading.getAttribute('title')).toBe('shell.run_**now**')
+    expect(heading.hasAttribute('title')).toBe(false)
     expect(screen.getByRole('button', { name: /^Show the details of shell\.run_\*\*now\*\*/ })).toBeInTheDocument()
   })
 })
 
-describe("a chat named by its first words, cut with '…', is named with the cut repaired", () => {
-  // Its title is its own key, a raw id, so the chat is named by its first words.
-  const untitled = { key: 'chat-raw', title: 'chat-raw', prompt_preview: 'Explain **why the build fails on the arm64 runner after the upgrade** today',
-    last_ts: '2026-11-07T10:00:00Z' } as unknown as ChatSessionSummary
-
-  const namedFor = () => Array.from(document.querySelectorAll('[aria-label], [title]'))
-    .map((el) => `${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''}`)
-    .filter((n) => n.includes('Explain'))
-
-  it("the row's tooltip and its name hold no open mark", async () => {
-    chatSessions.mockResolvedValue([untitled])
-    render(<HomeHarness />)
-    await waitFor(() => expect(namedFor().length, 'the row is named for it, and has its tooltip').toBeGreaterThanOrEqual(2))
-    for (const n of namedFor()) expect(n, 'a name keeps an open mark').not.toContain('**')
-  })
-
-  it("the pane's heading, its name and its tooltip hold no open mark", async () => {
-    chatSessions.mockResolvedValue([untitled])
-    render(<HomeHarness query={{ open: 'thread:chat-raw' }} />)
-    const heading = await screen.findByRole('heading', { level: 2, name: /^Explain why the build fails/ })
-    expect(heading.getAttribute('title')).not.toContain('**')
-    expect(heading.querySelector('strong')?.textContent).toMatch(/^why the build fails/)
-    for (const n of namedFor()) expect(n, 'a name keeps an open mark').not.toContain('**')
-  })
-})
-
-describe("no file on Home draws what an agent wrote raw", () => {
+describe("no file on Needs you or Home draws what an agent wrote raw", () => {
   const FIELDS = ['title', 'name', 'line', 'reason', 'prompt', 'question', 'subtitle', 'last_message', 'content']
   const FILES = [
-    'pages/dashboard/Home.tsx', 'pages/dashboard/NeedCards.tsx', 'pages/dashboard/RunningLane.tsx', 'pages/dashboard/widgets/ScheduleWidget.tsx',
-    'pages/dashboard/PinnedTiles.tsx', 'pages/capabilities/ListBesideDetail.tsx',
+    'pages/dashboard/NeedsYouPage.tsx', 'pages/dashboard/NeedCards.tsx', 'pages/dashboard/RunningLane.tsx', 'pages/dashboard/widgets/ScheduleWidget.tsx',
+    'pages/dashboard/PinnedTiles.tsx', 'pages/capabilities/ListBesideDetail.tsx', 'pages/dashboard/agents/AgentDay.tsx',
   ]
-  /** Sinks in these files that draw no agent's words: an artifact's name, and the pane's plain title
-   *  where its caller gave no rendered heading. */
+  /** Sinks in these files that draw no agent's words: an artifact's name, the pane's plain title
+   *  where its caller gave no rendered heading, and an agent's own name on the band. */
   const NOT_WRITTEN: Record<string, string[]> = {
+    'pages/dashboard/agents/AgentDay.tsx': ['{row.name}'],
     'pages/dashboard/PinnedTiles.tsx': ['{artifact?.name || slug}'],
     'pages/capabilities/ListBesideDetail.tsx': ['{detail.heading ?? detail.title}'],
   }

@@ -21,7 +21,7 @@
 - main:
   - button "Collapse sidebar"
   - button "Open terminal"
-  - button "# waiting on you — open Attention"
+  - button "# waiting on your answer, open Needs you"
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"

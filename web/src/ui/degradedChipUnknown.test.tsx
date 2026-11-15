@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { tipOf } from '../test/tipOf'
 
 // ── An indicator that only appears when something is wrong must appear when it cannot tell ───────
 //
@@ -57,7 +58,7 @@ describe('the degraded chip cannot stay silent about a check it could not read',
     mockApi({ degraded: boom })
     await mount()
     const chip = await waitFor(() => screen.getByRole('button', { name: /Status unknown/i }))
-    expect(chip.getAttribute('title'), 'and says what that means').toMatch(/could not be read/i)
+    expect(tipOf(chip), 'and says what that means').toMatch(/could not be read/i)
     // Deliberately NOT a claim of failure — the surfaces may be fine.
     expect(chip.textContent, 'no invented fault').not.toMatch(/degraded/i)
   })

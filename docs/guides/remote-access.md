@@ -481,7 +481,7 @@ as they happen, its approval or question with the same answers, and **Open in Pe
 own page. **Everything** takes you back. With reduced motion on, the switch is instant.
 
 Below the approvals are what is running, open tasks, the Inbox and recent notifications. The Running
-list is the one Mission Control and the menu bar read: every chat turn, helper, loop, workflow run,
+list is the one Home's Your agents today and the menu bar read: every chat turn, helper, loop, workflow run,
 automation and webhook at work, each with its name, its exact phase, what it is doing and when it
 last changed, and a link to it when a page opens it (a webhook's turn has none). A loop keeps its
 Pause, Nudge and Stop, and the loops not running now that you can still steer, a paused one among

@@ -21,8 +21,9 @@ async def api_waiting(request: web.Request) -> web.Response:
 
     ``{"waiting": [item, ...], "unreadable": [kind, ...]}``: by consequence, then age, oldest
     first (``waiting``). A source that could not be read is named in ``unreadable``, never shown
-    as nothing waiting. An app whose manifest declares the route reads all of it, without what
-    answers an item; an agent reads its own chat's items.
+    as nothing waiting. An app whose manifest declares the route reads all of it but the asks only
+    your Inbox raised (``waiting.INBOX_KINDS``), without what answers an item; an agent reads its
+    own chat's items.
     """
     state = request.app["state"]
     snap = waiting.taken(state)

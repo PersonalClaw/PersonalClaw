@@ -12,7 +12,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 import personalclaw.validation as _validation_mod
-from personalclaw import shutdown_event
+from personalclaw import approval_answer, shutdown_event
 from personalclaw.auth import lifetimes
 from personalclaw.config.edit_spec import (
     LOOSEN_TITLE,
@@ -1325,6 +1325,15 @@ async def api_project_trust(request: web.Request) -> web.Response:
     if not directory:
         return web.json_response({"error": "dir is required"}, status=400)
     trusted = require_bool(body, "trusted")
+    # A folder's trust request is listed as an ask waiting on you (``waiting``), and this is its
+    # answer: only you give it, never an agent's tool nor an app (`approval_answer`), as at every
+    # door to an ask. The sign-in in front of this route already keeps every other caller out;
+    # this is the door's own rule behind it.
+    refused = approval_answer.forbidden(
+        request, what=f"folder:{_pt.resolve_dir(directory)}", asked_by=""
+    )
+    if refused is not None:
+        return refused
     record = _pt.record_project_trust(directory, trusted=trusted)
     return web.json_response({"dir": _pt.resolve_dir(directory), **record})
 

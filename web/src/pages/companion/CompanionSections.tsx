@@ -173,7 +173,7 @@ function Row({ title, titleId, sub, meta, actions }: {
 // sight. A loop that has finished, failed or never launched is not a decision, so it stays off.
 //
 // Under them, the just-finished tail: the gateway's last endings, and what a restart cut off
-// (`useCutOff`), as Mission Control says them.
+// (`useCutOff`), as Home's band says them.
 const STEERABLE: readonly UnifiedLoopStatus[] = ['running', 'paused', 'needs_input', 'stagnant', 'blocked']
 
 /** A steering action stalens the loops and the running list both: a stopped loop leaves the list
@@ -396,8 +396,8 @@ function Item({ title, sub, meta, actions, head, children }: {
   )
 }
 
-/** A tap through to where the work runs. Work no page opens (a webhook's turn) has none, as in
- *  Mission Control: a link to somewhere its name does not say is worse than no link. */
+/** A tap through to where the work runs. Work no page opens (a webhook's turn) has none, as on
+ *  Home's band: a link to somewhere its name does not say is worse than no link. */
 function Opens({ route, subject }: { route: string; subject: string }) {
   if (!route) return null
   return (
@@ -493,7 +493,7 @@ export function InboxSection() {
         .map((raw) => {
           const i = view(raw.id, raw)
           const working = busy.has(i.id)
-          // Who raised it (`inboxRaisedBy`, as Home and Mission Control name it): a platform row's
+          // Who raised it (`inboxRaisedBy`, as Needs you names it): a platform row's
           // sender is the notification source it rode (`app:<name>`, `loop`), not who asked.
           const who = inboxRaisedBy(i) || i.channel || 'Unknown sender'
           return (

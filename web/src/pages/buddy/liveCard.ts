@@ -85,7 +85,8 @@ export function liveCardPropsOf(snap: HostSnapshot, host: BuddyHost): CardProps 
     inSight: inSight(machine.live, focus?.id ?? machine.focus).map((w) => cardWork(w, snap.rows)),
     list: machine.connection === 'up' ? 'live' : 'reconnecting',
     countdown: view.countdown ? 10 : undefined,
-    openHref: '#/mission-control',
+    // Open in PersonalClaw: Needs you while something waits on you, else Home, where the work shows.
+    openHref: machine.queue.length > 0 ? '#/mission-control' : '#/dashboard',
     onAnswer,
     onHold: (held) => host.hold(held),
   }

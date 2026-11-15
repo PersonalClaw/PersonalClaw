@@ -41,17 +41,16 @@ const path = require("node:path");
 
 /**
  * SPA deep-link targets. The dashboard is a HASH-routed SPA (`web/src/app/App.tsx`),
- * and these are its real routes — Mission Control lists everything waiting on you, each
- * answerable there or on its own page, and every piece of live work. A running row opens the
- * route the gateway names for it (`running_now`), which `hashAssignmentScript` checks
- * against the hash grammar before the window takes it.
+ * and these are its real routes — Needs you (`#/mission-control`) lists everything waiting on
+ * you, each answerable there or on its own page, and Home's band every piece of live work. A
+ * running row opens the route the gateway names for it (`running_now`), which
+ * `hashAssignmentScript` checks against the hash grammar before the window takes it.
  */
 const DEEP_LINKS = {
   dashboard: "#/dashboard",
   waiting: "#/mission-control",
   inbox: "#/inbox",
   settings: "#/settings",
-  missionControl: "#/mission-control",
 };
 
 /** A tray menu row's and the tooltip's longest (`docs/design/buddy/copy.md`). */
@@ -150,6 +149,10 @@ const WAITING_KIND_LABEL = Object.freeze({
   browse_grant: "Browser",
   plan_review: "Plan",
   bridge_confirmation: "Control bridge",
+  folder_trust: "Folder trust",
+  held_action: "Held action",
+  declined_wait: "Declined step",
+  escalated_run: "Escalated run",
 });
 
 const textOf = (value) => (typeof value === "string" ? value.trim() : "");
@@ -182,6 +185,12 @@ function waitingText(kind, brief) {
     }
     case "bridge_confirmation":
       return textOf(b.body) || textOf(b.action) || "A control-bridge action waits for you";
+    case "folder_trust":
+      return textOf(b.dir) ? `Trust ${textOf(b.dir)}?` : "A folder waits for your trust";
+    case "held_action":
+    case "declined_wait":
+    case "escalated_run":
+      return textOf(b.title) || "It waits on you in the Inbox";
     default:
       return "";
   }
@@ -379,7 +388,7 @@ function composeTrayTitle({ capturing = false, waiting = 0, buddyOn = false } = 
 /**
  * What waits on you, as menu rows: each item in the list's order up to the cap, each opening its
  * route, then the rest as one row. With no item to list, the count alone. The rows past the cap and
- * the count open Mission Control, which lists every item with its answer.
+ * the count open Needs you, which lists every item with its answer.
  */
 function waitingMenuRows(waiting, rows, deepLink) {
   // Click-through even at zero: the row is the way to the surface, and a
@@ -462,9 +471,9 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
     ...waitingMenuRows(waiting, waitingRows, deepLink),
   ];
 
-  // What is running now: every piece of live work, each opening where it runs (Mission Control
-  // for work no page opens), the first rows inline and the rest in Mission Control.
-  const opens = (route) => () => deepLink(route || DEEP_LINKS.missionControl);
+  // What is running now: every piece of live work, each opening where it runs (Home, whose band
+  // shows all of it, for work no page opens), the first rows inline and the rest on Home.
+  const opens = (route) => () => deepLink(route || DEEP_LINKS.dashboard);
   if (running.length === 0) {
     const word = stale ? "Last known: nothing running" : listed ? "Nothing running" : "What is running could not be read";
     template.push({ label: word, enabled: false });
@@ -473,7 +482,7 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
     const count = `${running.length} running${blocked > 0 ? `, ${blocked} blocked` : ""}`;
     const rows = running.slice(0, MAX_LISTED_ROWS).map((r) => ({ label: runningLabel(r), click: opens(r.route) }));
     if (running.length > MAX_LISTED_ROWS) {
-      rows.push({ label: `${running.length - MAX_LISTED_ROWS} more in Mission Control…`, click: opens(DEEP_LINKS.missionControl) });
+      rows.push({ label: `${running.length - MAX_LISTED_ROWS} more on Home…`, click: opens(DEEP_LINKS.dashboard) });
     }
     template.push({ label: stale ? `Last known: ${count}` : count, submenu: rows });
   }

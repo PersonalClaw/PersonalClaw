@@ -54,7 +54,21 @@ function firstQuestion(brief: Record<string, unknown>): string {
   return firstLine(q.question) || firstLine(q.header)
 }
 
-/** A waiting item's title, read off its own brief, in its source's words. */
+/** A folder as a person reads it: under the home folder, from `~`. */
+export function homeShort(dir: string): string {
+  return dir.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~')
+}
+
+/** An Inbox row's two parts as its raiser wrote its body: the work's name, then what happened
+ *  ("Release — investigate escalated"). A body with no name in it is all what happened. */
+function nameAndWhat(body: unknown): { name: string; what: string } {
+  const line = firstLine(body)
+  const cut = line.indexOf(' \u2014 ')
+  return cut === -1 ? { name: '', what: line } : { name: line.slice(0, cut).trim(), what: line.slice(cut + 3).trim() }
+}
+
+/** A waiting item's title, read off its own brief, in its source's words: a stalled or blocked loop
+ *  and the asks only the Inbox raised from their own fields, never a kind-first title. */
 export function waitingTitle(item: WaitingItem): string {
   const b = record(item.brief)
   switch (item.kind) {
@@ -63,7 +77,19 @@ export function waitingTitle(item: WaitingItem): string {
     case 'loop_question':
       if ('merge' in b) return 'Merge what the loop made?'
       if ('conflict' in b) return 'The loop’s work conflicts: redo it or drop it?'
+      if (b.status === 'stagnant') return `${firstLine(b.name) || 'The loop'} has stalled`
+      if (b.status === 'blocked') return `${firstLine(b.name) || 'The loop'} is blocked`
       return firstLine(b.question) || 'The loop asks you something'
+    case 'folder_trust': return text(b.dir) ? `Trust ${homeShort(text(b.dir))}?` : 'Trust this folder?'
+    case 'held_action': return firstLine(b.title) || 'An action waits for your OK'
+    case 'declined_wait': {
+      const { name } = nameAndWhat(b.body)
+      return `${name || 'A run'} waits after you declined one of its steps`
+    }
+    case 'escalated_run': {
+      const { name } = nameAndWhat(b.body)
+      return `${name || 'A run'} stopped before it finished`
+    }
     case 'gate': return firstLine(record(b.ask).prompt) || 'The run waits on you'
     case 'park': return firstLine(b.question) || firstLine(record(b.card).title) || 'The trigger waits on you'
     case 'browse_grant': return firstLine(b.task) || 'A browser task asks to go on'
@@ -89,6 +115,10 @@ export function waitingRaisedBy(item: WaitingItem): string {
     case 'browse_grant': return 'Browser'
     case 'plan_review': return item.work.startsWith('chat:') ? 'Chat' : named('Loop', b.name)
     case 'bridge_confirmation': return firstLine(b.asked_by) || 'Control bridge'
+    case 'folder_trust': return 'Folder trust'
+    case 'held_action': return named('Held for your OK', b.action_type)
+    case 'declined_wait':
+    case 'escalated_run': return b.loop_kind ? 'Loop' : 'Workflow run'
     default: return ''
   }
 }
@@ -108,6 +138,10 @@ export function waitingSubtitle(item: WaitingItem): string {
         : 'It acts as you in your own browser, and names no site. Not answering refuses it.'
     }
     case 'plan_review': return firstLine(record(b.step).objective)
+    case 'folder_trust':
+    case 'held_action': return firstLine(b.body)
+    case 'declined_wait':
+    case 'escalated_run': return nameAndWhat(b.body).what
     default: return ''
   }
 }

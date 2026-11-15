@@ -186,6 +186,15 @@ STOPPABLE_STATUSES: frozenset[LoopStatus] = ACTIVE_STATUSES | frozenset(
 #: from :data:`PRELAUNCH_STATUSES`, enforced through the SAME refusal sentence by
 #: ``dashboard/handlers/loop_routes:_refuse_replan`` (#412). One refusal shape, two admissible
 #: sets, both derived from :data:`LOOP_PHASES`.
+#: The statuses a loop waits on your answer in: its question (``needs_input``), a stall the
+#: supervisor cut it off at (``stagnant``) and a block it stopped at (``blocked``), each the work
+#: phase "input" (``work_phase``). The waiting list lists each (``waiting``), a steer starts it
+#: again from each (``manager.nudge``), and only you answer one: the nudge and the resume doors
+#: hold the answer rule for each (``loop_routes``). One set, so the four never drift apart.
+WAITS_ON_YOU: frozenset[str] = frozenset(
+    {LoopStatus.NEEDS_INPUT.value, LoopStatus.STAGNANT.value, LoopStatus.BLOCKED.value}
+)
+
 ACTION_SOURCE_STATES: dict[str, frozenset[LoopStatus]] = {
     "start": frozenset({LoopStatus.READY, LoopStatus.REVIEW}),
     "pause": frozenset({LoopStatus.RUNNING}),

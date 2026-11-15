@@ -15,25 +15,25 @@ one gateway and one dashboard you own.
 
 ## 🏠 Home
 
-Your day at a glance. Home opens on Overview: what your agents are doing, what you've pinned,
-ideas to start from and what ran lately. Attention, beside it, is what needs you, what is
-running and what finished lately. The sidebar keeps its shortcuts fixed at the top and the
-bottom, with your chats in one list between them. A small menu at the end of its search sorts
-and filters them, and Open Chat history sits beside New chat. The PersonalClaw icon and name
-open Home. All of it is live over one WebSocket.
+Your day at a glance. Home is its Overview: what your agents are doing, with every live run,
+what you keep on Home, ideas to start from and what ran lately. The sidebar keeps its shortcuts
+fixed at the top and the bottom, with your chats in one list between them. A small menu at the
+end of its search sorts and filters them, and Open Chat history sits beside New chat. The
+PersonalClaw icon and name open Home. All of it is live over one WebSocket.
 
 | Light | Dark |
 |---|---|
 | ![Home — light](docs/screenshots/light/01-dashboard.png) | ![Home — dark](docs/screenshots/dark/01-dashboard.png) |
 
-Attention puts what needs you first, then what is running now, then what finished lately. Each
-item there names the project it belongs to, and a running card says what kind of work it is: a
-chat, a goal loop or a code session. This set's demo home has nothing waiting and nothing
-running, so both groups read empty.
+Needs you is the one list of what waits on your answer: every approval, question, run stopped at
+a step and stalled loop, in the order that could change the most first, then the proposals and
+notes to review. Each is answered on its own card, and each names the project it belongs to. The
+badge at the top counts them on every page and opens it. This set's demo home has nothing
+waiting, so it reads all clear.
 
 | Light | Dark |
 |---|---|
-| ![Home's Attention — light](docs/screenshots/light/16-attention.png) | ![Home's Attention — dark](docs/screenshots/dark/16-attention.png) |
+| ![Needs you — light](docs/screenshots/light/16-needs-you.png) | ![Needs you — dark](docs/screenshots/dark/16-needs-you.png) |
 
 ---
 

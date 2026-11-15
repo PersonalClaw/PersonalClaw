@@ -39,7 +39,7 @@ const NO_E2E_CASE: Partial<Record<CommandId, string>> = Object.fromEntries(
 
 /** Rows with no control of their own to carry a tooltip, and where their keys are shown instead. */
 const NO_TOOLTIP: Partial<Record<CommandId, string>> = {
-  'next-needs-you': 'a jump with no button of its own: Home lists what needs you, and the palette shows the key',
+  'next-needs-you': 'a jump with no button of its own: Needs you lists what needs you, and the palette shows the key',
   'mark-all-read': 'a sweep with no button of its own: the sidebar shows each unread mark, and the palette shows the key',
   'workspace-tree': 'the working folder opens by its key or the palette, and its panel has only a Close control',
   'restore-last-prompt': "the composer's own ↑, in an empty composer: there is no control to tip",

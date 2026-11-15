@@ -6,7 +6,7 @@ import { CompanionPage } from './CompanionPage'
 import { invalidateKeys, resetDataStore } from '../../lib/data'
 import type { PendingApproval, RunningList, RunningRow, WaitingList } from '../../lib/api'
 import type { WsMessage } from '../../lib/useChatSocket'
-import { HomeHarness } from '../../test/homeHarness'
+import { NeedsYouHarness } from '../../test/needsYouHarness'
 import { waitingApproval, waitingItem, waitingList } from '../../test/waiting'
 
 // ── View two: one piece of work owning the screen (#3898) ────────────────────────────────────
@@ -25,7 +25,6 @@ vi.mock('../../lib/useChatSocket', async (orig) => ({
 vi.mock('../../app/identity', () => ({ useIdentity: () => ({ name: '' }), firstNameOf: (n: string) => n }))
 vi.mock('../dashboard/PinnedTiles', () => ({ PinnedTiles: () => null }))
 vi.mock('../../ui/surfaces/SurfaceOverlay', () => ({ SurfaceOverlay: () => null }))
-vi.mock('../dashboard/widgets/Suggestions', () => ({ Suggestions: () => null }))
 
 let reduced = false
 vi.mock('../../design/motion', async (orig) => ({
@@ -151,7 +150,7 @@ describe('an approval answered on the phone', () => {
   })
 
   it('leaves Home on the next change frame too', async () => {
-    render(<><Phone initial={{ open: 'approval:ap-1' }} /><HomeHarness /></>)
+    render(<><Phone initial={{ open: 'approval:ap-1' }} /><NeedsYouHarness /></>)
     const two = await vi.waitFor(() => { const v = viewTwo(); if (!v) throw new Error('not open'); return v })
     const home = () => screen.getByRole('region', { name: 'Needs you' })
     await vi.waitFor(() => expect(within(home()).getByRole('group', { name: 'Permission needed to run Bash' })).toBeTruthy())

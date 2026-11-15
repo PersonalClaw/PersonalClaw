@@ -450,6 +450,21 @@ describe("in the buddy's own window", () => {
     await userEvent.click(face.querySelector('button')!)
     const open = await screen.findByRole('link', { name: /Open in PersonalClaw/ })
     await userEvent.click(open)
+    // Nothing waits on you, so it opens Home, where the work shows.
+    expect(bridge.openInApp).toHaveBeenCalledWith('#/dashboard')
+    expect(resolveApproval).not.toHaveBeenCalled()
+  })
+
+  it('while something waits on you, its link to the app opens Needs you', async () => {
+    const { container } = render(<BuddyPage {...route} />)
+    const face = await waitFor(() => {
+      const f = container.querySelector('[data-buddy-orb-slot][data-buddy-shape][data-buddy-drag]')
+      expect(f).not.toBeNull()
+      return f!
+    }, { timeout: 2000 })
+    await userEvent.click(face.querySelector('button')!)
+    const open = await screen.findByRole('link', { name: /Open in PersonalClaw/ })
+    await userEvent.click(open)
     expect(bridge.openInApp).toHaveBeenCalledWith('#/mission-control')
     expect(resolveApproval).not.toHaveBeenCalled()
   })

@@ -5,33 +5,25 @@
         "button \"Dismiss — don't suggest this again\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
-        "button \"See all # in Discover\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button \"See all # in Discover\""
       ],
       "390": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
-        "button \"See all # in Discover\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button \"See all # in Discover\""
       ],
       "412": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
-        "button \"See all # in Discover\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button \"See all # in Discover\""
       ],
       "768": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
-        "button \"See all # in Discover\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button \"See all # in Discover\""
       ]
     },
     "known": {
@@ -47,33 +39,25 @@
         "button \"Dismiss — don't suggest this again\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
-        "button \"See all # in Discover\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button \"See all # in Discover\""
       ],
       "390": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
-        "button \"See all # in Discover\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button \"See all # in Discover\""
       ],
       "412": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
-        "button \"See all # in Discover\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button \"See all # in Discover\""
       ],
       "768": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New trigger\"",
         "button \"Open Chat\"",
-        "button \"See all # in Discover\"",
-        "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\""
+        "button \"See all # in Discover\""
       ]
     },
     "known": {

@@ -5,8 +5,13 @@ import { messageEnter } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { clipWords } from '../lib/clipWords'
 import { Button } from './Button'
+import { InlineConfirm } from './InlineConfirm'
+import { StatusPill } from './StatusPill'
 import { TextLink } from './TextLink'
+import { TOUCH_TARGET } from './Toggle'
+import { Tooltip, type TooltipTriggerProps } from './Tooltip'
 import { bindingLabel, matchBinding } from '../app/keymap'
+import { useHeldHeight } from '../lib/useHeldHeight'
 
 /** ONE renderer for "the agent is blocked waiting on your permission".
  *
@@ -27,8 +32,26 @@ import { bindingLabel, matchBinding } from '../app/keymap'
  *  Announcement contract (identical on both): `role="group"` named for the tool so a screen
  *  reader user knows which prompt they are in when several pend, plus an inner `role="alert"`
  *  so arrival interrupts — the agent is halted until this is answered.
+ *
+ *  Two forms, each a named opt-in:
+ *   • `chat` (the default) — everything above, unchanged.
+ *   • `queue` — one card among others in a list that holds still while you work (Needs you): the
+ *     same words, drawn inside the card's own tile. No border or warn tint of its own, no rise on
+ *     arrival and no `role="alert"` (the list is read when you open it, not announced at you).
+ *     "Permission needed" is the card's kind tag, its risk chip after it, and its "From …" line the
+ *     tag row's name slot, in plain text; `tool(args)` is the headline, still cut at a word, and
+ *     Show all opens the whole input in the flow, folding after {@link QUEUE_FOLD_LINES} lines. Both
+ *     choices read at `label-s` in `on-surface` ink on one `surface-high` ground, Deny in danger ink,
+ *     each a touch target that wraps, its tip in the themed `Tooltip`, never a native title. The
+ *     second confirmation is `InlineConfirm`, the inline twin of a deliberate dialog.
  */
 export type ApprovalDensity = 'compact' | 'roomy'
+
+/** Where the prompt is drawn: in a conversation (`chat`), or as one card of a queue (`queue`). */
+export type ApprovalForm = 'chat' | 'queue'
+
+/** How many lines of a call's whole input the queue form shows before it folds the rest. */
+export const QUEUE_FOLD_LINES = 40
 
 export interface ApprovalChoice {
   key: string
@@ -77,8 +100,9 @@ export function confirmSentences(confirms: readonly string[]): string[] {
   return [...new Set(confirms.map((k) => CONFIRM_WORDS[k] ?? CONFIRM_WORDS.undeclared))]
 }
 
-/** Whether a key pressed on *el* is typed into a text field: an input, a text area or an editor. */
-function typesText(el: EventTarget | null): boolean {
+/** Whether a key pressed on *el* is typed into a text field: an input, a text area or an editor. A
+ *  list's own keys (Needs you's) are never taken from one either. */
+export function typesText(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
   if (el.isContentEditable || el.closest('[contenteditable="true"],[role="textbox"]')) return true
   const tag = el.tagName
@@ -103,7 +127,7 @@ function unseen(el: HTMLElement): boolean {
 
 export function ApprovalPrompt({
   tool, args, purpose, source, sourceHref, badge, meta, scope, choices, density = 'compact', className,
-  confirms = [],
+  confirms = [], form = 'chat', tagEnd, answersReplacedBy,
 }: {
   tool: string
   /** The tool's arguments, raw. `compact` cuts them at a word and shows all of them on demand;
@@ -138,8 +162,19 @@ export function ApprovalPrompt({
    *  approving choice first asks once more, saying what the call would do, and sends nothing
    *  before that confirm. */
   confirms?: readonly string[]
+  /** `queue`: one card of a list (see above). The chat's card passes nothing. */
+  form?: ApprovalForm
+  /** The queue form's tag row end, right-aligned: the card's project chip and its time left. */
+  tagEnd?: ReactNode
+  /** The queue form only: what stands where the answers were, at the height they and their second
+   *  confirmation took, so nothing under the card moves: the outcome once it is answered, or, while
+   *  its panel is open, the line that says to answer it there. */
+  answersReplacedBy?: ReactNode
 }) {
   const roomy = density === 'roomy'
+  const queue = form === 'queue'
+  const answersRef = useRef<HTMLDivElement>(null)
+  const held = useHeldHeight(answersRef, queue && !answersReplacedBy)
   const rootRef = useRef<HTMLDivElement>(null)
   const yesRef = useRef<HTMLButtonElement>(null)
   // One request per decision, whichever choice it is: set when an answer is sent, and kept once it
@@ -199,6 +234,45 @@ export function ApprovalPrompt({
       return
     }
     approve(approving)
+  }
+
+  if (queue) {
+    return (
+      <div ref={rootRef} role="group" aria-label={`Permission needed to run ${tool}`} tabIndex={-1} onKeyDown={onKeyDown}
+        data-approval-form="queue" className={`flex min-w-0 flex-col gap-xs${className ? ` ${className}` : ''}`}>
+        <div className="flex min-w-0 flex-wrap items-center gap-xs">
+          <StatusPill tone="neutral" groundedOn="var(--color-surface-low)" className="inline-flex items-center gap-1">
+            <ShieldQuestion size={12} aria-hidden />Permission needed
+          </StatusPill>
+          {badge}
+          {/* Who asked, in the registry's words, as plain text: the panel's "Who asked" links it. */}
+          {source && <span data-type="caption" className="min-w-0 truncate text-on-surface-low">From {source}</span>}
+          {tagEnd && <span className="ml-auto flex shrink-0 items-center gap-xs">{tagEnd}</span>}
+        </div>
+        <CompactArgs tool={tool} args={args} queue />
+        {purpose && <p data-type="body-s" className="break-words text-on-surface">{purpose}</p>}
+        {meta}
+        {scope}
+        {answersReplacedBy ? (
+          <div data-held-answers="" style={held ? { minHeight: held } : undefined}>{answersReplacedBy}</div>
+        ) : (
+          <div ref={answersRef} className="flex min-w-0 flex-col gap-xs">
+            <div className="flex flex-wrap items-center gap-s">
+              {choices.map((c) => (
+                <ApprovalChoiceButton key={c.key} roomy={false} queue
+                  choice={{ ...c, onClick: () => (c.approves ? approve(c) : send(c)) }} />
+              ))}
+            </div>
+            {armed && approving && (
+              // Under the pressed control, and nothing is sent before it: every press of Allow only
+              // asks again, and Yes answers a press begun after a quiet moment (`InlineConfirm`).
+              <InlineConfirm sentence={`${confirmSentences(confirms).join(' ')} Run it?`} verb="run it"
+                onYes={() => send(approving)} onBack={() => setArmed(false)} />
+            )}
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -279,15 +353,18 @@ const COMPACT_ARGS = 60
  *  rest: she allowed a command she could not read. The line is cut at a word (`clipWords`, the
  *  server's `textfmt.clip_words` rule) and wraps rather than truncating, and when it is cut the
  *  whole input opens in the same scrollable block the roomy card shows. */
-function CompactArgs({ tool, args }: { tool: string; args?: string }) {
+function CompactArgs({ tool, args, queue = false }: { tool: string; args?: string; queue?: boolean }) {
   const [open, setOpen] = useState(false)
   const whole = (args ?? '').split(/\s+/).filter(Boolean).join(' ')
   const line = clipWords(whole, COMPACT_ARGS)
   const cut = line !== whole
   return (
     <>
-      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-s">
-        <div data-type="caption" className="min-w-0 break-all font-mono text-on-surface-var">{tool}{line ? `(${line})` : ''}</div>
+      <div className={queue ? 'flex min-w-0 flex-wrap items-baseline gap-x-s' : 'mt-0.5 flex flex-wrap items-baseline gap-x-s'}>
+        {queue
+          // The card's headline: what the call is, in the card's ink, still cut at a word.
+          ? <p data-type="title-m" className="min-w-0 break-all font-mono text-on-surface">{tool}{line ? `(${line})` : ''}</p>
+          : <div data-type="caption" className="min-w-0 break-all font-mono text-on-surface-var">{tool}{line ? `(${line})` : ''}</div>}
         {cut && (
           <Button variant="ghost" size="xs" ariaExpanded={open}
             ariaLabel={open ? `Hide what ${tool} would run` : `Show all of what ${tool} would run`}
@@ -296,12 +373,43 @@ function CompactArgs({ tool, args }: { tool: string; args?: string }) {
           </Button>
         )}
       </div>
-      {cut && open && (
-        <pre tabIndex={0} role="group" aria-label="Tool arguments" data-type="caption"
-          className="mt-xs max-h-[14rem] overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-high p-s font-mono text-on-surface-var">{args}</pre>
+      {cut && open && (queue
+        ? <QueueArgs args={args ?? ''} />
+        : (
+          <pre tabIndex={0} role="group" aria-label="Tool arguments" data-type="caption"
+            className="mt-xs max-h-[14rem] overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-high p-s font-mono text-on-surface-var">{args}</pre>
+        ))}
+    </>
+  )
+}
+
+/** The queue form's whole input: in the card's flow rather than a scrolled box (a list that holds
+ *  still has no inner scroller to find), its first {@link QUEUE_FOLD_LINES} lines, then the rest on
+ *  demand. */
+function QueueArgs({ args }: { args: string }) {
+  const [all, setAll] = useState(false)
+  const lines = args.split('\n')
+  const folds = lines.length > QUEUE_FOLD_LINES && !all
+  const rest = lines.length - QUEUE_FOLD_LINES
+  return (
+    <>
+      <pre role="group" aria-label="Tool arguments" data-type="caption"
+        className="whitespace-pre-wrap break-all rounded-md bg-surface-high p-s font-mono text-on-surface-var">
+        {folds ? lines.slice(0, QUEUE_FOLD_LINES).join('\n') : args}
+      </pre>
+      {folds && (
+        <Button variant="ghost" size="xs" onClick={() => setAll(true)}>
+          {`Show the other ${rest.toLocaleString()} ${rest === 1 ? 'line' : 'lines'}`}
+        </Button>
       )}
     </>
   )
+}
+
+/** Point *ref* at *el*, whichever kind of ref it is. */
+function assignRef<T>(ref: React.Ref<T> | undefined, el: T | null) {
+  if (typeof ref === 'function') ref(el)
+  else if (ref) (ref as React.MutableRefObject<T | null>).current = el
 }
 
 /** The prompt's action pill.
@@ -312,12 +420,33 @@ function CompactArgs({ tool, args }: { tool: string; args?: string }) {
  *  it is not this change's job. It lives in `ui/` — the sanctioned home for shared chrome —
  *  so it is one implementation rather than a per-page hand-roll.
  */
-function ApprovalChoiceButton({ choice, roomy, buttonRef }: {
+function ApprovalChoiceButton({ choice, roomy, buttonRef, queue = false }: {
   choice: ApprovalChoice; roomy: boolean; buttonRef?: React.Ref<HTMLButtonElement>
+  /** The queue form's choice: `label-s` in `on-surface` ink on `surface-high`, Deny in danger ink on
+   *  the same ground, a touch target whose words wrap, its tip in the themed `Tooltip`. */
+  queue?: boolean
 }) {
   const { icon: Icon, label, tone = 'neutral', name, onClick, busy, approves } = choice
   // The key is shown where the command is: on the approving choice's tooltip, and only there.
   const tip = `${name || label}${approves ? ` (${bindingLabel('approve-focused')})` : ''}`
+  if (queue) {
+    const ink = tone === 'danger' ? 'var(--color-danger)' : tone === 'primary' ? 'var(--color-on-primary)' : 'var(--color-on-surface)'
+    const ground = tone === 'primary' ? 'var(--color-primary)' : 'var(--color-surface-high)'
+    return (
+      // The name says the verb and its subject; the tip adds only the key, for the approving choice.
+      <Tooltip text={tip} describes={false} description={approves ? bindingLabel('approve-focused') : undefined}>
+        {(trigger: TooltipTriggerProps) => (
+          <button {...trigger} ref={(el) => { trigger.ref(el); assignRef(buttonRef, el) }}
+            type="button" onClick={() => { void onClick() }} disabled={busy} aria-busy={busy || undefined}
+            aria-label={name || undefined} data-type="label-s" data-choice-form="queue"
+            className={`inline-flex min-h-7 max-w-full items-center justify-center gap-1 whitespace-normal rounded-pill border border-transparent px-2.5 text-left transition-colors disabled:opacity-50 ${TOUCH_TARGET}`}
+            style={{ background: ground, color: ink }}>
+            <Icon size={12} aria-hidden className="shrink-0" /> {label}
+          </button>
+        )}
+      </Tooltip>
+    )
+  }
   const palette = tone === 'primary'
     ? { background: 'var(--color-primary)', color: 'var(--color-on-primary)' }
     : tone === 'danger'

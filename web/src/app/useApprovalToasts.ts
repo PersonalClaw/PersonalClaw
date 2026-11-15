@@ -22,15 +22,19 @@ import { blastRadiusOf } from '../pages/chat/approvalMeta'
  *  (`interrupt`): under mute, inside quiet hours or under a rule that keeps approvals quiet there
  *  is no toast and no cue, and the approval is listed and counted as ever.
  *
- *  `activeSession` is the chat key currently on screen ("" when not on a chat).
+ *  `activeSession` is the chat key currently on screen ("" when not on a chat). `listsEvery` is
+ *  true while Needs you shows: it lists every approval, so none nudges, as the chat in view's own
+ *  do not.
  */
 /** The gateway's answers that an approval may not interrupt you now (`Interrupt`). Anything else,
  *  an older gateway's row without one included, nudges as it always did. */
 const NOT_NOW: ReadonlySet<string> = new Set<Interrupt>(['quiet', 'hush', 'drop'])
 
-export function useApprovalToasts(activeSession: string) {
+export function useApprovalToasts(activeSession: string, listsEvery = false) {
   const activeRef = useRef(activeSession)
   activeRef.current = activeSession
+  const listedRef = useRef(listsEvery)
+  listedRef.current = listsEvery
   // Dedupe: the queue re-read on a reconnect lists approvals this tab may have nudged already;
   // toast each id once.
   const seen = useRef<Set<string>>(new Set())
@@ -41,6 +45,7 @@ export function useApprovalToasts(activeSession: string) {
     const id = String(d.id ?? '')
     if (!session || !id) return
     if (session === activeRef.current) return  // visible inline — no nudge
+    if (listedRef.current) return  // Needs you shows it: no nudge
     if (NOT_NOW.has(String(d.interrupt ?? ''))) return  // not now, or not at all: no nudge
     if (seen.current.has(id)) return
     seen.current.add(id)

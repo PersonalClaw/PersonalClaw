@@ -20,6 +20,10 @@ export const WAITING_KIND_LABEL: Record<WaitingKind, string> = {
   browse_grant: 'Browser',
   plan_review: 'Plan',
   bridge_confirmation: 'Control bridge',
+  folder_trust: 'Folder trust',
+  held_action: 'Held action',
+  declined_wait: 'Declined step',
+  escalated_run: 'Escalated run',
 }
 
 function text(value: unknown): string {
@@ -58,6 +62,12 @@ export function waitingText(item: Pick<WaitingItem, 'kind' | 'brief'>): string {
     }
     case 'bridge_confirmation':
       return text(b.body) || text(b.action) || 'A control-bridge action waits for you'
+    case 'folder_trust':
+      return text(b.dir) ? `Trust ${text(b.dir)}?` : 'A folder waits for your trust'
+    case 'held_action':
+    case 'declined_wait':
+    case 'escalated_run':
+      return text(b.title) || 'It waits on you in the Inbox'
   }
 }
 

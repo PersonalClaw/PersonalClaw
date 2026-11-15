@@ -2,13 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, act } from '@testing-library/react'
 import type { WsMessage } from '../../lib/useChatSocket'
 
-// ── Home reads a slice once per burst of its frames, and only on the frames that move it ────────
+// ── Needs you and Home read a slice once per burst of its frames, and only on the frames that move it
 //
-// Home does not poll what waits on you (the waiting list and the Inbox under it): every change
-// arrives as a frame, so frames are the whole signal, and they arrive in bursts: "Dismiss all"
-// moves every open row and the gateway says so once per row. One read per frame was 37 reads of
-// the Inbox for a 37-row sweep. And the Overview's run feed re-read on `refresh: history`, which is
-// the CHAT history; the trigger runs it shows are `cron_history`.
+// Needs you does not poll what waits on you (the waiting list and the Inbox under it), and nor does
+// the badge that shares its read: every change arrives as a frame, so frames are the whole signal,
+// and they arrive in bursts: "Dismiss all" moves every open row and the gateway says so once per
+// row. One read per frame was 37 reads of the Inbox for a 37-row sweep. And Home's Overview's run
+// feed re-read on `refresh: history`, which is the CHAT history; the trigger runs it shows are
+// `cron_history`. Each is mounted alone: Needs you has no run feed, and the Overview reads no Inbox.
 
 const frames: Array<(m: WsMessage) => void> = []
 const inboxOpen = vi.fn(() => Promise.resolve([]))
@@ -39,12 +40,18 @@ function mockApi() {
   }))
 }
 
-async function mountHome() {
-  const { DashboardLiveProvider } = await import('./DashboardLive')
+/** Needs you's read, as its page and the toolbar's badge hold it. */
+async function mountNeedsYou() {
   const { useNeedsYou } = await import('../../lib/useNeedsYou')
-  // Needs you's read, as Home and the toolbar's badge hold it.
   function NeedsYou() { useNeedsYou(); return null }
-  render(<DashboardLiveProvider><NeedsYou /></DashboardLiveProvider>)
+  render(<NeedsYou />)
+  await act(async () => { await Promise.resolve() })
+}
+
+/** The Overview's live feed, its run feed among it. */
+async function mountOverview() {
+  const { DashboardLiveProvider } = await import('./DashboardLive')
+  render(<DashboardLiveProvider><span /></DashboardLiveProvider>)
   await act(async () => { await Promise.resolve() })
 }
 
@@ -63,9 +70,9 @@ beforeEach(() => {
 })
 afterEach(() => { vi.useRealTimers() })
 
-describe('Home and its frames', () => {
+describe('Needs you and its frames', () => {
   it('reads the Inbox once for a burst of row moves', async () => {
-    await mountHome()
+    await mountNeedsYou()
     const onMount = inboxOpen.mock.calls.length
     for (let i = 0; i < 37; i++) say({ type: 'inbox_item_updated', data: { id: `row-${i}` } } as WsMessage)
     await act(async () => { vi.advanceTimersByTime(350) })
@@ -73,15 +80,24 @@ describe('Home and its frames', () => {
   })
 
   it('reads what waits on you again on the waiting list’s own frame, which carries nothing', async () => {
-    await mountHome()
+    await mountNeedsYou()
     const onMount = inboxOpen.mock.calls.length
     say({ type: 'waiting_changed' } as WsMessage)
     await act(async () => { vi.advanceTimersByTime(350) })
     expect(inboxOpen.mock.calls.length - onMount).toBe(1)
   })
 
+  it('has no run feed of its own', async () => {
+    await mountNeedsYou()
+    say({ type: 'refresh', data: { kinds: ['crons', 'cron_history'] } } as WsMessage)
+    act(() => { vi.advanceTimersByTime(200) })
+    expect(triggersHistory).not.toHaveBeenCalled()
+  })
+})
+
+describe('Home’s Overview and its frames', () => {
   it('reads the run feed on a trigger run, not on a chat-history change', async () => {
-    await mountHome()
+    await mountOverview()
     const onMount = triggersHistory.mock.calls.length
     say({ type: 'refresh', data: { kinds: ['history'] } } as WsMessage)
     act(() => { vi.advanceTimersByTime(200) })
@@ -95,7 +111,7 @@ describe('Home and its frames', () => {
     // Tasks are what agents keep their goals in, and have their own page; Home shows the agents.
     // Its Overview read the ready tasks on opening, on every poll and on each `refresh: tasks` for a
     // Tasks band it no longer has.
-    await mountHome()
+    await mountOverview()
     say({ type: 'refresh', data: { kinds: ['tasks'] } } as WsMessage)
     act(() => { vi.advanceTimersByTime(200) })
     expect(readyTasks).not.toHaveBeenCalled()

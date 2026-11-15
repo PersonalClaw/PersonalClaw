@@ -79,7 +79,11 @@ export function useNeedActions(refreshNeeds: () => void): {
         })
       return send(key, sent, 'Answered — the agent carries on.', 'send that answer')
     },
-  }), [send])
+    trusted: (key) => {
+      mark(key, { state: 'done', text: 'Trusted.' })
+      refreshNeeds()
+    },
+  }), [send, mark, refreshNeeds])
 
   return { outcomes, actions }
 }

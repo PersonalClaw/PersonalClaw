@@ -66,7 +66,7 @@ export const KEYMAP: readonly KeyBinding[] = [
     id: 'workspace-tree', label: "Show or hide the chat's working folder", scope: 'global', chords: ['mod+shift+e'],
     keywords: 'files file tree explorer workspace directory folder', disabledReason: 'Open a chat to see its working folder',
   },
-  { id: 'next-needs-you', label: 'Go to the next chat that needs you', keywords: 'approval waiting attention your turn', scope: 'global', chords: ['mod+alt+a'] },
+  { id: 'next-needs-you', label: 'Go to the next thing that needs you', keywords: 'needs you approval waiting attention your turn', scope: 'global', chords: ['mod+alt+a'] },
   // Every chat seen, on the gateway's record (`POST /api/chat/seen`), so every window and the phone
   // clear their unread marks. What waits on you stays marked: seeing a chat answers nothing.
   { id: 'mark-all-read', label: 'Mark every chat as read', keywords: 'unread seen clear marks dismiss', scope: 'global', chords: ['shift+escape'] },

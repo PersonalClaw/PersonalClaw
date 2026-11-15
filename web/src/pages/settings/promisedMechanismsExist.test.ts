@@ -190,29 +190,6 @@ describe('the routing card on the Settings home', () => {
 })
 
 describe('the remaining promise-hints, verified and pinned', () => {
-  it('suggestions really are built from activity', () => {
-    expect(web('pages/dashboard/widgets/Suggestions.tsx')).toContain('they build from your activity')
-    const sug = py('suggestions.py')
-    // 🪤 THIS USED TO PIN A DOCSTRING SENTENCE — `/Assemble context for the suggestions prompt from
-    // memory and recent activity/` — and a legitimate rewrite of that docstring reded this rail in CI
-    // while the mechanism was untouched and, in fact, improved. A prose pin for a mechanism claim
-    // fails on the one thing that should never break it: better prose.
-    //
-    // So it now asserts the SOURCES `_build_context` actually reads. That is strictly stronger than the
-    // sentence was: deleting any one of these reds the rail, where the docstring could have kept
-    // claiming all four after the code stopped doing any of them.
-    expect(sug, 'the function the hint is a promise about must exist').toMatch(/def _build_context\(/)
-    for (const [source, call] of [
-      ['user preferences', /read_preferences\(\)/],
-      ['active projects', /read_projects\(\)/],
-      ['recent history', /read_recent_history\(days=2\)/],
-      ['recent sessions', /list_sessions_with_metadata\(\)/],
-      ['active automations', /TriggerStore\(base_dir=config_dir\(\)\)\.load\(\)/],
-    ] as const) {
-      expect(sug, `"built from your activity" claims ${source}, so the builder must read it`).toMatch(call)
-    }
-  })
-
   it('the design canvas asks for exactly what the loop is told to write', () => {
     const ui = web('pages/loops/DesignCockpitPage.tsx')
     expect(ui).toContain('As the design loop generates React components')
@@ -253,7 +230,6 @@ describe('the census: every empty-state promise is accounted for', () => {
     const PROMISE = /fills? in|fills as|appears? (after|on)|land here|they build|build (on|from)|will appear|generates/i
     const EMPTY = /No [a-z .'’\-]{2,40}yet|Nothing [a-z .'’\-]{2,40}yet/i
     const VERIFIED = [
-      'pages/dashboard/widgets/Suggestions.tsx',      // built from activity — checked
       'pages/settings/DurabilityPanel.tsx',           // nightly job on by default — checked
       'pages/settings/FeedbackPanel.tsx',             // five thumbs surfaces — #1783 made synthesized_skill the fifth
       'pages/settings/MemoryPanel.tsx',               // digests cadence + memory-event log + #1783's learned preferences (the after-turn review captures them) — checked
@@ -291,7 +267,7 @@ describe('the census: every empty-state promise is accounted for', () => {
     // 🪤 A list of exemptions with nothing behind it would pass the test above forever. Each entry must
     // still contain the shape it is excused for.
     const PROMISE = /fills? in|fills as|appears? (after|on)|land here|they build|build (on|from)|will appear|generates/i
-    for (const rel of ['pages/dashboard/widgets/Suggestions.tsx', 'pages/settings/DurabilityPanel.tsx',
+    for (const rel of ['pages/settings/DurabilityPanel.tsx',
       'pages/settings/FeedbackPanel.tsx', 'pages/settings/MemoryPanel.tsx',
       'pages/loops/DesignCockpitPage.tsx', 'pages/settings/settingsWidgets.tsx',
       'pages/chat/history/ChatHistoryPage.tsx', 'pages/code/cockpit/files/WorkspaceTree.tsx']) {

@@ -25,9 +25,6 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Good <time of day>, Alex" [level=#]
-  - radiogroup "View":
-    - radio "Overview" [checked]
-    - radio "Attention"
   - button "New chat"
   - heading "Your agents today" [level=#]
   - button "Filter & sort": Show

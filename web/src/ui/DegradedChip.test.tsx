@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { DegradedChip } from './DegradedChip'
 import { api } from '../lib/api'
+import { tipOf } from '../test/tipOf'
 
 // ── The shell corner is fixed-width chrome that RESERVES page header space ───
 //
@@ -98,15 +99,15 @@ describe('DegradedChip width in the shell corner', () => {
     render(<DegradedChip />)
     const btn = await waitFor(() => screen.getByRole('button', { name: /degraded/i }))
     // `summary` had already got this right, which is what made the appended clause inconsistent.
-    expect(btn.getAttribute('title')).toMatch(/1 surface running without a model/)
-    expect(btn.getAttribute('title'), 'and not the hedge it replaced').not.toMatch(/surface\(s\)/)
+    expect(tipOf(btn)).toMatch(/1 surface running without a model/)
+    expect(tipOf(btn), 'and not the hedge it replaced').not.toMatch(/surface\(s\)/)
   })
 
   it('and plural above one', async () => {
     vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces: SURFACES } as never)
     render(<DegradedChip />)
     const btn = await waitFor(() => screen.getByRole('button', { name: /degraded/i }))
-    expect(btn.getAttribute('title')).toMatch(/2 surfaces running without a model/)
+    expect(tipOf(btn)).toMatch(/2 surfaces running without a model/)
   })
 
   it('keeps its text label on desktop, where the corner has room', async () => {
@@ -355,7 +356,7 @@ describe('setup-land: no provider has ever been configured', () => {
     setViewport(false)
     render(<DegradedChip />)
     await waitFor(() => expect(api.degraded).toHaveBeenCalled())
-    const chip = await screen.findByTitle(/running without a model/i)
+    const chip = await screen.findByRole('button', { description: /running without a model/i })
     expect(chip.textContent).toContain('degraded')
     expect(chip.getAttribute('style')).toContain('--color-warn')
   })
@@ -365,7 +366,7 @@ describe('setup-land: no provider has ever been configured', () => {
     vi.spyOn(api, 'degraded').mockRejectedValue(new Error('boom'))
     vi.spyOn(api, 'onboarding').mockResolvedValue({ has_model_provider: false } as never)
     render(<DegradedChip />)
-    const chip = await screen.findByTitle(/status unknown/i)
+    const chip = await screen.findByRole('button', { description: /status unknown/i })
     expect(chip.textContent).toContain('Status unknown')
     expect(chip.textContent).not.toContain('Set up a model')
   })
@@ -390,7 +391,7 @@ describe('a provider is connected, but no model is chosen yet', () => {
     const chip = await screen.findByRole('button', { name: /choose a model/i })
     expect(chip.textContent).toContain('Choose a model')
     expect(chip.textContent).not.toMatch(/degraded/)
-    expect(chip.getAttribute('title')).toBe(
+    expect(tipOf(chip)).toBe(
       'No model is chosen yet for 12 surfaces — click to see what unlocks once you choose one')
     expect(chip.getAttribute('style')).toContain('--color-info')
     expect(chip.getAttribute('style')).not.toContain('--color-warn')
@@ -401,7 +402,7 @@ describe('a provider is connected, but no model is chosen yet', () => {
     vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces: [NOT_CHOSEN[1]] } as never)
     render(<DegradedChip />)
     const chip = await screen.findByRole('button', { name: /choose a model/i })
-    expect(chip.getAttribute('title')).toBe(
+    expect(tipOf(chip)).toBe(
       'No model is chosen for Semantic search — click to see what unlocks once you choose one')
   })
 
@@ -425,7 +426,7 @@ describe('a provider is connected, but no model is chosen yet', () => {
     const surfaces = [{ ...NOT_CHOSEN[0], model_chosen: true, problem }]
     vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces } as never)
     render(<DegradedChip />)
-    ;(await screen.findByTitle(/running without a model/i)).click()
+    ;(await screen.findByRole('button', { description: /running without a model/i })).click()
     const panel = await waitFor(() => screen.getByRole('dialog', { name: 'Degraded surfaces' }))
     expect(panel.textContent).toContain(problem)
     expect(panel.textContent).not.toContain('No model for Chat')
@@ -438,9 +439,9 @@ describe('a provider is connected, but no model is chosen yet', () => {
     const surfaces = [{ ...NOT_CHOSEN[0], model_chosen: true }, NOT_CHOSEN[1]]
     vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces } as never)
     render(<DegradedChip />)
-    const chip = await screen.findByTitle(/running without a model/i)
+    const chip = await screen.findByRole('button', { description: /running without a model/i })
     expect(chip.textContent).toContain('Chat degraded')
-    expect(chip.getAttribute('title')).toMatch(/2 surfaces running without a model/)
+    expect(tipOf(chip)).toMatch(/2 surfaces running without a model/)
     expect(chip.getAttribute('style')).toContain('--color-warn')
   })
 })

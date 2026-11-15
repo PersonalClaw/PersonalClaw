@@ -77,12 +77,36 @@ NOTIFICATION_FRAMES: frozenset[str] = frozenset(
 _UNHEARD = object()
 
 
+def _without_owner_kinds(data: object) -> object:
+    """A refresh frame's *data* without :data:`OWNER_REFRESH_KINDS`, or :data:`_UNHEARD` when no
+    other kind is left."""
+    if not isinstance(data, dict):
+        return _UNHEARD
+    kinds = data.get("kinds")
+    if not isinstance(kinds, list):
+        return _UNHEARD
+    kept = [k for k in kinds if k not in OWNER_REFRESH_KINDS]
+    return {**data, "kinds": kept} if kept else _UNHEARD
+
+
+#: The refresh hint's frame (``DashboardState.push_refresh``), which an app's socket that declares
+#: it hears without :data:`OWNER_REFRESH_KINDS`.
+REFRESH_FRAMES: frozenset[str] = frozenset({"refresh"})
+
+#: Refresh kinds only your own pages hear: an app's socket that declares ``refresh`` gets the
+#: frame's other kinds, never these. ``yolo`` says your chats started or stopped running tool calls
+#: without asking (``DashboardState.enable_yolo``), which no app is told: the session list stopped
+#: carrying your YOLO state for the same reason.
+OWNER_REFRESH_KINDS: frozenset[str] = frozenset({"yolo"})
+
+
 def _has_app_view(event_type: str) -> bool:
     """Whether an app's socket gets *event_type* in a view of its own rather than as sent."""
     return (
         event_type in CONVERSATION_LIST_FRAMES
         or event_type in NOTIFICATION_FRAMES
         or event_type in RUNNING_LIST_FRAMES
+        or event_type in REFRESH_FRAMES
     )
 
 
@@ -180,6 +204,24 @@ class DashboardWebSocketState:
     _notification_log: list[dict[str, Any]]
     notification_reaches: Callable[[str, dict[str, Any]], bool]
     _write_notifications: Callable[[], None]
+    # DashboardState's: what a YOLO that turned off undoes for each chat (``_on_yolo_disabled``),
+    # and the refresh hint every page reads (``push_refresh``).
+    _on_yolo_disabled: Callable[[str], None]
+    push_refresh: Callable[..., None]
+
+    def _listen_to_trust_mode(self) -> None:
+        """The state's two listeners on the process-wide YOLO (``personalclaw.trust_mode``): what
+        a YOLO that turned off undoes for each chat, and the ring that tells your pages it moved."""
+        from personalclaw import trust_mode
+
+        trust_mode.register_on_disable(self._on_yolo_disabled)
+        trust_mode.register_on_change(self._ring_yolo)
+
+    def _ring_yolo(self) -> None:
+        """YOLO turned on or off, however it went (a toggle, its time running out, the config): the
+        corner's YOLO mark reads the status again (``YoloChip``), on your own pages alone
+        (:data:`OWNER_REFRESH_KINDS`)."""
+        self.push_refresh("yolo")
 
     def next_stream_seq(self) -> int:
         """Stamp the next streamed text chunk — the ``seq`` every ``chat_chunk`` carries.
@@ -421,6 +463,8 @@ class DashboardWebSocketState:
             return self._own_rows(app, event_type, data)
         if event_type in RUNNING_LIST_FRAMES:
             return self._own_changes(app, data)
+        if event_type in REFRESH_FRAMES:
+            return _without_owner_kinds(data)
         return self._own_notifications(app, event_type, data)
 
     def _own_changes(self, app: str, data: object) -> object:

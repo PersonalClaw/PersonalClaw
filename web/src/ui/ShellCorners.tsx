@@ -7,10 +7,12 @@ import { MenuRow, Popover } from './Popover'
 import { NotificationBell } from './NotificationBell'
 import { NeedsYouBadge } from './NeedsYouBadge'
 import { DegradedChip } from './DegradedChip'
+import { YoloChip } from './YoloChip'
 import { WidgetBoundary } from '../app/ErrorBoundary'
 import { accentChip } from '../design/accent'
 import { bindingLabel } from '../app/keymap'
 import { TOUCH_TARGET } from './Toggle'
+import { Tooltip } from './Tooltip'
 
 /** The app shell's two persistent CORNER regions — not a full header row, just
  *  the two corners that carry native shell controls, floating above page content:
@@ -43,17 +45,21 @@ export function ShellCornerLeft({ collapsed, onToggle, focusMode = false }: {
     // A pull-tab hugging the nav's top-right edge: flush to the left (no gap),
     // rounded only on the right so it reads as physically attached to the rail.
     <div ref={ref} className="absolute left-0 top-0 z-30 py-2">
-      <button type="button" onClick={onToggle} data-rail-toggle=""
-        aria-label={label} title={`${label} (${key})`}
-        className={`grid h-9 w-8 place-items-center rounded-r-lg border border-l-0 border-outline-variant/40 bg-surface-low/80 text-on-surface-low backdrop-blur-sm transition-colors hover:bg-surface-low hover:text-on-surface ${TOUCH_TARGET}`}>
-        {/* the collapse/expand glyph morphs (spring scale+fade key-swap) as the
-            rail toggles, so the pull-tab reflects the state change with life */}
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.span key={focusMode || collapsed ? 'open' : 'close'} initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} transition={spring.spatialFast} className="grid place-items-center">
-            {focusMode || collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-          </motion.span>
-        </AnimatePresence>
-      </button>
+      <Tooltip text={`${label} (${key})`} describes={false} description={key}>
+        {(tip) => (
+        <button {...tip} type="button" onClick={onToggle} data-rail-toggle=""
+          aria-label={label}
+          className={`grid h-9 w-8 place-items-center rounded-r-lg border border-l-0 border-outline-variant/40 bg-surface-low/80 text-on-surface-low backdrop-blur-sm transition-colors hover:bg-surface-low hover:text-on-surface ${TOUCH_TARGET}`}>
+          {/* the collapse/expand glyph morphs (spring scale+fade key-swap) as the
+              rail toggles, so the pull-tab reflects the state change with life */}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span key={focusMode || collapsed ? 'open' : 'close'} initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} transition={spring.spatialFast} className="grid place-items-center">
+              {focusMode || collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+            </motion.span>
+          </AnimatePresence>
+        </button>
+        )}
+      </Tooltip>
     </div>
   )
 }
@@ -87,11 +93,15 @@ function CornerMore({ terminalOpen, onToggleTerminal }: { terminalOpen: boolean;
   return (
     <Popover align="right" width={260} placement="bottom" portal
       trigger={(open, toggle) => (
-        <button type="button" onClick={toggle} aria-label="More" title="More: the terminal and the theme" aria-expanded={open}
-          className={`grid size-7 place-items-center rounded-pill transition-colors ${TOUCH_TARGET}`}
-          style={open || terminalOpen ? accentChip : { color: 'var(--color-on-surface-low)' }}>
-          <MoreVertical size={16} />
-        </button>
+        <Tooltip text="More: the terminal and the theme" describes={false} description="The terminal and the theme">
+          {(tip) => (
+            <button {...tip} type="button" onClick={toggle} aria-label="More" aria-expanded={open}
+              className={`grid size-7 place-items-center rounded-pill transition-colors ${TOUCH_TARGET}`}
+              style={open || terminalOpen ? accentChip : { color: 'var(--color-on-surface-low)' }}>
+              <MoreVertical size={16} />
+            </button>
+          )}
+        </Tooltip>
       )}>
       {(close) => (
         <div className="flex flex-col gap-0.5">
@@ -104,8 +114,9 @@ function CornerMore({ terminalOpen, onToggleTerminal }: { terminalOpen: boolean;
   )
 }
 
-/** Right corner — the screen's top-right. Terminal-drawer toggle + content-width + what waits on
- *  you + notifications + theme as native shell controls, above any page chrome. Below 768 px the
+/** Right corner — the screen's top-right. Terminal-drawer toggle + content-width + the YOLO mark
+ *  while YOLO is on + what waits on you + notifications + theme as native shell controls, above any
+ *  page chrome. Below 768 px the
  *  terminal and the theme fold into one More (`CornerMore`). Publishes width to
  *  `--shell-corner-r`. */
 export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: { terminalOpen: boolean; onToggleTerminal: () => void; navigate: (path: string) => void }) {
@@ -122,19 +133,25 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
         {folds ? (
           <WidgetBoundary what="the terminal and theme menu" compact><CornerMore terminalOpen={terminalOpen} onToggleTerminal={onToggleTerminal} /></WidgetBoundary>
         ) : (
-          <button type="button" onClick={onToggleTerminal}
-            aria-label={terminalOpen ? 'Hide terminal' : 'Open terminal'}
-            title={`${terminalOpen ? 'Hide terminal' : 'Open terminal'} (${bindingLabel('drawer')})`}
-            className={`grid size-7 place-items-center rounded-pill transition-colors ${TOUCH_TARGET}`}
-            style={terminalOpen
-              ? accentChip
-              : { color: 'var(--color-on-surface-low)' }}>
-            <SquareTerminal size={16} />
-          </button>
+          <Tooltip text={`${terminalOpen ? 'Hide terminal' : 'Open terminal'} (${bindingLabel('drawer')})`} describes={false} description={bindingLabel('drawer')}>
+            {(tip) => (
+            <button {...tip} type="button" onClick={onToggleTerminal}
+              aria-label={terminalOpen ? 'Hide terminal' : 'Open terminal'}
+              className={`grid size-7 place-items-center rounded-pill transition-colors ${TOUCH_TARGET}`}
+              style={terminalOpen
+                ? accentChip
+                : { color: 'var(--color-on-surface-low)' }}>
+              <SquareTerminal size={16} />
+            </button>
+            )}
+          </Tooltip>
         )}
         {/* Each control renders inside its own boundary: one that throws leaves a glyph and Retry
             in its slot, and its neighbours and the rest of the app keep working. With none, the
             System status popover throwing on one poll unmounted the whole app. */}
+        {/* While YOLO is on, the one fact about the agent's permissions you must see on every page:
+            beside what waits on you, a disclosure at every width. */}
+        <WidgetBoundary what="the YOLO mark" compact><YoloChip folded={folds} className={TOUCH_TARGET} /></WidgetBoundary>
         <WidgetBoundary what="what waits on you" compact><NeedsYouBadge navigate={navigate} className={TOUCH_TARGET} /></WidgetBoundary>
         <WidgetBoundary what="notifications" compact><NotificationBell navigate={navigate} className={TOUCH_TARGET} /></WidgetBoundary>
         {!folds && <WidgetBoundary what="the theme control" compact><ThemeControl className={TOUCH_TARGET} /></WidgetBoundary>}

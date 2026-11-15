@@ -8,16 +8,18 @@ import { DesktopLiveView, useDesktopLive } from './widgets/DesktopLiveView'
 import { BrowseMirror, useBrowseLive } from './widgets/BrowseMirror'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
+import { SurfaceOverlay } from '../../ui/surfaces/SurfaceOverlay'
+import { WidgetBoundary } from '../../app/ErrorBoundary'
 import type { RouteProps } from '../../app/useQueryState'
+import { PinnedTiles } from './PinnedTiles'
 
-/** Home's Overview view (`#/dashboard?view=overview`): the bands that have no place in the
- *  attention stack, the view Home opens on (`Home.tsx`). Needs you, Running now and Recent and
- *  completed took what this page's To triage, Active work and launcher held, the toolbar's needs-you
- *  badge took its count pills, and its suggestions belong to the stack's empty state. What is left
- *  here is what a person comes to look at rather than to answer: your agents' day, pinned artifacts,
- *  the desktop and browser live views (while the agent drives the desktop, or a browse runs, and
- *  only then), Discover, and recent activity last. Tasks are what agents keep their goals in, and
- *  have their own page (All tasks, and each project's): Home shows the agents, not their tasks.
+/** Home's Overview (`#/dashboard`, `Home.tsx`): what a person comes to look at rather than to
+ *  answer. What waits on your answer is Needs you's (`#/mission-control`); what runs and what
+ *  finished show in "Your agents today", where the band names every live run, and your chats in
+ *  the sidebar. Here: your agents' day, the tiles and pins you keep on Home, the desktop and browser
+ *  live views (while the agent drives the desktop, or a browse runs, and only then), Discover,
+ *  recent activity, and your own overlays last. Tasks are what agents keep their goals in, and have
+ *  their own page (All tasks, and each project's): Home shows the agents, not their tasks.
  *
  *  Boundary-less bands under hairline section labels: content owns the space, chrome doesn't. */
 export function HomeOverview(route: RouteProps) {
@@ -45,6 +47,8 @@ export function HomeOverview(route: RouteProps) {
         {/* Pinned artifacts: a pin is a slug in a list that THIS component renders. */}
         <EntranceRegion className="min-w-0">
           <Section label="Pinned artifacts" icon={Package}>
+            {/* The tiles you keep on Home, above the pins: each renders nothing when it holds nothing. */}
+            <WidgetBoundary what="your pinned tiles"><PinnedTiles /></WidgetBoundary>
             <PinnedArtifacts {...route} />
           </Section>
         </EntranceRegion>
@@ -61,7 +65,7 @@ export function HomeOverview(route: RouteProps) {
         )}
 
         {/* Browse live view: watch an unattended browse step by step while it runs, and only then.
-            A grant it asks for is answered in Attention, beside every other ask; the switch that
+            A grant it asks for is answered on Needs you, beside every other ask; the switch that
             stops all unattended browsing is in Settings › Security › Guardrails. */}
         {browse.live && (
           <EntranceRegion className="min-w-0">
@@ -84,6 +88,9 @@ export function HomeOverview(route: RouteProps) {
             <ScheduleWidget {...route} />
           </Section>
         </EntranceRegion>
+
+        {/* Your own overlays on Home, last; safe mode still drops them. */}
+        <SurfaceOverlay surface="dashboard" />
       </EntranceGroup>
     </DashboardLiveProvider>
   )

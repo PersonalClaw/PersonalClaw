@@ -12,6 +12,7 @@ import { findGenUiBlock } from '../../ui/widget/blocks'
 import { LiquidShape } from '../../ui/motion'
 import { safeMode } from '../../ui/surfaces/layers'
 import { SquareIconButton } from '../../ui/SquareIconButton'
+import { Tooltip } from '../../ui/Tooltip'
 import { costLabel, isLive, lastRefreshFailed, sourceChips } from './tileFreshness'
 import { SignedAnchor } from '../../ui/SignedMedia'
 import { resolveContentType } from '../../ui/content/contentTypes'
@@ -41,13 +42,19 @@ export function artifactTiles(views: DashboardView[] | undefined): DashboardTile
     .sort((a, b) => a.order - b.order)
 }
 
-export function PinnedTiles() {
-  // SWR paint through the shared cache: the band paints its last-known
-  // tiles instantly on revisit, no blank flash, and revalidates in the background.
-  const { data: views, refresh } = useQuery<DashboardView[]>(
+/** The tiles you keep on Home, through the shared cache: SWR paint, so the band paints its
+ *  last-known tiles instantly on revisit, no blank flash, and revalidates in the background. The
+ *  section's empty rule (`PinnedArtifacts`) reads the same copy. */
+export function useHomeTiles() {
+  const { data: views, error, refresh } = useQuery<DashboardView[]>(
     VIEWS_CACHE_KEY, () => api.dashboardViews().catch(() => [] as DashboardView[]), { persist: true },
   )
   const tiles = useMemo(() => artifactTiles(views), [views])
+  return { tiles, error, refresh }
+}
+
+export function PinnedTiles() {
+  const { tiles, refresh } = useHomeTiles()
 
   const resolve = useCallback((ref: string, keep: boolean) => {
     api.resolveTile('overview', { ref, keep }).then(() => {
@@ -68,20 +75,15 @@ export function PinnedTiles() {
   const safe = safeMode()
 
   return (
+    // Under the Overview section that holds what you keep on Home, whose heading it shares: no
+    // heading and no name of its own, so it adds no landmark inside that section.
     <section className="flex min-w-0 flex-col gap-s" data-testid="pinned-tiles">
-      <div className="flex items-center gap-s">
-        <Sparkles size={14} className="shrink-0 text-on-surface-low" />
-        {/* h2 to match the dashboard's other sections — see the note on DashboardPage's
-            `Section`. This one is its own component, so it has to be kept in step by hand. */}
-        <h2 data-type="label-l" className="text-on-surface-var">Pinned</h2>
-        <span className="h-px flex-1 bg-outline-variant/40" />
-      </div>
       {safe ? (
         <>
           {/* Said out loud, not inferred from missing controls: a band that quietly stopped
               working is indistinguishable from the breakage the user came here to escape. */}
           <p data-type="body-s" className="text-on-surface-low" data-testid="pinned-tiles-safe-note">
-            Safe mode — tiles are links only. Nothing is fetched, refreshed or re-run.
+            Safe mode: tiles are links only. Nothing is fetched, refreshed or re-run.
           </p>
           <ul className="flex min-w-0 flex-col gap-xs">
             {tiles.map((t) => (
@@ -138,30 +140,37 @@ function FreshnessBar({ tile, row }: { tile: DashboardTile; row: TileRefreshRow 
   const cost = costLabel(row)
   return (
     <div className="flex min-w-0 items-center gap-xs" data-testid="tile-freshness">
-      <SignedAnchor
-        href={api.tileLedgerHref('overview', tile.ref)}
-        target="_blank"
-        rel="noreferrer"
-        data-type="label-s"
-        data-testid="tile-ledger-link"
-        title={
-          row?.ts
-            ? `Refreshed ${row.ts}${cost ? ` · ${cost}` : ''}${row.error ? ` · ${row.error}` : ''} — open the ledger row`
-            : 'Never refreshed — open the ledger row'
-        }
-        className={`truncate underline decoration-dotted underline-offset-2 ${failed ? 'text-error' : 'text-on-surface-low'}`}
-      >
-        {row?.ts ? relPast(row.ts) : 'never refreshed'}
-      </SignedAnchor>
+      <Tooltip text={row?.ts
+        ? `Refreshed ${row.ts}${cost ? ` · ${cost}` : ''}${row.error ? ` · ${row.error}` : ''}. Open the ledger row`
+        : 'Never refreshed. Open the ledger row'}>
+        {(tip) => (
+          <SignedAnchor
+            {...tip}
+            href={api.tileLedgerHref('overview', tile.ref)}
+            target="_blank"
+            rel="noreferrer"
+            data-type="label-s"
+            data-testid="tile-ledger-link"
+            className={`truncate underline decoration-dotted underline-offset-2 ${failed ? 'text-error' : 'text-on-surface-low'}`}
+          >
+            {row?.ts ? relPast(row.ts) : 'never refreshed'}
+          </SignedAnchor>
+        )}
+      </Tooltip>
       {chips.map((c) => (
-        <span
-          key={c.id}
-          role="img"
-          aria-label={c.title}
-          title={c.title}
-          data-testid={`tile-source-${c.tone}`}
-          className={`size-2 shrink-0 rounded-full ${TONE_CLASS[c.tone]}`}
-        />
+        <Tooltip key={c.id} text={c.title} describes={false}>
+          {(tip) => (
+            <span
+              ref={tip.ref}
+              onPointerEnter={tip.onPointerEnter}
+              onPointerLeave={tip.onPointerLeave}
+              role="img"
+              aria-label={c.title}
+              data-testid={`tile-source-${c.tone}`}
+              className={`size-2 shrink-0 rounded-full ${TONE_CLASS[c.tone]}`}
+            />
+          )}
+        </Tooltip>
       ))}
     </div>
   )
@@ -282,20 +291,20 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
             <Sparkles size={11} /> Proposed
           </span>
         )}
-        <SquareIconButton label="Refresh tile" onClick={onRefreshClick}>
+        <SquareIconButton label="Refresh tile" tip onClick={onRefreshClick}>
           <RefreshCw size={12} />
         </SquareIconButton>
         {isProposal ? (
           <>
-            <SquareIconButton label="Accept — keep on dashboard" onClick={() => onResolve(tile.ref, true)}>
+            <SquareIconButton label="Keep on Home" tip onClick={() => onResolve(tile.ref, true)}>
               <Check size={13} />
             </SquareIconButton>
-            <SquareIconButton label="Dismiss proposal" onClick={() => onResolve(tile.ref, false)}>
+            <SquareIconButton label="Dismiss proposal" tip onClick={() => onResolve(tile.ref, false)}>
               <X size={13} />
             </SquareIconButton>
           </>
         ) : (
-          <SquareIconButton label="Unpin from dashboard" onClick={() => onResolve(tile.ref, false)}>
+          <SquareIconButton label="Remove from Home" tip onClick={() => onResolve(tile.ref, false)}>
             <X size={13} />
           </SquareIconButton>
         )}

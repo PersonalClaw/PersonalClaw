@@ -8,10 +8,11 @@ import { consumeProductTourRequest, requestProductTour } from './tourLaunch'
 // ── The tour takes you to each stop's surface once ───────────────────────────────────────────────
 //
 // The shell's `navigate` (`useHashRoute`) is a new function on every render, and every call
-// re-renders the shell, even to the address it is already at. The approvals stop's route carries a
-// query (`dashboard?view=attention`, since Home opens on Overview), which the shell's route id
-// (`dashboard`) never equals. A tour that navigated whenever `navigate` changed navigated again on
-// every render, without end: the browser run's tour test spun until its job timed out.
+// re-renders the shell, even to the address it is already at. The approvals stop's route carried a
+// query then (`dashboard?view=attention`), which the shell's route id (`dashboard`) never equals. A
+// tour that navigated whenever `navigate` changed navigated again on every render, without end: the
+// browser run's tour test spun until its job timed out. Its stop is Needs you now
+// (`mission-control`), and each stop is still gone to once.
 
 /** Past this many navigations the harness stops re-rendering, so an endless loop ends as a red. */
 const CAP = 25
@@ -34,7 +35,7 @@ afterEach(() => {
   consumeProductTourRequest()
 })
 
-it("goes to each stop's surface once, the approvals stop's query and all", async () => {
+it("goes to each stop's surface once", async () => {
   const calls: string[] = []
   const user = userEvent.setup()
   render(<Shell calls={calls} />)
@@ -43,5 +44,5 @@ it("goes to each stop's surface once, the approvals stop's query and all", async
   for (let n = 0; n < PRODUCT_TOUR_STOPS.length - 1; n += 1) {
     await user.click(await screen.findByRole('button', { name: /Next/ }))
   }
-  expect(calls).toEqual(['chat', 'inbox', 'dashboard?view=attention', 'settings'])
+  expect(calls).toEqual(['chat', 'inbox', 'mission-control', 'settings'])
 })

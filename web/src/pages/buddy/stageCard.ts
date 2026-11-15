@@ -87,7 +87,8 @@ export function cardPropsOf(machine: BuddyState, steps: StepWindows, onAnswer: (
     inSight: inSight(machine.live, focus?.id ?? machine.focus).map(cardWorkOf),
     list: machine.connection === 'up' ? 'live' : 'reconnecting',
     countdown: view.countdown ? 10 : undefined,
-    openHref: '#/mission-control',
+    // Open in PersonalClaw: Needs you while something waits on you, else Home, where the work shows.
+    openHref: machine.queue.length > 0 ? '#/mission-control' : '#/dashboard',
     onAnswer,
   }
 }

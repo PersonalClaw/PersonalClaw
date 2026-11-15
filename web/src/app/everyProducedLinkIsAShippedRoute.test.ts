@@ -151,7 +151,9 @@ describe('the menu-bar item opens only catalogued addresses', () => {
   const addresses = trayAddresses(tray.DEEP_LINKS)
 
   it('🔑 every DEEP_LINKS row and Quick Capture is an entry, and every entry naming the tray is one of them', () => {
-    expect(Object.keys(tray.DEEP_LINKS).length, 'vacuity floor').toBeGreaterThanOrEqual(5)
+    // Home, what waits (Needs you), the Inbox and Settings: Mission Control's own row named the
+    // same address as what waits, and went with it.
+    expect(Object.keys(tray.DEEP_LINKS).length, 'vacuity floor').toBeGreaterThanOrEqual(4)
     expect(addresses.every((a) => a.startsWith('#/')), 'the tray writes hashes').toBe(true)
     expect(uncatalogued(addresses), 'the tray opens these, and shippedRoutes.ts lacks them').toEqual([])
     expect(misattributed('tray', addresses), 'these entries say the tray opens them; it does not').toEqual([])
@@ -304,6 +306,7 @@ const FIXTURE_NAMES: Record<string, string> = {
   'not-a-real-app': SAMPLE.app,
   'e2e-ui-fixture': SAMPLE.app,
   'not-a-real-item': SAMPLE.knowledge,
+  'e2e-ap-1': SAMPLE.approval,
 }
 
 function manifestAddresses(tiers: readonly (readonly { route: string }[])[]): string[] {

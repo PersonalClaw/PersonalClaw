@@ -73,15 +73,9 @@ describe('sessionRecencyMs survives the payload the API actually sends', () => {
   })
 })
 
-describe('all three call sites share it now', () => {
+describe('every call site shares it now', () => {
   const SRC = join(process.cwd(), 'src')
   const read = (rel: string) => readSource(join(SRC, rel))
-
-  it('Home no longer builds a Date from a `??` chain', () => {
-    const src = read('pages/dashboard/Home.tsx')
-    expect(src).toContain('.sort((a, b) => sessionRecencyMs(b) - sessionRecencyMs(a))')
-    expect(src, 'the breakable spelling must be gone').not.toMatch(/new Date\([^)]*\?\?[^)]*\)\.getTime\(\)/)
-  })
 
   it('both chat sites use the helper too, so there is one spelling left', () => {
     // The Chat history panel is the sidebar's chat list now: its rows' order is `Thread.activeAt`,

@@ -43,6 +43,7 @@ class _TrustMode:
         self._from_config: bool = False
         self._active_ttl: int = 0
         self._on_disable: list[Callable[[str], None]] = []
+        self._on_change: list[Callable[[], None]] = []
 
     def register_on_disable(self, cb: Callable[[str], None]) -> None:
         """Register a callback fired when YOLO turns off (manually or by expiry).
@@ -62,12 +63,34 @@ class _TrustMode:
 
             app_code.keep(_forget)
 
+    def register_on_change(self, cb: Callable[[], None]) -> None:
+        """Register a callback fired whenever YOLO turns on or off, however it went (a toggle, its
+        time running out, the config): what reads the mode can read it again. Idempotent per
+        callback, and one an app registered is dropped when the app is unloaded, as
+        :meth:`register_on_disable`'s are."""
+        if cb not in self._on_change:
+            self._on_change.append(cb)
+
+            def _forget() -> None:
+                if cb in self._on_change:
+                    self._on_change.remove(cb)
+
+            app_code.keep(_forget)
+
+    def _fire_change(self) -> None:
+        for cb in list(self._on_change):
+            try:
+                cb()
+            except Exception:
+                logger.warning("trust_mode on_change callback failed", exc_info=True)
+
     def _fire_disable(self, reason: str) -> None:
         for cb in list(self._on_disable):
             try:
                 cb(reason)
             except Exception:
                 logger.warning("trust_mode on_disable callback failed", exc_info=True)
+        self._fire_change()
 
     def enable(self, *, ttl_secs: int | None = None, from_config: bool = False) -> None:
         """Turn YOLO on.
@@ -82,6 +105,7 @@ class _TrustMode:
             self._expires_at = 0.0
             self._active_ttl = 0
             logger.info("YOLO mode ON (config, permanent)")
+            self._fire_change()
             return
         if self._from_config:
             logger.info("YOLO already permanent from config — ignoring TTL activation")
@@ -91,6 +115,7 @@ class _TrustMode:
         self._active_ttl = ttl
         self._expires_at = time.monotonic() + ttl
         logger.info("YOLO mode ON (expires in %ds)", ttl)
+        self._fire_change()
 
     def disable(self) -> None:
         """Turn YOLO off (any source). Fires on_disable with reason ``manual``."""
@@ -183,3 +208,7 @@ def yolo_remaining_secs() -> float | None:
 
 def register_on_disable(cb: Callable[[str], None]) -> None:
     _TRUST.register_on_disable(cb)
+
+
+def register_on_change(cb: Callable[[], None]) -> None:
+    _TRUST.register_on_change(cb)

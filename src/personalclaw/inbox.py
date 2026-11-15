@@ -706,14 +706,21 @@ class InboxStore:
         how many items that moved."""
         held = {item_id: item.to_dict() for item_id, item in self.items.items()}
         moves = record_files.taken_in(self._path, _ITEMS, self._kept, held)
+        moved: list[InboxItem] = []
         for item_id, record in moves.items():
             if record is None:
-                self.items.pop(item_id, None)
+                gone = self.items.pop(item_id, None)
+                if gone is not None:
+                    moved.append(gone)
                 continue
             try:
                 self.items[item_id] = InboxItem.from_dict(record)
+                moved.append(self.items[item_id])
             except (TypeError, ValueError):
                 logger.warning("inbox item %s could not be read, so it is not shown", item_id)
+        # A row the waiting list lists that came or went with the file rings it, as a status
+        # move does (:func:`set_item_status`).
+        _ring_waiting(None, moved)
         return len(moves)
 
     def add(self, item: InboxItem) -> None:
@@ -834,13 +841,18 @@ class InboxStore:
         from personalclaw import attachments
 
         expired = self._expired_ids(retention_days)
+        removed: list[InboxItem] = []
         for item_id in expired:
             gone = self.items.pop(item_id, None)
-            if gone is not None and gone.attachments:
-                attachments.forget(item_id)
+            if gone is not None:
+                removed.append(gone)
+                if gone.attachments:
+                    attachments.forget(item_id)
         if expired:
             self.save()
             logger.info("Inbox auto-cleanup: deleted %d expired items", len(expired))
+            # An open row the waiting list lists that ages out leaves it: the list rings.
+            _ring_waiting(None, [g for g in removed if g.status in OPEN_STATUSES])
         return len(expired)
 
 
@@ -1024,8 +1036,9 @@ def emit_attention_item(
 
     ``dedup_key`` makes re-emission idempotent: a loop that re-checks every 30s must not
     stack a hundred identical rows. When supplied, an existing PENDING/SEEN item with the
-    same key is returned untouched and **no second notification fires** — the user was
-    already told.
+    same key from the same ``source`` is returned untouched and **no second notification
+    fires** — the user was already told. A key is its raiser's own: one another source filed,
+    an app's key it chose among them, never swallows this one (:func:`_find_open_by_dedup`).
 
     ``raised_by_app`` names the app the item is raised for (its proposal), which the
     notification carries so that app may read it back (``DashboardState.notification_reaches``).
@@ -1047,7 +1060,7 @@ def emit_attention_item(
             logger.warning("attention item: inbox load failed", exc_info=True)
 
     if dedup_key:
-        existing = _find_open_by_dedup(target, dedup_key)
+        existing = _find_open_by_dedup(target, dedup_key, source)
         if existing is not None:
             logger.debug("attention item deduped on %r → %s", dedup_key, existing.id)
             return existing.id
@@ -1114,6 +1127,8 @@ def emit_attention_item(
     # gate waiting, an approval asked, a proposal made) sent none, so they missed it.
     if state is not None and item_id:
         _announce(state, "inbox_new_item", item)
+    if item_id:
+        _ring_waiting(state, [item])
 
     if checking:
         from personalclaw.notification_verify import verify_in_background
@@ -1465,13 +1480,15 @@ def set_item_status(
     """Move *items* to *status*: THE status transition. Returns the rows it actually moved.
 
     Every writer that moves a row comes through here (:meth:`InboxStore.update` refuses a
-    ``status``), because a move is three writes, not one:
+    ``status``), because a move is four writes, not one:
 
     1. **the row**, persisted once for the whole batch;
     2. **every open surface**: one ``inbox_item_updated`` frame per moved row. The Inbox page,
        Home and Mission Control read the Inbox on its frames, and most movers sent none, so a
        gate passed, a loop resumed or a proposal answered left its row showing;
-    3. **the bell**: a row that CLOSES (leaves :data:`OPEN_STATUSES`) marks read every
+    3. **the waiting list**: a row it lists (``waiting.inbox_kind``) rings it
+       (:func:`_ring_waiting`);
+    4. **the bell**: a row that CLOSES (leaves :data:`OPEN_STATUSES`) marks read every
        notification that is a view of it (``meta.inbox_item``, which :func:`emit_attention_item`
        stamps). That link ran one way, so every row closed anywhere (a note handled in the
        Inbox, "Dismiss all", an approval answered in its chat) left its notification unread in
@@ -1497,6 +1514,7 @@ def set_item_status(
     if not moved:
         return moved
     store.save()
+    _ring_waiting(state, moved)
     if state is not None:
         for item in moved:
             _announce(state, "inbox_item_updated", item)
@@ -1509,6 +1527,23 @@ def set_item_status(
     return moved
 
 
+def _ring_waiting(state: Any, items: "Iterable[InboxItem]") -> None:
+    """Ring the waiting list's bell when any of *items* is a row it lists (``waiting.inbox_kind``):
+    the tray and the buddy read the list again only when it rings, so a folder's trust request,
+    a held action or a run's wait raised or closed here would otherwise come and go unseen there.
+    Best-effort: the row has already moved."""
+    try:
+        from personalclaw import waiting
+
+        if any(waiting.inbox_kind(item.refs, item.item_kind, item.source) for item in items):
+            if state is not None:
+                waiting.changed(state)
+            else:
+                waiting.changed_elsewhere()
+    except Exception:  # noqa: BLE001 — a ring is never a failure of the row it rings for
+        logger.debug("could not ring the waiting list for an Inbox row", exc_info=True)
+
+
 def _announce(state: Any, frame: str, item: "InboxItem") -> None:
     """Send one row to every open surface, redacted like every other writer of it."""
     try:
@@ -1517,16 +1552,20 @@ def _announce(state: Any, frame: str, item: "InboxItem") -> None:
         logger.debug("inbox: could not announce %s for %s", frame, item.id, exc_info=True)
 
 
-def _find_open_by_dedup(store: "InboxStore", dedup_key: str) -> "InboxItem | None":
-    """An unresolved item carrying ``dedup_key``, newest first.
+def _find_open_by_dedup(store: "InboxStore", dedup_key: str, source: str) -> "InboxItem | None":
+    """An unresolved item *source* raised carrying ``dedup_key``, newest first.
 
     Only :data:`OPEN_STATUSES` count as open: once the user has HANDLED or DISMISSED a request, a
     later re-emission is genuinely new and should surface again rather than be swallowed.
+
+    Matched within *source* only, the raiser's own (an app's is ``app:<name>``, which its door
+    sets): a key is the raiser's choice, an app's included, so a key one source filed never
+    dedupes another's row, a row filed before this rule among them.
     """
     matches = [
         i
         for i in store.items.values()
-        if i.refs.get("dedup_key") == dedup_key and i.status in OPEN_STATUSES
+        if i.refs.get("dedup_key") == dedup_key and i.source == source and i.status in OPEN_STATUSES
     ]
     if not matches:
         return None

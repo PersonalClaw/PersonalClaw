@@ -10,9 +10,9 @@ const docs: UiDoc[] = [
     description:
       "The app shell's LEFT corner — a pull-tab hugging the nav rail's top-right edge that carries the nav collapse/expand toggle, floating above page content. Publishes its measured width to the CSS var `--shell-corner-l` so page TopBars pad to clear it, and its height to `--shell-corner-lh`, which a TopBar whose row has moved below the corners clears instead.",
     props: [
-      { name: 'collapsed', description: 'Current rail collapsed state — chooses the glyph (PanelLeftOpen vs PanelLeftClose) and the aria/title copy.' },
+      { name: 'collapsed', description: 'Current rail collapsed state — chooses the glyph (PanelLeftOpen vs PanelLeftClose) and the name and tip copy.' },
       { name: 'onToggle', description: 'Fires to flip the rail between collapsed and expanded, or, in focus mode, to leave it.' },
-      { name: 'focusMode', description: "Set while focus mode hides the rail: the tab then reads \"Leave focus mode\", names focus mode's key in its title (else the sidebar's), both read from the keymap, and is the visible way out of the mode." },
+      { name: 'focusMode', description: "Set while focus mode hides the rail: the tab then reads \"Leave focus mode\", names focus mode's key in its tip (else the sidebar's), both read from the keymap, and is the visible way out of the mode." },
     ],
     bestPractices: [
       { guidance: true, description: "This is the single home for the nav collapse toggle — NavRail is collapse-CONTROLLED, so drive NavRail's `collapsed` from the same state you pass here." },
@@ -24,10 +24,10 @@ const docs: UiDoc[] = [
     name: 'ShellCornerRight',
     keywords: ['shell', 'corner', 'terminal', 'theme', 'notifications', 'width', 'system', 'chrome'],
     description:
-      "The app shell's RIGHT corner — the screen's top-right control cluster (terminal-drawer toggle • content-width pill • notification bell • theme • the model status chip) rendered as native shell chrome above any page header. Publishes its measured width to `--shell-corner-r` and height to `--shell-corner-rh`.",
+      "The app shell's RIGHT corner — the screen's top-right control cluster (terminal-drawer toggle • content-width pill • the YOLO mark while YOLO is on • what waits on you • notification bell • theme • the model status chip; each control's tip in the themed Tooltip, its key kept) rendered as native shell chrome above any page header. Publishes its measured width to `--shell-corner-r` and height to `--shell-corner-rh`.",
     props: [
-      { name: 'terminalOpen', description: 'Whether the terminal drawer is open — drives the toggle glyph highlight + aria/title copy.' },
-      { name: 'onToggleTerminal', description: "Fires to open/close the terminal drawer; its title names the drawer's keys, read from the keymap." },
+      { name: 'terminalOpen', description: 'Whether the terminal drawer is open — drives the toggle glyph highlight + its name and tip.' },
+      { name: 'onToggleTerminal', description: "Fires to open/close the terminal drawer; its tip names the drawer's keys, read from the keymap." },
       { name: 'navigate', description: 'Router navigation function, passed straight through to the embedded NotificationBell.' },
     ],
     bestPractices: [

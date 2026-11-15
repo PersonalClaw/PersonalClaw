@@ -1,35 +1,33 @@
 import { useState } from 'react'
 import type { ChatSessionSummary, RunningRow, WaitingItem, WaitingList } from '../lib/api'
 import type { RouteProps } from '../app/useQueryState'
-import { Home } from '../pages/dashboard/Home'
+import { NeedsYouPage } from '../pages/dashboard/NeedsYouPage'
 
-/** Home, mounted with the route props the shell hands it: its address's query is state here, so a
- *  selection (`?open=`) or a view (`?view=`) a test makes is what the next render reads, as a hash
- *  change is in the app. `navigate` is the test's, to assert where a control goes.
+/** Needs you, mounted with the route props the shell hands it: its address's query is state here, so
+ *  a selection (`?open=`) a test makes is what the next render reads, as a hash change is in the app.
+ *  `navigate` is the test's, to assert where a control goes; `onQuery` hears each query with whether
+ *  it replaced the last one.
  *
  *  Lives in `src/test/` beside the vitest setup file: it is test support, not app code, and nothing
  *  in the app imports it. The `api` a test mocks is its own (`vi.mock` is per file). */
-export function HomeHarness({ query: initial = {}, navigate = () => {}, onQuery, defaultView = 'attention' }: {
+export function NeedsYouHarness({ query: initial = {}, navigate = () => {}, onQuery }: {
   query?: Record<string, string>
-  /** The view Home opens on with no `?view`: Attention, as `#/mission-control` opens it, since the
-   *  tests that mount it read Needs you and the rest of that view. */
-  defaultView?: 'overview' | 'attention'
   navigate?: RouteProps['navigate']
-  onQuery?: (query: Record<string, string>) => void
+  onQuery?: (query: Record<string, string>, replaced: boolean) => void
 }) {
   const [query, setQueryState] = useState<Record<string, string>>(initial)
-  const setQuery: RouteProps['setQuery'] = (patch) => {
+  const setQuery: RouteProps['setQuery'] = (patch, opts) => {
     setQueryState((was) => {
       const next = { ...was }
       for (const [k, v] of Object.entries(patch)) {
         if (v === null || v === undefined || v === '') delete next[k]
         else next[k] = v
       }
-      onQuery?.(next)
+      onQuery?.(next, !!opts?.replace)
       return next
     })
   }
-  return <Home sub="" navEpoch={0} navigate={navigate} query={query} setQuery={setQuery} defaultView={defaultView} />
+  return <NeedsYouPage sub="" navEpoch={0} navigate={navigate} query={query} setQuery={setQuery} />
 }
 
 /** One waiting item as `GET /api/waiting` serves it (`personalclaw.waiting._item`): an approval of

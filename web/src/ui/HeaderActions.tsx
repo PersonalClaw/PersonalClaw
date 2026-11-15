@@ -341,6 +341,18 @@ export function wholeTitleTier(
   return picked
 }
 
+/** What the `…` costs the row: its box, when a control lives in it and the row is laid out.
+ *  Nothing measured is no layout to fit into (a test's document, where every width reads 0), and
+ *  there the row is drawn whole and the `…` costs nothing, as it always did. A cluster whose every
+ *  control lives in the `…` draws nothing in the probes, so its full probe reads 0 in a laid-out
+ *  row too; its own box (`clusterBox`, the `…` itself) says the row is laid out. Counted as
+ *  nothing there, the stack test left Needs you's title "Nee…" beside its `…` at 390 px. */
+export function overflowCost(
+  { inOverflow, fullProbe, clusterBox, dots }: { inOverflow: boolean; fullProbe: number; clusterBox: number; dots: number },
+): number {
+  return inOverflow && (fullProbe > 0 || clusterBox > 0) ? dots : 0
+}
+
 /** The narrowest the cluster can get and keep every control reachable: its never-overflow
  *  controls icon-only, plus the `…` when anything else can fall into it — or the whole ICON tier,
  *  when that is narrower (a cluster of two needs no `…`). */
@@ -539,9 +551,9 @@ export function HeaderActions({ children, className, overflowClassName, overflow
       }
       domOrderRef.current = placed
       setDomOrder((prev) => (samePlaces(prev, placed) ? prev : placed))
-      // Nothing measured is no layout to fit into (a test's document), where every width reads 0
-      // and the row is drawn whole, as it always was there.
-      const dots = [...regs.current.values()].some((r) => r.inOverflow) && wFull > 0 ? DOTS : 0
+      const dots = overflowCost({
+        inOverflow: [...regs.current.values()].some((r) => r.inOverflow), fullProbe: wFull, clusterBox: outer.clientWidth, dots: DOTS,
+      })
       const iconW = (id: number) => (iconEl(id)?.offsetWidth ?? 40) + GAP
       // Held children (`heldInRow`: a Segmented mode-slider, the primary action) never go into the
       // `…` menu, so their icon-only width is the rail's FLOOR (see the cap below) — and, with the

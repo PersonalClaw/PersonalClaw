@@ -22,6 +22,7 @@ export const FIXED_CLOCK: Record<string, string> = {
   projects: '2026-11-02T12:00:00Z',
   // What waits on you says how long each item has waited.
   'mission-control': '2026-11-02T12:00:00Z',
+  'mission-control?open=waiting%3Aapproval%3Ae2e-ap-1': '2026-11-02T12:00:00Z',
   companion: '2026-11-02T12:00:00Z',
   'companion?approval=ap-0a1b2c3d': '2026-11-02T12:00:00Z',
   // The buddy's card says how long its approval has waited (`waitedFor`), asked at 11:58 in the

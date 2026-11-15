@@ -216,6 +216,22 @@ def write_status(loop_id: str, status: LoopStatus, **extra: Any) -> None:
     atomic_write(d / "status.json", json.dumps(payload, indent=2))
 
 
+def status_since(loop_id: str, status: str) -> float:
+    """When the loop's status was last written as *status* (``write_status``'s ``ts``), or ``0.0``
+    when its ``status.json`` says another status, or nothing it can read."""
+    d = safe_loop_dir(loop_id)
+    try:
+        data = json.loads((d / "status.json").read_text(encoding="utf-8")) if d else {}
+    except (OSError, ValueError):
+        return 0.0
+    if not isinstance(data, dict) or data.get("status") != status:
+        return 0.0
+    try:
+        return float(data.get("ts") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def write_credited_cycles(loop_id: str, cycles: int) -> None:
     """Record how many cycles the watchdog has CREDITED (notified, judged, run the kind's hook for).
 

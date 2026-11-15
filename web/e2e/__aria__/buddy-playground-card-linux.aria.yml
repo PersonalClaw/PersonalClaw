@@ -186,7 +186,7 @@
               - /url: "#/buddy/playground?tab=card&open=w#"
               - text: Open
       - link "Open in PersonalClaw":
-        - /url: "#/mission-control"
+        - /url: "#/dashboard"
   - figure "The focused work finished":
     - heading "The focused work finished" [level=#]
     - text: Done
@@ -233,7 +233,7 @@
               - /url: "#/buddy/playground?tab=card&open=w#"
               - text: Open
       - link "Open in PersonalClaw":
-        - /url: "#/mission-control"
+        - /url: "#/dashboard"
   - figure "Nothing else running":
     - heading "Nothing else running" [level=#]
     - text: Searching
@@ -250,7 +250,7 @@
         - heading "In sight · #" [level=#]
         - paragraph: Nothing else is running.
       - link "Open in PersonalClaw":
-        - /url: "#/mission-control"
+        - /url: "#/dashboard"
   - figure "Many pieces of work":
     - heading "Many pieces of work" [level=#]
     - text: Searching
@@ -310,7 +310,7 @@
               - text: Open
         - button "Show all #"
       - link "Open in PersonalClaw":
-        - /url: "#/mission-control"
+        - /url: "#/dashboard"
   - figure "Reconnecting":
     - heading "Reconnecting" [level=#]
     - text: Searching
@@ -342,7 +342,7 @@
               - /url: "#/buddy/playground?tab=card&open=w#"
               - text: Open
       - link "Open in PersonalClaw":
-        - /url: "#/mission-control"
+        - /url: "#/dashboard"
   - figure "The list could not be read":
     - heading "The list could not be read" [level=#]
     - text: Searching
@@ -359,7 +359,7 @@
         - heading "In sight · #" [level=#]
         - paragraph: Could not read what is running.
       - link "Open in PersonalClaw":
-        - /url: "#/mission-control"
+        - /url: "#/dashboard"
   - figure "Interrupted and just finished, about to fold":
     - heading "Interrupted and just finished, about to fold" [level=#]
     - text: Searching
@@ -412,5 +412,5 @@
               - /url: "#/buddy/playground?tab=card&open=w#"
               - text: Open
       - link "Open in PersonalClaw":
-        - /url: "#/mission-control"
+        - /url: "#/dashboard"
       - status: Folding in # seconds; pointing at the card or tabbing into it keeps it open.

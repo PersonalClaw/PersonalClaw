@@ -1,6 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { ArrowLeft, X } from 'lucide-react'
 import { IconButton } from '../../ui/IconButton'
+import { ScrollFade } from '../../ui/ScrollFade'
+import { TOUCH_TARGET } from '../../ui/Toggle'
 import { useFocusReturn } from '../../ui/useFocusReturn'
 
 /** The room, in px, from which a list and its detail sit side by side; below it they show one at a
@@ -26,20 +28,58 @@ export interface CapabilityDetail {
   /** Clears the selection. Close, Escape and the narrow layout's Back all call it. */
   onClose: () => void
   body: ReactNode
+  /** A line above the heading in the pane's fixed header (Needs you's tag row). */
+  eyebrow?: ReactNode
+  /** The detail follows a selection moved in the list (↑↓ with the pane open), so it takes no
+   *  focus, whatever `focusOnOpen` says: the focus stays in the list. */
+  followsSelection?: boolean
+}
+
+/** The opt-ins a page passes for its own pane (Needs you); a Capabilities tab passes none, so its
+ *  list keeps `LIST_WIDTH` and its pane keeps its heading in the header. */
+export interface PaneOptions {
+  /** The list's width in px while a detail sits beside it, kept while the detail still gets
+   *  `splitWidth`. */
+  listWidth?: number
+  /** The detail's floor in px, and the list's width on a tab too narrow for `listWidth` beside it
+   *  (the Library's split). */
+  splitWidth?: number
+  /** The heading is the first thing in the pane's scroller, wrapping in full (no `truncate`, no
+   *  native title), rather than a line of the fixed header. */
+  headingScrolls?: boolean
+  /** Back and Close are 44 px targets below 1024 px (`TOUCH_TARGET`), each with its tip. */
+  compactTargets?: boolean
+  /** An open takes the focus to the heading at every width (`preventScroll`), not only where the
+   *  detail replaces the list; a detail that `followsSelection` does not. */
+  focusOnOpen?: boolean
+  /** Both scrollers fade at a cut edge (`ScrollFade`): the list from the canvas, the pane from
+   *  `surface`. */
+  edgeFade?: boolean
+}
+
+/** The list's width beside a detail on a tab *room* px wide, with *options*: `listWidth` while
+ *  the detail still gets `splitWidth`, else `splitWidth`; `LIST_WIDTH` with neither. */
+export function besideWidth(room: number, options: PaneOptions): string {
+  const { listWidth, splitWidth } = options
+  if (listWidth === undefined && splitWidth === undefined) return LIST_WIDTH
+  const floor = splitWidth ?? 0
+  if (listWidth !== undefined && room - listWidth >= floor) return `${listWidth}px`
+  return `${splitWidth ?? listWidth}px`
 }
 
 /** Whether `box` is narrower than `BESIDE_FROM`. It is read before the first paint and again
  *  whenever the box changes size: the window resizing, or the sidebar beside it collapsing or
  *  expanding. A box with no width (not laid out yet, or hidden while a page loads) has no room to
  *  read, so it keeps the last reading, which starts wide. */
-function useNarrowerThanBeside(box: RefObject<HTMLElement | null>): boolean {
+function useNarrowerThanBeside(box: RefObject<HTMLElement | null>): [boolean, number] {
   const [narrow, setNarrow] = useState(false)
+  const [room, setRoom] = useState(0)
   useLayoutEffect(() => {
     const el = box.current
     if (!el) return
     const read = () => {
       const width = el.getBoundingClientRect().width
-      if (width > 0) setNarrow(width < BESIDE_FROM)
+      if (width > 0) { setNarrow(width < BESIDE_FROM); setRoom(width) }
     }
     read()
     if (typeof ResizeObserver !== 'function') return
@@ -47,7 +87,7 @@ function useNarrowerThanBeside(box: RefObject<HTMLElement | null>): boolean {
     watch.observe(el)
     return () => watch.disconnect()
   }, [box])
-  return narrow
+  return [narrow, room]
 }
 
 /** A Capabilities tab (#3817): its header, its list, and the selected item's detail beside the
@@ -63,7 +103,7 @@ function useNarrowerThanBeside(box: RefObject<HTMLElement | null>): boolean {
  *
  *  The list's controls (its search, filter and secondary actions) are in the header with the one
  *  that adds, so no bar sits over the list. */
-export function ListBesideDetail({ header, detail, noun, children }: {
+export function ListBesideDetail({ header, detail, noun, children, ...options }: {
   /** The tab's header: its title and every control of the tab, the one that adds last. */
   header: ReactNode
   detail: CapabilityDetail | null
@@ -71,9 +111,9 @@ export function ListBesideDetail({ header, detail, noun, children }: {
   noun: string
   /** The list. */
   children: ReactNode
-}) {
+} & PaneOptions) {
   const box = useRef<HTMLDivElement>(null)
-  const compact = useNarrowerThanBeside(box)
+  const [compact, room] = useNarrowerThanBeside(box)
   const beside = detail !== null && !compact
   return (
     <div ref={box} data-capability-layout className="flex h-full flex-col">
@@ -81,10 +121,12 @@ export function ListBesideDetail({ header, detail, noun, children }: {
       <div className="flex min-h-0 flex-1">
         <div data-capability-list hidden={detail !== null && compact}
           className={`@container flex min-w-0 flex-col ${beside ? 'shrink-0 border-r border-outline-variant/40' : 'flex-1'}`}
-          style={beside ? { width: LIST_WIDTH } : undefined}>
-          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+          style={beside ? { width: besideWidth(room, options) } : undefined}>
+          {options.edgeFade
+            ? <ScrollFade ground="canvas">{children}</ScrollFade>
+            : <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>}
         </div>
-        {detail && <DetailPane key={detail.id} detail={detail} compact={compact} noun={noun} />}
+        {detail && <DetailPane key={detail.id} detail={detail} compact={compact} noun={noun} options={options} />}
       </div>
     </div>
   )
@@ -92,7 +134,7 @@ export function ListBesideDetail({ header, detail, noun, children }: {
 
 /** The detail's pane: a region named by its title, with Close (or, with less room than
  *  `BESIDE_FROM`, Back to the list) and the page's body under it. */
-function DetailPane({ detail, compact, noun }: { detail: CapabilityDetail; compact: boolean; noun: string }) {
+function DetailPane({ detail, compact, noun, options }: { detail: CapabilityDetail; compact: boolean; noun: string; options: PaneOptions }) {
   const titleId = useId()
   const focusReturnRef = useFocusReturn<HTMLElement>()
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -103,9 +145,14 @@ function DetailPane({ detail, compact, noun }: { detail: CapabilityDetail; compa
   // no one can see; a detail opened by an address, with nothing chosen, takes no focus. Back returns
   // it to the row (`useFocusReturn`).
   const chosenFromList = useRef(document.activeElement instanceof HTMLElement && !!document.activeElement.closest('[data-capability-list]'))
+  // A page that opts in takes the focus to the heading on every open, at every width: its list's
+  // rows hold their own controls, so Tab from the list would cross every later row first. A
+  // detail that follows the list's selection (↑↓) leaves the focus in the list.
+  const focusOnOpen = options.focusOnOpen === true && detail.followsSelection !== true
   useEffect(() => {
-    if (compact && chosenFromList.current) headingRef.current?.focus()
-  }, [compact])
+    if (focusOnOpen) headingRef.current?.focus({ preventScroll: true })
+    else if (compact && chosenFromList.current) headingRef.current?.focus()
+  }, [compact, focusOnOpen])
   // Escape closes the detail, as it closes a side panel. A control that handles its own Escape (a
   // menu, a dialog) stops it before it reaches the window.
   useEffect(() => {
@@ -113,17 +160,26 @@ function DetailPane({ detail, compact, noun }: { detail: CapabilityDetail; compa
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+  const target = options.compactTargets ? { className: TOUCH_TARGET } : {}
+  const back = `Back to ${noun}`
+  const scrolls = options.headingScrolls === true
+  const heading = scrolls
+    ? <h2 ref={headingRef} id={titleId} tabIndex={-1} data-type="title-l" className="min-w-0 break-words text-on-surface">{detail.heading ?? detail.title}</h2>
+    : <h2 ref={headingRef} id={titleId} tabIndex={-1} data-type="title-l" className="min-w-0 flex-1 truncate text-on-surface" title={detail.title}>{detail.heading ?? detail.title}</h2>
+  const body = scrolls
+    ? <div className="flex flex-col gap-l px-l py-l">{heading}{detail.body}</div>
+    : <div className="mx-auto px-l py-l">{detail.body}</div>
   return (
     <section ref={focusReturnRef} role="region" aria-labelledby={titleId} className="flex min-w-0 flex-1 flex-col bg-surface">
       <div className="flex shrink-0 items-center gap-s border-b border-outline-variant/40 px-l py-m">
-        {compact && <IconButton icon={ArrowLeft} label={`Back to ${noun}`} size={34} iconSize={18} onClick={detail.onClose} />}
+        {compact && <IconButton icon={ArrowLeft} label={back} tip={options.compactTargets ? back : undefined} size={34} iconSize={18} onClick={detail.onClose} {...target} />}
         {detail.icon}
-        <h2 ref={headingRef} id={titleId} tabIndex={-1} data-type="title-l" className="min-w-0 flex-1 truncate text-on-surface" title={detail.title}>{detail.heading ?? detail.title}</h2>
-        {!compact && <IconButton icon={X} label="Close" size={34} iconSize={18} onClick={detail.onClose} />}
+        {scrolls ? <div className="min-w-0 flex-1">{detail.eyebrow}</div> : heading}
+        {!compact && <IconButton icon={X} label="Close" tip={options.compactTargets ? 'Close' : undefined} size={34} iconSize={18} onClick={detail.onClose} {...target} />}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-l">{detail.body}</div>
-      </div>
+      {options.edgeFade
+        ? <ScrollFade ground="surface">{body}</ScrollFade>
+        : <div className="min-h-0 flex-1 overflow-y-auto">{body}</div>}
     </section>
   )
 }

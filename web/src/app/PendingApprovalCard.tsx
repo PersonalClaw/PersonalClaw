@@ -1,4 +1,6 @@
 import { rowSubject } from '../lib/rowSubject'
+import type { ReactNode } from 'react'
+import type { ApprovalForm } from '../ui/ApprovalPrompt'
 import { ApprovalCard } from '../pages/chat/ApprovalCard'
 import { approvalInputText, approvalSegmentOf, type ApprovalCardInput } from '../pages/chat/approvalSegment'
 import { approvalDestination } from './approvalDestination'
@@ -16,7 +18,7 @@ import { approvalDestination } from './approvalDestination'
  *  card offers this call alone. *opensSource* links the source to where that work is answered in
  *  full, for a surface that lists approvals from everywhere.
  */
-export function PendingApprovalCard({ approval, onDecide, busy, opensSource = false, sourceHref }: {
+export function PendingApprovalCard({ approval, onDecide, busy, opensSource = false, sourceHref, form, tagEnd, answersReplacedBy }: {
   approval: ApprovalCardInput
   onDecide: (action: 'approve' | 'reject') => void | Promise<unknown>
   busy?: boolean
@@ -24,6 +26,12 @@ export function PendingApprovalCard({ approval, onDecide, busy, opensSource = fa
   /** Where the source is answered in full, when the surface already knows it (a waiting item's
    *  `route`): it wins over the address read off the approval's session. */
   sourceHref?: string
+  /** `queue`: one card of a list that holds still (Needs you), `ApprovalPrompt`'s queue form. */
+  form?: ApprovalForm
+  /** The queue form's tag row end: the card's project chip and its time left. */
+  tagEnd?: ReactNode
+  /** The queue form only: what stands where its answers were, the outcome or the panel's line. */
+  answersReplacedBy?: ReactNode
 }) {
   const source = approval.source_label || undefined
   // A queue holds one card per call, so the verbs' names carry who asked and what the call does.
@@ -38,6 +46,9 @@ export function PendingApprovalCard({ approval, onDecide, busy, opensSource = fa
       sourceHref={opensSource ? sourceHref || (approval.session ? approvalDestination(approval).href : undefined) : undefined}
       subject={subject}
       busy={busy}
+      form={form}
+      tagEnd={tagEnd}
+      answersReplacedBy={answersReplacedBy}
       onAct={(_id, action) => onDecide(action === 'rejected' ? 'reject' : 'approve')}
     />
   )

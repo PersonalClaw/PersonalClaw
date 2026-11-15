@@ -1399,7 +1399,7 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // The cockpit's instant-paint seed, moved out of `CodeCockpitPage` with its state.
   'pages/code/cockpit/useCodeCockpit.ts': 1,
   'pages/companion/CompanionPage.tsx': 1,
-  'pages/dashboard/PinnedTiles.tsx': 2,
+  'pages/dashboard/PinnedTiles.tsx': 1,
   // A KEEP: the Discover tip under an empty state reads the catalogue for one optional hint, and a
   // failed read draws nothing on purpose, as an unread or empty one does. Nothing waits on it, so
   // there is no spinner to be eternal, and an error notice in an empty state would make the tip what

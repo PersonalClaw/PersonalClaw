@@ -75,8 +75,8 @@ export function roomApprovalOf(place: ApprovalPlace, roomId: string): boolean {
   return roomId !== '' && (place.room ?? '') === roomId
 }
 
-/** Where work no page answers is answered: its Inbox row (`InboxDetail`), which Home's To triage
- *  lists too. The row itself reads this to know it has no link to give. */
+/** Where work no page answers is answered: its Inbox row (`InboxDetail`), which Needs you's To
+ *  review lists too. The row itself reads this to know it has no link to give. */
 export const INBOX_HREF = '#/inbox'
 
 export interface ApprovalDestination {

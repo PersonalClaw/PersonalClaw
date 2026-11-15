@@ -230,11 +230,11 @@ describe('every list whose label states a total discloses its cap', () => {
     //
     // 🪤 THE RULE IS NARROWER THAN "EVERY WIDGET": disclose a residue only when the hidden items are
     // real, persistent things the user could otherwise reach — their own pins and the scheduled runs
-    // (open tasks were the third, until Home left tasks to their page). Each has a destination that
-    // lists them.
+    // (open tasks were a third, until Home left tasks to their page, and the Suggestions widget's
+    // list another, until Home stopped drawing it). Each has a destination that lists them.
     const widgets = join(SRC, 'pages/dashboard/widgets')
     const caps = cappedLists().filter((l) => l.rel.startsWith('pages/dashboard/widgets/'))
-    expect(caps.length, 'the widget caps must be found').toBeGreaterThanOrEqual(3)
+    expect(caps.length, 'the widget caps must be found').toBeGreaterThanOrEqual(2)
     const pins: Array<[string, RegExp]> = [
       ['pages/dashboard/widgets/ScheduleWidget.tsx', /<MoreRow total=\{visible\.length\} shown=\{6\} \/>/],
       ['pages/dashboard/widgets/PinnedArtifacts.tsx', /<MoreRow total=\{resolved\.length\} shown=\{6\} \/>/],
@@ -254,32 +254,6 @@ describe('every list whose label states a total discloses its cap', () => {
     expect(src, 'the residue is measured against what it shows').not.toMatch(
       /<MoreRow total=\{schedule\.length\}/,
     )
-  })
-
-  it('a GENERATED feed is deliberately left silent', () => {
-    // 🪤 THE ONE WIDGET EXCLUDED, and the reason is the rule above rather than convenience.
-    // `Suggestions` renders strings a backend generates from recent activity: there is no suggestions
-    // page, nothing persists, and the list is regenerated — so "… 12 more" would name items the user
-    // cannot reach and would recast a curated prompt list as a truncated inventory. Pinned so a later
-    // pass does not "finish the set".
-    //
-    // 🪤 THIS USED TO PIN `slice(0, 5)` AND THE 5 WAS NEVER THE POINT. Everything above is about
-    // DISCLOSURE — no `MoreRow` on a regenerated feed — and the assertion below is labelled "still
-    // capped", not "capped at five". The literal got baked in anyway, so when the cap moved to 6 to
-    // match the producer (the parser caps at `[:6]`, the shipped fallback list is exactly 6, and
-    // `ChatPage`'s `SuggestionChips` — the other consumer of this same endpoint — already rendered 6)
-    // this test reported a disclosure regression that had not happened.
-    //
-    // So it now asserts what it says: that a cap EXISTS. The number itself has a stricter owner than
-    // a literal here ever was — `pages/dashboard/suggestionCapMatchesProducer.test.ts` ties it to the
-    // producer's cap and to the other consumer, so 4, 5 or 7 all red there. The exclusion this test
-    // exists to protect is untouched and still fully enforced.
-    const src = strip(readSource(join(SRC, 'pages/dashboard/widgets/Suggestions.tsx')))
-    expect(src, 'still capped — the count is owned by suggestionCapMatchesProducer.test.ts').toMatch(
-      /items\.slice\(0, \d+\)/,
-    )
-    expect(src, 'and still silent, on purpose').not.toMatch(/MoreRow/)
-    expect(src, 'its own copy says it is a feed, which is why').toMatch(/they build from your activity/)
   })
 
   it('the folded work caps no list of tools', () => {

@@ -69,11 +69,14 @@ export const ORB_STATE_OF_PIP: Readonly<Record<ThreadPip, OrbState>> = Object.fr
 })
 
 /** Home's agent rows (`pages/dashboard/agents/agentDayModel.ts`'s row states), as the orb's still
- *  mark: an agent at work is working's rings, one that waits on the owner the clasp, one that failed
- *  done's mark with its ×, and an idle one the open ring. */
-export const ORB_STATE_OF_AGENT_ROW: Readonly<Record<'working' | 'waiting' | 'failed' | 'idle', OrbState>> = Object.freeze({
+ *  mark: an agent at work is working's rings, one held up thinking's (as a queued, retrying or
+ *  model-waiting phase is, `ORB_STATE_OF`), one that waits on the owner the clasp, one that failed or
+ *  a restart cut off done's mark with its ×, and an idle one the open ring. */
+export const ORB_STATE_OF_AGENT_ROW: Readonly<Record<'working' | 'blocked' | 'waiting' | 'failed' | 'interrupted' | 'idle', OrbState>> = Object.freeze({
   working: as('working', 'alive'),
+  blocked: as('thinking', 'alive'),
   waiting: as('waiting', 'alive'),
   failed: as('done', 'rest', { badge: 'error' }),
+  interrupted: as('done', 'rest', { badge: 'error' }),
   idle: as('ready', 'rest'),
 })

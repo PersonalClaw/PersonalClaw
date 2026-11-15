@@ -42,6 +42,11 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // subject moved: a confident "nothing waiting on you" is said only by the surface that read the
 // whole set, and only when no source of it went unread. So §1 and §2 now hold Home to that, §3
 // still holds the work state's one word, and §4 holds the tour to the group it points at.
+//
+// 🔑 AND THEN IT BECAME A PAGE (ATT PR 1). Needs you is its own page, `#/mission-control`
+// (`NeedsYouPage.tsx`), and Home is its Overview. The surface that reads the whole set is that
+// page, and ⌘⌥A, which reads the same one read, in the shell (`App.tsx`): those two are the only
+// places that say nothing waits.
 
 const SRC = join(process.cwd(), 'src')
 
@@ -73,8 +78,9 @@ const phraseSites = (phrase: string | RegExp) =>
     .map((abs) => abs.slice(SRC.length + 1))
     .sort()
 
-const home = () => codeOf(join(SRC, 'pages/dashboard/Home.tsx'))
-/** Home's cards and what Needs you says of a source it could not read, which a project's page
+const page = () => codeOf(join(SRC, 'pages/dashboard/NeedsYouPage.tsx'))
+const app = () => codeOf(join(SRC, 'app/App.tsx'))
+/** Needs you's cards and what it says of a source it could not read, which a project's page
  *  can draw too. */
 const cards = () => codeOf(join(SRC, 'pages/dashboard/NeedCards.tsx'))
 const needsRead = () => codeOf(join(SRC, 'lib/useNeedsYou.ts'))
@@ -83,12 +89,13 @@ const overview = () => codeOf(join(SRC, 'pages/dashboard/DashboardPage.tsx'))
 describe('§1 "nothing waiting on you" is said only by the surface that read the whole set', () => {
   it('Needs you is the waiting list, read whole, with the Inbox’s own asks after it', () => {
     expect(needsRead(), 'Needs you reads the one list of everything waiting').toMatch(/api\.waiting\(\)/)
-    expect(home(), 'Home draws Needs you from that read').toMatch(/useNeedsYou\(\)/)
+    expect(page(), 'the page draws Needs you from that read').toMatch(/useNeedsYou\(\)/)
+    expect(app(), '⌘⌥A goes by the same read').toMatch(/readNeedsYou\(\)/)
   })
 
   it('and its all-clear sentence is the only one, said only when no source went unread', () => {
-    const src = home()
-    expect(src).toMatch(/'Nothing is waiting on you\.'/)
+    const src = page()
+    expect(src).toMatch(/["']Nothing is waiting on you\.["']/)
     // The sentence for a list some source of which could not be read is a narrower one, said by
     // the one component that names the unread sources, and it can name a project, for a project's page.
     expect(src).toMatch(/<NeedsUnreadable unreadable=\{needs\.unreadable\}/)
@@ -98,13 +105,22 @@ describe('§1 "nothing waiting on you" is said only by the surface that read the
     expect(
       phraseSites(/nothing (is )?waiting on you/i).filter((rel) => rel.startsWith('pages/dashboard/')),
       'a dashboard surface that did not read the whole set claims nothing waits',
-    ).toEqual(['pages/dashboard/Home.tsx'])
+    ).toEqual(['pages/dashboard/NeedsYouPage.tsx'])
+    expect(
+      phraseSites(/nothing (is )?waiting on you/i).filter((rel) => rel.startsWith('app/')),
+      'the shell says it only for ⌘⌥A, from the whole read',
+    ).toEqual(['app/App.tsx'])
+    // ⌘⌥A says nothing waits only when every source was read: an unread one is said first.
+    expect(app()).toMatch(/unreadNeedsYou\(read\) \|\| 'Nothing is waiting on you\.'/)
   })
 })
 
 describe('§2 the group is named for what it holds', () => {
-  it('Home names the whole waiting list "Needs you"', () => {
-    expect(home()).toMatch(/'needs-you': 'Needs you'/)
+  it('the page that holds the whole waiting list is named "Needs you", and so is its palette row', () => {
+    // The name sits in the span that keeps it whole on a phone (`data-title-keep`), and is still all
+    // the title says.
+    expect(page()).toMatch(/<PageTitle>(?:<span [^>]*>)?Needs you(?:<\/span>)?<\/PageTitle>/)
+    expect(app()).toMatch(/id: 'go:mission-control', label: 'Needs you'/)
   })
 
   it('and the work state keeps its own word, owned by the registry', () => {
@@ -146,10 +162,11 @@ describe('§3 one wire value, one word', () => {
 })
 
 describe('§4 the tour describes the group it points at', () => {
-  it('names the group by its label, and no label Home no longer has', () => {
+  it('names the page by its name, and no label Home no longer has', () => {
     const tour = codeOf(join(SRC, 'app/onboarding/ProductTour.tsx'))
     const step = tour.slice(tour.indexOf("id: 'approvals'"))
-    expect(step.slice(0, 600)).toContain('"Needs you"')
+    expect(step.slice(0, 600)).toContain("route: 'mission-control'")
+    expect(step.slice(0, 600)).toContain('Needs you holds everything waiting on your answer')
     expect(step.slice(0, 600), 'the tour still quotes the retired card').not.toContain('"To triage"')
   })
 })

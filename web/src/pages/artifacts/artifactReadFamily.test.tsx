@@ -38,6 +38,8 @@ function mockApi(over: Record<string, unknown>) {
       artifacts: () => Promise.resolve(arts),
       pinnedArtifacts: () => Promise.resolve({ pins: [{ slug: 'a1', pinned_at: 1 }] }),
       artifactCollections: () => Promise.resolve([]),
+      // The tiles you keep on Home, which the pins' section says it is empty beside: none here.
+      dashboardViews: () => Promise.resolve([]),
       ...over,
     },
   }))

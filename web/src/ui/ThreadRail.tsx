@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Blocks, Code2, Edit3, Maximize2, Pin, Repeat, type LucideIcon } from 'lucide-react'
+import { Archive, Blocks, Code2, Edit3, Maximize2, MessageCircle, Pin, Repeat, type LucideIcon } from 'lucide-react'
 import type { Thread, ThreadKind, ThreadPip } from '../lib/useThreads'
 import type { PhaseFamily } from '../lib/workPhase'
 import { bindingLabel } from '../app/keymap'
 import { withWeight } from '../design/fontWeight'
 import { ORB_STATE_OF_PIP } from '../lib/orbState'
 import { startedByName, startedByTitle } from '../pages/chat/StartedByApp'
+import { cutMarkdownLine } from '../lib/cutMarkdown'
+import { previewLine } from '../lib/previewText'
 import { Button } from './Button'
 import { FilterMenu, type FilterSectionDef } from './FilterMenu'
 import { headerFilterLabel } from './HeaderFilter'
@@ -308,25 +310,31 @@ export function ThreadRail({
 
 /** One row of the list. Its title starts flush with the bar's rows (`px-s`, as New chat). A row's
  *  marks sit before its title in the kind icon's slot (a kind, a pin, an archive), an app's chat
- *  names the app at its end, and its state mark sits at its right end, so a mark pushes no title
- *  right and a row with no state keeps no room for one. */
+ *  names the app at its end and a channel's chat the channel ("From Telegram", the chat history's
+ *  words, `FromChannel`), and its state mark sits at its right end, so a mark pushes no title right
+ *  and a row with no state keeps no room for one. */
 function ThreadRow({ thread, selected, archivedMark, onOpen }: {
   thread: Thread; selected: boolean; archivedMark: boolean; onOpen: (route: string) => void
 }) {
   const pip = thread.pip ? PIP[thread.pip] : null
   const kind = KIND_MARK[thread.kind]
+  // A chat named by its first words is cut with "…": the cut is repaired, so no mark it left open
+  // reaches the row, its name or its tip, and the row reads as plain text.
+  const title = previewLine(cutMarkdownLine(thread.title, Infinity))
   const app = thread.startedBy ? startedByName(thread.startedBy) : ''
+  const channel = thread.channel ?? ''
   const said = [
-    kind ? `${kind.word}: ${thread.title}` : thread.title,
+    kind ? `${kind.word}: ${title}` : title,
     thread.pinned && 'pinned',
     archivedMark && 'archived',
     app && `started by ${app}`,
+    channel && `from ${channel}`,
   ].filter(Boolean).join(', ')
   const name = pip ? `${said}, ${pip.word}` : said
   // The row's tooltip, the app's own (`ui/Tooltip.tsx`), never the browser's: its name, the state's
   // word where it has a mark, and what the name lacks, an app's permissions and a helper's ask. Only
   // those last are its description, since the name says the rest.
-  const notes = [app && startedByTitle(app), thread.pipNote].filter(Boolean).join(' ')
+  const notes = [app && startedByTitle(app), channel && `This chat came in on ${channel}.`, thread.pipNote].filter(Boolean).join(' ')
   const tip = [said, pip && pip.word.charAt(0).toUpperCase() + pip.word.slice(1), notes].filter(Boolean).join(' — ')
   const marks: LucideIcon[] = [kind?.icon, thread.pinned ? Pin : undefined, archivedMark ? Archive : undefined]
     .filter((m): m is LucideIcon => !!m)
@@ -348,11 +356,17 @@ function ThreadRow({ thread, selected, archivedMark, onOpen }: {
         {marks.map((Mark, i) => (
           <Mark key={i} size={14} strokeWidth={2} aria-hidden data-row-mark className="relative shrink-0 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }} />
         ))}
-        <span className="relative min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words" style={{ zIndex: ROW_LABEL_Z }}>{thread.title}</span>
+        <span className="relative min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words" style={{ zIndex: ROW_LABEL_Z }}>{title}</span>
         {app && (
           <span data-type="caption" data-started-by className="relative inline-flex min-w-0 max-w-[40%] shrink items-center gap-0.5 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }}>
             <Blocks size={12} strokeWidth={2} aria-hidden className="shrink-0" />
             <span className="min-w-0 truncate">{app}</span>
+          </span>
+        )}
+        {channel && (
+          <span data-type="caption" data-from-channel className="relative inline-flex min-w-0 max-w-[40%] shrink items-center gap-0.5 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }}>
+            <MessageCircle size={12} strokeWidth={2} aria-hidden className="shrink-0" />
+            <span className="min-w-0 truncate">{`From ${channel}`}</span>
           </span>
         )}
         {pip && thread.pip && <RowMark pip={thread.pip} family={pip.family} />}

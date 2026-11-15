@@ -7,7 +7,7 @@ import {
   seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel, settleDom, settleEntranceAnimations, type SettleReport,
 } from './helpers'
 import { FIXED_CLOCK } from './fixedClock'
-import { AUDIT_VERIFIED, BOOT_ROOTS, FILE_ROOTS, LEARNING_WEEK, PROJECTS_LIST, SYSTEM_READING, answerStubbedRead, type StubbedRead } from './stubbedReads'
+import { AUDIT_VERIFIED, BOOT_ROOTS, FILE_ROOTS, LEARNING_WEEK, NEEDS_YOU_READS, PROJECTS_LIST, SYSTEM_READING, answerStubbedRead, type StubbedRead } from './stubbedReads'
 
 // ── Visual-regression baselines — every nav route × both themes ─────────────
 // This is the safety rail. Its baselines are made and compared against the pinned image's browser
@@ -92,6 +92,7 @@ test.use({ actionTimeout: 30_000 })
 const VISUAL_STUBS: Record<string, StubbedRead[]> = {
   files: [FILE_ROOTS],
   learning: [LEARNING_WEEK],
+  'mission-control': NEEDS_YOU_READS,
   projects: PROJECTS_LIST,
   settings: [AUDIT_VERIFIED, SYSTEM_READING],
 }
@@ -235,7 +236,7 @@ for (const { key, theme, width, height } of AGENTS_BAND_SHOTS) {
       await answerTheBandsReads(page)
       const settle = await gotoRoute(page, 'dashboard?view=overview', BUDGET)
       expect(settle.exhausted, `the overview never reached rest: ${settle.exhausted.join(', ')}`).toEqual([])
-      await expect(band(page).getByText('2 asks wait on you · 1 failed today')).toBeVisible()
+      await expect(band(page).locator('p', { hasText: /^2 need you · 1 running · 1 failed today$/ })).toBeVisible()
       await expect(band(page)).toHaveScreenshot(`${key}.png`, { animations: 'disabled' })
     })
   })

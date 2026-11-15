@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { withWeight } from '../../design/fontWeight'
 import { Check, Ban, ShieldCheck, ShieldAlert, ShieldQuestion, AlertTriangle } from 'lucide-react'
-import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
+import { ApprovalPrompt, type ApprovalForm } from '../../ui/ApprovalPrompt'
 import { Segmented } from '../../ui/Segmented'
 import { Checkbox } from '../../ui/forms'
+import { Tooltip } from '../../ui/Tooltip'
 import { approvalOutcome } from './approvalOutcome'
 import { confirmsOf, establishedFacets, mayDestroy, type BlastRadius } from './approvalMeta'
 import type { ApprovalSegment } from './chatTypes'
@@ -22,20 +23,32 @@ const RISK_META = {
   unchecked: { label: 'Not checked', icon: ShieldQuestion, color: 'var(--color-warn)' },
 } as const
 
-function RiskChip({ risk }: { risk: NonNullable<ApprovalSegment['risk']> }) {
+/** A chip's height: a floor its text sets, so text at 200% grows it rather than spilling out. */
+const CHIP_HEIGHT = 'min-h-[1.125rem] py-px'
+
+function RiskChip({ risk, themedTip = false }: { risk: NonNullable<ApprovalSegment['risk']>; themedTip?: boolean }) {
   const m = RISK_META[risk]
   if (!m) return null
   const Icon = m.icon
-  return (
+  const chip = (title?: string) => (
     // No aria-label: on a role-less span it is a PROHIBITED attribute (discarded, and axe
     // reports aria-prohibited-attr), and it was redundant anyway — the chip renders
     // `m.label` as visible text below, so the risk level is already in the a11y tree. The
-    // `title` stays as the hover affordance that spells out "Risk: …".
-    <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] shrink-0"
-      title={`Risk: ${m.label}`}
+    // `title` stays as the hover affordance that spells out "Risk: …" (the queue form's tip is
+    // the themed `Tooltip` instead).
+    <span data-type="caption" className={`inline-flex items-center gap-1 rounded-pill px-1.5 ${CHIP_HEIGHT} shrink-0`}
+      title={title}
       style={withWeight({ background: `color-mix(in srgb, ${m.color} 16%, transparent)`, color: m.color }, 600)}>
       <Icon size={11} aria-hidden /> {m.label}
     </span>
+  )
+  if (!themedTip) return chip(`Risk: ${m.label}`)
+  return (
+    <Tooltip text={`Risk: ${m.label}`} describes={false}>
+      {({ ref, onPointerEnter, onPointerLeave }) => (
+        <span ref={ref} onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave} className="inline-flex">{chip()}</span>
+      )}
+    </Tooltip>
   )
 }
 
@@ -48,18 +61,26 @@ function RiskChip({ risk }: { risk: NonNullable<ApprovalSegment['risk']> }) {
  *  list is NAMED, and its name says these are the facts established rather than a full
  *  audit, because the absence of a chip is not a guarantee about the tool.
  */
-function BlastRadiusChips({ radius }: { radius?: BlastRadius }) {
+function BlastRadiusChips({ radius, themedTip = false }: { radius?: BlastRadius; themedTip?: boolean }) {
   const facets = establishedFacets(radius)
   if (facets.length === 0) return null
+  const look = `inline-flex items-center rounded-pill bg-surface-high px-1.5 ${CHIP_HEIGHT} text-on-surface-var`
   return (
     <ul aria-label="What this can touch, as far as we can establish"
       className="mt-1.5 flex list-none flex-wrap items-center gap-1 p-0">
-      {facets.map((f) => (
-        <li key={f.key} title={f.detail}
-          data-type="caption" className="inline-flex items-center rounded-pill bg-surface-high px-1.5 h-[18px] text-on-surface-var">
+      {facets.map((f) => (themedTip && f.detail ? (
+        <Tooltip key={f.key} text={f.detail} describes={false}>
+          {({ ref, onPointerEnter, onPointerLeave }) => (
+            <li ref={ref} onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave} data-type="caption" className={look}>
+              {f.label}
+            </li>
+          )}
+        </Tooltip>
+      ) : (
+        <li key={f.key} title={themedTip ? undefined : f.detail} data-type="caption" className={look}>
           {f.label}
         </li>
-      ))}
+      )))}
     </ul>
   )
 }
@@ -212,7 +233,8 @@ function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean, alone: b
  *  the risk chip, the blast-radius chips, and the chat-scoped trust vocabulary.
  */
 export function ApprovalCard({
-  seg, onAct, scopeWords = 'chat', answers = 'scoped', source, sourceHref, subject, busy, density,
+  seg, onAct, scopeWords = 'chat', answers = 'scoped', source, sourceHref, subject, busy, density, form = 'chat', tagEnd,
+  answersReplacedBy,
 }: {
   seg: ApprovalSegment
   /** Returns the request when there is one: until it settles, a key press sends nothing more. */
@@ -233,7 +255,14 @@ export function ApprovalCard({
   /** An answer for this card is on its way. */
   busy?: boolean
   density?: ApprovalDensity
+  /** `queue`: one card of a list (`ApprovalPrompt`'s queue form), its chips' tips themed. */
+  form?: ApprovalForm
+  /** The queue form's tag row end: the card's project chip and its time left. */
+  tagEnd?: ReactNode
+  /** The queue form only: what stands where its answers were (`ApprovalPrompt`). */
+  answersReplacedBy?: ReactNode
 }) {
+  const queue = form === 'queue'
   // The narrowest scope is the initial one: a click on Allow with nothing else touched
   // grants once and remembers nothing. Broadening is always a deliberate act.
   const [scope, setScope] = useState<RememberScope>('once')
@@ -280,6 +309,9 @@ export function ApprovalCard({
       // another request drawn in the same place.
       key={seg.id}
       density={density}
+      form={form}
+      tagEnd={tagEnd}
+      answersReplacedBy={answersReplacedBy}
       // A segment built without the field (an older build's) fails closed (`confirmsOf`).
       confirms={seg.confirms ?? confirmsOf(undefined, seg.risk)}
       tool={seg.tool}
@@ -287,9 +319,9 @@ export function ApprovalCard({
       purpose={seg.purpose}
       source={source}
       sourceHref={sourceHref}
-      badge={seg.risk ? <RiskChip risk={seg.risk} /> : undefined}
+      badge={seg.risk ? <RiskChip risk={seg.risk} themedTip={queue} /> : undefined}
       meta={<>
-        <BlastRadiusChips radius={seg.blastRadius} />
+        <BlastRadiusChips radius={seg.blastRadius} themedTip={queue} />
         {seg.reach && <p data-type="caption" className="mt-xs text-on-surface-var">{seg.reach}</p>}
         {/* Who asked for the turn when it was not her, on every surface the call is asked on. */}
         {seg.askedFor && <p data-type="caption" className="mt-xs text-on-surface-var">{seg.askedFor}</p>}

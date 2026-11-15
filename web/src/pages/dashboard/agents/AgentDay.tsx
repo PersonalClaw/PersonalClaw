@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Users } from 'lucide-react'
 import { api, type AgentDayRead, type Loop, type SpawnedAgent, type UsageBudget } from '../../../lib/api'
 import { useQuery } from '../../../lib/data/useQuery'
 import { useNeedsYou } from '../../../lib/useNeedsYou'
 import { useAgentActivity } from '../../../lib/useAgentActivity'
 import { useChatSocket, type WsMessage } from '../../../lib/useChatSocket'
+import { useCutOff } from '../../../lib/useCutOff'
 import { Button } from '../../../ui/Button'
 import { MarkdownLine } from '../../../ui/MarkdownLine'
 import { ButtonLink } from '../../../ui/ButtonLink'
@@ -14,8 +15,10 @@ import { OrbMark } from '../../../ui/orb/OrbMark'
 import { ORB_STATE_OF_AGENT_ROW } from '../../../lib/orbState'
 import { TOUCH_TARGET } from '../../../ui/Toggle'
 import { fvs } from '../../../design/fontWeight'
+import { previewLine } from '../../../lib/previewText'
 import type { PhaseFamily } from '../../../lib/workPhase'
 import { SlotEmptyState } from '../widgets/kit'
+import { InlineLoadError } from '../../../ui/ListScaffold'
 import { Section } from '../Section'
 import { FOLD_MS, buildDay, clock, type DayRow, type DayView, type Mark, type Occurrence, type RowLine, type RowState } from './agentDayModel'
 
@@ -24,7 +27,13 @@ import { FOLD_MS, buildDay, clock, type DayRow, type DayView, type Mark, type Oc
 // A row per agent on a window around now (`agentDayModel.ts` holds every rule). Nothing moves: the
 // window steps once a minute, which only re-draws, so reduced motion needs nothing of its own. The
 // band reads again when the gateway rings that work changed, at most once every 30 seconds, so a
-// burst of rings makes one request. An ask is answered in Attention, never here: its row links there.
+// burst of rings makes one request. An ask is answered on Needs you, never here: its row's Answer
+// opens it there with its panel open.
+//
+// It is where running work shows: every live row of the running list, each of an agent's runs with
+// its own Open, one held up "Blocked" with the gateway's reason, and what a gateway restart cut off
+// "Interrupted". It draws whenever the running list answered: each other read it makes settles on
+// its own, and one that fails is named in a line of its own with Retry.
 //
 // What you act on comes first: the rows that wait on you or have failed today sit on top,
 // under a count of them, each on a ground of its state's colour (a tone, never a stripe: web/DESIGN.md's
@@ -40,28 +49,52 @@ const STEP_MS = 60_000
 export const READ_GAP_MS = 30_000
 /** How long a ring waits for the rest of its burst before the band reads. */
 const SETTLE_MS = 600
-const STATE_WORD: Record<RowState, string> = { waiting: 'Waiting on you', failed: 'Failed', working: 'Working', idle: 'Idle' }
-const FAMILY: Record<RowState, PhaseFamily> = { waiting: 'waiting', failed: 'blocked', working: 'active', idle: 'quiet' }
+const STATE_WORD: Record<RowState, string> = {
+  waiting: 'Waiting on you', failed: 'Failed', working: 'Working', blocked: 'Blocked', interrupted: 'Interrupted', idle: 'Idle',
+}
+// Red marks only work that failed, is held up or was cut off: working is the active family's rings.
+const FAMILY: Record<RowState, PhaseFamily> = {
+  waiting: 'waiting', failed: 'blocked', working: 'active', blocked: 'blocked', interrupted: 'blocked', idle: 'quiet',
+}
 
 interface DaySources {
-  day: AgentDayRead
+  day: AgentDayRead | null
   helpers: SpawnedAgent[]
   loops: Loop[]
   scheduled: Occurrence[]
   scheduledCut: string[]
   defaultAgent: string
+  /** What the reads that failed would have said, in words ("the schedule"). */
+  unread: string[]
 }
 
+/** The band's own reads, each settled on its own: one that fails leaves its part out and is named,
+ *  and the rest still draw. */
 async function readDay(): Promise<DaySources> {
   const now = Date.now()
-  const [day, helpers, loops, week, agents] = await Promise.all([
+  const [day, helpers, loops, week, agents] = await Promise.allSettled([
     api.agentsDay(new Date(now - 4 * 3600_000).toISOString(), new Date(now).toISOString()),
     api.spawnedAgents(),
     api.uLoops(),
     api.triggersWeek(new Date(now).toISOString(), 2),
     api.agents(),
   ])
-  return { day, helpers, loops, scheduled: week.occurrences, scheduledCut: week.truncated ?? [], defaultAgent: agents.default_agent }
+  const unread: string[] = []
+  const got = <T,>(r: PromiseSettledResult<T>, what: string): T | null => {
+    if (r.status === 'fulfilled') return r.value
+    unread.push(what)
+    return null
+  }
+  const w = got(week, 'the schedule')
+  return {
+    day: got(day, 'what your agents did'),
+    helpers: got(helpers, 'their helpers') ?? [],
+    loops: got(loops, 'the loops') ?? [],
+    scheduled: w?.occurrences ?? [],
+    scheduledCut: w?.truncated ?? [],
+    defaultAgent: got(agents, 'your agents’ names')?.default_agent ?? '',
+    unread,
+  }
 }
 
 /** The spend meter is read on its own: a band whose meter cannot be read still says what ran, and
@@ -117,31 +150,55 @@ export function AgentDay() {
   const meter = useQuery<UsageBudget>('dashboard:agent-day-spend', readBudget)
   const refreshMeter = meter.refresh
   const readAgain = useReadAgain(useCallback(() => { refresh(); refreshMeter() }, [refresh, refreshMeter]))
+  // What a restart cut off, told from the running list the feed reads. The feed reads the list
+  // again on a reconnect itself, so the cut asks for no read of its own.
+  const cut = useCutOff(feed.running ?? undefined, NO_READ, !!feed.error)
   const onMessage = useCallback((m: WsMessage) => {
     if (m.type === 'running_changed' || m.type === 'subagent_done') readAgain()
   }, [readAgain])
-  useChatSocket(onMessage, readAgain)
+  const { onReconnect: cutOnReconnect, onStatus } = cut
+  const onReconnect = useCallback(() => { readAgain(); cutOnReconnect() }, [readAgain, cutOnReconnect])
+  useChatSocket(onMessage, onReconnect, onStatus)
   const [filter, setFilter] = useState<Filter>('all')
+  // The asks the badge counts: what waits on your answer. Proposals and notes are Needs you's To
+  // review, which nothing runs and nothing is blocked on.
+  const asks = useMemo(() => needs.rows.filter((r) => r.origin === 'waiting'), [needs.rows])
 
   const view = useMemo(() => buildDay({
     now, narrow,
     defaultAgent: data?.defaultAgent ?? '',
     day: data?.day ?? null,
-    live: feed.entities,
-    asks: needs.rows,
+    live: feed.live,
+    cut: cut.interrupted,
+    asks,
     helpers: data?.helpers ?? [],
     loops: data?.loops ?? [],
     scheduled: data?.scheduled ?? [],
     scheduledCut: data?.scheduledCut ?? [],
-  }), [now, narrow, data, feed.entities, needs.rows])
+  }), [now, narrow, data, feed.live, cut.interrupted, asks])
 
-  const failed = error ?? feed.error ?? needs.error
+  // The band stands on the running list: without it, what runs is unknown. Any other read that
+  // fails is named, and what it would have drawn is left out.
+  const failed = !!feed.error && !feed.running
+  const unread = [
+    ...(error ? ['what your agents did'] : data?.unread ?? []),
+    ...(feed.error && feed.running ? ['what runs now'] : []),
+    ...(needs.error ? ['what waits on you'] : []),
+  ]
+  const retry = useCallback(() => { refresh(); feed.refresh(); needs.refresh() }, [refresh, feed, needs])
   // Until Needs you has answered, the band can't say what waits on you, so it says nothing yet.
-  const settling = (loading && !data) || feed.loading || needs.loading
+  const settling = (loading && !data && !error) || feed.loading || (needs.loading && !needs.error)
   return (
-    <AgentDayView view={view} failed={!!failed} settling={settling} narrow={narrow}
-      budget={meter.error ? 'unknown' : meter.data ?? null} filter={filter} onFilter={setFilter} />
+    <AgentDayView view={view} failed={failed} settling={settling} narrow={narrow} unread={unread} onRetry={retry}
+      reconnecting={cut.reconnecting} budget={meter.error ? 'unknown' : meter.data ?? null} filter={filter} onFilter={setFilter} />
   )
+}
+
+const NO_READ = () => {}
+
+/** Words in a list: 'a', 'a and b', 'a, b and c'. */
+function joined(words: string[]): string {
+  return words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
 }
 
 /** What it has spent on its own today against the daily cap (the meter counts no chat turn). Nothing
@@ -154,11 +211,16 @@ function spendLine(b: UsageBudget | 'unknown' | null): string {
   return b.max_dollars_per_day ? `On its own today: ${spent} of $${b.max_dollars_per_day}` : `On its own today: ${spent}`
 }
 
-export function AgentDayView({ view, failed, settling, narrow, budget, filter, onFilter }: {
+export function AgentDayView({ view, failed, settling, narrow, unread = [], onRetry, reconnecting = false, budget, filter, onFilter }: {
   view: DayView
   failed: boolean
   settling: boolean
   narrow: boolean
+  /** The reads that failed, in words: named in a line of their own, with Retry. */
+  unread?: string[]
+  onRetry?: () => void
+  /** The socket is down: the rows stay, and a line says they may be out of date until it is back. */
+  reconnecting?: boolean
   budget: UsageBudget | 'unknown' | null
   filter: Filter
   onFilter: (f: Filter) => void
@@ -176,7 +238,9 @@ export function AgentDayView({ view, failed, settling, narrow, budget, filter, o
           { key: 'all', label: 'All', count: all.filter((r) => r.key !== 'scheduled').length },
           { key: 'waiting', label: 'Waiting on you', count: view.waitingCount },
           { key: 'working', label: 'Working', count: count('working') },
+          { key: 'blocked', label: 'Blocked', count: count('blocked') },
           { key: 'failed', label: 'Failed', count: count('failed') },
+          { key: 'interrupted', label: 'Interrupted', count: count('interrupted') },
           { key: 'idle', label: 'Idle', count: count('idle') },
         ],
       }]} />
@@ -197,6 +261,13 @@ export function AgentDayView({ view, failed, settling, narrow, budget, filter, o
     body = (
       <div className="flex min-w-0 flex-col gap-s rounded-lg bg-surface-low px-m py-s">
         {head && <p data-type="label-m" className={`text-on-surface ${INSET}`} style={fvs(600)}>{head}</p>}
+        {/* A read that failed leaves its part out, and says so in the shared one-line way. */}
+        {unread.length > 0 && <div className={INSET}><InlineLoadError what={joined(unread)} onRetry={onRetry} /></div>}
+        {reconnecting && (
+          <p role="status" data-type="body-s" className={`text-on-surface-low ${INSET}`}>
+            Reconnecting… what shows here may be out of date.
+          </p>
+        )}
         <Axis view={view} lifted={lifted.length > 0} />
         {view.empty && (
           <p data-type="body-m" className="text-on-surface-var">
@@ -223,11 +294,13 @@ export function AgentDayView({ view, failed, settling, narrow, budget, filter, o
             {view.cut === 1 ? 'The oldest block' : `The ${view.cut} oldest blocks`} of work in these hours {view.cut === 1 ? 'is' : 'are'} not drawn.
           </p>
         )}
-        {view.unattributed > 0 && (
+        {view.unattributed > 0 && view.waitingCount > view.unattributed && (
+          // Beside the asks a row holds, the ones no row holds. With none on a row, the head's
+          // count is all of them, and its link already opens them.
           <p data-type="body-s" className="text-on-surface-var">
-            {/* "more" only beside an ask a row holds: with none, these are all there is. */}
-            {`${view.unattributed} ${view.waitingCount > view.unattributed ? 'more ' : ''}${view.unattributed === 1 ? 'ask' : 'asks'}`} in{' '}
-            <TextLink href="#/dashboard?view=attention" ink="emphasis" className={`inline-flex items-center ${TOUCH_TARGET}`}>Attention</TextLink>
+            <TextLink href="#/mission-control" ink="emphasis" className={`inline-flex items-center ${TOUCH_TARGET}`}>
+              {needYou(view.unattributed, 'more ')}
+            </TextLink>
           </p>
         )}
       </div>
@@ -385,19 +458,37 @@ function Track({ row, view, line = 'bg-outline-variant/35', ground = 'var(--colo
 }
 
 function Row({ row, view }: { row: DayRow; view: DayView }) {
+  // An agent with two runs or more names each, its first on the row's line: each has its own Open.
+  const runs = row.runs.length > 1 ? row.runs : []
   return (
     <li className={`grid min-w-0 grid-cols-[minmax(0,12rem)_1fr] items-center gap-m border-t border-outline-variant/30 py-s first:border-t-0 max-sm:grid-cols-1 ${INSET}`}
       aria-label={row.sentence}>
       <NameCell row={row} />
       <div className="relative min-w-0">
         <Track row={row} view={view} />
-        <p data-type="body-s" className="flex min-w-0 overflow-hidden text-on-surface-var max-sm:flex-wrap">
+        <p data-type="body-s" className="flex min-w-0 items-center overflow-hidden text-on-surface-var max-sm:flex-wrap">
           {/* The Scheduled row's line names each schedule whole, so it wraps at every width. */}
           <span className={row.key === 'scheduled' ? 'min-w-0' : 'min-w-0 truncate max-sm:whitespace-normal'}><RowLineText line={row.line} /></span>
           <FailedAt row={row} />
+          {runs[0] && <RunOpen run={runs[0]} />}
         </p>
+        {runs.slice(1).map((run, i) => (
+          <p key={i} data-type="body-s" className="flex min-w-0 items-center overflow-hidden text-on-surface-var max-sm:flex-wrap">
+            <span className="min-w-0 truncate max-sm:whitespace-normal"><MarkdownLine text={run.title} /></span>
+            <RunOpen run={run} />
+          </p>
+        ))}
       </div>
     </li>
+  )
+}
+
+/** A run's own Open, named for it, after its line. Nothing where the run opens no page. */
+function RunOpen({ run }: { run: { title: string; link: string } }) {
+  if (!run.link) return null
+  return (
+    <TextLink href={run.link} ink="emphasis" aria-label={`Open ${previewLine(run.title)}`}
+      className={`ml-s inline-flex shrink-0 items-center ${TOUCH_TARGET}`}>Open</TextLink>
   )
 }
 
@@ -419,17 +510,33 @@ function FailedAt({ row }: { row: DayRow }) {
 
 const isLifted = (r: DayRow) => r.key !== 'scheduled' && (r.state === 'waiting' || r.state === 'failed')
 
-/** The count over the band: '2 asks wait on you · 1 failed today'. The asks are the ones Attention
- *  counts, those on no row too (a proposal, a note), so the two always agree; the failures are the
- *  rows that failed today, whatever they do now, as each one's sentence says. Whatever the filter
- *  shows, as the Show menu's counts are. '' when neither. */
-function liftedHead(rows: DayRow[], view: DayView): string {
+/** "1 needs you", "2 need you", and "1 more needs you" after *more*, as a project's pulse and the
+ *  buddy count them (`pulseWords`, `buddy/copy.ts`). */
+function needYou(n: number, more = ''): string {
+  return `${n} ${more}${n === 1 ? 'needs' : 'need'} you`
+}
+
+/** The count over the band: '2 need you · 3 running · 1 blocked · 1 failed today · 1 cut off by a
+ *  restart', each part at 0 left out. The asks are the ones the badge counts, those on no row too,
+ *  so the two always agree, and they link to Needs you; the runs are live runs, moving and held up;
+ *  the failures are the rows that failed today, whatever they do now, as each one's sentence says.
+ *  Whatever the filter shows, as the Show menu's counts are. Null when every part is 0. */
+function liftedHead(rows: DayRow[], view: DayView): ReactNode {
   const asks = view.waitingCount
   const failed = rows.filter((r) => r.key !== 'scheduled' && r.failed !== '').length
-  return [
-    asks ? `${asks} ${asks === 1 ? 'ask waits' : 'asks wait'} on you` : '',
+  const rest = [
+    view.running ? `${view.running} running` : '',
+    view.blocked ? `${view.blocked} blocked` : '',
     failed ? `${failed} failed today` : '',
-  ].filter(Boolean).join(' · ')
+    view.interrupted ? `${view.interrupted} cut off by a restart` : '',
+  ].filter(Boolean)
+  if (!asks && rest.length === 0) return null
+  return (
+    <>
+      {asks ? <TextLink href="#/mission-control" ink="emphasis" className={`inline-flex items-center ${TOUCH_TARGET}`}>{needYou(asks)}</TextLink> : null}
+      {`${asks && rest.length ? ' · ' : ''}${rest.join(' · ')}`}
+    </>
+  )
 }
 
 /** A lifted row's ground, in its state's colour: 9% stays inside the ink-contrast budget `tokens.css`
@@ -455,11 +562,12 @@ function LiftedRow({ row, view }: { row: DayRow; view: DayView }) {
             {row.asked && <span className="shrink-0 whitespace-pre text-on-surface-var">{` · asked ${row.asked} ago`}</span>}
             <FailedAt row={row} />
           </p>
-          {row.attention && (
-            // Each row's link opens its own ask, so each is named for it, its visible words first.
-            <ButtonLink href={row.attention} variant="tonal" size="sm" className={TOUCH_TARGET}
-              ariaLabel={`Answer in Attention: ${row.name}’s ${row.asks > 1 ? `first of ${row.asks} asks` : 'ask'}`}>
-              Answer in Attention
+          {row.answer && (
+            // Each row's link opens its own ask in its panel, so each is named for it, its visible
+            // words first.
+            <ButtonLink href={row.answer} variant="tonal" size="sm" className={TOUCH_TARGET}
+              ariaLabel={`Answer: ${row.name}’s ${row.asks > 1 ? `first of ${row.asks} asks` : 'ask'}`}>
+              Answer
             </ButtonLink>
           )}
         </div>
@@ -476,6 +584,8 @@ function MarkView({ mark, view, room, nameAt }: { mark: Mark; view: DayView; roo
       return <span className={`${base} h-2 rounded-pill`} style={{ ...style, background: 'color-mix(in oklab, var(--color-state-quiet) 38%, var(--color-surface))' }} />
     case 'working':
       return <span className={`${base} h-3 rounded-pill`} style={{ ...style, background: 'color-mix(in oklab, var(--color-state-active) 60%, var(--color-surface))' }} />
+    case 'blocked':
+      return <span data-mark="blocked" className={`${base} h-3 rounded-pill`} style={{ ...style, background: 'color-mix(in oklab, var(--color-state-blocked) 60%, var(--color-surface))' }} />
     case 'waiting':
       return <span className={`${base} h-3 rounded-pill`} style={{ ...style, background: 'var(--color-state-waiting)' }} />
     case 'failed':

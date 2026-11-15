@@ -2,7 +2,7 @@
 
 The buddy is a new view of signals PersonalClaw already has, but three of them do not exist in one
 place yet. Each is built once, for every surface that tells the owner what is happening: the chat's
-thinking indicator, Mission Control, the tray, the menu-bar app, the phone companion, notifications
+thinking indicator, Needs you, the tray, the menu-bar app, the phone companion, notifications
 and the buddy.
 
 ## 1. One phase contract
@@ -70,7 +70,7 @@ a plan review and a bridge confirmation. One list route and one change event. Ea
   rules, so every surface applies one policy.
 
 The list keeps one order, consequence then age, and every surface keeps it: the buddy's
-one-at-a-time alert queue, Home's Needs you, the tray and the phone. The compact and phone
+one-at-a-time alert queue, Needs you, the tray and the phone. The compact and phone
 compositions show it with text, never by the orb's colour or pose. An item that is answered
 or expires leaves the list, and no surface keeps an action that could still send it.
 

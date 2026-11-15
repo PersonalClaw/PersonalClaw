@@ -12,8 +12,10 @@
  *  has to enumerate every control type and silently misses the CONDITIONAL ones, e.g. a
  *  delete button that only exists in an `armed` state.
  *
- *  The wrapper keeps `onClick`, because every nested control already stops its own
- *  propagation; this button's own click bubbles up to it.
+ *  The wrapper keeps `onClick`, and this button's own click bubbles up to it. A nested control's
+ *  click bubbles there too (a `Button` stops nothing), so a wrapper whose controls must keep their
+ *  own clicks asks where a click began (`openable` in `pages/dashboard/RunningLane`): this button is
+ *  marked `data-row-hit-target` so it can tell the two apart.
  *
  *  Usage — the wrapper needs `relative` and, for the focus ring, the `has-` variants:
  *
@@ -60,6 +62,7 @@ export function RowHitTarget({ label, selected = false }: {
       type="button"
       aria-label={label}
       aria-current={selected ? 'true' : undefined}
+      data-row-hit-target=""
       // `-z-10` keeps it UNDER the row content, so the row's own controls keep their own
       // clicks with no z-index needed on any child. Empty space still activates the row.
       className="absolute inset-0 -z-10 cursor-pointer outline-none"

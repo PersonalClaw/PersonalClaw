@@ -78,10 +78,21 @@ export interface AgentActivityEntity {
   agent?: string
   /** When the running work began, ISO. Absent when the source does not say. */
   since?: string
+  /** What a running row says it is doing, in the gateway's words (`Waiting for a model slot`), and
+   *  since when it has been in its phase, ISO. Absent for an entity no running row holds. */
+  line?: string
+  phaseSince?: string
 }
 
 export interface AgentActivityFeed {
   entities: AgentActivityEntity[]
+  /** Every row of live work, one entity each, as the running list holds it: never cut to the
+   *  scene's budget, so a host that lists what runs (Home's band) lists all of it, whatever the
+   *  background holds. */
+  live: AgentActivityEntity[]
+  /** The running list as last read, or null until it answers: what a host tells a restart's cut
+   *  from (`useCutOff`). */
+  running: RunningList | null
   /** How many entities the fold dropped to stay under `MAX_ENTITIES`. A world that
    *  silently renders 64 of 300 is lying about the scale of what is running. */
   truncated: number
@@ -185,6 +196,8 @@ export function foldRunning(
       work: row.work,
       agent: typeof row.agent === 'string' ? row.agent : '',
       ...(row.started_at ? { since: row.started_at } : {}),
+      ...(typeof row.line === 'string' && row.line ? { line: row.line } : {}),
+      ...(row.since ? { phaseSince: row.since } : {}),
     })
   }
   return out
@@ -267,21 +280,29 @@ const SIGNAL_DEBOUNCE = 600
 /** Live agent activity, folded from the running list and three public GETs behind it, and
  *  refreshed by the existing WS envelopes AS SIGNALS ONLY. A world consumes this and nothing else — see the
  *  contract doc. Safe to call from more than one host: each call opens its own
- *  socket, so prefer one host per view. */
+ *  socket, so prefer one host per view.
+ *
+ *  Each read settles on its own: the chat list, the loop list and the approvals are background, so
+ *  one that fails keeps its last answer (none at first) and the live rows still draw. `error` is
+ *  the running list's own failure, the one read the feed cannot stand without. */
 export function useAgentActivity(): AgentActivityFeed {
-  const [sources, setSources] = useState<AgentActivitySources | null>(null)
+  const [sources, setSources] = useState<Partial<AgentActivitySources>>({})
   const [error, setError] = useState<unknown>(null)
   const alive = useRef(true)
   useEffect(() => () => { alive.current = false }, [])
 
   const load = useCallback(() => {
-    Promise.all([
-      api.running(), api.chatSessions(), api.uLoops(), api.approvals(),
-    ]).then(([running, sessions, loops, approvals]) => {
-      if (!alive.current) return
-      setSources({ running, sessions, loops, approvals })
-      setError(null)
-    }).catch((e) => { if (alive.current) setError(e) })
+    const settle = <K extends keyof AgentActivitySources>(key: K, read: Promise<AgentActivitySources[K]>) =>
+      read.then((value) => { if (alive.current) setSources((was) => ({ ...was, [key]: value })) })
+    // The running list's own failure is recorded, and the rows it last read stay.
+    settle('running', api.running())
+      .then(() => { if (alive.current) setError(null) })
+      .catch((e) => { if (alive.current) setError(e) })
+    // The background's own failure keeps what it last read: the scene loses a quiet chat, never a
+    // live row.
+    settle('sessions', api.chatSessions()).catch(() => {})
+    settle('loops', api.uLoops()).catch(() => {})
+    settle('approvals', api.approvals()).catch(() => {})
   }, [])
 
   // Coalesce the signal storm. The gateway already rings `running_changed` at most once per
@@ -311,16 +332,22 @@ export function useAgentActivity(): AgentActivityFeed {
   useChatSocket(onMessage, load)  // reopened after a drop → full catch-up refetch
   useVisiblePoll(load, SAFETY_POLL)
 
-  const folded = useMemo(
-    () => sources ? foldAgentActivity(sources) : { entities: [], truncated: 0 },
-    [sources],
+  const running = sources.running ?? null
+  const folded = useMemo(() => running ? foldAgentActivity({
+    running, sessions: sources.sessions ?? [], loops: sources.loops ?? [], approvals: sources.approvals ?? [],
+  }) : { entities: [], truncated: 0 }, [running, sources.sessions, sources.loops, sources.approvals])
+  const live = useMemo(
+    () => (running ? foldRunning({ running: running.running ?? [], finished: [] }, sources.approvals ?? [], sources.loops ?? []) : []),
+    [running, sources.approvals, sources.loops],
   )
 
   return {
     entities: folded.entities,
+    live,
+    running,
     truncated: folded.truncated,
     error,
-    loading: sources === null && error === null,
+    loading: running === null && error === null,
     refresh: load,
   }
 }

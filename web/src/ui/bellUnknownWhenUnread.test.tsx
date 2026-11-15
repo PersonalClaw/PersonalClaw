@@ -35,6 +35,7 @@ vi.mock('../app/appSdk', async (importOriginal) => ({
 }))
 
 import { NotificationBell } from './NotificationBell'
+import { tipOf } from '../test/tipOf'
 
 const boom = () => Promise.reject(new Error('gateway down'))
 const UNKNOWN = 'Notifications, unread — couldn’t be read'
@@ -48,7 +49,7 @@ describe('a failed read is unknown on the bell, never zero', () => {
     read = boom
     render(<NotificationBell navigate={() => {}} />)
     await waitFor(() => expect(bell().getAttribute('aria-label')).toBe(UNKNOWN))
-    expect(bell().getAttribute('title')).toBe('unread — couldn’t be read')
+    expect(tipOf(bell())).toBe('unread — couldn’t be read')
     const mark = within(bell()).getByText('—')
     // Muted, not the accent: we do not know anything waits, only that we could not look.
     expect(mark.getAttribute('class') ?? '').toMatch(/\btext-on-surface-low\b/)

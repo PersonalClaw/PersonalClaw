@@ -11,8 +11,8 @@ file and the app differ.
 
 | Route | Opens | In the sidebar | Palette | Linked from |
 |---|---|---|---|---|
-| `#/dashboard` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 8 more |
-| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 16 more |
+| `#/dashboard` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 10 more |
+| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 15 more |
 | `#/projects` | Projects | Projects | Projects | `app/paletteProjectRows.tsx`, `pages/code/CodeSection.tsx`, `pages/tasks/TasksSection.tsx`, `ui/ProjectChip.tsx` |
 | `#/library` | Library | Library | Library | none |
 | `#/knowledge` | Knowledge | Library, its Knowledge tab | Knowledge | `lib/rowSubject.ts`, `pages/discover/DiscoverPage.tsx`, `pages/loop/LoopComposer.tsx`, `pages/schedule/ScheduleDetail.tsx` and 5 more |
@@ -32,15 +32,15 @@ file and the app differ.
 | `#/prompts` | Prompts | Capabilities, its Prompts tab | Prompts | `pages/tasks/TasksListPage.tsx`, `ui/forms.tsx` |
 | `#/workflows` | Workflows | Automations, its Workflows tab | Workflows | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/data/keys.ts` and 10 more |
 | `#/apps` | Apps | Capabilities, its Apps tab | Apps; Store | `pages/settings/AppsPanel.tsx`, `pages/settings/SearchPanel.tsx`, `pages/settings/SenderTrustPanel.tsx`, `pages/settings/VoiceProfilesSection.tsx` and 1 more |
-| `#/settings` | Settings | Settings | Open Settings (Action); Settings | `app/Onboarding.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/openDuringSetup.ts`, `design/tokenLintRule.ts` and 35 more |
+| `#/settings` | Settings | Settings | Open Settings (Action); Settings | `app/Onboarding.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/openDuringSetup.ts`, `design/tokenLintRule.ts` and 36 more |
 | `#/notifications` | Inbox | Platform › Inbox | Inbox; Notifications | `app/approvalDestination.ts`, `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/NeedCards.tsx` and 6 more |
 | `#/discover` | Discover | not in the sidebar | Discover | `pages/dashboard/widgets/Discover.tsx` |
-| `#/mission-control` | Mission Control | not in the sidebar | Mission Control | `pages/buddy/cardFixtures.ts`, `pages/buddy/liveCard.ts`, `pages/buddy/stageCard.ts`, `pages/dashboard/Home.tsx` |
+| `#/mission-control` | Needs you | not in the sidebar | Needs you | `pages/buddy/cardFixtures.ts`, `pages/buddy/liveCard.ts`, `pages/buddy/stageCard.ts`, `pages/dashboard/DashboardPage.tsx` and 5 more |
 | `#/loop` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
 | `#/loops` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
 | `#/code` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
 | `#/app` | app | not in the sidebar | none | `pages/apps/AppFrame.tsx`, `pages/apps/AppHostPage.tsx` |
-| `#/onboarding` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 8 more |
+| `#/onboarding` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 10 more |
 | `#/companion` | Companion | Companion, in the phone's drawer only | none | `app/nativePush.ts`, `app/personality.tsx`, `lib/data/keys.ts`, `lib/nativeNotifications.ts` and 2 more |
 | `#/buddy` | buddy | not in the sidebar | none | none |
 

@@ -1,7 +1,7 @@
 /** Which attention lane an item belongs to, as a pure function over the wire types.
  *
- *  Mission Control renders four lanes (Needs-approval / Your-turn / Working / Idle). This module
- *  owns the RULE; the component owns the pixels. Split out deliberately: lane assignment is the part
+ *  The lanes (Needs-approval / Your-turn / Working / Idle) that the sidebar's pips and Needs you's
+ *  sources read. This module owns the RULE; the components own the pixels. Split out deliberately: lane assignment is the part
  *  most likely to be subtly wrong, and a wrong lane is invisible in a screenshot — everything still
  *  renders, just in the wrong column, with counts that read as authoritative.
  *
@@ -40,7 +40,7 @@
  *     stays valid; pass nothing and Working is honestly empty rather than filled by a timestamp
  *     heuristic. **`laneFor` never returns `'working'`** — no single inbox item can prove it, and
  *     `laneFor` only sees inbox items. The thread rail reads its pips from this (`useThreads`);
- *     Mission Control's Working lane is the running list instead (`GET /api/running`, `RunningLane`),
+ *     Home's Your agents today is the running list instead (`GET /api/running`, `useAgentActivity`),
  *     which holds every kind of live work, and hands this none of it.
  *
  *  ── THE TWO `null`s, AND WHY UNKNOWN IS NOT `idle` ─────────────────────────────────────────────

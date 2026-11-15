@@ -1022,10 +1022,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # YOLO / auto-approve is process-global trust state owned by
         # personalclaw.trust_mode (single source of truth). The state object
         # delegates to it and registers a callback to clear per-session approval
-        # policies when YOLO turns off. See enable_yolo / is_yolo_active below.
-        from personalclaw import trust_mode as _trust
-
-        _trust.register_on_disable(self._on_yolo_disabled)
+        # policies when YOLO turns off, and rings your pages when it moves (`ws_state`).
+        self._listen_to_trust_mode()
         self.no_crons: bool = False  # --no-crons flag: cron execution disabled
         # The gateway's dispatch for an automation's fire, attached at boot: a webhook's fire and
         # a view's refresh run through it as every fire does (`gateway._fire_store_trigger`).

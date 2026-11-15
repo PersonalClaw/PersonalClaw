@@ -195,8 +195,9 @@ THINKING_OUTPUT_CAP = "thinking-output-cap"
 #: ``{"waiting": [item, …], "unreadable": [kind, …]}``, each item ``{id, kind, work, session, brief,
 #: consequence, risk, asked_at, age_secs, expires_at, current, interrupt, answer, route}``, by
 #: consequence and then age (``personalclaw.waiting``), and a ``waiting_changed`` frame carrying
-#: nothing says the list moved. An app whose manifest declares ``/api/waiting`` reads all of it,
-#: with nothing that answers an item, and its socket hears the frame. A core without it has no such
+#: nothing says the list moved. An app whose manifest declares ``/api/waiting`` reads all of it but
+#: the asks only your Inbox raised (``waiting.INBOX_KINDS``: your Inbox is yours alone), with
+#: nothing that answers an item, and its socket hears the frame. A core without it has no such
 #: route, so an app that reads the list there reads nothing. Since 0.3.9 each item also carries
 #: ``project_id`` and ``loop_kind`` (``personalclaw.work_project``); a core that offers the name but
 #: was built before serves neither, so an app reads a missing one as ``""``: no project, no loop.

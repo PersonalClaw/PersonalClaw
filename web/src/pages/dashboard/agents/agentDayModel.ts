@@ -1,7 +1,9 @@
 import type { AgentDayBlock, AgentDayRead, Loop, SpawnedAgent, WeekOccurrence } from '../../../lib/api'
 import type { NeedsYouRow } from '../../../lib/needsYou'
 import type { AgentActivityEntity } from '../../../lib/useAgentActivity'
+import type { CutRow } from '../../../lib/useCutOff'
 import { previewLine } from '../../../lib/previewText'
+import { INTERRUPTED_LINE, wordAndLine } from '../../../lib/runningRows'
 
 // ── Home's "Your agents today": the band's model ─────────────────────────────────────────────────
 //
@@ -9,10 +11,12 @@ import { previewLine } from '../../../lib/previewText'
 // narrow screen). Pure, so every rule here is tested without a gateway:
 //
 // - what an agent DID is its model calls, folded by the gateway (`GET /api/agents/day`);
-// - what it is DOING is the live feed (`useAgentActivity`);
-// - what WAITS on you is Needs you, the read Attention counts, so the two agree at every moment.
-//   An agent with an open ask is waiting on you, never working;
-// - what FAILED today is its helpers' and loops' ends;
+// - what it is DOING is every row of the running list (`useAgentActivity`'s `live`, never cut to the
+//   scene's budget): each of its runs, one held up "Blocked" with the gateway's reason;
+// - what WAITS on you is Needs you's first group, the asks the badge counts, so the two agree at
+//   every moment. An agent with an open ask is waiting on you, never working;
+// - what FAILED today is its helpers' and loops' ends, and what a gateway restart cut off
+//   (`useCutOff`) is "Interrupted";
 // - what COMES NEXT is the schedule. A run whose agent the schedule does not name sits on its own
 //   "Scheduled" row, never guessed onto an agent.
 //
@@ -23,8 +27,8 @@ import { previewLine } from '../../../lib/previewText'
  *  schedule says will not fire carries why in `suppressed_by`. */
 export type Occurrence = Pick<WeekOccurrence, 'trigger_id' | 'trigger_name' | 'at'> & { suppressed_by?: string }
 
-export type RowState = 'waiting' | 'failed' | 'working' | 'idle'
-export type MarkKind = 'done' | 'working' | 'waiting' | 'failed' | 'scheduled' | 'tail'
+export type RowState = 'waiting' | 'failed' | 'working' | 'blocked' | 'interrupted' | 'idle'
+export type MarkKind = 'done' | 'working' | 'blocked' | 'waiting' | 'failed' | 'scheduled' | 'tail'
 /** A mark on a row's track, in epoch ms. A failure and a scheduled run are a moment (`end === start`);
  *  a schedule whose runs come too close to name each one is a strip, from its first run to its last. */
 export interface Mark { kind: MarkKind; start: number; end: number; label: string }
@@ -43,8 +47,8 @@ export interface DayRow {
    *  "Last ran 17:40") is all `lead`, and so is an approval's title, a tool's name or the command
    *  itself, which is drawn as text. */
   line: RowLine
-  /** The Attention address that answers its ask, '' when it asks nothing. */
-  attention: string
+  /** The Needs you address that answers its first ask with its panel open, '' when it asks nothing. */
+  answer: string
   asks: number
   /** What failed today and when ('Failed at 16:12: …'), '' when nothing did. A row that waits on
    *  you or works now can have failed earlier: its sentence says so, its mark shows it when it fell
@@ -59,14 +63,20 @@ export interface DayRow {
   before: string
   /** The next run after the window ('21:30', 'tomorrow 07:30'), '' when none. */
   after: string
-  /** Where its work opens, '' when nothing does. */
+  /** Where its work opens, '' when nothing does: the run its line names, when it runs. */
   link: string
+  /** Each run it has live now, in the order the list holds them, the first the one its line names:
+   *  a row with two or more draws each with its own Open. */
+  runs: RunLink[]
   /** The row as one sentence: its text for a screen reader. */
   sentence: string
   latest: number
-  /** Its first ask's place in Attention's order, so waiting rows read in the order Attention does. */
+  /** Its first ask's place in Needs you's order, so waiting rows read in the order Needs you does. */
   rank: number
 }
+
+/** One live run on a row: its title, as an agent wrote it, and where it opens. */
+export interface RunLink { title: string; link: string }
 
 /** A row's line: our words around the one part an agent wrote. */
 export interface RowLine { lead: string; content: string; tail: string }
@@ -80,10 +90,14 @@ export interface DayView {
   idle: DayRow[]
   /** 'window' when nothing ran in it, 'today' when nothing ran today at all. */
   empty: '' | 'window' | 'today'
-  /** What waits on you: exactly the rows Attention counts. */
+  /** What waits on you: exactly the asks Needs you's first group holds, and the badge counts. */
   waitingCount: number
-  /** Asks no agent's row holds (a skill proposal, a note, an ask of work nothing runs now). */
+  /** Asks no agent's row holds (an ask of work nothing runs now, a browse grant). */
   unattributed: number
+  /** How many runs are live and moving, how many are held up, and how many a restart cut off. */
+  running: number
+  blocked: number
+  interrupted: number
   /** Blocks the day read left out to keep to its cap, the oldest: the track says less than ran. */
   cut: number
 }
@@ -95,6 +109,8 @@ export interface DayInput {
   defaultAgent: string
   day: AgentDayRead | null
   live: AgentActivityEntity[]
+  /** What a gateway restart cut off, and when (`useCutOff`). */
+  cut?: CutRow[]
   asks: NeedsYouRow[]
   helpers: SpawnedAgent[]
   loops: Loop[]
@@ -109,8 +125,10 @@ const HOUR = 3600_000
 const SCHEDULED = 'scheduled'
 /** What the Scheduled row says of whose runs they are: the schedule names no agent for them. */
 export const AGENT_NOT_NAMED = 'agent not named'
-const STATE_WORD: Record<RowState, string> = { waiting: 'waiting on you', failed: 'failed', working: 'working', idle: 'idle' }
-const ORDER: Record<RowState, number> = { waiting: 0, failed: 1, working: 2, idle: 3 }
+const STATE_WORD: Record<RowState, string> = {
+  waiting: 'waiting on you', failed: 'failed', working: 'working', blocked: 'blocked', interrupted: 'interrupted', idle: 'idle',
+}
+const ORDER: Record<RowState, number> = { waiting: 0, failed: 1, working: 2, blocked: 3, interrupted: 4, idle: 5 }
 
 /** A time as its clock reads it on this machine: '18:20'. */
 export function clock(ms: number): string {
@@ -224,8 +242,10 @@ interface Draft {
   key: string
   marks: Mark[]
   asks: NeedsYouRow[]
-  working: AgentActivityEntity | null
+  /** Its live runs: moving, then held up. */
+  runs: AgentActivityEntity[]
   failure: { at: number; why: string } | null
+  cut: number | null
   before: number | null
   link: string
   latest: number
@@ -245,7 +265,7 @@ export function buildDay(input: DayInput): DayView {
   const draft = (key: string): Draft => {
     let d = drafts.get(key)
     if (!d) {
-      d = { key, marks: [], asks: [], working: null, failure: null, before: null, link: '', latest: 0, tail: '', rank: Infinity }
+      d = { key, marks: [], asks: [], runs: [], failure: null, cut: null, before: null, link: '', latest: 0, tail: '', rank: Infinity }
       drafts.set(key, d)
     }
     return d
@@ -269,18 +289,28 @@ export function buildDay(input: DayInput): DayView {
     }
   }
 
-  // What it is doing: the live feed. A working agent's work runs from when it began to now.
+  // What it is doing: every live row. Work runs from when it began to now; held up, it is blocked
+  // from when its phase began. The row's name opens the run its line names, its first.
   const byWork = new Map<string, AgentActivityEntity>()
   const bySession = new Map<string, AgentActivityEntity>()
   for (const e of input.live) {
     if (e.work) byWork.set(e.work, e)
     if (e.refs.session) bySession.set(e.refs.session, e)
-    if (e.state !== 'working' && e.state !== 'blocked') continue
+  }
+  const moving = input.live.filter((e) => e.state === 'working')
+  const held = input.live.filter((e) => e.state === 'blocked')
+  for (const e of [...moving, ...held]) {
     const d = draft(named(e.agent))
-    d.working = d.working ?? e
-    d.link = e.refs.link || d.link
-    const began = ms(e.since)
-    d.marks.push({ kind: 'working', start: Math.max(began ?? now, since), end: now, label: '' })
+    d.runs.push(e)
+    if (d.runs.length === 1) d.link = e.refs.link || d.link
+    const began = Math.max(ms(e.since) ?? now, since)
+    if (e.state === 'blocked') {
+      const from = Math.min(now, Math.max(ms(e.phaseSince) ?? began, began))
+      if (from > began) d.marks.push({ kind: 'working', start: began, end: from, label: '' })
+      d.marks.push({ kind: 'blocked', start: from, end: now, label: '' })
+    } else {
+      d.marks.push({ kind: 'working', start: began, end: now, label: '' })
+    }
     touch(d, now)
     // A running loop with a cycle budget runs on past now, to a cycle, never to a guessed time.
     if (e.kind === 'loop' && e.work) {
@@ -290,6 +320,15 @@ export function buildDay(input: DayInput): DayView {
         d.marks.push({ kind: 'tail', start: now, end: until, label: d.tail })
       }
     }
+  }
+
+  // What a restart cut off: the last cut of each agent's work, while it is kept.
+  for (const c of input.cut ?? []) {
+    const d = draft(named(c.row.agent))
+    if (d.cut === null || c.at > d.cut) d.cut = c.at
+    d.link = d.link || c.row.route || ''
+    touch(d, c.at)
+    if (c.at >= since && c.at <= now) d.marks.push({ kind: 'failed', start: c.at, end: c.at, label: '' })
   }
 
   // What waits on you: Needs you's rows, each on the row of the agent whose work asks it.
@@ -302,7 +341,7 @@ export function buildDay(input: DayInput): DayView {
     d.rank = Math.min(d.rank, index)
     const asked = row.origin === 'waiting' ? ms(row.item.asked_at) : null
     d.marks.push({ kind: 'waiting', start: Math.max(asked ?? now, since), end: now, label: '' })
-    d.link = owner.refs.link || d.link
+    if (d.runs.length === 0) d.link = owner.refs.link || d.link
     touch(d, now)
   }
 
@@ -364,7 +403,11 @@ export function buildDay(input: DayInput): DayView {
   const rows: DayRow[] = []
   for (const d of drafts.values()) {
     const scheduled = d.key === SCHEDULED
-    const state: RowState = d.asks.length > 0 ? 'waiting' : d.working ? 'working' : d.failure ? 'failed' : 'idle'
+    const working = d.runs.find((e) => e.state === 'working')
+    const blocked = d.runs.find((e) => e.state === 'blocked')
+    const state: RowState = d.asks.length > 0 ? 'waiting' : working ? 'working' : blocked ? 'blocked'
+      : d.failure ? 'failed' : d.cut !== null ? 'interrupted' : 'idle'
+    const cutLead = d.cut !== null ? `Interrupted at ${clock(d.cut)}: ` : ''
     const after = scheduled && nextAfter ? whenNext(nextAfter.at, now) : ''
     const before = d.before !== null ? clock(d.before) : ''
     const ask = d.asks[0]
@@ -389,10 +432,17 @@ export function buildDay(input: DayInput): DayView {
       line = ask.origin === 'waiting' && ask.item.kind === 'approval'
         ? { lead: ask.title, content: '', tail: more }
         : { lead: '', content: ask.title, tail: more }
-    } else if (d.working) {
-      line = { lead: '', content: d.working.title, tail: '' }
+    } else if (working || blocked) {
+      // Its first run, held up or moving; any more are said after it, each drawn with its Open.
+      const first = d.runs[0]
+      const more = d.runs.length > 1 ? ` · and ${d.runs.length - 1} more` : ''
+      line = first.state === 'blocked' && !working
+        ? { lead: wordAndLine('Blocked', first.line ?? ''), content: '', tail: more }
+        : { lead: '', content: first.title, tail: more }
     } else if (d.failure) {
       line = { lead: failedLead, content: d.failure.why, tail: '' }
+    } else if (d.cut !== null) {
+      line = { lead: `${cutLead}${INTERRUPTED_LINE}`, content: '', tail: '' }
     } else {
       const last = d.marks.filter((m) => m.kind === 'done').reduce((t, m) => Math.max(t, m.end), d.before ?? 0)
       line = { lead: last ? `Last ran ${clock(last)}` : '', content: '', tail: '' }
@@ -406,7 +456,9 @@ export function buildDay(input: DayInput): DayView {
     const asked = askedAt !== null ? ago(now - askedAt) : ''
     const parts = [`${name}, ${scheduled ? AGENT_NOT_NAMED : STATE_WORD[state]}: ${plainSay || 'nothing to say'}.`]
     if (asked) parts.push(`Asked ${asked} ago.`)
+    if (d.runs.length > 1) parts.push(`Also ${d.runs.slice(1).map((e) => previewLine(e.title)).join(', ')}.`)
     if (failed && say !== failed) parts.push(`${failedLead}${previewLine(d.failure?.why ?? '')}.`)
+    if (d.cut !== null && state !== 'interrupted') parts.push(`${cutLead}${INTERRUPTED_LINE}`)
     if (d.tail) parts.push(`${d.tail}.`)
     if (before && !saysBefore) parts.push(`Earlier today ${before}.`)
     // The run after the window is in the line when two or fewer fall in it, and said after them when
@@ -421,7 +473,7 @@ export function buildDay(input: DayInput): DayView {
       marks: d.marks.sort((a, b) => a.start - b.start),
       say,
       line,
-      attention: ask ? `#/dashboard?view=attention&open=${encodeURIComponent(ask.key)}` : '',
+      answer: ask ? `#/mission-control?open=${encodeURIComponent(ask.key)}` : '',
       asks: d.asks.length,
       failed,
       failedAt: d.failure ? clock(d.failure.at) : '',
@@ -429,6 +481,7 @@ export function buildDay(input: DayInput): DayView {
       before,
       after,
       link: d.link,
+      runs: d.runs.map((e) => ({ title: e.title, link: e.refs.link })),
       sentence: parts.join(' '),
       latest: d.latest,
       rank: d.rank,
@@ -452,6 +505,9 @@ export function buildDay(input: DayInput): DayView {
     empty: ranInWindow ? '' : ranToday ? 'window' : 'today',
     waitingCount: input.asks.length,
     unattributed,
+    running: moving.length,
+    blocked: held.length,
+    interrupted: (input.cut ?? []).length,
     cut: input.day?.cut ?? 0,
   }
 }

@@ -129,19 +129,21 @@ test.describe('the keymap, in the built app', () => {
     await expect(page).toHaveURL(/#\/chat\/e2e-newest$/)
   })
 
-  test('⌘⌥A goes to the oldest chat that needs you', async ({ page }) => {
+  test('⌘⌥A goes to the first ask in Needs you\'s order, the oldest as the gateway serves it', async ({ page }) => {
     await page.route('**/api/inbox/open', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }))
+    // `GET /api/waiting` serves the oldest first among asks alike (`waiting.read`), and ⌘⌥A follows
+    // the order it is served in.
     await stubApprovals(page, [
-      approvalRow({ id: 'e2e-ap-new', request_id: 'e2e-ap-new', session: 'e2e-later', ts: 200 }),
       approvalRow({ id: 'e2e-ap-old', request_id: 'e2e-ap-old', session: 'e2e-first', ts: 100 }),
+      approvalRow({ id: 'e2e-ap-new', request_id: 'e2e-ap-new', session: 'e2e-later', ts: 200 }),
     ])
     await gotoRoute(page, 'dashboard')
     await page.keyboard.press(`${MOD}+Alt+A`)
     await expect(page).toHaveURL(/#\/chat\/e2e-first$/)
   })
 
-  test('⌘⌥A takes an approval no page answers to the Inbox, which answers it', async ({ page }) => {
+  test('⌘⌥A opens an approval no page answers on Needs you, with its panel, where it is answered', async ({ page }) => {
     await page.route('**/api/inbox/open', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }))
     await stubApprovals(page, [
@@ -149,7 +151,8 @@ test.describe('the keymap, in the built app', () => {
     ])
     await gotoRoute(page, 'dashboard')
     await page.keyboard.press(`${MOD}+Alt+A`)
-    await expect(page).toHaveURL(/#\/inbox$/)
+    await expect(page).toHaveURL(/#\/mission-control\?open=waiting%3Aapproval%3Ae2e-ap-hook$/)
+    await expect(page.getByRole('region', { name: 'task_create' })).toBeVisible()
   })
 
   test('⇧Esc marks every chat as read, once, and its mark clears', async ({ page }) => {
@@ -186,6 +189,62 @@ test.describe('the keymap, in the built app', () => {
     await composer.focus()
     await page.keyboard.press('ArrowUp')
     await expect(composer).toContainText('Say your scripted line for the keyboard test.')
+  })
+})
+
+test.describe("Needs you's list", () => {
+  /** Three approvals, each in its own chat, so the list has cards to move between. */
+  const three = () => [1, 2, 3].map((n) => approvalRow({ id: `e2e-ap-${n}`, request_id: `e2e-ap-${n}`, tool: `task_create_${n}`, session: `e2e-keys-${n}` }))
+  /** The card the focus is on, by its key. */
+  const focusedKey = (page: Page) => page.evaluate(() => document.activeElement?.closest('[data-need-key]')?.getAttribute('data-need-key') ?? '')
+
+  test('Allow answers its card and opens nothing, and the list stays where it is', async ({ page }) => {
+    const decisions = await stubApprovals(page, [approvalRow()])
+    await gotoRoute(page, 'mission-control')
+    await card(page, 'task_create').getByRole('button', { name: /^Allow/ }).click()
+    await expect.poll(() => decisions.length).toBe(1)
+    await expect(page).toHaveURL(/#\/mission-control$/)
+    await expect(page.getByRole('region', { name: 'task_create' })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Needs you' })).toBeVisible()
+  })
+
+  test('↑↓ move between cards, Enter opens one, and Escape closes it with the focus back on its card', async ({ page }) => {
+    // One column of cards, so ↓ is the next card (in columns it is the one below, `needsYouKeys`).
+    await page.setViewportSize({ width: 900, height: 900 })
+    await stubApprovals(page, three())
+    await gotoRoute(page, 'mission-control')
+    const first = page.getByRole('button', { name: /^Show the details of task_create_1/ })
+    await first.focus()
+    await page.keyboard.press('ArrowDown')
+    await expect.poll(() => focusedKey(page)).toBe('waiting:approval:e2e-ap-2')
+    await page.keyboard.press('End')
+    await expect.poll(() => focusedKey(page)).toBe('waiting:approval:e2e-ap-3')
+    await page.keyboard.press('ArrowUp')
+    await expect.poll(() => focusedKey(page)).toBe('waiting:approval:e2e-ap-2')
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(/open=waiting%3Aapproval%3Ae2e-ap-2/)
+    const pane = page.getByRole('region', { name: 'task_create_2' })
+    await expect(pane).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(pane).toHaveCount(0)
+    await expect.poll(() => focusedKey(page)).toBe('waiting:approval:e2e-ap-2')
+  })
+
+  test('with the panel open, ↓ moves the selection, and one Back closes the panel', async ({ page }) => {
+    await stubApprovals(page, three())
+    await gotoRoute(page, 'mission-control')
+    // The card's own target lies under its content, which takes the pointer: Enter on it opens.
+    await page.getByRole('button', { name: /^Show the details of task_create_1/ }).focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('region', { name: 'task_create_1' })).toBeVisible()
+    await page.getByRole('button', { name: /^Show the details of task_create_1/ }).focus()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByRole('region', { name: 'task_create_2' })).toBeVisible()
+    await expect(page).toHaveURL(/open=waiting%3Aapproval%3Ae2e-ap-2/)
+    // The selection replaced its entry, so one Back closes the panel.
+    await page.goBack()
+    await expect(page).toHaveURL(/#\/mission-control$/)
+    await expect(page.getByRole('region', { name: /^task_create_/ })).toHaveCount(0)
   })
 })
 
@@ -232,7 +291,9 @@ test.describe('the approval key', () => {
     await expect(ask.getByText(/It deletes files\./)).toBeVisible()
     await page.waitForTimeout(300)
     expect(decisions).toHaveLength(0)
+    // Yes answers a key only once it has held the focus for the quiet second (`InlineConfirm`).
     await ask.getByRole('button', { name: /Yes, run it/ }).focus()
+    await page.waitForTimeout(1_100)
     await page.keyboard.press(`${MOD}+Enter`)
     await expect.poll(() => decisions.length).toBe(1)
   })
@@ -265,6 +326,8 @@ test.describe('the approval key', () => {
       await expect(ask.getByText(/It deletes files\./)).toBeVisible()
       await page.waitForTimeout(300)
       expect(decisions).toHaveLength(0)
+      // Yes answers only a press begun after it has been in view and quiet for a second.
+      await page.waitForTimeout(1_100)
       await ask.getByRole('button', { name: /Yes, run it/ }).click()
       await expect.poll(() => decisions.length).toBe(1)
     })

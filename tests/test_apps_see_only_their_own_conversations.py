@@ -1008,7 +1008,10 @@ async def _each_frame_reaches_the_apps_it_reached_before_but_work_no_chat_starte
         for f in EVERY_FRAME
         if f not in CONVERSATION_LIST_FRAMES and f not in INBOX_ITEM_FRAMES and not _has_app_view(f)
     ]
-    assert {"work_phase", "chat_chunk", "approval", "session_title", "refresh"} <= set(frames)
+    # `refresh` has an app view of its own (the kinds only your pages hear are cut from it), read
+    # in test_yolo_rings_only_your_own_pages.py.
+    assert {"work_phase", "chat_chunk", "approval", "session_title"} <= set(frames)
+    assert "refresh" not in frames and _has_app_view("refresh")
 
     def heard_before(app: str, frame: str, named: Any) -> bool:
         if frame not in declared[app]:
