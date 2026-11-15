@@ -10,11 +10,16 @@ import { NeedsYouHarness, gateItem, waitingItem, waitingList } from '../../test/
 // An ask's panel never draws its card again. The pane's header is the card's tag row and its
 // heading the ask's headline, so the body holds the ask's own lines, where it came from, its facts
 // and one way out, and its answers in the decide bar at its foot. A hosted approval announces
-// nothing (no alert), draws no header row or "From …" line, and draws its command once.
+// nothing (no alert), draws no header row or "From …" line, and draws its command once. A loop's
+// merge or conflict shows its work, wrapping in place; its verbs stay in the bar, but for Resume.
 
 const waiting = vi.fn()
 const resumeWorkflowRun = vi.fn()
 const answerChatQuestion = vi.fn()
+const uLoopMergeReview = vi.fn()
+const uLoopConflictReview = vi.fn()
+const uLoopAction = vi.fn()
+const uLoopConflict = vi.fn()
 
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -28,6 +33,10 @@ vi.mock('../../lib/api', async (orig) => ({
     chatSessionDetail: () => Promise.resolve({ key: 'chat-1', title: '', run_state: 'idle', messages: [] }),
     resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
     answerChatQuestion: (...a: unknown[]) => answerChatQuestion(...a),
+    uLoopMergeReview: (...a: unknown[]) => uLoopMergeReview(...a),
+    uLoopConflictReview: (...a: unknown[]) => uLoopConflictReview(...a),
+    uLoopAction: (...a: unknown[]) => uLoopAction(...a),
+    uLoopConflict: (...a: unknown[]) => uLoopConflict(...a),
   },
 }))
 vi.mock('../../lib/useChatSocket', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useChatSocket: () => {} }))
@@ -159,5 +168,82 @@ describe('a run’s form gate is answered in its panel', () => {
     await userEvent.click(within(p).getByRole('button', { name: /Submit/ }))
     await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: { version: '1.2.0' }, resume_token: 'tok-9' }))
     expect(await within(p).findByText('Answered. The run is moving again.')).toBeInTheDocument()
+  })
+  it('a refused answer says so on the card, and nothing is left unhandled', async () => {
+    resumeWorkflowRun.mockRejectedValue(new Error('the gateway is restarting'))
+    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'form', prompt: 'Fill in the release', fields: [{ name: 'version', type: 'text', label: 'Version' }] })]))
+    render(<NeedsYouHarness query={{ open: 'waiting:gate:run-77:gate.push:1' }} />)
+    const p = await pane()
+    await userEvent.type(await within(p).findByRole('textbox', { name: 'Version' }), '1.2.0')
+    await userEvent.click(within(p).getByRole('button', { name: /Submit/ }))
+    expect(await within(p).findByText(/the gateway is restarting/)).toBeInTheDocument()
+  })
+})
+
+const DIFF = ['--- a/README.md', '+++ b/README.md', '@@ -1,2 +1,2 @@', '-[docs](old)', '+[docs](new)'].join('\n')
+const loopAsk = (brief: Record<string, unknown>, takes: string[]) => waitingItem({
+  id: 'loop_question:l1', kind: 'loop_question', work: 'loop:l1', session: '', consequence: 'changes',
+  brief: { name: 'Docs', question: 'Merge the finished task into main?', ...brief },
+  answer: { method: 'POST', path: `/api/loops/l1/${takes.includes('redo') ? 'conflict' : 'merge'}`, takes, body: {} }, route: '#/loops/l1',
+})
+/** The hosted form *attr* names, once the pane draws it. */
+const hostedIn = (p: HTMLElement, attr: string) => waitFor(() => {
+  const el = p.querySelector<HTMLElement>(`[${attr}="hosted"]`)
+  expect(el).not.toBeNull()
+  return el!
+})
+const TASK = { task_id: 't1', title: 'Fix README links', branch: 'task/t1', tip: 'tip1', commits: ['a1 Fix the links'], stat: ' README.md | 2 +-', diff: DIFF }
+
+describe('a loop’s merge or conflict shows its work in the panel', () => {
+  it('the merge’s review, hosted: its commits and its diff, wrapping and open, with Merge only in the bar', async () => {
+    uLoopMergeReview.mockResolvedValue({ into: 'main', cut: false, tasks: [TASK] })
+    waiting.mockResolvedValue(waitingList([loopAsk({ merge: { into: 'main', tasks: [{ task_id: 't1', title: 'Fix README links', branch: 'task/t1', tip: 'tip1' }] } }, ['confirm'])]))
+    render(<NeedsYouHarness query={{ open: 'waiting:loop_question:l1' }} />)
+    const p = await pane()
+    const review = await hostedIn(p, 'data-merge-form')
+    expect(await within(review).findByText('a1 Fix the links')).toBeInTheDocument()
+    expect(review.querySelector('details')!.open).toBe(true)
+    const diff = within(review).getByLabelText('Changes of Fix README links')
+    expect(diff.getAttribute('tabindex')).toBeNull()
+    expect(diff.className).toContain('whitespace-pre-wrap')
+    expect(within(review).getByLabelText('Files Fix README links changes').getAttribute('tabindex')).toBeNull()
+    // No region inside the pane, and one Merge: the bar's, which reads the work again first.
+    expect(within(p).queryAllByRole('region')).toEqual([])
+    expect(within(review).queryByRole('button', { name: /Merge into main/ })).toBeNull()
+    const bar = p.querySelector('[data-decide-bar]') as HTMLElement
+    expect(within(bar).getByRole('button', { name: /^Merge into main: / })).toBeInTheDocument()
+  })
+
+  it('the conflict’s review, hosted: its work, and Resume beside it; Redo and Drop only in the bar', async () => {
+    uLoopConflictReview.mockResolvedValue({ into: 'main', files: ['README.md'], cut: false, task: { ...TASK, path: '/w/t1' } })
+    uLoopAction.mockResolvedValue({ ok: true })
+    waiting.mockResolvedValue(waitingList([loopAsk({ question: 'Conflicts', conflict: { task_id: 't1', title: 'Fix README links', branch: 'task/t1', tip: 'tip1', into: 'main', files: ['README.md'] } }, ['redo', 'drop'])]))
+    render(<NeedsYouHarness query={{ open: 'waiting:loop_question:l1' }} />)
+    const p = await pane()
+    const review = await hostedIn(p, 'data-conflict-form')
+    expect(await within(review).findByText('a1 Fix the links')).toBeInTheDocument()
+    expect(within(p).queryAllByRole('region')).toEqual([])
+    expect(within(review).queryByRole('button', { name: /Redo|Drop/ })).toBeNull()
+    const bar = p.querySelector('[data-decide-bar]') as HTMLElement
+    expect(within(bar).getByRole('button', { name: /^Redo: / })).toBeInTheDocument()
+    expect(within(bar).getByRole('button', { name: /^Drop: / })).toBeInTheDocument()
+    // Resume says how it went on the card, and goes once it has.
+    await userEvent.click(within(review).getByRole('button', { name: /Resume/ }))
+    await waitFor(() => expect(uLoopAction).toHaveBeenCalledWith('l1', 'resume'))
+    expect(await within(p).findByText('Resumed. The loop merges it, or asks again if it still conflicts.')).toBeInTheDocument()
+    expect(within(review).queryByRole('button', { name: /Resume/ })).toBeNull()
+    expect(uLoopAction).toHaveBeenCalledTimes(1)
+  })
+
+  it('a Resume refused says so on the card and keeps Resume to try again', async () => {
+    uLoopConflictReview.mockResolvedValue({ into: 'main', files: ['README.md'], cut: false, task: { ...TASK, path: '/w/t1' } })
+    uLoopAction.mockRejectedValue(new Error('the gateway is restarting'))
+    waiting.mockResolvedValue(waitingList([loopAsk({ question: 'Conflicts', conflict: { task_id: 't1', title: 'Fix README links', branch: 'task/t1', tip: 'tip1', into: 'main', files: ['README.md'] } }, ['redo', 'drop'])]))
+    render(<NeedsYouHarness query={{ open: 'waiting:loop_question:l1' }} />)
+    const p = await pane()
+    const review = await hostedIn(p, 'data-conflict-form')
+    await userEvent.click(await within(review).findByRole('button', { name: /Resume/ }))
+    expect(await within(p).findByText(/the gateway is restarting/)).toBeInTheDocument()
+    expect(within(review).getByRole('button', { name: /Resume/ })).toBeEnabled()
   })
 })

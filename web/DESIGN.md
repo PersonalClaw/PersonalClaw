@@ -269,7 +269,7 @@ Controls are pill-shaped and tonal; every interactive component has default, hov
 ### Detail panel (Needs you)
 - **The thing itself, never the card again:** the pane's header is the card's tag row and its heading the headline, wrapping in full. The body is plain sections under `Eyebrow as="h3"`, each drawn only with content: what it proposes or asks, why (a model's words attributed, "The agent says: …"), where it came from (up to when it was proposed), its facts, and one way out named for where it goes.
 - **Nothing scrolls inside it:** a block sits one surface step down and folds in place past 40 lines; a diff wraps (`UnifiedDiff wrap`), ink only.
-- **The decide bar** is the body's last part: what Accept does, then the verbs (a primary only for an install or apply). It sticks to the pane's foot while the pane is 32rem tall or more, and the pane's bottom fade then lies on its top edge. A hosted approval keeps its own Allow and Deny and takes no second bar.
+- **The decide bar** is the body's last part: what Accept does, then the verbs (a primary only for an install or apply). It sticks to the pane's foot while the pane is 32rem tall or more, and the pane's bottom fade then lies on its top edge. A hosted approval keeps its own Allow and Deny and takes no second bar. A loop's merge or conflict shows its work above the bar, open and wrapping; Merge, Redo and Drop stay in the bar, which reads the work again first, and a conflict's Resume sits beside the work it resumes.
 - **After a decision** the panel stays on the item with its outcome, and Next ask opens the next one that still waits.
 
 ### Inputs / Fields

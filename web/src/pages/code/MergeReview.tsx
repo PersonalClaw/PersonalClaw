@@ -13,10 +13,13 @@ import { reportActionFailure } from '../../app/reportingWrite'
  *  what would land — each task's commits and its diff against your branch. Merge approves it at
  *  exactly the commits shown; the loop then merges them and carries on. Work that moved after you
  *  read it is not merged on that approval: the review is read again. */
-export function MergeReview({ loopId, waiting, onMerged }: {
+export function MergeReview({ loopId, waiting, onMerged, hosted = false }: {
   loopId: string
   waiting: LoopMergeWaiting
   onMerged: () => void
+  /** In Needs you's panel: the review alone, no frame or region of its own; its Merge is the
+   *  panel's decide bar, which reads the work again and asks once more. */
+  hosted?: boolean
 }) {
   const [review, setReview] = useState<LoopMergeReview | null>(null)
   const [loadErr, setLoadErr] = useState('')
@@ -44,8 +47,9 @@ export function MergeReview({ loopId, waiting, onMerged }: {
   const into = review?.into || waiting.into
   const count = waiting.tasks.length
   return (
-    <section role="region" aria-label={`Work waiting to merge into ${into}`} data-type="body-s"
-      className="mb-s rounded-lg border border-outline-variant bg-surface-container p-m">
+    <section role={hosted ? undefined : 'region'} aria-label={hosted ? undefined : `Work waiting to merge into ${into}`} data-type="body-s"
+      data-merge-form={hosted ? 'hosted' : undefined}
+      className={hosted ? 'min-w-0' : 'mb-s rounded-lg border border-outline-variant bg-surface-container p-m'}>
       <div className="mb-xs inline-flex items-center gap-xs" style={withWeight({ color: 'var(--color-info)' }, 550)}>
         <GitMerge size={14} /> {count === 1 ? 'A task’s work is' : `${count} tasks’ work is`} ready to merge into {into}
       </div>
@@ -67,16 +71,16 @@ export function MergeReview({ loopId, waiting, onMerged }: {
         <p data-type="caption" className="mt-s text-on-surface-low">Reading the changes…</p>
       ) : (
         <div className="mt-s flex flex-col gap-s">
-          {review.tasks.map((t) => <TaskChanges key={t.task_id} {...t} />)}
+          {review.tasks.map((t) => <TaskChanges key={t.task_id} {...t} wrap={hosted} open={hosted && review.tasks.length === 1} />)}
           {review.cut && (
             <p data-type="caption" className="text-on-surface-low">The diff is longer than one review shows; the rest is on the branches above.</p>
           )}
-          <div className="flex justify-end">
+          {hosted ? null : <div className="flex justify-end">
             <Button variant="tonal" size="sm" onClick={merge} loading={busy} loadingLabel="Merging…"
               disabled={review.tasks.length === 0} disabledReason="Nothing to merge">
               <GitMerge size={14} /> Merge into {into}
             </Button>
-          </div>
+          </div>}
         </div>
       )}
     </section>
@@ -86,14 +90,19 @@ export function MergeReview({ loopId, waiting, onMerged }: {
 /** One task's unmerged work, as every review of it shows it — a waiting merge's here, and the
  *  work an ended run kept (`KeptWork`): its branch, its commits, the files it changes and its diff
  *  against your branch, the same text git shows. */
-export function TaskChanges({ task_id, title, branch, commits, stat, diff, summary }: {
+export function TaskChanges({ task_id, title, branch, commits, stat, diff, summary, wrap = false, open = false }: {
   task_id: string; title: string; branch: string; commits: string[]; stat: string; diff: string
   /** What the row is called where the task is already named above it (`KeptWork`). */
   summary?: string
+  /** Where a panel holds it (Needs you), nothing scrolls inside it: its files and its diff wrap,
+   *  and take no tab stop. */
+  wrap?: boolean
+  /** Open from the start, where it is the only work shown. */
+  open?: boolean
 }) {
   const name = title || task_id
   return (
-    <details className="rounded-md bg-surface p-s">
+    <details open={open || undefined} className="rounded-md bg-surface p-s">
       <summary className="cursor-pointer text-on-surface">
         {summary || name} <span data-type="caption" className="text-on-surface-low">· {branch} · {commits.length} {commits.length === 1 ? 'commit' : 'commits'}</span>
       </summary>
@@ -103,10 +112,14 @@ export function TaskChanges({ task_id, title, branch, commits, stat, diff, summa
         </ul>
       )}
       {stat && (
-        <pre tabIndex={0} aria-label={`Files ${name} changes`} data-type="caption"
-          className="mt-xs overflow-x-auto font-mono text-on-surface-low">{stat}</pre>
+        <pre tabIndex={wrap ? undefined : 0} aria-label={`Files ${name} changes`} data-type="caption"
+          className={`mt-xs font-mono text-on-surface-low ${wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'overflow-x-auto'}`}>{stat}</pre>
       )}
-      <UnifiedDiff patch={diff || '(no changes)'} label={`Changes of ${name}`} className="mt-xs max-h-[40vh] overflow-auto font-mono leading-snug" />
+      {wrap ? (
+        <div className="mt-xs min-w-0"><UnifiedDiff wrap patch={diff || '(no changes)'} label={`Changes of ${name}`} /></div>
+      ) : (
+        <UnifiedDiff patch={diff || '(no changes)'} label={`Changes of ${name}`} className="mt-xs max-h-[40vh] overflow-auto font-mono leading-snug" />
+      )}
     </details>
   )
 }

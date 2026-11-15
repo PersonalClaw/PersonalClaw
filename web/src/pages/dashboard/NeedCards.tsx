@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
-import { api, ApiError, hasApiCode, isSwitchedOff, type AgentQuestion, type OrganizeProposal, type WorkflowContinuation } from '../../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, type AgentQuestion, type LoopMergeConflict, type LoopMergeWaiting, type OrganizeProposal, type WorkflowContinuation } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { clockTime } from '../../lib/epoch'
 import type { NeedsYouRow } from '../../lib/needsYou'
@@ -33,7 +33,8 @@ import { UnifiedDiff } from '../../ui/UnifiedDiff'
 import { openable } from './RunningLane'
 import { QuestionCard } from '../chat/QuestionCard'
 import { WorkflowAsk } from '../workflows/WorkflowAsk'
-import { dropBody, redoBody } from '../code/MergeConflict'
+import { MergeReview } from '../code/MergeReview'
+import { MergeConflict, dropBody, redoBody } from '../code/MergeConflict'
 import { capsHaveRoom, retryWindow, spendCapStop } from '../workflows/attentionMeta'
 import { proposalsKey } from '../learning/proposalCache'
 
@@ -249,6 +250,9 @@ export interface CardActions {
   merge?: (key: string, loopId: string, tips: Record<string, string>, done: string) => void
   /** A conflict's Redo or Drop at the tip its review named. */
   conflict?: (key: string, loopId: string, choice: 'redo' | 'drop', taskId: string, tip: string) => void
+  /** A loop whose conflict you resolved yourself, resumed: it merges the work, or asks again.
+   *  Settles once the card says how it went, so it never rejects. */
+  loopResume?: (key: string, loopId: string) => Promise<unknown>
   /** A run that waits after a declined step: resumed, or cancelled. */
   run?: (key: string, runId: string, action: 'resume' | 'cancel') => void
   /** An escalated run started again, as its page retries it: a fork of it, started. */
@@ -373,6 +377,9 @@ export function NeedDetail({ row, outcome, actions, now }: {
   // them all here (the card offered Skip and sent you here).
   const hostsQuestion = !!(ref && actions.chatReply && !isStale(item!, now)
     && (questions.length > 1 || (questions[0] as { multiSelect?: boolean } | undefined)?.multiSelect))
+  // A loop's merge or conflict: its review, hosted, shows the work (its commits, its files, its
+  // diff); the decide bar under it merges, redoes or drops, reading the work again first.
+  const loopChoice = item ? waitingLoopChoice(item) : null
   // A form gate, or a choice gate that names no choices: the run's own ask, hosted, answers it here.
   const gate = item ? waitingQuestion(item) : null
   const hostsGate = !!(gate && item && actions.gateReply && !isStale(item, now) && !gate.approval && !gate.event
@@ -382,11 +389,19 @@ export function NeedDetail({ row, outcome, actions, now }: {
   // the decide bar at the foot.
   const parts = (
     <>
+      {loopChoice?.kind === 'merge' && item && item.brief.merge && typeof item.brief.merge === 'object' ? (
+        <MergeReview hosted loopId={loopChoice.loopId} waiting={item.brief.merge as LoopMergeWaiting} onMerged={() => {}} />
+      ) : null}
+      {loopChoice?.kind === 'conflict' && item && item.brief.conflict && typeof item.brief.conflict === 'object' ? (
+        <MergeConflict hosted loopId={loopChoice.loopId} conflict={item.brief.conflict as LoopMergeConflict} onChosen={() => {}}
+          onResume={actions.loopResume ? () => actions.loopResume!(row.key, loopChoice.loopId) : undefined}
+          answered={outcome?.state === 'busy' ? 'sending' : outcome && outcome.state !== 'failed' ? 'settled' : undefined} />
+      ) : null}
       {hostsGate && gate && item ? (
         <WorkflowAsk hosted runId={gate.runId} busy={outcome?.state === 'busy'}
           continuation={{ resume_token: gate.resumeToken, node_id: gate.nodeId, instance_path: '', expires_at: 0, expired: false,
             ask: (item.brief.ask ?? {}) as WorkflowContinuation['ask'], handoff: (item.brief.handoff ?? {}) as WorkflowContinuation['handoff'] }}
-          onAnswer={async (c, value) => { await actions.gateReply?.(row.key, gate.runId, c.resume_token, value) }} />
+          onAnswer={async (c, value) => { await actions.gateReply?.(row.key, gate.runId, c.resume_token, value).catch(() => {}) }} />
       ) : null}
       {hostsQuestion && ref && item ? (
         <QuestionCard hosted

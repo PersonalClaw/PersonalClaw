@@ -126,6 +126,8 @@ export function useNeedActions(refreshNeeds: () => void): {
         choice === 'redo' ? 'The task runs again on top of your branch.' : 'Dropped. The loop carries on without it.',
         choice === 'redo' ? 'redo the task' : 'drop its work')
     },
+    loopResume: (key, loopId) =>
+      send(key, api.uLoopAction(loopId, 'resume'), 'Resumed. The loop merges it, or asks again if it still conflicts.', 'resume the loop'),
     run: (key, runId, action) => {
       const sent = action === 'resume' ? api.resumeWorkflowRun(runId, {}) : api.cancelWorkflowRun(runId)
       void send(key, sent, action === 'resume' ? 'Resumed. The run is moving again.' : 'Cancelled. Completed work is kept.',
