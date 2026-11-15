@@ -28,6 +28,7 @@ import { previewLine } from '../../lib/previewText'
 import { cutMarkdown } from '../../lib/cutMarkdown'
 import { widgetlessText } from '../../ui/widget/blocks'
 import { Markdown } from '../../ui/Markdown'
+import { UnifiedDiff } from '../../ui/UnifiedDiff'
 import { openable } from './RunningLane'
 import { dropBody, redoBody } from '../code/MergeConflict'
 import { capsHaveRoom, retryWindow, spendCapStop } from '../workflows/attentionMeta'
@@ -412,7 +413,10 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
   const subject = needSubject(row)
   // A proposal's or a note's lines are clamped (the panel holds them whole); what an ask's answer
   // decides on never is, since its answer acts in one press.
-  const clamped = row.origin !== 'waiting'
+  // An app's proposal is approved in one press from its card, so its card shows all of what it
+  // proposes, unclamped (the coordinator's call, 11-15).
+  const appPreview = noteAnswer(row)?.kind === 'app' ? appProposalPreview(row) : null
+  const clamped = row.origin !== 'waiting' && !appPreview
   const item = row.origin === 'waiting' ? row.item : null
   const expired = item ? isStale(item, now) : false
   const answersRef = useRef<HTMLDivElement>(null)
@@ -468,6 +472,7 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
           name, and a browse grant's second line is ours, so both stay text. */}
       <p data-type="title-m" className={`min-w-0 break-words text-on-surface${clamped ? ' line-clamp-2' : ''}`}>{item?.kind === 'approval' ? row.title : <MarkdownLine text={row.title} tooltip={false} />}</p>
       {row.subtitle ? <p data-type="body-s" className={`min-w-0 break-words text-on-surface${clamped ? ' line-clamp-1' : ''}`}>{item?.kind === 'browse_grant' ? row.subtitle : <MarkdownLine text={row.subtitle} tooltip={false} />}</p> : null}
+      {appPreview ? <AppPreview preview={appPreview} /> : null}
       {/* A gate's or a trigger's prompt is a body, with any widget block left out. */}
       {question?.prompt && question.prompt !== row.title ? (
         <div data-type="body-s" className="my-1 min-w-0 text-on-surface"><Markdown>{widgetlessText(question.prompt)}</Markdown></div>
@@ -597,6 +602,27 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
   )
 }
 
+/** An app's proposal's preview, as its Inbox row carries it (`refs.proposal`), or null when it has none. */
+function appProposalPreview(row: NeedsYouRow): { text: string; diff: boolean } | null {
+  if (row.origin !== 'note') return null
+  const proposal = (row.note.refs as Record<string, unknown> | undefined)?.proposal as { preview?: unknown; preview_kind?: unknown } | undefined
+  const text = typeof proposal?.preview === 'string' ? proposal.preview : ''
+  return text.trim() ? { text, diff: proposal?.preview_kind === 'diff' } : null
+}
+
+/** All of what an app proposes, on its card before its one-press Approve: a diff as a diff, else
+ *  its markdown. A long one scrolls inside its box, named so a keyboard reaches and reads it. */
+function AppPreview({ preview }: { preview: { text: string; diff: boolean } }) {
+  return (
+    <div tabIndex={0} role="group" aria-label="What the app proposes" data-app-preview=""
+      className="max-h-60 min-w-0 overflow-y-auto rounded-md bg-surface-container p-s">
+      {preview.diff
+        ? <UnifiedDiff patch={preview.text} label="The app's change" />
+        : <div data-type="body-s" className="min-w-0 text-on-surface"><Markdown>{preview.text}</Markdown></div>}
+    </div>
+  )
+}
+
 /** What a note row answers on its card, by what its Inbox row carries: a learning proposal (its
  *  card, or none for a row filed before it), an app's proposal, a chat to file. `null` for a row
  *  only the Inbox answers (your note). */
@@ -683,14 +709,17 @@ function LearningPair({ pid, card, subject, busy, off, onAnswer }: {
   const [reading, setReading] = useState(false)
   const verb = card ? accept.verb || 'Accept' : 'Accept'
   const no = rejectVerb(variant)
-  if (asking) {
-    return (
-      <InlineConfirm sentence={asking.sentence} verb={asking.verb.toLowerCase()} onBack={() => setAsking(null)}
-        onYes={() => { setAsking(null); onAnswer('accept', done(asking.verb)) }} />
-    )
-  }
+  // The confirm opens under the pressed control, which stays where it is: a second press only
+  // asks again (`InlineConfirm`).
+  const confirm = asking ? (
+    <div className="basis-full">
+        <InlineConfirm sentence={asking.sentence} verb={asking.verb.toLowerCase()} onBack={() => setAsking(null)}
+          onYes={() => { setAsking(null); onAnswer('accept', done(asking.verb)) }} />
+    </div>
+  ) : null
   if (told?.state === 'ended') return <ReadSaid told={told} />
   const press = () => {
+    if (asking) return
     setReading(true)
     setTold(null)
     void api.learningProposalReview(pid).then((review) => {
@@ -719,6 +748,7 @@ function LearningPair({ pid, card, subject, busy, off, onAnswer }: {
         <X size={13} aria-hidden="true" /> {no}
       </Button>
       {told?.state === 'failed' ? <ReadSaid told={told} /> : null}
+      {confirm}
     </>
   )
 }
@@ -758,14 +788,17 @@ function SkillAnswers({ proposal, subject, busy, off, onAnswer }: {
   const [asking, setAsking] = useState<string | null>(null)
   const [told, setTold] = useState<Told | null>(null)
   const [reading, setReading] = useState(false)
-  if (asking) {
-    return (
-      <InlineConfirm sentence={asking} verb="install it" onBack={() => setAsking(null)}
-        onYes={() => { setAsking(null); onAnswer('accept', done('Install skill')) }} />
-    )
-  }
+  // The confirm opens under the pressed control, which stays where it is: a second press only
+  // asks again (`InlineConfirm`).
+  const confirm = asking ? (
+    <div className="basis-full">
+        <InlineConfirm sentence={asking} verb="install it" onBack={() => setAsking(null)}
+          onYes={() => { setAsking(null); onAnswer('accept', done('Install skill')) }} />
+    </div>
+  ) : null
   if (told?.state === 'ended') return <ReadSaid told={told} />
   const press = () => {
+    if (asking) return
     // A proposal read before its card says what it always said.
     if (!proposal.card) { onAnswer('accept', 'Accepted. The skill is saved.'); return }
     if (!proposal.target_resolves) { onAnswer('accept', done(verb)); return }
@@ -796,6 +829,7 @@ function SkillAnswers({ proposal, subject, busy, off, onAnswer }: {
           removed installs it new, and a new skill that joins an existing one adds to it. */}
       {lands ? <p data-type="caption" className="basis-full text-on-surface-var">{lands}</p> : null}
       {told ? <ReadSaid told={told} /> : null}
+      {confirm}
     </>
   )
 }
@@ -881,17 +915,20 @@ function MergeAnswers({ loopId, into, subject, busy, off, onMerge }: {
   const [asking, setAsking] = useState<{ sentence: string; tips: Record<string, string>; n: number; into: string } | null>(null)
   const [told, setTold] = useState<Told | null>(null)
   const [reading, setReading] = useState(false)
-  if (asking) {
-    return (
-      <InlineConfirm sentence={asking.sentence} verb={asking.n === 1 ? 'merge it' : 'merge them'} onBack={() => setAsking(null)}
-        onYes={() => {
-          setAsking(null)
-          onMerge(asking.tips, `Merged into ${asking.into}. The loop carries on.`)
-        }} />
-    )
-  }
+  // The confirm opens under the pressed control, which stays where it is: a second press only
+  // asks again (`InlineConfirm`).
+  const confirm = asking ? (
+    <div className="basis-full">
+        <InlineConfirm sentence={asking.sentence} verb={asking.n === 1 ? 'merge it' : 'merge them'} onBack={() => setAsking(null)}
+          onYes={() => {
+            setAsking(null)
+            onMerge(asking.tips, `Merged into ${asking.into}. The loop carries on.`)
+          }} />
+    </div>
+  ) : null
   if (told?.state === 'ended') return <ReadSaid told={told} />
   const press = () => {
+    if (asking) return
     setReading(true)
     setTold(null)
     void api.uLoopMergeReview(loopId).then((review) => {
@@ -912,6 +949,7 @@ function MergeAnswers({ loopId, into, subject, busy, off, onMerge }: {
         <Check size={13} aria-hidden="true" /> Merge into {into}
       </Button>
       {told ? <ReadSaid told={told} /> : null}
+      {confirm}
     </>
   )
 }
@@ -926,15 +964,18 @@ function ConflictAnswers({ loopId, conflict, subject, busy, off, onChoose }: {
   const [asking, setAsking] = useState<{ choice: 'redo' | 'drop'; sentence: string; taskId: string; tip: string } | null>(null)
   const [told, setTold] = useState<Told | null>(null)
   const [reading, setReading] = useState<'' | 'redo' | 'drop'>('')
-  if (asking) {
-    return (
-      <InlineConfirm sentence={asking.sentence} verb={asking.choice === 'redo' ? 'redo it' : 'drop it'} onBack={() => setAsking(null)}
-        onYes={() => { setAsking(null); onChoose(asking.choice, asking.taskId, asking.tip) }} />
-    )
-  }
+  // The confirm opens under the pressed control, which stays where it is: a second press only
+  // asks again (`InlineConfirm`).
+  const confirm = asking ? (
+    <div className="basis-full">
+        <InlineConfirm sentence={asking.sentence} verb={asking.choice === 'redo' ? 'redo it' : 'drop it'} onBack={() => setAsking(null)}
+          onYes={() => { setAsking(null); onChoose(asking.choice, asking.taskId, asking.tip) }} />
+    </div>
+  ) : null
   if (told?.state === 'ended') return <ReadSaid told={told} />
   const asked = conflict && typeof conflict === 'object' ? conflict as { into?: string; branch?: string } : {}
   const press = (choice: 'redo' | 'drop') => {
+    if (asking?.choice === choice) return
     setReading(choice)
     setTold(null)
     void api.uLoopConflictReview(loopId).then((review) => {
@@ -959,6 +1000,7 @@ function ConflictAnswers({ loopId, conflict, subject, busy, off, onChoose }: {
         Drop
       </Button>
       {told ? <ReadSaid told={told} /> : null}
+      {confirm}
     </>
   )
 }
@@ -969,12 +1011,14 @@ function DeclinedAnswers({ subject, busy, off, onResume, onCancel }: {
   subject: string; busy: boolean; off?: string; onResume: () => void; onCancel: () => void
 }) {
   const [asking, setAsking] = useState(false)
-  if (asking) {
-    return (
-      <InlineConfirm sentence="Cancel this run? In-flight steps are stopped. Completed work is kept." verb="cancel run"
-        onBack={() => setAsking(false)} onYes={() => { setAsking(false); onCancel() }} />
-    )
-  }
+  // The confirm opens under the pressed control, which stays where it is: a second press only
+  // asks again (`InlineConfirm`).
+  const confirm = asking ? (
+    <div className="basis-full">
+        <InlineConfirm sentence="Cancel this run? In-flight steps are stopped. Completed work is kept." verb="cancel run"
+          onBack={() => setAsking(false)} onYes={() => { setAsking(false); onCancel() }} />
+    </div>
+  ) : null
   return (
     <>
       <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
@@ -985,6 +1029,7 @@ function DeclinedAnswers({ subject, busy, off, onResume, onCancel }: {
         ariaLabel={`Cancel it: ${subject}`} onClick={() => setAsking(true)} className={ANSWER}>
         <X size={13} aria-hidden="true" /> Cancel it
       </Button>
+      {confirm}
     </>
   )
 }
@@ -1041,13 +1086,16 @@ function AutonomyAnswers({ rung, subject, busy, off, onPromote, onLeave }: {
   const [asking, setAsking] = useState<{ sentence: string; label: string } | null>(null)
   const [told, setTold] = useState<Told | null>(null)
   const [reading, setReading] = useState(false)
-  if (asking) {
-    return (
-      <InlineConfirm sentence={asking.sentence} verb="promote it" onBack={() => setAsking(null)}
-        onYes={() => { setAsking(null); onPromote(`Promoted to “${asking.label}”.`) }} />
-    )
-  }
+  // The confirm opens under the pressed control, which stays where it is: a second press only
+  // asks again (`InlineConfirm`).
+  const confirm = asking ? (
+    <div className="basis-full">
+        <InlineConfirm sentence={asking.sentence} verb="promote it" onBack={() => setAsking(null)}
+          onYes={() => { setAsking(null); onPromote(`Promoted to “${asking.label}”.`) }} />
+    </div>
+  ) : null
   const press = () => {
+    if (asking) return
     setReading(true)
     setTold(null)
     void api.autonomyLadder().then((ladder) => {
@@ -1068,6 +1116,7 @@ function AutonomyAnswers({ rung, subject, busy, off, onPromote, onLeave }: {
         Leave it
       </Button>
       {told ? <ReadSaid told={told} /> : null}
+      {confirm}
     </>
   )
 }

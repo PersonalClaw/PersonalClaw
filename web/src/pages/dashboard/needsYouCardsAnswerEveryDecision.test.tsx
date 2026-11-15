@@ -640,3 +640,79 @@ describe('an expired ask draws no answers, and a gate still answers as before', 
     expect(await within(needsYou()).findByRole('button', { name: /^Ship it: / })).toBeTruthy()
   })
 })
+
+describe('a second confirmation opens under the pressed control, which stays where it is', () => {
+  /** Press *name*'s control, see its confirm open after it, press it again: it is still there, the
+   *  one confirm still open, and nothing was sent. */
+  async function holds(name: RegExp, group: RegExp | string, sent: ReturnType<typeof vi.fn>) {
+    const control = await within(needsYou()).findByRole('button', { name })
+    await userEvent.click(control)
+    const confirm = await within(needsYou()).findByRole('group', { name: group })
+    expect(control.isConnected).toBe(true)
+    expect(control.compareDocumentPosition(confirm) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await userEvent.click(control)
+    expect(within(needsYou()).getAllByRole('group', { name: group })).toHaveLength(1)
+    expect(sent).not.toHaveBeenCalled()
+  }
+
+  it('a learning accept that replaces yours', async () => {
+    inboxOpen.mockResolvedValue([learning('lesson.conflict')])
+    learningProposalReview.mockResolvedValue(review('lesson.conflict'))
+    render(<NeedsYouHarness />)
+    await holds(/^Use the learned one: /, 'It replaces yours in your memory.', acceptLearningProposal)
+  })
+
+  it('a refinement whose skill was removed since the list was read', async () => {
+    skillProposals.mockResolvedValue({ proposals: [REFINE], lastReview: null })
+    skillProposalDetail.mockResolvedValue({ ...REFINE, target_resolves: false })
+    render(<NeedsYouHarness />)
+    await holds(/^Add refinement: /, /^It is no longer installed/, acceptSkillProposal)
+  })
+
+  it('a merge', async () => {
+    uLoopMergeReview.mockResolvedValue({ into: 'main', cut: false, tasks: [REVIEW_TASK('t1', 'Fix README links', 'new1', 1)] })
+    waiting.mockResolvedValue(waitingList([mergeAsk]))
+    render(<NeedsYouHarness />)
+    await holds(/^Merge into main: /, /^Merge 1 task into main/, uLoopMerge)
+  })
+
+  it('a conflict’s Redo', async () => {
+    uLoopConflictReview.mockResolvedValue({ into: 'main', files: [], cut: false, task: { ...REVIEW_TASK('t9', 'Add retry', 'tip9', 1), path: '/w/t9' } })
+    waiting.mockResolvedValue(waitingList([{ ...mergeAsk, brief: { name: 'Docs', question: 'Conflicts', conflict: { task_id: 't9', into: 'main' } },
+      answer: { method: 'POST', path: '/api/loops/l1/conflict', takes: ['redo', 'drop'], body: {} } }]))
+    render(<NeedsYouHarness />)
+    await holds(/^Redo: /, /^The task runs again from main/, uLoopConflict)
+  })
+
+  it('a run’s Cancel it', async () => {
+    waiting.mockResolvedValue(waitingList([inboxAsk('declined_wait', { workflow: 'run-5' })]))
+    render(<NeedsYouHarness />)
+    await holds(/^Cancel it: /, /^Cancel this run\?/, cancelWorkflowRun)
+  })
+
+  it('Promote it', async () => {
+    inboxOpen.mockResolvedValue([row('row-aut', { action_type: 'inbox.reply_draft', rung: 'one_tap' }, { message: 'inbox.reply_draft has earned “asks first”' })])
+    autonomyLadder.mockResolvedValue({ rungs: [], rung_meta: [{ key: 'one_tap', label: 'asks first', hint: 'It drafts, and sends on your one tap.' }], incident_active: false, types: [], reversals: [] })
+    render(<NeedsYouHarness />)
+    await holds(/^Promote it: /, /^“asks first”/, autonomyGrant)
+  })
+})
+
+describe('an app’s proposal shows all of what it proposes on its card, before its one-press Approve', () => {
+  const LONG = Array.from({ length: 12 }, (_, i) => `- Move charge ${i + 1} to Health`).join('\n')
+
+  it('its whole preview and its lines unclamped; another proposal keeps its clamp', async () => {
+    inboxOpen.mockResolvedValue([
+      row('row-app', { app: 'budget', proposal: { op: 'move', preview: LONG, preview_kind: 'text' } }, { message: 'Move the gym membership to the Health category' }),
+      learning('template.named'),
+    ])
+    render(<NeedsYouHarness />)
+    const preview = await within(needsYou()).findByRole('group', { name: 'What the app proposes' })
+    expect(within(preview).getByText('Move charge 12 to Health')).toBeInTheDocument()
+    const appCard = preview.closest('[data-need-card]') as HTMLElement
+    expect(appCard.querySelector('.line-clamp-2, .line-clamp-1')).toBeNull()
+    expect(within(appCard).getByRole('button', { name: /^Approve: / })).toBeInTheDocument()
+    const other = within(needsYou()).getByRole('button', { name: /^Save template: / }).closest('[data-need-card]') as HTMLElement
+    expect(other.querySelector('.line-clamp-2')).not.toBeNull()
+  })
+})
