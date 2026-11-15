@@ -14,6 +14,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.request_validation import bool_field
 from personalclaw.security import is_sensitive_path
 from personalclaw.sel import sel
+from personalclaw.triggers.nudge import DEFAULT_MAX_CYCLES
 from personalclaw.triggers.nudge import get_instance as _autonudge_get
 
 
@@ -84,6 +85,7 @@ async def api_autonudge_start(request: web.Request) -> web.Response:
     """POST /api/autonudge — start or replace a loop on a session.
 
     Body: { session_name, message, idle_secs?, max_cycles?, stop_sentinel_path? }
+    With no ``max_cycles`` the loop stops after ``DEFAULT_MAX_CYCLES`` cycles; ``0`` is no limit.
     """
     svc = _autonudge_get()
     if svc is None:
@@ -122,7 +124,7 @@ async def api_autonudge_start(request: web.Request) -> web.Response:
         session_name=session_name,
         message=message,
         idle_secs=int(body.get("idle_secs", 60)),
-        max_cycles=int(body.get("max_cycles", 0)),
+        max_cycles=int(body.get("max_cycles", DEFAULT_MAX_CYCLES)),
         stop_sentinel_path=stop_sentinel_path,
     )
     sel().log_tool_invocation(

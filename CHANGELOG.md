@@ -32,6 +32,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The Tools page checks PersonalClaw's own tool server, `personalclaw-core`, from the gateway's own install. It started the first `personalclaw` in `~/.local/bin` or on PATH, so on a machine with another install, a gateway from a development clone, a wheel under test or the desktop app ran that install's server against its own home and listed that install's tools.**
 - **The sidebar names a chat with no title by its first words with no Markdown mark left showing, in its row, its name and its tip, also when the cut falls inside bold text.**
 - **Running a turn again asks first about a step that was still running when the turn ended, so a command a restart cut off is not run twice unasked.**
+- **Auto-nudge stops by itself after 10 cycles unless you set Max cycles to 0, which the modal now says means no limit. Max cycles started at 0 with nothing saying so, so a nudge armed as the modal opened, or through `POST /api/autonudge` without `max_cycles`, ran an agent turn about every minute until you pressed Stop. The modal shows the limit beside the cycles fired, and says Stopped once a nudge has stopped.**
 
 ### Security
 

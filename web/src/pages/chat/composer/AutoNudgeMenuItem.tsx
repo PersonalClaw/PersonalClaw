@@ -7,6 +7,10 @@ import { MenuRow } from '../../../ui/Popover'
 import { FieldError, NumberField, TextArea } from '../../../ui/forms'
 import { BUSY_REASON } from '../../../ui/unavailable'
 
+/** The cycles a nudge sends before it stops by itself when you arm it as it opens: the gateway's
+ *  own default (`DEFAULT_MAX_CYCLES`, `triggers/nudge.py`). 0 is no limit, set on purpose. */
+const DEFAULT_MAX_CYCLES = 10
+
 /** Auto-nudge entry for the composer "+" menu — a MenuRow that reflects the
  *  on/off state and opens the config in a Modal. Arms / edits / stops a reactive
  *  same-session loop (when a turn finishes and the user is idle for idle_secs,
@@ -19,7 +23,7 @@ export function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen
   const [loop, setLoop] = useState<NudgeLoop | null>(null)
   const [msg, setMsg] = useState('')
   const [idle, setIdle] = useState(60)
-  const [maxCycles, setMaxCycles] = useState(0)
+  const [maxCycles, setMaxCycles] = useState(DEFAULT_MAX_CYCLES)
   const [busy, setBusy] = useState(false)
 
   // 🔴 THE CATCH USED TO `setEnabled(false)`, and the `!enabled` branch below names a specific
@@ -76,7 +80,12 @@ export function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen
                 <label className="flex items-center gap-1">Max cycles
                   <NumberField value={maxCycles} onChange={setMaxCycles} min={0} width="w-14" /></label>
               </div>
-              {loop && <p className="text-[0.75rem] text-on-surface-low">Active · {loop.cycle_count} cycle{loop.cycle_count === 1 ? '' : 's'} fired{loop.max_cycles ? ` / ${loop.max_cycles}` : ''}.</p>}
+              <p data-type="caption" className="text-on-surface-low">{maxCycles > 0
+                ? `It stops by itself after ${maxCycles} cycle${maxCycles === 1 ? '' : 's'}. 0 means no limit.`
+                : 'No limit: it keeps nudging this chat until you press Stop.'}</p>
+              {loop && <p className="text-[0.75rem] text-on-surface-low">{loop.active ? 'Active' : 'Stopped'} · {loop.max_cycles > 0
+                ? `${loop.cycle_count} / ${loop.max_cycles} cycles fired`
+                : `${loop.cycle_count} cycle${loop.cycle_count === 1 ? '' : 's'} fired · no limit`}.</p>}
               <div className="flex justify-end gap-2 mt-1">
                 {loop && <Button variant="ghost" size="sm" onClick={stop} disabled={busy} disabledReason={BUSY_REASON}><X size={14} /> Stop</Button>}
                 <Button size="sm" onClick={arm} disabled={busy || !msg.trim()}
