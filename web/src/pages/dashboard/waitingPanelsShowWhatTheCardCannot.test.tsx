@@ -14,6 +14,7 @@ import { NeedsYouHarness, gateItem, waitingItem, waitingList } from '../../test/
 
 const waiting = vi.fn()
 const resumeWorkflowRun = vi.fn()
+const answerChatQuestion = vi.fn()
 
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -26,6 +27,7 @@ vi.mock('../../lib/api', async (orig) => ({
     chatSessions: () => Promise.resolve([]),
     chatSessionDetail: () => Promise.resolve({ key: 'chat-1', title: '', run_state: 'idle', messages: [] }),
     resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
+    answerChatQuestion: (...a: unknown[]) => answerChatQuestion(...a),
   },
 }))
 vi.mock('../../lib/useChatSocket', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useChatSocket: () => {} }))
@@ -117,5 +119,30 @@ describe('after a decision', () => {
     await userEvent.click(within(p).getByRole('button', { name: 'Next ask' }))
     await waitFor(() => expect(document.activeElement?.textContent).toBe('Which tag should I cut?'))
     expect(document.activeElement?.tagName).toBe('H2')
+  })
+})
+
+describe('a chat’s question with several parts is answered in its panel', () => {
+  it('the chat’s own question card, hosted: every question and option, Send and Skip, no alert and no second bar', async () => {
+    answerChatQuestion.mockResolvedValue({ ok: true, outcome: 'answered' })
+    waiting.mockResolvedValue(waitingList([waitingItem({
+      id: 'question:q2', kind: 'question', consequence: 'asks',
+      brief: { questions: [
+        { question: 'Which branch?', header: 'Branch', multiSelect: false, free_text: false, options: [{ label: 'main', description: '' }, { label: 'next', description: '' }] },
+        { question: 'Which notes?', header: 'Notes', multiSelect: true, free_text: false, options: [{ label: 'Fixes', description: '' }, { label: 'Features', description: '' }] },
+      ] },
+      answer: { method: 'POST', path: '/api/chat/sessions/chat-1/questions/q2/answer', takes: ['answers', 'skip'], body: {} },
+    })]))
+    render(<NeedsYouHarness query={{ open: 'waiting:question:q2' }} />)
+    const p = await pane()
+    const card = await within(p).findByRole('group', { name: 'Question for you' })
+    expect(within(p).queryAllByRole('alert')).toEqual([])
+    expect(within(p).queryByText('Answer it in the panel')).toBeNull()
+    expect(p.querySelectorAll('[data-decide-bar]')).toHaveLength(0)
+    await userEvent.click(within(card).getByRole('radio', { name: /next/ }))
+    await userEvent.click(within(card).getByRole('checkbox', { name: /Fixes/ }))
+    await userEvent.click(within(card).getByRole('button', { name: /Send answer/ }))
+    await waitFor(() => expect(answerChatQuestion).toHaveBeenCalledWith('chat-1', 'q2', { answers: [{ selected: [1], other: '' }, { selected: [0], other: '' }] }))
+    expect(await within(p).findByText('Answered. The agent carries on.')).toBeInTheDocument()
   })
 })

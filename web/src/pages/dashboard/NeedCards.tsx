@@ -31,6 +31,7 @@ import { widgetlessText } from '../../ui/widget/blocks'
 import { Markdown } from '../../ui/Markdown'
 import { UnifiedDiff } from '../../ui/UnifiedDiff'
 import { openable } from './RunningLane'
+import { QuestionCard } from '../chat/QuestionCard'
 import { dropBody, redoBody } from '../code/MergeConflict'
 import { capsHaveRoom, retryWindow, spendCapStop } from '../workflows/attentionMeta'
 import { proposalsKey } from '../learning/proposalCache'
@@ -230,6 +231,9 @@ export interface CardActions {
   appProposal?: (key: string, itemId: string, action: 'approve' | 'reject') => void
   /** A chat to file: Accept or Decline, the proposal rebuilt from its row. */
   organize?: (key: string, session: string, proposal: OrganizeProposal, action: 'accept' | 'decline') => void
+  /** A chat's question answered in full in the panel (several questions or choices): the answer
+   *  as the chat's own card sends it; its promise is the send's, so the card says why it failed. */
+  chatReply?: (key: string, ref: { session: string; question: string }, reply: { answers: { selected: number[]; other: string }[] } | { skip: true }) => Promise<unknown>
   /** An agent's one question in a chat: one of its options, by its place, or Skip. */
   chat?: (key: string, ref: { session: string; question: string }, answer: { pick: number; label: string } | 'skip') => void
   /** A plan step's approve, as the list read it; a loop's plan launched. */
@@ -360,12 +364,21 @@ export function NeedDetail({ row, outcome, actions, now }: {
   const asked = row.origin === 'waiting' ? clockTime(row.item.asked_at) : ''
   const item = row.origin === 'waiting' ? row.item : null
   const questions = item?.kind === 'question' && Array.isArray(item.brief.questions) ? item.brief.questions : []
+  const ref = item ? waitingQuestionRef(item) : null
+  // Several questions, or one with several choices: the chat's own question card, hosted, answers
+  // them all here (the card offered Skip and sent you here).
+  const hostsQuestion = !!(ref && actions.chatReply && !isStale(item!, now)
+    && (questions.length > 1 || (questions[0] as { multiSelect?: boolean } | undefined)?.multiSelect))
   // The parts, in the panel's order: the thing itself (the ask's own lines, `NeedBody`), where it
   // came from (who asked, and the chat's last lines), its facts and one way out; the answers are
   // the decide bar at the foot.
   const parts = (
     <>
-      {questions.length > 1 ? (
+      {hostsQuestion && ref && item ? (
+        <QuestionCard hosted
+          seg={{ kind: 'question', id: ref.question, toolCallId: '', questions: questions as AgentQuestion[], askedBy: '', answerable: true }}
+          onAnswer={(_id, reply) => actions.chatReply?.(row.key, ref, reply) ?? Promise.resolve()} />
+      ) : questions.length > 1 ? (
         <ol className="flex min-w-0 list-decimal flex-col gap-xs pl-l">
           {questions.map((q, i) => (
             <li key={i} data-type="body-s" className="text-on-surface">
@@ -392,7 +405,7 @@ export function NeedDetail({ row, outcome, actions, now }: {
   )
   return (
     <div className="flex min-w-0 flex-col gap-l">
-      <NeedBody row={row} outcome={outcome} actions={actions} now={now} panel beforeAnswers={parts} />
+      <NeedBody row={row} outcome={outcome} actions={actions} now={now} panel beforeAnswers={parts} hostsAnswers={hostsQuestion} />
     </div>
   )
 }
@@ -407,7 +420,7 @@ export function NeedDetail({ row, outcome, actions, now }: {
  *  confirmation's, `useHeldHeight`), and a failure says why under them, so a press moves nothing
  *  above or beside the pointer. Every answer to what waits is `secondary`, a skill proposal's accept
  *  `tonal`: none is solid coral on a card. */
-function NeedBody({ row, outcome, actions, now, chip, selected = false, off, panel = false, beforeAnswers }: {
+function NeedBody({ row, outcome, actions, now, chip, selected = false, off, panel = false, beforeAnswers, hostsAnswers = false }: {
   row: NeedsYouRow
   outcome: Outcome | undefined
   actions: CardActions
@@ -420,6 +433,8 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off, pan
   panel?: boolean
   /** In the panel: its other parts, drawn after the ask's own lines and before the decide bar. */
   beforeAnswers?: ReactNode
+  /** In the panel: a hosted component in `beforeAnswers` answers it, so no bar of its own. */
+  hostsAnswers?: boolean
 }) {
   const settled = outcome?.state === 'done' || outcome?.state === 'ended'
   const busy = outcome?.state === 'busy'
@@ -521,7 +536,7 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off, pan
       {panel ? beforeAnswers : null}
       {replaced && (settled || answerable) ? (
         <div data-held-answers="" style={held ? { minHeight: held } : undefined}>{replaced}</div>
-      ) : expired || settled || !answerable ? null : (
+      ) : expired || settled || !answerable || hostsAnswers ? null : (
         <div ref={answersRef} className={panel ? `${DECIDE_BAR} gap-xs` : 'flex min-w-0 flex-col gap-xs'} data-decide-bar={panel ? '' : undefined}>
           {cardReply || !answerable ? null : (
             <div className="flex min-w-0 flex-wrap items-start gap-xs">

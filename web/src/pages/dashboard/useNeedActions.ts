@@ -87,6 +87,11 @@ export function useNeedActions(refreshNeeds: () => void): {
       void send(key, sent, action === 'accept' ? 'Accepted. The chat is organized as suggested.' : 'Declined. It won’t be suggested again.',
         `${action} this`, () => invalidateKeys('inbox', true))
     },
+    chatReply: (key, ref, reply) => {
+      const sent = api.answerChatQuestion(ref.session, ref.question, reply)
+      void send(key, sent, 'skip' in reply ? 'Skipped. The agent goes on without your answer.' : 'Answered. The agent carries on.', 'send that answer')
+      return sent
+    },
     chat: (key, ref, answer) => {
       const sent = api.answerChatQuestion(ref.session, ref.question,
         answer === 'skip' ? { skip: true } : { answers: [{ selected: [answer.pick], other: '' }] })
