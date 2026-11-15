@@ -120,6 +120,9 @@ def ask(
         "scope": scope.value,
         "scope_ref": scope_ref or "",
         "replacing": list(replacing),
+        # Her lessons' own words, in the order she taught them: what the card leads with
+        # (“hers” → “learned”), so no reader parses them back out of the body.
+        "yours": list(taught.values()),
     }
     verdict, prop = proposals.enqueue(
         kind=proposals.Kind.LESSON_BATCH.value,

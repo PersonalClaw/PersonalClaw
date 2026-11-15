@@ -166,6 +166,9 @@ def _asked(*, hers: str, learned: str) -> proposals.Proposal:
     prop = asked[0]
     assert f"Yours: “{hers}”" in prop.body
     assert f"Yours: “{hers}”" in prop.source_excerpt
+    # Her lessons' own words are held beside the learned one, so the card can lead with
+    # “hers” → “learned” without parsing the body.
+    assert prop.change_manifest["targeted_fix"][0]["yours"] == [hers]
     assert f"Learned: “{learned}”" in prop.source_excerpt
     inbox = InboxStore()
     inbox.load()

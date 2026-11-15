@@ -1814,6 +1814,20 @@ def mask_markers(text: str) -> list[str]:
     return _MASK_RE.findall(text)
 
 
+def cut_outside_masks(text: str, end: int) -> int:
+    """Where to cut *text* at or before *end* so that every ``[REDACTED: …]`` marker stays whole:
+    *end* itself, or the start of the marker *end* falls inside.
+
+    Any cut of masked text a person reads goes through here. A half marker reads as a value, and no
+    restore (:func:`keep_masked_spans`) recognises it."""
+    for m in _MASK_RE.finditer(text):
+        if m.start() >= end:
+            break
+        if end < m.end():
+            return m.start()
+    return end
+
+
 def _mask_segments(masked: str, stored: str) -> list[tuple[int, int, int, int]] | None:
     """Where each marker of *masked* sits and the stored span it stands for, in order:
     ``(masked_start, masked_end, stored_start, stored_end)``. ``None`` when the walk

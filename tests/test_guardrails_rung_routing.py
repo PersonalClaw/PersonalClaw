@@ -592,6 +592,7 @@ def _fire_store_trigger(action: _AppAction, kind: str = "clock") -> Any:
 
     trigger = types.SimpleNamespace(
         id=f"{kind}:acme",
+        name="Morning brief",
         kind=kind,
         workflow={"inline": {"provider": action.name, "config": {"note": "x"}}},
         # Granted, as a row a fire brings here is: it passed `admit_fire`'s fence first.
@@ -632,6 +633,8 @@ def test_the_store_trigger_seam_HOLDS_a_declared_floor(_isolated_home):
     assert "held for your approval" in runs[0]["error"]
     rows = _inbox_rows(_isolated_home)
     assert rows and rows[-1]["refs"]["trigger"] == trigger.id
+    # Its card names the trigger by its name, "action.notify on Morning brief waits for your OK".
+    assert rows[-1]["refs"]["trigger_name"] == "Morning brief"
 
 
 def test_the_store_trigger_seam_records_the_reversal_handle(_isolated_home):

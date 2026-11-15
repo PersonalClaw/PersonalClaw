@@ -9,7 +9,7 @@ channel's own bundle, not here.
 import logging
 import re
 
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import cut_outside_masks, redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,8 @@ def clip_words(text: str, limit: int) -> str:
     """``text`` on one line, and at most ``limit`` characters: cut at a word boundary with an
     ellipsis when it is longer, so a sentence a person reads never stops mid-word ("Task: Draft a
     s"). Only a single run of text with no boundary in its second half (a long link, a path) is cut
-    inside itself: dropping it whole would leave nothing to read.
+    inside itself: dropping it whole would leave nothing to read. A ``[REDACTED: …]`` marker is
+    never cut: the line ends before it (``security.cut_outside_masks``).
     """
     line = " ".join(str(text or "").split())
     if len(line) <= limit:
@@ -61,6 +62,7 @@ def clip_words(text: str, limit: int) -> str:
     cut = head.rfind(" ")
     if cut >= len(head) // 2:
         head = head[:cut]
+    head = head[: cut_outside_masks(line, len(head))]
     return head.rstrip(" ,;:") + "…"
 
 
