@@ -43,8 +43,10 @@ const PROJECTS: ProjectItem[] = [
   { id: 'p-garden', name: 'Garden', status: 'active' },
   { id: 'p-house', name: 'House move', status: 'active' },
 ]
-const task = (id: string, title: string, project: string): TaskItem => ({ id, title, status: 'open', project } as TaskItem)
-const TASKS = [task('t1', 'Order the soil', 'Garden'), task('t2', 'Book the movers', 'House move'), task('t3', 'Plant the beans', 'Garden')]
+const task = (id: string, title: string, project: string, list: string): TaskItem => ({ id, title, status: 'open', project, task_list_id: list } as TaskItem)
+const TASKS = [task('t1', 'Order the soil', 'Garden', 'tl-g'), task('t2', 'Book the movers', 'House move', 'tl-h'), task('t3', 'Plant the beans', 'Garden', 'tl-g')]
+/** Garden's own list: its page's Tasks group lists the open tasks in it. */
+const GARDEN_LISTS = [{ id: 'tl-g', name: 'Garden', project_id: 'p-garden', loop_id: '' }]
 
 const { App } = await import('./App')
 const { ErrorBoundary } = await import('./ErrorBoundary')
@@ -77,7 +79,7 @@ beforeEach(() => {
   Object.assign(answers, {
     projects: PROJECTS,
     allTasks: { tasks: TASKS, total: TASKS.length, complete: true, owner: 'ada' },
-    taskLists: [],
+    taskLists: GARDEN_LISTS,
     readyTasks: [],
     uLoops: [],
     projectWork: { board: [] },
@@ -115,9 +117,8 @@ async function settle() {
 const heading = () => document.querySelector('main h1')?.textContent ?? ''
 const rail = () => document.querySelector('nav[data-tour="rail"]') as HTMLElement
 const railRows = () => within(rail()).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? '')
-/** The page header, where a project's Overview offers its Tasks. */
-const pageHeader = () => document.querySelector('main header') as HTMLElement
-const toTasks = () => within(pageHeader()).queryByRole('button', { name: 'Tasks' })
+/** The project page's Tasks group's See all tasks: the page's way to its Tasks view (PROJ PR 4). */
+const toTasks = () => screen.queryByRole('button', { name: 'See all tasks' })
 const checked = (group: HTMLElement | null) => (group ? within(group).getAllByRole('radio').filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.textContent) : [])
 const shown = (title: string) => screen.queryAllByText(title).length > 0
 
@@ -128,10 +129,11 @@ describe('a project\'s tasks are a view of the project', () => {
     expect(railRows()).not.toContain('Tasks')
   })
 
-  it('a project\'s Overview goes to its Tasks, which list that project\'s tasks alone, and the breadcrumb comes back', async () => {
+  it('a project\'s page goes to its Tasks, which list that project\'s tasks alone, and the breadcrumb comes back', async () => {
     await open('projects/p-garden')
     expect(heading()).toBe('Garden')
     const entries = history.length
+    expect(toTasks(), 'See all tasks, in the Tasks group').not.toBeNull()
     fireEvent.click(toTasks()!)
     await settle()
     expect(location.hash).toBe('#/projects/p-garden?tab=tasks')

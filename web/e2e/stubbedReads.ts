@@ -219,3 +219,112 @@ export const NEEDS_YOU_READS: StubbedRead[] = [{
   }],
   why: "the run's home has nothing open in the Inbox",
 }]
+
+// ── A project's page (`projects/p-0a1b2c3d` and its substates, in both specs) ────────────────────
+
+/** Garden, as its page and its Tasks view read it: a folder that is there, in preview, a brief and
+ *  instructions. The run's home has no project, so without it the page could only say the project
+ *  no longer exists. */
+export const GARDEN = {
+  id: 'p-0a1b2c3d', name: 'Garden', is_builtin: false, status: 'active', workspace_dir: '/srv/code/garden',
+  folder: { resolved: '/srv/code/garden', trust: 'preview' },
+  brief: 'Plan and grow the spring beds, and keep the soil sensors working. The beds go in by April.',
+  agent_instructions_template: 'Check the soil readings before suggesting a planting date.',
+  task_list_count: 1, made_for: null, created_at: '2026-10-01T09:00:00+00:00', updated_at: '2026-11-01T09:00:00+00:00',
+}
+
+/** Garden's one task list, its own (no loop's phases). */
+export const GARDEN_LISTS = [
+  { id: 'tl-e2e-1', name: 'Garden', project_id: 'p-0a1b2c3d', loop_id: '', task_count: 3, created_at: '2026-10-01T09:00:00+00:00', updated_at: '2026-11-01T15:00:00+00:00' },
+]
+
+const gardenTask = (id: string, title: string, status: string, priority: string) => ({
+  id, title, status, priority, project: 'Garden', task_list_id: 'tl-e2e-1', tags: [],
+  created_at: '2026-10-30T09:00:00+00:00', updated_at: '2026-11-01T15:00:00+00:00',
+})
+
+/** Three of Garden's tasks, one of them done. */
+export const GARDEN_TASKS = [
+  gardenTask('t-e2e-1', 'Order the soil', 'open', 'high'),
+  gardenTask('t-e2e-2', 'Plant the beans', 'in_progress', 'medium'),
+  gardenTask('t-e2e-3', 'Fix the gate latch', 'done', 'low'),
+]
+
+/** What a new chat in Garden is told, as `GET /api/legibility/always-on` builds it. */
+const GARDEN_TOLD = {
+  items: [], project_id: 'p-0a1b2c3d', counts: { total: 0, always_skills: 0, project_instructions: 0 }, always_skill_mechanism: '',
+  project_block: {
+    text: 'You are working in the project Garden.\n- Project brief (the goal/scope/background of this project — treat as foundational context): Plan and grow the spring beds, and keep the soil sensors working. The beds go in by April.\n- Project instructions: Check the soil readings before suggesting a planting date.',
+    parts: { brief: 1, overview: 0, decisions: 0, open_questions: 0, out_of_scope: 0 },
+  },
+}
+
+/** Garden's own reads, which its Tasks view (`?tab=tasks`) asks too: the project, the list it is
+ *  in, its board, its task lists and its tasks. The run's home has none of them. */
+export const GARDEN_READS: StubbedRead[] = [{
+  url: /\/api\/projects(\?.*)?$/,
+  json: { projects: [GARDEN] },
+  why: "the run's home has no project",
+}, {
+  url: /\/api\/projects\/p-0a1b2c3d(\?.*)?$/,
+  json: GARDEN,
+  why: "the run's home has no project",
+}, {
+  url: /\/api\/projects\/p-0a1b2c3d\/work(\?.*)?$/,
+  json: { board: [], sections: [], completeness: 'complete', attention: 0, loadedAt: 0 },
+  why: "the run's home has no project, so no work in one",
+}, {
+  url: /\/api\/task-lists(\?.*)?$/,
+  json: { task_lists: GARDEN_LISTS },
+  why: "the run's home has no project, so no task list of one",
+}, {
+  url: /\/api\/tasks(\?.*)?$/,
+  json: { tasks: GARDEN_TASKS, total: GARDEN_TASKS.length, complete: true, owner: '' },
+  why: "the run's home has no project, so no task of one",
+}]
+
+/** The page's reads at rest, each answered whole: Garden's own, what a new chat there is told,
+ *  the instruction changes proposed for it (one, so About › Instructions says "1 change
+ *  proposed"), its folder's check, what waits and runs in it (`PROJECTS_LIST`'s two live rows),
+ *  and its one chat. What the page does with each is held by
+ *  `src/pages/projects/aProjectsPageIsHomeForOneProject.test.tsx` and its siblings. */
+export const PROJECT_PAGE: StubbedRead[] = [...GARDEN_READS, {
+  url: /\/api\/legibility\/always-on(\?.*)?$/,
+  json: GARDEN_TOLD,
+  why: "the run's home has no project, so nothing a new chat in one is told",
+}, {
+  url: /\/api\/learning\/proposals(\?.*)?$/,
+  json: {
+    rows: [{
+      id: 'lp-e2e-1', kind: 'project_instruction', project_id: 'p-0a1b2c3d', title: 'Water before noon in summer',
+      summary: '', created_at: '2026-11-02T10:00:00+00:00', status: 'pending', risk_tier: 'review',
+    }],
+    total: 1, by_kind: { project_instruction: 1 }, by_tier: { review: 1 }, flagged: 0, unrenderable: [], bulk_acceptable: 0,
+  },
+  why: "the run's home has no project, so no change proposed for one",
+}, {
+  url: /\/api\/browse-dirs\?path=/,
+  json: { path: '/srv/code/garden', parent: '/srv/code', dirs: [{ name: 'beds', path: '/srv/code/garden/beds' }, { name: 'sensors', path: '/srv/code/garden/sensors' }] },
+  why: "the run's home binds no folder, and the runner has no /srv/code/garden",
+}, PROJECTS_LIST[1], PROJECTS_LIST[2], {
+  url: /\/api\/chat\/sessions(\?.*)?$/,
+  json: [{
+    key: 'chat-e2e-garden', title: 'When to sow the beans', messages: 6, project_id: 'p-0a1b2c3d', origin: 'manual', lifecycle: 'active',
+    created: '2026-11-01T16:00:00+00:00', last_activity_ts: '2026-11-02T10:30:00+00:00', run_state: { session: 'chat-e2e-garden', phase: 'idle' },
+  }],
+  why: "the run's home has no project, so no chat in one, and other specs' chats are whatever ran first",
+}]
+
+/** The `?open=folder` tree's listing of Garden's folder. Only that substate asks it. */
+export const GARDEN_FOLDER_TREE: StubbedRead = {
+  url: /\/api\/file-list\?path=/,
+  json: {
+    roots: [], path: '/srv/code/garden',
+    entries: [
+      { name: 'beds', path: '/srv/code/garden/beds', is_dir: true },
+      { name: 'sensors', path: '/srv/code/garden/sensors', is_dir: true },
+      { name: 'README.md', path: '/srv/code/garden/README.md', is_dir: false, size: 812, mtime: 1730538000 },
+    ],
+  },
+  why: "the run's home binds no folder, and the runner has no /srv/code/garden",
+}

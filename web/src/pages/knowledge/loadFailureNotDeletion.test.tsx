@@ -12,14 +12,16 @@ import { join } from 'node:path'
 //                      the header "Not found".
 //   projects-detail    `useQuery(...)` returns `data: undefined` on error, and this call site
 //                      destructured only `{ data, loading, refresh }`. A 500 fell through to
-//                      `!project` → "This project no longer exists."
+//                      `!project` → "This project no longer exists." The project's page (PROJ PR 4)
+//                      now decides by the read's status: a 404 alone says it, any other failure is
+//                      `LoadError`.
 //
 // Both are worse than a generic error: they tell the user something was destroyed when the server
 // merely failed to answer, and they offer no retry — so the honest recovery (reload) looks pointless.
 //
 // 🔑 THE LINE ALREADY EXISTS IN THIS REPO, which is why this is convergence rather than invention.
-// `ProjectsSection`'s `dirErrorMessage` switches on `ApiError.status`: 404 → "no longer exists on
-// disk", 400/403 → outside the browsable area, else → "couldn't read this directory". And
+// The project page's folder tree (`ProjectDetails`'s `dirErrorMessage`) switches on the status: 404 →
+// "no longer exists on disk", anything else → it can't be read right now. And
 // `CodeCockpitPage` carries the same rule in a comment: *"Only flag 'no longer exists' when the dir is
 // genuinely GONE."* These two surfaces were simply never brought in line.
 //
@@ -55,27 +57,28 @@ describe('a failed read is not a deletion', () => {
       .toMatch(/missing \? 'Not found' : loadErr \? "Couldn't load" : 'Loading…'/)
   })
 
-  it('projects-detail stops discarding the load error', () => {
-    const code = read('pages/projects/ProjectsSection.tsx')
+  it("the project's page keeps the load error, and renders the retry for any failure but a 404", () => {
+    const code = read('pages/projects/ProjectPage.tsx')
     expect(code, 'the error must be destructured to be checkable')
-      .toMatch(/const \{ data: project, loading, error: detailErr, refresh \} = useQuery/)
-    expect(code, 'and a failed read renders the retry, before the deletion branch')
-      .toMatch(/if \(!project && detailErr\) \{[\s\S]{0,220}?<LoadError what="project" error=\{detailErr\} onRetry=\{refresh\} \/>/)
+      .toMatch(/const \{ data: project, error: projectError, refresh \} = useQuery/)
+    expect(code, 'the deletion is decided by the status alone')
+      .toMatch(/const gone = projectError instanceof ApiError && projectError\.status === 404/)
+    expect(code, 'and any other failed read renders the retry')
+      .toMatch(/if \(!project && projectError\) \{[\s\S]{0,220}?<LoadError what="project" error=\{projectError\} onRetry=\{refresh\} \/>/)
   })
 
-  it('projects-detail keeps the deletion copy for a genuine absence', () => {
-    const code = read('pages/projects/ProjectsSection.tsx')
+  it("the project's page keeps the deletion copy for a genuine absence, and only for it", () => {
+    const code = read('pages/projects/ProjectPage.tsx')
     expect(code).toMatch(/This project no longer exists\./)
-    // Order matters: the error branch must come FIRST, or it is unreachable.
-    expect(code.indexOf('if (!project && detailErr)'))
-      .toBeLessThan(code.indexOf('This project no longer exists.'))
+    // The deletion branch reads `gone`, the 404, so it is reached only by one.
+    expect(code).toMatch(/if \(!project && gone\) \{[\s\S]{0,300}?This project no longer exists\./)
   })
 
   it('the retry copy does not double the article ("your this project")', () => {
     // `LoadError` renders "Couldn't load your <what>",
     // so a `what` beginning with "this" produced "Couldn't load your this knowledge item". The same
     // shape once shipped as "Couldn't load your your tasks".
-    for (const rel of ['pages/knowledge/KnowledgeDetailPage.tsx', 'pages/projects/ProjectsSection.tsx']) {
+    for (const rel of ['pages/knowledge/KnowledgeDetailPage.tsx', 'pages/projects/ProjectPage.tsx']) {
       expect(read(rel), `${rel} must not pass a demonstrative to LoadError`)
         .not.toMatch(/<LoadError what="(this|your|the) /)
     }
@@ -84,8 +87,8 @@ describe('a failed read is not a deletion', () => {
   it('the 404-vs-other rule this converges on is still the repo’s rule', () => {
     // Vacuity floor: if `dirErrorMessage` stops distinguishing 404, the precedent cited above is gone
     // and these two surfaces should be re-argued rather than silently kept.
-    expect(read('pages/projects/ProjectsSection.tsx'))
-      .toMatch(/if \(status === 404\) return "This folder no longer exists on disk\."/)
+    expect(read('pages/projects/ProjectDetails.tsx'))
+      .toMatch(/if \(status === 404\) return 'This folder no longer exists on disk\.'/)
   })
 
   it('the store contract its other callers rely on is untouched', () => {

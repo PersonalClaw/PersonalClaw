@@ -231,7 +231,8 @@ secret in the same credential store Settings → Secrets uses, where a workflow'
 `{{secret:NAME}}` and a provider entry whose `credential` is `NAME` read it.
 Settings → Secrets can also keep a secret for one project: only that project's
 work (its workflow runs, loops and chats) reads it, ahead of a global secret of
-the same name, and nothing outside the project does.
+the same name, and nothing outside the project does. A project's page links to
+its secrets from About this project, with Settings → Secrets opened on that project.
 `personalclaw doctor` verifies the result end to end.
 
 ## 4. First chat
@@ -273,7 +274,8 @@ State lives in the named volume `personalclaw_home`, mounted at `/data`, so it s
 `docker rm`/`docker run`. That includes your work: the image puts the workspace at
 `/data/workspace`, where the default chat workspace lives and where the folder picker opens
 to create a project folder. A folder you bind outside `/data` exists only inside that
-container and is gone when it is recreated; the project page then says so.
+container and is gone when it is recreated; the project's page then says so: its folder
+reads Folder missing, and About this project says where it was.
 `--restart unless-stopped` brings the gateway back by itself after a crash, an out-of-memory
 kill or a Docker restart. `-p 127.0.0.1:…` keeps the port on the host's loopback;
 `PERSONALCLAW_BIND_HOST=0.0.0.0` is what lets that published port reach the gateway

@@ -17,6 +17,12 @@ export const FIXED_CLOCK: Record<string, string> = {
   // filter does.
   notifications: '2026-11-02T12:00:00Z',
   'projects/p-0a1b2c3d?tab=tasks': '2026-11-02T12:00:00Z',
+  // A project's page says how long its live rows have waited or run and when its chat and tasks last
+  // moved, against its fixed reads (`PROJECT_PAGE`); so does each detail opened beside it.
+  'projects/p-0a1b2c3d': '2026-11-02T12:00:00Z',
+  'projects/p-0a1b2c3d?open=told': '2026-11-02T12:00:00Z',
+  'projects/p-0a1b2c3d?open=task:t-e2e-1': '2026-11-02T12:00:00Z',
+  'projects/p-0a1b2c3d?open=folder': '2026-11-02T12:00:00Z',
   // The Projects list says when each project last did something ("Active 3 min ago") and how long
   // each live row has waited or run, against its fixed reads (`PROJECTS_LIST`).
   projects: '2026-11-02T12:00:00Z',

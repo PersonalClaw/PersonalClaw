@@ -120,12 +120,16 @@ describe("Discover's area headings sit one rung under the page title", () => {
     //     is its h2, and each group (Feeds, Intents, Reports) heads its own region with an h3.
     //   · `ui/LibraryPreview` JOINED it: the preview's title is the item's h2, and its "About this
     //     item" section heads its rows with an h3. Panel-level both, correctly nested.
+    //   · `projects/ProjectAbout` JOINED it (PROJ PR 4): a project's page heads its About this project
+    //     section with an h2, and each of its parts (Brief, Instructions, Folder, What a new chat is
+    //     told, Secrets) with an h3 under it (`H1 > H2 > H3`). Panel-level, correctly nested.
     expect(withH3.sort(), 'files still using h3').toEqual([
       'pages/chat/beside/LoopBeside.tsx',
       'pages/chat/transcript/SourcesRow.tsx',
       // The cockpit's task title, which moved with the task detail out of `CodeCockpitPage`.
       'pages/code/cockpit/tasks/TaskDetailView.tsx',
       'pages/library/setup/SetupPanel.tsx',
+      'pages/projects/ProjectAbout.tsx',
       'pages/settings/VoicePanel.tsx',
       'pages/settings/VoiceProfilesSection.tsx',
       'pages/workflows/IntrospectPanel.tsx',

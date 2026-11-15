@@ -80,7 +80,7 @@ const SELF_REDUCING = /repeat\(\s*auto-(?:fill|fit)\s*,/
 describe('a multi-column grid must not carry an unconditional px floor', () => {
   it('reads the tree (a rail over nothing asserts nothing)', () => {
     expect(FILES.length, 'no .tsx files were read from src/').toBeGreaterThan(200)
-    expect(FILES.some((f) => f.rel === 'pages/projects/ProjectsSection.tsx')).toBe(true)
+    expect(FILES.some((f) => f.rel === 'pages/projects/ProjectPage.tsx')).toBe(true)
     // And the stripper must actually strip, or every assertion below reads prose as code.
     expect(stripComments('/* minmax(280px, 1fr) */ x')).not.toContain('280px')
     expect(stripComments('  // minmax(280px, 1fr)\ny')).not.toContain('280px')
@@ -112,7 +112,8 @@ describe('a multi-column grid must not carry an unconditional px floor', () => {
   it('every arbitrary grid-cols with a px floor is breakpoint-gated over a single-column base', () => {
     const checked: string[] = []
     for (const f of FILES) {
-      for (const m of f.code.matchAll(/(?:^|[\s"'`])((?:[a-z]+:)?grid-cols-\[[^\]]*\])/g)) {
+      // A breakpoint prefix (`md:`) or a container query on the surface's own box (`@[60rem]/page:`).
+      for (const m of f.code.matchAll(/(?:^|[\s"'`])((?:[a-z]+:|@\[[^\]]+\](?:\/[a-z-]+)?:)?grid-cols-\[[^\]]*\])/g)) {
         const cls = m[1]
         if (!/\d+px/.test(cls)) continue // no floor, nothing to starve
         if (SELF_REDUCING.test(cls)) continue
@@ -121,7 +122,7 @@ describe('a multi-column grid must not carry an unconditional px floor', () => {
           cls,
           `${f.rel} declares a px-floored multi-column grid with no breakpoint prefix — it applies ` +
             'at 320px, where it cannot fit. Prefix it (`md:`) and give the base a single column.',
-        ).toMatch(/^(sm|md|lg|xl|2xl):/)
+        ).toMatch(/^(?:(?:sm|md|lg|xl|2xl):|@\[[^\]]+\](?:\/[a-z-]+)?:)/)
         // A prefixed value only reflows if the unprefixed base is one column.
         expect(
           f.code,
@@ -135,16 +136,16 @@ describe('a multi-column grid must not carry an unconditional px floor', () => {
     expect(checked.length, 'no px-floored arbitrary grid-cols found — the rail is vacuous').toBeGreaterThan(0)
   })
 
-  it('the project hub keeps the responsive two-pane form (the measured fix)', () => {
-    const hub = FILES.find((f) => f.rel === 'pages/projects/ProjectsSection.tsx')!.code
-    // Base: one column, so Work stacks above Tasks below the breakpoint.
-    expect(hub, 'the narrow base must be a single column').toMatch(/\bgrid-cols-1\b/)
-    // Gated: the 2fr/1fr split, only where the container can hold both minima.
-    expect(
-      hub,
-      'the two-pane split must stay behind a breakpoint — 280px + 280px + a 1px gap needs ~561px',
-    ).toMatch(/\bmd:grid-cols-\[minmax\(0,2fr\)_minmax\(280px,1fr\)\]/)
-    // And the inline style it replaced must not come back.
-    expect(hub, 'the inline template must not return').not.toMatch(/gridTemplateColumns/)
+  it("a project's page keeps one column below 60rem of content, About beside the work only where both fit", () => {
+    // The old project hub's 2fr/1fr split (and its 280px floor, which starved the work to 39px at
+    // 320) went with its columns (PROJ PR 4). The page is one column over its own box, and About's
+    // 336px column joins it only from 60rem of content, a container query on the page's box, so a
+    // sidebar beside it takes its share first.
+    const page = FILES.find((f) => f.rel === 'pages/projects/ProjectPage.tsx')!.code
+    expect(page, 'the narrow base must be a single column').toMatch(/\bgrid-cols-1\b/)
+    expect(page, 'the page measures its own box').toMatch(/@container\/page/)
+    expect(page, 'About sits beside the work only from 60rem of content')
+      .toMatch(/@\[60rem\]\/page:grid-cols-\[minmax\(0,1fr\)_336px\]/)
+    expect(page, 'no inline template').not.toMatch(/gridTemplateColumns/)
   })
 })

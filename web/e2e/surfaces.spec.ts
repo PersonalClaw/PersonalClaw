@@ -6,7 +6,7 @@ import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, SUBSTATE_ROUTES, 
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
 import { idleRunState } from '../src/lib/workPhase'
 import { BASELINED_STEPS, runMatrix, stepVerdict, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
-import { FIXED_WAITING, LEARNING_WEEK, NEEDS_YOU_READS, PROJECTS_LIST, STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
+import { FIXED_WAITING, GARDEN_FOLDER_TREE, GARDEN_READS, LEARNING_WEEK, NEEDS_YOU_READS, PROJECT_PAGE, PROJECTS_LIST, STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
 import { FIXED_CLOCK } from './fixedClock'
 import { apiGet } from './pairedApi'
 
@@ -55,18 +55,6 @@ const baselinePath = (id: string) => join(BASELINE_DIR, `${id}-${process.platfor
 type BaselineFile = Record<string, { targets: Record<string, string[]>; known: Record<string, string[]> }>
 
 export const SURFACES = [...ROUTES, ...SETTINGS_ROUTES, ...VIEW_ROUTES, ...NON_NAV_ROUTES, ...SUBSTATE_ROUTES]
-
-/** The one project the Tasks view row opens, with three of its tasks; the run's home has none. */
-const FIXED_PROJECT = { id: 'p-0a1b2c3d', name: 'Garden', status: 'active', task_list_count: 0, created_at: '2026-10-01T09:00:00+00:00', updated_at: '2026-11-01T09:00:00+00:00' }
-const fixedTask = (id: string, title: string, status: string, priority: string) => ({
-  id, title, status, priority, project: 'Garden', tags: [],
-  created_at: '2026-10-30T09:00:00+00:00', updated_at: '2026-11-01T15:00:00+00:00',
-})
-const FIXED_TASKS = [
-  fixedTask('t-e2e-1', 'Order the soil', 'open', 'high'),
-  fixedTask('t-e2e-2', 'Plant the beans', 'in_progress', 'medium'),
-  fixedTask('t-e2e-3', 'Fix the gate latch', 'done', 'low'),
-]
 
 /** The feed the Notifications filter lists: one unread and one read note today, one read yesterday. */
 const fixedNote = (ts: string, title: string, acked: boolean) => ({ kind: 'job_completed', title, body: `${title}.`, ts, acked })
@@ -336,26 +324,16 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
     json: FIXED_NOTIFICATIONS,
     why: "the live feed's notes fall under Today or Yesterday by the real clock, and a run crosses midnight",
   }],
-  'projects/p-0a1b2c3d?tab=tasks': [{
-    url: /\/api\/projects(\?.*)?$/,
-    // One project and its tasks. The run's home has no project, so the Tasks view could only draw
-    // "not found". The view's own behavior (held to the project, its board, the scope All tasks
-    // remembers) is held by `src/app/tasksAreAViewOfEachProject.test.tsx`.
-    json: { projects: [FIXED_PROJECT] },
-    why: "the run's home has no project",
-  }, {
-    url: /\/api\/projects\/p-0a1b2c3d(\?.*)?$/,
-    json: FIXED_PROJECT,
-    why: "the run's home has no project",
-  }, {
-    url: /\/api\/projects\/p-0a1b2c3d\/work(\?.*)?$/,
-    json: { board: [], sections: [], completeness: 'complete', attention: 0, loadedAt: 0 },
-    why: "the run's home has no project",
-  }, {
-    url: /\/api\/tasks(\?.*)?$/,
-    json: { tasks: FIXED_TASKS, total: FIXED_TASKS.length, complete: true, owner: '' },
-    why: "the run's home has no project, so no task of one",
-  }],
+  // One project, its task list and its tasks (`GARDEN_READS`). The run's home has no project, so the
+  // Tasks view could only draw "not found". The view's own behavior (held to the project, its
+  // board, the scope All tasks remembers) is held by `src/app/tasksAreAViewOfEachProject.test.tsx`.
+  'projects/p-0a1b2c3d?tab=tasks': GARDEN_READS,
+  // A project's page and the details it opens beside it, over the page's fixed reads
+  // (`PROJECT_PAGE`); the folder's tree reads its listing too, which only that substate asks.
+  'projects/p-0a1b2c3d': PROJECT_PAGE,
+  'projects/p-0a1b2c3d?open=told': PROJECT_PAGE,
+  'projects/p-0a1b2c3d?open=task:t-e2e-1': PROJECT_PAGE,
+  'projects/p-0a1b2c3d?open=folder': [...PROJECT_PAGE, GARDEN_FOLDER_TREE],
   // Doctor and System are sections of Health since #5897: both pages' reads, where Health opens.
   'settings/health': [{
     url: /\/api\/doctor(\?.*)?$/,

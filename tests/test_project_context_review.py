@@ -216,6 +216,45 @@ def test_an_accepted_item_is_not_reproposed(project):
     assert Kind.PROJECT_FILE.value not in {p.kind for p in again}
 
 
+# ── the inbox row names the project its proposal changes ──
+
+
+def test_each_proposals_inbox_row_names_the_project_it_changes(project):
+    """A project's page counts the instruction changes proposed for it ("1 change proposed") by
+    the row's `project_id`, so it never decodes a target itself: each of the three kinds names its
+    project, and every other kind names none, whatever its target says."""
+    from types import SimpleNamespace
+
+    from personalclaw.learning.inbox import build_view
+
+    other = HierarchyStore().create_project(name="Elsewhere")
+    filed = pcr.project_context_review(_candidates(), project_id=project.id)
+    filed += pcr.project_context_review(_candidates()[:1], project_id=other.id)
+    # Every other kind, each with a target that reads like this project's, names no project.
+    others = [
+        SimpleNamespace(id=f"other-{k.value}", kind=k.value, target=project.id, title=k.value)
+        for k in Kind
+        if k.value not in pcr.PROJECT_KINDS
+    ]
+    assert others, "no kind outside the project kinds to hold to an empty project"
+
+    rows = {r["id"]: r for r in (row.to_dict() for row in build_view([*filed, *others]).rows)}
+
+    for p in filed:
+        want = other.id if p.target == other.id else project.id
+        assert (
+            rows[p.id]["project_id"] == want
+        ), f"{p.kind}'s row names {rows[p.id]['project_id']!r}"
+    assert {
+        rows[p.id]["project_id"] for p in filed if p.kind == Kind.PROJECT_INSTRUCTION.value
+    } == {
+        project.id,
+        other.id,
+    }
+    named = {o.kind: rows[o.id]["project_id"] for o in others if rows[o.id]["project_id"] != ""}
+    assert named == {}, f"kinds that change no project named one: {named}"
+
+
 # ── clause 5: prompt-only trigger, never automatic ──
 
 

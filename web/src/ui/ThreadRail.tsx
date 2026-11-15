@@ -36,8 +36,8 @@ const KIND_MARK: Partial<Record<ThreadKind, { word: string; icon: LucideIcon }>>
 }
 
 /** Each pip's state family (the shared state tokens the orb and the buddy read) and its words. A
- *  project's page lists its chats with the same marks, drawn in the shared state tokens
- *  (`pages/projects/ProjectThreads.tsx`). */
+ *  project's page lists its chats in Recent with the same marks, drawn in the shared state tokens
+ *  (`pages/projects/ProjectThreadRow.tsx`). */
 export const PIP: Record<ThreadPip, { family: PhaseFamily; word: string }> = {
   waiting: { family: 'waiting', word: 'waiting on you' },
   running: { family: 'active', word: 'running' },

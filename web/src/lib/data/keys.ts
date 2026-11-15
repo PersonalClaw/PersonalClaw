@@ -115,7 +115,6 @@ export const CACHE_NAMESPACES: Record<string, NamespacePolicy> = {
   skills: COLLECTION,
   snippet: COLLECTION,
   system: LIVE,
-  tasklist: COLLECTION,
   tasks: COLLECTION,
   'tasks-all': COLLECTION,
   'tasks-companion': COLLECTION,

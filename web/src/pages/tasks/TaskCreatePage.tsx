@@ -16,8 +16,30 @@ const EMPTY_TASKS: TaskCollection = { tasks: [], total: 0, complete: true, owner
 /** Dedicated full-page create flow (not the sidebar, per the directive). The
  *  same TaskForm the edit panel uses, laid out across the pane with a sticky
  *  footer. On success, hands the new task back to the section to open it. */
-export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCreated: (t: TaskItem) => void }) {
-  const [draft, setDraft] = useState<TaskDraft>(emptyDraft)
+export function TaskCreatePage({ onBack, onCreated, projectId }: {
+  onBack: () => void
+  onCreated: (t: TaskItem) => void
+  /** The project the task starts in (`tasks/new?project=<id>`, from a project's Tasks view). */
+  projectId?: string
+}) {
+  return (
+    <div className="flex h-full flex-col">
+      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New task</PageTitle></div>} />
+      <TaskCreateForm onCancel={onBack} onCreated={onCreated} projectId={projectId} />
+    </div>
+  )
+}
+
+/** The create form with its footer: the page's body, and a project page's `?open=task:new` beside
+ *  its work, where the task starts in that project and the page stays where it is. */
+export function TaskCreateForm({ onCancel, onCreated, projectId, compact }: {
+  onCancel: () => void
+  onCreated: (t: TaskItem) => void
+  projectId?: string
+  /** Laid out for a pane beside the work rather than across a page. */
+  compact?: boolean
+}) {
+  const [draft, setDraft] = useState<TaskDraft>(() => (projectId ? { ...emptyDraft(), project_id: projectId } : emptyDraft()))
   // A cheap cached snapshot for the dependency picker — NOT the list page's 'tasks'
   // key (that's persist:false for live status); a separate persisted key is fine here.
   // `allTasks`, not `tasks()`: the picker's whole job is to offer EVERY candidate, and the
@@ -48,23 +70,22 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New task</PageTitle></div>} />
+    <>
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-l pb-2xl">
+        <div className={compact ? 'px-m py-m pb-xl' : 'mx-auto px-l py-l pb-2xl'}>
           <PartialNotice className="mb-l" complete={collection?.complete ?? true} shown={allTasks.length}
             total={collection?.total ?? 0} what="tasks"
             detail="a prerequisite outside this window cannot be picked here" />
-          <TaskForm draft={draft} onChange={setDraft} allTasks={allTasks} />
+          <TaskForm draft={draft} onChange={setDraft} allTasks={allTasks} compact={compact} />
           {err && <p ref={errRef} role="alert" data-type="body-s" className="mt-l text-danger">{err}</p>}
         </div>
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-m">
         <div className="mx-auto flex justify-end gap-s">
-          <Button variant="ghost" onClick={onBack}>Cancel</Button>
+          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
           <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !draft.title.trim()} disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={16} /> Create task</Button>
         </div>
       </div>
-    </div>
+    </>
   )
 }

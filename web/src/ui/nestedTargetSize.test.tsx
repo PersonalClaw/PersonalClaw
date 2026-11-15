@@ -127,22 +127,14 @@ describe('the detail routes added after the first census', () => {
   const SRC = join(process.cwd(), 'src')
   const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
-  it("the project header's Rename button carries a 24px hit box", () => {
-    // The box is now the PRIMITIVE's guarantee: IconButton sizes its hit area
-    // from the `size` prop, so the pin asserts the prop instead of a class recipe.
-    expect(read('pages/projects/ProjectsSection.tsx'))
-      .toMatch(/IconButton icon=\{Pencil\} label="Rename" size=\{24\}/)
-  })
-
-  it("the context/workspace row's Open-in-Files button carries one too", () => {
-    expect(read('pages/projects/ProjectsSection.tsx'))
-      .toMatch(/IconButton icon=\{FolderOpen\} label=\{`Open \$\{label\} in Files`\}[\s\S]{0,40}?size=\{24\}/)
-  })
-
-  it('neither reintroduces the bare padding that made them undersized', () => {
-    const src = read('pages/projects/ProjectsSection.tsx')
-    expect(src, 'the 21x21 Rename shape').not.toMatch(/aria-label="Rename"[\s\S]{0,120}?rounded-md p-1 /)
-    expect(src, 'the 16x16 Open-in-Files shape').not.toMatch(/in Files`\}[\s\S]{0,200}?rounded p-0\.5 /)
+  // The project header's 24 px Rename and the old folder chip's Open in Files retired with the old
+  // page (PROJ PR 4): Rename is the "…"'s row, and the chip is deleted. What their pins held, no
+  // target under 24 px on desktop and every one 44 px from 320 to 768 px, holds for the page's own
+  // controls: the title editor's Save and Cancel keep their desktop sizes and take `TOUCH_TARGET`.
+  it("the project title's Save and Cancel keep their desktop sizes and take the 44 px box on a phone", () => {
+    const src = read('pages/projects/ProjectTitle.tsx')
+    expect(src).toMatch(/ariaLabel="Save the project name"[\s\S]{0,200}?className=\{TOUCH_TARGET\}/)
+    expect(src).toMatch(/IconButton icon=\{X\} label="Cancel" size=\{24\}[\s\S]{0,80}?className=\{TOUCH_TARGET\}/)
   })
 
   // Pins the holdout so it is not "converged" without confronting the reflow measured above.

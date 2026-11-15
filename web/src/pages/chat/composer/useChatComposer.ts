@@ -11,6 +11,7 @@ import { optimizeFailure, optimizeOutcome } from '../../../ui/composer/optimizeO
 import { TranscriptionRefused } from '../../../ui/composer/useMicRecorder'
 import type { ComposerValue } from '../../../ui/composer/types'
 import { coolWidgetHost, declineWidgetHost, useWidgetActionBridge, takePendingWidgetAction } from '../../../ui/widget/useWidgetActionBridge'
+import { takeNewChat } from '../../../lib/newChatHandoff'
 import { api, ApiError, hasApiCode, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type DiscoveredAgent, type MemoryMode, type SessionTemplate } from '../../../lib/api'
 import { idleRunState } from '../../../lib/workPhase'
 import { rewindPreviewText } from '../../../lib/rewindPreview'
@@ -150,7 +151,7 @@ const GOAL_REFUSAL_MIXED = 'A goal loop takes its task as yours. Delete all of t
 /** What the notice line says when a draft's words can't be told apart from a widget's. */
 export const MIXED_NOTICE = 'The widget\u2019s words and yours are mixed in this draft, so it stays marked: none of its links count as yours. Delete all of it to start your own.'
 
-export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = false, widgetActionNonce = '', initialProjectId, initialAgent, initialTaskMode = 'agent', pendingRouting, setRoutingSuggestion, setLiveRun, started, stream, followNewTurn, oweSpokenReply }: {
+export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = false, widgetActionNonce = '', startToken = '', initialProjectId, initialAgent, initialTaskMode = 'agent', pendingRouting, setRoutingSuggestion, setLiveRun, started, stream, followNewTurn, oweSpokenReply }: {
   sessionId: string | null
   navigate: (p: string, opts?: { replace?: boolean }) => void
   /** The draft a launch pre-fills (`?seed=`). */
@@ -161,6 +162,9 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   /** The nonce of a widget action the shell staged on the owner's yes (`?widget_action=`):
    *  this mount drains that stage and sends it. */
   widgetActionNonce?: string
+  /** The token of a draft a project's start box staged (`?start=`, `lib/newChatHandoff`): a new
+   *  chat in that project takes the stage once, with its files and picks, and sends it. */
+  startToken?: string
   /** The project a launch scopes the new chat to (`?project=`). */
   initialProjectId: string
   /** The agent a launch picks (`?agent=`). */
@@ -553,6 +557,37 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
       widget: fromWidget ? { text: back, ...joining(d) } : d.widget,
     }))
   }
+
+  // A draft a project's start box handed over (`?start=`): taken once, by its token and in its own
+  // project, on a new chat only. Its picks are set as the person would set them here, its files are
+  // attached, and its text waits in the draft until they are; then it is sent once, through this
+  // composer's own first send, which makes the chat with the project and those picks. A file the
+  // attach refused leaves the draft here to send by hand (the notice says why), never sent without
+  // it. A reload, Back or a copied link finds no stage and sends nothing.
+  const startPending = useRef<string | null>(null)
+  useEffect(() => {
+    if (sessionId || !startToken) return
+    const handed = takeNewChat(startToken, initialProjectId)
+    if (!handed) return
+    const { text, files, picks } = handed
+    const { memoryMode: mode, replyStyle: style, explain: explains, ...pills } = picks
+    if (Object.keys(pills).length) setSelection((s) => ({ ...s, ...pills }))
+    if (mode) setMemoryMode(mode)
+    if (style) void replyStyle.pill.onSelect(style)
+    if (explains) void explain.choice.onSelect(explains)
+    setDraft({ text, widget: null })
+    startPending.current = text
+    if (files.length) void attach(files)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    const text = startPending.current
+    if (text === null || uploads.length > 0) return
+    if (attachError) { startPending.current = null; return }
+    if (input !== text) return
+    startPending.current = null
+    void send(text)
+  })
 
   // A widget action raised from a NON-chat host (artifact-library preview, dashboard
   // tile band) was staged by the owner's press — in the page, or on the shell's ask — and

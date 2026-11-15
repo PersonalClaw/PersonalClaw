@@ -701,6 +701,8 @@ counts), `ui/navRailIsInstant.test.tsx`, `design/countsDoNotPop.test.tsx`,
 | `pages/loops/LoopsListPage.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
 | `pages/notifications/NotificationsPage.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
 | `pages/projects/ProjectList.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/projects/ProjectPage.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
+| `pages/projects/ProjectPage.tsx` | entrance (rise) | a list row rises in |
 | `pages/settings/bento.tsx` | entrance (rise) | a list row rises in |
 | `pages/settings/bento.tsx` | hover movement | list-row and card hover movement |
 | `pages/settings/settingsUI.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |

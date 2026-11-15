@@ -34,7 +34,7 @@ function strippedFiles(): string[] {
 }
 
 /** The route shots, by id. A primitive under `ui/` or the shell under `app/` renders on all of them. */
-const ROUTE_SHOTS = ['dashboard', 'chat', 'projects', 'tasks', 'apps', 'settings']
+const ROUTE_SHOTS = ['dashboard', 'chat', 'projects', 'project', 'tasks', 'apps', 'settings']
 
 /** Where each part of the strip table renders: the shot ids that show it, or why none can. The
  *  longest matching prefix wins, so a file can be placed more narrowly than its folder. */
@@ -57,6 +57,8 @@ const WHERE: Record<string, string[] | { none: string }> = {
       'that visual.spec.ts leaves out by design (NARROWER_BY_DESIGN)',
   },
   'pages/projects/': ['projects'],
+  // A project's page is its own shot, narrower than the list's folder.
+  'pages/projects/ProjectPage.tsx': ['project'],
   'pages/settings/': ['settings'],
   'pages/tasks/': ['tasks'],
 }

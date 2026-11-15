@@ -326,6 +326,10 @@ function changesThreads(m: WsMessage): boolean {
 
 export interface ThreadsRead {
   groups: ProjectThreads[]
+  /** The read's own loop rows, beside its groups: a project's page leaves their steps out of its
+   *  Tasks (`linked_task_ids`, and the phase lists their `loop_id` names) with no second read.
+   *  `undefined` until a read has answered. */
+  loops?: Loop[]
   loading: boolean
   /** Set when the last read failed. `groups` are then what the last good read said, and empty
    *  when none has succeeded, so the caller must say the read failed rather than show them as all. */
@@ -351,5 +355,5 @@ export function useThreads(): ThreadsRead {
     (data?.loops ?? []).flatMap((l) => [l.project_id, l.tasks_project_id]),
   )
   const groups = useMemo(() => (data ? toThreads({ ...data, projectIds }) : []), [data, projectIds])
-  return { groups, loading, error, refresh }
+  return { groups, loops: data?.loops, loading, error, refresh }
 }

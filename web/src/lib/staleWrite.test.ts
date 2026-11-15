@@ -295,7 +295,8 @@ describe('the census of saves that replace what they read', () => {
 
   it('every caller holds the guard, shows the notice, and is reached from a route', () => {
     expect(census.violations).toEqual([])
-    expect(census.callers.map((c) => `${c.route} › ${c.module}`)).toHaveLength(41)
+    // 43: a project's page saves its instructions (`ProjectAbout`) and its overview (`ProjectDetails`).
+    expect(census.callers.map((c) => `${c.route} › ${c.module}`)).toHaveLength(43)
     // Placed by the route tables, not by a list: a settings panel on its sub-page, a page on its
     // route, onboarding on the shell.
     expect(census.callers).toContainEqual(expect.objectContaining({ module: 'pages/settings/ProjectionRulesPanel.tsx', route: 'settings/tool-output' }))

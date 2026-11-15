@@ -49,7 +49,13 @@ function classAttributes(): Array<{ file: string; line: number; value: string }>
 // The measured surfaces. Adding a file here is a claim that its dimmed-ink text was checked on the
 // live DOM — not a guess from the class name.
 const MEASURED = new Set([
-  'pages/projects/ProjectsSection.tsx',
+  // A project's page (PROJ PR 4), which took over the old project detail's measured surface: its
+  // frame, groups, About and details, measured on the live DOM in both themes with the page.
+  'pages/projects/ProjectPage.tsx',
+  'pages/projects/ProjectWork.tsx',
+  'pages/projects/ProjectAbout.tsx',
+  'pages/projects/ProjectDetails.tsx',
+  'pages/projects/ProjectTitle.tsx',
   // The New project dialog: its intro, its folder's hint and its reason beside Create, measured on
   // the live DOM in both themes when the dialog moved into a file of its own.
   'pages/projects/NewProjectDialog.tsx',
@@ -75,8 +81,8 @@ const MEASURED = new Set([
 ])
 const DIMMED_LOW_INK = /\btext-on-surface-low\/\d+\b/
 // An ICON is not text: 1.4.3 governs text contrast, and a decorative glyph falls under 1.4.11
-// non-text contrast instead. `ProjectsSection` keeps one `text-on-surface-low/40` on a `<Circle>`
-// bullet, and axe does not flag it — so the rail skips className strings that carry an icon-sizing
+// non-text contrast instead. The old project page kept one `text-on-surface-low/40` on a `<Circle>`
+// bullet, and axe did not flag it — so the rail skips className strings that carry an icon-sizing
 // hint. Written as a RULE in the filter below (not a line-number allowlist) so it stays true as the
 // file moves.
 

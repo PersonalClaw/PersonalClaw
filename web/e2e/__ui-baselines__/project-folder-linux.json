@@ -1,0 +1,150 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close folder\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand folder\"",
+        "button \"New\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\""
+      ],
+      "390": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close folder\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand folder\"",
+        "button \"New\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\""
+      ],
+      "412": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close folder\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand folder\"",
+        "button \"New\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\""
+      ],
+      "768": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close folder\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand folder\"",
+        "button \"Move folder\"",
+        "button \"New\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\"",
+        "div[role=separator] \"Resize folder — arrow keys to resize\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Garden\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatW\" clips at #%: #x# in #x#"
+      ],
+      "axe (WCAG 2 AA)": [
+        "[serious] list: <ul> and <ol> must only directly contain <li>, <script> or <template> elements — # node(s): .py-s.px-m.flex-col > .gap-#\\.#"
+      ],
+      "focus order": [
+        "focus moves backwards from <button .absolute.inset-#.-z-#> \"File: README.md\" to <div .group/handle.absolute.top-#> \"Resize folder — arrow keys to resize\""
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close folder\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand folder\"",
+        "button \"New\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\""
+      ],
+      "390": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close folder\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand folder\"",
+        "button \"New\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\""
+      ],
+      "412": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close folder\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand folder\"",
+        "button \"New\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\""
+      ],
+      "768": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close folder\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand folder\"",
+        "button \"Move folder\"",
+        "button \"New\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\"",
+        "div[role=separator] \"Resize folder — arrow keys to resize\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Garden\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatW\" clips at #%: #x# in #x#"
+      ],
+      "axe (WCAG 2 AA)": [
+        "[serious] list: <ul> and <ol> must only directly contain <li>, <script> or <template> elements — # node(s): .py-s.px-m.flex-col > .gap-#\\.#"
+      ],
+      "focus order": [
+        "focus moves backwards from <button .absolute.inset-#.-z-#> \"File: README.md\" to <div .group/handle.absolute.top-#> \"Resize folder — arrow keys to resize\""
+      ]
+    }
+  }
+}

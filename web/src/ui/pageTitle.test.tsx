@@ -108,7 +108,8 @@ const DESTINATIONS = [
   'pages/inbox/InboxPage.tsx',
   'pages/notifications/NotificationsPage.tsx',
   'pages/projects/ProjectList.tsx',
-  'pages/projects/ProjectsSection.tsx',
+  'pages/projects/ProjectPage.tsx',
+  'pages/projects/ProjectTitle.tsx',
   'pages/skills/SkillsPage.tsx',
   'pages/learning/LearningPage.tsx',
   'pages/artifacts/ArtifactsSection.tsx',
@@ -158,12 +159,13 @@ describe('every converged destination names itself', () => {
     // SkillsPage (proposals view vs installed view vs the browse branch, which joined with the
     // 2026-09-05 audit) and KnowledgeCreatePage (the type picker step vs the chosen-type form).
     // Named rather than waved through, so a new branch has to justify itself here.
-    // `ProjectsSection` renders two, one per mutually exclusive branch: the shared detail shell's
-    // default and the project view's own `titleNode` (the list's title is `ProjectList`'s own). 🪤 Converting the shell's
-    // default alone left `#/projects/<id>` still h1-less — the project view passes `titleNode`, so the
-    // `??` default never renders. Follow the value that reaches the slot, not the first one you find.
+    // `ProjectPage` renders two, one per mutually exclusive branch: the frame of a project it cannot
+    // draw (gone, or its read failed) and its Tasks view's crumb. The page itself is titled by its own
+    // title module, `ProjectTitle` (the list's title is `ProjectList`'s own). 🪤 An earlier shell's
+    // default alone left `#/projects/<id>` h1-less, because the view passed its own title node. Follow
+    // the value that reaches the slot, not the first one you find.
     const TWO_STEP = ['pages/skills/SkillsPage.tsx', 'pages/knowledge/KnowledgeCreatePage.tsx',
-      'pages/projects/ProjectsSection.tsx']
+      'pages/projects/ProjectPage.tsx']
     const offenders: string[] = []
     for (const rel of DESTINATIONS) {
       const src = readSource(join(SRC, rel))
@@ -206,8 +208,8 @@ describe('an entity is the destination when the URL says so', () => {
       .toMatch(/<PageTitle className="truncate">\{run\.title \|\| run\.workflow\}<\/PageTitle>/)
     expect(read('pages/workflows/WorkflowDefDetail.tsx'), 'the definition')
       .toMatch(/<PageTitle className="truncate">\{name\}<\/PageTitle>/)
-    expect(read('pages/projects/ProjectsSection.tsx'), "the project view's own titleNode")
-      .toMatch(/<PageTitle className="truncate">\{project\.name\}<\/PageTitle>/)
+    expect(read('pages/projects/ProjectTitle.tsx'), "the project page's own title module")
+      .toMatch(/<PageTitle className="min-w-0 truncate"><span title=\{name\}>\{name\}<\/span><\/PageTitle>/)
     expect(read('pages/apps/AppFrame.tsx'), 'the installed app')
       .toMatch(/<PageTitle className="flex items-center gap-s">/)
     // Named in this file's own prose as "measured h1-less today" but never converted: the last

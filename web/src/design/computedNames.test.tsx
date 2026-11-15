@@ -288,7 +288,8 @@ describe('a Button whose whole body is an icon carries a name', () => {
       .toMatch(/ariaLabel=\{`Delete intent: \$\{rowSubject\(\[it\.goal \|\| it\.id\], 40\)\}`\}/)
     // In Library › Memory's header since the Audit view's controls moved there.
     expect(read('pages/library/MemoryPage.tsx')).toMatch(/label="Reload the audit log"/)
-    expect(read('pages/projects/ProjectsSection.tsx')).toMatch(/ariaLabel="Save the project name"/)
+    // The project page's title module, whose Save keeps that name (PROJ PR 4).
+    expect(read('pages/projects/ProjectTitle.tsx')).toMatch(/ariaLabel="Save the project name"/)
   })
 
   it('Button can carry a name at all, and documents it', () => {

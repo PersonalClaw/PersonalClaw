@@ -46,7 +46,7 @@ const { TaskDetail } = await import('./TaskDetail')
 const { DependencyEditor, NotesEditor } = await import('./formControls')
 const { TaskRow } = await import('../code/cockpit/tasks/TaskRow')
 const { TaskDetailView } = await import('../code/cockpit/tasks/TaskDetailView')
-const { TaskListPanel } = await import('../projects/ProjectsSection')
+const { TasksGroup } = await import('../projects/ProjectWork')
 const { resetDataStore } = await import('../../lib/data')
 const { registerBuiltinContentTypes } = await import('../../ui/content/registerBuiltins')
 
@@ -165,9 +165,9 @@ describe('a task title renders as one line everywhere a task is listed or headed
     expect(sinkOf(line)?.getAttribute('title')).toBe(SEEN)
   })
 
-  it("a project's task list", async () => {
-    render(<TaskListPanel list={{ id: 'tl-1', name: 'General', project_id: 'p-1' }} onOpenTask={noop} />)
-    const row = await screen.findByRole('button', { name: (name: string) => name.includes(SEEN) })
+  it("a project page's Tasks group", async () => {
+    render(<TasksGroup tasks={{ open: [task({})], any: true }} failed={false} onRetry={noop} onOpenTask={noop} onNewTask={noop} onSeeAll={noop} />)
+    const row = screen.getByRole('button', { name: (name: string) => name.includes(SEEN) }).closest('li')!
     const [line] = linesOf(row)
     expect(rendersLine(line)).toEqual([])
   })
@@ -266,13 +266,13 @@ describe('no file that draws a task draws its title raw', () => {
   const FILES = [
     'pages/tasks/TasksListPage.tsx', 'pages/tasks/TaskBoard.tsx', 'pages/tasks/TaskGraph.tsx', 'pages/tasks/TaskDetail.tsx',
     'pages/tasks/formControls.tsx', 'pages/code/cockpit/tasks/TaskRow.tsx', 'pages/code/cockpit/tasks/TaskDetailView.tsx',
-    'pages/projects/ProjectsSection.tsx', 'pages/loops/LoopCockpitPage.tsx',
+    'pages/projects/ProjectWork.tsx', 'pages/projects/ProjectPage.tsx', 'pages/loops/LoopCockpitPage.tsx',
   ]
   const read = (rel: string) => readFileSync(join(process.cwd(), 'src', rel), 'utf8')
 
   /** Titles in these files that are not a task's, which render in the change that renders their
-   *  kind's titles. None now: the Projects list's peek, which drew a project's chats and knowledge
-   *  in `ProjectsSection.tsx`, is retired for each project's own page. */
+   *  kind's titles. None now: the old project page's task-list panel, `TaskListPanel` in
+   *  `ProjectsSection.tsx`, retired for the page's Tasks group (`ProjectWork.tsx`). */
   const NOT_A_TASK: Record<string, string[]> = {}
 
   const FIELDS = ['title', 'description', 'content']

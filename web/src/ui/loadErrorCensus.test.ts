@@ -380,7 +380,7 @@ describe('the migrated surfaces read the error', () => {
     // skeleton branch. After: heading "Couldn't load your tasks", the server's own message, and a
     // Retry that recovers (driven: 0 rows -> 12, and the alert clears).
     'pages/tasks/TasksListPage.tsx',
-    'pages/projects/ProjectsSection.tsx',
+    'pages/projects/ProjectPage.tsx',
     'pages/projects/ProjectList.tsx',
     'pages/code/CodeSection.tsx',
     'pages/learning/LearningPage.tsx',
@@ -1420,7 +1420,7 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // findings show without the bar.
   'pages/library/LibraryPage.tsx': 2,
   'pages/library/useLibrary.ts': 3,
-  'pages/projects/ProjectsSection.tsx': 4,
+  'pages/projects/ProjectPage.tsx': 3,
   // `PromptDetail`, `SnippetDetail` and `AppsPanel` are GONE from this map, not zeroed. All three
   // were the pure eternal-spinner shape with nothing else wrong: the fetcher propagated correctly,
   // `full === undefined` / `!apps` was the ONLY gate below it, and nobody asked. So a failed
