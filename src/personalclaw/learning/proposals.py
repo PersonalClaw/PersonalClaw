@@ -757,7 +757,11 @@ def enqueue(
     if verdict is Verdict.REINFORCE and match is not None:
         match.reinforcements += 1
         match.updated_at = now
-        match.tags = sorted(set(match.tags) | set(candidate.tags))
+        from personalclaw.learning.template_install import keep_single_valued
+
+        # A single-valued tag (a template's name, the workflow a path was mined from) keeps the
+        # value it was filed with.
+        match.tags = keep_single_valued(match.tags, candidate.tags)
         # Human provenance wins on merge: a pattern later confirmed by the user is
         # human-originated from then on, and outranks inferred rows accordingly.
         if provenance == "human":
@@ -1190,6 +1194,12 @@ class AcceptError(Exception):
     """Raised when a proposal cannot be accepted."""
 
 
+class NotInstalledError(AcceptError):
+    """The install ran and failed: a taken name, a store that refused the write. Nothing changed,
+    no decision is recorded, and the row stays pending. Its message is the installer's sentence,
+    which the route answers as 409 ``learning_proposal_not_installed``."""
+
+
 class NoProposalInstallerError(AcceptError):
     """Nothing in this build can install this proposal's kind.
 
@@ -1256,9 +1266,15 @@ def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
         _audit("learning_proposal_accept", prop, "unsupported")
         logger.warning("Cannot install a %s proposal (%s); accept refused", prop.kind, pid)
         raise
+    except AcceptError as exc:
+        # An installer's own refusal is its sentence: a taken name, a store that refused the write.
+        _audit("learning_proposal_accept", prop, "failed")
+        raise NotInstalledError(str(exc)) from exc
     except Exception as exc:
         _audit("learning_proposal_accept", prop, "failed")
-        raise AcceptError(f"install failed for {pid!r}: {exc}") from exc
+        raise NotInstalledError(
+            f"It could not be installed ({exc}), so nothing changed and the proposal still waits."
+        ) from exc
 
     prop.status = Status.ACCEPTED.value
     prop.updated_at = _now()

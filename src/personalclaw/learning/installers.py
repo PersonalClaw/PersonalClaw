@@ -62,6 +62,7 @@ SKILL = "skill"
 SELF_MODEL = "self_model"
 LESSON_CONFLICT = "lesson_conflict"
 LEARNED_FROM_TEXT_NOT_TYPED = "learned_from_text_not_typed"
+TEMPLATE = "template"
 #: Claimed, and writing nothing is the CORRECT outcome — see :data:`NOTHING_TO_INSTALL`.
 NOTHING = "nothing"
 
@@ -108,6 +109,7 @@ def branch_for(data: dict[str, Any]) -> str:
         project_context_review,
         self_model_observer,
         skill_promotion,
+        template_install,
     )
     from personalclaw.packs import prompt_cards
 
@@ -125,6 +127,9 @@ def branch_for(data: dict[str, Any]) -> str:
         return SELF_MODEL
     if lesson_conflicts.is_conflict_proposal(data):
         return LESSON_CONFLICT
+    if template_install.is_template_proposal(data):
+        # A plan shape, or a row with no name or too few steps, is one nothing installs.
+        return "" if template_install.why_not(data) else TEMPLATE
     if str(data.get("kind") or "") in NOTHING_TO_INSTALL:
         return NOTHING
     return ""
@@ -179,6 +184,10 @@ def install(prop: Any, *, service: Any = None) -> str:
         from personalclaw.learning import lesson_conflicts
 
         lesson_conflicts.install_accepted(data, service)
+    elif branch == TEMPLATE:
+        from personalclaw.learning import template_install
+
+        template_install.install_accepted_template(data)
     elif branch == SELF_MODEL:
         from personalclaw.learning import self_model_observer
 
@@ -193,8 +202,15 @@ def install(prop: Any, *, service: Any = None) -> str:
                 "memory refused its text): nothing changed and the proposal is still pending"
             )
     elif branch != NOTHING:
+        from personalclaw.learning import template_install
+
+        # A template says why it can't be installed: a plan shape, no name, too few steps.
+        reason = (
+            template_install.why_not(data) if template_install.is_template_proposal(data) else ""
+        )
         raise proposals.NoProposalInstallerError(
-            f"nothing installs a {kind!r} proposal yet: nothing was changed and the proposal is "
+            reason
+            or f"nothing installs a {kind!r} proposal yet: nothing was changed and the proposal is "
             "still pending"
         )
 

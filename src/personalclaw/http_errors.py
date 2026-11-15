@@ -410,6 +410,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # 500 (handlers/learning.py — GET /api/learning/proposals): the queue's listing failed —
     # answered in place of an empty queue, which would read as "nothing to review".
     "learning_proposals_unreadable": "The learning proposal queue could not be read.",
+    # 409 (handlers/learning.py — POST /api/learning/proposals/{id}/accept): the install ran and
+    # was refused (a taken name, a store that refused the write); the message is the reason,
+    # nothing changed, and the proposal is still waiting.
+    "learning_proposal_not_installed": (
+        "It could not be installed, so nothing changed and the proposal is still waiting."
+    ),
     "store_required": "The request must name one retrieval store (knowledge or memory).",
     "card_unavailable": "That retrieval store could not be read for labelling.",
     "store_mutated": "A read-only harness pass wrote to a store and was refused.",

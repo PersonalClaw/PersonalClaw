@@ -615,6 +615,16 @@ def _is_successful(run: Any) -> bool:
     return str(getattr(status, "value", status) or "").lower() == "complete"
 
 
+def _path_tags(workflow: str) -> list[str]:
+    """A mined path's single-valued tags: the workflow it was mined from, and the name its Accept
+    saves it under (``learning.template_install``). None for ad-hoc work, which names no workflow.
+    """
+    from personalclaw.learning.template_install import NAME_TAG, WORKFLOW_TAG
+
+    name = str(workflow or "").strip()
+    return [WORKFLOW_TAG + name, f"{NAME_TAG}{name}-path"] if name else []
+
+
 def file_positive_trace(trace: Trace, *, session_key: str = "") -> str:
     """File one mined trace as a PENDING ``template`` proposal. Returns its id or ``""``.
 
@@ -644,7 +654,8 @@ def file_positive_trace(trace: Trace, *, session_key: str = "") -> str:
             source_cadence="run_end",
             evidence_strength="correlated",
             confidence=min(0.9, 0.4 + 0.1 * trace.frequency),
-            tags=["positive_path", "trace_mining"],
+            # Installs as "<workflow>-path", the workflow it was mined from kept beside it.
+            tags=["positive_path", "trace_mining"] + _path_tags(trace.workflow_name),
             occurrences=trace.frequency,
         )
     except Exception:

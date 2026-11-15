@@ -1357,8 +1357,11 @@ through and never by what that door was handed (`service._write_definition`
 drops a spec's own `provenance`): the owner in the editor (`owner`, from her
 signed-in session — the internal credential an agent's tools present saves as
 `agent` at the same route), the publish switch (`publish`), an agent's
-`workflow_author` or a chat's batch (`agent`), an accepted refiner proposal
-(`refiner`), a prompt card (`import`), an app's token (`app`). A version no door
+`workflow_author` or a chat's batch (`agent`), a proposed template you accepted
+in Learning (`agent` too, since its steps are an agent's words:
+`learning.template_install` saves it under its `name:` tag, and refuses a name a
+workflow already has), an accepted refiner proposal (`refiner`), a prompt card
+(`import`), an app's token (`app`). A version no door
 here saved — a template PersonalClaw ships (`shipped`) or an app provides
 (`app`), or a definition another machine's sync, a restore or a pack brought
 in (`brought_in`) — is recorded when an automation is allowed to run it. Version

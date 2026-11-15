@@ -2037,7 +2037,9 @@ def _save_template_from_session(args: dict[str, Any]) -> str:
 
     Files, never installs: the gate's accepted branch enqueues a PENDING proposal the user accepts
     or rejects, so this tool cannot add a definition to the workflow library. That is what makes it
-    safe to expose at all — the worst outcome of an over-eager call is one reviewable row.
+    safe to expose at all — the worst outcome of an over-eager call is one reviewable row. Her
+    Accept saves the steps as a workflow under *name*, filed as the proposal's ``name:`` tag
+    (``learning.template_install``), unless a workflow already has that name.
 
     A DECLINE is reported with its typed reason rather than swallowed. The model that proposed the
     steps is the one that can fix them (add a placeholder, list the real steps), and a silent no
@@ -2069,6 +2071,7 @@ def _save_template_from_session(args: dict[str, Any]) -> str:
         session_key=_resolve_session_key(),
         title=description or f"Template: {slug}",
         body="\n".join(f"- {s}" for s in steps),
+        name=slug,
     )
     if outcome.filed:
         return (

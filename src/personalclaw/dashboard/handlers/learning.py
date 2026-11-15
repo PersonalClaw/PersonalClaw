@@ -314,6 +314,11 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
     actor = _actor(request)
     try:
         prop = store.accept(pid, actor=actor, installer=_installer_for(request))
+    except store.NotInstalledError as exc:
+        # The install ran and was refused (a taken name, a store that refused the write): nothing
+        # changed and it still waits. Its sentence is the installer's, said on the card as it is.
+        _audit(request, "learning.proposal_accept", "rejected", f"{pid}:{exc}")
+        return json_error("learning_proposal_not_installed", message=str(exc), status=409)
     except store.AcceptError as exc:
         message = str(exc)
         # A missing row is a 404; a refused actor is a 403; a kind with no installer is a 409.

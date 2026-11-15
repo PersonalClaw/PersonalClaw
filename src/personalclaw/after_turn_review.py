@@ -731,6 +731,7 @@ async def _review_template_candidate(decision: dict, *, session_key: str) -> str
         session_key=session_key,
         title=description or f"Template: {slug}",
         body="\n".join(f"- {s}" for s in steps),
+        name=slug,
     )
     logger.info(
         "template gate: %s for %s (score %.2f, recorded=%s)",

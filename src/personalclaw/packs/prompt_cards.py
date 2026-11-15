@@ -365,7 +365,14 @@ def _payload_from_body(body: str) -> dict[str, Any]:
     return parsed
 
 
-def _save_def_sync(spec: dict[str, Any]) -> str:
+def save_definition(spec: dict[str, Any], *, saved_by: str = "") -> str:
+    """Save a workflow definition built by :func:`build_entity` from a SYNC installer, under the
+    door *saved_by* (``workflows.versions.SAVERS``; a pasted card's import by default). Returns
+    the name it was saved under. ``learning.template_install`` saves a learned template here."""
+    return _save_def_sync(spec, saved_by=saved_by)
+
+
+def _save_def_sync(spec: dict[str, Any], *, saved_by: str = "") -> str:
     """Save a card-derived workflow definition from a SYNC installer, through the save every
     other one goes through (``workflows.service.author_def``): a name a shipped template holds is
     refused, and so is a step that would do more than ask and read, which no card's yes covers.
@@ -386,7 +393,7 @@ def _save_def_sync(spec: dict[str, Any]) -> str:
             root=dict(spec.get("root") or {}),
             description=str(spec.get("description") or ""),
             tags=[str(t) for t in (spec.get("tags") or [])],
-            saved_by=IMPORT,
+            saved_by=saved_by or IMPORT,
         )
 
     try:
