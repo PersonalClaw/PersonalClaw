@@ -29,7 +29,8 @@ Needs you is the one list of what waits on your answer: every approval, question
 a step and stalled loop, in the order that could change the most first, then the proposals and
 notes to review. Each card leads with what it asks, its kind a small tag beside the thing it is
 about and the time left to answer, and each is answered on its own card, asking once more where
-its panel does. Each names the project it belongs to. The
+its panel does. Its panel is the thing itself, as its producer wrote it, with what Accept does at
+its foot. Each names the project it belongs to. The
 badge at the top counts them on every page and opens it. This set's demo home has nothing
 waiting, so it reads all clear.
 

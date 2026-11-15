@@ -17,6 +17,17 @@ import { verifyNote } from './inboxMeta'
 import { MarkdownLine } from '../../ui/MarkdownLine'
 import { Markdown } from '../../ui/Markdown'
 import { previewLine } from '../../lib/previewText'
+import { TextLink } from '../../ui/TextLink'
+import { LEARNING_KINDS } from '../../lib/needsYouKinds'
+
+/** A learning row's kind, by its card's variant, in the registry's words (`needsYouKinds`); "" for
+ *  any other row, or one filed before its card. */
+function learningTag(it: InboxItem): string {
+  const refs = (it.refs ?? {}) as Record<string, unknown>
+  const card = refs.card && typeof refs.card === 'object' ? refs.card as Record<string, unknown> : null
+  if (!refs.learning_proposal || !card) return ''
+  return LEARNING_KINDS[String(card.variant ?? '')]?.tag ?? ''
+}
 
 /** Per-item apply outcome, kept so a BATCH shows N individual results — one failure must
  *  not read as "the batch failed", and a success next to it must stay visible. */
@@ -164,6 +175,8 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
         {items.map((it) => {
           const p = proposalOf(it)
           const kase = p ? applyCase(p) : ''
+          // A learning row names its kind as Needs you's card does, by its tag, and opens its panel.
+          const tag = learningTag(it)
           const outcome = outcomes[it.id]
           return (
             <div
@@ -178,12 +191,17 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                   ariaLabel={`Select proposal: ${previewLine(p?.title || it.message)}`}
                 />
                 <div className="min-w-0 flex-1">
-                  <div data-type="label-m" className="truncate text-on-surface" style={fvs(500)} title={previewLine(p?.title || it.message)}>
-                    <MarkdownLine text={p?.title || it.message} />
+                  <div data-type="label-m" className="line-clamp-2 break-words text-on-surface" style={fvs(500)}>
+                    <MarkdownLine text={p?.title || it.message} tooltip={false} />
                   </div>
                   <div data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-s text-on-surface-low">
                     <span>{groupLabel(it)}</span>
-                    {kase ? (
+                    {tag ? (
+                      <>
+                        <span>· {tag}</span>
+                        <TextLink href={`#/mission-control?open=${encodeURIComponent(`note:${it.id}`)}`} ink="emphasis" size="sm">Review it in Needs you</TextLink>
+                      </>
+                    ) : kase ? (
                       <span>· {APPLY_CASE_LABEL[kase]}</span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-warn">

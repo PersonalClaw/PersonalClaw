@@ -266,6 +266,12 @@ Controls are pill-shaped and tonal; every interactive component has default, hov
 - **Its answer on the card:** every card that holds a decision answers with the panel closed, in its panel's words, through its panel's route. Answers to what waits are `secondary`; a proposal's accept that installs or applies is `tonal`, one that only records is `secondary`, one nothing here can do is its sentence beside Reject. A second confirmation opens inline on `InlineConfirm`, and a proposal's or a merge's press reads it again first. A card says "Answer it in the panel" only for what needs more than one press or one line.
 - **Outcomes say what happened for that card, by the gateway's code:** done, ended elsewhere (its answers go), or still waiting with the reason (its answers stay).
 
+### Detail panel (Needs you)
+- **The thing itself, never the card again:** the pane's header is the card's tag row and its heading the headline, wrapping in full. The body is plain sections under `Eyebrow as="h3"`, each drawn only with content: what it proposes or asks, why (a model's words attributed, "The agent says: …"), where it came from (up to when it was proposed), its facts, and one way out named for where it goes.
+- **Nothing scrolls inside it:** a block sits one surface step down and folds in place past 40 lines; a diff wraps (`UnifiedDiff wrap`), ink only.
+- **The decide bar** is the body's last part: what Accept does, then the verbs (a primary only for an install or apply). It sticks to the pane's foot while the pane is 32rem tall or more, and the pane's bottom fade then lies on its top edge. A hosted approval keeps its own Allow and Deny and takes no second bar.
+- **After a decision** the panel stays on the item with its outcome, and Next ask opens the next one that still waits.
+
 ### Inputs / Fields
 - Tonal fill (surface-low/container), 1px hairline stroke, 8–12px radius, ink text with ink-low placeholder (metadata only — placeholders never carry required information).
 - **Focus:** ordinary inputs get the global 2px coral `:focus-visible` outline. In the default look the composer's focus is a plain 2px coral ring: no animated gradient ring, no rim glow, no spring rise. Claw Arcade adds them (§7).
@@ -303,6 +309,7 @@ Controls are pill-shaped and tonal; every interactive component has default, hov
 - **Don't** use uppercase tracked eyebrows or display sizes inside panels — weight steps carry hierarchy.
 - **Don't** lead a card with its kind's label: the kind is the tag, and the headline is what it asks.
 - **Don't** keep a card's full text only in a native tooltip: a clamp fits it, and the panel holds it whole.
+- **Don't** draw a card again in its panel, or give a part of the panel a region of its own: the pane is the one region, named by its heading.
 
 ## 7. Identities
 

@@ -35,7 +35,7 @@ file and the app differ.
 | `#/settings` | Settings | Settings | Open Settings (Action); Settings | `app/Onboarding.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/openDuringSetup.ts`, `design/tokenLintRule.ts` and 41 more |
 | `#/notifications` | Inbox | Platform › Inbox | Inbox; Notifications | `app/approvalDestination.ts`, `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/NeedCards.tsx` and 6 more |
 | `#/discover` | Discover | not in the sidebar | Discover | `pages/dashboard/widgets/Discover.tsx` |
-| `#/mission-control` | Needs you | not in the sidebar | Needs you | `pages/buddy/cardFixtures.ts`, `pages/buddy/liveCard.ts`, `pages/buddy/stageCard.ts`, `pages/dashboard/DashboardPage.tsx` and 5 more |
+| `#/mission-control` | Needs you | not in the sidebar | Needs you | `pages/buddy/cardFixtures.ts`, `pages/buddy/liveCard.ts`, `pages/buddy/stageCard.ts`, `pages/dashboard/DashboardPage.tsx` and 6 more |
 | `#/loop` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectPage.tsx` and 1 more |
 | `#/loops` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectPage.tsx` and 1 more |
 | `#/code` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectPage.tsx` and 1 more |
