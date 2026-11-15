@@ -47,8 +47,10 @@ import { useHeldHeight } from '../lib/useHeldHeight'
  */
 export type ApprovalDensity = 'compact' | 'roomy'
 
-/** Where the prompt is drawn: in a conversation (`chat`), or as one card of a queue (`queue`). */
-export type ApprovalForm = 'chat' | 'queue'
+/** Where the prompt is drawn: in a conversation (`chat`), as one card of a queue (`queue`), or in
+ *  the panel beside that card (`hosted`): the queue form without its head row, which the panel's
+ *  header already says in the same words ("Permission needed", its risk and who asked). */
+export type ApprovalForm = 'chat' | 'queue' | 'hosted'
 
 /** How many lines of a call's whole input the queue form shows before it folds the rest. */
 export const QUEUE_FOLD_LINES = 40
@@ -172,7 +174,8 @@ export function ApprovalPrompt({
   answersReplacedBy?: ReactNode
 }) {
   const roomy = density === 'roomy'
-  const queue = form === 'queue'
+  const queue = form === 'queue' || form === 'hosted'
+  const hosted = form === 'hosted'
   const answersRef = useRef<HTMLDivElement>(null)
   const held = useHeldHeight(answersRef, queue && !answersReplacedBy)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -239,8 +242,8 @@ export function ApprovalPrompt({
   if (queue) {
     return (
       <div ref={rootRef} role="group" aria-label={`Permission needed to run ${tool}`} tabIndex={-1} onKeyDown={onKeyDown}
-        data-approval-form="queue" className={`flex min-w-0 flex-col gap-xs${className ? ` ${className}` : ''}`}>
-        <div className="flex min-w-0 flex-wrap items-center gap-xs">
+        data-approval-form={form} className={`flex min-w-0 flex-col gap-xs${className ? ` ${className}` : ''}`}>
+        {hosted ? null : <div className="flex min-w-0 flex-wrap items-center gap-xs">
           <StatusPill tone="neutral" groundedOn="var(--color-surface-low)" className="inline-flex items-center gap-1">
             <ShieldQuestion size={12} aria-hidden />Permission needed
           </StatusPill>
@@ -248,7 +251,7 @@ export function ApprovalPrompt({
           {/* Who asked, in the registry's words, as plain text: the panel's "Who asked" links it. */}
           {source && <span data-type="caption" className="min-w-0 truncate text-on-surface-low">From {source}</span>}
           {tagEnd && <span className="ml-auto flex shrink-0 items-center gap-xs">{tagEnd}</span>}
-        </div>
+        </div>}
         <CompactArgs tool={tool} args={args} queue />
         {purpose && <p data-type="body-s" className="break-words text-on-surface">{purpose}</p>}
         {meta}

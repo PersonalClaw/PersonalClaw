@@ -12,7 +12,7 @@ import { QuietButton } from '../../../ui/QuietButton'
 import { TextLink } from '../../../ui/TextLink'
 import { UnifiedDiff } from '../../../ui/UnifiedDiff'
 import {
-  CardOutcome, ConversationTail, ENDED_ELSEWHERE, LEARNING_OFF, LearningAnswers, NeedDetail, SkillAnswers,
+  CardOutcome, ConversationTail, DECIDE_BAR, ENDED_ELSEWHERE, LEARNING_OFF, LearningAnswers, NeedDetail, SkillAnswers,
   needSubject, type CardActions, type Outcome,
 } from '../NeedCards'
 
@@ -33,8 +33,8 @@ export const FOLD_LINES = 40
 
 /** Whether the row's panel is its own body (a proposal's read), whose header is its tag row; what
  *  waits keeps its detail (`NeedDetail`), which draws the card's parts, until its body is here. */
-export function panelOwnsBody(row: NeedsYouRow): boolean {
-  return row.origin === 'proposal' || (row.origin === 'note' && typeof row.note.refs?.learning_proposal === 'string')
+export function panelOwnsBody(_row: NeedsYouRow): boolean {
+  return true
 }
 
 /** The selected row's panel body: a proposal's own read, or, for what waits, the ask's detail. */
@@ -108,7 +108,7 @@ function Facts({ items }: { items: [string, string][] }) {
  *  32rem tall or more; `ScrollFade` lays its bottom fade on the bar's top edge while it is stuck. */
 export function DecideBar({ sentence, children }: { sentence?: string; children: ReactNode }) {
   return (
-    <div data-decide-bar="" className="-mx-l flex min-w-0 flex-col gap-s border-t border-outline-variant/40 bg-surface px-l py-s [@container(min-height:32rem)]:sticky [@container(min-height:32rem)]:bottom-0">
+    <div data-decide-bar="" className={`${DECIDE_BAR} gap-s`}>
       {sentence ? <p data-type="body-s" className="max-w-[70ch] text-on-surface">{sentence}</p> : null}
       <div className="flex min-w-0 flex-wrap items-start gap-s [&_button]:whitespace-normal">{children}</div>
     </div>

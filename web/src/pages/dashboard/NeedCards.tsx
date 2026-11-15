@@ -11,6 +11,7 @@ import {
 import { approvalOf, isStale, staleAt } from '../../lib/waitingList'
 import { kindOf, learningCardOf, type KindWords } from '../../lib/needsYouKinds'
 import { StatusPill } from '../../ui/StatusPill'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { rowSubject } from '../../lib/rowSubject'
 import { PendingApprovalCard } from '../../app/PendingApprovalCard'
 import { Button } from '../../ui/Button'
@@ -289,6 +290,10 @@ export function NeedTagRow({ row, chip, now }: { row: NeedsYouRow; chip?: ReactN
   )
 }
 
+/** The panel's decide bar: at the pane's foot, sticky while the pane is 32rem tall or more (a size
+ *  query on its scroller, `ListBesideDetail`'s `decideBar`), the body's last part otherwise. */
+export const DECIDE_BAR = '-mx-l flex min-w-0 flex-col border-t border-outline-variant/40 bg-surface px-l py-s [@container(min-height:32rem)]:sticky [@container(min-height:32rem)]:bottom-0'
+
 /** What a card's answer carries on every card: a 44 px box below 1024 px and a transparent edge,
  *  which forced colours draw as `ButtonBorder`, so a pair keeps its edges there. */
 const ANSWER = `border border-transparent ${TOUCH_TARGET}`
@@ -354,12 +359,12 @@ export function NeedDetail({ row, outcome, actions, now }: {
   const route = own.replace(/^#\/?/, '').split('?')[0] === 'mission-control' ? '' : own
   const asked = row.origin === 'waiting' ? clockTime(row.item.asked_at) : ''
   const item = row.origin === 'waiting' ? row.item : null
-  const reply = item ? waitingReply(item) : null
-  const settled = outcome?.state === 'done' || outcome?.state === 'ended'
   const questions = item?.kind === 'question' && Array.isArray(item.brief.questions) ? item.brief.questions : []
-  return (
-    <div className="flex min-w-0 flex-col gap-m">
-      <NeedBody row={row} outcome={outcome} actions={actions} now={now} />
+  // The parts, in the panel's order: the thing itself (the ask's own lines, `NeedBody`), where it
+  // came from (who asked, and the chat's last lines), its facts and one way out; the answers are
+  // the decide bar at the foot.
+  const parts = (
+    <>
       {questions.length > 1 ? (
         <ol className="flex min-w-0 list-decimal flex-col gap-xs pl-l">
           {questions.map((q, i) => (
@@ -369,22 +374,25 @@ export function NeedDetail({ row, outcome, actions, now }: {
           ))}
         </ol>
       ) : null}
-      {item?.session ? <ConversationTail session={item.session} /> : null}
-      {/* A loop's line and a text gate's are on its card (`NeedBody`), and so in its panel: a chat's
-          question takes its words here too. */}
-      {reply && reply.kind === 'question' && item && !settled && !isStale(item, now) ? (
-        <ReplyField subject={needName(row)} busy={outcome?.state === 'busy'}
-          placeholder="Reply in one line: Enter sends, Escape closes"
-          onSend={(text) => actions.reply(row.key, reply, text)} />
+      {row.raisedBy || item?.session ? (
+        <section className="flex min-w-0 flex-col gap-s">
+          <Eyebrow as="h3">Where it came from</Eyebrow>
+          {row.raisedBy ? <p data-type="body-s" className="text-on-surface">{row.raisedBy}</p> : null}
+          {item?.session ? <ConversationTail session={item.session} hosted /> : null}
+        </section>
       ) : null}
-      <dl data-type="body-s" className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs text-on-surface-var">
-        {row.raisedBy ? <><dt className="text-on-surface-low">Asked by</dt><dd>{row.raisedBy}</dd></> : null}
-        {asked ? <><dt className="text-on-surface-low">Asked</dt><dd>{asked}</dd></> : null}
-        {row.origin === 'waiting' && row.item.expires_at ? (
-          <><dt className="text-on-surface-low">Answer by</dt><dd>{clockTime(row.item.expires_at)}</dd></>
-        ) : null}
-      </dl>
+      {asked || item?.expires_at ? (
+        <dl data-type="body-s" className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs">
+          {asked ? <><dt className="text-on-surface-low">Asked</dt><dd className="text-on-surface">{asked}</dd></> : null}
+          {item?.expires_at ? <><dt className="text-on-surface-low">Answer by</dt><dd className="text-on-surface">{clockTime(item.expires_at)}</dd></> : null}
+        </dl>
+      ) : null}
       {route ? <TextLink href={route} ink="emphasis" size="sm">Open where it asks</TextLink> : null}
+    </>
+  )
+  return (
+    <div className="flex min-w-0 flex-col gap-l">
+      <NeedBody row={row} outcome={outcome} actions={actions} now={now} panel beforeAnswers={parts} />
     </div>
   )
 }
@@ -399,7 +407,7 @@ export function NeedDetail({ row, outcome, actions, now }: {
  *  confirmation's, `useHeldHeight`), and a failure says why under them, so a press moves nothing
  *  above or beside the pointer. Every answer to what waits is `secondary`, a skill proposal's accept
  *  `tonal`: none is solid coral on a card. */
-function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
+function NeedBody({ row, outcome, actions, now, chip, selected = false, off, panel = false, beforeAnswers }: {
   row: NeedsYouRow
   outcome: Outcome | undefined
   actions: CardActions
@@ -407,6 +415,11 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
   chip?: ReactNode
   selected?: boolean
   off?: string
+  /** In the panel: the pane's header holds the tag row and the heading the headline, so neither is
+   *  drawn again; an approval is its hosted form, and the answers sit in the decide bar. */
+  panel?: boolean
+  /** In the panel: its other parts, drawn after the ask's own lines and before the decide bar. */
+  beforeAnswers?: ReactNode
 }) {
   const settled = outcome?.state === 'done' || outcome?.state === 'ended'
   const busy = outcome?.state === 'busy'
@@ -434,11 +447,12 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
     if (approval && !expired) {
       return (
         <div className="flex min-w-0 flex-col gap-xs">
-          <PendingApprovalCard approval={approval} busy={busy || !!off} form="queue"
+          <PendingApprovalCard approval={approval} busy={busy || !!off} form={panel ? 'hosted' : 'queue'}
             tagEnd={chip || timeLeft(item, now) ? <>{chip}{timeLeft(item, now) ? <span data-type="caption" className="text-on-surface-low">{timeLeft(item, now)}</span> : null}</> : undefined}
             answersReplacedBy={replaced ?? undefined}
             onDecide={(action) => actions.approval(row.key, approval.id, action)} />
           {outcome?.state === 'failed' ? <CardOutcome outcome={outcome} /> : null}
+          {panel ? beforeAnswers : null}
         </div>
       )
     }
@@ -467,10 +481,11 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
     || (item?.kind === 'declined_wait' && runOf) || inboxRow)
   return (
     <div className="flex min-w-0 flex-col gap-xs">
-      <NeedTagRow row={row} chip={chip} now={now} />
+      {panel ? null : <NeedTagRow row={row} chip={chip} now={now} />}
       {/* What an agent, a loop or a person wrote renders as its line; an approval's title is a tool's
-          name, and a browse grant's second line is ours, so both stay text. */}
-      <p data-type="title-m" className={`min-w-0 break-words text-on-surface${clamped ? ' line-clamp-2' : ''}`}>{item?.kind === 'approval' ? row.title : <MarkdownLine text={row.title} tooltip={false} />}</p>
+          name, and a browse grant's second line is ours, so both stay text. In the panel it is the
+          pane's heading. */}
+      {panel ? null : <p data-type="title-m" className={`min-w-0 break-words text-on-surface${clamped ? ' line-clamp-2' : ''}`}>{item?.kind === 'approval' ? row.title : <MarkdownLine text={row.title} tooltip={false} />}</p>}
       {row.subtitle ? <p data-type="body-s" className={`min-w-0 break-words text-on-surface${clamped ? ' line-clamp-1' : ''}`}>{item?.kind === 'browse_grant' ? row.subtitle : <MarkdownLine text={row.subtitle} tooltip={false} />}</p> : null}
       {appPreview ? <AppPreview preview={appPreview} /> : null}
       {/* A gate's or a trigger's prompt is a body, with any widget block left out. */}
@@ -503,10 +518,11 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
 
       {/* Settled or expired, the verbs are GONE, not disabled: a second answer on a settled item
           is a real action. A FAILED card keeps them: retrying is the point of being told. */}
+      {panel ? beforeAnswers : null}
       {replaced && (settled || answerable) ? (
         <div data-held-answers="" style={held ? { minHeight: held } : undefined}>{replaced}</div>
       ) : expired || settled || !answerable ? null : (
-        <div ref={answersRef} className="flex min-w-0 flex-col gap-xs">
+        <div ref={answersRef} className={panel ? `${DECIDE_BAR} gap-xs` : 'flex min-w-0 flex-col gap-xs'} data-decide-bar={panel ? '' : undefined}>
           {cardReply || !answerable ? null : (
             <div className="flex min-w-0 flex-wrap items-start gap-xs">
               {proposal ? (
@@ -871,7 +887,7 @@ function ChatAnswers({ questions, subject, busy, off, onAnswer, onReply }: {
         ariaLabel={`Skip: ${subject}`} onClick={() => onAnswer('skip')} className={ANSWER}>
         Skip
       </Button>
-      {one?.free_text ? (
+      {one && (one.free_text || options.length === 0) ? (
         <div className="basis-full"><ReplyField subject={subject} busy={busy} off={off} onCard onSend={onReply} /></div>
       ) : null}
       {one ? null : <InThePanel />}

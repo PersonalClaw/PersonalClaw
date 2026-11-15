@@ -139,7 +139,7 @@ describe('Needs you renders what agents wrote', () => {
 
   it('the conversation an ask came from renders as the transcript does, cut at a block', async () => {
     render(<NeedsYouHarness query={{ open: 'waiting:question:q-1' }} />)
-    const region = await screen.findByRole('region', { name: 'The conversation it came from' })
+    const region = (await screen.findByRole('heading', { level: 3, name: 'Where it came from' })).closest('section')!
     await waitFor(() => expect(region.querySelector('pre')).not.toBeNull())
     expect(rendersBlock(region)).toEqual([])
     expect(region.textContent).not.toContain('<widget')
