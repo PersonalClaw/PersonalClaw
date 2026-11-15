@@ -160,11 +160,15 @@ describe('a run’s gate', () => {
     expect(within(needsYou()).getByRole('button', { name: /^Hold: / })).toBeEnabled()
   })
 
-  it('with no preset options, says where to answer it instead of faking a text box', async () => {
+  it('a text gate takes its line on the card; a choice gate with no choices is answered in the panel', async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: 'Name the release' })]))
+    const { unmount } = render(<NeedsYouHarness />)
+    expect(await within(needsYou()).findByRole('textbox', { name: /^Reply to Name the release/ })).toBeTruthy()
+    unmount()
+    resetDataStore()
+    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'choice', prompt: 'Pick a branch', choices: [] })]))
     render(<NeedsYouHarness />)
-    const link = await within(needsYou()).findByRole('link', { name: /^Open the run/ })
-    expect(link.getAttribute('href')).toBe('#/workflows/runs/run-77')
+    expect(await within(needsYou()).findByText('Answer it in the panel')).toBeTruthy()
     expect(within(needsYou()).queryByRole('textbox')).toBeNull()
   })
 
@@ -231,7 +235,7 @@ describe('the other asks', () => {
     await waitFor(() => expect(answerBridgeConfirmation).toHaveBeenCalledWith('tok-bridge', true))
   })
 
-  it('an agent’s question, a loop’s question and a plan open where they ask, and nothing is sent from here', async () => {
+  it('an agent’s question takes Skip, a loop’s its line and a plan its Launch, and only the loop also opens where it asks', async () => {
     waiting.mockResolvedValue(waitingList([
       waitingItem({ id: 'question:q1', kind: 'question', consequence: 'asks', brief: { questions: [{ question: 'Which branch?' }] },
         answer: { method: 'POST', path: '/api/chat/sessions/chat-1/questions/q1/answer', takes: ['answers', 'skip'], body: {} } }),
@@ -242,9 +246,11 @@ describe('the other asks', () => {
     ]))
     render(<NeedsYouHarness />)
     const links = await within(needsYou()).findAllByRole('link', { name: /^Answer it where it asks/ })
-    expect(links.map((a) => a.getAttribute('href'))).toEqual(['#/chat/chat-1', '#/loops/l1', '#/loops/l2'])
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['#/loops/l1'])
     expect(within(needsYou()).getByText('Docs')).toBeTruthy()
     expect(within(needsYou()).getByText('Review the plan: Split the module')).toBeTruthy()
+    expect(within(needsYou()).getByRole('button', { name: /^Skip: Which branch\?/ })).toBeTruthy()
+    expect(within(needsYou()).getByRole('button', { name: /^Launch: / })).toBeTruthy()
     expect(within(needsYou()).queryAllByRole('button', { name: /^(Approve|Allow|Deny)/ })).toEqual([])
   })
 })

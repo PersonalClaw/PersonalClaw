@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
-import { api, ApiError, hasApiCode, type OrganizeProposal } from '../../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, type AgentQuestion, type OrganizeProposal } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { clockTime } from '../../lib/epoch'
 import type { NeedsYouRow } from '../../lib/needsYou'
 import {
-  waitingAnswerId, waitingQuestion, waitingReply, type CardQuestion, type ReplyTarget,
+  waitingAnswerId, waitingLoopChoice, waitingPlan, waitingQuestion, waitingQuestionRef, waitingReply,
+  type CardQuestion, type PlanTarget, type ReplyTarget,
 } from '../../lib/waitingAnswer'
 import { approvalOf, isStale, staleAt } from '../../lib/waitingList'
 import { kindOf, learningCardOf, type KindWords } from '../../lib/needsYouKinds'
@@ -28,6 +29,9 @@ import { cutMarkdown } from '../../lib/cutMarkdown'
 import { widgetlessText } from '../../ui/widget/blocks'
 import { Markdown } from '../../ui/Markdown'
 import { openable } from './RunningLane'
+import { dropBody, redoBody } from '../code/MergeConflict'
+import { capsHaveRoom, retryWindow, spendCapStop } from '../workflows/attentionMeta'
+import { proposalsKey } from '../learning/proposalCache'
 
 // ── Needs you's cards ────────────────────────────────────────────────────────────────────────────
 //
@@ -58,9 +62,12 @@ export const SOURCE_WORDS: Record<string, string> = {
 
 export type Outcome =
   | { state: 'busy' }
-  | { state: 'done'; text: string }
+  | { state: 'done'; text: string; link?: OutcomeLink }
   | { state: 'ended'; text: string }
-  | { state: 'failed'; text: string }
+  | { state: 'failed'; text: string; link?: OutcomeLink }
+
+/** Where an answer's work went on to, named for it ("Open the new run"). */
+export interface OutcomeLink { href: string; label: string }
 
 /** The gateway's own sentence, plus what the user can do about it. The server text comes first
  *  and verbatim: it is the only part that says WHICH knob to turn. */
@@ -83,7 +90,8 @@ const KEPT_WITH_ITS_SENTENCE = new Set([
  *  "answered or ended somewhere else" and every other refusal as "try again"):
  *  - Learning off: its sentence, and the card's verbs go;
  *  - a 404 (decided or ended somewhere else) or an answered or ended question: ended;
- *  - work that moved since it asked: ended, sent to the panel;
+ *  - work that moved since it asked, or a plan step changed since the list read it: ended, sent to
+ *    the panel;
  *  - an install that was refused, a budget, an autonomy grant refused: still waiting, the server's
  *    sentence;
  *  - anything else: still waiting, `failureText`. */
@@ -94,7 +102,8 @@ export function outcomeFor(err: unknown, verb: string): Outcome {
   if (hasApiCode(err, 'question_answered') || hasApiCode(err, 'question_ended')) {
     return { state: 'ended', text: (err as Error).message }
   }
-  if (hasApiCode(err, 'loop_merge_moved') || hasApiCode(err, 'loop_conflict_moved')) {
+  if (hasApiCode(err, 'loop_merge_moved') || hasApiCode(err, 'loop_conflict_moved') || hasApiCode(err, 'stale_write')
+    || hasApiCode(err, 'plan_step_reviewed_again')) {
     return { state: 'ended', text: 'It changed since it asked. Review it in the panel.' }
   }
   if (err instanceof ApiError && (KEPT_WITH_ITS_SENTENCE.has(err.code) || (err.status === 400 && err.code.startsWith('autonomy'))) && err.message) {
@@ -219,6 +228,25 @@ export interface CardActions {
   appProposal?: (key: string, itemId: string, action: 'approve' | 'reject') => void
   /** A chat to file: Accept or Decline, the proposal rebuilt from its row. */
   organize?: (key: string, session: string, proposal: OrganizeProposal, action: 'accept' | 'decline') => void
+  /** An agent's one question in a chat: one of its options, by its place, or Skip. */
+  chat?: (key: string, ref: { session: string; question: string }, answer: { pick: number; label: string } | 'skip') => void
+  /** A plan step's approve, as the list read it; a loop's plan launched. */
+  planApprove?: (key: string, step: PlanStep) => void
+  /** A plan step's one-line comment, which redrafts it; true once it is sent. */
+  planComment?: (key: string, step: PlanStep, text: string) => Promise<boolean>
+  launch?: (key: string, loopId: string) => void
+  /** A loop's merge at the commits its read named, said as *done*. */
+  merge?: (key: string, loopId: string, tips: Record<string, string>, done: string) => void
+  /** A conflict's Redo or Drop at the tip its review named. */
+  conflict?: (key: string, loopId: string, choice: 'redo' | 'drop', taskId: string, tip: string) => void
+  /** A run that waits after a declined step: resumed, or cancelled. */
+  run?: (key: string, runId: string, action: 'resume' | 'cancel') => void
+  /** An escalated run started again, as its page retries it: a fork of it, started. */
+  retry?: (key: string, runId: string) => void
+  /** An Inbox row closed as the Inbox dismisses one, said as *done*. */
+  dismiss?: (key: string, itemId: string, done: string) => void
+  /** The autonomy an action earned, granted, said as *done*. */
+  promote?: (key: string, actionKey: string, rung: string, done: string) => void
   /** A typed line for a free-text ask; true once it is sent, so the field empties only then. */
   reply: (key: string, target: ReplyTarget, text: string) => Promise<boolean>
   /** A folder's trust, recorded by its own button (`TrustFolderButton`): the card says so. */
@@ -341,9 +369,9 @@ export function NeedDetail({ row, outcome, actions, now }: {
         </ol>
       ) : null}
       {item?.session ? <ConversationTail session={item.session} /> : null}
-      {/* A loop's line is on its card (`NeedBody`), and so in its panel: any other ask that takes words
-          is answered here. */}
-      {reply && reply.kind !== 'loop' && item && !settled && !isStale(item, now) ? (
+      {/* A loop's line and a text gate's are on its card (`NeedBody`), and so in its panel: a chat's
+          question takes its words here too. */}
+      {reply && reply.kind === 'question' && item && !settled && !isStale(item, now) ? (
         <ReplyField subject={needName(row)} busy={outcome?.state === 'busy'}
           placeholder="Reply in one line: Enter sends, Escape closes"
           onSend={(text) => actions.reply(row.key, reply, text)} />
@@ -416,15 +444,23 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
   const answerId = item ? waitingAnswerId(item) : ''
   const proposal = row.origin === 'proposal' ? row.proposal : null
   const answersHere = noteAnswer(row)
+  const chatQ = item ? waitingQuestionRef(item) : null
+  const plan = item ? waitingPlan(item) : null
+  const loopChoice = item ? waitingLoopChoice(item) : null
+  const inboxRow = item && ANSWERED_IN_THE_INBOX.has(item.kind) && typeof item.brief.inbox_item === 'string'
+    ? item.brief.inbox_item : ''
+  const runOf = item && typeof item.brief.workflow === 'string' ? item.brief.workflow : ''
   const trustsFolder = item?.kind === 'folder_trust' && typeof item.brief.dir === 'string' && item.brief.dir !== ''
     ? item.brief.dir : ''
   const inTheInbox = item && ANSWERED_IN_THE_INBOX.has(item.kind) && item.route ? item.route : ''
-  const opensWhereAsked = item && !question && !answerId && !trustsFolder && !inTheInbox
+  const opensWhereAsked = item && !question && !answerId && !trustsFolder && !inTheInbox && !chatQ && !plan && !loopChoice
   const reply = item ? waitingReply(item) : null
-  // A loop's question, and a stalled or blocked loop, take their one line on the card.
-  const cardReply = reply?.kind === 'loop' ? reply : null
-  const answerable = !!(proposal || answersHere || question || cardReply || trustsFolder
-    || ((item?.kind === 'browse_grant' || item?.kind === 'bridge_confirmation') && answerId))
+  // A loop's question, a stalled or blocked loop, and a run's text gate take their one line on the
+  // card; a chat's question takes its own (`ChatAnswers`).
+  const cardReply = reply?.kind === 'loop' || reply?.kind === 'gate' ? reply : null
+  const answerable = !!(proposal || answersHere || question || cardReply || trustsFolder || chatQ || plan || loopChoice
+    || ((item?.kind === 'browse_grant' || item?.kind === 'bridge_confirmation') && answerId)
+    || (item?.kind === 'declined_wait' && runOf) || inboxRow)
   return (
     <div className="flex min-w-0 flex-col gap-xs">
       <NeedTagRow row={row} chip={chip} now={now} />
@@ -481,6 +517,51 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
                   onYes={() => actions.appProposal?.(row.key, answersHere.itemId, 'approve')}
                   onNo={() => actions.appProposal?.(row.key, answersHere.itemId, 'reject')} />
               ) : null}
+              {answersHere?.kind === 'autonomy' && actions.promote && actions.dismiss ? (
+                <AutonomyAnswers actionKey={answersHere.actionKey} rung={answersHere.rung} subject={subject} busy={busy} off={off}
+                  onPromote={(done) => actions.promote?.(row.key, answersHere.actionKey, answersHere.rung, done)}
+                  onLeave={() => actions.dismiss?.(row.key, answersHere.itemId, 'Left as it is. Nothing changed.')} />
+              ) : null}
+              {chatQ && item && actions.chat ? (
+                <ChatAnswers questions={Array.isArray(item.brief.questions) ? item.brief.questions as AgentQuestion[] : []}
+                  subject={subject} busy={busy} off={off}
+                  onAnswer={(answer) => actions.chat?.(row.key, chatQ, answer)}
+                  onReply={(text) => actions.reply(row.key, { kind: 'question', session: chatQ.session, questionId: chatQ.question }, text)} />
+              ) : null}
+              {plan?.kind === 'step' && actions.planApprove && actions.planComment ? (
+                <PlanStepAnswers subject={subject} busy={busy} off={off}
+                  onApprove={() => actions.planApprove?.(row.key, plan)}
+                  onComment={(text) => actions.planComment?.(row.key, plan, text) ?? Promise.resolve(false)} />
+              ) : null}
+              {plan?.kind === 'launch' && actions.launch ? (
+                <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+                  ariaLabel={`Launch: ${subject}`} onClick={() => actions.launch?.(row.key, plan.loopId)} className={ANSWER}>
+                  <Play size={13} aria-hidden="true" /> Launch
+                </Button>
+              ) : null}
+              {loopChoice?.kind === 'merge' && item && actions.merge ? (
+                <MergeAnswers loopId={loopChoice.loopId} into={intoOf(item.brief.merge)} subject={subject} busy={busy} off={off}
+                  onMerge={(tips, done) => actions.merge?.(row.key, loopChoice.loopId, tips, done)} />
+              ) : null}
+              {loopChoice?.kind === 'conflict' && item && actions.conflict ? (
+                <ConflictAnswers loopId={loopChoice.loopId} conflict={item.brief.conflict} subject={subject} busy={busy} off={off}
+                  onChoose={(choice, taskId, tip) => actions.conflict?.(row.key, loopChoice.loopId, choice, taskId, tip)} />
+              ) : null}
+              {item?.kind === 'declined_wait' && runOf && actions.run ? (
+                <DeclinedAnswers subject={subject} busy={busy} off={off}
+                  onResume={() => actions.run?.(row.key, runOf, 'resume')} onCancel={() => actions.run?.(row.key, runOf, 'cancel')} />
+              ) : null}
+              {item?.kind === 'escalated_run' && inboxRow && actions.dismiss ? (
+                <EscalatedAnswers runId={runOf} subject={subject} busy={busy} off={off} now={now}
+                  onRetry={actions.retry ? () => actions.retry?.(row.key, runOf) : undefined}
+                  onDismiss={() => actions.dismiss?.(row.key, inboxRow, 'Dismissed.')} />
+              ) : null}
+              {item?.kind === 'held_action' && inboxRow && actions.dismiss ? (
+                <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+                  ariaLabel={`Dismiss: ${subject}`} onClick={() => actions.dismiss?.(row.key, inboxRow, 'Dismissed. Nothing ran.')} className={ANSWER}>
+                  <X size={13} aria-hidden="true" /> Dismiss
+                </Button>
+              ) : null}
               {answersHere?.kind === 'organize' && actions.organize ? (
                 <YesNo subject={subject} busy={busy} off={off} yes="Accept" no="Decline"
                   onYes={() => actions.organize?.(row.key, answersHere.session, answersHere.proposal, 'accept')}
@@ -523,6 +604,7 @@ type NoteAnswer =
   | { kind: 'learning'; pid: string; card: Record<string, unknown> | null }
   | { kind: 'app'; itemId: string }
   | { kind: 'organize'; session: string; proposal: OrganizeProposal }
+  | { kind: 'autonomy'; itemId: string; actionKey: string; rung: string }
 
 function noteAnswer(row: NeedsYouRow): NoteAnswer | null {
   if (row.origin !== 'note' || row.note.item_kind !== 'proposal') return null
@@ -531,6 +613,9 @@ function noteAnswer(row: NeedsYouRow): NoteAnswer | null {
     return { kind: 'learning', pid: refs.learning_proposal, card: learningCardOf(row) }
   }
   if (refs.app && refs.proposal) return { kind: 'app', itemId: row.note.id }
+  if (typeof refs.action_type === 'string' && refs.action_type && typeof refs.rung === 'string' && refs.rung) {
+    return { kind: 'autonomy', itemId: row.note.id, actionKey: refs.action_type, rung: refs.rung }
+  }
   if (refs.session_organize && typeof refs.session === 'string') {
     // The proposal rebuilt from the row; the route checks every field again against the live
     // folders and tags at the press.
@@ -568,7 +653,26 @@ function rejectVerb(variant: string): string {
  *  that replaces or removes what is there asks once more, inline, in the review's words, and nothing
  *  is sent before its yes. A row filed before the card (no `refs.card`) can't tell from its kind
  *  what its Accept does, so its Accept always asks once more. */
-function LearningAnswers({ pid, card, subject, busy, off, onAnswer }: {
+function LearningAnswers(props: {
+  pid: string; card: Record<string, unknown> | null; subject: string; busy: boolean; off?: string
+  onAnswer: (action: 'accept' | 'reject', done: string) => void
+}) {
+  // While Learning is off nothing here can decide a learning card: one read a page says so, the
+  // same read Learning's page makes (`GET /api/learning/proposals` answers `{enabled: false}`).
+  // A read that fails leaves the verbs: each press reads its proposal again, and says so then.
+  const { data, status } = useQuery(proposalsKey(''), async () => api.learningProposals())
+  if (status === 'success' && isSwitchedOff(data)) {
+    return (
+      <p data-type="body-s" className="basis-full text-on-surface">
+        {LEARNING_OFF}{' '}
+        <TextLink href="#/learning" ink="emphasis" aria-label={`Turn learning on: ${props.subject}`}>Turn learning on</TextLink>
+      </p>
+    )
+  }
+  return <LearningPair {...props} />
+}
+
+function LearningPair({ pid, card, subject, busy, off, onAnswer }: {
   pid: string; card: Record<string, unknown> | null; subject: string; busy: boolean; off?: string
   onAnswer: (action: 'accept' | 'reject', done: string) => void
 }) {
@@ -649,6 +753,8 @@ function SkillAnswers({ proposal, subject, busy, off, onAnswer }: {
   onAnswer: (action: 'accept' | 'reject', done: string) => void
 }) {
   const verb = proposal.card?.accept.verb || 'Accept'
+  const joins = proposal.kind === 'refine' ? !proposal.accept_target : !!proposal.accept_target
+  const lands = proposal.card && joins ? proposal.card.accept.sentence : ''
   const [asking, setAsking] = useState<string | null>(null)
   const [told, setTold] = useState<Told | null>(null)
   const [reading, setReading] = useState(false)
@@ -686,6 +792,281 @@ function SkillAnswers({ proposal, subject, busy, off, onAnswer }: {
         ariaLabel={`Reject: ${subject}`} onClick={() => onAnswer('reject', 'Rejected.')} className={ANSWER}>
         <X size={13} aria-hidden="true" /> Reject
       </Button>
+      {/* Where its Accept lands, when that isn't what its verb says: a refinement whose skill was
+          removed installs it new, and a new skill that joins an existing one adds to it. */}
+      {lands ? <p data-type="caption" className="basis-full text-on-surface-var">{lands}</p> : null}
+      {told ? <ReadSaid told={told} /> : null}
+    </>
+  )
+}
+
+/** "Answer it in the panel": what a card says where its answer needs more room than a card has. */
+function InThePanel() {
+  return <p data-type="caption" className="basis-full text-on-surface-low">Answer it in the panel</p>
+}
+
+/** An agent's question in a chat, on its card. One question with one choice takes its options, a
+ *  press each, its description under its label, the one-line reply where it takes your own words,
+ *  and Skip. Several questions, or one that takes several choices, take Skip, and the rest is
+ *  answered in the panel. */
+function ChatAnswers({ questions, subject, busy, off, onAnswer, onReply }: {
+  questions: AgentQuestion[]; subject: string; busy: boolean; off?: string
+  onAnswer: (answer: { pick: number; label: string } | 'skip') => void
+  onReply: (text: string) => Promise<boolean>
+}) {
+  const one = questions.length === 1 && !questions[0].multiSelect ? questions[0] : null
+  const options = one && Array.isArray(one.options) ? one.options : []
+  const said = useId()
+  return (
+    <>
+      {options.map((o, i) => (
+        <WrappingAnswer key={i} disabled={busy || !!off} ariaBusy={busy} ariaLabel={`${o.label}: ${subject}`}
+          ariaDescribedBy={o.description ? `${said}-${i}` : undefined} onClick={() => onAnswer({ pick: i, label: o.label })}>
+          <span className="flex min-w-0 flex-col items-start text-left">
+            <span>{o.label}</span>
+            {o.description ? <span id={`${said}-${i}`} data-type="caption" className="text-on-surface-var">{o.description}</span> : null}
+          </span>
+        </WrappingAnswer>
+      ))}
+      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+        ariaLabel={`Skip: ${subject}`} onClick={() => onAnswer('skip')} className={ANSWER}>
+        Skip
+      </Button>
+      {one?.free_text ? (
+        <div className="basis-full"><ReplyField subject={subject} busy={busy} off={off} onCard onSend={onReply} /></div>
+      ) : null}
+      {one ? null : <InThePanel />}
+    </>
+  )
+}
+
+type PlanStep = Extract<PlanTarget, { kind: 'step' }>
+
+/** A plan step under review: Approve, and a one-line comment that asks for a change, which redrafts
+ *  the step. Both name the step as the list read it, so a step changed since is refused. */
+function PlanStepAnswers({ subject, busy, off, onApprove, onComment }: {
+  subject: string; busy: boolean; off?: string
+  onApprove: () => void
+  onComment: (text: string) => Promise<boolean>
+}) {
+  return (
+    <>
+      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+        ariaLabel={`Approve: ${subject}`} onClick={onApprove} className={ANSWER}>
+        <Check size={13} aria-hidden="true" /> Approve
+      </Button>
+      <div className="basis-full">
+        <ReplyField subject={subject} busy={busy} off={off} onCard placeholder="Ask for a change in one line: Enter sends"
+          onSend={onComment} />
+      </div>
+    </>
+  )
+}
+
+const commitCount = (n: number) => `${n} commit${n === 1 ? '' : 's'}`
+
+/** The branch a loop's merge goes into, as its question names it, else "your branch". */
+function intoOf(merge: unknown): string {
+  const into = merge && typeof merge === 'object' ? (merge as { into?: unknown }).into : ''
+  return typeof into === 'string' && into ? into : 'your branch'
+}
+
+/** A loop's finished work, merged from its card: the press reads the merge review again and asks
+ *  once more, naming each task and its commits as that read shows them; its yes merges at exactly
+ *  those commits. Nothing declines a merge, so it has no Reject; its panel reviews the work. */
+function MergeAnswers({ loopId, into, subject, busy, off, onMerge }: {
+  loopId: string; into: string; subject: string; busy: boolean; off?: string
+  onMerge: (tips: Record<string, string>, done: string) => void
+}) {
+  const [asking, setAsking] = useState<{ sentence: string; tips: Record<string, string>; n: number; into: string } | null>(null)
+  const [told, setTold] = useState<Told | null>(null)
+  const [reading, setReading] = useState(false)
+  if (asking) {
+    return (
+      <InlineConfirm sentence={asking.sentence} verb={asking.n === 1 ? 'merge it' : 'merge them'} onBack={() => setAsking(null)}
+        onYes={() => {
+          setAsking(null)
+          onMerge(asking.tips, `Merged into ${asking.into}. The loop carries on.`)
+        }} />
+    )
+  }
+  if (told?.state === 'ended') return <ReadSaid told={told} />
+  const press = () => {
+    setReading(true)
+    setTold(null)
+    void api.uLoopMergeReview(loopId).then((review) => {
+      setReading(false)
+      const tasks = review.tasks ?? []
+      if (tasks.length === 0) { setTold({ state: 'ended', text: ENDED_ELSEWHERE }); return }
+      const named = tasks.map((task) => `“${task.title || task.branch}” (${commitCount(task.commits.length)})`).join(', ')
+      setAsking({
+        sentence: `Merge ${tasks.length} task${tasks.length === 1 ? '' : 's'} into ${review.into || into}: ${named}.`,
+        tips: Object.fromEntries(tasks.map((task) => [task.task_id, task.tip])), n: tasks.length, into: review.into || into,
+      })
+    }).catch((err: unknown) => { setReading(false); setTold(toldBy(err, 'read the work')) })
+  }
+  return (
+    <>
+      <Button size="xs" variant="secondary" loading={busy || reading} disabled={!!off} disabledReason={off}
+        ariaLabel={`Merge into ${into}: ${subject}`} onClick={press} className={ANSWER}>
+        <Check size={13} aria-hidden="true" /> Merge into {into}
+      </Button>
+      {told ? <ReadSaid told={told} /> : null}
+    </>
+  )
+}
+
+/** A task whose work conflicts with your branch: Redo or Drop, each read again first and each asked
+ *  once more in its review's words (both discard work); the yes names the task and the commit that
+ *  read showed. Resume, after you resolve it yourself, is in its panel. */
+function ConflictAnswers({ loopId, conflict, subject, busy, off, onChoose }: {
+  loopId: string; conflict: unknown; subject: string; busy: boolean; off?: string
+  onChoose: (choice: 'redo' | 'drop', taskId: string, tip: string) => void
+}) {
+  const [asking, setAsking] = useState<{ choice: 'redo' | 'drop'; sentence: string; taskId: string; tip: string } | null>(null)
+  const [told, setTold] = useState<Told | null>(null)
+  const [reading, setReading] = useState<'' | 'redo' | 'drop'>('')
+  if (asking) {
+    return (
+      <InlineConfirm sentence={asking.sentence} verb={asking.choice === 'redo' ? 'redo it' : 'drop it'} onBack={() => setAsking(null)}
+        onYes={() => { setAsking(null); onChoose(asking.choice, asking.taskId, asking.tip) }} />
+    )
+  }
+  if (told?.state === 'ended') return <ReadSaid told={told} />
+  const asked = conflict && typeof conflict === 'object' ? conflict as { into?: string; branch?: string } : {}
+  const press = (choice: 'redo' | 'drop') => {
+    setReading(choice)
+    setTold(null)
+    void api.uLoopConflictReview(loopId).then((review) => {
+      setReading('')
+      const task = review.task
+      const n = task.commits.length
+      const into = review.into || asked.into || 'your branch'
+      setAsking({
+        choice, taskId: task.task_id, tip: task.tip,
+        sentence: choice === 'redo' ? redoBody(into, task.branch, n) : dropBody(task.branch, n),
+      })
+    }).catch((err: unknown) => { setReading(''); setTold(toldBy(err, 'read the work')) })
+  }
+  return (
+    <>
+      <Button size="xs" variant="secondary" loading={busy || reading === 'redo'} disabled={!!off || !!reading} disabledReason={off}
+        ariaLabel={`Redo: ${subject}`} onClick={() => press('redo')} className={ANSWER}>
+        Redo
+      </Button>
+      <Button size="xs" variant="secondary" loading={busy || reading === 'drop'} disabled={!!off || !!reading} disabledReason={off}
+        ariaLabel={`Drop: ${subject}`} onClick={() => press('drop')} className={ANSWER}>
+        Drop
+      </Button>
+      {told ? <ReadSaid told={told} /> : null}
+    </>
+  )
+}
+
+/** A run that waits after you declined one of its steps: Resume it, or Cancel it, which asks once
+ *  more in the run page's words. */
+function DeclinedAnswers({ subject, busy, off, onResume, onCancel }: {
+  subject: string; busy: boolean; off?: string; onResume: () => void; onCancel: () => void
+}) {
+  const [asking, setAsking] = useState(false)
+  if (asking) {
+    return (
+      <InlineConfirm sentence="Cancel this run? In-flight steps are stopped. Completed work is kept." verb="cancel run"
+        onBack={() => setAsking(false)} onYes={() => { setAsking(false); onCancel() }} />
+    )
+  }
+  return (
+    <>
+      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+        ariaLabel={`Resume it: ${subject}`} onClick={onResume} className={ANSWER}>
+        <Play size={13} aria-hidden="true" /> Resume it
+      </Button>
+      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+        ariaLabel={`Cancel it: ${subject}`} onClick={() => setAsking(true)} className={ANSWER}>
+        <X size={13} aria-hidden="true" /> Cancel it
+      </Button>
+    </>
+  )
+}
+
+/** A run that stopped before it finished: Retry where the engine calls every one of its failures
+ *  retryable or a spend cap stopped it (read once here, and again at the press, as its page reads
+ *  them), shown once its window opens and its caps have room; and Dismiss. A loop's escalation, or
+ *  a run that can't be read, takes Dismiss alone. */
+function EscalatedAnswers({ runId, subject, busy, off, now, onRetry, onDismiss }: {
+  runId: string; subject: string; busy: boolean; off?: string; now: number
+  onRetry?: () => void; onDismiss: () => void
+}) {
+  const { data: run, error, refresh } = useQuery(`workflows:run:${runId}`, async () => (runId ? api.workflowRun(runId) : null))
+  const capStop = run ? !!spendCapStop(run) : false
+  // The day's caps, read for a run a spend cap stopped, as its page reads them; unread, no room.
+  const [caps, setCaps] = useState<Awaited<ReturnType<typeof api.usageBudget>> | null>(null)
+  useEffect(() => {
+    if (!capStop) return
+    let live = true
+    api.usageBudget().then((b) => { if (live) setCaps(b) }, () => { if (live) setCaps(null) })
+    return () => { live = false }
+  }, [capStop])
+  const window_ = run ? retryWindow(run) : null
+  const opensAt = window_ ? window_.retryAt * 1000 : 0
+  const canRetry = !!onRetry && !!runId && ((!!window_ && opensAt <= now) || (capStop && capsHaveRoom(caps)))
+  return (
+    <>
+      {canRetry ? (
+        <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+          ariaLabel={`Retry: ${subject}`} onClick={onRetry} className={ANSWER}>
+          <Play size={13} aria-hidden="true" /> Retry
+        </Button>
+      ) : null}
+      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+        ariaLabel={`Dismiss: ${subject}`} onClick={onDismiss} className={ANSWER}>
+        <X size={13} aria-hidden="true" /> Dismiss
+      </Button>
+      {error && !run ? <div className="basis-full"><InlineLoadError what="its run" error={error} onRetry={refresh} /></div> : null}
+      {window_ && opensAt > now ? (
+        <p data-type="caption" className="basis-full text-on-surface-low">It can be retried from {clockTime(new Date(opensAt).toISOString())}.</p>
+      ) : capStop && !canRetry ? (
+        <p data-type="caption" className="basis-full text-on-surface-low">It can be retried once the day's spend caps have room.</p>
+      ) : null}
+    </>
+  )
+}
+
+/** The autonomy an action earned: Promote it asks once more with what the rung lets it do, in the
+ *  ladder's own words, read at the press; Leave it closes the row and changes nothing. */
+function AutonomyAnswers({ rung, subject, busy, off, onPromote, onLeave }: {
+  actionKey: string; rung: string; subject: string; busy: boolean; off?: string
+  onPromote: (done: string) => void; onLeave: () => void
+}) {
+  const [asking, setAsking] = useState<{ sentence: string; label: string } | null>(null)
+  const [told, setTold] = useState<Told | null>(null)
+  const [reading, setReading] = useState(false)
+  if (asking) {
+    return (
+      <InlineConfirm sentence={asking.sentence} verb="promote it" onBack={() => setAsking(null)}
+        onYes={() => { setAsking(null); onPromote(`Promoted to “${asking.label}”.`) }} />
+    )
+  }
+  const press = () => {
+    setReading(true)
+    setTold(null)
+    void api.autonomyLadder().then((ladder) => {
+      setReading(false)
+      const meta = (ladder.rung_meta ?? []).find((m) => m.key === rung)
+      const label = meta?.label || rung
+      setAsking({ label, sentence: meta?.hint ? `“${label}”: ${meta.hint}` : `It moves to “${label}”.` })
+    }).catch((err: unknown) => { setReading(false); setTold(toldBy(err, 'read the autonomy ladder')) })
+  }
+  return (
+    <>
+      <Button size="xs" variant="secondary" loading={busy || reading} disabled={!!off} disabledReason={off}
+        ariaLabel={`Promote it: ${subject}`} onClick={press} className={ANSWER}>
+        <Check size={13} aria-hidden="true" /> Promote it
+      </Button>
+      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+        ariaLabel={`Leave it: ${subject}`} onClick={onLeave} className={ANSWER}>
+        Leave it
+      </Button>
       {told ? <ReadSaid told={told} /> : null}
     </>
   )
@@ -720,13 +1101,16 @@ function CardOutcome({ outcome }: { outcome: Outcome | undefined }) {
   if (!outcome || outcome.state === 'busy') return null
   if (outcome.state === 'failed') {
     return (
-      <p role="alert" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface">
-        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
-        {outcome.text}
-      </p>
+      <div className="flex min-w-0 flex-col gap-xs">
+        <p role="alert" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
+          {outcome.text}
+        </p>
+        {outcome.link ? <TextLink href={outcome.link.href} ink="emphasis" size="sm">{outcome.link.label}</TextLink> : null}
+      </div>
     )
   }
-  return (
+  const said = (
     <p role="status" data-type="body-s" className="flex min-w-0 items-start gap-xs text-on-surface-var">
       {outcome.state === 'done'
         ? <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-success" aria-hidden="true" />
@@ -734,11 +1118,18 @@ function CardOutcome({ outcome }: { outcome: Outcome | undefined }) {
       {outcome.text}
     </p>
   )
+  if (outcome.state !== 'done' || !outcome.link) return said
+  return (
+    <div className="flex min-w-0 flex-col gap-xs">
+      {said}
+      <TextLink href={outcome.link.href} ink="emphasis" size="sm">{outcome.link.label}</TextLink>
+    </div>
+  )
 }
 
-/** A gate's or a park's answers, as buttons: one click per option. A question with no preset options
- *  says where to answer it in your own words rather than offering a text box this card could not
- *  honestly submit. A parked run decides nothing, so its one button wakes it. */
+/** A gate's or a park's answers, as buttons: one click per option. A text gate takes its line in
+ *  the card's reply field; a form is filled in the panel, which says so. A parked run decides
+ *  nothing, so its one button wakes it. */
 function QuestionActions({ question, subject, busy, onAnswer, off }: {
   question: CardQuestion
   subject: string
@@ -757,17 +1148,10 @@ function QuestionActions({ question, subject, busy, onAnswer, off }: {
   if (question.approval) {
     return <YesNo subject={subject} busy={busy} off={off} yes="Approve" no="Deny" onYes={() => onAnswer(true)} onNo={() => onAnswer(false)} />
   }
-  if (question.choices.length === 0) {
-    return (
-      <p data-type="body-s" className="text-on-surface-low">
-        This question has no preset options —{' '}
-        <TextLink href={`#/workflows/runs/${encodeURIComponent(question.runId)}`} ink="emphasis" aria-label={`Open the run: ${subject}`}>
-          open the run
-        </TextLink>{' '}
-        to answer it in your own words.
-      </p>
-    )
-  }
+  // A text gate takes its one line on the card (`ReplyField`); a form, or a choice gate that
+  // names no choices, is answered in its panel.
+  if (question.kind === 'text') return null
+  if (question.choices.length === 0) return <InThePanel />
   // A choice's words are the run's own, so its pill wraps (`Button` never does): a long one never
   // runs past the card at 320 px.
   return (

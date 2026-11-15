@@ -25,6 +25,9 @@ export interface CardQuestion {
   confirm: boolean
   /** Parked until something wakes it (an `event` gate): the card wakes it, and decides nothing. */
   event: boolean
+  /** What it asks for, as the gate's ask names it (`approval`, `choice`, `text`, `form`, `event`),
+   *  `approval` for a park: a form is answered only in the panel, a text gate by a typed line. */
+  kind: string
 }
 
 function text(v: unknown): string {
@@ -85,6 +88,7 @@ export function waitingQuestion(item: WaitingItem): CardQuestion | null {
       approval: confirm || kind === 'approval',
       confirm,
       event: !confirm && kind === 'event',
+      kind: confirm ? 'approval' : kind,
     }
   }
   if (item.kind === 'park') {
@@ -101,6 +105,7 @@ export function waitingQuestion(item: WaitingItem): CardQuestion | null {
       approval: true,
       confirm: false,
       event: false,
+      kind: 'approval',
     }
   }
   return null
@@ -136,7 +141,8 @@ export function waitingReply(item: WaitingItem): ReplyTarget | null {
   const path = text(record(item.answer).path)
   if (item.kind === 'gate') {
     const q = waitingQuestion(item)
-    if (!q || q.approval || q.event || q.confirm || q.choices.length > 0) return null
+    // A form is filled in its panel: a line typed on a card would answer only its first field.
+    if (!q || q.kind !== 'text') return null
     return { kind: 'gate', runId: q.runId, resumeToken: q.resumeToken }
   }
   if (item.kind === 'loop_question') {
@@ -164,4 +170,53 @@ export function waitingQuestionRef(item: WaitingItem): { session: string; questi
   const session = m ? segment(m[1]) : ''
   const question = m ? segment(m[2]) : ''
   return session && question ? { session, question } : null
+}
+
+const LOOP_MERGE = /^\/api\/loops\/([^/]+)\/merge$/
+const LOOP_CONFLICT = /^\/api\/loops\/([^/]+)\/conflict$/
+
+/** A loop's merge or conflict question, and the loop it is answered on, read off its own route as
+ *  `waitingReply` reads a nudge's. `null` for any other item, or a route not of that shape. */
+export function waitingLoopChoice(item: WaitingItem): { kind: 'merge' | 'conflict'; loopId: string } | null {
+  if (item.kind !== 'loop_question') return null
+  const path = text(record(item.answer).path)
+  const merge = LOOP_MERGE.exec(path)
+  if (merge && segment(merge[1])) return { kind: 'merge', loopId: segment(merge[1]) }
+  const conflict = LOOP_CONFLICT.exec(path)
+  if (conflict && segment(conflict[1])) return { kind: 'conflict', loopId: segment(conflict[1]) }
+  return null
+}
+
+/** What a plan answers on: a loop's or a chat's step under review (approved, or commented on to
+ *  redraft it, naming the step as the list read it: `base`, its review revision), or a loop's
+ *  plan waiting for its launch. */
+export type PlanTarget =
+  | { kind: 'step'; on: 'loop' | 'chat'; id: string; stepId: string; base: string }
+  | { kind: 'launch'; loopId: string }
+
+const LOOP_PLAN = /^\/api\/loops\/([^/]+)\/plan\/approve$/
+const CHAT_PLAN = /^\/api\/chat\/sessions\/([^/]+)\/plan\/approve$/
+const LOOP_LAUNCH = /^\/api\/loops\/([^/]+)$/
+
+/** A plan's answer, read off its own route: `null` for any other item, or a route, a step or a
+ *  revision not of the shape a plan answers on. */
+export function waitingPlan(item: WaitingItem): PlanTarget | null {
+  if (item.kind !== 'plan_review') return null
+  const answer = record(item.answer)
+  const path = text(answer.path)
+  const body = record(answer.body)
+  if (text(answer.method) === 'PATCH') {
+    const m = LOOP_LAUNCH.exec(path)
+    const loopId = m ? segment(m[1]) : ''
+    return loopId && body.action === 'start' ? { kind: 'launch', loopId } : null
+  }
+  const stepId = text(body.step_id)
+  const quoted = text(record(answer.headers)['If-Match'])
+  const base = /^"[^"]+"$/.test(quoted) ? quoted.slice(1, -1) : ''
+  if (!stepId || !base) return null
+  const loop = LOOP_PLAN.exec(path)
+  if (loop && segment(loop[1])) return { kind: 'step', on: 'loop', id: segment(loop[1]), stepId, base }
+  const chat = CHAT_PLAN.exec(path)
+  if (chat && segment(chat[1])) return { kind: 'step', on: 'chat', id: segment(chat[1]), stepId, base }
+  return null
 }

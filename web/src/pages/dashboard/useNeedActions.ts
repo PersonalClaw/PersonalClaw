@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { api, ApiError } from '../../lib/api'
+import { capsHaveRoom, retryWindow, spendCapStop } from '../workflows/attentionMeta'
+import { clockTime } from '../../lib/epoch'
 import { invalidateKeys } from '../../lib/data'
 import { answeredText, failureText, outcomeFor, type CardActions, type Outcome } from './NeedCards'
 
@@ -84,6 +86,79 @@ export function useNeedActions(refreshNeeds: () => void): {
       const sent = action === 'accept' ? api.organizeAccept(session, proposal) : api.organizeDecline(session, proposal)
       void send(key, sent, action === 'accept' ? 'Accepted. The chat is organized as suggested.' : 'Declined. It won’t be suggested again.',
         `${action} this`, () => invalidateKeys('inbox', true))
+    },
+    chat: (key, ref, answer) => {
+      const sent = api.answerChatQuestion(ref.session, ref.question,
+        answer === 'skip' ? { skip: true } : { answers: [{ selected: [answer.pick], other: '' }] })
+      void send(key, sent, answer === 'skip' ? 'Skipped. The agent goes on without your answer.'
+        : `Answered “${answer.label}”. The agent carries on.`, 'send that answer')
+    },
+    planApprove: (key, step) => {
+      const sent = step.on === 'loop'
+        ? api.uLoopPlanApprove(step.id, step.stepId, step.base)
+        : api.chatPlanApprove(step.id, step.stepId, 'here', step.base)
+      void send(key, sent, 'Approved. The plan goes on.', 'approve this step')
+    },
+    planComment: (key, step, text) => {
+      const sent = step.on === 'loop'
+        ? api.uLoopPlanComment(step.id, step.stepId, text)
+        : api.chatPlanComment(step.id, step.stepId, text)
+      return send(key, sent, 'Sent. The step is drafted again with your change.', 'send that comment')
+    },
+    launch: (key, loopId) => {
+      void send(key, api.uLoopAction(loopId, 'start'), 'Launched. The loop is running.', 'launch it')
+    },
+    merge: (key, loopId, tips, done) => {
+      void send(key, api.uLoopMerge(loopId, tips), done, 'merge it')
+    },
+    conflict: (key, loopId, choice, taskId, tip) => {
+      void send(key, api.uLoopConflict(loopId, choice, taskId, tip),
+        choice === 'redo' ? 'The task runs again on top of your branch.' : 'Dropped. The loop carries on without it.',
+        choice === 'redo' ? 'redo the task' : 'drop its work')
+    },
+    run: (key, runId, action) => {
+      const sent = action === 'resume' ? api.resumeWorkflowRun(runId, {}) : api.cancelWorkflowRun(runId)
+      void send(key, sent, action === 'resume' ? 'Resumed. The run is moving again.' : 'Cancelled. Completed work is kept.',
+        action === 'resume' ? 'resume it' : 'cancel it', () => invalidateKeys('inbox', true))
+    },
+    retry: (key, runId) => {
+      // As the run's page retries (`WorkflowRunDetail`): read the run again, and its caps for a run
+      // a spend cap stopped, then a fork of it, started. A refused start leaves the new run a draft.
+      mark(key, { state: 'busy' })
+      void (async () => {
+        let child = ''
+        try {
+          const fresh = await api.workflowRun(runId)
+          const window_ = retryWindow(fresh)
+          if (window_ && window_.retryAt > Date.now() / 1000) {
+            mark(key, { state: 'failed', text: `It can be retried from ${clockTime(new Date(window_.retryAt * 1000).toISOString())}. Nothing was started.` })
+            return
+          }
+          if (spendCapStop(fresh) && !capsHaveRoom(await api.usageBudget())) {
+            mark(key, { state: 'failed', text: "The day's spend caps are still full, so nothing was started. Raise them in Settings, or retry once they reset." })
+            return
+          }
+          if (!window_ && !spendCapStop(fresh)) {
+            mark(key, { state: 'failed', text: 'A new attempt would stop the same way, so nothing was started. Open the run to see why.' })
+            return
+          }
+          child = (await api.forkWorkflowRun(runId, { note: 'retry after a transient failure' })).child_run_id
+          await api.startDraftWorkflowRun(child)
+          mark(key, { state: 'done', text: 'Started again as a new run.', link: { href: `#/workflows/runs/${encodeURIComponent(child)}`, label: 'Open the new run' } })
+          refreshNeeds()
+        } catch (err) {
+          if (child) {
+            mark(key, { state: 'failed', text: failureText('start the new run', err).replace(/ Nothing was recorded.*$/, ' It waits as a draft.'),
+              link: { href: `#/workflows/runs/${encodeURIComponent(child)}`, label: 'Open the new run' } })
+          } else mark(key, outcomeFor(err, 'retry it'))
+        }
+      })()
+    },
+    dismiss: (key, itemId, done) => {
+      void send(key, api.updateInboxItem(itemId, { status: 'dismissed' }), done, 'dismiss it', () => invalidateKeys('inbox', true))
+    },
+    promote: (key, actionKey, rung, done) => {
+      void send(key, api.autonomyGrant(actionKey, rung), done, 'promote it', () => invalidateKeys('inbox', true))
     },
     reply: (key, target, text) => {
       if (target.kind === 'gate') {

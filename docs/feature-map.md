@@ -28,7 +28,7 @@ file and the app differ.
 | `#/agents` | Agents | Capabilities, its Agents tab | Agents | `pages/chat/RoomMembersPanel.tsx`, `pages/dashboard/agents/AgentDay.tsx`, `pages/settings/PacksPanel.tsx` |
 | `#/tools` | Tools | Capabilities, its Tools tab | Add a tool server (Action); Tools | `pages/chat/composer/ChatComposer.tsx`, `pages/chat/composer/useChatComposer.ts`, `pages/chat/inspector/sections.tsx` |
 | `#/skills` | Skills | Capabilities, its Skills tab | Skills | `pages/agents/AgentForm.tsx`, `pages/chat/chatTypes.ts`, `pages/dashboard/NeedCards.tsx`, `pages/inbox/InboxDetail.tsx` and 1 more |
-| `#/learning` | Learning | Capabilities, its Learning tab | Learning | `pages/projects/ProjectPage.tsx`, `pages/settings/EvalsPanel.tsx`, `pages/settings/SettingsPage.tsx`, `pages/settings/settingsWidgets.tsx` |
+| `#/learning` | Learning | Capabilities, its Learning tab | Learning | `pages/dashboard/NeedCards.tsx`, `pages/projects/ProjectPage.tsx`, `pages/settings/EvalsPanel.tsx`, `pages/settings/SettingsPage.tsx` and 1 more |
 | `#/prompts` | Prompts | Capabilities, its Prompts tab | Prompts | `pages/tasks/TasksListPage.tsx`, `ui/forms.tsx` |
 | `#/workflows` | Workflows | Automations, its Workflows tab | Workflows | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/data/keys.ts` and 10 more |
 | `#/apps` | Apps | Capabilities, its Apps tab | Apps; Store | `pages/settings/AppsPanel.tsx`, `pages/settings/SearchPanel.tsx`, `pages/settings/SenderTrustPanel.tsx`, `pages/settings/VoiceProfilesSection.tsx` and 1 more |

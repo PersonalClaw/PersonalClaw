@@ -106,10 +106,17 @@ describe("a loop's line, on its card with the panel closed", () => {
     expect(field).toHaveValue('Use the staging key')
   })
 
-  it('a run’s text gate and an agent’s question keep their line in the panel, not on the card', async () => {
+  it('a run’s text gate takes its line on the card too, and a form gate is answered in the panel', async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: 'Name the release' })]))
     render(<NeedsYouHarness />)
-    await screen.findByRole('button', { name: 'Show the details of Name the release' })
+    await userEvent.type(await screen.findByRole('textbox', { name: /^Reply to Name the release/ }), 'v2.0 Spring{Enter}')
+    await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: 'v2.0 Spring', resume_token: 'tok-9' }))
+  })
+
+  it('a form gate takes no line on its card: it says to answer it in the panel', async () => {
+    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'form', prompt: 'Fill in the release form' })]))
+    render(<NeedsYouHarness />)
+    expect(await screen.findByText('Answer it in the panel')).toBeInTheDocument()
     expect(screen.queryByRole('textbox')).toBeNull()
   })
 })
@@ -126,7 +133,7 @@ describe('a free-text ask, answered from its peek', () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: 'Name the release' })]))
     render(<NeedsYouHarness />)
     const pane = await peek('Name the release')
-    await userEvent.type(within(pane).getByRole('textbox', { name: 'Reply to Name the release' }), 'v2.0 Spring{Enter}')
+    await userEvent.type(within(pane).getByRole('textbox', { name: /^Reply to Name the release/ }), 'v2.0 Spring{Enter}')
     await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: 'v2.0 Spring', resume_token: 'tok-9' }))
     expect(await within(pane).findByText('Answered “v2.0 Spring”. The run is moving again.')).toBeInTheDocument()
   })

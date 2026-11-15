@@ -119,7 +119,8 @@ describe('Needs you renders what agents wrote', () => {
   it("the reply field is named for the ask in plain text", async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: MD_LINE }, { id: 'gate:run-9:g:3' })]))
     render(<NeedsYouHarness query={{ open: 'waiting:gate:run-9:g:3' }} />)
-    expect(await screen.findByRole('textbox', { name: `Reply to ${SEEN}` })).toBeInTheDocument()
+    const field = await screen.findByRole('textbox', { name: (name) => name.startsWith(`Reply to ${SEEN}`) })
+    expect(field).toBeInTheDocument()
   })
 
   it("a hostile gate prompt is inert in its body", async () => {
