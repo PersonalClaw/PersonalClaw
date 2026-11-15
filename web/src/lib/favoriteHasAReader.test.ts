@@ -67,6 +67,23 @@ function areasThatWrite(): Map<string, string[]> {
 const areaSource = (area: string) =>
   walk(join(PAGES, area)).map((f) => readSource(f)).join('\n')
 
+/** An area whose favorite is read on another page, each reason checked in the files that hold it.
+ *  Knowledge's star is on an item's own page, and its list is the library now, where a favorite IS a
+ *  pin: the library's read takes `favorited` as `pinned`, so a starred item is shown first under
+ *  Pinned, and the Filter's State offers Pinned. The star in the list and its Favorites filter left
+ *  with the old knowledge list. */
+const READ_ELSEWHERE: Record<string, { by: string; proofs: [string, RegExp][] }> = {
+  knowledge: {
+    by: 'the library, as Pinned',
+    proofs: [
+      ['../src/personalclaw/dashboard/handlers/library.py', /pinned=bool\(r\["is_pinned"\]\) or bool\(r\["favorited"\]\)/],
+      ['src/pages/library/libraryMeta.ts', /shelf\('Pinned', pinned,/],
+      ['src/pages/library/libraryFilter.ts', /\{ key: 'pinned', label: 'Pinned' \}/],
+    ],
+  },
+}
+const readHere = () => [...areasThatWrite().keys()].filter((area) => !(area in READ_ELSEWHERE))
+
 describe('a favorite write implies a favorite read', () => {
   const writers = areasThatWrite()
 
@@ -80,12 +97,12 @@ describe('a favorite write implies a favorite read', () => {
     expect(FAVORITE_WRITE.test('api.listInboxItems()')).toBe(false)
   })
 
-  it.each([...areasThatWrite().keys()])('%s shows a favorited row in its list', (area) => {
+  it.each(readHere())('%s shows a favorited row in its list', (area) => {
     const source = areaSource(area)
     expect(source).toContain(STAR_NAME)
   })
 
-  it.each([...areasThatWrite().keys()])('%s lets you filter to favorites', (area) => {
+  it.each(readHere())('%s lets you filter to favorites', (area) => {
     const source = areaSource(area)
     // Three things, and the third is the one that matters. A predicate and a count with no control
     // to select them is a filter nobody can reach — which is the same dead-control shape as the
@@ -97,6 +114,13 @@ describe('a favorite write implies a favorite read', () => {
     // click. Both surfaces render it: `label: 'Favorites'` in a filter section, and
     // `<Star /> Favorites {count}` in a chip.
     expect(source, 'no selectable Favorites control').toMatch(/\bFavorites\b/)
+  })
+
+  it.each(Object.entries(READ_ELSEWHERE))('%s\'s favorite is read by %s', (area, { proofs }) => {
+    expect(areasThatWrite().has(area), `${area} still writes the favorite, or the exemption is dead weight`).toBe(true)
+    for (const [rel, proof] of proofs) {
+      expect(readSource(join(process.cwd(), rel)), `${rel} must hold the read`).toMatch(proof)
+    }
   })
 
   it('uses ONE accessible name for the FAVORITED star, everywhere', () => {
@@ -126,7 +150,8 @@ describe('a favorite write implies a favorite read', () => {
         names.push(m ? m[1] : '(indicator with no accessible name)')
       }
     }
-    expect(names.length).toBeGreaterThan(1)
+    // One today: the inbox's. Knowledge's list star left with the old knowledge list (above).
+    expect(names.length).toBeGreaterThan(0)
     expect([...new Set(names)]).toEqual(['Favorited'])
   })
 })

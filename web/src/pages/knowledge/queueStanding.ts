@@ -1,4 +1,4 @@
-import type { KnowledgeItem, KnowledgeQueueStanding } from '../../lib/api'
+import type { KnowledgeQueueStanding } from '../../lib/api'
 import { fmtInterval } from './sourceMeta'
 
 /** How a queued or enriching item's place in the ingest queue reads.
@@ -11,16 +11,6 @@ import { fmtInterval } from './sourceMeta'
  *  queue never promises a time. */
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
-
-/** The short label a list row shows: "Queued · 3 ahead", "Queued · next", "Enriching". */
-export function queueLabel(item: Pick<KnowledgeItem, 'processing_status' | 'queue'>): string {
-  const standing = item.queue
-  if (standing?.state === 'running') return 'Enriching'
-  if (standing?.state === 'waiting') {
-    return standing.ahead === 0 ? 'Queued · next' : `Queued · ${standing.ahead} ahead`
-  }
-  return item.processing_status === 'queued' ? 'Queued' : 'Enriching'
-}
 
 /** The sentence under an item that is waiting or being read; '' when the queue does not hold
  *  it (the item then says only that it is queued). `nowSecs` is a seam for tests. */

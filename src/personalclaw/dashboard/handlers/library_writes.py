@@ -94,7 +94,13 @@ class _Bulk:
             return None if self.store.move_item_project(item_id, pid) else NOT_FOUND
         kept = {k: v for k, v in self.args.items() if k in ("collection_id", "state", "value")}
         done = self.store.bulk_apply(self.op, [item_id], **kept)
-        return NOT_FOUND if item_id in done["missing"] else None
+        if item_id in done["missing"]:
+            return NOT_FOUND
+        # Pin merges the star: the library reads a starred item as pinned, so an Unpin clears
+        # the star too, or a starred note stays under Pinned after an Unpin that answered ok.
+        if self.op == "pin" and not self.args.get("value", True):
+            self.store.set_favorited(item_id, False)
+        return None
 
     def _artifact(self, slug: str) -> str | None:
         if self.prov is None or not slug:

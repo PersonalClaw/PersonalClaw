@@ -12,7 +12,8 @@ import { ChoiceList } from '../../../ui/ChoiceList'
 import { FormFooter } from '../../../ui/FormFooter'
 import { Toggle, TOUCH_TARGET } from '../../../ui/Toggle'
 import { HeldChange, StaleWriteNotice } from '../../../ui/StaleWriteNotice'
-import { blank } from '../../knowledge/ReportsPage'
+import { blank } from './reportDraft'
+import { INTENT_KINDS, kindsOf, typesOf } from './intentKinds'
 import { intentRecord, readIntent, writeIntent } from '../../knowledge/intentRecord'
 import { n } from '../libraryWords'
 import { deleteIntent, PAUSED_RUN, runOnSaved, useIntentRun } from './SetupPanel'
@@ -25,24 +26,7 @@ import { BUSY_REASON } from '../../../ui/unavailable'
 // is the intent; off deletes that report and keeps its last write-up. An edit saves over the
 // record it opened on, under the revision guard (`useStaleWriteGuard`), through the intent's one writer.
 
-/** The kinds an intent can be limited to, as the form names them, with the item types each holds. */
-export const INTENT_KINDS: readonly { key: string; label: string; types: readonly string[] }[] = [
-  { key: 'notes', label: 'Notes', types: ['note', 'fleeting', 'journal', 'gist'] },
-  { key: 'documents', label: 'Documents', types: ['pdf', 'document', 'sheet', 'slides'] },
-  { key: 'links', label: 'Links', types: ['bookmark'] },
-  { key: 'images', label: 'Images', types: ['image'] },
-  { key: 'media', label: 'Audio and video', types: ['audio', 'video'] },
-]
-
-/** The form's kinds for an intent's `enabled_for`: every kind one of its types names. */
-export function kindsOf(enabledFor: readonly string[]): string[] {
-  return INTENT_KINDS.filter((k) => k.types.some((t) => enabledFor.includes(t))).map((k) => k.key)
-}
-
-/** The item types the chosen kinds hold. */
-export function typesOf(kinds: readonly string[]): string[] {
-  return INTENT_KINDS.filter((k) => kinds.includes(k.key)).flatMap((k) => k.types)
-}
+export { INTENT_KINDS, kindsOf, typesOf }
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 

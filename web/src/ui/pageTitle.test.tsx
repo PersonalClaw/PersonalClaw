@@ -101,7 +101,8 @@ const DESTINATIONS = [
   'pages/triggers/TriggersListPage.tsx',
   'pages/terminal/TerminalPage.tsx',
   'pages/agents/AgentsListPage.tsx',
-  'pages/knowledge/KnowledgeListPage.tsx',
+  // The Knowledge list's place: the library (#6101).
+  'pages/library/LibraryPage.tsx',
   'pages/prompts/PromptsListPage.tsx',
   'pages/loops/LoopsListPage.tsx',
   'pages/settings/SettingsPage.tsx',
@@ -224,10 +225,10 @@ describe('an entity is the destination when the URL says so', () => {
   })
 
   it('a peek does NOT take one — the list is still the destination', () => {
-    // `?item=` on knowledge, `?open=` on prompts and apps all keep the LIST's h1 and give the
+    // `?item=` on the library, `?open=` on prompts and apps all keep the LIST's h1 and give the
     // panel none. `PageTitle`'s doc already forbids an h1 on a docked panel; this pins the surfaces that
     // could most easily drift, because their peek and their full page look the same in a diff.
-    const knowledge = read('pages/knowledge/KnowledgeListPage.tsx')
+    const knowledge = read('pages/library/LibraryPage.tsx')
     expect(knowledge).toMatch(/<PageTitle[\s>]/)
     expect((knowledge.match(/<PageTitle[\s>]/g) ?? []).length, 'one per destination, not one per panel').toBe(1)
     const chat = read('pages/ChatPage.tsx') + read('pages/chat/history/ChatHistoryPage.tsx')

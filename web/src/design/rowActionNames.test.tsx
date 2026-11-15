@@ -108,11 +108,8 @@ describe('the two list surfaces name their row controls too', () => {
     expect(code, 'the row shows "Delete project…" and is named for the project').toMatch(/label: 'Delete project…', name: `Delete project: \$\{p\.name\}`/)
   })
 
-  it('the repeated-chip families are left alone on purpose', () => {
-    // Pinned so "finish the sweep" cannot turn 11 identical tag links into 11 different names.
-    const kn = read('pages/knowledge/KnowledgeListPage.tsx')
-    expect(kn, 'tag chips share a name because they share a destination').not.toMatch(/aria-label=\{`Tag: /)
-  })
+  // The repeated tag chips this once pinned were the old Knowledge list's; a library row draws none,
+  // and its tags are the preview's (#6101).
 })
 
 // ── 2026-08-19: the census was closed over a PRIMITIVE, so hand-rolled row actions were invisible ──

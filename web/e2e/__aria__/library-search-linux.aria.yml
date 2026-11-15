@@ -31,10 +31,11 @@
   - heading "Library" [level=#]
   - searchbox "Search your library": backup
   - button "Clear search your library"
-  - 'button "Filter: made by · Any project · Any collection"'
+  - 'button "Filter: Any project · Any collection"'
   - radiogroup "Show as":
     - radio "List" [checked]
     - radio "Grid"
+  - button "Power user view"
   - button "More actions"
   - button "Add"
   - region "Library items":

@@ -1,0 +1,54 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Open chat\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
+      ],
+      "390": [
+        "button \"Open chat\""
+      ],
+      "412": [
+        "button \"Open chat\""
+      ],
+      "768": [
+        "button \"Open chat\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<button> \"Keep it on\" clips at #%: #x# in #x#",
+        "<div> \"LibraryPower user viewAddPower user view\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Open chat\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
+      ],
+      "390": [
+        "button \"Open chat\""
+      ],
+      "412": [
+        "button \"Open chat\""
+      ],
+      "768": [
+        "button \"Open chat\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<button> \"Keep it on\" clips at #%: #x# in #x#",
+        "<div> \"LibraryPower user viewAddPower user view\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

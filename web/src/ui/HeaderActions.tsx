@@ -4,12 +4,14 @@ import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check, ChevronDown, MoreHorizontal, type LucideIcon } from 'lucide-react'
 import { cx } from './cx'
+import { CURRENT_OUTLINE } from './RowHitTarget'
+import { useIsMobile } from '../app/useIsMobile'
 import { overlayEnter, spring } from '../design/motion'
 import { fvs, withWeight } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
 import { Segmented, type SegOption } from './Segmented'
 import { TOP_BAR_BAND, useStackBelowCorners } from './TopBar'
-import { TOUCH_TARGET } from './Toggle'
+import { TOUCH_TARGET, Toggle } from './Toggle'
 
 /** Responsive header controls — the ONE 4-tier cluster (`responsive-header-controls.md`).
  *  The row of controls degrades TOGETHER (whole-cluster) as horizontal space
@@ -88,6 +90,9 @@ interface OverflowRow {
   /** The row's group in the `…`: a break is drawn between two rows whose group differs, never at the
    *  menu's top or foot. Unset on every row, the menu has no break (as before groups). */
   group?: string
+  /** A row that turns a setting on and off: its state, announced as `aria-pressed`, with a
+   *  decorative switch at the row's end (`MenuRow`'s `pressed`). Unset, the row is an action. */
+  checked?: boolean
 }
 
 interface ClusterCtx {
@@ -178,6 +183,8 @@ export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; t
     // Re-register when the descriptor's identity-bearing fields change so the
     // container's overflow math + menu labels stay correct.
   }, [ctx, id, reg.priority, reg.canIcon, reg.inOverflow, reg.trailing, reg.foldsTo, reg.menu.label, reg.menu.danger, reg.menu.hint, reg.menu.disabled,
+    // A switch row's state is what the menu shows: a setting read after the first render turns it on.
+    reg.menu.checked,
     reg.menu.rows?.map((r) => `${r.label}\u0000${r.hint ?? ''}`).join('\u0001')])
   if (!ctx) return { visible: !reg.inOverflow, tier: 'full', mark: (node) => node, id }
   const visible = !reg.inOverflow && (ctx.tier !== 'overflow' || !ctx.visibleIds || ctx.visibleIds.has(id))
@@ -841,8 +848,8 @@ function OverflowItem({ row: a, close }: { row: OverflowRow; close: () => void }
   return (
     <div className={a.danger ? '[&_button]:text-danger' : ''}>
       <MenuRow icon={a.icon ? <a.icon size={16} /> : undefined} label={a.label} hint={a.hint}
-        nameIsLabel={a.disabled && !!a.hint} title={a.disabled ? a.hint : undefined}
-        disabled={a.disabled} onClick={() => { if (a.disabled) return; a.onSelect?.(); close() }} />
+        nameIsLabel={(a.disabled && !!a.hint) || a.checked !== undefined} title={a.disabled ? a.hint : undefined}
+        disabled={a.disabled} pressed={a.checked} onClick={() => { if (a.disabled) return; a.onSelect?.(); close() }} />
     </div>
   )
 }
@@ -869,7 +876,7 @@ const variants: Record<Variant, string> = {
  *  in that case; the container draws the menu row from this control's declaration). */
 export function HeaderControl({
   icon: Icon, label, onClick, variant = 'ghost', active, ariaExpanded, disabled, disabledReason, danger,
-  priority = 'default', hint, title, className, inOverflow, group,
+  priority = 'default', hint, title, className, inOverflow, group, keep, asSwitch = false,
 }: {
   icon?: LucideIcon
   label: string
@@ -902,7 +909,17 @@ export function HeaderControl({
   inOverflow?: boolean
   /** Its row's group in the `…` (`OverflowRow`'s `group`): a break is drawn where the group changes. */
   group?: string
+  /** `row`: never shed into the `…`, at any tier. It keeps its place, draws icon-only at the ICON and
+   *  OVERFLOW tiers, and counts in the cluster's floor, as a `HeaderFilter` does. */
+  keep?: 'row'
+  /** A control that turns a setting on and off (the library's "Power user view"): from 769 px it
+   *  draws a decorative switch from `active` inside its pill (icon, label and switch; icon and switch
+   *  at the ICON tier); at 768 px and below its icon alone in a 44 px box, filled while on. It always
+   *  announces `aria-pressed` and keeps its name; under forced colours its on state is outlined. As
+   *  an `inOverflow` row it is one toggle row (`OverflowRow`'s `checked`). */
+  asSwitch?: boolean
 }) {
+  const phone = useIsMobile()
   // Reachable-but-unavailable only when there is a reason to announce; otherwise stay native.
   const softOff = !!disabled && !!disabledReason
   // The page's primary action, drawn after the `…`: a `variant="primary"` control, or one that
@@ -913,7 +930,8 @@ export function HeaderControl({
     canIcon: !!Icon,
     inOverflow,
     trailing: primary,
-    menu: { label, icon: Icon, hint: softOff ? disabledReason : hint, danger, disabled, onSelect: disabled ? undefined : onClick, group },
+    neverOverflow: keep === 'row' || undefined,
+    menu: { label, icon: Icon, hint: softOff ? disabledReason : hint, danger, disabled, onSelect: disabled ? undefined : onClick, group, ...(asSwitch ? { checked: !!active } : {}) },
   })
   const placed = usePlaced(primary, mark, id)
   if (!visible) return mark(null) // container is showing this as a `…`-menu row
@@ -925,7 +943,7 @@ export function HeaderControl({
   //            as FULL so the whole cluster degrades icon+label → icon-only uniformly.
   //  • ICON / OVERFLOW(kept) → icon-only (label → tooltip + aria); a label-only
   //            control can't reach here (canIcon=false → it lives in the … menu).
-  const iconOnly = (tier === 'icon' || tier === 'overflow') && !!Icon
+  const iconOnly = ((tier === 'icon' || tier === 'overflow') && !!Icon) || (asSwitch && phone && !!Icon)
   const showLabel = !iconOnly
   const showIcon = !!Icon // icon shows in full/text/icon (never dropped while visible)
   const eff: Variant = danger ? 'danger' : variant
@@ -951,14 +969,16 @@ export function HeaderControl({
         'transition-colors duration-(--duration-short) disabled:opacity-40 disabled:pointer-events-none',
         // Same dim as the native attribute, without swallowing the hover that shows the reason.
         'aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
-        iconOnly ? 'size-10' : 'h-10 px-l',
-        active ? variants.secondary : variants[eff],
+        asSwitch && phone ? 'size-11' : iconOnly ? (asSwitch ? 'h-10 gap-s px-s' : 'size-10') : 'h-10 px-l',
+        asSwitch ? (active && phone ? 'bg-primary-container text-on-primary-container' : variants.ghost) : active ? variants.secondary : variants[eff],
+        asSwitch && active ? CURRENT_OUTLINE : '',
         className,
       )}
       style={fvs(470)}
     >
       {showIcon && <Icon size={16} />}
       {showLabel && <span className="whitespace-nowrap">{label}</span>}
+      {asSwitch && !phone && <Toggle on={!!active} decorative size="sm" />}
     </button>
   )
 }

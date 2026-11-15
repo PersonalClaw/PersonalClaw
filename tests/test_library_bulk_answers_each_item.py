@@ -58,3 +58,34 @@ async def test_a_delete_needs_the_confirmed_count(home):
     assert done[0] == 200 and [r["ok"] for r in done[1]["results"]] == [True, True, True]
     assert knowledge_store().get_item(one) is None
     assert artifacts().get(page.slug) is None
+
+
+@pytest.mark.asyncio
+async def test_an_unpin_clears_a_starred_items_star_too(home):
+    """Pin merges the star: a starred note reads as pinned, so its Unpin clears the star as well,
+    and the note leaves Pinned. Without it, the Unpin answered ok and the note stayed pinned."""
+    starred = note("Router manual")
+    assert knowledge_store().set_favorited(starred, True)
+    ref = f"knowledge:{starred}"
+    async with client(home) as c:
+        before = {r["ref"]: r for r in (await (await c.get("/api/library")).json())["items"]}
+        status, body = await _bulk(c, {"op": "pin", "refs": [ref], "value": False})
+        after = {r["ref"]: r for r in (await (await c.get("/api/library")).json())["items"]}
+    assert before[ref]["pinned"], "a starred item reads as pinned"
+    assert status == 200 and body["results"] == [{"ref": ref, "ok": True}]
+    assert not after[ref]["pinned"], "and leaves Pinned once it is unpinned"
+    assert not knowledge_store().get_item(starred)["favorited"], "its star is cleared with the pin"
+
+
+@pytest.mark.asyncio
+async def test_a_pin_leaves_the_star_alone(home):
+    """The other way, a Pin sets the pin and leaves a star as it was."""
+    plain, starred = note("Seed list"), note("Bed layout")
+    assert knowledge_store().set_favorited(starred, True)
+    async with client(home) as c:
+        status, _ = await _bulk(
+            c, {"op": "pin", "refs": [f"knowledge:{plain}", f"knowledge:{starred}"], "value": True}
+        )
+    assert status == 200
+    assert not knowledge_store().get_item(plain)["favorited"]
+    assert knowledge_store().get_item(starred)["favorited"]

@@ -1,27 +1,32 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import { SourceRow } from './SourcesPage'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { answers, resetGateway } from '../../test/libraryHarness'
 import { ARTIFACT_TYPE, isArtifactItem, resolveType, typeLabel, TYPES } from './knowledgeMeta'
 import { eventDrivenMetaLine } from './sourceMeta'
 import type { WatchedSource } from '../../lib/api'
+
+vi.mock('../../lib/api', async (orig) => {
+  const { gatewayApi } = await import('../../test/libraryHarness')
+  return { ...(await orig<typeof import('../../lib/api')>()), api: gatewayApi() }
+})
+const { SetupPanel } = await import('../library/setup/SetupPanel')
+const { resetDataStore } = await import('../../lib/data/store')
 
 // ── What the two artifact-mirror surfaces must NOT say ────────────────────────────────
 //
 // Both halves of this file are negative assertions, because both defects are of the shape
 // that every positive test passes right through:
 //
-// 1. The Sources row describes a POLLER. An event-driven source rendered with that
-//    vocabulary reads "No provider · never polled · every 1h" — and the loudest of those is
-//    a DANGER chip telling the user a mechanism that is working perfectly is broken. Every
-//    "the row renders" assertion passes in that state.
+// 1. A feed's set-up row describes a POLLER. An event-driven source drawn with that vocabulary
+//    reads "Nothing is set up to check this kind · not checked yet · every 1 hr", and the loudest
+//    of those tells the user a mechanism that is working perfectly is broken. Every "the row
+//    renders" assertion passes in that state. The mirror is a row in the Power user view only:
+//    it is set in Settings, so the regular view lists the feeds you set up.
 // 2. A mirrored artifact is not a note. Before `ARTIFACT_TYPE` existed, `resolveType` fell
 //    through its `mime`/`url` cascade to `note`, so an artifact search hit rendered a
-//    StickyNote labelled "Note" — present, plausible, and wrong about what was found.
+//    StickyNote labelled "Note": present, plausible, and wrong about what was found.
 
-const KINDS = {
-  'artifacts': { display_name: 'Artifacts', form: 'artifact' },
-  'watched-page': { display_name: 'Watched Page', form: 'web_page' },
-}
+const KINDS = [{ provider: 'watched-page', display_name: 'Watched Page', kind: 'web_page', form: 'web_page', previewable: true, poll_interval_secs: 3600 }]
 
 function source(over: Partial<WatchedSource> = {}): WatchedSource {
   return {
@@ -35,62 +40,82 @@ function source(over: Partial<WatchedSource> = {}): WatchedSource {
   }
 }
 
-function renderRow(over: Partial<WatchedSource> = {}) {
-  return render(<SourceRow source={source(over)} kinds={KINDS} onChanged={() => {}} />)
+beforeEach(() => {
+  resetDataStore(); resetGateway()
+  answers.knowledgeIntents = { intents: [] }
+  answers.researchReports = { reports: [] }
+})
+afterEach(cleanup)
+
+/** The source's set-up row, in the Power user view unless `detail` is false. */
+async function renderRow(over: Partial<WatchedSource> = {}, detail = true) {
+  const s = source(over)
+  answers.knowledgeSources = { sources: [s], kinds: KINDS, health_statuses: [], raw_enrichment: 'raw' }
+  render(<SetupPanel nav={{ form: vi.fn(), item: vi.fn() }} onClose={vi.fn()} detail={detail} />)
+  if (!detail) { await screen.findByText('Feeds, folders and apps'); return null }
+  const name = await screen.findByText(s.name)
+  return within(name.closest('div.rounded-lg') as HTMLElement)
 }
 
 describe('an event-driven source is not described as a broken poller', () => {
-  it('does NOT claim no provider will collect anything', () => {
-    renderRow()
-
-    expect(screen.queryByText('No provider'), 'the mirror is fed by a listener, not a poll').toBeNull()
+  it('does NOT claim nothing will collect anything', async () => {
+    const row = (await renderRow())!
+    expect(row.queryByText(/Nothing is set up to check/), 'the mirror is fed by a listener, not a check').toBeNull()
   })
 
-  it('still shows the danger chip for a genuinely orphaned poller', () => {
-    // The vacuity guard: without this, suppressing the chip for EVERY unenrolled row would
-    // satisfy the assertion above while hiding a real orphan.
-    renderRow({ provider: 'watched-page', event_driven: false, enrolled: false })
-
-    expect(screen.getByText('No provider')).toBeTruthy()
+  it('still says so for a genuinely orphaned poller', async () => {
+    // The vacuity guard: without this, saying nothing for EVERY unenrolled row would satisfy the
+    // assertion above while hiding a real orphan.
+    const row = (await renderRow({ provider: 'watched-page', event_driven: false, enrolled: false }))!
+    expect(row.getByText('Nothing is set up to check this kind, so it brings nothing in.')).toBeTruthy()
   })
 
-  it('does not report a poll health it never earned', () => {
-    renderRow()
-
-    expect(screen.queryByText('Not polled yet')).toBeNull()
-    expect(screen.queryByText('Healthy')).toBeNull()
+  it('does not report a check or a health it never earned', async () => {
+    const row = (await renderRow())!
+    expect(row.queryByText(/not checked yet|Healthy/)).toBeNull()
   })
 
-  it('says how it IS fed, and where its one switch lives', () => {
-    renderRow()
-
-    expect(screen.getByText(eventDrivenMetaLine())).toBeTruthy()
+  it('says how it IS fed, and where its one switch lives', async () => {
+    const row = (await renderRow())!
+    expect(row.getByText(eventDrivenMetaLine())).toBeTruthy()
     expect(eventDrivenMetaLine()).toMatch(/Settings → Automations → Watched sources/)
   })
 
-  it('does not open by repeating the row title as a lowercase provider name', () => {
-    // `kinds` holds poll-capable providers only, so this row
-    // had no entry and the line opened with the raw provider string — "artifacts ·" sitting
-    // directly under the row's own "Artifacts" heading, the same word twice in two casings.
-    renderRow()
-
-    expect(eventDrivenMetaLine().startsWith('artifacts')).toBe(false)
+  it('does not open by repeating the row title as a lowercase provider name', async () => {
+    // The kinds catalogue holds poll-capable providers only, so this row has no entry, and a line
+    // that opened with the raw provider string put "artifacts ·" directly under the row's own
+    // "Artifacts", the same word twice in two casings.
+    const row = (await renderRow())!
+    expect(row.queryByText(/^artifacts/)).toBeNull()
     expect(eventDrivenMetaLine().split(' · ')[0]).toBe('Indexed as artifacts change')
   })
 
-  it('offers no pause toggle, because pausing the row would do nothing', () => {
-    // The row's `enabled` column is not what the mirror reads — `knowledge.auto_ingest_artifacts`
-    // is. A toggle here would save successfully and change nothing, which is worse than absent.
-    renderRow()
-
-    expect(screen.queryByLabelText(/Pause Artifacts/)).toBeNull()
-    expect(screen.queryByLabelText(/Resume Artifacts/)).toBeNull()
+  it('offers no switch, because pausing the row would do nothing', async () => {
+    // The row's `enabled` column is not what the mirror reads (`knowledge.auto_ingest_artifacts` is).
+    // A switch here would save and change nothing, which is worse than none.
+    await renderRow()
+    expect(screen.queryByRole('switch', { name: /Artifacts/ })).toBeNull()
   })
 
-  it('keeps the pause toggle for a real poller', () => {
-    renderRow({ name: 'Changelog', provider: 'watched-page', event_driven: false, enrolled: true })
+  it('keeps the switch for a real poller', async () => {
+    await renderRow({ name: 'Changelog', provider: 'watched-page', event_driven: false, enrolled: true })
+    expect(screen.getByRole('switch', { name: 'Watching: Changelog' })).toBeTruthy()
+  })
 
-    expect(screen.getByLabelText('Pause Changelog')).toBeTruthy()
+  it('is no row in the regular view, which lists the feeds you set up', async () => {
+    await renderRow({}, false)
+    expect(screen.queryByText('Artifacts')).toBeNull()
+  })
+
+  it('🔴 is no row there, yet it adds on its own: the regular view never says nothing does', async () => {
+    await renderRow({}, false)
+    await waitFor(() => expect(document.querySelector('[aria-busy="true"]'), 'every read is in').toBeNull())
+    expect(screen.queryByText('Nothing adds on its own yet.'), 'the mirror is on').toBeNull()
+  })
+
+  it('with the mirror off and nothing else set up, it says nothing adds', async () => {
+    await renderRow({ enabled: false }, false)
+    expect(await screen.findByText('Nothing adds on its own yet.')).toBeTruthy()
   })
 })
 

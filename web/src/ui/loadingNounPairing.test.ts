@@ -244,7 +244,7 @@ const EXCLUDED: [string, string][] = [
   // its noun comes from a SANCTIONED sibling instead of a guess. That moves it into `errPaired`, where
   // the pairing test asserts the two agree — strictly stronger than "stay bare". An exclusion is a
   // statement about the evidence available, so it expires when the evidence changes.
-  ['pages/knowledge/KnowledgeListPage.tsx', '"No items reference this entity" is a sentence, and EntityDetail\'s own gate'],
+  // The old Knowledge list's EntityDetail was the other, and left with that page (#6101).
 ]
 
 /**
@@ -348,17 +348,10 @@ describe('a skeleton borrows a noun its own surface already declares', () => {
     expect(far, `these matched a distant LoadError — check they describe the same data:\n${far.join('\n')}`).toEqual([])
   })
 
-  it('a results noun only reaches a skeleton in its own component', () => {
-    // 🪤 `KnowledgeListPage` counts `items`; `EntityDetail` in the same file has a different `items`.
-    // Naming that one "items" would say the same word about different rows.
-    const leaked = all.filter((s) => s.resultsNoun && s.rel === 'pages/knowledge/KnowledgeListPage.tsx'
-      && s.owner !== 'KnowledgeListPage')
-    expect(leaked.map((s) => `${s.line} in ${s.owner}`), 'a sub-view borrowed the list noun').toEqual([])
-    // And the item-peek skeleton in the SAME component stays bare — it gates `peekItem`, not `items`.
-    const peek = all.find((s) => s.rel === 'pages/knowledge/KnowledgeListPage.tsx' && s.owner === 'KnowledgeListPage'
-      && !/what=/.test(s.tag))
-    expect(peek, 'the peek-panel skeleton is gated on other state and stays bare').toBeTruthy()
-  })
+  // The results noun's scoping (one component's noun never names a sibling's skeleton) was pinned on
+  // the old Knowledge list, whose EntityDetail counted a different `items`; it left with that page
+  // (#6101), and the rule above still scopes every site by its owner.
+
 
   it('the unnamed ones stay bare rather than guessing', () => {
     // Asserted from the other side: a `what` that matches NONE of the three declarations is an

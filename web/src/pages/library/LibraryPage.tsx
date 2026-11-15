@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FilePlus, LayoutGrid, Link2, List, ListChecks, NotebookPen, RefreshCw, Repeat, Search, Server, Upload } from 'lucide-react'
-import { api, type LibraryItem } from '../../lib/api'
+import { FilePlus, Gauge, LayoutGrid, Link2, List, ListChecks, NotebookPen, RefreshCw, Repeat, ScanSearch, Search, Server, Upload } from 'lucide-react'
+import { api, type KnowledgeStats, type LibraryItem } from '../../lib/api'
 import { invalidateKeys, useQuery } from '../../lib/data'
+import { useEmbeddingReindex } from '../../lib/useEmbeddingReindex'
+import { DiscoverTip } from '../discover/DiscoverTip'
 import { notify } from '../../app/appSdk'
 import { reportActionFailure } from '../../app/reportingWrite'
 import { confirm } from '../../ui/dialog'
@@ -10,7 +12,9 @@ import { ComparePane } from './ComparePane'
 import { deleteCollection, newCollection, renameCollection } from './libraryCollections'
 import { TagsPane } from './TagsPane'
 import { CollectionPicker } from './CollectionPicker'
-import { InPlaceView, isInPlaceView } from './InPlaceView'
+import { PowerUserTabs, panelId, tabId } from './PowerUserTabs'
+import { PowerTabPanel } from './PowerTabPanel'
+import { isPowerTab, powerUserPlace, usePowerUserView, type PowerTab } from './powerUserView'
 import { LibraryBulkBar } from './LibraryBulkBar'
 import { LibraryAddForm, LibraryAddMenu, uploadFiles, type AddForm } from '../../ui/LibraryAddMenu'
 import type { RouteProps } from '../../app/useQueryState'
@@ -52,12 +56,27 @@ const keep = (key: string, value: string) => { try { if (value) localStorage.set
 /** How long the search waits after the last key before it reads. */
 export const SEARCH_SETTLE_MS = 250
 
+/** The Power user view's detail on the Items count line: how much can be found by meaning, and how
+ *  much waits to be read; a part that would read 0 is left out. */
+function detailParts(stats: KnowledgeStats): string[] {
+  const ent = stats.enrichment?.entities
+  const waiting = ent ? ent.not_run + ent.running : 0
+  return [
+    stats.embeddings.enabled && stats.embeddings.embedded_items ? `${n(stats.embeddings.embedded_items)} can be found by meaning` : '',
+    waiting ? `${n(waiting)} waiting to be read` : '',
+  ].filter(Boolean)
+}
+
+/** The Power user view switch's tooltip. */
+const POWER_TIP = 'Adds the graph, counts and other details. Everything else stays the same.'
+
 /** Library: one list of everything you keep beside a preview, the header's Search,
  *  Filter, List or Grid, the "…" and Add, and the count line under the title. What the list shows
  *  is the address's (`useLibrary.libraryParamsOf`); the preview is `?item=<ref>`. */
 export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
   // An old Knowledge or Artifacts address's keys, read as the library's own.
   const query = useMemo(() => mappedQuery(raw), [raw])
+  const power = usePowerUserView()
   const phone = useIsMobile()
   const connection = useGatewayConnection()
   const offline = connection.state === 'disconnected'
@@ -76,6 +95,11 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
   const { data: projects } = useQuery('projects:list', () => api.projects())
   const { data: collections, error: collectionsErr } = useQuery('knowledge:collections', () => api.knowledgeCollections())
   const { data: stats } = useQuery('knowledge:stats', () => api.knowledgeStats())
+  // The one re-index: Library settings' Re-index and the "…" row's, each the same job.
+  const reindex = useEmbeddingReindex({ onSettled: () => invalidateKeys('knowledge:stats') })
+  const reindexing = reindex.job?.status === 'running'
+  const unembedded = stats?.embeddings.enabled
+    ? stats.embeddings.stale_items ?? Math.max(0, stats.items - (stats.embeddings.embedded_items ?? 0)) : 0
 
   // The search: its own field's words, read after the settle, held in the address (replace).
   const [words, setWords] = useSyncedDraft(query.q ?? '')
@@ -83,7 +107,9 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
   const onSearch = (next: string) => {
     setWords(next)
     window.clearTimeout(settle.current)
-    settle.current = window.setTimeout(() => setQuery({ q: next.trim() ? next: null }, { replace: true }), SEARCH_SETTLE_MS)
+    // On another Power user view tab, a search opens Items with it: it searches Items' rows.
+    const elsewhere = isPowerTab(raw.view) && raw.view !== 'items' && !!next.trim()
+    settle.current = window.setTimeout(() => setQuery({ q: next.trim() ? next: null, ...(elsewhere ? { view: 'items' } : {}) }, { replace: true }), SEARCH_SETTLE_MS)
   }
   useEffect(() => () => window.clearTimeout(settle.current), [])
 
@@ -189,12 +215,17 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
     ...useInChatGroups(item, actions).flatMap((g) => g.rows.map((r) => ({ icon: <r.icon size={15} />, label: r.label, hint: r.hint, disabled: r.disabled, onSelect: r.onSelect }))),
     ...moreRows(item, actions),
   ]
+  // The Power user view: on by the stored setting, or for this visit when the address names one of
+  // its tabs (`powerUserView.ts`).
+  const place = powerUserPlace(raw, power.stored, narrowed)
+  const powerOn = !!place.tab
+  const onItems = !place.tab || place.tab === 'items'
   const previewed = selected ? rows.find((r) => r.ref === selected) : undefined
   const adding = /^(link|note|audio):new$/.exec(query.open ?? '')?.[1] as AddForm | undefined
   const setupPane = adding ? (
     <LibraryAddForm key={adding} form={adding} project={into} onClose={() => setQuery({ open: null })}
       onAdded={(ref) => setQuery({ open: null, item: ref || null })} />
-  ) : setup ? <SetupPane setup={setup} nav={setupNav} onClose={closeSetup} />
+  ) : setup ? <SetupPane setup={setup} nav={setupNav} onClose={closeSetup} detail={powerOn} />
     // Manage tags: the tag tree in the pane, each count opening the list filtered by it.
     : query.manage === 'tags' ? <TagsPane onClose={() => setQuery({ manage: null })} onFilter={(tag) => setQuery({ manage: null, tag })} />
     // Compare: two items that disagree, reached from either one's notice line.
@@ -203,6 +234,16 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
         onOpen={(id) => navigate(`knowledge/item/${encodeURIComponent(id)}`)} />
     ) : null
 
+  const togglePower = async () => {
+    const next = !powerOn
+    // The setting moves first (at once, optimistically), so the address below never reads as a
+    // visit. Turning it on opens the Graph; turning it off returns to the list with what was selected.
+    const saved = power.save(next)
+    setQuery(next ? { view: 'graph', entity: null } : { view: null, entity: null })
+    await saved
+  }
+  const openTab = (tab: PowerTab) => setQuery({ view: tab })
+
   const header = (
     <TopBar
       keepCornerPadding
@@ -210,15 +251,24 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
       right={(
         <HeaderActions overflowClassName={TOUCH_TARGET} overflowWidth={360} overflowPhoneSheet>
           {(!emptyHome || !!query.q) && <HeaderSearch value={words} onChange={onSearch} placeholder="Search your library" />}
-          {!emptyHome && <HeaderFilter sections={sections} prefix="Filter" panel phoneSheet foot={data ? `Show ${n(data.total)} items` : undefined} />}
-          {!emptyHome && !phone && (
+          {!emptyHome && onItems && <HeaderFilter sections={sections} prefix="Filter" panel phoneSheet foot={data ? `Show ${n(data.total)} items` : undefined} />}
+          {!emptyHome && !phone && onItems && (
             <HeaderSegmented ariaLabel="Show as" markCurrent value={layout} onChange={(k) => setLayout(k === 'grid' ? 'grid' : 'list')}
               options={[{ key: 'list', label: 'List', icon: List }, { key: 'grid', label: 'Grid', icon: LayoutGrid }]} />
           )}
-          {!emptyHome && rows.length > 0 && (
+          <HeaderControl icon={Gauge} label="Power user view" title={POWER_TIP} asSwitch keep="row" active={powerOn} onClick={() => void togglePower()} />
+          {/* On a phone the gauge stands alone; the "…" holds its words and its switch. */}
+          {phone && <HeaderControl icon={Gauge} label="Power user view" hint="Adds the graph, counts and other details." asSwitch inOverflow active={powerOn} onClick={() => void togglePower()} group="view" />}
+          {!emptyHome && rows.length > 0 && onItems && (
             <HeaderControl icon={ListChecks} label="Select items" onClick={() => { setBulk(true); setChecked(new Set()) }} inOverflow group="list" />
           )}
           <HeaderControl icon={Repeat} label="Feeds, intents and reports" hint="See and change what adds on its own." onClick={() => setQuery({ setup: 'all' })} inOverflow group="list" />
+          {(unembedded > 0 || reindexing) && (
+            <HeaderControl icon={ScanSearch} label="Re-index search by meaning"
+              hint={reindexing ? `Re-indexing · ${n(reindex.job!.done)} of ${n(reindex.job!.total)}` : `${n(unembedded)} ${unembedded === 1 ? 'item is' : 'items are'} waiting.`}
+              disabled={reindex.starting || reindexing || offline} disabledReason={reindex.starting ? 'Starting…' : reindexing ? "It's re-indexing now." : offline ? "Can't reach PersonalClaw." : undefined}
+              onClick={reindex.start} inOverflow group="upkeep" />
+          )}
           <HeaderControl icon={RefreshCw} label="Read missed items" hint={nothingToRead ? undefined: 'For items added while no model could read them.'}
             disabled={!!nothingToRead || offline} disabledReason={nothingToRead ?? (offline ? "Can't reach PersonalClaw." : undefined)}
             onClick={() => void readAgain('missing')} inOverflow group="upkeep" />
@@ -248,6 +298,7 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
                 <Button variant="secondary" onClick={() => setQuery({ open: 'note:new' })} className={TOUCH_TARGET}><NotebookPen size={16} /> Write a note</Button>
               </div>
               <p data-type="caption" className="text-on-surface-low">Or drop files anywhere on this page.</p>
+              <DiscoverTip here="library" />
             </div>
           )} />
       )
@@ -282,6 +333,50 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
   })()
 
   const failed = data ? failedStoreNotice(data.failed) : ''
+  // The list and its pane: the regular view, and the Power user view's Items tab.
+  const listAndPane = (
+      <div className="flex min-h-0 flex-1">
+        <section role="region" aria-label="Library items" className="flex min-h-0 w-full flex-col md:w-[440px] md:shrink-0">
+          {bulk && (
+            <LibraryBulkBar checked={checked} rows={rows} total={rows.length} collections={collections ?? []}
+              collectionsReason={collections ? undefined : collectionsErr ? "Couldn't load your collections." : 'Your collections are loading.'}
+              collection={collection && collection.kind !== 'smart' ? { id: collection.id, name: collection.name } : null}
+              offReason={offline ? "Can't reach PersonalClaw." : undefined}
+              onSelectAll={() => setChecked(new Set(rows.map((r) => r.ref)))}
+              onClear={() => { setBulk(false); setChecked(new Set()) }} />
+          )}
+          <div className="px-l pb-s">
+            {line && (
+              <ListStatus results={{ count: data?.total ?? 0, noun: 'items', active: narrowed }} stale={stale}
+                lead={line.lead} line={powerOn && !narrowed && stats ? [line.line, ...detailParts(stats)].filter(Boolean).join(' · ') : line.line}
+                actions={line.actions.map((a) => ({ label: a.label, onSelect: lineAction(a.key) }))} />
+            )}
+            {failed && (
+              <p data-type="body-s" className="mt-s text-on-surface-var">{failed} <TextLink onClick={refresh}>Try again</TextLink></p>
+            )}
+            {data && !data.complete && !data.failed.length && (
+              <PartialNotice complete={false} shown={rows.length} total={data.total} what="items"
+                detail={`${partialWords(data.sort, rows.length, data.total)} Search or filter to reach the rest.`} />
+            )}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {/* A phone opens the item full screen (push, so Back returns to the row). */}
+            {phone && setupPane ? setupPane
+              : phone && previewed ? <LibraryPreview key={previewed.ref} item={previewed} actions={actions} phoneSheet foot detail={powerOn} /> : body}
+          </div>
+        </section>
+        {!phone && (
+          <div className="m-m hidden min-w-0 flex-1 overflow-y-auto rounded-xl bg-surface-low md:block">
+            {setupPane}
+            {!setupPane && !selected && <p data-type="body-m" className="p-xl text-on-surface-low">Pick an item to see it here.</p>}
+            {!setupPane && selected && previewed && <LibraryPreview key={previewed.ref} item={previewed} actions={actions} phoneSheet detail={powerOn} />}
+            {!setupPane && selected && data && !previewed && !loading && (
+              <p data-type="body-m" className="p-xl text-on-surface-low">Nothing in your library has this address.</p>
+            )}
+          </div>
+        )}
+      </div>
+  )
   return (
     // The whole page is a drop target: files dropped anywhere are added, into the project the
     // list is filtered to when there is one.
@@ -304,52 +399,19 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
           <p data-type="body-s" className="text-on-surface-var">Files stay on this computer.</p>
         </div>
       )}
-      {isInPlaceView(query.view) ? (
-        <InPlaceView view={query.view} entity={query.entity} stats={stats} navigate={navigate}
-          onBack={() => setQuery({ view: null, entity: null })} onEntity={(entity) => setQuery({ entity }, { replace: true })}
-          onFilterTag={(tag) => setQuery({ view: null, tag })} />
-      ) : (
+      {place.tab ? (
       <div className="flex min-h-0 flex-1">
-        <section role="region" aria-label="Library items" className="flex min-h-0 w-full flex-col md:w-[440px] md:shrink-0">
-          {bulk && (
-            <LibraryBulkBar checked={checked} rows={rows} total={rows.length} collections={collections ?? []}
-              collectionsReason={collections ? undefined : collectionsErr ? "Couldn't load your collections." : 'Your collections are loading.'}
-              collection={collection && collection.kind !== 'smart' ? { id: collection.id, name: collection.name } : null}
-              offReason={offline ? "Can't reach PersonalClaw." : undefined}
-              onSelectAll={() => setChecked(new Set(rows.map((r) => r.ref)))}
-              onClear={() => { setBulk(false); setChecked(new Set()) }} />
+        <PowerUserTabs tab={place.tab} onOpen={openTab} visit={place.visit} onKeepOn={() => void power.save(true)} />
+        <div role="tabpanel" id={panelId(place.tab)} aria-labelledby={tabId(place.tab)} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+          {place.tab === 'items' ? listAndPane : (
+            <PowerTabPanel tab={place.tab} entity={query.entity} stats={stats} navigate={navigate}
+              onEntity={(entity) => setQuery({ entity }, { replace: true })}
+              onShowEntity={(entity, item) => setQuery({ view: 'items', entity, item: item ?? null })} onFilterTag={(tag) => setQuery({ view: 'items', tag })}
+              openTab={openTab} filterItems={(state) => setQuery({ view: 'items', state })} processAll={() => void processAll()} reindex={reindex} />
           )}
-          <div className="px-l pb-s">
-            {line && (
-              <ListStatus results={{ count: data?.total ?? 0, noun: 'items', active: narrowed }} stale={stale}
-                lead={line.lead} line={line.line} actions={line.actions.map((a) => ({ label: a.label, onSelect: lineAction(a.key) }))} />
-            )}
-            {failed && (
-              <p data-type="body-s" className="mt-s text-on-surface-var">{failed} <TextLink onClick={refresh}>Try again</TextLink></p>
-            )}
-            {data && !data.complete && !data.failed.length && (
-              <PartialNotice complete={false} shown={rows.length} total={data.total} what="items"
-                detail={`${partialWords(data.sort, rows.length, data.total)} Search or filter to reach the rest.`} />
-            )}
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {/* A phone opens the item full screen (push, so Back returns to the row). */}
-            {phone && setupPane ? setupPane
-              : phone && previewed ? <LibraryPreview key={previewed.ref} item={previewed} actions={actions} phoneSheet foot /> : body}
-          </div>
-        </section>
-        {!phone && (
-          <div className="m-m hidden min-w-0 flex-1 overflow-y-auto rounded-xl bg-surface-low md:block">
-            {setupPane}
-            {!setupPane && !selected && <p data-type="body-m" className="p-xl text-on-surface-low">Pick an item to see it here.</p>}
-            {!setupPane && selected && previewed && <LibraryPreview key={previewed.ref} item={previewed} actions={actions} phoneSheet />}
-            {!setupPane && selected && data && !previewed && !loading && (
-              <p data-type="body-m" className="p-xl text-on-surface-low">Nothing in your library has this address.</p>
-            )}
-          </div>
-        )}
+        </div>
       </div>
-      )}
+      ) : listAndPane}
       {pickingChat && (
         <ChatPicker onClose={() => setPickingChat(null)}
           onPick={(key) => { const chip = chipRefOf(pickingChat, writeUps); if (chip) navigate(chatLaunchPath({ session: key, attach: [chip] })) }} />

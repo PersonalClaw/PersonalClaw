@@ -29,6 +29,7 @@
     - radio "Memory"
     - radio "Files"
   - heading "Library" [level=#]
+  - button "Power user view"
   - button "More actions"
   - button "Add"
   - region "Library items":
@@ -40,6 +41,12 @@
     - button "Add a link"
     - button "Write a note"
     - paragraph: Or drop files anywhere on this page.
+    - complementary "A tip from Discover":
+      - paragraph: Start a conversation
+      - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.
+      - link "Open Chat":
+        - /url: "#/chat/new"
+      - button "Dismiss this tip"
   - paragraph: Pick an item to see it here.
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

@@ -766,7 +766,6 @@ const SWALLOW_BUDGET: Record<string, number> = {
   'pages/files/filesData.ts': 1,
   'pages/inbox/InboxPage.tsx': 1,
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
-  'pages/knowledge/KnowledgeListPage.tsx': 1,
   // 3 → 2: the classify `.catch(() => null)` now records the rejection (#3470), so the
   // RECORDS veto exempts it. The remaining two are `validateULoop` (whose 200-with-`errors`
   // body is already rendered) and the design-attachment upload (best-effort by design).
@@ -1319,7 +1318,6 @@ const FETCHER_SWALLOW_BUDGET: Record<string, number> = {
   'pages/dashboard/PinnedTiles.tsx': 2,
   'pages/inbox/InboxPage.tsx': 1,
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
-  'pages/knowledge/KnowledgeListPage.tsx': 1,
   'pages/settings/AgentDefaultsPanel.tsx': 1,
   // 1 → 0: its dashboard read no longer substitutes `null` for a failure.
   'pages/settings/ChatPanel.tsx': 0,
@@ -1410,7 +1408,6 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // (`pages/discover/aDiscoverTipShowsInEmptyStates.test.tsx` holds the silence).
   'pages/discover/DiscoverTip.tsx': 1,
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
-  'pages/knowledge/KnowledgeListPage.tsx': 3,
   // KEEPS, all beside the library's rows, whose own read says when it fails. The page's projects and
   // stats reads name the project on the count line and say whether search matches meaning: unread or
   // failed, the line says "in this project" and makes no claim about meaning. The context's intents
@@ -1420,6 +1417,13 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // findings show without the bar.
   'pages/library/LibraryPage.tsx': 2,
   'pages/library/useLibrary.ts': 3,
+  // A KEEP: Library settings' Items row breaks its count down by kind from the library's facets. Unread
+  // or failed, the row says the count alone, which the stats read (bound) holds.
+  'pages/library/LibrarySettingsPanel.tsx': 1,
+  // KEEPS: the fact under each Power user view tab's name (the stats, tags and conflicts reads). A fact
+  // is decoration beside the tab's own panel, whose reads say when they fail; unread, a tab says nothing
+  // rather than a 0 (`aTabFactNeverSaysZero`).
+  'pages/library/PowerUserTabs.tsx': 3,
   'pages/projects/ProjectPage.tsx': 3,
   // `PromptDetail`, `SnippetDetail` and `AppsPanel` are GONE from this map, not zeroed. All three
   // were the pure eternal-spinner shape with nothing else wrong: the fetcher propagated correctly,
@@ -1614,7 +1618,8 @@ describe('direct fetches keep their rejection too — the 2026-09-05 false-empty
   // each catch must RECORD the rejection, and the surface must render LoadError for that slice —
   // reverting either half turns this red.
   const PINS: Array<[string, RegExp, string]> = [
-    ['pages/knowledge/KnowledgeListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*setOutcomesErr\(e\);\s*setOutcomes\(null\)\s*\}\)/, 'gathered matches'],
+    // The intent-outcomes slice left with the old list (#6101): the library's findings read is a
+    // `useQuery` the scan above sees, and its preview draws `LoadError what="findings"`.
     ['pages/skills/SkillsPage.tsx', /catch\s*\(e\)\s*\{\s*setSearchErr\(e\);\s*setResults\(null\)/, 'skill search results'],
     ['pages/tasks/TasksListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*setReadyErr\(e\);\s*setReady\(null\)\s*\}\)/, 'ready tasks'],
     // Recorded WITH the request it answered, so a new query hides it without a per-keystroke clearing

@@ -212,7 +212,8 @@ describe('the remaining promise-hints, verified and pinned', () => {
   })
 
   it('intents really do gather as items are saved', () => {
-    expect(web('pages/knowledge/KnowledgeListPage.tsx')).toContain('As you save items, it gathers what matches')
+    // The promise is the library's intent form's now (#6101).
+    expect(web('pages/library/setup/IntentForm.tsx')).toContain('It checks each item you add and keeps what matches.')
     expect(py('knowledge/pipeline/runner.py'), 'the ingest pipeline records the matches').toMatch(
       /relevant matches are recorded as intent_outcomes by value/,
     )

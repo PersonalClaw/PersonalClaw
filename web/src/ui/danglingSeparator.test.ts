@@ -85,32 +85,8 @@ describe('the agents meta line cannot strand its separator', () => {
   })
 })
 
-describe('the knowledge summary cannot strand its separator', () => {
-  const src = read('pages/knowledge/KnowledgeListPage.tsx')
-
-  it('reads the real file (not vacuously green)', () => {
-    expect(src).toMatch(/truncate/)
-    expect(src).toMatch(/it\.summary \|\| it\.content/)
-    expect(src.length).toBeGreaterThan(4000)
-  })
-
-  it('the summary renders bare — it always wraps to its own line', () => {
-    expect(src, 'the summary must not carry a leading separator').toMatch(
-      /\{\(it\.summary \|\| it\.content\) && <span className="truncate">\{it\.summary \|\| it\.content\}<\/span>\}/,
-    )
-  })
-
-  it('the exact pre-fix shape does not come back', () => {
-    // Kept as a negative so a revert is named rather than merely un-asserted.
-    expect(/<span className="truncate">· \{it\.summary/.test(src), 'the dangling prefix reappeared').toBe(false)
-  })
-
-  it('the short file_size sibling KEEPS its separator — it shares the label line', () => {
-    // The asymmetry is the point: `fmtBytes` is a few characters, so it sits beside the type label
-    // and its dot genuinely separates. "Unifying" by stripping this one would lose a real separator.
-    expect(src).toMatch(/<span>· \{fmtBytes\(it\.file_size\)\}<\/span>/)
-  })
-})
+// The old Knowledge list's summary line left with that page (#6101): a library row's excerpt is its
+// own line under the title, with no separator to strand.
 
 describe('the canonical form on #/tasks is now NO GLYPH — the computed one was measured unsafe', () => {
   // 🔴 THIS BLOCK USED TO ASSERT THE OPPOSITE, and its reason was empirically wrong. It read: "98 of

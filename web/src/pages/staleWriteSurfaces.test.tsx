@@ -14,8 +14,9 @@ import { registerBuiltinContentTypes } from '../ui/content/registerBuiltins'
 import { ArtifactViewer } from './artifacts/ArtifactViewer'
 import { FileViewer, type SaveAsArtifact } from './files/browse/FileViewer'
 import { KnowledgeDetail } from './knowledge/KnowledgeDetail'
-import { IntentEditor, IntentsView } from './knowledge/KnowledgeListPage'
-import { SourceRow } from './knowledge/SourcesPage'
+import { SetupPanel } from './library/setup/SetupPanel'
+import { IntentForm } from './library/setup/IntentForm'
+import { Remediation } from './library/setup/Remediation'
 import { PromptDetail } from './prompts/PromptDetail'
 import { SnippetDetail } from './prompts/SnippetDetail'
 import { AlwaysOnConventions } from './settings/AlwaysOnConventions'
@@ -1065,15 +1066,14 @@ const SURFACES: Surface[] = [
       return () => save.mock.calls
     },
     edit: async () => {
-      render(<IntentsView selectedId={null} onSelect={() => {}} reloadKey={0} />)
-      await click(screen.findByRole('switch', { name: /^pause intent:/i }))
+      render(<SetupPanel nav={{ form: () => {}, item: () => {} }} onClose={() => {}} />)
+      await click(screen.findByRole('switch', { name: `Checking new items: ${INTENT.goal}` }))
     },
-    what: /The intent “anything that could improve my homelab” changed elsewhere/,
+    what: /This intent changed elsewhere/,
     refused: [{ id: INTENT.id, goal: INTENT.goal, enabled: false, enabled_for: ['note'], propose_skill: false }, 'i1'],
-    kept: () => expect(notified, 'a refused pause must not announce "Intent paused"').not.toContainEqual(['Intent paused', 'success']),
+    kept: () => expect(notified, 'a refused pause says nothing went through').not.toContainEqual(expect.arrayContaining(['success'])),
     // The other tab's rewording survives; the pause is applied on top.
     reapplied: [{ id: INTENT.id, goal: INTENT_THEIRS.goal, enabled: false, enabled_for: ['note'], propose_skill: false }, 'i2'],
-    landed: () => waitFor(() => expect(notified).toContainEqual(['Intent paused', 'success'])),
   },
   { surface: 'a knowledge intent’s editor',
     stage: () => {
@@ -1083,15 +1083,15 @@ const SURFACES: Surface[] = [
     },
     edit: async () => {
       intentSaved = vi.fn()
-      render(<IntentEditor intent={INTENT} onClose={() => {}} onSaved={intentSaved} />)
-      fireEvent.change(screen.getByLabelText(/what do you want to track/i), { target: { value: 'homelab power usage' } })
-      await click(screen.getByRole('button', { name: /^save changes/i }))
+      render(<IntentForm intent={INTENT} onClose={() => {}} onSaved={intentSaved} />)
+      fireEvent.change(screen.getByRole('textbox', { name: /Look out for/ }), { target: { value: 'homelab power usage' } })
+      await click(screen.getByRole('button', { name: /^Save$/ }))
     },
     what: /This intent changed elsewhere/,
     refused: [{ id: INTENT.id, goal: 'homelab power usage', enabled: true, enabled_for: ['note'], propose_skill: false }, 'i1'],
     kept: () => {
       expect(intentSaved, 'a refused edit did not save').not.toHaveBeenCalled()
-      expect(screen.getByLabelText(/what do you want to track/i)).toHaveValue('homelab power usage')
+      expect(screen.getByRole('textbox', { name: /Look out for/ })).toHaveValue('homelab power usage')
     },
     // The other tab's bookmarks stay on; the new goal lands on top.
     reapplied: [{ id: INTENT.id, goal: 'homelab power usage', enabled: true, enabled_for: ['note', 'bookmark'], propose_skill: false }, 'i2'],
@@ -1108,7 +1108,7 @@ const SURFACES: Surface[] = [
     },
     edit: async () => {
       sourceChanged = vi.fn()
-      render(<SourceRow source={SOURCE} kinds={{ 'watched-page': { display_name: 'Watched Page', form: 'web_page' } }} onChanged={sourceChanged} />)
+      render(<Remediation source={SOURCE} onChanged={sourceChanged} />)
       await click(screen.getByRole('button', { name: 'Allow the render tier' }))
     },
     what: /This source’s settings changed elsewhere/,

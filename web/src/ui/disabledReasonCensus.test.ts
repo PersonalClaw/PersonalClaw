@@ -145,9 +145,9 @@ const CLASSIFIED: Record<string, { n?: number; why: string }> = {
   'pages/inbox/InboxSettingsPanel.tsx  disabled={engagementOn === null}': { why: 'loading (engagementOn === null)' },
   'pages/settings/InboxSettingsPanel.tsx  disabled={sourcesOn === null}': { why: 'loading (sourcesOn === null)' },
   'pages/settings/InboxSettingsPanel.tsx  disabled={engagementOn === null}': { why: 'loading (engagementOn === null)' },
-  // The reason is the button's own visible text — "(removed — insight kept)" — not an attribute.
-  'pages/knowledge/KnowledgeListPage.tsx  disabled={!o.item_id}': { why: "the reason is the button's own label text" },
-  // The same: an installed skill's button reads "Installed", and there is nothing left to do.
+  // The reason is the button's own visible text: an installed skill's button reads "Installed", and
+  // there is nothing left to do. (The old Knowledge list's "(removed — insight kept)" link was the
+  // other, and left with that page, #6101.)
   'pages/loops/LoopPlanReview.tsx  disabled={done}': { why: "the reason is the button's own label text — it reads \"Installed\"" },
   // Section-level explanation: the panel renders "Managed by project — read-only" with a lock icon, so
   // the surface states it once rather than repeating it on every checkbox.
@@ -233,8 +233,6 @@ describe('the disabled-reason census', () => {
 
     expect(code('ui/Button.tsx'), 'the carrier really implements soft-off').toMatch(/softOff/)
 
-    expect(code('pages/knowledge/KnowledgeListPage.tsx'),
-      'and its label really does explain the state').toMatch(/\(removed — insight kept\)/)
     expect(code('pages/loops/LoopPlanReview.tsx'),
       'and the Install label really does say it is done').toMatch(/done \? <><Check size=\{13\} \/> Installed<\/>/)
 

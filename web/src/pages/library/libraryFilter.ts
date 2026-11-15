@@ -93,7 +93,7 @@ export function librarySections(inp: FilterInputs): FilterSectionDef[] {
   const multi = (key: string) => (value: string) => push({ [key]: value || null })
   const sections: FilterSectionDef[] = [
     { title: 'Kind', value: query.kind ?? '', defaultKey: '', options: kinds, onChange: multi('kind'), multi: true, said: saidOf(KINDS), column: 1 },
-    { title: 'Made by', value: query.made ?? '', defaultKey: '', options: makers, onChange: multi('made'), multi: true, said: (k) => `made by ${saidOf(MAKERS)(k)}`, column: 1 },
+    { title: 'Made by', value: query.made ?? '', defaultKey: '', options: makers, onChange: multi('made'), multi: true, said: (k) => { const who = saidOf(MAKERS)(k); return who ? `made by ${who}` : '' }, column: 1 },
     {
       title: 'Project', value: query.project ?? '', defaultKey: '', options: projectOptions,
       onChange: (k) => push({ project: k || null, store: null }), limit: PROJECT_LIMIT, limitNoun: 'projects', column: 2,

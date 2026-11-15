@@ -88,6 +88,10 @@ const EXEMPT: Record<string, string> = {
   // Which write-up each report wrote. Unread, a report row knows no write-up yet, as before its
   // first one; the list's own read says when the gateway fails.
   'pages/library/useLibrary.ts:useWriteUps': "unread, a report knows no write-up yet — the list's own read reports",
+  // The one fact under each Power user view tab's name. A fact is decoration beside the tab's own
+  // panel, whose reads say when they fail; unread, a tab says nothing rather than a 0
+  // (`aTabFactNeverSaysZero`).
+  'pages/library/PowerUserTabs.tsx:useTabFacts': 'an unread fact says nothing, never a 0 — each tab panel reports its own read',
 }
 
 describe('an adapter hook re-exposes useQuery\'s error', () => {

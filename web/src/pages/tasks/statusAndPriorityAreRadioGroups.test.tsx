@@ -143,7 +143,7 @@ describe('§3 no single-choice field borrows tab semantics again', () => {
   })
 
   it('and every tab role left in the tree belongs to a strip that reveals a pane', () => {
-    // The sweep the issue's scope note asks for. These five are hand-rolled view switchers, each
+    // The sweep the issue's scope note asks for. These are hand-rolled view switchers, each
     // of which swaps the pane beside it; `Segmented` is deliberately not among them. (The chat's
     // Activity panel left the list when its tabs became the session inspector's sections, #3820.)
     const declaring = walk(SRC)
@@ -153,6 +153,8 @@ describe('§3 no single-choice field borrows tab semantics again', () => {
       .sort()
     expect(declaring).toEqual([
       'pages/files/FilesSection.tsx',
+      // The library's Power user view: a vertical tablist whose tabs each swap the panel beside them.
+      'pages/library/PowerUserTabs.tsx',
       'pages/loops/LoopCockpitPage.tsx',
       'pages/terminal/TerminalDrawer.tsx',
       'pages/terminal/TerminalPage.tsx',
@@ -176,7 +178,8 @@ describe('§3 no single-choice field borrows tab semantics again', () => {
           || /\[role=\\?["']tab(list)?\\?["']\]/.test(code)
         if (!queries) return false
         // The five hand-rolled strips have their own tests, which legitimately query tabs.
-        return !/ChatActivityPanel|FilesSection|LoopCockpitPage|MemoryPanel|TerminalPage|TerminalDrawer|tabListKeys/
+        // The library's are named by their tablist, "Library views".
+        return !/ChatActivityPanel|FilesSection|LoopCockpitPage|MemoryPanel|TerminalPage|TerminalDrawer|tabListKeys|PowerUserTabs|Library views/
           .test(code + abs)
       })
       .map((abs) => abs.slice(SRC.length + 1))

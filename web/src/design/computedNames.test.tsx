@@ -284,8 +284,9 @@ describe('a Button whose whole body is an icon carries a name', () => {
 
   it('the three named sites keep their names', () => {
     const read = (rel: string) => readSource(join(process.cwd(), 'src', rel))
-    expect(read('pages/knowledge/KnowledgeListPage.tsx'), 'the destructive one, through the shared cap')
-      .toMatch(/ariaLabel=\{`Delete intent: \$\{rowSubject\(\[it\.goal \|\| it\.id\], 40\)\}`\}/)
+    // The old list's intent delete is the library's set-up row's now (#6101): its ⋯ is named for the row.
+    expect(read('pages/library/setup/SetupPanel.tsx'), 'the row menu that holds Delete intent…')
+      .toMatch(/<IconButton icon=\{MoreHorizontal\} label=\{`More for \$\{name\}`\}/)
     // In Library › Memory's header since the Audit view's controls moved there.
     expect(read('pages/library/MemoryPage.tsx')).toMatch(/label="Reload the audit log"/)
     // The project page's title module, whose Save keeps that name (PROJ PR 4).

@@ -34,7 +34,8 @@ import { filesUnder, readSource } from '../test/sourceTree'
 const SRC = join(process.cwd(), 'src')
 const ESTABLISHED = new Set(['40', '50', '60'])
 /** Site-pinned exception: a disabled control whose label carries information. */
-const PINNED_EXCEPTIONS = new Map([['pages/knowledge/KnowledgeListPage.tsx', '70']])
+// The one there was, the old Knowledge list's link to a removed source item, left with that page (#6101).
+const PINNED_EXCEPTIONS = new Map<string, string>()
 
 const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n))
 

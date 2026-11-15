@@ -41,11 +41,13 @@ export function sidesOf(rows: readonly KnowledgeConflict[], cid: string): { a: s
   return { a: holder, b: other, claims, choice: first.choice ?? '', foundIn: first.item_title }
 }
 
-export function ComparePane({ cid, fromTitle, onBack, onOpen }: {
+export function ComparePane({ cid, fromTitle, onBack, onOpen, inList = false }: {
   cid: string
   /** The item the pane was opened from, for its back link. */
   fromTitle: string
   onBack: () => void
+  /** One of the Conflicts tab's list: no back link, and its heading one level down. */
+  inList?: boolean
   /** Open one of the two items at its own page. */
   onOpen: (itemId: string) => void
 }) {
@@ -56,9 +58,10 @@ export function ComparePane({ cid, fromTitle, onBack, onOpen }: {
   const b = useQuery(`knowledge:item:${pair?.b ?? ''}`, () => (pair ? api.knowledgeItem(pair.b) : Promise.resolve(null)))
   const [changing, setChanging] = useState(false)
   const [busy, setBusy] = useState('')
-  const back = (
+  const back = inList ? null : (
     <TextLink onClick={onBack} className={TOUCH_TARGET}><ArrowLeft size={14} aria-hidden /> {fromTitle || 'Back'}</TextLink>
   )
+  const Heading = inList ? 'h3' : 'h2'
   if (conflicts.loading && !conflicts.data) return <div className="p-l"><ListSkeleton rows={4} what="comparison" /></div>
   if (conflicts.error && !conflicts.data) return <div className="p-l"><LoadError what="comparison" error={conflicts.error} onRetry={conflicts.refresh} /></div>
   if (!pair) {
@@ -89,7 +92,7 @@ export function ComparePane({ cid, fromTitle, onBack, onOpen }: {
     <section aria-labelledby={headingId} className="flex min-h-0 flex-col gap-m p-l">
       {back}
       <header>
-        <h2 id={headingId} data-type="title-l" className="text-on-surface">Two items disagree</h2>
+        <Heading id={headingId} data-type={inList ? 'title-m' : 'title-l'} className="text-on-surface">Two items disagree</Heading>
         <p data-type="caption" className="text-on-surface-low">Found when {pair.foundIn} was added</p>
       </header>
       <div className="grid grid-cols-2 gap-m max-md:grid-cols-1">

@@ -86,7 +86,8 @@ function actionExprs(src: string): string[] {
 const SURFACES: { name: string; file: string; primitive: 'EmptyState' | 'PresetEmptyState' }[] = [
   { name: 'Loops', file: 'pages/loops/LoopsListPage.tsx', primitive: 'EmptyState' },
   { name: 'Workflows', file: 'pages/workflows/WorkflowsListPage.tsx', primitive: 'EmptyState' },
-  { name: 'Knowledge', file: 'pages/knowledge/KnowledgeListPage.tsx', primitive: 'EmptyState' },
+  // The Knowledge list's place: the library (#6101).
+  { name: 'Library', file: 'pages/library/LibraryPage.tsx', primitive: 'EmptyState' },
   { name: 'Memory', file: 'pages/settings/MemoryPanel.tsx', primitive: 'EmptyState' },
   { name: 'Skills', file: 'pages/skills/SkillsPage.tsx', primitive: 'EmptyState' },
   { name: 'Tasks', file: 'pages/tasks/TasksListPage.tsx', primitive: 'EmptyState' },
@@ -226,15 +227,12 @@ const EMPTY_STATE_CENSUS: {
   // ── fixed by this sweep ──
   { surface: 'Workflows › Runs', file: 'pages/workflows/WorkflowsListPage.tsx', verdict: 'on-ramp',
     why: 'Runs is the DEFAULT tab, so this is the newcomer\'s first view of Workflows. Its one CTA went to the definitions LIST — twenty-odd machine names. Now a PresetEmptyState of bundled-template cards that seed the existing start() flow, with browse kept as the footer.' },
-  { surface: 'Knowledge › Intents', file: 'pages/knowledge/KnowledgeListPage.tsx', verdict: 'on-ramp',
-    why: 'Named the "New intent" control in prose and left the user to find it in the top bar. Now carries it, sharing blankIntent() with the header so there is one create seed — and its loader stopped swallowing, because a CTA over a failed read is the worse bug.' },
   { surface: 'Artifacts', file: 'pages/artifacts/ArtifactGrid.tsx', verdict: 'on-ramp',
     why: 'Hint named the Files page ("save a file as an artifact") with no way to get there. Now a Browse-files action into that existing flow; the prop is required so a call site cannot ship the fact without the way in.' },
   // ── already had one ──
   { surface: 'Tasks', file: 'pages/tasks/TasksListPage.tsx', verdict: 'on-ramp',
     why: 'New task → onCreate. TEMPLATE cards were asked for here; there is no task-template catalog in the backend to source them from (src/personalclaw/tasks/ ships models+handlers, no templates), and authoring card copy would be the drift this sweep forbids. Nothing changed.' },
   { surface: 'Loops', file: 'pages/loops/LoopsListPage.tsx', verdict: 'on-ramp', why: '"Start a loop" — the same handler the header CTA uses.' },
-  { surface: 'Knowledge › Library', file: 'pages/knowledge/KnowledgeListPage.tsx', verdict: 'on-ramp', why: '"Add knowledge" — onCreate, the shared create route.' },
   { surface: 'Knowledge › Decisions', file: 'pages/knowledge/DecisionJournal.tsx', verdict: 'on-ramp',
     why: '"Open chat" — the ONLY surface that can create a decision. Logging one also mints its one-shot review trigger, so handlers/knowledge.py deliberately refuses to create a `decision` from the library create picker: an item authored there would be a decision that never comes back. Naming chat in prose and leaving the user to find it is the exact defect this census flagged on Knowledge › Intents, so `onOpenChat` is a REQUIRED prop threaded from KnowledgeSection (the ArtifactGrid rule — a call site cannot ship the fact without the way in).' },
   { surface: 'Memory', file: 'pages/settings/MemoryPanel.tsx', verdict: 'on-ramp', why: '"Add a fact" — opens the memory editor in place.' },
@@ -249,8 +247,6 @@ const EMPTY_STATE_CENSUS: {
   { surface: 'App host › not installed', file: 'pages/apps/AppHostPage.tsx', verdict: 'on-ramp',
     why: 'Not a zero-items state but a 404 on #/app/<name>: the app is not installed, and the fix IS the install flow — "Open the Store" deep-links to #/apps?view=store, the same flow the Apps entry above names. The transient-failure sibling renders LoadError, not this.' },
   { surface: 'Terminal', file: 'pages/terminal/TerminalPage.tsx', verdict: 'on-ramp', why: '"New session" — spawns a shell, the only way one exists.' },
-  { surface: 'Watched sources', file: 'pages/knowledge/SourcesPage.tsx', verdict: 'on-ramp', why: '"Add a source" — the existing SourceCreatePage flow.' },
-  { surface: 'Scheduled reports', file: 'pages/knowledge/ReportsPage.tsx', verdict: 'on-ramp', why: '"New report" — the inline create form on the same page.' },
   { surface: 'Knowledge › Graph', file: 'pages/knowledge/KnowledgeGraph.tsx', verdict: 'on-ramp', why: 'Extraction is a per-item action, and the empty state offers it.' },
   { surface: 'Discover', file: 'pages/discover/DiscoverPage.tsx', verdict: 'on-ramp', why: 'Open Settings — the off case is a SETTING, and the action reaches it.' },
   { surface: 'Devices', file: 'pages/settings/DevicesPanel.tsx', verdict: 'on-ramp',
@@ -387,41 +383,15 @@ describe('on-ramp sweep · the three surfaces this change changed', () => {
     expect(src, 'and the original empty state must survive as the fallback').toMatch(/title="No workflow runs yet"[\s\S]{0,400}?action=\{\{ label: 'Browse definitions'/)
   })
 
-  it('Knowledge intents share ONE create seed between the header and the empty state', () => {
-    const src = read('pages/knowledge/KnowledgeListPage.tsx')
-    // Two call sites, one definition. A second inline `{ id: '', goal: '', … }` literal would be
-    // two create paths one edit apart from diverging.
-    expect(src).toMatch(/function blankIntent\(\): KnowledgeIntent/)
-    // Anchored on `blankIntent())` — the seed being HANDED TO a setter — not on the bare name,
-    // which also occurs in the declaration and in a comment. Exactly two such call sites: the
-    // header control's `setSelectedIntent(…)` and the empty state's `onSelect(…)`. (A THIRD site,
-    // the `?intent=__new__` deep-link restore, calls it bare and is counted by the literal check
-    // below — it was a third inline copy of the blank shape until this change found it.)
-    expect((src.match(/blankIntent\(\)\)/g) ?? []).length, 'header + empty state').toBe(2)
-    // And the THIRD consumer — asserted by what it IS, not by a count a comment could shift.
-    expect(src, 'the ?intent=__new__ deep-link uses the same seed').toMatch(
-      /intentTok === '__new__'\s*\n\s*\? blankIntent\(\)/,
-    )
-    // The blank shape is written down exactly ONCE — inside `blankIntent`. A second occurrence is
-    // an inline literal at a call site, which is how the two paths drift.
-    expect((src.match(/\{ id: '', goal: '',/g) ?? []).length, 'the blank shape has one definition').toBe(1)
-  })
-
-  it('Knowledge intents branch on the failed read BEFORE the empty state', () => {
-    // THE INVERSE DEFECT. Adding a create CTA to an empty state that also renders on a failed
-    // read makes the lie worse: "you have none, make your first" to a user who has some. This
-    // loader used to `.catch(() => setIntents([]))`.
-    const src = read('pages/knowledge/KnowledgeListPage.tsx')
-    expect(src, 'the rejection must be captured').toMatch(/catch\(\(e\) => \{ setIntentsErr\(e\)/)
-    expect(src, 'no swallow may remain on the intents read').not.toMatch(/knowledgeIntents\(\)[\s\S]{0,120}catch\(\(\) =>/)
-    // REACHABILITY: the error branch is an early return, so the empty branch is unreachable while
-    // it holds. Asserted as an ordering over the two sites rather than as a source-order regex —
-    // the same widening `ui/loadErrorCensus.test.ts` had to make three times.
-    const errAt = src.indexOf('if (intentsErr) return <LoadError what="intents"')
-    const emptyAt = src.indexOf('title="No intents yet"')
-    expect(errAt, 'the intents error branch must exist').toBeGreaterThan(-1)
-    expect(emptyAt).toBeGreaterThan(-1)
-    expect(errAt, 'the error branch must precede the empty one').toBeLessThan(emptyAt)
+  it("the library's intents branch on the failed read before anything says there are none", () => {
+    // THE INVERSE DEFECT, which the old Intents view's empty state once had: "you have none, make
+    // your first" to a user who has some. The library's set-up panel (#6101) draws the intents read's
+    // LoadError in place of its rows, and says "Nothing adds on its own yet." only once every read has
+    // answered.
+    const src = read('pages/library/setup/SetupPanel.tsx')
+    expect(src, 'a failed intents read is its LoadError').toMatch(/intents\.error && !intents\.data \? <LoadError what="intents"/)
+    expect(src, 'and "nothing" waits on every read').toMatch(/const loaded = !!\(intents\.data && reports\.data && sources\.data\)/)
+    expect(src).toMatch(/const nothing = loaded && /)
   })
 
   it('Artifacts cannot ship the fact without the way in', () => {

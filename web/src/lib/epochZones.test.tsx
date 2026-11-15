@@ -13,14 +13,13 @@
 process.env.TZ = 'America/Los_Angeles'
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render } from '@testing-library/react'
 import { epochSeconds, localDateTimeInput, localDateTimeSeconds } from './epoch'
 import { relFuture, relPast, scheduleWhenMet } from '../pages/schedule/scheduleMeta'
 import { journalDayHasPassed, relTime as knowledgeRelTime } from '../pages/knowledge/knowledgeMeta'
 import { relTime as taskRelTime } from '../pages/tasks/taskMeta'
 import { relTime as fileRelTime } from '../pages/files/fileMeta'
 import { bucketOf, clockTime as notificationClock, relTime as notificationRelTime } from '../pages/notifications/notificationMeta'
-import { SourceRow } from '../pages/knowledge/SourcesPage'
+import { sourceDetails, sourceParts } from '../pages/library/setup/SetupPanel'
 import type { WatchedSource } from './api'
 
 afterAll(() => { process.env.TZ = 'America/Los_Angeles' })
@@ -109,7 +108,7 @@ describe('a time the user typed into a datetime-local picker', () => {
   })
 })
 
-describe('the Sources row', () => {
+describe("a feed's set-up row", () => {
   const source: WatchedSource = {
     id: 'src-1', name: 'Daily', provider: 'watched-dir', kind: 'dir',
     spec: { path: '/home/user/Notes/Daily' }, budget: {}, revision: 'r-src-1',
@@ -119,10 +118,8 @@ describe('the Sources row', () => {
     remediation: { kind: '', guidance: '', detail: '', action: '' },
   }
 
-  it('says a five-minute folder polled just now is next in five minutes', () => {
-    const { container } = render(
-      <SourceRow source={source} kinds={{ 'watched-dir': { display_name: 'Watched Directory', form: 'dir' } }} onChanged={() => {}} />,
-    )
-    expect(container.textContent).toContain('Watched Directory · every 5 min · polled just now · 5 new last time · next in 5m')
+  it('says a five-minute folder checked just now is next in five minutes', () => {
+    expect(sourceParts(source, NOW).join(' · ')).toBe('Folder · /home/user/Notes/Daily · checked just now · 5 new')
+    expect(sourceDetails(source, 'Watched Directory')[0]).toBe('Watched Directory · checked every 5 min · next in 5m · Healthy')
   })
 })

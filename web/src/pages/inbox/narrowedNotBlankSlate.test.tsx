@@ -179,7 +179,8 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
       // the pin follows the copy to its query-named form; the narrowed-vs-blank
       // distinction this rail guards is still there (the blank slate stays "Knowledge base is
       // empty" and is pinned by knowledgeNoMatch.test.ts alongside the split).
-      ['pages/knowledge/KnowledgeListPage.tsx', /No items match “\$\{submitted\}”/],
+      // The Knowledge list's no-match copy is the library's now (#6101).
+      ['pages/library/libraryWords.ts', /Nothing matches “\$\{q\}”/],
       ['pages/prompts/PromptsListPage.tsx', /Try a different term\./],
       ['pages/skills/SkillsPage.tsx', /Try a different term\./],
       ['pages/triggers/TriggersListPage.tsx', /Try a different filter\./],

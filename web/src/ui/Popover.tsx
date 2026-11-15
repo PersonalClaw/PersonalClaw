@@ -7,6 +7,7 @@ import { framesMayHaveMoved } from './framesMayHaveMoved'
 import { overlayEnter } from '../design/motion'
 import { useIsMobile } from '../app/useIsMobile'
 import { PhoneSheet, useInPhoneSheet } from './PhoneSheet'
+import { Toggle } from './Toggle'
 
 /** Vertical room a menu needs before a side is considered viable. Matches the
  *  composer SlashMenu/MentionMenu flip threshold (`roomAbove < 160`) so every
@@ -371,7 +372,7 @@ function portalPos(anchor: DOMRect, placement: 'top' | 'bottom' | 'right', align
  *  is a high-frequency surface, and the icon nudge and press squish it used to have only
  *  made a dense list wobble under the pointer. */
 export function MenuRow({
-  icon, label, hint, selected, onClick, role, tabIndex, disabled, title, nameIsLabel, checkMark, name,
+  icon, label, hint, selected, onClick, role, tabIndex, disabled, title, nameIsLabel, checkMark, name, pressed,
 }: {
   icon?: ReactNode; label: string; hint?: string; selected?: boolean; onClick?: () => void
   /** The ITEM role required by the popup's container role, when it declares one.
@@ -409,6 +410,10 @@ export function MenuRow({
    *  "Delete project…" row named "Delete project: Garden". Wins over `nameIsLabel`. Unset, the
    *  name is computed from what the row shows. */
   name?: string
+  /** A row that turns a setting on and off (a page's "Power user view" in its `…`): it announces
+   *  `aria-pressed` with the setting's state and draws a decorative switch at its end, so its words
+   *  and its switch say the same thing. Unset, the row is an action, as before. */
+  pressed?: boolean
 }) {
   // A 44 px row in a phone sheet (`PhoneSheet`), its usual height elsewhere.
   const inSheet = useInPhoneSheet()
@@ -425,6 +430,7 @@ export function MenuRow({
       // correct for an action row (Peek / Open / Pin) — nothing there is "on".
       aria-selected={role === 'option' ? !!selected : undefined}
       aria-checked={role === 'menuitemradio' ? !!selected : undefined}
+      aria-pressed={pressed}
       className={`group flex items-center gap-s w-full rounded-md px-m py-s text-left text-on-surface hover:bg-surface-high active:bg-surface-high transition-colors aria-disabled:opacity-40 aria-disabled:cursor-not-allowed${inSheet ? ' min-h-11' : ''}`}
     >
       {icon && <span className="shrink-0 text-on-surface-var">{icon}</span>}
@@ -433,6 +439,7 @@ export function MenuRow({
         {hint && <span data-type="caption" className="block text-on-surface-low truncate">{hint}</span>}
       </span>
       {checkMark && <Check size={14} aria-hidden data-menu-check className="shrink-0 text-on-surface-var" />}
+      {pressed !== undefined && <Toggle on={pressed} decorative size="sm" />}
       {selected && <span className="size-1.5 shrink-0 rounded-pill bg-primary" />}
     </button>
   )

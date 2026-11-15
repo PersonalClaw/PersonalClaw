@@ -12,6 +12,7 @@ const doc: UiDoc = {
     { name: 'actions', description: 'What its menus do and where they go (`libraryActions.ActionInputs`): the host\'s navigation, pickers, write-ups and project context.' },
     { name: 'phoneSheet', description: 'Its Use in chat and More menus open as phone sheets from 320 to 768 px.' },
     { name: 'foot', description: 'A phone\'s full-screen form: Use in chat, Open and Pin at its foot, 44 px each, and More the ⋯ at its top.' },
+    { name: 'detail', description: 'The Power user view\'s rows after About (what was read from it, search by meaning, its graph). Unset, the preview reads the library\'s own setting, so a project\'s page shows them while the view is on, as the library does.' },
   ],
   bestPractices: [
     { guidance: true, description: 'Key it by the item\'s ref, so its bodies and bars read again for another item.' },

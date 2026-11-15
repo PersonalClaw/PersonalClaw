@@ -10,7 +10,7 @@ import { Field, Select, TextInput } from '../../../ui/forms'
 import { FormFooter } from '../../../ui/FormFooter'
 import { ListSkeleton, LoadError } from '../../../ui/ListScaffold'
 import { TOUCH_TARGET } from '../../../ui/Toggle'
-import { blank, editable } from '../../knowledge/ReportsPage'
+import { blank, editable } from './reportDraft'
 import { LibraryReportForm } from './LibraryReportForm'
 import { SourceCreatePage } from '../../knowledge/SourceCreatePage'
 import { INTERVAL_CHOICES, RAW_ENRICHMENT, fmtInterval } from '../../knowledge/sourceMeta'
@@ -43,17 +43,19 @@ export function setupViewOf(raw: string | undefined): SetupView | null {
   return { view: 'panel' }
 }
 
-export function SetupPane({ setup, nav, onClose }: {
+export function SetupPane({ setup, nav, onClose, detail }: {
   /** The address's `setup` value. */
   setup: string
   nav: SetupNav
   /** Close the panel (and every form in it). */
   onClose: () => void
+  /** The Power user view's detail lines on the panel's rows. */
+  detail?: boolean
 }) {
   const v = setupViewOf(setup)
   const back = () => nav.form('all')
   if (!v) return null
-  if (v.view === 'panel') return <SetupPanel focus={v.focus} nav={nav} onClose={onClose} />
+  if (v.view === 'panel') return <SetupPanel focus={v.focus} nav={nav} onClose={onClose} detail={detail} />
   if (v.view === 'intent') return <IntentPane id={v.id} back={back} />
   if (v.view === 'report') return <ReportPane id={v.id} intent={v.intent} back={() => nav.form('reports')} />
   if (v.id === 'new') {

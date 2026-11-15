@@ -36,11 +36,6 @@ describe('OutcomeFieldValue is defined once', () => {
     // Exactly one home. A second definition is how the dispatch tables drift apart.
     expect(definers, `declared in: ${definers.join(', ')}`).toEqual(['KnowledgeDetail.tsx'])
   })
-
-  it('the list page imports it rather than re-declaring', () => {
-    const src = readFileSync(join(KNOWLEDGE, 'KnowledgeListPage.tsx'), 'utf8')
-    expect(src).toMatch(/import \{[^}]*OutcomeFieldValue[^}]*\} from '\.\/KnowledgeDetail'/)
-  })
 })
 
 describe('the dispatch table itself', () => {

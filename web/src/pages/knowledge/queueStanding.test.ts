@@ -1,23 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { queueLabel, queueSentence } from './queueStanding'
+import { queueSentence } from './queueStanding'
 
 // Measured: an audio upload sat behind a watched folder's backlog for about three hours, and
 // the page said "Queued…" the whole time — no place in line, no pace, nothing to decide on.
 
 const NOW = 1_000_000
-
-describe('queueLabel', () => {
-  it('says where a waiting row stands, not that it is enriching', () => {
-    expect(queueLabel({ processing_status: 'queued', queue: { state: 'waiting', lane: 'background', ahead: 12, running_since: NOW, typical_secs: null } })).toBe('Queued · 12 ahead')
-    expect(queueLabel({ processing_status: 'queued', queue: { state: 'waiting', lane: 'yours', ahead: 0, running_since: NOW, typical_secs: null } })).toBe('Queued · next')
-    expect(queueLabel({ processing_status: 'processing', queue: { state: 'running', since: NOW, typical_secs: null } })).toBe('Enriching')
-  })
-
-  it('falls back to the status alone when no running queue holds the item', () => {
-    expect(queueLabel({ processing_status: 'queued', queue: null })).toBe('Queued')
-    expect(queueLabel({ processing_status: 'processing' })).toBe('Enriching')
-  })
-})
 
 describe('queueSentence', () => {
   it('states the place in line and the arithmetic of the estimate', () => {

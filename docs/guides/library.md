@@ -38,7 +38,8 @@ Every item has the same few actions, and a kind that cannot do one leaves it out
 - **Open**: its own page. A note, file or link opens its reader, an artifact its page, a report its
   latest write-up. Their back control returns to the library with the item selected, or to the project
   you opened it from;
-- **Pin**: kept at the top of your library;
+- **Pin**: kept at the top of your library. A starred note is pinned here, and its Unpin clears the
+  star too;
 - **More**: Copy text, Copy link, Download, Add to project…, Mark as read or unread, Archive or Restore,
   and Delete… for what can be deleted.
 
@@ -71,10 +72,43 @@ tag named before you change it.
 When two items say different things, both are marked, and **Compare them** shows the two claims side
 by side. You choose which one the agent goes by, or say both can be right; both are always kept.
 
+## The Power user view
+
+The **Power user view** switch in the header adds detail and changes nothing else. With it on, a tab
+list runs down the left of the page: **Graph** (the default), **Items**, **Tags**, **Conflicts** and
+**Decisions**, with **Library settings** pinned at its foot. Each tab says one fact under its name, and
+a tab with nothing to say says nothing.
+
+- **Graph** draws the people, places and ideas your items mention, and how they connect. Pick a name to
+  see how many items mention it, what it is linked to and where; **Show all in Items** opens Items
+  narrowed to them.
+- **Items** is the list, with more on its count line (how many can be found by meaning, how many wait
+  to be read) and in each preview's About (what was read from it, whether it is searchable by meaning,
+  possible duplicates and a link to its own graph).
+- **Tags**, **Conflicts** and **Decisions** are the tag tree, every disagreement with its Compare
+  choices, and the decision journal.
+- **Library settings** says what is in your library, how it is found and what needs a look, each with
+  its one action: Re-index, Open graph, Show them, Review, Change, Process everything again….
+
+Feeds, intents and reports show more too: a feed's kind, how often it is really checked and how its
+last check went; what an intent asks of your model; what a report reads and what it may cite.
+
+Turning it off hides no control. Re-index search by meaning and Process everything again… are in the
+page's "…", the State filter shows what is still being read or couldn't be read, and each item keeps its
+own graph on its page.
+
+The setting is kept on the gateway, so it is the same in every browser, the desktop app and the phone.
+A link to one of its tabs (`#/library?view=graph`, and `tags`, `conflicts`, `decisions`, `items` or
+`settings`) shows that tab whatever the setting, as a link restores what you were looking at: "On for
+this visit. Your setting is off." says so, with **Keep it on**. A link never changes the setting; the
+switch and Keep it on are the only things that do. ⌘K has **Turn on Power user view** (or off) and a row
+for each tab.
+
 ## Old addresses
 
 The Knowledge list, the Artifacts grid and the Sources and Reports pages are part of the library now.
 Their old addresses open the same things here: `#/knowledge` and `#/artifacts` open the list, with
-what they named, and `#/knowledge/sources` and `#/knowledge/reports` open the set-up panel at that
+what they named, `#/knowledge?view=graph` (and its tags, conflicts and decisions) opens that tab of the
+Power user view, and `#/knowledge/sources` and `#/knowledge/reports` open the set-up panel at that
 group. A knowledge item's page (`#/knowledge/item/<id>`) and an artifact's (`#/artifacts/<slug>`)
 keep their addresses.

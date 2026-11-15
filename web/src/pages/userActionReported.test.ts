@@ -61,9 +61,9 @@ const FIXED: Array<[string, string, string]> = [
   ['pages/agents/AgentsListPage.tsx', 'syncAgents', 'sync the agents'],
   // Same audit, batch 2: two confirmed destructive deletes whose failure said nothing.
   // The notification delete also closed the open panel and reloaded on failure — gated now.
-  // deleteKnowledgeIntent has TWO covered call sites (row button + detail panel), both wrapped.
+  // deleteKnowledgeIntent's one call site now is the library's set-up row and form (#6101).
   ['pages/notifications/NotificationsPage.tsx', 'deleteNotification', 'delete this notification'],
-  ['pages/knowledge/KnowledgeListPage.tsx', 'deleteKnowledgeIntent', 'delete this intent'],
+  ['pages/library/setup/SetupPanel.tsx', 'deleteKnowledgeIntent', 'delete “${goal}”'],
 ]
 
 describe('a user-initiated write that fails tells the user', () => {

@@ -119,9 +119,11 @@ describe('the population this reaches', () => {
   const SRC = join(process.cwd(), 'src')
   const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
-  it('14 surfaces use the primitive, so the fix is not a per-page patch', () => {
+  it('13 surfaces use the primitive, so the fix is not a per-page patch', () => {
+    // 13, not 14: the old knowledge list left with its page; the library's rows take theirs through
+    // `ui/LibraryRow`, which is not under `pages/`.
     const files = walk(join(SRC, 'pages')).filter((abs) => /<ContextMenu[\s>]/.test(readSource(abs)))
-    expect(files.length, `consumers:\n${files.map((f) => f.slice(SRC.length + 1)).join('\n')}`).toBeGreaterThanOrEqual(14)
+    expect(files.length, `consumers:\n${files.map((f) => f.slice(SRC.length + 1)).join('\n')}`).toBeGreaterThanOrEqual(13)
   })
 
   it('the primitive still binds a keyboard opener', () => {

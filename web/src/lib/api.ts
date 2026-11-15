@@ -1995,10 +1995,6 @@ export interface KnowledgeCollection {
 // `KnowledgeCollection.item_count`, which counts archived members the opened shelf hides.
 // `count_capped` says the smart-resolve cap was hit, so the UI can render "200+" instead of
 // passing a cap off as a total.
-export interface KnowledgeLibraryHome {
-  recently_added: KnowledgeItem[]; continue_reading: KnowledgeItem[]; favorites: KnowledgeItem[]
-  collections: { id: string; name: string; kind: 'manual' | 'smart'; icon?: string; position?: number; count: number; count_capped?: boolean }[]
-}
 // One reading highlight on a knowledge item. Anchored by TEXT,
 // not by offset: the reader renders markdown, so a character index into the item's source
 // does not survive the transform. `occurrence` says WHICH instance of `quote` this is, so
@@ -4785,6 +4781,8 @@ export type LibraryBulkBody =
   | { op: 'delete'; refs: string[]; expect: number }
 /** One ref's answer: done, or why not (`not_found`, `not_applicable`, `failed`). */
 export interface LibraryBulkResult { ref: string; ok: boolean; error?: string }
+/** The library's settings: whether the Power user view is on. */
+export interface LibrarySettings { power_user_view: boolean }
 
 /** `GET /api/library`'s keys. A multi-valued key takes several values. */
 export interface LibraryParams {
@@ -10732,6 +10730,10 @@ export const api = {
    *  Mark as read, a project and a collection, on a row, the preview or the bulk bar. A delete
    *  names `expect`, the number of things its confirm showed. */
   libraryBulk: (body: LibraryBulkBody) => post<{ op: string; results: LibraryBulkResult[] }>('/api/library/bulk', body),
+  /** The library's own settings, on the gateway (`entity_settings/library.json`): the same on every
+   *  browser, the desktop app and the phone. */
+  librarySettings: () => get<LibrarySettings>('/api/library/settings'),
+  saveLibrarySettings: (body: Partial<LibrarySettings>) => put<LibrarySettings>('/api/library/settings', body),
   // ── Lexicon / Vocabulary ──
   lexiconTerms: (opts: { source?: string; search?: string } = {}) =>
     get<{ terms: LexiconTerm[]; total: number }>(
@@ -10834,17 +10836,11 @@ export const api = {
   /** Record which of two disagreeing items to go by: one's id, or `both`. */
   decideKnowledgeConflict: (id: string, choice: string) =>
     post<Record<string, unknown>>(`/api/knowledge/conflicts/${encodeURIComponent(id)}/decision`, { choice }),
-  // Everything an intent has gathered (outcomes link back to source items by id).
-  knowledgeIntentOutcomes: (id: string) =>
-    get<{ intent: KnowledgeIntent; outcomes: IntentOutcome[] }>(`/api/knowledge/intents/${encodeURIComponent(id)}/outcomes`),
   /** One page of an intent's findings, newest first: `before` is where the next page starts,
    *  "" after the last. */
   knowledgeIntentOutcomesPage: (id: string, limit: number, before = '') =>
     get<{ intent: KnowledgeIntent; outcomes: IntentOutcome[]; before: string }>(
       `/api/knowledge/intents/${encodeURIComponent(id)}/outcomes?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
-  // Retroactively run an intent against all already-ingested items.
-  runKnowledgeIntent: (id: string) =>
-    post<{ recorded: number; matched: number; new: number; errors: number; evaluated: number; outcomes: IntentOutcome[] }>(`/api/knowledge/intents/${encodeURIComponent(id)}/run`, {}),
   // Synthesize a reusable skill from what an intent has gathered (opt-in per click).
   generateSkillFromIntent: (id: string) =>
     post<{ skill: string; description: string }>(`/api/knowledge/intents/${encodeURIComponent(id)}/generate-skill`, {}),
@@ -10898,12 +10894,6 @@ export const api = {
   // ── Knowledge collections ──
   knowledgeCollections: () =>
     get<{ collections: KnowledgeCollection[] }>('/api/knowledge/collections').then((d) => d.collections),
-  // The library home's four shelves in ONE read. 🔴 NO
-  // `.catch(() => …)`: four empty shelves and a failed fetch look identical, and the home is
-  // the one surface where "your library is empty" and "the read failed" must not be the same
-  // pixels. The rejection reaches the caller so it can say which.
-  knowledgeLibraryHome: (limit?: number) =>
-    get<KnowledgeLibraryHome>(`/api/knowledge/library-home${limit ? `?limit=${limit}` : ''}`),
   createKnowledgeCollection: (body: { name: string; kind?: 'manual' | 'smart'; query?: string; icon?: string }) =>
     post<{ ok: boolean; collection: KnowledgeCollection }>('/api/knowledge/collections', body),
   updateKnowledgeCollection: (id: string, body: { name?: string; kind?: 'manual' | 'smart'; query?: string; icon?: string; position?: number }) =>

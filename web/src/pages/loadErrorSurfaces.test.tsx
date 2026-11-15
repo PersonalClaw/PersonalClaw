@@ -5,7 +5,7 @@ import { api } from '../lib/api'
 import { writeQuery } from '../lib/data'
 import { AgentsListPage } from './agents/AgentsListPage'
 import { InboxPage } from './inbox/InboxPage'
-import { KnowledgeListPage } from './knowledge/KnowledgeListPage'
+import { LibraryPage } from './library/LibraryPage'
 import { SkillProposals } from './skills/SkillProposals'
 import { SkillsPage } from './skills/SkillsPage'
 import { ToolsPage } from './tools/ToolsPage'
@@ -41,19 +41,6 @@ import { startOfDay } from './triggers/weekGrid'
 //
 // One gateway stand-in serves every row: each `api` method the row answers is a stub on the one
 // `api` object every module holds, and every other method rejects, as an unreachable gateway would.
-// The knowledge library reads its items through `knowledgeStore`, which is drawn at that seam.
-
-const { store } = vi.hoisted(() => ({
-  /** The knowledge store's answers for the row; empty when the row does not mount the library. */
-  store: {} as Record<string, (...args: unknown[]) => Promise<unknown>>,
-}))
-
-vi.mock('./knowledge/knowledgeStore', async (orig) => {
-  const real = await orig<Record<string, unknown>>()
-  const seam = (name: string) => (...args: unknown[]) =>
-    (store[name] ?? (real[name] as (...a: unknown[]) => Promise<unknown>))(...args)
-  return { ...real, listKnowledge: seam('listKnowledge'), knowledgeStats: seam('knowledgeStats') }
-})
 
 type Answers = Record<string, (...args: unknown[]) => unknown>
 
@@ -70,10 +57,7 @@ function answer(methods: Answers) {
   for (const k of Object.keys(methods)) if (!(k in methodsOf)) throw new Error(`api has no method ${k}`)
 }
 
-beforeEach(() => {
-  for (const k of Object.keys(store)) delete store[k]
-  sessionStorage.clear()
-})
+beforeEach(() => { sessionStorage.clear() })
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 const nav = () => {}
@@ -126,15 +110,14 @@ const SKILLS: Answers = {
     pending_proposals: { count: 0, names: [] }, facts: { count: 0, names: [] },
   }),
 }
-const KNOWLEDGE: Answers = {
+const EMPTY_LIBRARY = { items: [], total: 0, complete: true, failed: [], facets: {}, sort: 'activity' }
+const LIBRARY: Answers = {
+  library: () => Promise.resolve(EMPTY_LIBRARY),
   knowledgeCollections: () => Promise.resolve([]),
-  knowledgeStats: () => Promise.resolve({ items: 0, entities: 0, relations: 0 }),
-  // The embedding chip follows the one re-index, and reads whether one runs on mount.
+  knowledgeStats: () => Promise.resolve({ items: 0, entities: 0, relations: 0, embeddings: { enabled: false } }),
+  // The page follows the one re-index, and reads whether one runs on mount.
   embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
-}
-const KNOWLEDGE_STORE = {
-  listKnowledge: () => Promise.resolve([]),
-  knowledgeStats: () => Promise.resolve({ items: 0, entities: 0, relations: 0, embedded: 0 }),
+  librarySettings: () => Promise.resolve({ power_user_view: false }),
 }
 
 interface Surface {
@@ -144,9 +127,6 @@ interface Surface {
   answers: Answers
   /** The collection read, failed. */
   fails: Answers
-  /** The knowledge store's answers, when the page reads through it. */
-  store?: Record<string, (...args: unknown[]) => Promise<unknown>>
-  storeFails?: Record<string, (...args: unknown[]) => Promise<unknown>>
   /** What the alert names. */
   names: RegExp
   /** The empty state's heading, which a failed read must not show. */
@@ -248,20 +228,15 @@ const SURFACES: Surface[] = [
     warm: { seed: { 'skill-proposals': { proposals: [], lastReview: null } }, shows: heading('No skill proposals') },
   },
   {
-    // Its search branch never caught, so a failure fell through `items === null` with
-    // `itemsLoading` false and rendered a blank region.
-    row: '#/knowledge, the library',
-    mount: () => (
-      <KnowledgeListPage onCreate={() => {}} onOpenItem={() => {}} onOpenSources={() => {}} onOpenReports={() => {}}
-        onOpenChat={() => {}} query={q} setQuery={setQuery} />
-    ),
-    answers: KNOWLEDGE,
-    store: KNOWLEDGE_STORE,
-    fails: {},
-    storeFails: { listKnowledge: boom },
-    names: /knowledge items/i,
-    empty: 'Knowledge base is empty',
-    warm: { seed: { 'knowledge:items::': [] }, shows: heading('Knowledge base is empty') },
+    // The old Knowledge list's search branch never caught, so a failure fell through to a blank
+    // region; the library it became reads once, and says so when that read fails.
+    row: '#/library',
+    mount: () => <LibraryPage sub="" navigate={nav} navEpoch={0} query={q} setQuery={setQuery} />,
+    answers: LIBRARY,
+    fails: { library: boom },
+    names: /library/i,
+    empty: 'Your library is empty',
+    warm: { seed: { 'knowledge:library:{}': EMPTY_LIBRARY }, shows: heading('Your library is empty') },
   },
 ]
 
@@ -272,7 +247,6 @@ function stage(s: Surface, failed: boolean): { calls: number } {
   const counted = <F extends (...args: unknown[]) => unknown>(fns: Record<string, F>) =>
     Object.fromEntries(Object.entries(fns).map(([k, fn]) => [k, (...a: unknown[]) => { made.calls++; return fn(...a) }]))
   answer(failed ? { ...s.answers, ...counted(s.fails) } : s.answers)
-  Object.assign(store, s.store ?? {}, failed ? counted(s.storeFails ?? {}) : {})
   render(s.mount())
   return made
 }

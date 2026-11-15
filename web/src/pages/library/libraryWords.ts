@@ -31,7 +31,7 @@ export interface CountLine {
 }
 
 /** The count line: "5,012 items"; "23 matches · Matching words only. Set up search by meaning";
- *  "34 items in Homelab · Clear · Open project"; "Trips · 34 items · Rename · Delete collection ·
+ *  "34 items in Homelab · Clear · Open project"; "9 items that mention NAS · Clear"; "Trips · 34 items · Rename · Delete collection ·
  *  Clear"; "Showing the best 100 matches. Add a word or a filter to narrow it." */
 export function countLine({ query, data, projectName, collection, wordsOnly }: LineInputs): CountLine {
   const total = data.total
@@ -57,6 +57,8 @@ export function countLine({ query, data, projectName, collection, wordsOnly }: L
     const what = query.store === 'artifacts' ? `${n(total)} pages and documents` : query.store === 'knowledge' ? `${n(total)} notes and files` : items(total)
     return { lead: `${what} ${where}`, actions }
   }
+  // The graph's Show all in Items: "9 items that mention NAS · Clear".
+  if (query.entity) return { lead: `${n(total)} ${total === 1 ? 'item that mentions' : 'items that mention'} ${query.entity}`, actions: [{ key: 'clear', label: 'Clear' }] }
   if (filtered) return { lead: items(total), actions: [{ key: 'clear', label: 'Clear' }] }
   return { line: items(total), actions: [] }
 }

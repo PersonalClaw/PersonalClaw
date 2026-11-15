@@ -1,0 +1,50 @@
+- navigation:
+  - button "PersonalClaw, Home":
+    - img "PersonalClaw"
+    - text: PersonalClaw
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Chat history":
+    - button "New chat"
+    - button "Open Chat history"
+    - searchbox "Search chats"
+    - 'button "Sort and filter: Recent activity · Active"'
+    - status
+    - text: No chats yet
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - radiogroup "Library":
+    - radio "Library" [checked]
+    - radio "Memory"
+    - radio "Files"
+  - heading "Library" [level=#]
+  - button "Power user view" [pressed]
+  - button "More actions"
+  - button "Add"
+  - tablist "Library views":
+    - tab "Graph"
+    - tab "Items"
+    - tab "Tags" [selected]
+    - tab "Conflicts"
+    - tab "Decisions"
+    - tab "Library settings"
+  - paragraph: On for this visit. Your setting is off.
+  - button "Keep it on"
+  - tabpanel "Tags":
+    - region "Tags":
+      - heading "Tags" [level=#]
+      - heading "No tags yet" [level=#]
+      - paragraph: Tag a saved item and it appears here, where you can rename, nest, or merge it.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

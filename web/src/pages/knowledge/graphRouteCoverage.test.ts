@@ -4,9 +4,9 @@ import { join } from 'node:path'
 
 // ── The knowledge graph must be REACHABLE as a route ──────────────────────────────────────────
 //
-// The graph is not a page. It is `KnowledgeListPage`'s `view` query param — one of Library /
-// Graph / Intents — so navigating `#/knowledge` renders the DEFAULT view (`library`) and the
-// graph never mounts. The harness scanned `knowledge`, got the library, and reported clean: the
+// The graph is not a page. It was the old Knowledge list's `view` query param, and it is the
+// library's Power user view's first tab now (#6101), `#/library?view=graph`, so navigating the bare
+// page renders its default and the graph may never mount. The harness scanned `knowledge`, got the library, and reported clean: the
 // graph had no axe scan and no visual baseline, for the same structural reason `learning` had
 // none (see the note in e2e/routes.ts) and the same reason 30 settings panels had none.
 //
@@ -125,16 +125,26 @@ describe('the knowledge graph is reachable as a harness route', () => {
     const app = read('src/app/App.tsx')
     expect(app).toMatch(new RegExp(`case '${path}': return <LibraryPage \\{\\.\\.\\.r\\} />`))
 
-    // 4. which draws the old views in place for THIS param name (`InPlaceView`, until the power-user
-    //    view gives them tabs) and draws the list by default, which is why the bare route never
-    //    reached the graph
+    // 4. which reads the Power user view's tab from THIS param name, so an address that names a tab
+    //    shows it whatever the stored setting (#6101), and draws the list by default, which is why the
+    //    bare route never reached the graph
+    const view = read('src/pages/library/powerUserView.ts')
+    expect(view, `the library must read its tab from '${param}'`).toMatch(new RegExp(`isPowerTab\\(query\\.${param}\\)`))
+    expect(view, `'${value}' must be one of the tabs`).toMatch(new RegExp(`POWER_TABS = \\[[^\\]]*'${value}'`))
     const page = read('src/pages/library/LibraryPage.tsx')
-    expect(page, `the library must draw the '${param}' views in place`).toMatch(new RegExp(`isInPlaceView\\(query\\.${param}\\)`))
+    expect(page).toMatch(/powerUserPlace\(raw, power\.stored, narrowed\)/)
+    expect(page).toMatch(/<PowerTabPanel tab=\{place\.tab\}/)
 
-    // 5. and renders the graph at THIS value
-    const views = read('src/pages/library/InPlaceView.tsx')
-    expect(views, `'${value}' must be one of the views drawn in place`).toMatch(new RegExp(`IN_PLACE_VIEWS = \\[[^\\]]*'${value}'`))
-    expect(views, `view === '${value}' must render the graph`)
-      .toMatch(new RegExp(`view === '${value}' &&[\\s\\S]{0,400}<KnowledgeGraph`))
+    // 5. and renders the graph in that tab
+    const tabs = read('src/pages/library/PowerTabPanel.tsx')
+    expect(tabs, `tab '${value}' must render the graph`).toMatch(new RegExp(`tab === '${value}'\\)[\\s\\S]{0,1600}<KnowledgeGraph`))
+  })
+})
+
+describe('the old address and the new one draw the graph in the same tab', () => {
+  it('🔑 #/knowledge?view=graph lands on #/library?view=graph, the harness row', async () => {
+    const { redirectFor } = await import('../../app/routeRedirects')
+    expect(redirectFor('knowledge?view=graph')).toBe('library?view=graph')
+    expect(GRAPH_ROUTE).toBe('library?view=graph')
   })
 })
