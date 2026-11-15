@@ -416,6 +416,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "learning_proposal_not_installed": (
         "It could not be installed, so nothing changed and the proposal is still waiting."
     ),
+    # 409 (same route): a template change could not be applied (its definition gone, an op that no
+    # longer fits, a step it would let do more); the message is the reason, and it still waits.
+    "learning_proposal_not_applied": (
+        "The change could not be applied, so nothing changed and the proposal is still waiting."
+    ),
     "store_required": "The request must name one retrieval store (knowledge or memory).",
     "card_unavailable": "That retrieval store could not be read for labelling.",
     "store_mutated": "A read-only harness pass wrote to a store and was refused.",

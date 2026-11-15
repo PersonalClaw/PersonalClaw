@@ -844,6 +844,10 @@ def _expire_oldest(existing: list[Proposal]) -> None:
         logger.info("proposal queue full; expired oldest %s", victim.id)
     except OSError:
         logger.debug("proposal expiry failed", exc_info=True)
+        return
+    # Its Inbox row and its notification go with it: a row whose proposal is gone would wait on
+    # an answer nothing can take.
+    _resolve_inbox_item(victim.id, "dismissed")
 
 
 # ── Inbox surfacing ──
@@ -1228,6 +1232,12 @@ class NotInstalledError(AcceptError):
     which the route answers as 409 ``learning_proposal_not_installed``."""
 
 
+class NotAppliedError(NotInstalledError):
+    """A template change that could not be applied: its definition gone, an op that no longer
+    fits, a step it would let do more. Nothing changed and the row stays pending; the route
+    answers 409 ``learning_proposal_not_applied``."""
+
+
 class NoProposalInstallerError(AcceptError):
     """Nothing in this build can install this proposal's kind.
 
@@ -1293,6 +1303,10 @@ def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
         # no decision is the whole point — the row stays pending and re-filable.
         _audit("learning_proposal_accept", prop, "unsupported")
         logger.warning("Cannot install a %s proposal (%s); accept refused", prop.kind, pid)
+        raise
+    except NotInstalledError:
+        # Already said in the installer's words (a template change that was not applied).
+        _audit("learning_proposal_accept", prop, "failed")
         raise
     except AcceptError as exc:
         # An installer's own refusal is its sentence: a taken name, a store that refused the write.

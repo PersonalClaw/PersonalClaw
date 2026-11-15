@@ -219,7 +219,7 @@ async def test_a_trigger_fired_run_records_the_def_version_it_executed(monkeypat
 async def test_accepting_a_template_diff_records_a_new_refiner_version() -> None:
     """Accept → new template VERSION: applying an accepted refiner diff saves the target
     through the writable provider, which appends an immutable v2 saved by the refiner."""
-    from personalclaw.dashboard.handlers.learning import _apply_accepted_template_diff
+    from personalclaw.learning.template_diff import apply_accepted as _apply_accepted_template_diff
     from personalclaw.workflows.native_defs import NativeWorkflowDefProvider
 
     provider = NativeWorkflowDefProvider()

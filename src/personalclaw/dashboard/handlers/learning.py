@@ -110,69 +110,25 @@ def _installer_for(request: web.Request):
     return installers.installer_for(service=svc)
 
 
-async def _apply_accepted_template_diff(prop) -> dict:
-    """Apply an accepted ``template_diff`` to its target and save it as a NEW version.
-
-    The refiner FILES typed ops and never applies them; accepting is the human installing, so
-    THIS is where the diff lands, as a new template VERSION. The ops ride the change
-    manifest's ``targeted_fix`` (the same field the inbox reads to stamp a risk tier); they are
-    applied to a deep copy via ``mutations.apply_batch`` and, only if the batch is clean, saved
-    as a new version (``service.save_accepted_diff``), which refuses a diff that would let a step
-    do more than before: accepting a model's proposal is no yes to that. Best-effort: the
-    proposal is already accepted, so a failed apply is reported, never a 500 that would strand it.
-    """
-    manifest = getattr(prop, "change_manifest", None)
-    ops_raw = manifest.get("targeted_fix") if isinstance(manifest, dict) else None
-    name = str(getattr(prop, "target", "") or "")
-    if not name or not isinstance(ops_raw, list) or not ops_raw:
-        return {"applied": False, "reason": "no typed ops on the proposal"}
-
-    from personalclaw.workflows import defs as defs_mod
-    from personalclaw.workflows import mutations, service
-
-    spec = None
-    for pname in defs_mod.list_providers():
-        provider = defs_mod.get_provider(pname)
-        if provider is None:
-            continue
-        try:
-            found = await provider.get_def(name)
-        except Exception:
-            continue
-        if found is not None:
-            spec = found if isinstance(found, dict) else getattr(found, "to_dict", lambda: None)()
-            break
-    if not isinstance(spec, dict):
-        return {"applied": False, "reason": f"no definition named {name!r}"}
-
-    try:
-        ops = [mutations.Op.from_dict(o) for o in ops_raw if isinstance(o, dict)]
-    except ValueError as exc:
-        return {"applied": False, "reason": f"unparseable op: {exc}"}
-    candidate, issues = mutations.apply_batch(ops, spec, {})
-    if issues:
-        return {"applied": False, "reason": "; ".join(i.code for i in issues)}
-
-    saved = await service.save_accepted_diff(candidate, ops=ops_raw)
-    if not saved.get("ok"):
-        return {"applied": False, "reason": str(saved.get("message") or "it was not saved")}
-    return {"applied": True, "version": int(saved.get("version") or 0)}
-
-
 def _tier_for(prop) -> str:
     """The risk tier for one proposal, or `""`.
 
     Only a `template_diff` carries typed ops to derive a tier from, so anything else is left
-    unscored
-    rather than stamped with a meaningless one — the inbox defaults those to `review`, and a
-    fabricated `low` would hand a lesson bulk-accept eligibility nobody computed.
+    unscored rather than stamped with a meaningless one: the inbox defaults those to `review`, and a
+    fabricated `low` would hand a lesson bulk-accept eligibility nobody computed. Read by
+    membership: the tier the refiner filed among its tags, else the riskiest of its ops. Never by
+    a tag's position, and never as an attribute of the manifest, which is a dict (it read none).
     """
-    from personalclaw.learning.refiner import risk_tier
+    from personalclaw.learning.refiner import RiskTier, risk_tier
 
     if str(getattr(prop, "kind", "")) != "template_diff":
         return ""
+    tiers = {t.value for t in RiskTier}
+    for tag in getattr(prop, "tags", None) or []:
+        if str(tag) in tiers:
+            return str(tag)
     manifest = getattr(prop, "change_manifest", None)
-    ops = getattr(manifest, "targeted_fix", None) if manifest is not None else None
+    ops = manifest.get("targeted_fix") if isinstance(manifest, dict) else None
     if isinstance(ops, list):
         return risk_tier([o for o in ops if isinstance(o, dict)])
     return ""
@@ -314,6 +270,11 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
     actor = _actor(request)
     try:
         prop = store.accept(pid, actor=actor, installer=_installer_for(request))
+    except store.NotAppliedError as exc:
+        # A template change that could not be applied (its definition gone, an op that no longer
+        # fits, a step it would let do more): nothing changed and it still waits.
+        _audit(request, "learning.proposal_accept", "rejected", f"{pid}:{exc}")
+        return json_error("learning_proposal_not_applied", message=str(exc), status=409)
     except store.NotInstalledError as exc:
         # The install ran and was refused (a taken name, a store that refused the write): nothing
         # changed and it still waits. Its sentence is the installer's, said on the card as it is.
@@ -332,13 +293,9 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
             status = 403
         _audit(request, "learning.proposal_accept", "rejected", f"{pid}:{message}")
         return web.json_response({"error": message}, status=status)
-    applied: dict | None = None
-    if str(getattr(prop, "kind", "")) == "template_diff":
-        try:
-            applied = await _apply_accepted_template_diff(prop)
-        except Exception:
-            logger.warning("template_diff %s accepted but not applied", pid, exc_info=True)
-            applied = {"applied": False, "reason": "apply failed"}
+    # A template change was applied before its decision was recorded (`learning.template_diff`),
+    # so an accept that answers 200 is one that landed.
+    applied = {"applied": True} if str(getattr(prop, "kind", "")) == "template_diff" else None
     _audit(request, "learning.proposal_accept", "ok", f"{pid}:{prop.kind}")
     return web.json_response({"ok": True, "proposal": prop.to_dict(), "applied": applied})
 

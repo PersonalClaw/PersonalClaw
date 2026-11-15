@@ -63,6 +63,7 @@ SELF_MODEL = "self_model"
 LESSON_CONFLICT = "lesson_conflict"
 LEARNED_FROM_TEXT_NOT_TYPED = "learned_from_text_not_typed"
 TEMPLATE = "template"
+TEMPLATE_DIFF = "template_diff"
 #: Claimed, and writing nothing is the CORRECT outcome — see :data:`NOTHING_TO_INSTALL`.
 NOTHING = "nothing"
 
@@ -73,16 +74,10 @@ NOTHING = "nothing"
 #:   exists to stop an *inferred* one writing live, not to write it a second time. (A self-model
 #:   principle is a ``lesson_batch`` too, and so is the question a learned lesson that would
 #:   replace one she taught raises; :func:`branch_for` checks those branches first.)
-#: * ``template_diff`` — applied AFTER the decision by
-#:   ``handlers.learning._apply_accepted_template_diff``, which saves a new template VERSION. It
-#:   is deliberately not an installer: the apply is async and reports its own ``applied`` result
-#:   on the response.
-NOTHING_TO_INSTALL = frozenset(
-    {
-        proposals.Kind.LESSON_BATCH.value,
-        proposals.Kind.TEMPLATE_DIFF.value,
-    }
-)
+#:
+#: A ``template_diff`` is applied by its own branch (``learning.template_diff``), before the
+#: decision is recorded, as every other install is.
+NOTHING_TO_INSTALL = frozenset({proposals.Kind.LESSON_BATCH.value})
 
 
 def branch_for(data: dict[str, Any]) -> str:
@@ -130,6 +125,8 @@ def branch_for(data: dict[str, Any]) -> str:
     if template_install.is_template_proposal(data):
         # A plan shape, or a row with no name or too few steps, is one nothing installs.
         return "" if template_install.why_not(data) else TEMPLATE
+    if str(data.get("kind") or "") == proposals.Kind.TEMPLATE_DIFF.value:
+        return TEMPLATE_DIFF
     if str(data.get("kind") or "") in NOTHING_TO_INSTALL:
         return NOTHING
     return ""
@@ -188,6 +185,10 @@ def install(prop: Any, *, service: Any = None) -> str:
         from personalclaw.learning import template_install
 
         template_install.install_accepted_template(data)
+    elif branch == TEMPLATE_DIFF:
+        from personalclaw.learning import template_diff
+
+        template_diff.install_accepted_diff(data)
     elif branch == SELF_MODEL:
         from personalclaw.learning import self_model_observer
 

@@ -63,7 +63,7 @@ def accept_for(prop: Any, *, variant: str = "") -> dict[str, Any]:
             template_install.why_not(data) if template_install.is_template_proposal(data) else ""
         )
         return _accept(NONE, "", reason or _NONE_SENTENCES.get(variant, NO_ACCEPT["sentence"]))
-    if branch == installers.NOTHING:
+    if branch in (installers.NOTHING, installers.TEMPLATE_DIFF):
         if variant == "template_diff":
             workflow = str(data.get("target") or "")
             manifest = data.get("change_manifest") or {}

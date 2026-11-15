@@ -364,6 +364,8 @@ class TestVacuityFloor:
         every other unmatched kind refuses. A regression that widened it would turn four honest
         409s back into four silent 200s.
         """
-        assert installers.NOTHING_TO_INSTALL == frozenset({"lesson_batch", "template_diff"})
+        assert installers.NOTHING_TO_INSTALL == frozenset({"lesson_batch"})
+        # A template change has its own branch now, applied before its decision is recorded.
+        assert installers.branch_for({"kind": "template_diff"}) == installers.TEMPLATE_DIFF
         for kind in UNINSTALLABLE_KINDS:
             assert installers.branch_for({"kind": kind}) == ""
