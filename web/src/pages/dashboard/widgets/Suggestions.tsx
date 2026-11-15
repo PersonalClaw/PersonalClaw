@@ -7,6 +7,7 @@ import { SlotEmptyState } from './kit'
 import { InlineLoadError } from '../../../ui/ListScaffold'
 import { fadeEnter } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
+import { chatLaunchPath } from '../../../app/linkState'
 import { NeedsModelNote } from '../../chat/NoModelSetupState'
 
 /** Today's Suggestions — LLM prompt-starter cards personalized from memory +
@@ -75,7 +76,7 @@ export function Suggestions({ navigate }: RouteProps) {
           type="button"
           layout
           variants={fadeEnter} initial="initial" animate="animate"
-          onClick={() => navigate(`chat/new?seed=${encodeURIComponent(s)}`)}
+          onClick={() => navigate(chatLaunchPath({ seed: s }))}
           className="group flex items-center gap-s rounded-lg bg-surface-low px-m py-s text-left transition-colors hover:bg-surface-high"
         >
           {/* Neutral, not coral: coral marks the agent's own activity, the primary action, focus

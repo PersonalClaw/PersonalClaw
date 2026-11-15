@@ -3,7 +3,7 @@ import { render, screen, waitFor, act, cleanup, within } from '@testing-library/
 import userEvent from '@testing-library/user-event'
 import { Settings } from 'lucide-react'
 
-// ── ⌘K finds what is inside chats, memory, knowledge and tasks ────────────────────────────────
+// ── ⌘K finds what is inside chats, memory, the library and tasks ──────────────────────────────
 //
 // Measured before: the palette searched its own list of pages and actions and nothing else, so a
 // chat you remembered by what was said in it was four pages away. Each source is searched through
@@ -15,7 +15,8 @@ const h = vi.hoisted(() => ({
   searchEpisodic: vi.fn(),
   memorySemantic: vi.fn(),
   lessons: vi.fn(),
-  knowledgeItems: vi.fn(),
+  library: vi.fn(),
+  researchReports: vi.fn(),
   searchTasks: vi.fn(),
 }))
 
@@ -44,7 +45,11 @@ beforeEach(() => {
     { key: 'user.timezone', value_json: '"Europe/Lisbon"' },
   ])
   h.lessons.mockReset().mockResolvedValue([])
-  h.knowledgeItems.mockReset().mockResolvedValue({ items: [{ id: 'k1', title: 'Budget template', summary: 'A sheet' }], total: 1, page: 1, limit: 5 })
+  h.library.mockReset().mockResolvedValue({
+    items: [{ ref: 'knowledge:k1', title: 'Budget template', excerpt: 'A sheet', match: null }],
+    total: 1, complete: true, failed: [], facets: {}, sort: 'rank',
+  })
+  h.researchReports.mockReset().mockResolvedValue({ reports: [] })
   h.searchTasks.mockReset().mockResolvedValue({ tasks: [{ id: 't1', title: 'Send the budget', status: 'open' }], total: 1 })
 })
 
@@ -61,11 +66,11 @@ async function openAndType(text: string) {
 }
 
 describe('⌘K content search', () => {
-  it('finds a chat, a memory, a knowledge item and a task, each under its own heading', async () => {
+  it('finds a chat, a memory, a library item and a task, each under its own heading', async () => {
     const { input } = await openAndType('budget')
     expect(input.getAttribute('aria-label'), 'the field says it searches content too').toBe('Search pages, actions and content')
     const list = screen.getByRole('listbox')
-    for (const heading of ['Chats', 'Memory', 'Knowledge', 'Tasks']) {
+    for (const heading of ['Chats', 'Memory', 'Library', 'Tasks']) {
       expect(await within(list).findByRole('group', { name: heading })).toBeTruthy()
     }
     expect(within(screen.getByRole('group', { name: 'Chats' })).getByRole('option', { name: /Budget planning/ })).toBeTruthy()
@@ -73,7 +78,7 @@ describe('⌘K content search', () => {
     expect(within(memory).getByRole('option', { name: /budget\.limit/ })).toBeTruthy()
     expect(within(memory).getByRole('option', { name: /Talked the budget through/ })).toBeTruthy()
     expect(within(memory).queryByRole('option', { name: /user\.timezone/ }), 'a fact that does not match stays out').toBeNull()
-    expect(within(screen.getByRole('group', { name: 'Knowledge' })).getByRole('option', { name: /Budget template/ })).toBeTruthy()
+    expect(within(screen.getByRole('group', { name: 'Library' })).getByRole('option', { name: /Budget template/ })).toBeTruthy()
     expect(within(screen.getByRole('group', { name: 'Tasks' })).getByRole('option', { name: /Send the budget/ })).toBeTruthy()
     // The index's match marks are not shown as text.
     expect(screen.getByText('…the budget for Q3…')).toBeTruthy()
@@ -97,11 +102,11 @@ describe('⌘K content search', () => {
   })
 
   it('says which source failed, and still shows the others', async () => {
-    h.knowledgeItems.mockRejectedValue(new ApiError('the knowledge index is rebuilding', 503))
+    h.library.mockRejectedValue(new ApiError('the knowledge index is rebuilding', 503))
     await openAndType('budget')
-    expect(await screen.findByText("Couldn't search your knowledge: the knowledge index is rebuilding")).toBeTruthy()
+    expect(await screen.findByText("Couldn't search your library: the knowledge index is rebuilding")).toBeTruthy()
     expect(screen.getByRole('option', { name: /Budget planning/ })).toBeTruthy()
-    expect(screen.queryByRole('group', { name: 'Knowledge' })).toBeNull()
+    expect(screen.queryByRole('group', { name: 'Library' })).toBeNull()
   })
 
   it('lists a chat once when two of its hits open the same chat', async () => {

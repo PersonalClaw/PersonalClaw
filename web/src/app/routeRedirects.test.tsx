@@ -240,6 +240,11 @@ const PAGE_LANDINGS: readonly { route: string; home?: ShippedRoute['home']; why:
   { route: 'projects?import=1', why: 'the palette\'s Import a project: the list opens the file picker within the press and drops the key' },
   { route: 'projects?view=chats&q=garden', why: 'the retired Chats by project view: the list keeps the search and drops the view, replacing the history entry' },
   { route: `projects?peek=${SAMPLE.project}`, why: 'the retired peek: the list opens that project\'s own page in its place, replacing the history entry' },
+  // A link's library items: the chat reads them as chips and takes the key off its own address, so a
+  // chip taken out stays out (`linkAttachments`).
+  { route: `chat/new?attach=knowledge%3A${SAMPLE.knowledge}%2Cartifact%3A${SAMPLE.artifact}`, why: 'the chat reads its library items as chips and drops the key (linkAttachments)' },
+  { route: `chat/new?project=${SAMPLE.project}&attach=knowledge%3A${SAMPLE.knowledge}`, why: 'the chat reads its library items as chips and drops the key (linkAttachments)' },
+  { route: `chat/${SAMPLE.chat}?attach=artifact%3A${SAMPLE.artifact}`, why: 'the chat reads its library items as chips and drops the key (linkAttachments)' },
 ]
 
 const keyOf = (route: string, home?: ShippedRoute['home']): string => `${normal(route)}${home ? ` (${home} home)` : ''}`

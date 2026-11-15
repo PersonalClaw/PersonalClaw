@@ -4702,6 +4702,84 @@ export interface KnowledgeItem {
   neighbour_chunk_index?: number
   shared_entities?: number
 }
+
+/** One thing in the library, as `GET /api/library` answers it: every note, file, link, decision,
+ *  page, app, document, report and intent's findings in one shape (`dashboard/handlers/library.py`
+ *  `_row`). The row is not called `LibraryRow`: that name is the list's component. */
+export interface LibraryItem {
+  /** `<kind>:<id>` (`lib/itemRef.ts`): `knowledge:`, `artifact:`, `report:` or `findings:`. */
+  ref: string
+  title: string
+  /** The library's kind: `note`, `document`, `link`, `media`, `page` or `report`. */
+  kind: string
+  /** The store's own type (`pdf`, `bookmark`, `widget`, `findings`…). */
+  format: string
+  /** The store it is kept in: `knowledge` or `artifacts`. */
+  store: string
+  /** Who made it: `you`, `chats`, `automations`, `sources` or `not_recorded`, and its word. */
+  made: string
+  made_label: string
+  /** What it came from (a chat, loop, run, source or intent) and its title, "" once that is gone. */
+  from: { ref: string; title: string } | null
+  /** Who added it, when that is someone else. */
+  contributor: string
+  project: { id: string; name: string } | null
+  collections: { id: string; name: string }[]
+  tags: string[]
+  /** `%Y-%m-%dT%H:%M:%SZ`, "" when the store keeps none. */
+  created_at: string
+  activity_at: string
+  /** A knowledge item's or findings log's read state; null for a thing that has none. */
+  read: 'unread' | 'reading' | 'read' | null
+  pinned: boolean
+  archived: boolean
+  /** A report a run is writing now. */
+  running: boolean
+  /** The conflicts with no call yet, by id. */
+  conflicts: string[]
+  /** The tags a report reads that were deleted. */
+  missing_tags: string[]
+  /** Where its reading stands: '' (read, or nothing to read), `being_read` or `unreadable`. */
+  state: '' | 'being_read' | 'unreadable'
+  excerpt: string
+  size: number | null
+  version: number | null
+  thumb: string | null
+  /** A search's passage for this row, and whether it matched by meaning alone; null outside a search. */
+  match: { passage: string; meaning_only: boolean } | null
+}
+
+/** `GET /api/library`'s answer: the rows the filter keeps (`MAX_ROWS` at most), their true total,
+ *  each filter value's count, and each store it could not read. */
+export interface LibraryResponse {
+  items: LibraryItem[]
+  total: number
+  /** False when a store failed or the rows were cut. */
+  complete: boolean
+  failed: string[]
+  facets: Record<string, Record<string, number>>
+  /** `activity`, `added` or `name`; `rank` for a search. */
+  sort: string
+  /** A search's caps per store, and whether one was reached. */
+  cap?: Record<string, number>
+  capped?: boolean
+}
+
+/** `GET /api/library`'s keys. A multi-valued key takes several values. */
+export interface LibraryParams {
+  q?: string
+  kind?: string[]
+  made?: string[]
+  /** A project's id, or `none` for the things in no project. */
+  project?: string
+  store?: string
+  collection?: string
+  tag?: string[]
+  state?: string[]
+  sort?: 'activity' | 'added' | 'name'
+  entity?: string
+}
+
 /** A knowledge-item PATCH that replaces nothing whole: scalar fields, flags, and tags one name at a
  *  time. The body goes through `saveKnowledgeItem`; a whole-list `tags` does not exist, because it
  *  replaced the list with the page's copy of it. */
@@ -4754,6 +4832,10 @@ export interface ResearchReport {
    *  since its previous run."). A failed run leaves it, since `last_run_ts` still dates that run. */
   last_result: string
   watermark_ts: number
+  /** The write-up its runs rewrite: a knowledge item, kept by this id whatever the report is called.
+   *  "" until its first run writes one; null for a report saved before reports kept it, until the
+   *  gateway's migration fills it. */
+  finding_item_id?: string | null
   /** Its schedule as the Triggers page words it ("At 8:00 AM EDT, only on Monday"), the zone it
    *  runs in, and its next run (ISO, UTC). `words` is '' for a report with no schedule, and
    *  `next_run_at` is '' while it is paused, or while a restore holds the automation that runs it
@@ -10601,6 +10683,17 @@ export const api = {
     if (params?.includeArchived) qs.set('include_archived', '1')
     qs.set('page', String(params?.page ?? 1)); qs.set('limit', String(params?.limit ?? 50))
     return get<{ items: KnowledgeItem[]; total: number; page: number; limit: number }>(`/api/knowledge/items?${qs}`)
+  },
+  /** The whole library in one read: both stores, the reports and the intents' findings, one row
+   *  per thing (`LibraryItem`). A multi-valued key is sent as a comma list. */
+  library: (params: LibraryParams = {}) => {
+    const qs = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) {
+      const v = Array.isArray(value) ? value.filter(Boolean).join(',') : value
+      if (v) qs.set(key, v)
+    }
+    const q = qs.toString()
+    return get<LibraryResponse>(`/api/library${q ? `?${q}` : ''}`)
   },
   // ── Lexicon / Vocabulary ──
   lexiconTerms: (opts: { source?: string; search?: string } = {}) =>

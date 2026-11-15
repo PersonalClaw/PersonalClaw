@@ -60,6 +60,9 @@ import { EDIT_KEY_RE } from './editMode'
 import { FRAMES_MAY_HAVE_MOVED } from '../framesMayHaveMoved'
 import { newMessageId } from '../../lib/messageIds'
 import { readAnnotation, type WidgetAnnotation } from './annotate'
+import { clearStagedWidgetAction, isStagedWidgetNonce, stageWidgetAction, stagedWidgetAction } from './stagedAction'
+
+export { isStagedWidgetNonce }
 
 // Re-exported so the bridge stays the ONE public path for the turn dialect its consumers
 // already import (`useArtifactIteration`, the genui router, the contract tests).
@@ -624,7 +627,7 @@ export function useWidgetActionLauncher(at?: string): void {
     }
   }, [])
   useEffect(() => {
-    if (staged && at !== undefined && at !== STAGED_AT) staged = null
+    if (stagedWidgetAction() && at !== undefined && at !== STAGED_AT) clearStagedWidgetAction()
   }, [at])
 }
 
@@ -640,7 +643,6 @@ const HANDOFF_TTL_MS = 20_000
 const STAGED_AT = 'chat/new'
 /** The shell's one way into a new chat (App.tsx, and `launchChat` in the apps' SDK). */
 const LAUNCH_CHAT_EVENT = 'ne:launch-chat'
-let staged: { text: string; label?: string; at: number; nonce: string } | null = null
 
 /** The staged turn: the machine text plus (genui only) the label the bubble shows. */
 export interface PendingWidgetAction {
@@ -652,7 +654,7 @@ function stageAndLaunch(text: string, meta: WidgetActionMeta): void {
   // Minted from getRandomValues, which every context has: randomUUID exists only in a secure
   // one, and the remote link may be plain http.
   const nonce = newMessageId().slice('msg_'.length)
-  staged = { text, label: meta.label, at: Date.now(), nonce }
+  stageWidgetAction({ text, label: meta.label, at: Date.now(), nonce })
   // The one `ne:launch-chat` path (App.tsx), as `launchChat` raises it, with the nonce the new
   // chat drains by. Not a `launchChat` option: that is the apps' SDK, and nothing of an app's
   // may name one.
@@ -695,20 +697,15 @@ function launchWidgetActionInChat(text: string, meta: WidgetActionMeta): void {
 /** Drain the staged widget-action turn if one is still fresh and *nonce* is the one its
  *  launch carried. */
 export function takePendingWidgetAction(nonce?: string): PendingWidgetAction | null {
-  const p = staged
+  const p = stagedWidgetAction()
   if (!p || !nonce || p.nonce !== nonce) return null
-  staged = null
+  clearStagedWidgetAction()
   if (Date.now() - p.at > HANDOFF_TTL_MS) return null
   return { text: p.text, label: p.label }
 }
 
-/** Whether *nonce* is the staged turn's own: App's `ne:launch-chat` carries a nonce on only that
- *  launch, so nothing an app raises can name one. */
-export function isStagedWidgetNonce(nonce: unknown): boolean {
-  return typeof nonce === 'string' && !!nonce && staged?.nonce === nonce
-}
 
 /** Drop a staged turn no chat drained (tests, and a launch that never reached its chat). */
 export function forgetPendingWidgetAction(): void {
-  staged = null
+  clearStagedWidgetAction()
 }

@@ -1,6 +1,7 @@
 import { Edit3, MessageSquare } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { EmptyState } from '../../ui/ListScaffold'
+import { chatLaunchPath } from '../../app/linkState'
 
 /** The route names a chat that does not exist — a dead deep link, or a chat deleted while it
  *  was open. Said plainly, with the two ways forward, instead of an empty chat whose composer
@@ -16,7 +17,6 @@ export function MissingChat({ draft, fromWidget = false, navigate }: {
   navigate: (p: string, opts?: { replace?: boolean }) => void
 }) {
   const keep = draft.trim()
-  const marked = fromWidget ? '&from_widget=1' : ''
   return (
     <div className="flex h-full flex-col items-center justify-center gap-s overflow-y-auto px-l">
       <EmptyState icon={MessageSquare} title="This chat doesn’t exist"
@@ -25,7 +25,7 @@ export function MissingChat({ draft, fromWidget = false, navigate }: {
           : 'It may have been deleted, or the link is out of date.'}
         action={{
           label: 'Start a new chat', icon: Edit3,
-          onClick: () => navigate(keep ? `chat/new?seed=${encodeURIComponent(keep)}${marked}` : 'chat/new', { replace: true }),
+          onClick: () => navigate(chatLaunchPath(keep ? { seed: keep, fromWidget } : {}), { replace: true }),
         }} />
       <Button variant="ghost" size="sm" onClick={() => navigate('chat/history')}>See all chats</Button>
     </div>

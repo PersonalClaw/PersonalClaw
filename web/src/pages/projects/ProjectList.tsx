@@ -38,6 +38,7 @@ import { SOURCE_WORDS } from '../dashboard/NeedCards'
 import { NewProjectModal } from './NewProjectDialog'
 import { confirmArchiveProject, confirmDeleteProject, confirmForceDeleteProject } from './projectConfirms'
 import { ProjectWorkRow } from './ProjectWorkRow'
+import { chatLaunchPath } from '../../app/linkState'
 
 /** ── The Projects page (`#/projects`): one list ──────────────────────────────────────────────
  *
@@ -360,7 +361,7 @@ export function ProjectListPage({ navigate, onOpenTasks, query, setQuery }: {
     const pinOff = offReason ?? (pinsUnread ? "Couldn't read your pins." : archived && !pinned ? "Restore it first. An archived project can't be pinned." : undefined)
     return [
       { icon: <FolderOpen size={15} />, label: 'Open', onSelect: () => onOpen(p.id) },
-      { icon: <MessageSquare size={15} />, label: 'Start a chat here', onSelect: () => navigate(`chat/new?project=${encodeURIComponent(p.id)}`), disabled: archived || offline, disabledReason: offReason ?? (archived ? 'Restore it first.' : undefined), breakAfter: true },
+      { icon: <MessageSquare size={15} />, label: 'Start a chat here', onSelect: () => navigate(chatLaunchPath({ project: p.id })), disabled: archived || offline, disabledReason: offReason ?? (archived ? 'Restore it first.' : undefined), breakAfter: true },
       { icon: <Pin size={15} />, label: pinned ? 'Unpin' : 'Pin to the top', onSelect: () => togglePin(p.id), disabled: !!pinOff, disabledReason: pinOff },
       { icon: <Star size={15} />, label: isDefault ? 'Default project' : 'Make default project', checkMark: isDefault,
         onSelect: () => { if (!isDefault) void setDefaultProject(p.id) },

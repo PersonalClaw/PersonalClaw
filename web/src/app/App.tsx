@@ -24,7 +24,7 @@ import { onSetupRerun } from './onboarding/rerun'
 import { ProductTour } from './onboarding/ProductTour'
 import { useHashRoute } from './useHashRoute'
 import { BuddyRoutePage } from '../pages/buddy/buddyRoute'
-import { linkStatePatch, showsNewThread, withLinkState } from './linkState'
+import { chatLaunchPath, linkStatePatch, showsNewThread, withLinkState } from './linkState'
 import { useIsMobile } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
 import { ErrorBoundary, WidgetBoundary } from './ErrorBoundary'
@@ -49,7 +49,7 @@ import { runInTerminal, runInTerminalWhenReady, subscribeTerminal, hasActiveTerm
 import { LoadError, LoadingStatus } from '../ui/ListScaffold'
 import { useQuery } from '../lib/data'
 import { resolveAppIcon } from '../pages/apps/appIcon'
-import { isStagedWidgetNonce, useWidgetActionLauncher } from '../ui/widget/useWidgetActionBridge'
+import { useWidgetActionLauncher } from '../ui/widget/useWidgetActionBridge'
 import { getNavApps, onNavAppsChange } from '../pages/apps/navApps'
 import { ViewModesProvider, useViewModeState } from './viewModes'
 import type { AppSummary } from '../lib/api'
@@ -379,17 +379,17 @@ function AppInner() {
   useEffect(() => {
     const onLaunch = (e: Event) => {
       const d = (e as CustomEvent).detail || {}
-      const qs = new URLSearchParams()
-      if (d.prompt) qs.set('seed', d.prompt)
-      if (d.agent) qs.set('agent', d.agent)
-      // A widget action the owner said yes to, staged in memory: the new chat drains it by this
-      // nonce, which is no use to anyone without the stage (ui/widget/useWidgetActionBridge.ts).
-      // Only the shell's own launch names one: an app's event that names any other is ignored.
-      if (isStagedWidgetNonce(d.widgetAction)) qs.set('widget_action', d.widgetAction)
-      const q = qs.toString()
-      // A staged session keeps its ?seed too (investigate pre-fills the
-      // composer with an editable opening question — never auto-sent).
-      navigate(d.session ? `chat/${encodeURIComponent(d.session)}${q ? `?${q}` : ''}` : `chat/new${q ? `?${q}` : ''}`)
+      // The chat's launch keys are written by their one writer (`linkState.ts`). A widget action
+      // the owner said yes to, staged in memory, is named by its nonce, which the new chat drains
+      // it by: the writer writes it only when it is the staged turn's own, so an app's event that
+      // names any other is ignored. A staged session keeps its ?seed too (investigate pre-fills the
+      // composer with an editable opening question, never auto-sent).
+      navigate(chatLaunchPath({
+        session: d.session ? String(d.session) : '',
+        seed: d.prompt ? String(d.prompt) : '',
+        agent: d.agent ? String(d.agent) : '',
+        widgetAction: typeof d.widgetAction === 'string' ? d.widgetAction : '',
+      }))
     }
     const onBadge = (e: Event) => {
       const d = (e as CustomEvent).detail || {}

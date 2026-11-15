@@ -1,5 +1,6 @@
 import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck, TimerOff, CircleDashed, CircleAlert } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
+import { isKnowledgeItemId, pageOfItem, type ItemRef } from '../../lib/itemRef'
 import { isOpenStatus } from '../../lib/attentionLanes'
 import { approvalDestination, INBOX_HREF, placeOfRefs } from '../../app/approvalDestination'
 import { notificationLink } from '../notifications/notificationMeta'
@@ -213,6 +214,10 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
   // pre-existing ref resolves exactly as before — an item that carries both a session and
   // an artifact still goes to the session, which is the referent it always went to.
   if (refs.artifact) return `artifacts/${encodeURIComponent(refs.artifact)}`
+  // A scheduled report's finding carries the write-up its run rewrote (`knowledge_item_id`, beside
+  // `research_report_id`): the row opens that write-up's page. LAST in the chain like `artifact`.
+  const writeUp = writeUpOf(refs)
+  if (writeUp) return pageOfItem(writeUp)
   // The agent-rooms pause item (`agent/room_paused`) stamps `refs.room` and nothing else, so this
   // is the row's only route. LAST in the chain like `artifact` above, so every pre-existing ref
   // resolves exactly as it did. It is the reason the pause card is not a second notice: the row
@@ -226,6 +231,14 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
   const status = statusLink(refs)
   if (status) return status.path
   return ''
+}
+
+/** The write-up a report's finding names (`refs.knowledge_item_id`), as a library ref; null when
+ *  the row names none, or names it in no shape the store mints a knowledge item's id in
+ *  (`isKnowledgeItemId`, the rule the report's notification reads it by too). */
+function writeUpOf(refs: Record<string, unknown>): ItemRef | null {
+  const id = refs.knowledge_item_id
+  return isKnowledgeItemId(id) ? { kind: 'knowledge', id } : null
 }
 
 /** The in-app place an item's `refs.statusUrl` names, or null (`notificationLink`). */
@@ -245,6 +258,7 @@ export function refLabel(it: Pick<InboxItem, 'refs'>): string {
   if (refs.session) return 'Go to chat'
   if (refs.workflow) return 'Open the workflow run'
   if (refs.artifact) return 'Open the report'
+  if (writeUpOf(refs)) return 'Open the write-up'
   if (refs.room) return 'Go to the room'
   if (Array.isArray(refs.triggers) && refs.triggers.length > 0) return 'Go to Triggers'
   return statusLink(refs)?.label ?? 'Go to source'

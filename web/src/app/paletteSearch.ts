@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type Lesson, type SemanticEntry } from '../lib/api'
+import { api, type LibraryItem, type Lesson, type SemanticEntry } from '../lib/api'
+import { pageOfItem, parseItemRef } from '../lib/itemRef'
 import { semanticRowKind } from '../lib/semanticRowKind'
 import { failureSentence } from './reportingWrite'
 import { chatFindPath, searchCoverage } from '../pages/chat/searchDeepLink'
 
-/** ⌘K's CONTENT half: what the palette finds inside chats, memory, knowledge and tasks.
+/** ⌘K's CONTENT half: what the palette finds inside chats, memory, the library and tasks.
  *
  *  The palette used to search its own list of pages and actions and nothing else, so "the chat
  *  where I asked about the budget" was a trip to four different pages. Each source is searched
@@ -17,24 +18,27 @@ import { chatFindPath, searchCoverage } from '../pages/chat/searchDeepLink'
  *     matched by key or value from `GET /api/memory/semantic` (the Memory studio's own filter), and
  *     lessons matched by their rule from `GET /api/lessons`, each opened as the selected record in
  *     Library → Memory under the kind the studio lists it as (`semanticRowKind`);
- *   · knowledge: `GET /api/knowledge/items?q=`, opened on the item's page;
+ *   · library: `GET /api/library?q=`, the one search over both stores, the reports and what
+ *     the intents found (notes, files, pages and documents), each hit opened at its own page
+ *     (`lib/itemRef.ts` `pageOfItem`): an artifact's, a knowledge item's, a report's write-up's,
+ *     and what an intent found on that intent in the Intents view;
  *   · tasks: `POST /api/tasks/search`, opened in the task list's side panel.
  *
  *  A source that fails says so in its own words, beside the others' results, rather than looking
  *  like a source with nothing in it. That is the failure the chat list used to have. */
 
-export type ContentSource = 'chats' | 'memory' | 'knowledge' | 'tasks'
+export type ContentSource = 'chats' | 'memory' | 'library' | 'tasks'
 
 /** In display order. */
-export const CONTENT_SOURCES: readonly ContentSource[] = ['chats', 'memory', 'knowledge', 'tasks'] as const
+export const CONTENT_SOURCES: readonly ContentSource[] = ['chats', 'memory', 'library', 'tasks'] as const
 
 export const SOURCE_LABEL: Record<ContentSource, string> = {
-  chats: 'Chats', memory: 'Memory', knowledge: 'Knowledge', tasks: 'Tasks',
+  chats: 'Chats', memory: 'Memory', library: 'Library', tasks: 'Tasks',
 }
 
 /** What a failed search is called in its sentence: "Couldn't search your memory: …". */
 const SOURCE_WHAT: Record<ContentSource, string> = {
-  chats: 'search your chats', memory: 'search your memory', knowledge: 'search your knowledge', tasks: 'search your tasks',
+  chats: 'search your chats', memory: 'search your memory', library: 'search your library', tasks: 'search your tasks',
 }
 
 export interface ContentHit {
@@ -139,12 +143,31 @@ async function searchMemory(
   return [...factHits, ...lessonHits, ...slotHits, ...episodicHits].slice(0, HITS_PER_SOURCE)
 }
 
-async function searchKnowledge(q: string): Promise<ContentHit[]> {
-  const { items } = await api.knowledgeItems({ q, limit: HITS_PER_SOURCE })
-  return items.slice(0, HITS_PER_SOURCE).map((k) => ({
-    id: `knowledge:${k.id}`, source: 'knowledge', label: k.title || 'Untitled item',
-    detail: k.summary ? oneLine(k.summary) : undefined, path: `knowledge/item/${encodeURIComponent(k.id)}`,
+/** The library's best hits for `q`, each opening at its own page. A report opens at its write-up's
+ *  page, so when one is among the hits the reports are read once for their write-ups; a report
+ *  whose write-up can't be found then opens the Reports page rather than nowhere. */
+export async function searchLibrary(q: string): Promise<ContentHit[]> {
+  const { items } = await api.library({ q })
+  const top = items.flatMap((row) => {
+    const ref = parseItemRef(row.ref)
+    return ref ? [{ row, ref }] : []
+  }).slice(0, HITS_PER_SOURCE)
+  const writeUps = top.some(({ ref }) => ref.kind === 'report')
+    ? await api.researchReports().then(
+      ({ reports }) => new Map(reports.map((r) => [r.id, r.finding_item_id || ''])),
+      () => new Map<string, string>(),
+    )
+    : new Map<string, string>()
+  return top.map(({ row, ref }) => ({
+    id: `library:${row.ref}`, source: 'library', label: row.title || 'Untitled item',
+    detail: libraryDetail(row), path: pageOfItem(ref, writeUps.get(ref.id) ?? ''),
   }))
+}
+
+/** A hit's second line: the passage the search matched, else the row's own excerpt. */
+function libraryDetail(row: LibraryItem): string | undefined {
+  const text = row.match?.passage || row.excerpt
+  return text ? oneLine(unmark(text)) : undefined
 }
 
 async function searchTasks(q: string): Promise<ContentHit[]> {
@@ -182,7 +205,7 @@ export function useContentSearch(q: string, open: boolean): ContentSearch {
       const searches: Record<ContentSource, Promise<SourceAnswer>> = {
         chats: searchChats(query),
         memory: whole(searchMemory(query, readFacts, readLessons)),
-        knowledge: whole(searchKnowledge(query)),
+        library: whole(searchLibrary(query)),
         tasks: whole(searchTasks(query)),
       }
       void Promise.allSettled(CONTENT_SOURCES.map((s) => searches[s])).then((settled) => {

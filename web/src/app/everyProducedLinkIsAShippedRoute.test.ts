@@ -25,7 +25,8 @@ import { approvalDestination } from './approvalDestination'
 import { numberedThreads } from './threadRail'
 import { DEFAULT_VIEW } from './chatListView'
 import { chatFindPath } from '../pages/chat/searchDeepLink'
-import { DEFAULT_NOTIFICATION_ROUTE, NOTIFICATION_SOURCE_ROUTES } from '../lib/nativeNotifications'
+import { DEFAULT_NOTIFICATION_ROUTE, NOTIFICATION_SOURCE_ROUTES, itemRouteForNote } from '../lib/nativeNotifications'
+import { pageOfItem } from '../lib/itemRef'
 import type { ThreadChat, ThreadLoop } from '../lib/useThreads'
 import type { ProjectItem } from '../lib/api'
 import { projectCommands } from './paletteProjectRows'
@@ -181,8 +182,9 @@ function routerRoutes(app: string): string[] {
 /** Where the palette's rows go: a "Go to" row per `NAV` entry, every literal `navigate('…')` in the
  *  rows and in the keymap's runners, and the rows built from the owner's data with the sample's
  *  shape: a pinned app's tile, ⌘1 to ⌘9's threads (a chat, a goal loop, a code session and a
- *  run-backed loop), a project's rows (`paletteProjectRows`, run against a sample project) and a
- *  content search's hit. */
+  *  run-backed loop), a project's rows (`paletteProjectRows`, run against a sample project) and a
+  *  content search's hits: a chat's, and the library's of each kind (a knowledge item, an artifact,
+  *  a report at its write-up or, with none found, at the Reports page, and what an intent found). */
 function paletteAddresses(app: string): string[] {
   const nav = app.slice(app.indexOf('const NAV: NavItem[] = ['), app.indexOf('const ROUTABLE'))
   const rows = app.slice(app.indexOf('const commands: Command[] = ['), app.indexOf('...keymapCommands(keyRunners)'))
@@ -204,6 +206,11 @@ function paletteAddresses(app: string): string[] {
     `app/${SAMPLE.app}`,
     ...threads.map((t) => t.route),
     chatFindPath(SAMPLE.chat, 'report'),
+    pageOfItem({ kind: 'knowledge', id: SAMPLE.knowledge }),
+    pageOfItem({ kind: 'artifact', id: SAMPLE.artifact }),
+    pageOfItem({ kind: 'report', id: 'rpt-0a1b2c3d' }, SAMPLE.writeUp),
+    pageOfItem({ kind: 'report', id: 'rpt-0a1b2c3d' }),
+    pageOfItem({ kind: 'findings', id: SAMPLE.intent }),
   ]
 }
 
@@ -251,8 +258,12 @@ describe('the router\'s tables and the palette\'s rows are catalogued', () => {
 
 // ── Notification taps and approval destinations ─────────────────────────────────────────────────
 
-/** Where a notification's tap lands, every source and the fallback. */
-const notificationAddresses = [...Object.values(NOTIFICATION_SOURCE_ROUTES), DEFAULT_NOTIFICATION_ROUTE]
+/** Where a notification's tap lands, every source and the fallback, and the item a note names for
+ *  itself: a report's write-up. */
+const notificationAddresses = [
+  ...Object.values(NOTIFICATION_SOURCE_ROUTES), DEFAULT_NOTIFICATION_ROUTE,
+  itemRouteForNote({ source: 'knowledge', knowledge_item_id: SAMPLE.writeUp }),
+]
 
 /** Where an approval is answered, for each place `approvalDestination` reads (`approval_place`). */
 const approvalAddresses = [

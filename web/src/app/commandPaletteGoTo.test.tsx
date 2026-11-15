@@ -14,7 +14,7 @@ const h = vi.hoisted(() => ({
   sessionsSearch: vi.fn(),
   searchEpisodic: vi.fn(),
   memorySemantic: vi.fn(),
-  knowledgeItems: vi.fn(),
+  library: vi.fn(),
   searchTasks: vi.fn(),
 }))
 
@@ -42,7 +42,7 @@ beforeEach(() => {
   })
   h.searchEpisodic.mockReset().mockResolvedValue([])
   h.memorySemantic.mockReset().mockResolvedValue([])
-  h.knowledgeItems.mockReset().mockResolvedValue({ items: [], total: 0, page: 1, limit: 5 })
+  h.library.mockReset().mockResolvedValue({ items: [], total: 0, complete: true, failed: [], facets: {}, sort: 'rank' })
   h.searchTasks.mockReset().mockResolvedValue({ tasks: [], total: 0 })
 })
 
