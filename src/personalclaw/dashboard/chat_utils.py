@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from personalclaw.llm.base import LLMEvent
 
 from personalclaw import memory_locality, task_modes
+from personalclaw.context_compaction import ALL_KEPT, TOO_FEW_MESSAGES
 from personalclaw.dashboard.chat_queue import ON_RECORD
 from personalclaw.dashboard.state import (
     CRON_NOTIFY_PREFIX,
@@ -535,6 +536,24 @@ NOTHING_TO_COMPACT_YET = (
     "Nothing to compact yet — the model holds none of this conversation until your next "
     "message, which hands it over, shortened if it is long."
 )
+#: This full or less is short: a noop there is "already short enough", whatever folded nothing.
+SHORT_CONTEXT_PCT = 25.0
+#: What a noop says of a context fuller than :data:`SHORT_CONTEXT_PCT`, by why nothing folded
+#: (``context_compaction.why_nothing_folds``).
+NOTHING_FOLDS = {
+    TOO_FEW_MESSAGES: (
+        "Nothing to compact — the context is {pct}% full, but this session holds only its "
+        "opening (the agent's instructions, the safety rules, memory and any earlier messages "
+        "of this chat) and its latest messages, which compaction keeps word for word. To free "
+        "room, start a new chat."
+    ),
+    ALL_KEPT: (
+        "Nothing to compact — the context is {pct}% full, but nearly all of it is this "
+        "session's opening (the agent's instructions, the safety rules, memory and any earlier "
+        "messages of this chat) and its latest messages, which compaction keeps word for word. "
+        "To free room, start a new chat."
+    ),
+}
 
 
 async def compact_before_opening(
@@ -575,6 +594,17 @@ def context_parts_of(client: object) -> list[dict] | None:
     return parts if isinstance(parts, list) else None
 
 
+def _nothing_folded(event: "LLMEvent") -> str:
+    """What a noop says: :data:`NOTHING_TO_COMPACT` unless the context is measured fuller than
+    :data:`SHORT_CONTEXT_PCT` and the event says why nothing folded (:data:`NOTHING_FOLDS`). A
+    noop with no reason (an agent CLI's) or no reading keeps the short sentence."""
+    said = NOTHING_FOLDS.get(str((event.tool_meta or {}).get("why") or ""))
+    pct = event.context_usage_pct
+    if said is None or pct is None or pct <= SHORT_CONTEXT_PCT:
+        return NOTHING_TO_COMPACT
+    return said.format(pct=round(pct))
+
+
 async def _broadcast_compaction_result(
     state: DashboardState, session: _ChatSession, event: "LLMEvent"
 ) -> str | None:
@@ -582,7 +612,9 @@ async def _broadcast_compaction_result(
     message text, or None for a status that is no outcome.
 
     Three terminal statuses, and the third is the one worth reading. ``noop`` says the pass
-    ran and found nothing to reclaim — a short conversation is already compact. It is NOT a
+    ran and found nothing to reclaim. That is not always a short conversation: a context more
+    than a quarter full that holds only its opening and its latest messages, which compaction
+    keeps word for word, is said as such (:func:`_nothing_folded`). It is NOT a
     failure and NOT a "Conversation compacted." either: the in-process compaction the native
     runtime performs returns a real before/after, so on a fresh chat the honest answer is
     that nothing moved. Saying "compacted" there would be the same shape of lie as the
@@ -598,7 +630,7 @@ async def _broadcast_compaction_result(
         summary, _ = redact_exfiltration_urls(summary)
         msg_text = f"Conversation compacted: {summary}" if summary else "Conversation compacted."
     elif status_type == "noop":
-        msg_text = NOTHING_TO_COMPACT
+        msg_text = _nothing_folded(event)
     elif status_type == "failed":
         error, _ = redact_credentials(event.title or "unknown error")
         error, _ = redact_exfiltration_urls(error)

@@ -67,6 +67,9 @@ _KEEP_RECENT_TOOL_RESULTS = 4
 # 4-region protection.
 _PROTECT_HEAD = 3  # system + first messages stay verbatim
 _PROTECT_TAIL = 8  # floor of recent messages kept verbatim
+#: Why a pass folded nothing (:func:`why_nothing_folds`).
+TOO_FEW_MESSAGES = "too_few_messages"
+ALL_KEPT = "all_kept"
 # Anti-thrashing: a compaction that saved less than this fraction "didn't help".
 _MIN_SAVE_FRACTION = 0.10
 # Paths in tool-call args worth surfacing as "Relevant Files".
@@ -517,6 +520,16 @@ def _live_from(messages: list[dict], request: dict | None) -> int:
         (i for i in range(len(messages) - 1, -1, -1) if _is_the_users(messages[i])),
         len(messages),
     )
+
+
+def why_nothing_folds(messages: list[dict]) -> str:
+    """Why a pass over *messages* folded nothing, for the chat to say what holds the context.
+
+    :data:`TOO_FEW_MESSAGES` when there are no more messages than the head and the tail keep word
+    for word, so there is no middle at all. :data:`ALL_KEPT` otherwise: the middle there is, the
+    pass keeps whole (whole exchanges, what the turn needs) or cannot fold shorter.
+    """
+    return TOO_FEW_MESSAGES if len(messages) <= _PROTECT_HEAD + _PROTECT_TAIL else ALL_KEPT
 
 
 def compact(

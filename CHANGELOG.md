@@ -27,6 +27,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A folder in your artifacts with a name no artifact can have, or one that links out of the store, no longer makes every page that lists your artifacts fail: it is left out, and the rest are listed.**
 - **The gateway keeps answering while a code loop lands a finished task and on every poll: git merges the task's work back, reads it for its owner's review and answers the poll's checks off the gateway's event loop. A loop stopped or paused meanwhile is asked nothing, a merge already under way is recorded, and a task taken off the queue meanwhile is not merged.**
 - **Saving a fact again with the value it already has no longer hides the episodes that agree with it. Memory retires the episodes that mention a fact's old value only when the value changes, so a consolidation or an Add fact that restates a fact leaves them in recall.**
+- **/compact no longer calls a conversation "already short enough" when its context is more than a quarter full. When compaction can fold nothing there, the chat says how full the context is and that it holds the session's opening and its latest messages, which compaction keeps word for word.**
 
 ### Security
 
