@@ -72,14 +72,24 @@ _PASS = (
     "_ask_to_merge",
     "_merged_prerequisites",
     "_reap_merge_done",
+    "_judge_on_drain",
+    "_judge_from",
+    "_judge_active_stage",
+    "_stage_gate_passed",
 )
 _NAMES_ONLY = {"worktree.branch_name", "worktree.worktree_path"}
+#: Helpers outside ``worktree`` that run git: the stage gate's reads of what a stage changed.
+_RUN_GIT = {
+    "stage_evidence.observe_changes",
+    "stage_evidence.observe_named_files",
+    "_observe_stage",
+}
 
 
 def _own_worktree_calls(func) -> list[str]:
-    """The ``worktree.*`` calls *func* makes at its own level, and its own nested functions it
-    calls there: not inside a nested function or a lambda, which the pass hands to a worker
-    thread, and not a helper that runs no git."""
+    """The ``worktree.*`` calls *func* makes at its own level, the other helpers that run git
+    (:data:`_RUN_GIT`), and its own nested functions it calls there: not inside a nested function
+    or a lambda, which the pass hands to a worker thread, and not a helper that runs no git."""
     import ast
     import inspect
     import textwrap
@@ -94,7 +104,8 @@ def _own_worktree_calls(func) -> list[str]:
         todo.extend(ast.iter_child_nodes(node))
         if isinstance(node, ast.Call):
             name = ast.unparse(node.func)
-            if (name.startswith("worktree.") and name not in _NAMES_ONLY) or name in nested:
+            git = name.startswith("worktree.") and name not in _NAMES_ONLY
+            if git or name in _RUN_GIT or name in nested:
                 own.append(name)
     return own
 

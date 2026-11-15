@@ -36,15 +36,20 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from a_code_loops_git_runs_off_the_gateways_loop_shared import _held, _when
 
 from personalclaw.loop import files as loop_files
-from personalclaw.loop import gates, kinds, manager, store, tasks_link
+from personalclaw.loop import gates
+from personalclaw.loop import judge as loop_judge
+from personalclaw.loop import kinds, manager, store, tasks_link
 from personalclaw.loop import watchdog as W
 from personalclaw.loop import worktree
+from personalclaw.loop.kinds.sdlc import _BASE_KEY, CodeKind
 from personalclaw.loop.loop import Loop, LoopStatus
 from personalclaw.loop.manager import session_key, task_session_key
 
@@ -333,10 +338,10 @@ def _work(dash, ws: Path, loop: Loop, tid: str, path: str, text: str, finding: d
     _run(registry.update_task(tid, provider_name="native", status="done"))
 
 
-def _drive_to_the_gate(tmp_path, monkeypatch, criteria, *, verify, test, attended, tests_text):
-    """A stage of two tasks in two files, each done by its own task worker in its own worktree and
-    merged, up to the poll that judges the stage. Returns the loop, the gateway pieces and the
-    workspace."""
+def _drive_to_the_drain(tmp_path, monkeypatch, criteria, *, verify, test, attended, tests_text):
+    """A stage of two tasks in two files, each done by its own task worker in its own worktree,
+    up to the poll that reaps them: for an Unattended loop, the poll that merges their work and
+    judges the stage. Returns the loop, the gateway pieces and the workspace."""
     ws = _newsfold(tmp_path)
     rows, dash = _Rows(), _Dashboard()
     monkeypatch.setattr("personalclaw.triggers.nudge.get_instance", lambda: rows)
@@ -365,6 +370,16 @@ def _drive_to_the_gate(tmp_path, monkeypatch, criteria, *, verify, test, attende
     _run(wd._poll_once())  # the findings' cycle: the workers are still at work
     for tid in (fix, add):
         dash.get_or_create_session(name=task_session_key(loop.id, tid)).running = False
+    return store.get(loop.id), rows, dash, wd, ws
+
+
+def _drive_to_the_gate(tmp_path, monkeypatch, criteria, *, verify, test, attended, tests_text):
+    """:func:`_drive_to_the_drain`, then the poll that judges the stage: an Attended loop's after
+    its owner approved the merge."""
+    loop, rows, dash, wd, ws = _drive_to_the_drain(
+        tmp_path, monkeypatch, criteria, verify=verify, test=test, attended=attended,
+        tests_text=tests_text,
+    )  # fmt: skip
     _run(wd._poll_once())
     if attended:
         waiting = store.get(loop.id)
@@ -904,3 +919,304 @@ def test_a_folder_git_does_not_track_yet_is_listed_once(tmp_path):
     listing = observed.blocks[0]
     assert "- src/newsfold/digest.py: modified" in listing
     assert "- out/: new, not yet added to git" in listing and "page_10.html" not in listing
+
+
+# ── git reads the stage's changes off the gateway's event loop ────────────────
+
+
+@pytest.fixture()
+def hold():
+    """The held step's two signals: it began, and the test lets it go (at the end in any case)."""
+    started, go = threading.Event(), threading.Event()
+    yield started, go
+    go.set()
+
+
+class _LoopCtx:
+    """The gateway as a cycle's judgement sees it: the sessions, the nudge loops, the page."""
+
+    def __init__(self):
+        self.state, self.svc = _Dashboard(), _Rows()
+        self.events: list[tuple[str, dict]] = []
+
+    def publish(self, loop_id, event, data=None):
+        self.events.append((event, data or {}))
+
+    async def complete(self, loop_id, reason=""):
+        pass
+
+
+def _tracked_stage(tmp_path: Path, *, metric_pass: float | None = None) -> tuple[Loop, Path]:
+    """A running Code loop with no task queued, whose worker changed digest.py in a workspace git
+    tracks and wrote its finding, with the run's start point recorded: its next cycle is judged,
+    and its gate's build check compiles the project. With *metric_pass*, a quality score gates the
+    stage too."""
+    ws = _newsfold(tmp_path)
+    base = _git(ws, "rev-parse", "HEAD").strip()
+    (ws / "src" / "newsfold" / "digest.py").write_text(DIGEST_FIXED)
+    loop = store.create(
+        Loop(
+            id="",
+            name="digest titles",
+            kind="code",
+            task="fix the double-escaped titles in the digest",
+            workspace_dir=str(ws),
+            plan=[
+                {
+                    "stage": "implementation",
+                    "title": "Escape the title once",
+                    "exit_criteria": [FIX],
+                    "deliverable": "src/newsfold/digest.py",
+                    **({} if metric_pass is None else {"metric_pass": metric_pass}),
+                }
+            ],
+            phase_status={"implementation": "active"},
+            kind_config={"verify_command": COMPILE, "test_command": "", _BASE_KEY: base},
+        )
+    )
+    tasks_link.provision(loop.id)
+    loop = store.update_status(loop.id, LoopStatus.RUNNING)
+    _finding(loop, 1, summary="escaped each title once", files_touched=["src/newsfold/digest.py"])
+    return loop, ws
+
+
+@pytest.fixture()
+def checks_run(monkeypatch):
+    """The commands the gate ran in the workspace, each as it ran it."""
+    ran: list[str] = []
+    real = gates.run_verify_command
+
+    async def run(cmd, *args, **kwargs):
+        ran.append(cmd)
+        return await real(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(gates, "run_verify_command", run)
+    return ran
+
+
+def _cycle_beside(loop: Loop, ctx, hold, then):
+    """The cycle's judgement (``on_new_cycle``), and *then* on the event loop once the held step
+    began."""
+
+    async def both():
+        findings = loop_files.get_findings(loop.id)
+        return await asyncio.gather(
+            kinds.get("code").on_new_cycle(store.get(loop.id), findings, ctx), _when(*hold, then)
+        )
+
+    return _run(both())
+
+
+@pytest.mark.parametrize("step", ["tracks", "changes_since"])
+def test_the_gateway_answers_while_a_cycles_gate_reads_what_the_stage_changed(
+    tmp_path, monkeypatch, judge, checks_run, hold, step
+):
+    """Before it judges a stage, its gate asks git what the run changed: whether git tracks the
+    workspace, then a process for each read of the changes. They run in a worker thread now: a
+    request the gateway gets meanwhile is answered before git is done, and the stage is judged on
+    what git read as before."""
+    loop, _ws = _tracked_stage(tmp_path)
+    seen = _held(monkeypatch, step, *hold)
+
+    async def a_request():
+        return not seen.returned
+
+    _completed, answered_first = _cycle_beside(loop, _LoopCtx(), hold, a_request)
+
+    assert seen.on_loop is False, f"{step} ran on the gateway's event loop"
+    assert answered_first, "the request waited for git"
+    assert len(judge) == 1 and FIXED_LINE in _observed(judge[0]), "the change went unread"
+    assert checks_run == [COMPILE]
+
+
+@pytest.mark.timeout(60)
+@pytest.mark.parametrize("step", ["tracks", "changes_since"])
+def test_the_gateway_answers_while_a_drained_stages_gate_reads_what_it_changed(
+    tmp_path, monkeypatch, judge, hold, step
+):
+    """The same reads when the stage's last task worker is reaped and the stage is judged in
+    that poll."""
+    loop, _rows, _dash, wd, _ws = _drive_to_the_drain(
+        tmp_path, monkeypatch, [FIX, TEST], verify=PYTEST, test="", attended=False,
+        tests_text=TESTS + NEW_TEST,
+    )  # fmt: skip
+    seen = _held(monkeypatch, step, *hold)
+
+    async def a_request():
+        return not seen.returned
+
+    async def both():
+        return await asyncio.gather(wd._poll_once(), _when(*hold, a_request))
+
+    _polled, answered_first = _run(both())
+
+    assert seen.on_loop is False, f"{step} ran on the gateway's event loop"
+    assert answered_first, "the request waited for git"
+    assert len(judge) == 1, "the stage was not judged once, when its work was in"
+    assert store.get(loop.id).status == LoopStatus.COMPLETE.value
+
+
+#: How each ending lands on the event loop while git reads the stage's changes in a worker thread.
+_ENDINGS = {
+    "stopped": lambda ctx, loop_id: manager.stop(ctx.state, ctx.svc, loop_id),
+    "paused": lambda ctx, loop_id: manager.pause(ctx.state, ctx.svc, loop_id),
+    "deleted": lambda ctx, loop_id: manager.teardown_for_delete(ctx.state, ctx.svc, loop_id),
+}
+
+
+@pytest.fixture()
+def _no_deletes_left():
+    yield
+    manager._DELETING.clear()
+
+
+def _as_left(ctx, loop_id: str) -> tuple:
+    """A loop as it is: its status, and its stage worker's nudge row (whether it is on, and its
+    message), or None once an ending removed the row."""
+    nudge = ctx.svc.get_by_session(session_key(loop_id))
+    return store.get(loop_id).status, nudge and (nudge.active, nudge.message)
+
+
+@pytest.mark.parametrize("ending", list(_ENDINGS))
+def test_a_loop_that_ends_while_its_gate_reads_the_stage_neither_judges_nor_advances_it(
+    tmp_path, monkeypatch, judge, checks_run, hold, _no_deletes_left, ending
+):
+    """A Stop, a Pause or a delete that lands while git reads what the stage changed: the gate
+    runs no check in the workspace, asks no judge, and the stage stays where it was. The loop is
+    left as the ending left it: its status, its stage worker's nudge, and no question asked."""
+    loop, _ws = _tracked_stage(tmp_path)
+    seen = _held(monkeypatch, "changes_since", *hold)
+    ctx = _LoopCtx()
+    _run(ctx.svc.add(session_name=session_key(loop.id), message="the stage worker's nudge"))
+    left: list[tuple] = []
+
+    async def end():
+        await _ENDINGS[ending](ctx, loop.id)
+        left.append(_as_left(ctx, loop.id))
+
+    _completed, _ = _cycle_beside(loop, ctx, hold, end)
+
+    assert seen.on_loop is False
+    assert judge == [], f"a {ending} loop's stage was judged"
+    assert checks_run == [], f"a {ending} loop's gate ran its check in the workspace"
+    after = store.get(loop.id)
+    assert after is not None and after.phase_status == {"implementation": "active"}
+    assert "gate_check" not in [e for e, _ in ctx.events]
+    now = _as_left(ctx, loop.id)
+    assert now == left[0], f"the gate wrote to a {ending} loop: {left[0]} became {now}"
+    assert not loop_files.pending_question(loop.id), f"the gate asked a {ending} loop's owner"
+
+
+# ── a Pause while the gate checks or judges the stage ─────────────────────────
+
+
+#: Where a loop pauses or goes while a gate that would pass waits, how it ends, and what the gate
+#: has done by then (the judge asked, a stage verdict recorded): while its check runs, while it
+#: reads the stage's tasks for its judge, while its judge rules (the loop paused, or its delete
+#: begun), and, for a stage a quality score gates too, while the score is given.
+_DURING = {
+    "check": (gates, "run_verify_command", "paused", 0, 0),
+    "evidence": (CodeKind, "_gate_evidence", "paused", 0, 0),
+    "judge": (gates, "judge_verdict", "paused", 1, 0),
+    "judge-deleted": (gates, "judge_verdict", "deleted", 1, 0),
+    "score": (loop_judge, "assess_cycle", "paused", 1, 1),
+}
+
+#: How each ending leaves the loop as the gate's re-read sees it: its status, and its delete begun.
+_LEFT_BY = {
+    "paused": (LoopStatus.PAUSED.value, False),
+    "deleted": (LoopStatus.RUNNING.value, True),
+}
+
+
+def _a_stage_that_passes(tmp_path: Path, monkeypatch, *, scored: bool) -> Loop:
+    """A stage whose gate passes: its check compiles the project and its judge sees the fix. When
+    *scored*, a quality score gates it too, and the quality judge gives it 5 of 5."""
+    loop, _ws = _tracked_stage(tmp_path, metric_pass=4.0 if scored else None)
+
+    async def five_of_five(*_args, **_kw):
+        return SimpleNamespace(
+            quality_score=5.0, done=True, marginal_value=0.0, regressed=False,
+            to_dict=lambda: {"quality_score": 5.0},
+        )  # fmt: skip
+
+    monkeypatch.setattr(loop_judge, "assess_cycle", five_of_five)
+    return loop
+
+
+def _stage_verdicts(loop_id: str) -> list[dict]:
+    return [v for v in loop_files.get_verdicts(loop_id) if v.get("gate") == "stage"]
+
+
+def _quality_verdicts(loop_id: str) -> list[dict]:
+    return [v for v in loop_files.get_verdicts(loop_id) if "quality_score" in v]
+
+
+@pytest.mark.parametrize("during", list(_DURING))
+def test_a_loop_paused_or_deleted_while_its_gate_waits_is_left_as_it_was_left(
+    tmp_path, monkeypatch, judge, _no_deletes_left, during
+):
+    """A Pause that lands while the gate's check runs, while it reads the stage's tasks for its
+    judge, while its judge rules, or while the stage's quality is scored, and a delete begun while
+    its judge rules: the stage is not marked done and the loop is not completed over it. The loop
+    keeps the status and the stage worker's nudge the ending left, its owner is asked nothing, and
+    from the ending on the gate asks no judge, writes no verdict and no score, and tells the loop's
+    page nothing."""
+    loop = _a_stage_that_passes(tmp_path, monkeypatch, scored=during == "score")
+    ctx = _LoopCtx()
+    _run(ctx.svc.add(session_name=session_key(loop.id), message="the stage worker's nudge"))
+    owner, name, ending, asked, recorded = _DURING[during]
+    real = getattr(owner, name)
+    left: list[tuple] = []
+    told: list[int] = []
+
+    async def ended_meanwhile(*args, **kwargs):
+        await _ENDINGS[ending](ctx, loop.id)
+        left.append(_as_left(ctx, loop.id))
+        told.append(len(ctx.events))
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, ended_meanwhile)
+
+    _run(kinds.get("code").on_new_cycle(store.get(loop.id), loop_files.get_findings(loop.id), ctx))
+
+    assert len(left) == 1, f"the loop was not {ending} during the gate's {during}"
+    assert (left[0][0], manager.being_deleted(loop.id)) == _LEFT_BY[ending]
+    after = store.get(loop.id)
+    assert after.phase_status == {
+        "implementation": "active"
+    }, f"the stage was marked done over a loop {ending} during its {during}"
+    now = _as_left(ctx, loop.id)
+    assert (
+        now == left[0]
+    ), f"the gate wrote to a loop {ending} during its {during}: {left[0]} -> {now}"
+    assert not loop_files.pending_question(loop.id), f"the gate asked a {ending} loop's owner"
+    events = [e for e, _ in ctx.events]
+    assert "stage_advance" not in events
+    since = events[told[0] :]
+    assert since == [], f"the gate told the page {since} after the loop was {ending}"
+    assert (len(judge), len(_stage_verdicts(loop.id))) == (asked, recorded), (
+        f"after the loop was {ending} during its {during} the gate asked its judge {len(judge)} "
+        f"times and recorded {len(_stage_verdicts(loop.id))} verdicts"
+    )
+    scores = (
+        store.get_quality_scores(loop.id),
+        _quality_verdicts(loop.id),
+        "cycle_verdict" in events,
+    )
+    assert scores == ([], [], False), f"a {ending} loop's stage was scored: {scores}"
+
+
+@pytest.mark.parametrize("scored", [False, True], ids=["unscored", "scored"])
+def test_with_no_pause_the_same_gate_passes_its_stage(tmp_path, monkeypatch, judge, scored):
+    """The rows' premise: with no Pause, the same stage passes its gate and is marked done, and a
+    stage a quality score gates is scored."""
+    loop = _a_stage_that_passes(tmp_path, monkeypatch, scored=scored)
+    ctx = _LoopCtx()
+
+    _run(kinds.get("code").on_new_cycle(store.get(loop.id), loop_files.get_findings(loop.id), ctx))
+
+    assert store.get(loop.id).phase_status == {"implementation": "done"}
+    assert len(judge) == 1 and len(_stage_verdicts(loop.id)) == 1
+    assert store.get_quality_scores(loop.id) == ([5.0] if scored else [])
+    assert len(_quality_verdicts(loop.id)) == int(scored)

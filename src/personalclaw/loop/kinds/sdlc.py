@@ -24,6 +24,7 @@ from personalclaw.loop.kinds import (
     sdlc_git,
     workspace_rules_lines,
 )
+from personalclaw.loop.kinds.sdlc_gate import _gate_prompt
 from personalclaw.loop.loop import TERMINAL_STATUSES, Loop, LoopStatus
 from personalclaw.security import redact_for_display
 
@@ -58,6 +59,29 @@ def _stage_turns(ctx, loop_id: str) -> tuple[bool, int]:
     if session is None:
         return False, 0
     return bool(getattr(session, "running", False)), len(getattr(session, "messages", None) or [])
+
+
+def _observe_stage(ws: str, base: str, stage_findings: list[dict]):
+    """In a worker thread: what a stage did, as its gate observes it before it judges
+    (``stage_evidence``). In a workspace git tracks, every file the run changed since *base*; in a
+    folder git does not track, the files the stage's findings name."""
+    from personalclaw.loop import stage_evidence, worktree
+
+    observed = stage_evidence.Observed()
+    if ws and base and worktree.tracks(ws):
+        stage_evidence.observe_changes(observed, ws, base)
+    elif ws:
+        stage_evidence.observe_named_files(
+            observed,
+            ws,
+            [
+                str(name)
+                for f in stage_findings
+                if isinstance(f.get("files_touched"), list)
+                for name in f["files_touched"]
+            ],
+        )
+    return observed
 
 
 _POOL_CAP = 4  # max concurrent task-workers per loop
@@ -1234,6 +1258,8 @@ class CodeKind(LoopKindStrategy):
         except Exception:
             logger.debug("loop %s: stage-metric judge failed (non-fatal)", loop.id, exc_info=True)
             return None
+        if self._still_ours(loop) is None:
+            return None  # it stopped, paused or went while the stage was scored: nothing is written
         if verdict is None:
             return None
         cycle = int((stage_findings[-1] or {}).get("cycle", len(findings)))
@@ -1340,7 +1366,9 @@ class CodeKind(LoopKindStrategy):
         )
         return False
 
-    async def _stage_gate_passed(self, loop: Loop, idx: int, findings: list[dict], ctx) -> bool:
+    async def _stage_gate_passed(
+        self, loop: Loop, idx: int, findings: list[dict], ctx
+    ) -> bool | None:
         """Whether the ACTIVE stage's exit criteria are met — the supervisor's own
         verification (never the worker's self-report). Needs work-evidence (≥1 stage
         finding); applies a STAGE-APPROPRIATE gate; then a conservative judge over the
@@ -1362,7 +1390,10 @@ class CodeKind(LoopKindStrategy):
         advances. So a verify/test command only gates a stage when its project is
         actually buildable in the workspace yet (a manifest exists); otherwise the
         command is skipped (can't run) and the stage gates on the judge + an independent
-        deliverable-existence check (ground truth, not the worker's self-report)."""
+        deliverable-existence check (ground truth, not the worker's self-report). None when the
+        loop stopped, paused or went while the gate waited (on git's read of what the stage changed,
+        on a check, on the read of the stage's tasks, on the judge): nothing more is run, judged or
+        recorded."""
         plan = loop.plan or []
         if idx < 0 or idx >= len(plan):
             return False
@@ -1381,7 +1412,7 @@ class CodeKind(LoopKindStrategy):
         # else the project context dir. Reading loop.workspace_dir directly would miss the
         # deliverable for a context-dir loop (no explicit workspace) and silently skip the
         # ground-truth check. `effective_dir` is the one resolver both gate paths share.
-        from personalclaw.loop import stage_evidence, worktree
+        from personalclaw.loop import stage_evidence
         from personalclaw.loop.gates import (
             CheckReport,
             criteria_verdicts,
@@ -1391,52 +1422,16 @@ class CodeKind(LoopKindStrategy):
         from personalclaw.loop.loop import effective_dir
 
         ws = effective_dir(loop)
-        observed = stage_evidence.Observed()
         base = str((loop.kind_config or {}).get(_BASE_KEY) or "")
-        if ws and base and worktree.tracks(ws):
-            stage_evidence.observe_changes(observed, ws, base)
-        elif ws:
-            stage_evidence.observe_named_files(
-                observed,
-                ws,
-                [
-                    str(name)
-                    for f in stage_findings
-                    if isinstance(f.get("files_touched"), list)
-                    for name in f["files_touched"]
-                ],
-            )
-        # Independent ground-truth check (no self-report): if the stage declares a
-        # document deliverable, it MUST exist on disk before the stage can pass. This
-        # gives a doc/planning stage a real gate (not transcript-only) and is the
-        # observe-don't-trust requirement. Every file it names is read for the judge.
-        deliverable = str(phase.get("deliverable", "")).strip()
-        found = stage_evidence.observe_deliverable(observed, ws, deliverable) if ws else None
-        if found is not None:
-            ctx.publish(
-                loop.id,
-                "gate_check",
-                {
-                    "loop_id": loop.id,
-                    "label": "deliverable",
-                    "deliverable": deliverable,
-                    "ok": bool(found),
-                    "stage": stage,
-                    **({"content_bytes": sum(size for _, size in found)} if found else {}),
-                },
-            )
-            if not found:
-                # A concrete file was named and none is in the work folder → block.
-                self._record_gate(
-                    loop,
-                    stage,
-                    findings,
-                    _not_judged(
-                        exit_criteria, f"the deliverable `{deliverable}` is not in the work folder"
-                    ),
-                    observed=observed.seen,
-                )
-                return False
+        # Git reads what the stage changed in a worker thread, a process a read, so the gateway
+        # keeps answering; a loop that stopped, paused or went meanwhile is judged on nothing.
+        # No git lock: the land's merge, the one git that writes this tree, runs earlier in this
+        # same pass.
+        observed = await asyncio.to_thread(_observe_stage, ws, base, stage_findings)
+        if self._still_ours(loop) is None:
+            return None
+        if not self._deliverable_is_there(loop, phase, ws, exit_criteria, observed, findings, ctx):
+            return False
         checks = _stage_commands(loop, stage, tests_changed=observed.tests_changed())
         passed_a_command = False  # a deterministic check that decides the gate RAN and PASSED
         for label, cmd in checks:
@@ -1473,6 +1468,8 @@ class CodeKind(LoopKindStrategy):
             ok = await run_verify_command(
                 cmd, ws or None, label=label, report=report, per_test=True
             )
+            if self._still_ours(loop) is None:
+                return None  # it stopped, paused or went while the check ran: no judge is asked
             stage_evidence.observe_check(observed, label, cmd, ok, report)
             if ok is False and _decides(label, stage):
                 failed = f"the stage's {label} command failed" + (
@@ -1504,25 +1501,12 @@ class CodeKind(LoopKindStrategy):
         if checks:
             ctx.publish(loop.id, "gate_check", {"loop_id": loop.id, "ok": True, "stage": stage})
         evidence, evidence_note = await self._gate_evidence(loop, stage, stage_findings, observed)
-        criteria = "\n".join(f"{n}. {c}" for n, c in enumerate(exit_criteria, 1))
-        # The stage-gate instruction lives in the prompt system (bundled
-        # ``task-sdlc-stage-gate``), rendered with the stage + evidence.
-        from personalclaw.prompt_providers.runtime import render_use_case_prompt
-
-        prompt = (
-            render_use_case_prompt(
-                "sdlc_stage_gate",
-                {
-                    "stage_title": phase.get("title", stage),
-                    "objective": phase.get("objective", ""),
-                    "criteria": criteria,
-                    "evidence": evidence,
-                    "evidence_note": evidence_note,
-                },
-            )
-            or ""
-        )
+        if self._still_ours(loop) is None:
+            return None  # it stopped, paused or went while the stage's tasks were read: no judge
+        prompt = _gate_prompt(phase, stage, exit_criteria, evidence, evidence_note)
         raw = await judge_verdict(prompt, loop_id=loop.id)
+        if self._still_ours(loop) is None:
+            return None  # it stopped, paused or went while the judge ruled: nothing is recorded
         verdicts, rendered = criteria_verdicts(raw, exit_criteria)
         passed = all(v["verdict"] == "pass" for v in verdicts)
         # A judge that rendered NO verdict (empty/prose — provider unavailable or the stream
@@ -1544,6 +1528,46 @@ class CodeKind(LoopKindStrategy):
             judged=rendered,
         )
         return passed or fallback
+
+    def _deliverable_is_there(
+        self, loop: Loop, phase: dict, ws: str, exit_criteria: list[str], observed, findings, ctx
+    ) -> bool:
+        """Independent ground-truth check (no self-report): if the stage declares a document
+        deliverable, it MUST exist on disk before the stage can pass. This gives a doc/planning
+        stage a real gate (not transcript-only) and is the observe-don't-trust requirement. Every
+        file it names is read for the judge (into *observed*). False, with the gate recorded, when
+        it names a file and none is in the work folder."""
+        from personalclaw.loop import stage_evidence
+
+        stage = self.phase_key(phase)
+        deliverable = str(phase.get("deliverable", "")).strip()
+        found = stage_evidence.observe_deliverable(observed, ws, deliverable) if ws else None
+        if found is None:
+            return True
+        ctx.publish(
+            loop.id,
+            "gate_check",
+            {
+                "loop_id": loop.id,
+                "label": "deliverable",
+                "deliverable": deliverable,
+                "ok": bool(found),
+                "stage": stage,
+                **({"content_bytes": sum(size for _, size in found)} if found else {}),
+            },
+        )
+        if not found:
+            # A concrete file was named and none is in the work folder → block.
+            self._record_gate(
+                loop,
+                stage,
+                findings,
+                _not_judged(
+                    exit_criteria, f"the deliverable `{deliverable}` is not in the work folder"
+                ),
+                observed=observed.seen,
+            )
+        return bool(found)
 
     async def _gate_evidence(
         self, loop: Loop, stage: str, stage_findings: list[dict], observed
@@ -1983,6 +2007,8 @@ class CodeKind(LoopKindStrategy):
         from personalclaw.loop import tick
 
         gate_passed = await self._stage_gate_passed(loop, idx, findings, ctx)
+        if gate_passed is None:
+            return False  # it stopped, paused or went while its gate waited
         if gate_passed:
             gate_passed = await self._check_work_post_gate(loop, idx, findings, ctx)
         metric = (
@@ -1990,6 +2016,8 @@ class CodeKind(LoopKindStrategy):
             if gate_passed
             else None
         )
+        if self._still_ours(loop) is None:
+            return False  # it stopped, paused or went while its stage was judged: no decision
         decision = self._tick_decide(loop, idx, findings, gate_passed=gate_passed, metric=metric)
         if decision.action is tick.Action.ROLLBACK:
             return await self._apply_rollback(loop, idx, stage, decision, ctx)
