@@ -882,7 +882,7 @@ PREVIEW_CHARS = 2000
 def _preview(text: str) -> str:
     """*text* up to :data:`PREVIEW_CHARS`, cut at the last paragraph break before it (else a line
     break), never inside a mask."""
-    from personalclaw.security import cut_outside_masks
+    from personalclaw.textfmt import cut_outside_masks
 
     if len(text) <= PREVIEW_CHARS:
         return text

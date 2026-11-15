@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from personalclaw import security, textfmt, waiting
+from personalclaw import textfmt, waiting
 from personalclaw.inbound import bridge
 
 pytestmark = pytest.mark.security
@@ -48,11 +48,11 @@ def _mint(params: dict) -> dict:
 def test_a_cut_inside_a_marker_moves_to_the_markers_start():
     text = "key " + MASK + " tail"
     inside = len("key ") + 5
-    assert security.cut_outside_masks(text, inside) == len("key ")
-    assert security.cut_outside_masks(text, len("key ")) == len("key ")
+    assert textfmt.cut_outside_masks(text, inside) == len("key ")
+    assert textfmt.cut_outside_masks(text, len("key ")) == len("key ")
     after = len("key " + MASK)
-    assert security.cut_outside_masks(text, after) == after
-    assert security.cut_outside_masks(text, len(text)) == len(text)
+    assert textfmt.cut_outside_masks(text, after) == after
+    assert textfmt.cut_outside_masks(text, len(text)) == len(text)
 
 
 def test_clip_words_never_ends_inside_a_marker():
@@ -78,11 +78,15 @@ def test_clip_words_still_cuts_a_line_with_no_marker_at_a_word():
 
 def test_the_parameters_are_carried_whole_masked_and_in_sorted_order():
     row = _mint(
-        {"title": "Pay the rent", "due": "2026-11-15", "note": "key sk-ant-api03-" + "x" * 40}
+        {
+            "title": "Pay the rent",
+            "due": "2026-11-15",
+            "note": "API_KEY=fake-anthropic-test-" + "x" * 40,
+        }
     )
     params = row["params"]
     assert params.startswith('{"due": "2026-11-15", "note": ')
-    assert "sk-ant-api03" not in params
+    assert "fake-anthropic-test" not in params
     assert "[REDACTED:" in params
     assert row["params_cut"] is False
     assert row["params_chars"] == len(params)
@@ -90,7 +94,7 @@ def test_the_parameters_are_carried_whole_masked_and_in_sorted_order():
 
 def test_long_parameters_are_cut_at_4000_between_masks_and_say_so():
     filler = "a" * 3990
-    row = _mint({"a": filler, "b": "key sk-ant-api03-" + "y" * 40, "c": "z" * 500})
+    row = _mint({"a": filler, "b": "API_KEY=fake-anthropic-test-" + "y" * 40, "c": "z" * 500})
     params = row["params"]
     assert row["params_cut"] is True
     assert len(params) <= 4000

@@ -177,7 +177,7 @@ def _masked(text: object) -> str:
 def _cut_lines(text: str, limit: int = PART_CHARS) -> tuple[str, bool]:
     """*text* up to *limit*, cut at the last line break before it and never inside a mask, with
     whether anything was cut."""
-    from personalclaw.security import cut_outside_masks
+    from personalclaw.textfmt import cut_outside_masks
 
     if len(text) <= limit:
         return text, False

@@ -470,7 +470,8 @@ def _shown_params(params: dict) -> tuple[str, bool, int]:
     The redacted JSON in the producer's sorted key order, up to :data:`PARAMS_SHOWN` characters.
     The cut never splits a mask. ``cut`` and ``chars`` say whether anything was left out and how
     long the whole was, so the card can say so."""
-    from personalclaw.security import cut_outside_masks, redact_field
+    from personalclaw.security import redact_field
+    from personalclaw.textfmt import cut_outside_masks
 
     if not params:
         return "", False, 0

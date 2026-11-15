@@ -35,7 +35,10 @@ _EXCEPTION_RE = re.compile(
     r"^\s*(?:[A-Za-z_][\w.]*)(?:Error|Exception|Warning|Exit|Interrupt)\b.*$"
 )
 _FENCE_RE = re.compile(r"^\s*```[\w-]*\s*$", re.M)
-_MARKER_RE = re.compile(r"\[(?:stumble|skill-ladder)[^\]]*\]")
+#: A producer's own marker (``[stumble: <trigger>]``, ``[skill-ladder …]``): one line, and no
+#: ``[`` inside, so each opening's search ends at the next one and a text of openings that never
+#: close is read once.
+_MARKER_RE = re.compile(r"\[(?:stumble|skill-ladder)[^\]\[\n]*\]")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s")
 
 
