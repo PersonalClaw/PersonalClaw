@@ -166,8 +166,19 @@ describe('a run’s form gate is answered in its panel', () => {
     expect(within(p).queryByText('Answer it in the panel')).toBeNull()
     await userEvent.type(within(p).getByRole('textbox', { name: 'Version' }), '1.2.0')
     await userEvent.click(within(p).getByRole('button', { name: /Submit/ }))
-    await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: { version: '1.2.0' }, resume_token: 'tok-9' }))
+    await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: { version: '1.2.0' }, resume_token: 'tok-9', always_allow: false }))
     expect(await within(p).findByText('Answered. The run is moving again.')).toBeInTheDocument()
+  })
+
+  it('its “Don’t ask again for this step in this run”, ticked, goes with the answer, as the run’s page sends it', async () => {
+    resumeWorkflowRun.mockResolvedValue({ ok: true })
+    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'form', prompt: 'Fill in the release', fields: [{ name: 'version', type: 'text', label: 'Version' }] })]))
+    render(<NeedsYouHarness query={{ open: 'waiting:gate:run-77:gate.push:1' }} />)
+    const p = await pane()
+    await userEvent.type(await within(p).findByRole('textbox', { name: 'Version' }), '1.2.0')
+    await userEvent.click(within(p).getByRole('checkbox', { name: 'Don\'t ask again for this step in this run' }))
+    await userEvent.click(within(p).getByRole('button', { name: /Submit/ }))
+    await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: { version: '1.2.0' }, resume_token: 'tok-9', always_allow: true }))
   })
   it('a refused answer says so on the card, and nothing is left unhandled', async () => {
     resumeWorkflowRun.mockRejectedValue(new Error('the gateway is restarting'))

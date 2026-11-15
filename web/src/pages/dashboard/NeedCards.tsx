@@ -237,8 +237,9 @@ export interface CardActions {
    *  as the chat's own card sends it; its promise is the send's, so the card says why it failed. */
   chatReply?: (key: string, ref: { session: string; question: string }, reply: { answers: { selected: number[]; other: string }[] } | { skip: true }) => Promise<unknown>
   /** A run's form gate (or a choice gate that names no choices) answered in the panel, as the run's
-   *  page answers it; its promise is the send's, so the form says why it failed. */
-  gateReply?: (key: string, runId: string, resumeToken: string, value: unknown) => Promise<unknown>
+   *  page answers it, its "Don't ask again for this step in this run" with it (*alwaysAllow*); its
+   *  promise is the send's, so the form says why it failed. */
+  gateReply?: (key: string, runId: string, resumeToken: string, value: unknown, alwaysAllow?: boolean) => Promise<unknown>
   /** An agent's one question in a chat: one of its options, by its place, or Skip. */
   chat?: (key: string, ref: { session: string; question: string }, answer: { pick: number; label: string } | 'skip') => void
   /** A plan step's approve, as the list read it; a loop's plan launched. */
@@ -401,7 +402,7 @@ export function NeedDetail({ row, outcome, actions, now }: {
         <WorkflowAsk hosted runId={gate.runId} busy={outcome?.state === 'busy'}
           continuation={{ resume_token: gate.resumeToken, node_id: gate.nodeId, instance_path: '', expires_at: 0, expired: false,
             ask: (item.brief.ask ?? {}) as WorkflowContinuation['ask'], handoff: (item.brief.handoff ?? {}) as WorkflowContinuation['handoff'] }}
-          onAnswer={async (c, value) => { await actions.gateReply?.(row.key, gate.runId, c.resume_token, value).catch(() => {}) }} />
+          onAnswer={async (c, value, always) => { await actions.gateReply?.(row.key, gate.runId, c.resume_token, value, always).catch(() => {}) }} />
       ) : null}
       {hostsQuestion && ref && item ? (
         <QuestionCard hosted

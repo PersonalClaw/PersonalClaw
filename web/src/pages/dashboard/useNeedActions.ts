@@ -87,8 +87,10 @@ export function useNeedActions(refreshNeeds: () => void): {
       void send(key, sent, action === 'accept' ? 'Accepted. The chat is organized as suggested.' : 'Declined. It won’t be suggested again.',
         `${action} this`, () => invalidateKeys('inbox', true))
     },
-    gateReply: (key, runId, resumeToken, value) => {
-      const sent = api.resumeWorkflowRun(runId, { answer: value, resume_token: resumeToken || undefined })
+    gateReply: (key, runId, resumeToken, value, alwaysAllow) => {
+      const sent = api.resumeWorkflowRun(runId, {
+        answer: value, resume_token: resumeToken || undefined, ...(alwaysAllow === undefined ? {} : { always_allow: alwaysAllow }),
+      })
       void send(key, sent, 'Answered. The run is moving again.', 'send that answer')
       return sent
     },
