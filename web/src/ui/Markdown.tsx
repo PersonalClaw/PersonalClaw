@@ -1,3 +1,4 @@
+import { Tooltip } from './Tooltip'
 import { createContext, memo, useContext, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { physics } from '../design/motion'
@@ -58,10 +59,14 @@ const SHELL_LANGS = new Set(['shell', 'bash', 'sh', 'zsh', 'console', 'shellsess
  *  with the block's other controls, on hover and on focus, and always on a screen that cannot hover. */
 function BesideButton({ name, onClick }: { name: string; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} aria-label={`Open ${name} beside`} title="Open beside"
-      className="inline-flex size-6 items-center justify-center rounded text-on-surface-low hover:bg-surface-high hover:text-on-surface">
-      <PanelRightOpen size={12} />
-    </button>
+    <Tooltip text="Open beside" describes={false}>
+      {(tip) => (
+        <button {...tip} type="button" onClick={onClick} aria-label={`Open ${name} beside`}
+          className="inline-flex size-6 items-center justify-center rounded text-on-surface-low hover:bg-surface-high hover:text-on-surface">
+          <PanelRightOpen size={12} />
+        </button>
+      )}
+    </Tooltip>
   )
 }
 
@@ -74,7 +79,8 @@ function DiffBlock({ code, onBeside }: { code: string; onBeside?: () => void }) 
       <div className="flex items-center gap-2 px-m pt-2">
         <span data-type="caption" className="uppercase tracking-wide text-on-surface-low">diff</span>
         {onBeside && <span className="ml-auto opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100"><BesideButton name="diff" onClick={onBeside} /></span>}
-        <button type="button" onClick={copy} aria-label="Copy diff" title={copied ? 'Copied' : 'Copy'}
+        <Tooltip text={copied ? 'Copied' : 'Copy'} describes={false}>{(tip) => (
+        <button {...tip} type="button" onClick={copy} aria-label="Copy diff"
           className={`${onBeside ? '[@media(hover:none)]:opacity-100 ' : 'ml-auto '}inline-flex size-6 items-center justify-center rounded text-on-surface-low opacity-0 transition-opacity hover:bg-surface-high hover:text-on-surface group-hover/code:opacity-100 focus-within:opacity-100`}
           style={copied ? { color: 'var(--color-success)' } : undefined}>
           <AnimatePresence mode="wait" initial={false}>
@@ -82,7 +88,7 @@ function DiffBlock({ code, onBeside }: { code: string; onBeside?: () => void }) 
               {copied ? <Check size={12} /> : <Copy size={12} />}
             </motion.span>
           </AnimatePresence>
-        </button>
+        </button>)}</Tooltip>
       </div>
       {/* 🔴 A horizontally-scrolling box that Chromium puts in the tab order, with no explicit name, is
           announced as its own CONTENT — measured on `#/settings/updates` at 390px: focus landed on this
@@ -239,13 +245,16 @@ function CodeBlock({ code, lang, onBeside }: { code: string; lang?: string; onBe
         {lang && <span data-type="caption" className="uppercase tracking-wide text-on-surface-low">{lang}</span>}
         <div className={`ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100${onBeside ? ' [@media(hover:none)]:opacity-100' : ''}`}>
           {runnable && (
-            <button type="button" onClick={run} title="Run in terminal" data-type="caption"
-              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-on-surface-low hover:bg-surface-high hover:text-primary">
-              <Play size={11} /> Run
-            </button>
+            <Tooltip text="Run in terminal">{(tip) => (
+              <button {...tip} type="button" onClick={run} data-type="caption"
+                className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-on-surface-low hover:bg-surface-high hover:text-primary">
+                <Play size={11} /> Run
+              </button>
+            )}</Tooltip>
           )}
           {onBeside && <BesideButton name={lang ? `${lang} code` : 'code'} onClick={onBeside} />}
-          <button type="button" onClick={copy} title={copied ? 'Copied' : 'Copy'} aria-label="Copy code"
+          <Tooltip text={copied ? 'Copied' : 'Copy'} describes={false}>{(tip) => (
+          <button {...tip} type="button" onClick={copy} aria-label="Copy code"
             className="inline-flex size-6 items-center justify-center rounded text-on-surface-low hover:bg-surface-high hover:text-on-surface"
             style={copied ? { color: 'var(--color-success)' } : undefined}>
             {/* copy→check pops on a spring (success bloom) rather than a hard swap */}
@@ -254,7 +263,7 @@ function CodeBlock({ code, lang, onBeside }: { code: string; lang?: string; onBe
                 {copied ? <Check size={12} /> : <Copy size={12} />}
               </motion.span>
             </AnimatePresence>
-          </button>
+          </button>)}</Tooltip>
         </div>
       </div>
       {/* Named by the fence's own language when it declares one — the same word this block already

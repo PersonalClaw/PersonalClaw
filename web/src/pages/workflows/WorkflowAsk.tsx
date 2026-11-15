@@ -215,7 +215,7 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption,
             {/* Deny is quiet, not destructive-styled: rejecting a gate is a normal answer,
                 and dressing it in red implies the run broke. Off while any answer is out, like
                 Approve: a Deny pressed after an Approve would send the opposite answer. */}
-            <QuietButton onClick={() => answerWith('deny', false, rerun ? false : alwaysAllow)} title="Deny this step"
+            <QuietButton onClick={() => answerWith('deny', false, rerun ? false : alwaysAllow)}
               disabled={busy || answering !== null} disabledReason={BUSY_REASON}>
               <X size={13} /> Deny
             </QuietButton>

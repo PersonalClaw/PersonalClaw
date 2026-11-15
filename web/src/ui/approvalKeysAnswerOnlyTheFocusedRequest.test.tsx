@@ -223,8 +223,11 @@ describe('the approval key', () => {
 
   it('shows its key in the Allow tooltip, and gives Deny none', () => {
     card()
-    expect(screen.getByRole('button', { name: /Allow/ }).getAttribute('title')).toMatch(/⌘Enter|Ctrl\+Enter/)
-    expect(screen.getByRole('button', { name: /Deny/ }).getAttribute('title') ?? '').not.toMatch(/Enter/)
+    // In the themed tip and its description, never a native title.
+    const allow = screen.getByRole('button', { name: /Allow/ })
+    expect(allow).toHaveAccessibleDescription(/⌘Enter|Ctrl\+Enter/)
+    expect(allow.getAttribute('title')).toBeNull()
+    expect(screen.getByRole('button', { name: /Deny/ })).not.toHaveAccessibleDescription(/Enter/)
   })
 })
 

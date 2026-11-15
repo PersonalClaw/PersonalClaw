@@ -52,7 +52,9 @@ describe('Deny while an answer is in flight', () => {
     const { getByRole } = render(<WorkflowAsk continuation={continuation()} runId="r1" busy onAnswer={onAnswer} />)
     const deny = getByRole('button', { name: /Deny/ })
     expect(deny).toHaveAttribute('aria-disabled', 'true')
-    expect(deny.getAttribute('title') ?? '', 'the reason rides the title').toMatch(/Deny this step — .+/)
+    // Deny's own words are its label; only the reason it is held is said.
+    expect(deny.getAttribute('title') ?? '', 'the reason is said').toMatch(/.+/)
+    expect(deny.getAttribute('title') ?? '').not.toMatch(/Deny this step/)
     fireEvent.click(deny)
     expect(onAnswer).not.toHaveBeenCalled()
   })

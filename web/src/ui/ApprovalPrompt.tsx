@@ -455,13 +455,19 @@ function ApprovalChoiceButton({ choice, roomy, buttonRef, queue = false }: {
     : tone === 'danger'
       ? { background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }
       : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }
+  // The chat's choices take the same themed tip as the queue's, never a native title.
   return (
-    <button ref={buttonRef} type="button" onClick={() => { void onClick() }} disabled={busy} aria-busy={busy || undefined}
-      title={tip} aria-label={name || undefined}
-      data-type={roomy ? 'body-m' : 'caption'}
-      className={`inline-flex items-center justify-center gap-1 rounded-pill transition-colors disabled:opacity-50 ${roomy ? 'h-11 min-w-[6.5rem] gap-2 px-l' : 'h-7 px-2.5'}`}
-      style={palette}>
-      <Icon size={roomy ? 16 : 12} aria-hidden /> {label}
-    </button>
+    <Tooltip text={tip} describes={false} description={approves ? bindingLabel('approve-focused') : undefined}>
+      {(trigger: TooltipTriggerProps) => (
+        <button {...trigger} ref={(el) => { trigger.ref(el); assignRef(buttonRef, el) }}
+          type="button" onClick={() => { void onClick() }} disabled={busy} aria-busy={busy || undefined}
+          aria-label={name || undefined}
+          data-type={roomy ? 'body-m' : 'caption'}
+          className={`inline-flex items-center justify-center gap-1 rounded-pill transition-colors disabled:opacity-50 ${roomy ? 'h-11 min-w-[6.5rem] gap-2 px-l' : 'h-7 px-2.5'}`}
+          style={palette}>
+          <Icon size={roomy ? 16 : 12} aria-hidden /> {label}
+        </button>
+      )}
+    </Tooltip>
   )
 }

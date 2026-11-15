@@ -53,9 +53,16 @@ describe('no native tooltip on Needs you', () => {
     expect(tipOf(allow)).toContain(bindingLabel('approve-focused'))
   })
 
-  it('the chat card keeps its titles: the change is the queue form\'s alone', () => {
+  it('the chat card too: its choices, its risk and its reach tip through Tooltip, Allow\'s with its key', () => {
     const { container } = render(<ApprovalCard seg={seg()} onAct={() => {}} answers="once" />)
-    expect(titled(container).length).toBeGreaterThan(0)
+    expect(titled(container)).toEqual([])
+    expect(tipOf(screen.getByRole('button', { name: /^Allow/ }))).toContain(bindingLabel('approve-focused'))
+  })
+
+  it('a code block\'s Copy, Open beside and Run tip through Tooltip', async () => {
+    const { Markdown } = await import('./Markdown')
+    const { container } = render(<Markdown>{'```diff\n+added\n```\n\n```bash\nls\n```'}</Markdown>)
+    expect(titled(container)).toEqual([])
   })
 
   it("the panel's heading, Back and Close", () => {
