@@ -24,6 +24,8 @@ import pytest
 from personalclaw import security, textfmt, waiting
 from personalclaw.inbound import bridge
 
+pytestmark = pytest.mark.security
+
 MASK = "[REDACTED: credential]"
 
 

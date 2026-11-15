@@ -21,6 +21,7 @@ pending.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 INSTALLS = "installs"
@@ -215,17 +216,32 @@ def _runs(prop: Any) -> list[str]:
 
 
 def _content(prop: Any, variant: str, *, capture: str = "") -> dict[str, Any]:
-    """The thing itself, by type, masked; what its panel draws first."""
-    from personalclaw.learning import cards
+    """The thing itself, by type, masked; what its panel draws first: one builder per variant
+    (:data:`_CONTENT`), else the body as markdown."""
+    build = _CONTENT.get(variant)
+    if build is not None:
+        return build(prop, str(prop.body or ""), capture)
+    text, cut = _cut_lines(_masked(str(prop.body or "")))
+    return {"type": "markdown", "text": text, "cut": cut}
+
+
+def _steps(prop: Any, body: str, _capture: str) -> dict[str, Any]:
     from personalclaw.learning.template_install import template_steps
 
-    body = str(prop.body or "")
-    if variant in ("template.named", "template.recurring_path"):
-        return {"type": "steps", "steps": [_masked(s) for s in template_steps(body)]}
-    if variant == "template.plan_shape":
-        first, _sep, _rest = body.partition("\n\n")
-        return {"type": "plan_shape", "sentence": _masked(first), "runs": _runs(prop)[:8]}
-    if variant in ("template.card", "prompt.card", "agent.card"):
+    return {"type": "steps", "steps": [_masked(s) for s in template_steps(body)]}
+
+
+def _plan_shape(prop: Any, body: str, _capture: str) -> dict[str, Any]:
+    first, _sep, _rest = body.partition("\n\n")
+    return {"type": "plan_shape", "sentence": _masked(first), "runs": _runs(prop)[:8]}
+
+
+def _pasted_card(variant: str) -> Callable[[Any, str, str], dict[str, Any]]:
+    """A card pasted as a template, a prompt or an agent: what was pasted, and its parts."""
+
+    def build(prop: Any, body: str, _capture: str) -> dict[str, Any]:
+        from personalclaw.learning import cards
+
         payload = cards._card_payload(prop)
         pasted, cut = _cut_lines(_masked(body.split("```json", 1)[-1].rsplit("```", 1)[0]))
         out: dict[str, Any] = {"type": variant.split(".")[0], "pasted": pasted, "pasted_cut": cut}
@@ -245,62 +261,82 @@ def _content(prop: Any, variant: str, *, capture: str = "") -> dict[str, Any]:
             out["text"] = _masked(payload.get("system_prompt"))
             out["voice"] = _masked(payload.get("voice"))
         return out
-    if variant == "lesson.failed_run":
-        lesson = body.split("\n\n", 1)[0]
-        error, cut = _cut_lines(_masked(getattr(prop, "source_excerpt", "")))
-        return {
-            "type": "lesson",
-            "lesson": _masked(lesson),
-            "capsule": _masked(body.split("\n\n", 2)[-1]),
-            "error": error,
-            "error_cut": cut,
-        }
-    if variant == "lesson.conflict":
-        manifest = getattr(prop, "change_manifest", None) or {}
-        fix = manifest.get("targeted_fix") if isinstance(manifest, dict) else None
-        held = fix[0] if isinstance(fix, list) and fix and isinstance(fix[0], dict) else {}
-        from personalclaw.learning import lesson_conflicts
 
-        return {
-            "type": "choice",
-            "yours": [_masked(t) for t in held.get("yours") or []],
-            "memory": lesson_conflicts.memory_words(str(held.get("memory") or "")),
-            "learned": _masked(held.get("rule")),
-            "negative": _masked(held.get("negative")),
-            "who": lesson_conflicts.learned_from_words(str(prop.source_cadence or "")),
-        }
-    if variant == "lesson.captures":
-        return _captures(prop, capture=capture)
-    if variant == "skill.promoted":
-        text, cut = _cut_lines(_masked(body))
-        return {"type": "procedure", "text": text, "cut": cut}
-    if variant == "template_diff":
-        manifest = getattr(prop, "change_manifest", None) or {}
-        ops = manifest.get("targeted_fix") if isinstance(manifest, dict) else None
-        from personalclaw.security import redact_values_for_display
+    return build
 
-        return {
-            "type": "ops",
-            "ops": redact_values_for_display([o for o in ops or [] if isinstance(o, dict)]),
-            "predicted_fixes": (
-                [_masked(p) for p in manifest.get("predicted_fixes") or []]
-                if isinstance(manifest, dict)
-                else []
-            ),
-        }
-    if variant == "retirement.text_not_typed":
-        items = []
-        for line in body.splitlines():
-            if not line.startswith("- "):
-                continue
-            head, _sep, source = line[2:].partition(" (the same as in ")
-            kind, _sep, text = head.partition(": ")
-            items.append(
-                {"kind": kind, "text": _masked(text), "source": _masked(source.rstrip(")"))}
-            )
-        return {"type": "items", "items": items}
+
+def _failed_run(prop: Any, body: str, _capture: str) -> dict[str, Any]:
+    error, cut = _cut_lines(_masked(getattr(prop, "source_excerpt", "")))
+    return {
+        "type": "lesson",
+        "lesson": _masked(body.split("\n\n", 1)[0]),
+        "capsule": _masked(body.split("\n\n", 2)[-1]),
+        "error": error,
+        "error_cut": cut,
+    }
+
+
+def _conflict(prop: Any, _body: str, _capture: str) -> dict[str, Any]:
+    from personalclaw.learning import lesson_conflicts
+
+    manifest = getattr(prop, "change_manifest", None) or {}
+    fix = manifest.get("targeted_fix") if isinstance(manifest, dict) else None
+    held = fix[0] if isinstance(fix, list) and fix and isinstance(fix[0], dict) else {}
+    return {
+        "type": "choice",
+        "yours": [_masked(t) for t in held.get("yours") or []],
+        "memory": lesson_conflicts.memory_words(str(held.get("memory") or "")),
+        "learned": _masked(held.get("rule")),
+        "negative": _masked(held.get("negative")),
+        "who": lesson_conflicts.learned_from_words(str(prop.source_cadence or "")),
+    }
+
+
+def _procedure(_prop: Any, body: str, _capture: str) -> dict[str, Any]:
     text, cut = _cut_lines(_masked(body))
-    return {"type": "markdown", "text": text, "cut": cut}
+    return {"type": "procedure", "text": text, "cut": cut}
+
+
+def _ops(prop: Any, _body: str, _capture: str) -> dict[str, Any]:
+    from personalclaw.security import redact_values_for_display
+
+    manifest = getattr(prop, "change_manifest", None) or {}
+    if not isinstance(manifest, dict):
+        manifest = {}
+    ops = manifest.get("targeted_fix")
+    return {
+        "type": "ops",
+        "ops": redact_values_for_display([o for o in ops or [] if isinstance(o, dict)]),
+        "predicted_fixes": [_masked(p) for p in manifest.get("predicted_fixes") or []],
+    }
+
+
+def _items(_prop: Any, body: str, _capture: str) -> dict[str, Any]:
+    items = []
+    for line in body.splitlines():
+        if not line.startswith("- "):
+            continue
+        head, _sep, source = line[2:].partition(" (the same as in ")
+        kind, _sep, text = head.partition(": ")
+        items.append({"kind": kind, "text": _masked(text), "source": _masked(source.rstrip(")"))})
+    return {"type": "items", "items": items}
+
+
+#: What each variant's panel draws first, by its builder.
+_CONTENT: dict[str, Callable[[Any, str, str], dict[str, Any]]] = {
+    "template.named": _steps,
+    "template.recurring_path": _steps,
+    "template.plan_shape": _plan_shape,
+    "template.card": _pasted_card("template.card"),
+    "prompt.card": _pasted_card("prompt.card"),
+    "agent.card": _pasted_card("agent.card"),
+    "lesson.failed_run": _failed_run,
+    "lesson.conflict": _conflict,
+    "lesson.captures": lambda prop, _body, capture: _captures(prop, capture=capture),
+    "skill.promoted": _procedure,
+    "template_diff": _ops,
+    "retirement.text_not_typed": _items,
+}
 
 
 def _captures(prop: Any, *, capture: str = "") -> dict[str, Any]:

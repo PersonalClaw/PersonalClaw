@@ -46,6 +46,7 @@
 {"site": "GET /api/knowledge/items/{id}/staleness", "reason": "staleness_for rejects an unknown item"}
 {"site": "GET /api/knowledge/items/{id}/thumbnail", "reason": "_serve_item_path rejects an item without a thumbnail"}
 {"site": "GET /api/learning/proposals/{id}", "reason": "plain proposal detail; proposal store rejects absence"}
+{"site": "GET /api/learning/proposals/{id}/review", "reason": "the proposal's own review, not a child collection: the proposal store rejects absence, so a ghost proposal is a 404 learning_proposal_gone (driven in test_a_proposals_review_says_what_accept_does.py)", "added": "2026-11-15"}
 {"site": "GET /api/loops/{id}/conflict", "reason": "the loop (404) and the conflict it waits on (409) resolve first"}
 {"site": "GET /api/loops/{id}/design/tokens", "reason": "loop store resolves the design loop before token projection"}
 {"site": "GET /api/loops/{id}/kept-work", "reason": "_kept_loop resolves the loop (404 when absent) before listing"}
