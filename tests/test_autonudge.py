@@ -16,6 +16,7 @@ lossless `autonudge.json` migration, and the end-to-end tick (`loop.tick_once` �
 import json
 import time
 from dataclasses import asdict
+from types import SimpleNamespace
 
 import pytest
 
@@ -537,6 +538,29 @@ async def _delete(loop_id):
     return resp.status, _json.loads(resp.body.decode())
 
 
+async def _start(body, workspace):
+    """Drive api_autonudge_start directly with a mocked request; return (status, body)."""
+    import json as _json
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import autonudge as _h
+
+    app = web.Application()
+    app["state"] = SimpleNamespace(
+        _sessions={"chat-1-123": SimpleNamespace(workspace_dir=str(workspace))}
+    )
+    req = make_mocked_request("POST", "/api/autonudge", app=app)
+
+    async def _json_body():
+        return body
+
+    req.json = _json_body
+    resp = await _h.api_autonudge_start(req)
+    return resp.status, _json.loads(resp.body.decode())
+
+
 @pytest.mark.asyncio
 async def test_delete_unknown_loop_id_404s(svc, monkeypatch):
     """A typo'd/already-deleted id must be distinguishable from a real delete — it 404s with
@@ -559,3 +583,70 @@ async def test_delete_existing_loop_still_200s_and_removes_it(svc, monkeypatch):
     assert status == 200
     assert body == {"ok": True}
     assert svc.get_by_session("chat-1-123") is None, "a real delete must actually remove the loop"
+
+
+# ── POST /api/autonudge: armed with no number, a nudge stops by itself ──
+
+
+async def _delivered(loop):
+    return True
+
+
+@pytest.mark.asyncio
+async def test_a_nudge_started_without_max_cycles_stops_by_itself_after_ten(
+    svc, tmp_path, monkeypatch
+):
+    """Armed as the modal opens, or through the API without a number, a nudge used to run an
+    agent turn about every minute until someone pressed Stop: it now stops after ten."""
+    from personalclaw.dashboard.handlers import autonudge as _h
+
+    monkeypatch.setattr(_h, "_autonudge_get", lambda: svc)
+    svc._on_fire = _delivered
+    status, body = await _start({"session_name": "chat-1-123", "message": "go"}, tmp_path)
+    assert status == 200
+    assert body["loop"]["max_cycles"] == 10
+    loop_id = body["loop"]["id"]
+    delivered = 0
+    refused = None
+    for i in range(1, 40):
+        ok, why = await svc.deliver(_row(tmp_path, loop_id).trigger, now=NOW + 61 * i)
+        if not ok:
+            refused = (ok, why)
+            break
+        delivered += 1
+    assert delivered == 10
+    assert refused == (False, "max_cycles")
+    kept = svc.get_by_session("chat-1-123")
+    assert kept is not None, "a nudge that ran out is switched off and kept, not removed"
+    assert kept.active is False
+    assert N.why_it_ended(kept) == "budget"
+
+
+@pytest.mark.asyncio
+async def test_max_cycles_0_still_means_no_limit(svc, tmp_path, monkeypatch):
+    from personalclaw.dashboard.handlers import autonudge as _h
+
+    monkeypatch.setattr(_h, "_autonudge_get", lambda: svc)
+    svc._on_fire = _delivered
+    status, body = await _start(
+        {"session_name": "chat-1-123", "message": "go", "max_cycles": 0}, tmp_path
+    )
+    assert status == 200
+    assert body["loop"]["max_cycles"] == 0
+    loop_id = body["loop"]["id"]
+    for i in range(1, 26):
+        ok, why = await svc.deliver(_row(tmp_path, loop_id).trigger, now=NOW + 61 * i)
+        assert (ok, why) == (True, ""), f"delivery {i} was refused with max_cycles 0"
+    assert svc.get_by_session("chat-1-123").active is True
+
+
+@pytest.mark.asyncio
+async def test_the_service_and_the_view_default_to_the_same_bound(svc, monkeypatch):
+    from personalclaw.dashboard.handlers import autonudge as _h
+
+    monkeypatch.setattr(_h, "_autonudge_get", lambda: svc)
+    svc._on_fire = _delivered
+    loop = await svc.add(session_name="chat-1-123", message="go", idle_secs=15)
+    assert loop.max_cycles == N.DEFAULT_MAX_CYCLES == 10
+    view = NudgeLoop(id="nudge:0a1b2c3d", session_name="s", message="m")
+    assert view.max_cycles == N.DEFAULT_MAX_CYCLES == 10

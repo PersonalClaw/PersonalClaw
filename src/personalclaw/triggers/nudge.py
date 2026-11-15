@@ -66,6 +66,11 @@ _MAX_IDLE_SECS = 86400  # 24h
 # loop can't spin forever on a hard error). Resets on any clean turn.
 _MAX_CONSECUTIVE_ERRORS = 3
 
+#: How many cycles a nudge sends when it is armed without a number (the Auto-nudge modal starts
+#: at it, and ``POST /api/autonudge`` takes it when its body has no ``max_cycles``): it then
+#: stops by itself. ``0`` is no limit, and only an explicit 0 gives one.
+DEFAULT_MAX_CYCLES = 10
+
 # Sentinel file per loop: creating it halts the loop on next cycle.
 STOP_SENTINEL = "STOP"
 
@@ -104,7 +109,7 @@ class NudgeLoop:
     session_name: str
     message: str
     idle_secs: int = 60
-    max_cycles: int = 0  # 0 = unlimited
+    max_cycles: int = DEFAULT_MAX_CYCLES  # 0 = no limit
     cycle_count: int = 0
     active: bool = True
     last_fire_ts: float = 0.0
@@ -385,7 +390,7 @@ class AutoNudgeService:
         session_name: str,
         message: str,
         idle_secs: int = 60,
-        max_cycles: int = 0,
+        max_cycles: int = DEFAULT_MAX_CYCLES,
         stop_sentinel_path: str = "",
         first_idle_secs: int = 0,
     ) -> NudgeLoop:
