@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -230,7 +231,10 @@ def test_route_reports_the_marker_and_its_absence(home):
     from personalclaw.dashboard.handlers import skills as skills_handlers
 
     async def _payload():
-        resp = await skills_handlers.api_skill_proposals_list(object())  # request unused
+        # A request of yours: no app's name on it, so every proposal is yours to read.
+        resp = await skills_handlers.api_skill_proposals_list(
+            SimpleNamespace(get=lambda key, default=None: default)
+        )
         return json.loads(resp.text)
 
     before = asyncio.run(_payload())

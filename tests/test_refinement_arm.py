@@ -345,6 +345,9 @@ def test_the_detail_route_serves_the_diff_and_the_version_it_would_create(home):
         def __init__(self, pid: str) -> None:
             self.match_info = {"id": pid}
 
+        def get(self, key: str, default: object = None) -> object:
+            return default  # a request of yours: no app's name on it
+
     _install(home)
     prop = _propose(home)
     assert prop is not None
@@ -379,6 +382,9 @@ def test_a_new_kind_proposal_carries_no_diff_and_no_version(home):
     class _Req:
         def __init__(self, pid: str) -> None:
             self.match_info = {"id": pid}
+
+        def get(self, key: str, default: object = None) -> object:
+            return default  # a request of yours: no app's name on it
 
     prop = proposals.enqueue(
         slug="brand-new",

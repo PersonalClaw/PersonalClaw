@@ -1370,7 +1370,29 @@ async def api_run_introspect(request: web.Request) -> web.Response:
     it can see in full. Five routes would let the cockpit render eight answers and never learn
     that the ninth was missing.
     """
-    return _reply(run_cockpit.introspect(request.match_info.get("run_id", "")))
+    result = run_cockpit.introspect(request.match_info.get("run_id", ""))
+    if not _answers_gates(request):
+        result = _without_gate_tokens(result)
+    return _reply(result)
+
+
+def _answers_gates(request: web.Request) -> bool:
+    """Whether the caller of *request* may be handed a gate's resume token: not an app. Every route
+    that takes one (``/resume``, ``/confirm``, a park's answer) refuses an app, so a token handed to
+    one is a credential it can do nothing with but keep."""
+    return not request.get("app", "")
+
+
+def _without_gate_tokens(result: dict[str, Any]) -> dict[str, Any]:
+    """The cockpit's *result* with each open ask's resume token blanked."""
+    answers = result.get("answers") if isinstance(result, dict) else None
+    if not isinstance(answers, dict):
+        return result
+    asks = answers.get("approval")
+    if not isinstance(asks, list):
+        return result
+    shown = [{**a, "resume_token": ""} if isinstance(a, dict) else a for a in asks]
+    return {**result, "answers": {**answers, "approval": shown}}
 
 
 @_of_its_chat
@@ -1864,6 +1886,9 @@ async def api_run_continuations(request: web.Request) -> web.Response:
     `run_status` rides along so a client can say WHY nothing is answerable without a second
     fetch: "this run failed" and "you already answered this" are different sentences, and an
     empty list alone cannot tell them apart.
+
+    The ask and the handoff are masked as the cockpit masks them, and an app is handed no resume
+    token (:func:`_answers_gates`): the routes that take one refuse an app.
     """
     from personalclaw.workflows.human_input import list_continuations
     from personalclaw.workflows.models import TERMINAL_RUN_STATUSES
@@ -1874,15 +1899,17 @@ async def api_run_continuations(request: web.Request) -> web.Response:
         return _fail({"code": "WF_RUN_NOT_FOUND", "message": f"no run {run_id!r}"})
     status = getattr(run, "status", "")
     pending = [] if status in TERMINAL_RUN_STATUSES else list_continuations(run_id)
+    answers = _answers_gates(request)
     return web.json_response(
         {
             "continuations": [
                 {
-                    "resume_token": c.token,
+                    "resume_token": c.token if answers else "",
                     "node_id": c.node_id,
                     "instance_path": c.instance_path,
-                    "ask": c.ask,
-                    "handoff": c.handoff,
+                    # As the run's cockpit shows them, through the journal's redactor.
+                    "ask": journal.redact(c.ask),
+                    "handoff": journal.redact(c.handoff),
                     "expires_at": c.expires_at,
                     "expired": c.expired,
                 }

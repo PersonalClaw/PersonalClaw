@@ -1134,6 +1134,30 @@ VERIFY_RESTORED = "restored"
 _OWN_REFS = frozenset({"dedup_key", "verify", "verify_withheld"})
 
 
+def _token_ref(key: str) -> bool:
+    """Whether the ref *key* holds a token that answers its row (a gate's or a park's resume
+    token): the row's to keep, never a notification's."""
+    return key == "token" or key.endswith("_token")
+
+
+def _note_refs(refs: dict[str, Any]) -> dict[str, Any]:
+    """The refs of a row its notification carries: its ids and plain values, so the bell and an
+    app's notification read can name and open what the row is about.
+
+    Never the row's structured copies (a gate's card, a proposal's payload) nor a token that
+    answers it. The notification log, the digest queue and ``GET /api/notifications`` hold what a
+    note carries, and an app reads the notes about a conversation it started there, while the row
+    itself stays in your Inbox."""
+    out: dict[str, Any] = {}
+    for key, value in refs.items():
+        if key in _OWN_REFS or _token_ref(str(key)):
+            continue
+        if isinstance(value, (dict, list, tuple, set)):
+            continue
+        out[key] = value
+    return out
+
+
 def _notify_view(state: Any, item: "InboxItem", inbox_item: str, note: dict) -> None:
     """Fire *item*'s one notification, *note* (``kind``, ``title``, ``body``, ``item_kind`` and
     an app's ``raised_by_app``: the shape verification holds it back in). ``inbox_item`` is ""
@@ -1159,7 +1183,7 @@ def _notify_view(state: Any, item: "InboxItem", inbox_item: str, note: dict) -> 
                 # are equal and the note is addressed here as it always was, while a shared
                 # source's item carries the teammate it actually belongs to.
                 notification_addressing.ADDRESSEE_KEY: item.owner_username,
-                **{k: v for k, v in item.refs.items() if k not in _OWN_REFS},
+                **_note_refs(item.refs),
             },
             **({"raised_by_app": raiser} if raiser else {}),
         )

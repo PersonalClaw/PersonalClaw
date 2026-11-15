@@ -37,7 +37,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -182,8 +182,10 @@ def _gather_skills(cutoff: datetime) -> tuple[list[str], list[str]]:
     return new_names, refined_names
 
 
-def _gather_pending() -> list[str]:
-    """Pending skill-proposal labels. A refine names its target, a new names its slug."""
+def _gather_pending(reads: Callable[[str], bool] | None = None) -> list[str]:
+    """Pending skill-proposal labels. A refine names its target, a new names its slug. *reads*,
+    when given, says which proposals the caller reads, by the chat each was filed from (an app
+    reads only its own chats'): the others are neither named nor counted."""
     from personalclaw.skills import proposals
 
     try:
@@ -193,6 +195,8 @@ def _gather_pending() -> list[str]:
         return []
     out: list[str] = []
     for prop in pending:
+        if reads is not None and not reads(str(getattr(prop, "session_key", "") or "")):
+            continue
         kind = str(getattr(prop, "kind", "") or "new")
         target = str(getattr(prop, "refine_target", "") or "")
         slug = str(getattr(prop, "slug", "") or "")
@@ -251,6 +255,7 @@ def compose_learning_summary(
     window_days: int = DEFAULT_WINDOW_DAYS,
     vs: Any = None,
     now: datetime | None = None,
+    reads: Callable[[str], bool] | None = None,
 ) -> LearningSummary:
     """Gather the learning summary block. Read-only; never raises.
 
@@ -268,6 +273,6 @@ def compose_learning_summary(
         window_days=days,
         new_skills=SummaryGroup.of(sorted(new_names)),
         refined_skills=SummaryGroup.of(sorted(refined_names)),
-        pending_proposals=SummaryGroup.of(_gather_pending()),
+        pending_proposals=SummaryGroup.of(_gather_pending(reads)),
         facts=SummaryGroup.of(_gather_facts(vs, cutoff, at)),
     )

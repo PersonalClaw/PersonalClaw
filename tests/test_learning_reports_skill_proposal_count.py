@@ -146,7 +146,7 @@ def test_the_helper_is_called_by_the_endpoint(home: Path):
     never invoked."""
     monkey = pytest.MonkeyPatch()
     try:
-        monkey.setattr(L, "_skill_proposals_pending", lambda: 77)
+        monkey.setattr(L, "_skill_proposals_pending", lambda _request: 77)
         assert _get().get("skill_proposals_pending") == 77
     finally:
         monkey.undo()

@@ -30,7 +30,7 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.record_ids import is_safe_record_id, record_path
@@ -156,20 +156,38 @@ class SkillProposal:
         return asdict(self)
 
     def summary(self) -> dict:
-        """The compact view for the inbox list (no full procedure body)."""
+        """The compact view for the inbox list (no full procedure body), its words masked for
+        display as :meth:`shown`'s are."""
+        from personalclaw.security import redact_for_display
+
         return {
             "id": self.id,
             "slug": self.slug,
-            "description": self.description,
-            "triggers": self.triggers,
+            "description": redact_for_display(self.description),
+            "triggers": redact_for_display(self.triggers),
             "kind": self.kind,
             "refine_target": self.refine_target,
-            "trigger": self.trigger,
+            "trigger": redact_for_display(self.trigger),
             "session_key": self.session_key,
             "created_at": self.created_at,
             "status": self.status,
-            "procedure_preview": self.procedure_md[:280],
+            "procedure_preview": redact_for_display(self.procedure_md)[:280],
         }
+
+    def shown(self) -> dict:
+        """The whole proposal as a read hands it out: :meth:`to_dict`, its words masked for display
+        (``security.redact_for_display``).
+
+        The procedure is masked when it is filed, but the description and triggers are filed as
+        the model wrote them, and the excerpt quotes the reply or the message it was learned from.
+        The record keeps them whole; an edit seeded from this read puts each marker it sends back
+        (``security.keep_masked_spans``, at accept)."""
+        from personalclaw.security import redact_for_display
+
+        out = self.to_dict()
+        for key in ("description", "triggers", "procedure_md", "trigger", "source_excerpt"):
+            out[key] = redact_for_display(str(out.get(key) or ""))
+        return out
 
 
 def _id_label(slug: str) -> str:
@@ -462,6 +480,8 @@ def _surface_in_inbox(prop: SkillProposal) -> None:
         except Exception:
             logger.debug("proposal inbox surface: no dashboard state", exc_info=True)
 
+        from personalclaw.security import redact_for_display
+
         label = "Refine a skill" if prop.kind == "refine" else "New skill proposed"
         emit_attention_item(
             state,
@@ -469,7 +489,9 @@ def _surface_in_inbox(prop: SkillProposal) -> None:
             kind="proposal",
             item_kind=ItemKind.PROPOSAL.value,
             title=label,
-            body=f"{prop.slug} — {prop.description}",
+            # Masked as the proposal's own read is (`SkillProposal.shown`): the row's words are
+            # copied into its notification, the notification log and the digest.
+            body=redact_for_display(f"{prop.slug} — {prop.description}"),
             refs={"skill_proposal": prop.id, "session": prop.session_key},
             dedup_key=f"skill_proposal:{prop.id}",
         )
@@ -539,6 +561,43 @@ def _resolve_inbox_item(pid: str, status: str) -> None:
         set_item_status(_dashboard_state(), store, rows, status)
     except Exception:
         logger.debug("proposal inbox resolve failed", exc_info=True)
+
+
+def withdraw_sessions(spelled: Callable[[str], bool]) -> list[str]:
+    """Withdraw every pending proposal filed from a chat *spelled* names (its ``session_key``), as
+    a deleted chat leaves. Returns the ids withdrawn.
+
+    A proposal's excerpt quotes the reply or the message it was learned from, so deleting the chat
+    takes what is still waiting on your answer with it: its file, its Inbox row, dismissed, and the
+    words that row's notification copied. Withdrawn, not rejected: you decided nothing."""
+    from personalclaw.inbox import set_item_status
+    from personalclaw.learning.proposals import withdrawn_words
+
+    gone: list[str] = []
+    for prop in list_pending(_surface=False):
+        if not prop.session_key or not spelled(prop.session_key):
+            continue
+        try:
+            _path(prop.id).unlink()
+        except OSError:
+            logger.warning("could not remove skill proposal %s", prop.id, exc_info=True)
+            continue
+        try:
+            state = _dashboard_state()
+            store = _inbox_store_for_write()
+            rows = [i for i in store.items.values() if i.refs.get("skill_proposal") == prop.id]
+            words = withdrawn_words(rows)
+            if rows and not set_item_status(state, store, rows, "dismissed"):
+                store.save()  # already dismissed: its new words are still written
+            retext = getattr(state, "retext_item_notifications", None)
+            if words and callable(retext):
+                retext(words)
+        except Exception:  # noqa: BLE001 — the proposal is gone; its row keeps its words
+            logger.warning(
+                "could not withdraw skill proposal %s from the Inbox", prop.id, exc_info=True
+            )
+        gone.append(prop.id)
+    return gone
 
 
 def _load(pid: str) -> SkillProposal | None:
