@@ -149,6 +149,22 @@ logger = logging.getLogger(__name__)
 #: The row a loop's cycle starts its turn with: a ``nudge`` row, shown as one.
 _NUDGE_ROW = ("nudge", "msg msg-nudge")
 
+
+def _cycle_message(session: Any, msg: str, cycle: int) -> str:
+    """Cycle *cycle*'s message to a chat its autonudge drives, built once the cycle is delivered:
+    its words, numbered, and for a loop's worker the owner's steer the gateway hands over with
+    them (``loop.manager.steer_message``). The steer is part of the message itself, so a re-prompt
+    on a fresh session, which sends this message again, carries it too; the worker never reads or
+    deletes the steer's file."""
+    tagged = f"[auto-nudge cycle {cycle}]\n{msg}"
+    if getattr(session, "_app", "") != "loop":
+        return tagged
+    from personalclaw.loop.manager import steer_message
+
+    steer = steer_message(session.key)
+    return f"{tagged}\n\n{steer}" if steer else tagged
+
+
 # Full chat turn timeout — tool calls, multi-step reasoning, spawning.
 # More generous than INJECTION_TIMEOUT (120s) which only covers stream_and_collect.
 
@@ -3189,7 +3205,6 @@ class GatewayOrchestrator:
                     logger.debug("AutoNudge hold: %s starts no turn: %s", session.key, held)
                     return _idle_poll.SKIP_LOOP_HELD
             msg = render_nudge_message(loop.message, loop.stop_sentinel_path)
-            tagged = f"[auto-nudge cycle {loop.cycle_count + 1}]\n{msg}"
             from personalclaw.dashboard.chat import (  # circular import: gateway -> dashboard.chat -> gateway (chat dispatch references GatewayOrchestrator)  # noqa: E501
                 run_chat,
             )
@@ -3213,6 +3228,7 @@ class GatewayOrchestrator:
                     loop.cycle_count,
                 )
                 return False
+            tagged = _cycle_message(session, msg, loop.cycle_count + 1)
             # Show nudge as a distinct "nudge" role message, taken in as every message is.
             session.take_in_at_door(dstate, tagged, *_NUDGE_ROW)
 

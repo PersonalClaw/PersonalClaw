@@ -450,10 +450,10 @@ class DesignKind(LoopKindStrategy):
             [
                 f"Run the next autonomous cycle for design loop {loop.id} "
                 f"(the loop's own folder: {loop_dir}). Steps: (1) check {loop_dir}/status.json "
-                f"— if not 'running', stop; (2) read {loop_dir}/brief.md; (3) apply + delete "
-                f"{loop_dir}/guidance.txt "
-                "if present; (4) advance the CURRENT design step (tokens, a component, a "
-                "palette decision) toward the design system.",
+                f"— if not 'running', stop; (2) read {loop_dir}/brief.md; (3) apply the user's "
+                "steer if this message carries one, headed USER STEERING (its file is the "
+                "gateway's: leave it be); (4) advance the CURRENT design step (tokens, a "
+                "component, a palette decision) toward the design system.",
                 "",
                 f"Before you end this turn you MUST write {loop_files.finding_file(loop_dir)} "
                 "(next sequential N) — {cycle, step, summary, key_insight, artifacts}. Save "

@@ -185,10 +185,20 @@ class TestFileHelpers:
         assert len(loop_files.get_findings(g.id)) == 2
 
     def test_nudges_applied_stamp(self):
+        """A steer is applied at the cycle of its worker's first finding after it was handed
+        over, and never before it was handed over."""
         g = _goal()
+        loop_files.write_guidance(g.id, "focus on the db path")
         loop_files.append_nudge(g.id, "focus on the db path", 0)
-        loop_files.mark_nudges_applied(g.id, 1)
-        assert loop_files.get_nudges(g.id)[0]["applied_cycle"] == 1
+        d = loop_files.loop_dir(g.id)
+        (d / "findings").mkdir(exist_ok=True)
+        (d / "findings" / "cycle_001.json").write_text("{}")
+        loop_files.credit_delivered_steers(g.id, cycle=1)
+        assert loop_files.get_nudges(g.id)[0]["applied_cycle"] is None
+        assert "focus on the db path" in loop_files.hand_over_steer(g.id)
+        (d / "findings" / "cycle_002.json").write_text("{}")
+        loop_files.credit_delivered_steers(g.id, cycle=2)
+        assert loop_files.get_nudges(g.id)[0]["applied_cycle"] == 2
 
     def test_per_task_guidance_round_trip(self):
         c = _code()

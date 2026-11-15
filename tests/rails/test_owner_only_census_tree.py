@@ -34,6 +34,7 @@ WRITE_PATHS: dict[tuple[str, str], str] = {
     ("write_scope.py", "problem"): "an automation's files to change",
     ("sandbox.py", "_owner_only_targets"): "the macOS fence of the home's paths",
     ("sandbox.py", "_owners_own_fence"): "the macOS fence of the owner's own files",
+    ("sandbox.py", "_loop_record_rules"): "the macOS fence of a loop's own records",
 }
 
 
@@ -123,6 +124,11 @@ def test_the_architecture_doc_names_every_entry():
         "$ZDOTDIR",
         *owner_only.FISH_STARTUP_FILES,
         *(f"{name}/" for name in owner_only.FISH_STARTUP_DIRS),
+        f"{owner_only.LOOPS_ROOT}/",
+        *owner_only.LOOP_RECORD_FILES,
+        *(f"{name}/" for name in owner_only.LOOP_RECORD_DIRS),
+        "guidance_<task>.txt",
+        *owner_only.LOOPS_DB_NAMES,
     ]
     for name in names:
         assert f"`{name}`" in section, name

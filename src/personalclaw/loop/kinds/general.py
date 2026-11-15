@@ -118,9 +118,9 @@ class GeneralKind(LoopKindStrategy):
             [
                 f"Run the next autonomous cycle for loop {loop.id} "
                 f"(the loop's own folder: {loop_dir}). Steps: (1) check {loop_dir}/status.json "
-                f"— if not 'running', stop; (2) read {loop_dir}/brief.md; (3) apply + delete "
-                f"{loop_dir}/guidance.txt "
-                "if present; (4) do ONE adaptive step toward the goal.",
+                f"— if not 'running', stop; (2) read {loop_dir}/brief.md; (3) apply the user's "
+                "steer if this message carries one, headed USER STEERING (its file is the "
+                "gateway's: leave it be); (4) do ONE adaptive step toward the goal.",
                 "",
                 f"Before you end this turn you MUST write {loop_files.finding_file(loop_dir)} "
                 "(next sequential N) — {cycle, summary, key_insight, files_touched, evidence}. "

@@ -50,6 +50,18 @@ starts, in every terminal she opens: ``.profile``, ``.bashrc``, ``.zshrc`` and t
 (:func:`owners_own`). Reading one, and running it in the agent's own shell (``source ~/.zshrc``),
 changes nothing and is left alone.
 
+**A loop's own records** (:data:`LOOP`), in PersonalClaw's home: the loops' root (``loop/``), each
+entry in it (a loop's folder as a whole, the loops' database and its companions), and in each
+loop's folder the records the gateway writes for the loop and its workers only read
+(:data:`LOOP_RECORD_FILES`, :data:`LOOP_RECORD_DIRS`, and one task's steer,
+``guidance_<task>.txt``): its brief, its run state, the owner's steers and their history, its stop
+file and cycle credits, its ledger, its walkthrough, its merges and the outputs later stages read.
+Everything else in a loop's folder stays a worker's to write: its findings, its log, its
+deliverable, the loop's question, the planner's own folder. A change to one of them is not code
+that runs as the owner but the record the gateway keeps of the owner's loop, which only the
+gateway writes. A word a command uses only as the folder a ``cd`` moves to is not a change to a
+loop's folder (a worker writes its finding from there).
+
 A write to any of them is code that runs as the owner, or a yes they never gave. Measured on
 `main` before this module existed: the agent's shell — the native ``bash`` tool, sandboxed with
 ``(allow default)`` and read-only fences — wrote ``<home>/hooks/x-pre.sh``, made it executable, and
@@ -100,6 +112,7 @@ owner's surfaces.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -112,12 +125,44 @@ OWNER_ONLY_FILES: tuple[str, ...] = ("config.json", "mcp.json")
 #: The directories, by name under the home: everything inside them is owner-only.
 OWNER_ONLY_DIRS: tuple[str, ...] = ("hooks", "agents", "grants")
 
-#: The kinds of owner-only place: PersonalClaw's own, in its home; git's; the shell's; and the
-#: places whose entries run at login.
+#: The loops' root, by name under the home (``loop/files.loops_root``): it, and every entry in it.
+LOOPS_ROOT = "loop"
+
+#: A loop's own records, by name in its folder: what the gateway writes for the loop, and its
+#: workers only read. ``tests/rails/test_a_loops_records_writer_census_tree.py`` holds every name
+#: the gateway writes in a loop's folder to this list or to the worker's.
+LOOP_RECORD_FILES: tuple[str, ...] = (
+    "brief.md",
+    "status.json",
+    "guidance.txt",
+    "nudges.json",
+    "delivered_steers.json",
+    "STOP",
+    "credited.json",
+    "events.jsonl",
+    "journal.jsonl",
+    "plan_session.json",
+    "merges.jsonl",
+)
+
+#: A loop's own folders of records, by name in its folder: everything inside them.
+LOOP_RECORD_DIRS: tuple[str, ...] = ("outputs", "artifacts")
+
+#: One task's steer, by its name rule (``loop/files.valid_task_guidance_id``), as folded.
+_TASK_STEER = re.compile(r"guidance_[a-z0-9_-]{1,64}\.txt")
+
+#: A loop's id (``loop/files.valid_loop_id``), and the loops' database and its companions, by
+#: the names a command may give them bare, from the loops' root.
+_LOOP_ID = re.compile(r"[0-9a-f]{8}")
+LOOPS_DB_NAMES: tuple[str, ...] = ("loops.db", "loops.db-wal", "loops.db-shm", "loops.db-journal")
+
+#: The kinds of owner-only place: PersonalClaw's own, in its home; git's; the shell's; the places
+#: whose entries run at login; and a loop's own records, in PersonalClaw's home.
 HOME = "home"
 GIT = "git"
 SHELL = "shell"
 LOGIN = "login"
+LOOP = "loop"
 
 #: The places whose entries run at the owner's login: macOS launch agents, under her home folder;
 #: XDG autostart entries, systemd's user units, its user manager's settings and the session's
@@ -194,6 +239,7 @@ _WHAT: dict[str, str] = {
     GIT: "where git keeps what it reads and runs as the owner",
     SHELL: "where the owner's shell keeps what it runs as the owner each time it starts",
     LOGIN: "where the owner's system keeps what it runs as the owner at every login",
+    LOOP: "where PersonalClaw keeps a loop's own records",
 }
 
 #: What the agent is told to do instead, for each kind.
@@ -215,6 +261,14 @@ _HINTS: dict[str, str] = {
         "Leave what runs at the owner's login to the owner. Tell them what you would have run, "
         "when and why; work to repeat can be an automation, which they see and can stop."
     ),
+    LOOP: (
+        "Leave a loop's own records to PersonalClaw: its brief, the owner's steers and their "
+        "history, its ledger and its plan. A steer from the owner reaches you in your cycle's "
+        "message, and the owner changes a loop's brief or steers it from the loop's page. In the "
+        "loop's folder, write only your findings file, FINDINGS.md, your deliverable and, when "
+        "the brief allows, questions.json. Read a loop's record in a call of its own (or with "
+        "your read tool), then write your file."
+    ),
 }
 
 
@@ -229,6 +283,18 @@ def owner_only_paths(home: Path | str | None = None) -> list[Path]:
     """Every owner-only path under *home* (the active home when None), files first."""
     root = Path(home) if home is not None else _home()
     return [root / name for name in OWNER_ONLY_FILES] + [root / name for name in OWNER_ONLY_DIRS]
+
+
+def loop_roots(home: Path | str | None = None) -> list[str]:
+    """The loops' root under *home* (the active home when None), in each spelling a write can
+    name it by: as written and as its real path, which differ when the home sits behind a link."""
+    root = (Path(home) if home is not None else _home()) / LOOPS_ROOT
+    written = os.path.abspath(os.path.expanduser(str(root)))
+    return list(dict.fromkeys([written, *map(_real, kept_spellings(written))]))
+
+
+_LOOP_FILES = frozenset(folded(name) for name in LOOP_RECORD_FILES)
+_LOOP_DIRS = frozenset(folded(name) for name in LOOP_RECORD_DIRS)
 
 
 def _real(path: Path | str) -> str:
@@ -363,6 +429,7 @@ class _Places:
                     self._dirs.append((folded(spelling), kind))
                 else:
                     self._files.setdefault(folded(spelling), kind)
+        self._loops = [folded(spelling) for spelling in loop_roots(root)]
 
     def kind_of(self, path: Path | str) -> str:
         """:func:`kind_of`, against the places resolved when this was made."""
@@ -375,14 +442,45 @@ class _Places:
             for base, holds in self._dirs:
                 if form == base or form.startswith(base + os.sep):
                     return holds
+            if self._in_loops(form) is not None:
+                return LOOP
         if any(_is_gits(spelling) for spelling in dict.fromkeys((target, written))):
             return GIT
         return ""
 
+    def _in_loops(self, form: str) -> int | None:
+        """How deep a loop's own record *form* (folded) lies under the loops' root: 0 for the root,
+        1 for an entry in it (a loop's folder as a whole, the loops' database), 2 or more for a
+        record in a loop's folder; ``None`` for a path that is none of them."""
+        for base in self._loops:
+            if form == base:
+                return 0
+            if not form.startswith(base + os.sep):
+                continue
+            parts = form[len(base) + 1 :].split(os.sep)
+            if len(parts) == 1:
+                return 1
+            name = parts[1]
+            if len(parts) == 2 and (name in _LOOP_FILES or _TASK_STEER.fullmatch(name)):
+                return 2
+            if name in _LOOP_DIRS:
+                return len(parts)
+        return None
+
+    def is_loop_folder(self, path: Path | str) -> bool:
+        """Whether *path* is the loops' root or one loop's folder as a whole: where a worker's
+        ``cd`` takes it to write its own files, which is not a change to the folder."""
+        for spelling in dict.fromkeys(
+            (_real(path), os.path.abspath(os.path.expanduser(str(path))))
+        ):
+            if self._in_loops(folded(spelling)) in (0, 1):
+                return True
+        return False
+
 
 def kind_of(path: Path | str, home: Path | str | None = None) -> str:
-    """Which kind of owner-only place *path* is, or lies inside: :data:`HOME`, :data:`GIT`, or
-    ``""`` for none.
+    """Which kind of owner-only place *path* is, or lies inside: :data:`HOME`, :data:`GIT`,
+    :data:`SHELL`, :data:`LOGIN`, :data:`LOOP`, or ``""`` for none.
 
     Compared by real path, so a symlink or ``..`` that lands on one is one; git's as written too
     (``~`` and ``..`` resolved), since a linked ``.git`` folder's real path need not say so."""
@@ -413,6 +511,33 @@ def _only_sourced(text: str) -> frozenset[str]:
             elsewhere.update(words)
         elsewhere.update(target.text for _redirect, target in one.redirects)
     return frozenset(sourced - elsewhere)
+
+
+def _only_cd(text: str) -> frozenset[str]:
+    """The words *text* names nowhere but as the folder a ``cd`` or ``pushd`` moves to, as the
+    shell splits it; none for a command the reader does not parse."""
+    from personalclaw.shell_syntax import lex, simple_commands
+
+    tokens = lex(text)
+    commands = simple_commands(tokens) if tokens is not None else None
+    moved: set[str] = set()
+    elsewhere: set[str] = set()
+    for one in commands or ():
+        words = [word.text for word in one.words]
+        if len(words) == 2 and words[0] in ("cd", "pushd"):
+            moved.add(words[1])
+        else:
+            elsewhere.update(words)
+        elsewhere.update(target.text for _redirect, target in one.redirects)
+    return frozenset(moved - elsewhere)
+
+
+def _names_a_loops(word: str) -> bool:
+    """Whether a bare *word* may name a loop's own record from the folder it is read in: one
+    task's steer, or a loop's folder by its id. Judged by the path it names (:func:`kind_of`), so
+    the same word anywhere else is nothing."""
+    form = folded(word)
+    return bool(_TASK_STEER.fullmatch(form) or _LOOP_ID.fullmatch(form))
 
 
 @dataclass(frozen=True)
@@ -450,10 +575,20 @@ def named_in(
     root = Path(home) if home is not None else _home()
     places = _Places(root)
     sourced = _only_sourced(text)
-    for word, path in named_paths(text, cwd=cwd, home=root, names=OWNER_ONLY_FILES):
+    moved_to = _only_cd(text)
+    for word, path in named_paths(
+        text,
+        cwd=cwd,
+        home=root,
+        names=OWNER_ONLY_FILES + LOOP_RECORD_FILES + LOOP_RECORD_DIRS + LOOPS_DB_NAMES,
+        named=_names_a_loops,
+    ):
         if word in sourced:
             continue
-        if kind := places.kind_of(path):
+        kind = places.kind_of(path)
+        if kind == LOOP and word in moved_to and places.is_loop_folder(path):
+            continue
+        if kind:
             return Named(word, kind)
     if cwd is not None:
         start = Path(cwd)

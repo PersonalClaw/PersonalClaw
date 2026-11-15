@@ -1390,6 +1390,11 @@ What the OS sandbox holds of them, in its `auto` mode:
   into a dotfiles folder is held at both its names, and that folder cannot be moved aside.
 - **Linux** holds none of them: holding a file in your home folder would mean making the whole
   folder read-only to the agent's shell.
+- **A loop's own records** (its brief, its run state, your steers and their history, its ledger,
+  its merges and its plan, in PersonalClaw's `loop/` folder): **macOS** denies writes to them by
+  pattern; **Linux** holds none of them in the kernel, since the loops' folder stays writable for
+  each worker's findings and question, and a bind cannot hold a name inside a writable folder. On
+  both, the screen and the file tools refuse an agent's change to one whatever your grants say.
 - **Neither** fences a repository's settings and hooks, nor the settings kept in `~/.config`
   (`~/.config/git/config`, fish's): git writes a repository's itself in the agent's ordinary work
   (`git init`, `git clone`, `git remote add`, `git push -u`, a branch that tracks another), and a

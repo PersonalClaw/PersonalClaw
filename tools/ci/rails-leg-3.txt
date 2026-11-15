@@ -1,4 +1,5 @@
 tests/rails/test_a_long_response_header_reads_tree.py
+tests/rails/test_a_loops_records_writer_census_tree.py
 tests/rails/test_agent_safety_rules_census_tree.py
 tests/rails/test_bounded_log_rail_trims_by_time_tree.py
 tests/rails/test_by_name_load_census_tree.py

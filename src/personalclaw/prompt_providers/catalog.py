@@ -599,12 +599,6 @@ BUNDLED_PROMPTS: tuple[BundledPrompt, ...] = (
                 default="",
                 description="The task's exit-criteria lines, if any.",
             ),
-            PromptVariable(
-                name="guidance",
-                type="textarea",
-                default="",
-                description="Pending user steering for this task, if any.",
-            ),
         ),
     ),
     # ── loop planning-walkthrough briefs (per-kind step/design briefs) ──

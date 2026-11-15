@@ -10,7 +10,7 @@ the policy only *advises*. This upholds the tenet that no agent certifies its ow
 work.
 
 Shared lifecycle (all kinds): trust-TTL expiry → NEEDS_INPUT, attended/unattended
-question handling, new-finding bookkeeping (clear guidance, stamp nudges, publish),
+question handling, new-finding bookkeeping (credit handed-over steers, publish),
 budget cap, stagnation, loop-exhaustion finalize, and the unresponsive deadline.
 The parallel task-worker scheduler (code/design) lands in 2c(iv); this is the
 sequential supervisor every kind needs.
@@ -1457,8 +1457,8 @@ class LoopWatchdog:
                 self._running_since.pop(cid, None)
                 self._consec_errors[cid] = 0
                 latest = findings[-1]
-                loop_files.clear_guidance(cid)
-                loop_files.mark_nudges_applied(cid, count)
+                # A handed-over steer is credited; one not yet handed over waits for its cycle.
+                loop_files.credit_delivered_steers(cid, cycle=count)
                 self._publish(cid, "new_finding", {"loop_id": cid, "finding": latest})
 
                 # Done-ness — produced by something OTHER than the worker. A kind

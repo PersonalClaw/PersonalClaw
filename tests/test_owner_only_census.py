@@ -1,8 +1,9 @@
 """The owner-only census: every place an agent may not change, and every path it writes by that is
 held to them.
 
-``owner_only`` is one rule with three kinds of place: PersonalClaw's own files in its home, git's
-own settings and hook scripts, and the owner's shell startup files. This census lists every entry
+``owner_only`` is one rule with five kinds of place: PersonalClaw's own files in its home, git's
+own settings and hook scripts, the owner's shell startup files, the places whose entries run at
+her login, and a loop's own records. This census lists every entry
 of each kind as the rule declares it, and fails for one it does not list, so a new entry is named
 here first. For each it checks that the rule recognises a path of that entry, and that a path
 which only shares a name is not one. That the architecture doc names each entry (what the doc
@@ -56,6 +57,25 @@ ZSH_STARTUP_FILES = (".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout")
 FISH_STARTUP_FILES = ("config.fish",)
 FISH_STARTUP_DIRS = ("conf.d", "functions")
 
+#: A loop's own records, as the rule declares them: its folder's record files and folders, and
+#: the loops' root, every entry in which is the gateway's.
+LOOPS_ROOT = "loop"
+LOOP_RECORD_FILES = (
+    "brief.md",
+    "status.json",
+    "guidance.txt",
+    "nudges.json",
+    "delivered_steers.json",
+    "STOP",
+    "credited.json",
+    "events.jsonl",
+    "journal.jsonl",
+    "plan_session.json",
+    "merges.jsonl",
+)
+LOOP_RECORD_DIRS = ("outputs", "artifacts")
+LOOPS_DB_NAMES = ("loops.db", "loops.db-wal", "loops.db-shm", "loops.db-journal")
+
 
 @pytest.fixture
 def owner(tmp_path, monkeypatch):
@@ -97,6 +117,10 @@ def test_the_census_lists_every_entry_the_rule_declares():
     assert owner_only.ZSH_STARTUP_FILES == ZSH_STARTUP_FILES
     assert owner_only.FISH_STARTUP_FILES == FISH_STARTUP_FILES
     assert owner_only.FISH_STARTUP_DIRS == FISH_STARTUP_DIRS
+    assert owner_only.LOOPS_ROOT == LOOPS_ROOT
+    assert owner_only.LOOP_RECORD_FILES == LOOP_RECORD_FILES
+    assert owner_only.LOOP_RECORD_DIRS == LOOP_RECORD_DIRS
+    assert owner_only.LOOPS_DB_NAMES == LOOPS_DB_NAMES
 
 
 def _entries(user: Path, pc: Path, repo: Path) -> dict[str, list[Path]]:
@@ -122,6 +146,10 @@ def _entries(user: Path, pc: Path, repo: Path) -> dict[str, list[Path]]:
         + [config / "zsh" / name for name in ZSH_STARTUP_FILES]
         + [config / "fish" / name for name in FISH_STARTUP_FILES]
         + [config / "fish" / name / "x.fish" for name in FISH_STARTUP_DIRS],
+        owner_only.LOOP: [pc / LOOPS_ROOT / "ab12cd34" / name for name in LOOP_RECORD_FILES]
+        + [pc / LOOPS_ROOT / "ab12cd34" / name / "x.json" for name in LOOP_RECORD_DIRS]
+        + [pc / LOOPS_ROOT / "ab12cd34" / "guidance_t-9f3e2a1b.txt", pc / LOOPS_ROOT / "ab12cd34"]
+        + [pc / LOOPS_ROOT, *(pc / LOOPS_ROOT / name for name in LOOPS_DB_NAMES)],
     }
 
 
@@ -146,6 +174,11 @@ def test_a_path_that_only_shares_a_name_is_none_of_them(owner):
         user / ".zsh_history",
         user / ".config" / "fish" / "fish_variables",
         user / "notes" / ".profile.bak",
+        pc / LOOPS_ROOT / "ab12cd34" / "findings" / "cycle_001.json",
+        pc / LOOPS_ROOT / "ab12cd34" / "questions.json",
+        pc / LOOPS_ROOT / "ab12cd34" / "FINDINGS.md",
+        pc / LOOPS_ROOT / "ab12cd34" / "planner" / "plan_steps.json",
+        repo / "brief.md",
     ):
         assert owner_only.kind_of(path) == "", path
 

@@ -7,11 +7,8 @@ TASK: {{task_title}}{% if task_description %}
 Action plan:
 {{plan}}{% endif %}{% if criteria %}
 Done when:
-{{criteria}}{% endif %}{% if guidance %}
+{{criteria}}{% endif %}
 
-USER STEERING FOR THIS TASK — apply it:
-{{guidance}}{% endif %}
-
-ALSO: if {{loop_dir}}/guidance_{{task_id}}.txt exists (a steer arriving mid-run), read it — the user's steering for THIS task — apply it, then delete the file.
+A steer from the user for THIS task arrives in a cycle's message, headed USER STEERING: apply it. Its file in the loop's own folder is the gateway's; leave it be.
 
 Mark the task in_progress now (task_update {{task_id}} in_progress). Implement it end-to-end in this checkout, validate its done-conditions, then mark it done (task_update {{task_id}} done).{% if outside_rule %} {{outside_rule}}{% endif %} Before you end the turn you MUST write {{finding_file}} (next sequential N) with {cycle, stage, task_id, summary, key_insight, files_touched, evidence}. Write real code with your file tools; end the turn.
