@@ -467,6 +467,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/learning/proposals/{id}` — dismiss it, and REMEMBER the decision.
 - `GET /api/learning/proposals/{id}` — one full record, its words masked (`proposals.shown`).
 - `POST /api/learning/proposals/{id}/accept` — install it.
+- `GET /api/learning/proposals/{id}/review` — what a proposal's panel reads.
 - `GET /api/learning/staging/week` — the week-at-a-glance capture panel.
 - `GET /api/learning/summary` — the learning summary block.
 - `GET /api/legibility/always-on` — what every session receives, with provenance.

@@ -28,6 +28,7 @@ would make the gate decorative.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiohttp import web
@@ -62,6 +63,21 @@ def _enabled() -> bool:
         # a hidden queue looks like an empty one and proposals then accumulate unseen.
         logger.debug("learning config unreadable; treating the surface as enabled", exc_info=True)
         return True
+
+
+#: What a proposal's card and panel say while learning is off: nothing here can decide it.
+LEARNING_OFF = "Learning is off, so this can't be decided here."
+
+
+def _disabled() -> web.Response:
+    """The 404 a proposal's detail, review, accept and reject answer while learning is off."""
+    return json_error("learning_disabled", message=LEARNING_OFF, status=404)
+
+
+def _gone() -> web.Response:
+    """The 404 for a proposal that is no longer waiting, or one this caller doesn't read: the
+    same answer either way, so the refusal confirms nothing."""
+    return json_error("learning_proposal_gone", status=404)
 
 
 def _actor(request: web.Request) -> str:
@@ -232,7 +248,7 @@ async def api_learning_proposal(request: web.Request) -> web.Response:
     actually reads before accepting. An app reads only a proposal from a conversation it started.
     """
     if not _enabled():
-        return web.json_response({"error": "learning is disabled"}, status=404)
+        return _disabled()
 
     from personalclaw.learning import proposals as store
 
@@ -240,8 +256,37 @@ async def api_learning_proposal(request: web.Request) -> web.Response:
     # Another chat's proposal is no proposal to an app: the same answer as an id never filed, so
     # the refusal confirms nothing.
     if prop is None or not _reads(request, prop.session_key):
-        return web.json_response({"error": "not found"}, status=404)
+        return _gone()
     return web.json_response(store.shown(prop))
+
+
+async def api_learning_proposal_review(request: web.Request) -> web.Response:
+    """GET /api/learning/proposals/{id}/review — what a proposal's panel reads.
+
+    Its card's lines, why it was proposed (only what its producer wrote), the thing itself by
+    type, where it came from, and what Accept and Reject do, worked out at this read
+    (``learning.review.review_for``). ``?capture=<uid>`` serves that one capture of a captures
+    batch whole. Read-only: no write, no model call, no listener. Only you read it: an app's token
+    is refused (403 ``learning_review_owner_only``), since only you decide a proposal.
+    """
+    if not _enabled():
+        return _disabled()
+    if request.get("app"):
+        return json_error("learning_review_owner_only", status=403)
+
+    from personalclaw.learning import proposals as store
+    from personalclaw.learning import review
+
+    prop = store.get(request.match_info.get("id", ""))
+    if prop is None or not _reads(request, prop.session_key):
+        return _gone()
+    capture = str(request.query.get("capture", "") or "")
+    try:
+        body = await asyncio.to_thread(review.review_for, prop, capture=capture)
+    except Exception:
+        logger.warning("learning review of %s could not be built", prop.id, exc_info=True)
+        return json_error("learning_proposal_unreadable", status=500)
+    return web.json_response(body)
 
 
 async def api_learning_proposal_accept(request: web.Request) -> web.Response:
@@ -262,7 +307,7 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
     accepted". A 200 for a change that did not happen is the one answer this route must never give.
     """
     if not _enabled():
-        return web.json_response({"error": "learning is disabled"}, status=404)
+        return _disabled()
 
     from personalclaw.learning import proposals as store
 
@@ -285,13 +330,10 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
         # A missing row is a 404; a refused actor is a 403; a kind with no installer is a 409.
         # Collapsing them would report a permission decision as a typo, or an unbuilt installer as
         # a permission wall someone would go hunting for the setting to open.
-        if isinstance(exc, store.NoProposalInstallerError):
-            status = 409
-        elif message.startswith("no proposal"):
-            status = 404
-        else:
-            status = 403
         _audit(request, "learning.proposal_accept", "rejected", f"{pid}:{message}")
+        if message.startswith("no proposal"):
+            return _gone()
+        status = 409 if isinstance(exc, store.NoProposalInstallerError) else 403
         return web.json_response({"error": message}, status=status)
     # A template change was applied before its decision was recorded (`learning.template_diff`),
     # so an accept that answers 200 is one that landed.
@@ -310,14 +352,14 @@ async def api_learning_proposal_reject(request: web.Request) -> web.Response:
     stop accumulating.
     """
     if not _enabled():
-        return web.json_response({"error": "learning is disabled"}, status=404)
+        return _disabled()
 
     from personalclaw.learning import proposals as store
 
     pid = request.match_info.get("id", "")
     actor = _actor(request)
     if store.get(pid) is None:
-        return web.json_response({"error": "not found"}, status=404)
+        return _gone()
     ok = store.reject(pid, actor=actor)
     _audit(request, "learning.proposal_reject", "ok" if ok else "rejected", pid)
     if not ok:
@@ -718,5 +760,6 @@ def register_learning_routes(app: web.Application) -> None:
     app.router.add_post("/api/learning/identity-report", api_learning_identity_report_deliver)
     app.router.add_get("/api/learning/proposals", api_learning_proposals)
     app.router.add_get("/api/learning/proposals/{id}", api_learning_proposal)
+    app.router.add_get("/api/learning/proposals/{id}/review", api_learning_proposal_review)
     app.router.add_post("/api/learning/proposals/{id}/accept", api_learning_proposal_accept)
     app.router.add_delete("/api/learning/proposals/{id}", api_learning_proposal_reject)

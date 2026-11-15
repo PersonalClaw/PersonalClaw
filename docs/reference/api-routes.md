@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **973 registrations** over **788 distinct paths** — 966 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **974 registrations** over **789 distinct paths** — 967 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -50,13 +50,13 @@ The 134 families the surface divides into, largest first.
 | `/api/notifications` | 11 | 8 |
 | `/api/prompts` | 11 | 7 |
 | `/api/auth` | 10 | 10 |
+| `/api/learning` | 10 | 8 |
 | `/api/lexicon` | 10 | 6 |
 | `/api/model-providers` | 10 | 8 |
 | `/api/rooms` | 10 | 8 |
 | `/api/browse` | 9 | 7 |
 | `/api/doctor` | 9 | 9 |
 | `/api/evals` | 9 | 9 |
-| `/api/learning` | 9 | 7 |
 | `/api/security` | 9 | 9 |
 | `/api/agent-marketplace` | 8 | 5 |
 | `/api/devices` | 7 | 7 |
@@ -161,7 +161,7 @@ The 134 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 966 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 967 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -626,6 +626,7 @@ The 966 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/learning/proposals/{id}` | dismiss it, and REMEMBER the decision. |
 | `GET` | `/api/learning/proposals/{id}` | one full record, its words masked (`proposals.shown`). |
 | `POST` | `/api/learning/proposals/{id}/accept` | install it. |
+| `GET` | `/api/learning/proposals/{id}/review` | what a proposal's panel reads. |
 | `GET` | `/api/learning/staging/week` | the week-at-a-glance capture panel. |
 | `GET` | `/api/learning/summary` | the learning summary block. |
 | `GET` | `/api/legibility/always-on` | what every session receives, with provenance. |

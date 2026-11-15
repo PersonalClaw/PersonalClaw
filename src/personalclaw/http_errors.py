@@ -413,6 +413,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # 409 (handlers/learning.py — POST /api/learning/proposals/{id}/accept): the install ran and
     # was refused (a taken name, a store that refused the write); the message is the reason,
     # nothing changed, and the proposal is still waiting.
+    # 404 (handlers/learning.py — a proposal's detail, review, accept and reject): it is no longer
+    # waiting (decided or ended somewhere else), or this caller doesn't read it.
+    "learning_proposal_gone": ("It is no longer waiting: it was decided or ended somewhere else."),
+    # 500 (GET /api/learning/proposals/{id}/review): the review could not be built from the record.
+    "learning_proposal_unreadable": "This proposal's review could not be read.",
+    # 403 (same route): only you decide a proposal, so only you read its review.
+    "learning_review_owner_only": ("Only you read a proposal's review; an app's token may not."),
     "learning_proposal_not_installed": (
         "It could not be installed, so nothing changed and the proposal is still waiting."
     ),

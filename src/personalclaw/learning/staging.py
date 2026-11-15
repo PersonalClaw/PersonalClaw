@@ -394,6 +394,15 @@ class StagingStore:
             )
             return cur.rowcount if cur.rowcount and cur.rowcount > 0 else len(ids)
 
+    def content_for(self, uid: str) -> str | None:
+        """The text of the capture *uid*, or ``None`` once it is no longer kept (pruned): what a
+        captures review shows when you open one capture whole."""
+        if not uid:
+            return None
+        with self._cursor() as cur:
+            row = cur.execute("SELECT content FROM staging WHERE uid = ?;", (str(uid),)).fetchone()
+        return str(row[0]) if row is not None else None
+
     def sources_for(self, uids: list[str]) -> list[dict[str, Any]]:
         """The captures a compiled proposal names (its ``staging_refs``), by their identities,
         which are theirs in every home a capture and its proposal reach."""
