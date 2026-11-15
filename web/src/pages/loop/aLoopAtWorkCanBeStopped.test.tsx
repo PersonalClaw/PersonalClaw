@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, within, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { Loop, WorkBoard, WorkRow } from '../../lib/api'
+import type { Loop, WorkRow } from '../../lib/api'
 import { resetDataStore } from '../../lib/data'
 
 // ── A loop at work can be stopped from wherever it shows as working ────────────────────────────
@@ -122,35 +122,15 @@ describe('the Code list', () => {
   })
 })
 
-describe('a project\'s Work board', () => {
+// The work board's Stop on a working loop's row retired with `WorkBoardColumn` (PROJ PR 4): a loop at
+// work is never a row with nothing to click, since the project page's Running now card opens its work
+// (`aRunningCardOpensItsWork.test.tsx`), and the loop's own page keeps its Stop (the blocks above).
+describe('a project\'s work rows', () => {
   const row = (over: Partial<WorkRow>): WorkRow => ({
     run_id: 'c0ffee01', title: 'Digest titles', state: 'working', source: 'loop', kind: 'code', origin: 'manual',
     project_id: 'p-1', claim: null, collapsed: false, attention: false, resumable: false, outcome: '',
     updated_at: '', ...over,
   })
-  const board = (rows: WorkRow[]): WorkBoard => ({
-    board: [{ state: 'working', count: rows.length, attention: 0, rows }],
-    sections: [{ name: 'loops', items: [], status: 'ok', error: '', loadedAt: 0 }],
-    completeness: 'complete', attention: 0, loadedAt: 0,
-  })
-
-  it('a loop working there opens on its page and can be stopped from its row', async () => {
-    const { WorkBoardColumn } = await import('../projects/ProjectsSection')
-    const onOpen = vi.fn()
-    const onStop = vi.fn()
-    const working = row({})
-    render(<WorkBoardColumn work={board([working, row({ run_id: 'run-7', title: 'Nightly digest', source: 'run', kind: '' })])}
-      loading={false} onResume={() => {}} onOpen={onOpen} onStop={onStop} />)
-
-    await userEvent.click(screen.getByRole('button', { name: 'Digest titles' }))
-    expect(onOpen).toHaveBeenCalledWith(working)
-    const card = screen.getByRole('button', { name: 'Digest titles' }).parentElement!
-    await userEvent.click(within(card).getByRole('button', { name: /^stop$/i }))
-    expect(onStop).toHaveBeenCalledWith(working)
-    const run = screen.getByRole('button', { name: 'Nightly digest' }).parentElement!
-    expect(within(run).queryByRole('button', { name: /^stop$/i }), 'a run row offered the loop Stop').toBeNull()
-  })
-
   it('each row opens where its own page is', async () => {
     const { workRoute } = await import('../projects/ProjectWorkRow')
     expect(workRoute(row({}))).toBe('code/c0ffee01')

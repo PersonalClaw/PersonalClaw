@@ -482,21 +482,26 @@ describe('the disclosures whose toggle arrives as a PROP', () => {
   })
 
   /** Prop-passed toggles that are SETTINGS, classified: they reveal nothing, so they take no
-   *  `aria-expanded`, and announce their state with `aria-pressed` (HeaderControl's `active`) and a
-   *  label that names it. [file, the setter, the pressed state, the state-naming label].
+   *  `aria-expanded`, and announce their state in their label, a label that names it, and, when the
+   *  control is a header button, with `aria-pressed` (HeaderControl's `active`). [file, the setter, the
+   *  pressed state or '' for a "…" row, the state-naming label].
    *
    *  🪤 The project's default read as announced only by an unrelated `aria-expanded` in its file, its
    *  New menu's, until that menu moved into the header's cluster. The file-level read below cannot
-   *  tell the two apart, so it is classified here, with its own proof. */
+   *  tell the two apart, so it is classified here, with its own proof. On the project's page (PROJ PR
+   *  4) the default is a row of the header's "…", which draws a label and no check or pressed state
+   *  (`OverflowRow`), so the label alone says it: "Make default project", "Default project" while it
+   *  is. */
   const PROP_SETTINGS: [string, string, string, string][] = [
-    ['projects/ProjectsSection.tsx', 'DefaultProject', 'active={isDefault}', "label={isDefault ? 'Default project' : 'Make default'}"],
+    ['projects/ProjectPage.tsx', 'DefaultProject', '', "label={isDefault ? 'Default project' : 'Make default project'}"],
   ]
 
   for (const [rel, setter, pressed, label] of PROP_SETTINGS) {
-    it(`${rel}'s set${setter} announces its state as pressed, with a label that names it`, () => {
+    it(`${rel}'s set${setter} announces its state ${pressed ? 'as pressed, ' : ''}with a label that names it`, () => {
       const src = read(rel)
       expect(src, 'the toggle must still be there').toMatch(new RegExp(`set${setter}\\(`))
-      expect(src, 'its control is pressed while the setting is on').toContain(pressed)
+      if (pressed) expect(src, 'its control is pressed while the setting is on').toContain(pressed)
+      else expect(src, 'a "…" row draws no pressed state, so it claims none').not.toContain('active={isDefault}')
       expect(src, 'and its label says which').toContain(label)
     })
   }

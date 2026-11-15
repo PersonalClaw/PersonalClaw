@@ -152,10 +152,11 @@ describe('§3 one wire value, one word', () => {
     ).toEqual([])
   })
 
-  it('the board still groups by the state this is a label for (the vacuity floor)', () => {
-    // A label map is only a coherence surface while something renders from it.
-    const src = codeOf(join(SRC, 'pages/projects/ProjectsSection.tsx'))
-    expect(src).toMatch(/WORK_STATE_LABEL\[/)
+  it('a project page still names its group by the state this is a label for (the vacuity floor)', () => {
+    // A label map is only a coherence surface while something renders from it. The work board's
+    // state groups left with the board (PROJ PR 4); a project's page names its Needs you group by it.
+    const src = codeOf(join(SRC, 'pages/projects/ProjectLive.tsx'))
+    expect(src).toMatch(/WORK_STATE_LABEL\.needs_input/)
     expect(Object.keys(WORK_STATE_LABEL).sort())
       .toEqual(['done', 'needs_input', 'queued', 'review', 'suspended', 'working'])
   })

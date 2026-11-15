@@ -3854,6 +3854,8 @@ export interface ManualGatePlan { enforced?: string[]; bypassed?: string[]; dry_
 // for it — the FE must not re-derive either, or the two will disagree about what is safe to accept.
 export interface LearningRow {
   id: string; kind: string; title: string; provenance: string
+  /** The project a project-context proposal changes, "" for every other kind. */
+  project_id?: string
   source_cadence: string; source_excerpt: string
   // `evidence_strength` is WHICH KIND of evidence the refs are — anecdotal / correlated / causal /
   // ablation. The count alone cannot tell a measured on/off ablation (the ablation
@@ -11333,6 +11335,9 @@ export const api = {
   // the gateway resolved it (`HeldBack.folder`, an Inbox request's `refs.dir`).
   trustProjectFolder: (dir: string) =>
     post<{ dir: string; trusted: boolean; decided_at: string }>('/api/guardrails/project-trust', { dir, trusted: true }),
+  // Stop trusting it: the folder is back in Preview, where an automation working in it only reads.
+  distrustProjectFolder: (dir: string) =>
+    post<{ dir: string; trusted: boolean; decided_at: string }>('/api/guardrails/project-trust', { dir, trusted: false }),
   // The secrets vault. The READ carries presence, scope and consumer links and NEVER a
   // value: `/api/secrets` has no code path to one (the server builds its rows from key names
   // only). So there is deliberately no `getSecret(name)` here — not "we chose not to add it",

@@ -111,4 +111,10 @@
   - option "New project Action"
   - option "Import a project Action"
   - option "All loops Go to"
+  - option "New goal loop in a project Open a project to use this. Action" [disabled]
+  - option "New task in a project Open a project to use this. Action" [disabled]
+  - option "Edit a project's brief Open a project to use this. Action" [disabled]
+  - option "Edit a project's instructions Open a project to use this. Action" [disabled]
+  - option "Open a project's folder Open a project to use this. Action" [disabled]
+  - option "What a new chat in a project is told Open a project to use this. Action" [disabled]
 - text: navigate select Ctrl+K or Ctrl+Shift+P toggle

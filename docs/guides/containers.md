@@ -94,8 +94,8 @@ The workspace is `/data/workspace`: the image sets `PERSONALCLAW_WORKSPACE` to i
 so does compose. The default chat workspace lives there, and the folder picker opens
 there, so a project folder created with **New folder here** lands on the volume. `/data`
 is the only volume, so a folder you bind anywhere else — `/home/personalclaw`, `/tmp` —
-exists only inside that container and is gone when it is recreated. The project page
-then says the folder no longer exists, and **Change** binds a new one.
+exists only inside that container and is gone when it is recreated. The project's page
+then says the folder is missing and where it was, and About this project binds a new one.
 
 The volume also holds the Python packages installed apps bring: the image's own environment
 (`/opt/venv`) is read-only to the gateway's user, so an app's `pythonDependencies`

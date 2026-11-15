@@ -216,6 +216,10 @@ class Row:
     #: Evidence only: `bulk_acceptable` does not consult it either, and a `regressed` verdict
     #: leaves the row exactly as acceptable as it was.
     replay: dict[str, Any] = field(default_factory=dict)
+    #: The project a project-context proposal changes (its target's project), "" for every other
+    #: kind. A project's page counts the instruction changes proposed for it ("1 change proposed"
+    #: under About › Instructions) by this, so it never reads the target's encoding itself.
+    project_id: str = ""
 
     @property
     def renderable(self) -> bool:
@@ -267,6 +271,7 @@ class Row:
             "replay": dict(self.replay),
             "renderable": self.renderable,
             "bulk_acceptable": self.bulk_acceptable,
+            "project_id": self.project_id,
         }
 
 
@@ -282,8 +287,12 @@ def row_from_proposal(prop: Any, *, risk_tier: str = "") -> Row:
     """
     tier = risk_tier or "review"
     from personalclaw.evals import gate as gate_lib
+    from personalclaw.learning import project_context_review
     from personalclaw.learning import replay as replay_lib
     from personalclaw.security import redact_for_display
+
+    kind = str(getattr(prop, "kind", "") or "")
+    target = str(getattr(prop, "target", "") or "")
 
     return Row(
         id=str(getattr(prop, "id", "") or ""),
@@ -314,6 +323,11 @@ def row_from_proposal(prop: Any, *, risk_tier: str = "") -> Row:
         # ABSENT report becomes an honest `unreplayed` + reason, and a null mean stays null
         # rather than being coerced to 0.0 at the last hop before the screen.
         replay=replay_lib.summary(getattr(prop, "replay", None)),
+        project_id=(
+            project_context_review.project_of_target(target)
+            if kind in project_context_review.PROJECT_KINDS
+            else ""
+        ),
     )
 
 

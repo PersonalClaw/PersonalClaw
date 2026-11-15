@@ -1,3 +1,4 @@
+import { isStagedNewChat } from '../lib/newChatHandoff'
 import { isStagedWidgetNonce } from '../ui/widget/stagedAction'
 
 /** State a link names in its own words, written in the words the chat reads.
@@ -70,7 +71,11 @@ export function showsNewThread(route: string, sub: string): boolean {
  *    (`MissingChat`), so what is sent from it says so;
  *  - `attach`: `<ref>[,<ref>]` (`lib/itemRef.ts`), library items the composer holds as chips on a
  *    new chat or a chat you were in. They are attached, never sent: the person sends them, or
- *    takes them out. Read together with `project`, and with a draft that already has text. */
+ *    takes them out. Read together with `project`, and with a draft that already has text;
+ *  - `start`: the token of a draft a project's start box staged in memory (`lib/newChatHandoff`),
+ *    which the new chat in that project takes once and sends. Like `widget_action`, no use without
+ *    the stage, and written only for the staged draft's own token. Never with `attach`: an address
+ *    that names both is read as attaching, with no `start`. */
 export interface ChatLaunch {
   seed: string
   agent: string
@@ -80,31 +85,36 @@ export interface ChatLaunch {
   fromWidget: boolean
   /** The refs, in the link's order, each once. */
   attach: string[]
+  /** The staged draft's token, '' when the address names none or attaches. */
+  start: string
 }
 
 /** The most refs one link attaches; the rest are said as not attached. */
 export const MAX_LINK_ATTACH = 20
 
-const LAUNCH_KEYS = { seed: 'seed', agent: 'agent', widgetAction: 'widget_action', project: 'project', fromWidget: 'from_widget', attach: 'attach' } as const
+const LAUNCH_KEYS = { seed: 'seed', agent: 'agent', widgetAction: 'widget_action', project: 'project', fromWidget: 'from_widget', attach: 'attach', start: 'start' } as const
 
 /** The launch keys `query` names, each '' (or no refs) when it names none. The one reader of them. */
 export function readChatLaunch(query: Record<string, string> | undefined): ChatLaunch {
   const q = query ?? {}
   const word = (key: string) => (typeof q[key] === 'string' ? q[key] : '')
+  const attach = [...new Set(word(LAUNCH_KEYS.attach).split(',').map((r) => r.trim()).filter(Boolean))]
   return {
     seed: word(LAUNCH_KEYS.seed),
     agent: word(LAUNCH_KEYS.agent),
     widgetAction: word(LAUNCH_KEYS.widgetAction),
     project: word(LAUNCH_KEYS.project),
     fromWidget: word(LAUNCH_KEYS.fromWidget) === '1',
-    attach: [...new Set(word(LAUNCH_KEYS.attach).split(',').map((r) => r.trim()).filter(Boolean))],
+    attach,
+    start: attach.length ? '' : word(LAUNCH_KEYS.start),
   }
 }
 
 /** The address of a chat that starts from `launch`: `chat/<session>` when it names one, else a new
  *  chat (`chat/new`), with each key it names. The one writer of them: every page that opens a chat
  *  with something to start from builds its address here. `widgetAction` is written only when it is
- *  the staged turn's own nonce, so no caller can hand a chat a nonce the owner did not stage. */
+ *  the staged turn's own nonce, so no caller can hand a chat a nonce the owner did not stage, and
+ *  `start` only when it is the staged draft's own token, and never beside `attach`. */
 export function chatLaunchPath(launch: Partial<ChatLaunch> & { session?: string }): string {
   // Each value written as the pages that built a chat's address by hand wrote it (`encodeURIComponent`,
   // a space as `%20`), so a draft's address reads as it did.
@@ -115,6 +125,7 @@ export function chatLaunchPath(launch: Partial<ChatLaunch> & { session?: string 
   if (launch.project) qs.set(LAUNCH_KEYS.project, launch.project)
   if (launch.fromWidget) qs.set(LAUNCH_KEYS.fromWidget, '1')
   if (launch.attach?.length) qs.set(LAUNCH_KEYS.attach, launch.attach.join(','))
+  else if (isStagedNewChat(launch.start)) qs.set(LAUNCH_KEYS.start, launch.start)
   const q = [...qs].map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
   const at = launch.session ? `chat/${encodeURIComponent(launch.session)}` : 'chat/new'
   return q ? `${at}?${q}` : at

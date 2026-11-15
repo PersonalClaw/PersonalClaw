@@ -34,6 +34,7 @@ import { api } from '../lib/api'
 import { reportingWrite } from './reportingWrite'
 import { CommandPalette, keymapCommands, type Command } from './CommandPalette'
 import { THREAD_NUMBERS, useBoundRunner, useKeyBinding, type CommandId } from './keymap'
+import { useOpenProjectPage } from './projectPageActions'
 import { useRailFocus } from './railFocus'
 import { nextNeedsYouRoute, unreadNeedsYou } from './globalKeys'
 import { readNeedsYou } from '../lib/useNeedsYou'
@@ -632,6 +633,8 @@ function AppInner() {
   // ⌘⇧E's runner is the open chat's, which shows and hides its working folder (`chat/panes`); the
   // palette runs it while a chat is open and lists it dimmed elsewhere.
   const chatTree = useBoundRunner('workspace-tree')
+  // ⌘N focuses a project's start box while its page is open (`projectPageActions`), else opens a new chat.
+  const projectPage = useOpenProjectPage()
   const keyRunners: Partial<Record<CommandId, () => void>> = {
     sidebar: toggleNav,
     drawer: toggleDrawer,
@@ -641,7 +644,7 @@ function AppInner() {
     'workspace-tree': chatTree,
     'next-needs-you': goNeedsYou,
     'mark-all-read': markAllRead,
-    'new-chat': () => navigate('chat/new'),
+    'new-chat': projectPage ? projectPage.startChat : () => navigate('chat/new'),
     ...Object.fromEntries(THREAD_NUMBERS.map((n) => [`chat-${n}`, () => goThread(n)])),
   }
   useKeyBinding('sidebar', () => keyRunners.sidebar?.())

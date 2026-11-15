@@ -1,60 +1,34 @@
-/** The Work board's Resume resumes the work and opens it.
+/** Up next's Resume resumes the work and opens it.
  *
  *  It navigated to `#/loop/<id>` for every row. `#/loop` is the loop COMPOSER, which ignores the
  *  id, so Resume on a suspended run or a paused loop opened an empty "new loop" form and resumed
- *  nothing. A row now says what it is (`source`, and a loop's `kind`); Resume performs the SAME
- *  resume the item's own page offers, then opens that page.
+ *  nothing. A row says what it is (`source`, and a loop's `kind`); Resume performs the SAME resume
+ *  the item's own page offers, then opens that page. (The old work board's Resume moved to a
+ *  project page's Up next, PROJ PR 4.)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { api, type ProjectItem, type WorkBoard, type WorkRow } from '../../lib/api'
+import { api } from '../../lib/api'
 import { resetDataStore } from '../../lib/data'
-import { ProjectsSection } from './ProjectsSection'
+import { board, mountPage, navigate, workRow } from '../../test/projectPageHarness'
 
-const PROJECT_ID = 'p-work'
+const BOARD = board([
+  workRow('run-42', 'Nightly digest', { state: 'suspended', source: 'run', kind: '' }),
+  workRow('loop-7', 'Refactor the parser', { state: 'suspended', source: 'loop', kind: 'code' }),
+  workRow('loop-9', 'Grow the newsletter', { state: 'suspended', source: 'loop', kind: 'goal' }),
+], [{ name: 'runs', items: [], status: 'ok', error: '', loadedAt: 0 }])
 
-function row(over: Partial<WorkRow>): WorkRow {
-  return {
-    run_id: 'x', title: 'x', state: 'suspended', source: 'run', kind: '', origin: 'manual', project_id: PROJECT_ID,
-    claim: null, collapsed: false, attention: false, resumable: true, outcome: '', updated_at: '', ...over,
-  }
-}
-
-const BOARD: WorkBoard = {
-  board: [{
-    state: 'suspended', count: 3, attention: 0, rows: [
-      row({ run_id: 'run-42', title: 'Nightly digest', source: 'run' }),
-      row({ run_id: 'loop-7', title: 'Refactor the parser', source: 'loop', kind: 'code' }),
-      row({ run_id: 'loop-9', title: 'Grow the newsletter', source: 'loop', kind: 'goal' }),
-    ],
-  }],
-  sections: [{ name: 'runs', items: [], status: 'ok', error: '', loadedAt: 0 }],
-  completeness: 'complete', attention: 0, loadedAt: 0,
-}
-
-const navigate = vi.fn()
-
-function mount() {
-  const project: ProjectItem = { id: PROJECT_ID, name: 'Work', status: 'active', brief: '', context_dir: '/tmp/ctx' }
-  vi.spyOn(api, 'project').mockResolvedValue(project)
-  vi.spyOn(api, 'taskLists').mockResolvedValue([])
-  vi.spyOn(api, 'projectWork').mockResolvedValue(BOARD)
-  vi.spyOn(api, 'personalclawConfig').mockResolvedValue({ legibility: { context_adapters: false } } as Awaited<ReturnType<typeof api.personalclawConfig>>)
-  vi.spyOn(api, 'projectSettings').mockResolvedValue({ default_project_id: '', pinned_project_ids: [] })
-  render(<ProjectsSection sub={PROJECT_ID} navigate={navigate} navEpoch={0} query={{}} setQuery={() => {}} />)
-}
+const mount = () => mountPage({ board: BOARD })
 
 beforeEach(() => { localStorage.clear(); sessionStorage.clear(); resetDataStore(); navigate.mockReset() })
-afterEach(() => { vi.restoreAllMocks(); resetDataStore() })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); resetDataStore() })
 
 async function resumeRow(title: string) {
-  const label = await screen.findByText(title)
-  const card = label.closest('div')!
-  await userEvent.click(within(card).getByRole('button', { name: /Resume/ }))
+  await userEvent.click(await screen.findByRole('button', { name: `Resume: ${title}` }))
 }
 
-describe('Resume on the Work board', () => {
+describe("Resume in a project's Up next", () => {
   it('🔑 a suspended run is resumed through the run API and opens on its run page', async () => {
     const resume = vi.spyOn(api, 'resumeWorkflowRun').mockResolvedValue({ resumed: true })
     mount()

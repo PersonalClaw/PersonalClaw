@@ -19,7 +19,7 @@ const TRUST_WORDS = 'An automation that works in this folder then gets the write
  *  Shown where a folder's Preview is said: the panel of a trigger it holds back (`HeldBackNote`) and
  *  the Inbox request the folder raised on its first such run. Until this control existed that
  *  request asked "Trust this project folder?" and offered nothing to answer it with. */
-export function TrustFolderButton({ folder, onTrusted, busy = false, inline = false }: {
+export function TrustFolderButton({ folder, onTrusted, busy = false, inline = false, className }: {
   /** The folder as the gateway resolved it (`HeldBack.folder`, a request's `refs.dir`). */
   folder: string
   onTrusted: () => void
@@ -28,6 +28,9 @@ export function TrustFolderButton({ folder, onTrusted, busy = false, inline = fa
    *  than in a dialog: for a card in a list that holds still (Needs you). The button is a touch target
    *  there and never moves, and every press of it only asks again. Its other callers keep the dialog. */
   inline?: boolean
+  /** The button's own box, for a host that needs it larger: a project's page passes
+   *  `TOUCH_TARGET`, its 44 px box from 320 to 768 px. */
+  className?: string
 }) {
   const [trusting, setTrusting] = useState(false)
   const [asking, setAsking] = useState(false)
@@ -50,7 +53,7 @@ export function TrustFolderButton({ folder, onTrusted, busy = false, inline = fa
   }
   const button = (
     <Button variant="secondary" size="sm" onClick={trust} loading={trusting} disabled={busy} disabledReason={BUSY_REASON}
-      className={inline ? TOUCH_TARGET : undefined}>
+      className={[inline ? TOUCH_TARGET : '', className ?? ''].filter(Boolean).join(' ') || undefined}>
       Trust this folder
     </Button>
   )

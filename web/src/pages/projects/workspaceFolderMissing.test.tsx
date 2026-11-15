@@ -1,92 +1,67 @@
-/** A project whose workspace folder no longer exists SAYS SO on the project page.
+/** A project whose folder no longer exists SAYS SO on the project's page.
  *
- *  Measured on the container image: a project bound to a folder created at the picker's
- *  old starting point, `/home/personalclaw/garden-planner`, lost it on `docker rm` + `docker run`
- *  — only `/data` is a volume — and the project page went on showing
- *  `WORKSPACE /home/personalclaw/garden-planner` with Change and × beside it, exactly as it looked
- *  when the folder was there. Nothing said it was gone; the user found out when work in it failed.
- *  The same happens on any install when a repo is moved or deleted.
+ *  Measured on the container image: a project bound to a folder created at the picker's old starting
+ *  point lost it on `docker rm` + `docker run` (only `/data` is a volume), and the project page went on
+ *  showing the path with Change beside it, exactly as it looked when the folder was there. Nothing said
+ *  it was gone; the user found out when work in it failed. The same happens on any install when a repo
+ *  is moved or deleted.
  *
- *  So the page asks browse-dirs, and a 404 — only a 404 — becomes a visible, announced line that
- *  names the folder and says what to do. The chip also stops offering to open the folder, since
- *  both "view contents" and "Open in Files" would open a path that is not there.
+ *  So the page asks browse-dirs, and a 404, only a 404, is "missing": the header's chip reads "Folder
+ *  missing" and About › Folder says where it was and what to do, with Choose another folder and Remove
+ *  folder, and offers no Open and no tree, which would open a path that is not there. A 403 is a folder
+ *  that may well be there: it is never called missing, and says it could not be read.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { api, ApiError, type ProjectItem, type WorkBoard } from '../../lib/api'
-import { ProjectsSection } from './ProjectsSection'
+import { api } from '../../lib/api'
+import { resetDataStore } from '../../lib/data'
+import { mountPage, PID, project } from '../../test/projectPageHarness'
 
-const PROJECT_ID = 'p-eae77a55'
-const DEAD = '/home/personalclaw/garden-planner'
-const EMPTY_WORK: WorkBoard = { board: [], sections: [], completeness: 'complete', attention: 0, loadedAt: 0 }
+const DIR = '~/code/garden'
+const garden = () => project(PID, 'Garden', { workspace_dir: DIR, folder: { resolved: '/Users/me/code/garden', trust: 'preview' } })
 
-function mount(browse: () => Promise<unknown>) {
-  const project: ProjectItem = {
-    id: PROJECT_ID,
-    name: 'Garden planner',
-    status: 'active',
-    brief: 'Plan the spring vegetable garden.',
-    workspace_dir: DEAD,
-    context_dir: `/data/projects/${PROJECT_ID}/context`,
-  }
-  vi.spyOn(api, 'project').mockResolvedValue(project)
-  vi.spyOn(api, 'taskLists').mockResolvedValue([])
-  vi.spyOn(api, 'projectWork').mockResolvedValue(EMPTY_WORK)
-  vi.spyOn(api, 'personalclawConfig').mockResolvedValue({
-    legibility: { context_adapters: false },
-  } as Awaited<ReturnType<typeof api.personalclawConfig>>)
-  const browseDirs = vi.spyOn(api, 'browseDirs').mockImplementation(browse as () => ReturnType<typeof api.browseDirs>)
-  render(<ProjectsSection sub={PROJECT_ID} navigate={() => {}} navEpoch={0} query={{}} setQuery={() => {}} />)
-  return browseDirs
-}
+beforeEach(() => { resetDataStore() })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); resetDataStore() })
+
+const folderPart = async () => (await screen.findByRole('heading', { level: 3, name: 'Folder' })).closest('section')!
 
 /** The probe has been asked and answered, so an absent warning is a verdict, not a race. */
-async function settled(browseDirs: ReturnType<typeof vi.spyOn>) {
-  await waitFor(() => expect(browseDirs).toHaveBeenCalledWith(DEAD))
+async function settled() {
+  await waitFor(() => expect(api.browseDirs).toHaveBeenCalledWith(DIR))
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-afterEach(() => { vi.restoreAllMocks() })
-
-describe('the project page and a workspace folder that is gone', () => {
-  it('🔑 says the folder no longer exists, names it, and says what to do', async () => {
-    mount(() => Promise.reject(new ApiError('No such directory', 404)))
-    // The workspace's line, not the threads' loading line beside it.
-    const line = (await screen.findByText(/Folder missing/)).closest('[role="status"]')!
-    expect(line.textContent).toMatch(/Folder missing/)
-    expect(line.textContent).toContain('garden-planner')
-    expect(line.textContent).toContain(`no longer exists at ${DEAD}`)
-    expect(line.textContent).toMatch(/Choose Change to bind a folder that exists/)
-    // The way out is on screen, beside the warning.
-    expect(screen.getByRole('button', { name: 'Change' })).toBeTruthy()
-  })
-
-  it('stops offering to open a folder that is not there', async () => {
-    mount(() => Promise.reject(new ApiError('No such directory', 404)))
-    await screen.findByText(/Folder missing/)
-    // The path is still SHOWN (it is the thing that is wrong), but no longer as a peek button, and
-    // "Open Workspace in Files" is gone — both would open the dead path.
-    expect(screen.getAllByText(DEAD).some((el) => el.tagName === 'CODE')).toBe(true)
-    expect(screen.queryByRole('button', { name: DEAD })).toBeNull()
-    expect(screen.queryByRole('button', { name: /Open Workspace in Files/i })).toBeNull()
-    // Unbind stays: it is one of the two ways out.
-    expect(screen.getByRole('button', { name: /Unbind Workspace/i })).toBeTruthy()
+describe("the project's page and a folder that is gone", () => {
+  it('🔑 says the folder is missing, where it was, and what to do', async () => {
+    mountPage({ project: garden(), folder: 404 })
+    expect(await screen.findByText('Folder missing')).toBeTruthy()
+    const part = await folderPart()
+    await waitFor(() => expect(part.textContent).toContain(`This folder is missing. It was at ${DIR}. Restore it there, or choose another.`))
+    expect(within(part).getByRole('button', { name: 'Choose another folder' })).toBeTruthy()
+    expect(within(part).getByRole('button', { name: 'Remove folder' })).toBeTruthy()
+    expect(within(part).queryByRole('button', { name: 'Open' }), 'it offered to open a folder that is not there').toBeNull()
+    expect(screen.queryByRole('button', { name: DIR }), 'the chip still opens the tree').toBeNull()
+    expect(screen.getByText("Garden's folder is missing, so chats here can't open its files. Choose another folder in About this project.")).toBeTruthy()
   })
 
   it('says nothing about a folder that is there, and offers to open it', async () => {
-    const browseDirs = mount(() => Promise.resolve({ path: DEAD, parent: '/home/personalclaw', dirs: [] }))
-    await settled(browseDirs)
-    expect(screen.queryByText(/Folder missing/)).toBeNull()
-    expect(screen.getByRole('button', { name: DEAD })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Open Workspace in Files/i })).toBeTruthy()
+    mountPage({ project: garden(), folder: 'there' })
+    await settled()
+    expect(screen.queryByText('Folder missing')).toBeNull()
+    const part = await folderPart()
+    expect(within(part).getByRole('button', { name: 'Open' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: DIR }), 'the header chip opens the folder beside').toBeTruthy()
   })
 
-  it('does not call a protected or unreadable folder missing', async () => {
-    const browseDirs = mount(() => Promise.reject(new ApiError("Can't open it — permission denied", 403)))
-    await settled(browseDirs)
-    expect(screen.queryByText(/Folder missing/)).toBeNull()
+  it('never calls a protected or unreadable folder missing', async () => {
+    mountPage({ project: garden(), folder: 403 })
+    await settled()
+    expect(screen.queryByText('Folder missing')).toBeNull()
+    const part = await folderPart()
+    await waitFor(() => expect(part.textContent).toContain("PersonalClaw can't read this folder right now. It may still be there."))
+    expect(part.textContent).not.toMatch(/missing/)
   })
 })
 
@@ -100,7 +75,8 @@ describe('both surfaces that ask use the one status-keyed hook', () => {
     expect(cockpit.toLowerCase()).not.toContain(".includes('no such directory')")
   })
 
-  it('the project page asks through the same hook', () => {
-    expect(read('pages/projects/ProjectsSection.tsx')).toContain('useWorkspaceMissing(')
+  it("the project's page asks through the same module, which keeps an unreadable folder apart", () => {
+    expect(read('pages/projects/ProjectPage.tsx')).toContain('useWorkspaceState(')
+    expect(read('lib/useWorkspaceMissing.ts')).toMatch(/return useWorkspaceState\(path, opts\) === 'missing'/)
   })
 })

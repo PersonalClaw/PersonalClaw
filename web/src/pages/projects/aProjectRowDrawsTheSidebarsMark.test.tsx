@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
-import { ProjectThreadRow } from './ProjectThreads'
+import { ProjectThreadRow } from './ProjectThreadRow'
 import { ORB_STATE_OF_PIP } from '../../lib/orbState'
 import { PIP } from '../../ui/ThreadRail'
 import type { Thread, ThreadPip } from '../../lib/useThreads'

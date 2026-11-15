@@ -12,8 +12,13 @@ import { useEditFlag, type RouteProps } from '../../app/useQueryState'
  *  keystroke/-click history); open + edit are Back-undoable destinations → push. */
 export function TasksSection({ sub, navigate, query, setQuery, navEpoch }: RouteProps) {
   const seg = (sub || '').split('/')[0]
-  if (seg === 'new')
-    return <TaskCreatePage onBack={() => navigate('tasks')} onCreated={() => navigate('tasks')} />
+  if (seg === 'new') {
+    // From a project's Tasks view the task starts in that project, and Back, Cancel and Create
+    // return there rather than to All tasks.
+    const pid = query.project || ''
+    const back = () => navigate(pid ? `projects/${encodeURIComponent(pid)}?tab=tasks` : 'tasks')
+    return <TaskCreatePage projectId={pid || undefined} onBack={back} onCreated={back} />
+  }
   return <TaskList navigate={navigate} query={query} setQuery={setQuery} navEpoch={navEpoch} />
 }
 
@@ -30,7 +35,7 @@ export function TaskList({ navigate, query, setQuery, navEpoch, inProject }: Pic
       tag={query.tag || ''}
       editing={editing} setEditing={setEditing}
       inProject={inProject}
-      onCreate={() => navigate('tasks/new')}
+      onCreate={() => navigate(inProject ? `tasks/new?project=${encodeURIComponent(inProject.id)}` : 'tasks/new')}
       // view-mode + status filter are in-place refinements → replace,
       // so toggling List/Board/filter doesn't stack Back-undoable history entries.
       setView={(v) => setQuery({ view: v }, { replace: true })}

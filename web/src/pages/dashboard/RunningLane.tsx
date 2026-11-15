@@ -17,6 +17,11 @@ import { previewLine } from '../../lib/previewText'
 // The lane a project's page draws for its live work (Home shows all of it on its band, "Your agents
 // today", `agents/AgentDay.tsx`). Its `openable()` is every card's press target, Needs you's too.
 //
+// What a card opens is the host's (`opens`): its detail, beside the groups or in their place (the
+// default), or, with `opens="work"`, the work itself at its route. Then the card's row-wide target
+// is named as a work row is ("Code session: Fix the irrigation sensor tests, testing") and the card
+// draws no second Open link, since the whole card is that link (a project's page, PROJ PR 4).
+//
 // Every row is one piece of live work as `GET /api/running` names it (`running_now`): its name, its
 // exact phase as text (the tone only summarises it), what it is doing in the gateway's words, the
 // agent doing it, when it last changed, and the route that opens it. A blocked row (queued for a
@@ -40,6 +45,7 @@ export function RunningLane({
   onOpen,
   selected,
   projectOf,
+  opens = 'detail',
 }: {
   rows: RunningRow[]
   loading: boolean
@@ -54,6 +60,9 @@ export function RunningLane({
   /** The project a row's work is in, by name, for its chip: none for work in no project, or in one
    *  the reader cannot name. */
   projectOf?: (row: RunningRow) => { id: string; name: string } | null
+  /** What a card opens: its detail (`onOpen` with the row), or its work at its route (`onOpen` with
+   *  the row, which the host opens at `row.route`), named as a work row and with no Open link. */
+  opens?: 'detail' | 'work'
 }) {
   const headingId = useId()
   const [all, setAll] = useState(false)
@@ -76,7 +85,7 @@ export function RunningLane({
         </p>
       ) : (
         <ul className="flex min-w-0 flex-col gap-s">
-          {shown.map((r) => <RunningCard key={r.work} row={r} onOpen={onOpen} selected={selected === r.work} project={projectOf?.(r) ?? null} />)}
+          {shown.map((r) => <RunningCard key={r.work} row={r} onOpen={onOpen} selected={selected === r.work} project={projectOf?.(r) ?? null} opens={opens} />)}
         </ul>
       )}
       {rows.length > LARGE_LIST ? (
@@ -142,19 +151,20 @@ export function beganInAControl(e: { target: EventTarget | null; currentTarget: 
  *  that begins in one of the row's own controls (an answer, a link, a field, a second confirmation)
  *  is that control's, and opens nothing (`beganInAControl`): a `Button` stops nothing, so Allow
  *  would otherwise open the panel too and, on a phone, replace the list. */
-export function openable(name: string, onOpen?: () => void, selected = false) {
+export function openable(name: string, onOpen?: () => void, selected = false, label = `Show the details of ${name}`) {
   if (!onOpen) return { props: {}, target: null, className: '' }
   return {
     props: { tabIndex: -1, onClick: (e: React.MouseEvent<HTMLElement>) => { if (!beganInAControl(e)) onOpen() } },
-    target: <RowHitTarget label={`Show the details of ${name}`} selected={selected} />,
+    target: <RowHitTarget label={label} selected={selected} />,
     className: `relative cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary ${selected ? 'ring-1 ring-primary' : ''}`,
   }
 }
 
-function RunningCard({ row, onOpen, selected, project }: {
+function RunningCard({ row, onOpen, selected, project, opens = 'detail' }: {
   row: RunningRow; onOpen?: (row: RunningRow) => void; selected?: boolean
   /** The project its work is in, drawn at the card's top right. */
   project?: { id: string; name: string } | null
+  opens?: 'detail' | 'work'
 }) {
   const nameId = useId()
   const look = phaseOf(row)
@@ -167,7 +177,13 @@ function RunningCard({ row, onOpen, selected, project }: {
     updated ? <span key="updated">{`Updated ${updated}`}</span> : null,
     waiting > 0 ? <span key="waiting" className="text-on-surface">{`${waiting} waiting on you`}</span> : null,
   ].filter((part) => part !== null)
-  const open = openable(previewLine(row.name), onOpen ? () => onOpen(row) : undefined, selected)
+  // Opening the work: its target is named as a work row is, "<kind>: <title>, <phase>", and a card
+  // with no route to open has no target at all.
+  const toWork = opens === 'work'
+  const workName = `${kind || 'Work'}: ${previewLine(row.name)}, ${look.label.toLowerCase()}`
+  const open = toWork
+    ? openable(workName, onOpen && row.route ? () => onOpen(row) : undefined, selected, workName)
+    : openable(previewLine(row.name), onOpen ? () => onOpen(row) : undefined, selected)
   return (
     <li aria-labelledby={nameId} {...open.props}
       className={`flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s ${open.className}`}>
@@ -192,7 +208,7 @@ function RunningCard({ row, onOpen, selected, project }: {
             Updated 14:02". */}
         {meta.flatMap((part, i) => (i > 0 ? [<span key={`dot-${i}`} aria-hidden="true">·</span>, part] : [part]))}
       </div>
-      {row.route ? (
+      {row.route && !toWork ? (
         <TextLink href={row.route} ink="emphasis" size="sm" aria-label={`Open ${rowSubject([previewLine(row.name), kind.toLowerCase() || row.kind])}`}>Open</TextLink>
       ) : null}
     </li>

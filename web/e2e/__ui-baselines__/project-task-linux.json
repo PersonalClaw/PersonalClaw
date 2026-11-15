@@ -1,0 +1,192 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close task\"",
+        "button \"Delete\"",
+        "button \"Edit\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand task\"",
+        "button \"Investigate in chat\"",
+        "button \"New\"",
+        "button \"Post comment\"",
+        "button \"Retry\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\"",
+        "textarea"
+      ],
+      "390": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close task\"",
+        "button \"Delete\"",
+        "button \"Edit\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand task\"",
+        "button \"Investigate in chat\"",
+        "button \"New\"",
+        "button \"Post comment\"",
+        "button \"Retry\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\"",
+        "textarea"
+      ],
+      "412": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close task\"",
+        "button \"Delete\"",
+        "button \"Edit\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand task\"",
+        "button \"Investigate in chat\"",
+        "button \"New\"",
+        "button \"Post comment\"",
+        "button \"Retry\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\"",
+        "textarea"
+      ],
+      "768": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close task\"",
+        "button \"Delete\"",
+        "button \"Edit\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand task\"",
+        "button \"Investigate in chat\"",
+        "button \"Move task\"",
+        "button \"New\"",
+        "button \"Post comment\"",
+        "button \"Retry\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\"",
+        "div[role=separator] \"Resize task — arrow keys to resize\"",
+        "textarea"
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Garden\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatW\" clips at #%: #x# in #x#"
+      ],
+      "focus order": [
+        "focus moves backwards from <button .group.relative.inline-flex> \"Post comment\" to <div .group/handle.absolute.top-#> \"Resize task — arrow keys to resize\""
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close task\"",
+        "button \"Delete\"",
+        "button \"Edit\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand task\"",
+        "button \"Investigate in chat\"",
+        "button \"New\"",
+        "button \"Post comment\"",
+        "button \"Retry\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\"",
+        "textarea"
+      ],
+      "390": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close task\"",
+        "button \"Delete\"",
+        "button \"Edit\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand task\"",
+        "button \"Investigate in chat\"",
+        "button \"New\"",
+        "button \"Post comment\"",
+        "button \"Retry\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\"",
+        "textarea"
+      ],
+      "412": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close task\"",
+        "button \"Delete\"",
+        "button \"Edit\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand task\"",
+        "button \"Investigate in chat\"",
+        "button \"New\"",
+        "button \"Post comment\"",
+        "button \"Retry\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\"",
+        "textarea"
+      ],
+      "768": [
+        "button \"Agent and model: Agent · Auto\"",
+        "button \"Attach files\"",
+        "button \"Back to Projects\"",
+        "button \"Chat preferences\"",
+        "button \"Chat: When to sow the beans\"",
+        "button \"Close task\"",
+        "button \"Delete\"",
+        "button \"Edit\"",
+        "button \"Execution boundary: Normal\"",
+        "button \"Expand task\"",
+        "button \"Investigate in chat\"",
+        "button \"Move task\"",
+        "button \"New\"",
+        "button \"Post comment\"",
+        "button \"Retry\"",
+        "button \"Send message\"",
+        "button \"Start work in Garden\"",
+        "button \"Task mode: Agent\"",
+        "div[role=separator] \"Resize task — arrow keys to resize\"",
+        "textarea"
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<h#> \"Garden\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatW\" clips at #%: #x# in #x#"
+      ],
+      "focus order": [
+        "focus moves backwards from <button .group.relative.inline-flex> \"Post comment\" to <div .group/handle.absolute.top-#> \"Resize task — arrow keys to resize\""
+      ]
+    }
+  }
+}

@@ -81,7 +81,11 @@ describe("the palette's rows", () => {
     const list = await open()
     expect(labels(list)).toEqual([
       'Knowledge', 'Artifacts', 'Garden', 'Personal', 'Start a chat in Garden', 'Start a chat in Personal',
-      'New project', 'Import a project', 'All loops', 'Open Settings',
+      'New project', 'Import a project', 'All loops',
+      // A project's page's six rows, listed once each and dimmed with no project open (PROJ PR 4).
+      'New goal loop in a project', 'New task in a project', "Edit a project's brief", "Edit a project's instructions",
+      "Open a project's folder", 'What a new chat in a project is told',
+      'Open Settings',
     ])
     const garden = within(list).getByRole('option', { name: /^Garden/ })
     await waitFor(() => expect(garden.textContent).toContain('Go to · 2 need you · 2 running'))

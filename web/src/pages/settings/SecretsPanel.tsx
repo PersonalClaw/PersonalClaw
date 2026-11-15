@@ -48,7 +48,11 @@ type ProjectLabel = (projectId: string) => string
  *  secret is stored, listed and removed, and names each project by its name, chosen with the same
  *  picker every other project choice uses: an id typed by hand was a secret nothing would read.
  */
-export function SecretsPanel() {
+export function SecretsPanel({ project = '' }: {
+  /** The project the add form starts on (`#/settings/secrets?project=<id>`, from a project's page's
+   *  "Secrets for Garden"). Every project when absent. */
+  project?: string
+} = {}) {
   const { data: v, error, refresh } = useQuery<SecretsVaultState>(
     'settings:secrets', () => api.secrets(),
   )
@@ -96,7 +100,7 @@ export function SecretsPanel() {
           + 'read back — not by this page and not by any API.'}
       />
 
-      <AddSecret onSaved={refresh} projectLabel={projectLabel} store={v.store} />
+      <AddSecret onSaved={refresh} projectLabel={projectLabel} store={v.store} startProject={project} />
 
       {v.secrets.length === 0 ? (
         <EmptyState
@@ -343,10 +347,10 @@ function KeychainNamespaceRow({ store }: { store: SecretStoreWire }) {
 }
 
 /** The write-only add form. The value leaves in a POST body and is cleared on success. */
-function AddSecret({ onSaved, projectLabel, store }: { onSaved: () => void; projectLabel: ProjectLabel; store: SecretStoreWire }) {
+function AddSecret({ onSaved, projectLabel, store, startProject = '' }: { onSaved: () => void; projectLabel: ProjectLabel; store: SecretStoreWire; startProject?: string }) {
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
-  const [projectId, setProjectId] = useState('')
+  const [projectId, setProjectId] = useState(startProject)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [note, setNote] = useState('')

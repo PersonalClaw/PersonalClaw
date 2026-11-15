@@ -144,11 +144,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const composer = useChatComposer({
     // A widget's message carried here (`?from_widget=1`, MissingChat), and the nonce of a widget
     // action the shell staged on the owner's yes (`?widget_action=`).
-    sessionId, navigate, seed, seedFromWidget: launch.fromWidget, widgetActionNonce: launch.widgetAction, initialProjectId, initialAgent, initialTaskMode: taskModeFromQuery(query) ?? 'agent',
+    sessionId, navigate, seed, seedFromWidget: launch.fromWidget, widgetActionNonce: launch.widgetAction, startToken: launch.start, initialProjectId, initialAgent, initialTaskMode: taskModeFromQuery(query) ?? 'agent',
     pendingRouting, setRoutingSuggestion, setLiveRun, started, stream,
     followNewTurn: () => followNewTurn(), oweSpokenReply: (sid) => oweSpokenReply(sid),
   })
   const { adoptDetail, applyTemplate, composerFocused, composerRef, draftUnderWay, focusComposerSoon, input, memoryMode, notice, quoteToComposer, replaceDraft, selection, send, setInput, setSelection } = composer
+  // A start box's draft (`?start=`) is taken as the composer mounts, or there was none to take: the
+  // address drops its token either way (replace), so a reload or Back never names it again.
+  useEffect(() => { if (launch.start) setQuery({ start: null }, { replace: true }) }, []) // eslint-disable-line react-hooks/exhaustive-deps
   // The library items the address attaches (`?attach=`): chips in the draft, never sent
   // (`chat/composer/linkAttachments`).
   useLinkAttachments({

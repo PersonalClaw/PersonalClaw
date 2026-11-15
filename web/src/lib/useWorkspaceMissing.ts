@@ -13,6 +13,32 @@ export function isWorkspaceGone(e: unknown): boolean {
   return e instanceof ApiError && e.status === 404
 }
 
+/** What the disk says of a bound folder: `ok` once `browse-dirs` read it, `missing` once it answered
+ *  404 (`isWorkspaceGone`), `unreadable` for any other failure (a protected location, a permission
+ *  failure, a 5xx: the folder may well still be there, so it is never called missing), and
+ *  `unknown` while the answer is out, with no path, or while `enabled` is off. */
+export type WorkspaceState = 'ok' | 'missing' | 'unreadable' | 'unknown'
+
+/** `useWorkspaceMissing`'s read, with the failure that is not a 404 kept apart as `unreadable`, for
+ *  a surface that says each in its own words (a project's page: "PersonalClaw can't read this folder
+ *  right now. It may still be there."). `recheck` re-asks the disk whenever it changes. */
+export function useWorkspaceState(
+  path: string | null | undefined,
+  { enabled = true, recheck }: { enabled?: boolean; recheck?: unknown } = {},
+): WorkspaceState {
+  const [state, setState] = useState<WorkspaceState>('unknown')
+  const target = (path ?? '').trim()
+  useEffect(() => {
+    if (!target || !enabled) { setState('unknown'); return }
+    let alive = true
+    api.browseDirs(target)
+      .then(() => { if (alive) setState('ok') })
+      .catch((e) => { if (alive) setState(isWorkspaceGone(e) ? 'missing' : 'unreadable') })
+    return () => { alive = false }
+  }, [target, enabled, recheck])
+  return state
+}
+
 /** True once `browse-dirs` has answered 404 for `path`: the bound workspace folder no longer exists.
  *
  *  `false` while the answer is unknown, while `enabled` is off, and for every failure that is not a
@@ -23,17 +49,7 @@ export function isWorkspaceGone(e: unknown): boolean {
  *  to, so a refreshed project re-probes. */
 export function useWorkspaceMissing(
   path: string | null | undefined,
-  { enabled = true, recheck }: { enabled?: boolean; recheck?: unknown } = {},
+  opts: { enabled?: boolean; recheck?: unknown } = {},
 ): boolean {
-  const [missing, setMissing] = useState(false)
-  const target = (path ?? '').trim()
-  useEffect(() => {
-    if (!target || !enabled) { setMissing(false); return }
-    let alive = true
-    api.browseDirs(target)
-      .then(() => { if (alive) setMissing(false) })
-      .catch((e) => { if (alive) setMissing(isWorkspaceGone(e)) })
-    return () => { alive = false }
-  }, [target, enabled, recheck])
-  return missing
+  return useWorkspaceState(path, opts) === 'missing'
 }

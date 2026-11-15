@@ -21,9 +21,9 @@ import { join } from 'node:path'
 // Comments are stripped before every assertion — this file's own prose, and the explanatory
 // comments left at both fix sites, name the deleted strings on purpose.
 
-// The project page renames it; the New project dialog (its own file since the list became one list)
-// creates it. Both are read, as the one surface they are.
-const SRC = ['ProjectsSection.tsx', 'NewProjectDialog.tsx']
+// The project's page renames it (its title module, `ProjectTitle.tsx`, with the write in the page);
+// the New project dialog creates it. All are read, as the one surface they are.
+const SRC = ['ProjectTitle.tsx', 'ProjectPage.tsx', 'NewProjectDialog.tsx']
   .map((f) => readFileSync(join(process.cwd(), 'src', 'pages', 'projects', f), 'utf8')).join('\n')
 const strip = (s: string) =>
   s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -48,7 +48,12 @@ describe('#449 the inert padlock is gone', () => {
     // If these vanished the assertions above would pass vacuously while the mechanism broke.
     // The writes are correct: a name the user typed should stop the LLM auto-renaming.
     expect(CODE).toContain('name_locked: true')
-    expect(CODE.match(/name_locked:\s*true/g) ?? []).toHaveLength(3)  // create + Enter + Save
+    expect(CODE.match(/name_locked:\s*true/g) ?? []).toHaveLength(2)  // create + rename
+    // The rename's write is reached by Enter and by Save, each deliberate, and never by a blur.
+    const title = strip(readFileSync(join(process.cwd(), 'src', 'pages', 'projects', 'ProjectTitle.tsx'), 'utf8'))
+    expect(title).toMatch(/if \(e\.key === 'Enter'\) void save\(\)/)
+    expect(title).toMatch(/ariaLabel="Save the project name" onClick=\{\(\) => void save\(\)\}/)
+    expect(title).not.toMatch(/onBlur/)
   })
 })
 

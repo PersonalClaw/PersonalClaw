@@ -12,7 +12,7 @@ import { restForm } from './clawRing'
 import { paintRing } from './paintRing'
 import { ORB_STATE_OF_PIP } from '../../lib/orbState'
 import { ThreadRail } from '../ThreadRail'
-import { ProjectThreadRow } from '../../pages/projects/ProjectThreads'
+import { ProjectThreadRow } from '../../pages/projects/ProjectThreadRow'
 import type { Thread, ThreadPip } from '../../lib/useThreads'
 
 type Entry = (string | number | boolean | undefined)[]

@@ -108,6 +108,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   /** The project whose Tasks view this is (#3818): its tasks alone, under its own header. The scope
    *  is the project, so the Scope filter goes, and the scope All tasks remembers is left as it is. */
   inProject?: {
+    /** The project's id: its New task starts there and comes back to this view. */
+    id: string
     /** The project's name, the scope its tasks carry. */
     name: string
     /** The header's left side: where you are, the project's name (back to its Overview) and Tasks. */

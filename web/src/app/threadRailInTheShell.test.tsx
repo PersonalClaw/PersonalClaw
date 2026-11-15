@@ -285,7 +285,9 @@ describe("a project's page lists its chats, and the pages they came from still o
     const user = userEvent.setup()
     renderApp()
     const main = () => document.querySelector('main') as HTMLElement
-    expect(await within(main()).findByText('Chats · 3')).toBeInTheDocument()
+    // The project's page (PROJ PR 4) lists what is not live in Recent, by name, each opening at its
+    // address.
+    expect(await within(main()).findByRole('heading', { level: 2, name: 'Recent' })).toBeInTheDocument()
     const rows = within(main()).getAllByRole('button', { name: /^(Chat|Goal loop|Code session): / }).map((b) => b.getAttribute('aria-label'))
     expect(rows).toEqual(expect.arrayContaining(['Chat: Plan the garden', 'Chat: Order the soil', 'Code session: Fence gate, failed']))
     expect(rows, 'another project\'s chat').not.toContain('Chat: A question about tax')

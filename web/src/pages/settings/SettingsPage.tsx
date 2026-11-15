@@ -105,7 +105,7 @@ export const SECTIONS: SettingsSection[] = [
   // redacted), and this is the inventory of credentials the instance holds. A user asking "what
   // tokens does this thing have" is asking a different question from "what does it block", and
   // burying a per-secret list inside the enforcement page would make the inventory unfindable.
-  { id: 'secrets', label: 'Secrets', icon: KeyRound, render: () => <SecretsPanel /> },
+  { id: 'secrets', label: 'Secrets', icon: KeyRound, render: (ctx) => <SecretsPanel project={ctx.query.project} /> },
   // Next to Security on purpose: "what is paired to my gateway, and can I cut it off" is a
   // security question. This is the ONE device registry — `companion` above is the LAN/PWA
   // transport settings, not a list of devices.

@@ -71,6 +71,7 @@ export function TaskForm({ draft, onChange, compact, allTasks = [] }: { draft: T
               put the old list back. An edited task's draft changes only when the user picks — its
               opening writes nothing, so it cannot land on a field typed a moment before. */}
           <ProjectListPicker taskListId={draft.task_list_id ?? ''} editing={!!draft.id}
+            startProjectId={draft.id ? undefined : draft.project_id || undefined}
             onListChange={(listId, projectId) => onChange({ ...draft, task_list_id: listId, project_id: projectId })}
             onProjectChange={(projectId) => onChange({ ...draft, task_list_id: '', project_id: projectId })}
             onStartingProject={draft.id ? undefined : (projectId) => set('project_id', projectId)} />
@@ -144,9 +145,12 @@ export function TaskForm({ draft, onChange, compact, allTasks = [] }: { draft: T
 // Sentinel value the Project/TaskList selects use to trigger an inline create.
 const NEW = '__new__'
 
-function ProjectListPicker({ taskListId, editing, onListChange, onProjectChange, onStartingProject }: {
+function ProjectListPicker({ taskListId, editing, startProjectId, onListChange, onProjectChange, onStartingProject }: {
   taskListId: string
   editing: boolean
+  /** The project a new task was started in (a project's page, or its Tasks view): it opens there,
+   *  ahead of the default, while that project is listed. */
+  startProjectId?: string
   onListChange: (listId: string, projectId: string) => void
   onProjectChange: (projectId: string) => void
   onStartingProject?: (projectId: string) => void
@@ -189,10 +193,11 @@ function ProjectListPicker({ taskListId, editing, onListChange, onProjectChange,
     const preferred = defaultProjectId && projects.some((p) => p.id === defaultProjectId) ? defaultProjectId : ''
     // `||` (not `??`): the intermediate fallbacks are empty STRINGS, not null, so
     // each must fall through to the next when blank.
-    const start = cur?.project_id || preferred || projects.find((p) => p.is_builtin)?.id || projects[0]?.id || ''
+    const asked = startProjectId && projects.some((p) => p.id === startProjectId) ? startProjectId : ''
+    const start = cur?.project_id || asked || preferred || projects.find((p) => p.is_builtin)?.id || projects[0]?.id || ''
     setProjectId(start)
     onStartingProject?.(start)
-  }, [loaded, editing, defaultSettled, defaultProjectId, lists, projects, taskListId, onStartingProject])
+  }, [loaded, editing, defaultSettled, defaultProjectId, lists, projects, taskListId, onStartingProject, startProjectId])
 
   const projectLists = lists.filter((l) => l.project_id === projectId)
 

@@ -78,6 +78,12 @@ def _encode_target(project_id: str, name: str = "") -> str:
     return f"{project_id}{_TARGET_SEP}{name}" if name else project_id
 
 
+def project_of_target(target: str) -> str:
+    """The project a project-context proposal's *target* names: what its inbox row says it
+    changes."""
+    return _decode_target(target)[0]
+
+
 def _decode_target(target: str) -> tuple[str, str]:
     """Split a proposal's target back into ``(project_id, name)``.
 

@@ -30,7 +30,7 @@ Reach for something else when:
 
 | You want | Use instead |
 |---|---|
-| One rule that should hold in every conversation | An `always: true` skill (below), or a project instruction doc |
+| One rule that should hold in every conversation | An `always: true` skill (below), or, for one project's work, its instructions, written on its page under About this project |
 | A fact, not a procedure | Memory / the knowledge base |
 | A one-off instruction for this conversation only | Just say it in the message |
 | Something that must *run* on a schedule | A workflow or a scheduled task |

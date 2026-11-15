@@ -95,6 +95,9 @@ export const VIEW_ROUTES: RouteEntry[] = [
   // All tasks, every project's: a project's own are its Tasks view (#3818), and the sidebar has no
   // Tasks row. It keeps the address, the visual baseline and the scans it had as a row.
   { route: 'tasks', id: 'tasks', label: 'Projects › All tasks', needsData: true },
+  // A project's page (PROJ PR 4): Home for one project. Not a nav id, so not in ROUTES; its reads
+  // are fixed (`PROJECT_PAGE` in `stubbedReads.ts`), since the run's home has no project.
+  { route: 'projects/p-0a1b2c3d', id: 'project', label: 'Projects › a project', needsData: true },
   // The terminal's full page, the drawer's Open full: the terminal is the drawer on every page
   // (#3826), and the sidebar has no Terminal row. It keeps the address, the visual baseline and the
   // scans it had as a row.
@@ -186,6 +189,11 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   // whatever other specs raised first, so both reads are fixed for these rows (`surfaces.spec.ts`).
   { route: 'inbox?filter=notifications', id: 'inbox-notifications', label: 'Inbox › Notifications', needsData: true },
   { route: 'projects/p-0a1b2c3d?tab=tasks', id: 'project-tasks', label: 'Projects › a project › Tasks', needsData: true },
+  // A project's page with a detail open beside it: what a new chat there is told, one of its tasks,
+  // and its folder. Each reads the page's fixed reads; the folder's tree reads its listing too.
+  { route: 'projects/p-0a1b2c3d?open=told', id: 'project-told', label: 'Projects › a project › what a new chat is told', needsData: true },
+  { route: 'projects/p-0a1b2c3d?open=task:t-e2e-1', id: 'project-task', label: 'Projects › a project › a task', needsData: true },
+  { route: 'projects/p-0a1b2c3d?open=folder', id: 'project-folder', label: 'Projects › a project › its folder', needsData: true },
   // The buddy playground's other two tabs: the scripted day, and the pose sheet the buddy orb's
   // snapshots are taken from (#3892).
   { route: 'buddy/playground?tab=day', id: 'buddy-playground-day', label: 'Buddy › Playground › a day' },
@@ -337,6 +345,8 @@ const REDUCED_MOTION_SURFACES: { id: string; route: string; open?: ReducedMotion
   { id: 'dashboard', route: 'dashboard' },
   { id: 'chat', route: 'chat' },
   { id: 'projects', route: 'projects' },
+  // A project's page (PROJ PR 4): its groups' rows render in place and its detail pane opens instantly.
+  { id: 'project', route: 'projects/p-0a1b2c3d' },
   { id: 'tasks', route: 'tasks' },
   { id: 'apps', route: 'apps' },
   { id: 'settings', route: 'settings' },

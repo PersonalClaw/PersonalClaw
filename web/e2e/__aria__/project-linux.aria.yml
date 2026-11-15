@@ -1,0 +1,110 @@
+- navigation:
+  - button "PersonalClaw, Home":
+    - img "PersonalClaw"
+    - text: PersonalClaw
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Chat history":
+    - button "New chat"
+    - button "Open Chat history"
+    - searchbox "Search chats"
+    - 'button "Sort and filter: Recent activity · Active"'
+    - status
+    - list:
+      - listitem:
+        - button "When to sow the beans"
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - button "# waiting on your answer, open Needs you"
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Projects"
+  - heading "Garden" [level=#]
+  - searchbox "Search Garden"
+  - button "More actions"
+  - button "New"
+  - button "/srv/code/garden"
+  - textbox "Message input"
+  - button "Attach files"
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
+  - button "Chat preferences"
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Execution boundary: Normal"': Normal
+  - button "Send message" [disabled]
+  - region "Needs you":
+    - heading "Needs you" [level=#]
+    - text: "#"
+    - list:
+      - listitem:
+        - button "Show the details of bash"
+        - group "Permission needed to run bash":
+          - text: Permission needed
+          - paragraph: bash(npm run sensor:calibrate)
+          - paragraph: Calibrate the soil sensors after the rain
+          - button "Allow bash — Calibrate the soil sensors after the rain": Allow
+          - button "Deny bash — Calibrate the soil sensors after the rain": Deny
+  - region "Running now":
+    - heading "Running now" [level=#]
+    - text: "#"
+    - list:
+      - listitem "Fix the irrigation sensor tests":
+        - 'button "Code session: Fix the irrigation sensor tests, working"'
+        - paragraph: Fix the irrigation sensor tests
+        - text: Working # of # passed Code session Updated #:# <am/pm>
+  - region "Tasks":
+    - heading "Tasks" [level=#]
+    - text: # open
+    - button "New task"
+    - button "See all tasks"
+    - list:
+      - listitem:
+        - 'button "Task: Order the soil, not started"'
+        - text: Not started Order the soil high priority
+      - listitem:
+        - 'button "Task: Plant the beans, in progress"'
+        - text: In progress Plant the beans medium priority
+  - region "Recent":
+    - heading "Recent" [level=#]
+    - list:
+      - listitem:
+        - 'button "Chat: When to sow the beans"': Chat When to sow the beans
+  - status
+  - complementary "About this project":
+    - heading "About this project" [level=#]
+    - region "Brief":
+      - heading "Brief" [level=#]
+      - paragraph: Plan and grow the spring beds, and keep the soil sensors working. The beds go in by April.
+      - button "Edit"
+    - region "Instructions":
+      - heading "Instructions" [level=#]
+      - paragraph: Check the soil readings before suggesting a planting date.
+      - button "Edit"
+      - text: # change proposed
+      - button "Review"
+    - region "Folder":
+      - heading "Folder" [level=#]
+      - paragraph: /srv/code/garden
+      - paragraph: Automations here can only read, until you trust this folder.
+      - button "Open"
+      - button "Change"
+      - button "Remove folder"
+      - button "Trust this folder"
+    - region "What a new chat here is told":
+      - heading "What a new chat here is told" [level=#]
+      - paragraph: Each new chat here starts with the brief.
+      - button "See it"
+    - region "Secrets":
+      - heading "Secrets" [level=#]
+      - link "Secrets for Garden":
+        - /url: "#/settings/secrets?project=p-#a#b#c#d"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

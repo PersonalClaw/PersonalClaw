@@ -31,8 +31,10 @@ const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\
 const read = (rel: string) => strip(readSource(join(SRC, rel)))
 const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
 
-describe('the project card reads task status from taskMeta', () => {
-  const src = read('pages/projects/ProjectsSection.tsx')
+describe("a project page's Tasks group reads task status from taskMeta", () => {
+  // The page's Tasks group (PROJ PR 4), which took over from the old project card's task list.
+  const src = read('pages/projects/ProjectWork.tsx')
+  const model = read('pages/projects/projectPageModel.ts')
 
   it('reads the real file (not vacuously green)', () => {
     expect(src, 'the task list moved — this rail measures nothing').toMatch(/onOpenTask\(t\.id\)/)
@@ -46,24 +48,19 @@ describe('the project card reads task status from taskMeta', () => {
     expect(src, 'and called for the row glyph').toMatch(/statusMeta\(t\.status\)/)
   })
 
-  it('names the glyph with the canonical label', () => {
+  it('says its status in the canonical word, in its state and in its name', () => {
     const at = src.indexOf('statusMeta(t.status)')
-    const block = src.slice(at, src.indexOf('</span>', at))
+    const block = src.slice(at, at + 600)
     expect(block.length, 'empty slice — vacuous').toBeGreaterThan(60)
-    expect(block, 'role="img" — a graphic whose label is its only text').toMatch(/role="img"/)
-    expect(block, "the label must be statusMeta's, not a local string").toMatch(/aria-label=\{sm\.label\}/)
-    expect(block, "and the tone must be statusMeta's").toMatch(/color: sm\.tone/)
+    expect(block, "the row's state word must be statusMeta's, not a local string").toMatch(/state=\{meta\.label\}/)
+    expect(block, "and its name says the same word").toMatch(/\$\{meta\.label\.toLowerCase\(\)\}/)
   })
 
-  it('the strike-through follows TERMINAL, not just done', () => {
-    // `=== 'done'` left a cancelled task's text looking active. Asserted because the two halves of the
-    // row have to agree about what "finished" means.
-    expect(src, 'terminal statuses are struck through').toMatch(/TERMINAL\.has\(t\.status\)/)
-    const at = src.indexOf('statusMeta(t.status)')
-    const after = src.slice(at, at + 900)
-    expect(after, "the row must not re-derive 'finished' from one status").not.toMatch(
-      /t\.status === 'done' \? 'text-on-surface-low line-through'/,
-    )
+  it('what is finished follows TERMINAL, not just done', () => {
+    // `=== 'done'` left a cancelled task looking active. The group lists the open tasks, so a
+    // finished one is left out by the one display set, never by one status.
+    expect(model, 'the open tasks are those TERMINAL does not hold').toMatch(/!TERMINAL\.has\(t\.status\)/)
+    expect(model + src, "nothing re-derives 'finished' from one status").not.toMatch(/t\.status === 'done'/)
   })
 
   it('no file outside taskMeta keeps a rival status branch table', () => {

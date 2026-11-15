@@ -210,6 +210,21 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   // peek opens the project's own page.
   { route: 'projects?view=chats&q=garden', from: ['documented'], lands: 'projects?q=garden' },
   { route: `projects?peek=${S.project}`, from: ['documented'], lands: `projects/${S.project}` },
+  // A project's page (PROJ PR 4): its search, and one detail beside the work at a time (`?open=`,
+  // pushed, so Back closes it): a waiting item, a task, the task form, the folder's tree, and what a
+  // new chat there is told. Each keeps its address and draws its detail's own loading state.
+  { route: `projects/${S.project}?q=gate`, from: ['documented'] },
+  { route: `projects/${S.project}?open=need%3Aapproval%3Aa-1`, from: ['documented'] },
+  { route: `projects/${S.project}?open=task%3At-e2e-1`, from: ['documented'] },
+  { route: `projects/${S.project}?open=task%3Anew`, from: ['documented'] },
+  { route: `projects/${S.project}?open=folder`, from: ['documented'] },
+  { route: `projects/${S.project}?open=told`, from: ['documented'] },
+  // The old page's side panels, retired: the page maps each as it opens, before its project read
+  // answers, replacing the entry.
+  // The Tasks view keeps `list` for a list it holds; on an empty home there is none, so it settles on the view.
+  { route: `projects/${S.project}?panel=tasks%3Atl-1`, from: ['documented'], since: 'v0.1.0', lands: `projects/${S.project}?tab=tasks` },
+  { route: `projects/${S.project}?panel=dir%3Aworkspace`, from: ['documented'], since: 'v0.1.0', lands: `projects/${S.project}?open=folder` },
+  { route: `projects/${S.project}?panel=dir%3Acontext`, from: ['documented'], since: 'v0.1.0', lands: `projects/${S.project}?open=told` },
   // A project's Tasks view (#3818), the task list and board held to it, with #/tasks's keys.
   { route: `projects/${S.project}?tab=tasks`, from: ['documented'] },
   { route: `projects/${S.project}?tab=tasks&view=board`, from: ['documented'] },
@@ -409,6 +424,8 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'settings/routing', from: ['documented'], since: 'v0.2.0', lands: 'settings/models?section=routing' },
   { route: 'settings/search', from: ['documented'], since: 'v0.1.0', lands: 'settings/models?section=search' },
   { route: 'settings/secrets', from: ['documented'], since: 'v0.2.0' },
+  // Secrets for one project, from its page's About (PROJ PR 4).
+  { route: `settings/secrets?project=${S.project}`, from: ['documented'] },
   { route: 'settings/security', from: ['documented'], since: 'v0.1.0' },
   { route: 'settings/sender-trust', from: ['documented'], since: 'v0.2.0', lands: 'settings/devices?section=sender-trust' },
   { route: 'settings/sources', from: ['documented'], since: 'v0.2.0', lands: 'settings/automations?section=sources' },

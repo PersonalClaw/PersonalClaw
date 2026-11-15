@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { ThreadRail } from './ThreadRail'
 import { TOOLTIP_DELAY_MS } from './Tooltip'
 import { SHOW_DELAY_MS, TurnStatusRow } from './TurnStatusRow'
-import { ProjectThreadRow } from '../pages/projects/ProjectThreads'
+import { ProjectThreadRow } from '../pages/projects/ProjectThreadRow'
 import type { Thread, ThreadPip } from '../lib/useThreads'
 
 // ── No browser tooltip on the sidebar's rows, a project's rows or the live line's tokens (#6117) ──

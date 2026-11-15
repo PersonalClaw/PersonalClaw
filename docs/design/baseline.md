@@ -501,6 +501,8 @@ The 18 destinations in the rail, in its order (`ROUTES` in `web/e2e/routes.ts`).
 3. **Can move:** "Import" to an overflow menu and the palette; "Loops" to the palette.
 4. **Scope homes:** the projects themselves, which the IA puts in the sidebar, and "Loops", navigation in a page header; Delete sits on its row and in the context menu, in place.
 
+**A project's page** (`#/projects/<id>`) has no section of its own: the capture visits no project's page, so `baseline/figures.json` holds no figures for it. Its before is the page its redesign replaced (an Overview and a Tasks view, the project's threads beside its detail), as that redesign's PR shows it, with no figures to set beside the new ones.
+
 ### Knowledge
 
 `#/knowledge` · id `knowledge`.

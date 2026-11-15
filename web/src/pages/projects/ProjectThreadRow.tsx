@@ -1,43 +1,15 @@
-import { ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { PIP } from '../../ui/ThreadRail'
 import { OrbMark } from '../../ui/orb/OrbMark'
 import { Tooltip } from '../../ui/Tooltip'
 import { ORB_STATE_OF_PIP } from '../../lib/orbState'
 import { withWeight } from '../../design/fontWeight'
-import type { Thread, ThreadKind, ThreadsRead } from '../../lib/useThreads'
+import type { Thread, ThreadKind } from '../../lib/useThreads'
 
 /** What each kind of thread is called on its row. */
 const KIND: Record<ThreadKind, string> = { chat: 'Chat', loop: 'Goal loop', code: 'Code session' }
 
-/** A project's own chats, in the sidebar's order: its chats, goal loops and code sessions, each with
- *  the sidebar's mark (running, waiting on you, failed) and opening at its own address (#3814). The
- *  read is the sidebar's (`useThreads`), so the two never disagree. */
-export function ProjectThreads({ projectId, read, onOpen }: {
-  projectId: string
-  read: ThreadsRead
-  onOpen: (route: string) => void
-}) {
-  const { groups, loading, error, refresh } = read
-  const threads = projectThreads(read, projectId)
-  if (!groups.length && error) return <LoadError what="chats" error={error} onRetry={refresh} />
-  if (!groups.length && loading) return <ListSkeleton rows={3} what="chats" />
-  if (!threads.length) {
-    return <p className="text-on-surface-low text-[0.8125rem]">No chats yet. A chat, goal loop or code session started in this project is listed here.</p>
-  }
-  return (
-    <ul className="flex flex-col gap-1">
-      {threads.map((t) => <ProjectThreadRow key={t.key} thread={t} onOpen={onOpen} />)}
-    </ul>
-  )
-}
-
-/** The rows *read* holds for *projectId*, none while it holds no group for it. */
-export function projectThreads(read: Pick<ThreadsRead, 'groups'>, projectId: string): Thread[] {
-  return read.groups.find((g) => g.projectId === projectId)?.threads ?? []
-}
-
-/** One chat, goal loop or code session of a project, as its hub and the Chats by project view list
- *  it: its kind, its name and its mark. */
+/** One chat, goal loop or code session of a project, as its page's Recent lists it: its kind, its
+ *  name and the sidebar's mark (running, waiting on you, failed), opening at its own address. */
 export function ProjectThreadRow({ thread, onOpen }: { thread: Thread; onOpen: (route: string) => void }) {
   const pip = thread.pip ? PIP[thread.pip] : null
   return (

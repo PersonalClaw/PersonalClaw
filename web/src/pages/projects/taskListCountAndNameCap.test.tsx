@@ -1,45 +1,15 @@
 /**
- * #514 — the hub's task-count badge, and the project-name cap.
+ * #514 — the project-name cap.
  *
- * The badge read `task_count ?? count` since the initial public commit while no endpoint emitted
- * either key, so `typeof count === 'number'` was always false and it never rendered. The backend
- * now emits `task_count`; these rails pin that the badge renders for a number, stays hidden when
- * the field is ABSENT (a count that could not be computed is not the same as zero), and — the one
- * that matters most — that the cap the field enforces is the SAME number the server enforces,
- * read from the Python source so the two cannot drift.
+ * The cap the field enforces is the SAME number the server enforces, read from the Python source so
+ * the two cannot drift. (The task-list count badge retired with the old page's `TaskListRow`, PROJ PR
+ * 4: a project's page counts its open tasks in its Tasks group, and a count its read did not give is
+ * never drawn as 0, the group says its read failed, `aProjectPageFailsPartway.test.tsx`.)
  */
-import { describe, it, expect, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MAX_NAME_LEN, type TaskListItem } from '../../lib/api'
-import { TaskListRow } from './ProjectsSection'
-
-afterEach(() => cleanup())
-
-const list = (over: Partial<TaskListItem> = {}): TaskListItem => ({
-  id: 'tl-1', name: 'General', project_id: 'p-1', ...over,
-})
-
-describe('the task-list count badge', () => {
-  it('renders the count when the endpoint supplied one', () => {
-    render(<TaskListRow list={list({ task_count: 2 })} active={false} onOpen={() => {}} />)
-    expect(screen.getByText('2')).toBeTruthy()
-  })
-
-  it('renders 0 — an empty list is a real reading', () => {
-    render(<TaskListRow list={list({ task_count: 0 })} active={false} onOpen={() => {}} />)
-    expect(screen.getByText('0')).toBeTruthy()
-  })
-
-  it('renders NO badge when the field is absent', () => {
-    // The pre-fix state, and still the honest render when counting failed: the row shows the name
-    // and claims nothing about how many tasks it holds.
-    const { container } = render(<TaskListRow list={list()} active={false} onOpen={() => {}} />)
-    expect(screen.getByText('General')).toBeTruthy()
-    expect(container.querySelector('.tabular-nums'), 'no count element at all').toBeNull()
-  })
-})
+import { MAX_NAME_LEN } from '../../lib/api'
 
 describe('the project-name cap is one number, not two', () => {
   const source = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8')
@@ -55,8 +25,8 @@ describe('the project-name cap is one number, not two', () => {
 
   it('both project-name inputs carry the cap', () => {
     // Structural: these two inputs live inside internal components (the New project dialog and the
-    // project page's inline rename).
-    const src = source('src/pages/projects/ProjectsSection.tsx') + source('src/pages/projects/NewProjectDialog.tsx')
+    // project page's title, which renames it).
+    const src = source('src/pages/projects/ProjectTitle.tsx') + source('src/pages/projects/NewProjectDialog.tsx')
     const capped = src.match(/maxLength=\{MAX_NAME_LEN\}/g) ?? []
     expect(capped.length, 'the New-project input AND the inline rename input').toBe(2)
   })

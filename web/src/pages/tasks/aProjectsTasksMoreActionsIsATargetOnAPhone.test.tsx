@@ -54,7 +54,7 @@ describe("a project's Tasks header on a phone", () => {
         setOpenId={noop} editing={false} setEditing={noop}
         q="" sort="" scope="" list="" tag=""
         setQ={noop} setSort={noop} setScope={noop} setList={noop} setTag={noop}
-        inProject={{ name: 'Launch notes', title: <span data-type="title-l">Launch notes</span>, actions: <HeaderControl icon={FolderKanban} label="All projects" onClick={noop} /> }}
+        inProject={{ id: 'p-launch', name: 'Launch notes', title: <span data-type="title-l">Launch notes</span>, actions: <HeaderControl icon={FolderKanban} label="All projects" onClick={noop} /> }}
       />,
     )
     const more = await screen.findByRole('button', { name: 'More actions' })

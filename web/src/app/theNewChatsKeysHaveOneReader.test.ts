@@ -29,7 +29,8 @@ const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 const SOURCES = filesUnder(SRC, (name) => /\.tsx?$/.test(name) && !/\.(test|doc)\.tsx?$/.test(name))
   .map((path) => ({ rel: relative(SRC, path), text: readSource(path) }))
 
-const KEYS = ['seed', 'agent', 'widget_action', 'project', 'attach', 'from_widget']
+// `start`: the token of a draft a project's start box staged (`lib/newChatHandoff`), PROJ PR 4.
+const KEYS = ['seed', 'agent', 'widget_action', 'project', 'attach', 'from_widget', 'start']
 /** The keys no page of its own uses: a `.set` or `.append` of one, or a `URLSearchParams` built with
  *  one, writes a chat's address. */
 const CHAT_ONLY = ['seed', 'widget_action', 'attach', 'from_widget']
@@ -213,7 +214,7 @@ describe("the new chat's launch keys", () => {
     const through = callers(SOURCES)
     for (const rel of ['app/App.tsx', 'app/appSdk.tsx', 'app/paletteProjectRows.tsx', 'pages/chat/MissingChat.tsx',
       'pages/loops/LoopsSection.tsx', 'pages/projects/ProjectList.tsx',
-      'pages/projects/ProjectsSection.tsx']) expect(through, rel).toContain(rel)
+      'pages/projects/ProjectStartBox.tsx']) expect(through, rel).toContain(rel)
     expect(read('pages/ChatPage.tsx')).toContain('readChatLaunch(query)')
   })
 
@@ -308,7 +309,7 @@ describe("the new chat's launch keys", () => {
   it('🔑 attach with project keeps both, and with a draft keeps the draft', () => {
     const launch = readChatLaunch({ project: 'p-0a1b2c3d', attach: 'knowledge:k1,artifact:lisbon', seed: 'Plan the trip' })
     expect(launch).toEqual({
-      seed: 'Plan the trip', agent: '', widgetAction: '', project: 'p-0a1b2c3d', fromWidget: false, attach: ['knowledge:k1', 'artifact:lisbon'],
+      seed: 'Plan the trip', agent: '', widgetAction: '', project: 'p-0a1b2c3d', fromWidget: false, attach: ['knowledge:k1', 'artifact:lisbon'], start: '',
     })
     // Read back from the address its writer makes.
     const path = chatLaunchPath(launch)
@@ -319,12 +320,16 @@ describe("the new chat's launch keys", () => {
   it('reads each ref once, in the link\'s order, and an empty attach as none', () => {
     expect(readChatLaunch({ attach: ' artifact:a , knowledge:k1,,artifact:a ' }).attach).toEqual(['artifact:a', 'knowledge:k1'])
     expect(readChatLaunch({ attach: '' }).attach).toEqual([])
-    expect(readChatLaunch(undefined)).toEqual({ seed: '', agent: '', widgetAction: '', project: '', fromWidget: false, attach: [] })
+    expect(readChatLaunch(undefined)).toEqual({ seed: '', agent: '', widgetAction: '', project: '', fromWidget: false, attach: [], start: '' })
   })
 
   it('🔑 nothing sends: no key names a send, and attach is never a draft', () => {
     const launch = readChatLaunch({ attach: 'knowledge:k1', send: '1', auto: '1', submit: 'yes' })
-    expect(Object.keys(launch).sort()).toEqual(['agent', 'attach', 'fromWidget', 'project', 'seed', 'widgetAction'])
+    // `start`, like `widget_action`, sends only what the owner's own press staged in memory, by its token
+    // (`theStartBoxSendsOnceAndNeverFromAnAddress`); with an attach it reads as none.
+    expect(Object.keys(launch).sort()).toEqual(['agent', 'attach', 'fromWidget', 'project', 'seed', 'start', 'widgetAction'])
+    expect(readChatLaunch({ attach: 'knowledge:k1', start: 'a-token' }).start).toBe('')
+    expect(chatLaunchPath({ project: 'p-0a1b2c3d', start: 'a-guess' })).toBe('chat/new?project=p-0a1b2c3d')
     expect(launch.seed, 'an attached item is a chip, not words in the draft').toBe('')
     // A session the launch names keeps its own address, and its keys ride along.
     expect(chatLaunchPath({ session: 'chat 7', seed: 'hi', attach: ['artifact:a'] })).toBe('chat/chat%207?seed=hi&attach=artifact%3Aa')
