@@ -952,10 +952,11 @@ hands the turn asked again the calls that attempt finished: the first four
 delete them, and a runtime built for a turn (after a restart, a rewind or a
 move) is given the chat's messages, never its calls. So every door asks through
 one function, `repeated_steps.ask_first`, before it deletes or runs anything.
-When the attempt finished a call that may have changed something, a door they
-use runs nothing and answers `409 retry_repeats_steps` with the question: its
-title, its sentence, each such call by its tool and target (a failed one says
-so), and the `confirm` the owner's yes sends back. The chat page shows it, each
+When the attempt finished a call that may have changed something, or ended
+while one was still running, a door they use runs nothing and answers
+`409 retry_repeats_steps` with the question: its title, its sentence, each such
+call by its tool and target (a failed one says so, and so does one still
+running), and the `confirm` the owner's yes sends back. The chat page shows it, each
 step in the words of its card, and sends the request again only on that yes; a
 No leaves the chat as it was. A move, which nobody is there to answer, does not
 send their message to the new agent on its own: the turn ends in the error that
@@ -974,8 +975,10 @@ and the agent's tool surface once the runtime is gone, as after a restart; an
 external MCP server's call counts as a change there, since listing its tools
 would start the server. A call its approval refused, or a gate refused before it
 ran, is not asked about; a failed call is, since the transcript does not keep
-whether it ran before it failed. A turn whose finished calls only read, or that
-finished none, runs again unasked as before. The yes is bound to the steps it
+whether it ran before it failed, and so is a write still running when the turn
+ended (a restart, a crash, a lost agent CLI, a timeout), since it may have made
+its change. A turn whose calls only read, or that made none that finished or was
+still running, runs again unasked as before. The yes is bound to the steps it
 was shown, so a turn that changed since is asked about again, and an app is
 refused and told to run it again from the dashboard. The rows each door deletes
 are the ones it always deleted. The turn's audit records the question

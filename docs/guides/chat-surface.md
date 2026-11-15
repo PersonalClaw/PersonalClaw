@@ -77,9 +77,11 @@ on screen.
 **Retry**, **Regenerate** on an answer, **Rewind to here**, and **Edit & resend** with your
 message unchanged each run a turn again, and the new attempt is not shown what the old one did.
 When that attempt finished steps that may have changed something (a file written, a command run,
-a message sent, a record created), each asks first: it lists those steps as their cards name
-them, and runs the turn again only when you choose **Run it again**, because the new attempt may
-make them again. A turn whose finished steps only read, or that finished none, runs again without
+a message sent, a record created), or ended while one was still running (a restart, a crash, a
+timeout), each asks first: it lists those steps as their cards name them, saying which failed and
+which was still running, and runs the turn again only when you choose **Run it again**, because the
+new attempt may make them again. A turn whose steps only read, or that made none that finished or
+was still running, runs again without
 asking. Rewind asks only about the turn it runs again: the later turns it replaces answered other
 messages. A message you edit is a new message, so it is sent without this question. A step counts
 as a read only when its tool declares that it only reads, or its shell command is one PersonalClaw
@@ -199,8 +201,9 @@ your message is answered again by what you picked. The chat says so where the co
 "Moved to oncall-triage — it is answering your message.", or for a folder "Moved to PersonalClaw
 in /Users/you/src/recipe-box — it is answering your message." If the answer had already arrived,
 it stands, and the change applies from your next message. If the turn had already finished a step
-that may have changed something, your message is not sent to what you picked on its own, since
-that could repeat the step: the chat says so, with **Retry**, which asks first.
+that may have changed something, or one was still running, your message is not sent to what you
+picked on its own, since that could repeat the step: the chat says so, with **Retry**, which asks
+first.
 
 ### Subagents the agent starts
 

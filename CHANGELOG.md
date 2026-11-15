@@ -31,6 +31,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **/compact no longer calls a conversation "already short enough" when its context is more than a quarter full. When compaction can fold nothing there, the chat says how full the context is and that it holds the session's opening and its latest messages, which compaction keeps word for word.**
 - **The Tools page checks PersonalClaw's own tool server, `personalclaw-core`, from the gateway's own install. It started the first `personalclaw` in `~/.local/bin` or on PATH, so on a machine with another install, a gateway from a development clone, a wheel under test or the desktop app ran that install's server against its own home and listed that install's tools.**
 - **The sidebar names a chat with no title by its first words with no Markdown mark left showing, in its row, its name and its tip, also when the cut falls inside bold text.**
+- **Running a turn again asks first about a step that was still running when the turn ended, so a command a restart cut off is not run twice unasked.**
 
 ### Security
 

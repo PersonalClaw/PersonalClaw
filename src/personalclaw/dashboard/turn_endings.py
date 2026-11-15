@@ -173,16 +173,17 @@ def moved_turn_notice(to: str) -> str:
     return f"Moved to {to.strip() or 'the new agent'} — it is answering your message."
 
 
-def moved_without_answering_notice(to: str, steps: int) -> str:
+def moved_without_answering_notice(to: str, steps: int, *, running: bool = False) -> str:
     """Said when she changed what answers the chat while it was answering (`running_turn`) and the
-    turn had finished *steps* calls that may have changed something: her message is not sent to
-    *to* on its own, since *to* is not handed those calls and could make them again
-    (`repeated_steps.ask_first`). The error the turn ends on, so the chat offers Retry on it, which
-    asks her first."""
+    turn had finished *steps* calls that may have changed something, or had started them and one
+    was still running (*running*): her message is not sent to *to* on its own, since *to* is not
+    handed those calls and could make them again (`repeated_steps.ask_first`). The error the turn
+    ends on, so the chat offers Retry on it, which asks her first."""
     who = to.strip() or "the new agent"
     made = f"{steps} step{'' if steps == 1 else 's'}"
+    done = "started" if running else "finished"
     return (
-        f"Moved to {who}. This turn had finished {made} that may have changed something, so your "
+        f"Moved to {who}. This turn had {done} {made} that may have changed something, so your "
         f"message was not sent again: that could repeat {'it' if steps == 1 else 'them'}. Send "
         "it again to retry."
     )

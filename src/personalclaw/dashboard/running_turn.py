@@ -24,11 +24,11 @@ that names a folder with :func:`to_folder`. The change is hers, and it is
 about the message the chat is answering. The running turn ends as stopped: a pending approval is
 answered cancelled, as a Stop answers it, and its runtime is asked to stop. Her message is then
 answered again on the new runtime, as the same turn, and the chat says so where the conversation
-is. Not when the turn had finished a call that may have changed something: the new runtime is
-handed her messages and never that call, so it could make it again, and nobody is there to say
-yes to that (``repeated_steps.ask_first``). That turn ends saying so, with Retry, which asks. A
-turn that had given its answer when the change landed keeps it, and the change applies from her
-next message.
+is. Not when the turn had finished a call that may have changed something, or ended while one was
+still running: the new runtime is handed her messages and never that call, so it could make it
+again, and nobody is there to say yes to that (``repeated_steps.ask_first``). That turn ends
+saying so, with Retry, which asks. A turn that had given its answer when the change landed keeps
+it, and the change applies from her next message.
 
 The change itself is made when the old turn has ended, never under it, so what the old turn
 records about itself (its audit rows, its hooks, its usage) names the runtime it ran on.
@@ -393,8 +393,9 @@ async def say_moved(
     and the change applies from her next message. Otherwise her message is asked again on the new
     runtime as the same turn (*send_again*), once: a retry the turn already queued for itself is
     that one. Not when the attempt it made (*attempt*: the row that started the turn and the rows
-    it wrote) finished a call that may have changed something (``repeated_steps.ask_first``): the
-    turn ends in the error that says so, which carries Retry. The chat says which, and its linked
+    it wrote) finished a call that may have changed something, or ended while one was still
+    running (``repeated_steps.ask_first``): the turn ends in the error that says so, which carries
+    Retry. The chat says which, and its linked
     channel hears the same line.
     """
     change = session._rebinding
@@ -406,7 +407,9 @@ async def say_moved(
         started_by, rows = attempt()
         asked = await repeated_steps.ask_first(state, session, started_by, rows, request=None)
         if not asked.runs:
-            note = turn_endings.moved_without_answering_notice(to, len(asked.steps))
+            note = turn_endings.moved_without_answering_notice(
+                to, len(asked.steps), running=any(s.running for s in asked.steps)
+            )
             turn_endings.say_the_turn_has_no_answer(state, session, note)
             _tell_channel(state, session_key, note)
             return True

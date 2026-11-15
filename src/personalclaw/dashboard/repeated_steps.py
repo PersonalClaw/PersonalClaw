@@ -11,10 +11,11 @@ never its calls. So the turn may make them again. A read costs nothing to repeat
 command run, a message sent or a record created may happen twice.
 
 So every such door asks through :func:`ask_first` before it deletes or runs anything. When the
-attempt finished a call that may have changed something, a door she uses runs the turn again only
-once she has confirmed exactly those steps, and a door nobody answers through (a move) does not run
-it again on its own: it says so, with Retry, which asks. A turn whose finished calls only read, or
-that finished none, is run again unasked. The gateway's own re-sends after a lost connection or an
+attempt finished a call that may have changed something, or ended while one was still running, a
+door she uses runs the turn again only once she has confirmed exactly those steps, and a door
+nobody answers through (a move) does not run it again on its own: it says so, with Retry, which
+asks. A turn whose calls only read, or that made none that finished or was still running, is run
+again unasked. The gateway's own re-sends after a lost connection or an
 empty reply send only a turn that made no call at all (``chat_runner.run_chat``).
 
 Which calls may have changed something is read from the attempt's tool parts
@@ -28,7 +29,9 @@ is gone. The external MCP servers are not listed for that (it would start every 
 calls count as changes. A call its approval refused, or that a gate's line on its card says was
 not run, is not one of them. Any other call that failed is: the transcript keeps that it failed,
 not whether it ran before it did, so it may have changed something, and the question says it
-failed.
+failed. So is a write still running when the turn ended (a restart, a crash, a lost agent CLI, a
+timeout): it may have made its change before the turn ended, and the question says it was still
+running.
 
 The question names those calls, and the yes that answers it carries the question's digest
 (``confirm``), so a yes answers the steps it was shown: a turn that changed since is asked about
@@ -53,7 +56,7 @@ from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.declined_calls import declined_step, said
 from personalclaw.http_errors import CONSENT_QUESTION, json_error
 from personalclaw.sel import sel
-from personalclaw.turns import ToolPart, completed_side_effect, failed_side_effect
+from personalclaw.turns import ToolPart, completed_side_effect, failed_side_effect, outcome_unknown
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -78,13 +81,16 @@ Declared = turn_rows.Declared
 class FinishedStep:
     """A call the replaced attempt finished that may have changed something, as the question
     names it: its tool, what it named first (a path, a command, a recipient), and whether it
-    failed. A failed call is still one: the transcript does not keep whether it ran before it
-    failed, and the question says it failed, as its card does."""
+    failed or was still running when the turn ended. A failed call is still one: the transcript
+    does not keep whether it ran before it failed, and the question says it failed, as its card
+    does. A call still running is one too: it may have made its change before the turn ended, and
+    the question says it was still running."""
 
     call_id: str
     tool: str
     target: str
     failed: bool = False
+    running: bool = False
 
     @property
     def step(self) -> dict[str, Any]:
@@ -165,14 +171,14 @@ def _target(call: ToolPart) -> str:
 def _changes(
     session: _ChatSession, rows: list[dict[str, Any]], declared: Declared | None
 ) -> list[ToolPart]:
-    """The calls in *rows* that finished, completed or failed, as writes, each once, in the order
-    they were made (``turn_rows.from_rows``, which reads a call no declaration vouches for as a
-    write)."""
+    """The calls in *rows* that finished, completed or failed, as writes, or that were still
+    running as writes when the turn ended (``unknown``), each once, in the order they were made
+    (``turn_rows.from_rows``, which reads a call no declaration vouches for as a write)."""
     found: dict[str, ToolPart] = {}
     for message in turn_rows.from_rows(rows, session_key=session.key, declared=declared):
         for part in message.parts:
             if isinstance(part, ToolPart) and (
-                completed_side_effect(part) or failed_side_effect(part)
+                completed_side_effect(part) or failed_side_effect(part) or outcome_unknown(part)
             ):
                 found.setdefault(part.tool_call_id, part)
     return list(found.values())
@@ -181,9 +187,9 @@ def _changes(
 async def _finished_changes(
     state: DashboardState, session: _ChatSession, rows: list[dict[str, Any]]
 ) -> list[FinishedStep]:
-    """The calls in *rows*, the attempt running the turn again replaces, that finished and may
-    have changed something, in the order they were made. The declarations are read only when a
-    call that finished could be one."""
+    """The calls in *rows*, the attempt running the turn again replaces, that finished, or were
+    still running when it ended, and may have changed something, in the order they were made.
+    The declarations are read only when such a call could be one."""
     if not _changes(session, rows, None):
         return []
     declared_by = await _declarations(state, session)
@@ -193,6 +199,7 @@ async def _finished_changes(
             tool=declined_step(call.title, "")["tool"],
             target=_target(call),
             failed=call.state == "failed",
+            running=call.state == "unknown",
         )
         for call in _changes(session, rows, declared_by)
     ]
@@ -209,14 +216,30 @@ def _digest(
 
 
 def _lead(steps: list[FinishedStep], *, naming: bool) -> str:
-    """What the question says: how many finished steps may have changed something (named, where
-    the question has no list of its own), and what running the turn again does with them."""
+    """What the question says: how many finished steps, and how many still running when the turn
+    ended, may have changed something (named, where the question has no list of its own), and
+    what running the turn again does with them."""
     count = len(steps)
+    running = sum(1 for s in steps if s.running)
+    finished = count - running
     named = f": {said([s.step for s in steps])}" if naming else ""
+    again = "Running the turn again replaces this attempt and may repeat"
+    if not running:
+        return (
+            f"This turn finished {count} step{'' if count == 1 else 's'} that may have changed "
+            f"something{named}. Running the turn again replaces this attempt and may repeat "
+            f"{'it' if count == 1 else 'them'}."
+        )
+    if not finished:
+        return (
+            f"This turn ended while {count} step{'' if count == 1 else 's'} that may have "
+            f"changed something {'was' if count == 1 else 'were'} still running{named}. "
+            f"{again} {'it' if count == 1 else 'them'}."
+        )
     return (
-        f"This turn finished {count} step{'' if count == 1 else 's'} that may have changed "
-        f"something{named}. Running the turn again replaces this attempt and may repeat "
-        f"{'it' if count == 1 else 'them'}."
+        f"This turn finished {finished} step{'' if finished == 1 else 's'} that may have changed "
+        f"something, and {running} more {'was' if running == 1 else 'were'} still running when "
+        f"it ended{named}. {again} them."
     )
 
 
@@ -224,7 +247,7 @@ def _question(steps: list[FinishedStep], confirm: str) -> web.Response:
     """The question a door asks the owner before it runs a turn again over *steps*: what may
     repeat, and the digest her yes carries. Answered as a question to a page that asks
     (``dashboard.consent_ask``), so it is not logged as a failed request there."""
-    distinct = list({(s.tool, s.target, s.failed): s for s in steps}.values())
+    distinct = list({(s.tool, s.target, s.failed, s.running): s for s in steps}.values())
     response = json_error(
         REPEATS_STEPS,
         message=f"{_lead(steps, naming=True)} To run it anyway, send this request again with its "
@@ -235,7 +258,12 @@ def _question(steps: list[FinishedStep], confirm: str) -> web.Response:
                 "title": "Run this turn again?",
                 "said": _lead(steps, naming=False),
                 "steps": [
-                    {"tool": s.tool, "target": s.target, **({"failed": True} if s.failed else {})}
+                    {
+                        "tool": s.tool,
+                        "target": s.target,
+                        **({"failed": True} if s.failed else {}),
+                        **({"running": True} if s.running else {}),
+                    }
                     for s in distinct[:_SHOWN]
                 ],
                 "more": max(0, len(distinct) - _SHOWN),

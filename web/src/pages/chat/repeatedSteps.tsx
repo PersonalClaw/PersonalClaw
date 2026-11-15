@@ -15,9 +15,10 @@ import type { ToolSegment } from './chatTypes'
 import { labelForTool } from './toolRenderers/registry'
 
 /** A finished step the question names: its tool, what it named first (a path, a command), and
- *  whether it failed, which its card in the chat says too. A failed step is still asked about:
- *  whether it ran before it failed is not kept. */
-export interface RepeatedStep { tool: string; target: string; failed?: boolean }
+ *  whether it failed, which its card in the chat says too, or was still running when the turn
+ *  ended. A failed step is still asked about: whether it ran before it failed is not kept. So is
+ *  one still running: it may have made its change before the turn ended. */
+export interface RepeatedStep { tool: string; target: string; failed?: boolean; running?: boolean }
 
 /** The gateway's question, as `error.detail` carries it. */
 export interface RepeatsAsked {
@@ -40,9 +41,14 @@ export function repeatsAsked(e: unknown): RepeatsAsked | null {
   if (typeof yes !== 'string' || !yes || !Array.isArray(steps)) return null
   const listed = steps.flatMap((s): RepeatedStep[] => {
     if (!s || typeof s !== 'object') return []
-    const { tool, target, failed } = s as Record<string, unknown>
+    const { tool, target, failed, running } = s as Record<string, unknown>
     if (typeof tool !== 'string' || !tool) return []
-    return [{ tool, target: typeof target === 'string' ? target : '', ...(failed === true ? { failed } : {}) }]
+    return [{
+      tool,
+      target: typeof target === 'string' ? target : '',
+      ...(failed === true ? { failed } : {}),
+      ...(running === true ? { running } : {}),
+    }]
   })
   return { title, said, steps: listed, more: typeof more === 'number' && more > 0 ? more : 0, confirm: yes }
 }
@@ -69,6 +75,7 @@ export function RepeatedSteps({ asked }: { asked: RepeatsAsked }) {
               {step.target && <span className="min-w-0 truncate font-mono text-on-surface-var">{step.target}</span>}
               {!sameName(label, step.tool) && <span className="shrink-0 font-mono text-on-surface-low">{step.tool}</span>}
               {step.failed && <span className="shrink-0 text-on-surface-low">· failed</span>}
+              {step.running && <span className="shrink-0 text-on-surface-low">· was still running</span>}
             </li>
           )
         })}
