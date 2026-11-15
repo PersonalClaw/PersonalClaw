@@ -45,6 +45,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Settings › Devices lists a sign-in link a browser opened as "Link opened in" that browser, with when, and that it still works as a token until it ends. It no longer reads as an unrecognised client among links no browser has opened.**
 - **A missed-run card settles once its automation has run on schedule since the slots it missed and that run did its work: the history records the missed slots let go, as a Dismiss does. A card about a run a restart cut off still waits for you.**
 - **Library settings' Being read row counts the items still being read or that couldn't be read, the ones its Show them lists, no longer the names the graph could not take without a model; those have a row of their own, with Set up a model. The Library settings tab and the Items count line count the same.**
+- **A chat's cost after each answer, the Usage page and the first models list after a start no longer freeze the gateway. The usage totals, rollup and fold read every row the usage ledger keeps (up to 50,000) on the gateway's event loop, so every other request waited up to 0.9 s a call on a full ledger, and a chat asks for its total on every load and after every answer; the first models list imported the OpenAI SDK there to ask an image provider if it can make images, about a second. They run in a worker thread.**
 
 ### Security
 

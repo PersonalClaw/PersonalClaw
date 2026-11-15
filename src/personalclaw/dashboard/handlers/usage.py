@@ -25,11 +25,21 @@ capped), the rollup is the recent per-session detail.
 Read-only throughout — this is observation, never enforcement, so there is no write/mutate route
 here: the budget route reads the meter the cap is enforced from and changes nothing. Errors use
 the shared ``{error:{code,message}}`` envelope (:func:`personalclaw.http_errors.json_error`).
+
+The ledger and fold reads run in a worker thread (``asyncio.to_thread``), never on the event loop.
+Each reads every retained row (the ledger keeps up to 50,000), and on the loop a read held every
+request the gateway serves: at the cap the fold took 0.7-0.9 s, the totals and the rollup 0.2-0.3
+s, and the chat asks for its cost chip's total on every load and after every turn. Refolds still run
+one at a time, as they did on the loop: each rewrites ``usage_stats.json`` from the fold before it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
+from pathlib import Path
+from typing import Any
 
 from aiohttp import web
 
@@ -40,6 +50,15 @@ from personalclaw.http_errors import json_error
 from personalclaw.routing import usage as usage_fold
 
 logger = logging.getLogger(__name__)
+
+#: One refold at a time: each one reads the fold file, merges and writes it back.
+_REFOLD = threading.Lock()
+
+
+def _refold(home: Path) -> dict[str, Any]:
+    """:func:`usage_fold.refresh` of *home*, one at a time (:data:`_REFOLD`), in a worker thread."""
+    with _REFOLD:
+        return usage_fold.refresh(home)
 
 
 def _bounds(request: web.Request) -> tuple[str, str] | web.Response:
@@ -98,7 +117,9 @@ async def api_usage_rollup(request: web.Request) -> web.Response:
     session = request.query.get("session", "")
     session_key = dashboard_history_key(session) if session else session
     try:
-        rows = ul.rollup(since=since, until=until, group_by=group_by, session_key=session_key)
+        rows = await asyncio.to_thread(
+            ul.rollup, since=since, until=until, group_by=group_by, session_key=session_key
+        )
     except Exception:  # noqa: BLE001 — a ledger read must never 500 a read-only surface
         logger.debug("usage rollup failed", exc_info=True)
         return web.json_response(
@@ -125,7 +146,9 @@ async def api_usage_totals(request: web.Request) -> web.Response:
     session = request.query.get("session", "")
     session_key = dashboard_history_key(session) if session else session
     try:
-        totals = ul.totals(since=since, until=until, session_key=session_key)
+        totals = await asyncio.to_thread(
+            ul.totals, since=since, until=until, session_key=session_key
+        )
     except Exception:  # noqa: BLE001
         logger.debug("usage totals failed", exc_info=True)
         return web.json_response(
@@ -164,7 +187,7 @@ async def api_usage(request: web.Request) -> web.Response:
     try:
         from personalclaw.config.loader import config_dir
 
-        fold = usage_fold.refresh(config_dir())
+        fold = await asyncio.to_thread(_refold, config_dir())
     except Exception:  # noqa: BLE001 — a read-only spend view must never 500 on a bad fold
         logger.debug("usage fold refresh failed", exc_info=True)
         return web.json_response(
