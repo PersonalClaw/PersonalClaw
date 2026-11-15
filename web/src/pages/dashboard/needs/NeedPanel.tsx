@@ -4,6 +4,7 @@ import { useQuery } from '../../../lib/data'
 import { clockTime } from '../../../lib/epoch'
 import type { NeedsYouRow } from '../../../lib/needsYou'
 import { learningCardOf } from '../../../lib/needsYouKinds'
+import { Button } from '../../../ui/Button'
 import { Eyebrow } from '../../../ui/Eyebrow'
 import { InlineLoadError, ListSkeleton } from '../../../ui/ListScaffold'
 import { Markdown } from '../../../ui/Markdown'
@@ -38,18 +39,24 @@ export function panelOwnsBody(_row: NeedsYouRow): boolean {
 }
 
 /** The selected row's panel body: a proposal's own read, or, for what waits, the ask's detail. */
-export function NeedPanel({ row, outcome, actions, now }: {
+export function NeedPanel({ row, outcome, actions, now, onNext }: {
   row: NeedsYouRow
   outcome: Outcome | undefined
   actions: CardActions
   now: number
+  /** Opens the next row in Needs you's order that still waits, once this one is decided. */
+  onNext?: () => void
 }) {
   const card = learningCardOf(row)
+  const settled = outcome?.state === 'done' || outcome?.state === 'ended'
+  const next = settled && onNext ? (
+    <div><Button size="sm" variant="secondary" onClick={onNext}>Next ask</Button></div>
+  ) : null
   if (row.origin === 'note' && typeof row.note.refs?.learning_proposal === 'string' && actions.learning) {
-    return <LearningPanel row={row} pid={String(row.note.refs.learning_proposal)} card={card} outcome={outcome} actions={actions} />
+    return <>{<LearningPanel row={row} pid={String(row.note.refs.learning_proposal)} card={card} outcome={outcome} actions={actions} />}{next}</>
   }
-  if (row.origin === 'proposal') return <SkillPanel row={row} outcome={outcome} actions={actions} />
-  return <NeedDetail row={row} outcome={outcome} actions={actions} now={now} />
+  if (row.origin === 'proposal') return <>{<SkillPanel row={row} outcome={outcome} actions={actions} />}{next}</>
+  return <><NeedDetail row={row} outcome={outcome} actions={actions} now={now} />{next}</>
 }
 
 /** One part of the panel, under its own `h3`, drawn only with content. */

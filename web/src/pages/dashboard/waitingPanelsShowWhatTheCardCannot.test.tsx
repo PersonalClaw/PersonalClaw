@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { resetDataStore } from '../../lib/data'
 import { NeedsYouHarness, gateItem, waitingItem, waitingList } from '../../test/needsYouHarness'
 
@@ -12,6 +13,7 @@ import { NeedsYouHarness, gateItem, waitingItem, waitingList } from '../../test/
 // nothing (no alert), draws no header row or "From …" line, and draws its command once.
 
 const waiting = vi.fn()
+const resumeWorkflowRun = vi.fn()
 
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -23,6 +25,7 @@ vi.mock('../../lib/api', async (orig) => ({
     running: () => Promise.resolve({ running: [], finished: [] }),
     chatSessions: () => Promise.resolve([]),
     chatSessionDetail: () => Promise.resolve({ key: 'chat-1', title: '', run_state: 'idle', messages: [] }),
+    resumeWorkflowRun: (...a: unknown[]) => resumeWorkflowRun(...a),
   },
 }))
 vi.mock('../../lib/useChatSocket', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useChatSocket: () => {} }))
@@ -95,5 +98,24 @@ describe('any other ask’s panel', () => {
     const p = await pane()
     const field = await within(p).findByRole('textbox', { name: /^Reply to Which version\?/ })
     expect(field.getAttribute('placeholder')).toBe('Reply in one line: Enter sends')
+  })
+})
+
+describe('after a decision', () => {
+  it('the panel stays on it with its outcome, and Next ask opens the next one, its heading focused', async () => {
+    resumeWorkflowRun.mockResolvedValue({ ok: true })
+    const second = gateItem({ kind: 'choice', prompt: 'Which tag should I cut?', choices: ['v1.2', 'v1.3'] }, {
+      id: 'gate:run-78:gate.tag:1', work: 'workflow:run-78',
+      answer: { method: 'POST', path: '/api/workflows/runs/run-78/resume', takes: ['choice'], body: { resume_token: 'tok-8' } },
+      route: '#/workflows/runs/run-78',
+    })
+    waiting.mockResolvedValue(waitingList([gateItem(), second]))
+    render(<NeedsYouHarness query={{ open: 'waiting:gate:run-77:gate.push:1' }} />)
+    const p = await pane()
+    await userEvent.click(await within(p).findByRole('button', { name: /^Ship it: / }))
+    expect(await within(p).findByText(/^Answered “Ship it”/)).toBeInTheDocument()
+    await userEvent.click(within(p).getByRole('button', { name: 'Next ask' }))
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Which tag should I cut?'))
+    expect(document.activeElement?.tagName).toBe('H2')
   })
 })

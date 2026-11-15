@@ -187,6 +187,14 @@ export function NeedsYouPage({ query, setQuery, navigate }: RouteProps) {
 
   // ── The selection ──
   const selectedRow = rows.find((r) => rowKey(r) === open)
+  /** The row after *r* in Needs you's order that still waits on an answer: what "Next ask" opens. */
+  const nextAfter = (r: NeedsYouRow): NeedsYouRow | undefined => {
+    const at = rows.indexOf(r)
+    return rows.slice(at + 1).find((n) => {
+      const o = outcomes[rowKey(n)]
+      return !(o?.state === 'done' || o?.state === 'ended')
+    })
+  }
   const panelOpen = open !== ''
   const columns = useColumns(reviewGrid, panelOpen)
   const [allAsks, setAllAsks] = useState(false)
@@ -229,7 +237,8 @@ export function NeedsYouPage({ query, setQuery, navigate }: RouteProps) {
     id: open, title: needName(selectedRow), heading: needHeading(selectedRow), onClose: close,
     followsSelection: followed === open,
     eyebrow: panelOwnsBody(selectedRow) ? <NeedTagRow row={selectedRow} now={now} /> : undefined,
-    body: <NeedPanel row={selectedRow} outcome={outcomeOf(selectedRow)} actions={actions} now={now} />,
+    body: <NeedPanel row={selectedRow} outcome={outcomeOf(selectedRow)} actions={actions} now={now}
+      onNext={nextAfter(selectedRow) ? () => select(rowKey(nextAfter(selectedRow)!)) : undefined} />,
   } : needs.data ? {
     id: open, title: 'This is no longer waiting on you', onClose: close,
     body: <p data-type="body-m" className="text-on-surface">This is no longer waiting on you. It was decided or ended somewhere else.</p>,
