@@ -30,11 +30,17 @@ export function diffLineColor(l: string): string | undefined {
  *  cannot reach is a region they cannot read, and an unnamed one is announced as its own
  *  content. `label` defaults to 'Diff' but should be specific when a page can show two
  *  patches — two regions both called "Diff" have a name that does not distinguish them. */
-export function UnifiedDiff({ patch, label = 'Diff', className }: { patch: string; label?: string; className?: string }) {
+export function UnifiedDiff({ patch, label = 'Diff', className, wrap = false }: {
+  patch: string; label?: string; className?: string
+  /** Its lines wrap where a panel holds it, so nothing scrolls inside it: no tab stop then, and
+   *  its `@@` lines take the quiet ink a heading line has, not the brand's. */
+  wrap?: boolean
+}) {
+  const ink = (l: string) => (wrap && l.startsWith('@@') ? 'var(--color-on-surface-low)' : diffLineColor(l))
   return (
-    <pre tabIndex={0} aria-label={label} data-type={className ? undefined : 'caption'}
-      className={className ?? 'overflow-x-auto font-mono leading-snug'}>
-      {patch.split('\n').map((l, i) => <div key={i} style={{ color: diffLineColor(l) }}>{l || ' '}</div>)}
+    <pre tabIndex={wrap ? undefined : 0} aria-label={label} data-type={className ? undefined : 'caption'}
+      className={className ?? (wrap ? 'whitespace-pre-wrap font-mono leading-snug [overflow-wrap:anywhere]' : 'overflow-x-auto font-mono leading-snug')}>
+      {patch.split('\n').map((l, i) => <div key={i} style={{ color: ink(l) }}>{l || ' '}</div>)}
     </pre>
   )
 }

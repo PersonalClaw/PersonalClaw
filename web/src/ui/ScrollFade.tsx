@@ -9,6 +9,14 @@ export const FADE_PX = 24
 
 const FROM: Record<FadeGround, string> = { canvas: 'from-canvas', surface: 'from-surface' }
 
+/** The height of a decide bar stuck to *el*'s foot (`data-decide-bar`, sticky by its size query),
+ *  or 0 when there is none or it sits at the content's end. */
+export function stuckFoot(el: HTMLElement): number {
+  const bar = el.querySelector<HTMLElement>('[data-decide-bar]')
+  if (!bar || typeof getComputedStyle !== 'function' || getComputedStyle(bar).position !== 'sticky') return 0
+  return Math.round(bar.getBoundingClientRect().height)
+}
+
 /** Where *el*'s content runs past its edges: below its bottom edge, and above its top once it has
  *  moved past it. A pane that fits fades nowhere. A pixel of slack is read as none, as a
  *  rounding of `scrollTop` at a fractional zoom leaves one. */
@@ -44,11 +52,15 @@ export function ScrollFade({ ground, className = '', style, scrollRef, children,
   const own = useRef<HTMLDivElement>(null)
   const pane = scrollRef ?? own
   const [edges, setEdges] = useState({ top: false, bottom: false })
+  // A decide bar stuck to the pane's foot (Needs you's panel) is where the content is cut: the
+  // bottom fade lies on its top edge, and what a key reveals stops clear of the bar and the fade.
+  const [foot, setFoot] = useState(0)
   const measure = useCallback(() => {
     const el = pane.current
     if (!el) return
     const next = cutEdges(el)
     setEdges((was) => (was.top === next.top && was.bottom === next.bottom ? was : next))
+    setFoot(stuckFoot(el))
   }, [pane])
   useLayoutEffect(measure, [measure, children])
   useEffect(() => {
@@ -81,12 +93,12 @@ export function ScrollFade({ ground, className = '', style, scrollRef, children,
         ref={pane}
         onScroll={measure}
         className={`min-h-0 flex-1 overflow-y-auto ${className}`}
-        style={{ scrollPaddingTop: FADE_PX, scrollPaddingBottom: FADE_PX, ...style }}
+        style={{ scrollPaddingTop: FADE_PX, scrollPaddingBottom: FADE_PX + foot, ...style }}
       >
         {children}
       </div>
       {edges.top && <span aria-hidden="true" data-fade="top" className={`${fade} top-0 bg-gradient-to-b`} />}
-      {edges.bottom && <span aria-hidden="true" data-fade="bottom" className={`${fade} bottom-0 bg-gradient-to-t`} />}
+      {edges.bottom && <span aria-hidden="true" data-fade="bottom" className={`${fade} bottom-0 bg-gradient-to-t`} style={foot ? { bottom: foot } : undefined} />}
     </div>
   )
 }

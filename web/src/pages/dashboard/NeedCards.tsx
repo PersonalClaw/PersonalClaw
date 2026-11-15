@@ -268,7 +268,7 @@ function KindTag({ kind }: { kind: KindWords }) {
 /** A card's tag row: its kind, then the thing it is about or its source, the dot and the name one
  *  unit so a wrapped row never leaves the dot behind; at its end the project chip and the time left
  *  to answer. */
-function NeedTagRow({ row, chip, now }: { row: NeedsYouRow; chip?: ReactNode; now: number }) {
+export function NeedTagRow({ row, chip, now }: { row: NeedsYouRow; chip?: ReactNode; now: number }) {
   const slot = thingName(row) || sourceSlot(row)
   const left = row.origin === 'waiting' ? timeLeft(row.item, now) : ''
   return (
@@ -679,9 +679,11 @@ function rejectVerb(variant: string): string {
  *  that replaces or removes what is there asks once more, inline, in the review's words, and nothing
  *  is sent before its yes. A row filed before the card (no `refs.card`) can't tell from its kind
  *  what its Accept does, so its Accept always asks once more. */
-function LearningAnswers(props: {
+export function LearningAnswers(props: {
   pid: string; card: Record<string, unknown> | null; subject: string; busy: boolean; off?: string
   onAnswer: (action: 'accept' | 'reject', done: string) => void
+  /** In the panel's decide bar: an accept that installs or applies is its `primary`. */
+  inBar?: boolean
 }) {
   // While Learning is off nothing here can decide a learning card: one read a page says so, the
   // same read Learning's page makes (`GET /api/learning/proposals` answers `{enabled: false}`).
@@ -698,9 +700,10 @@ function LearningAnswers(props: {
   return <LearningPair {...props} />
 }
 
-function LearningPair({ pid, card, subject, busy, off, onAnswer }: {
+function LearningPair({ pid, card, subject, busy, off, onAnswer, inBar = false }: {
   pid: string; card: Record<string, unknown> | null; subject: string; busy: boolean; off?: string
   onAnswer: (action: 'accept' | 'reject', done: string) => void
+  inBar?: boolean
 }) {
   const accept = (card?.accept ?? {}) as { effect?: string; verb?: string; sentence?: string }
   const variant = String(card?.variant ?? '')
@@ -738,12 +741,12 @@ function LearningPair({ pid, card, subject, busy, off, onAnswer }: {
       {none ? (
         <p data-type="body-s" className="basis-full text-on-surface">{told?.state === 'none' ? told.text : accept.sentence}</p>
       ) : (
-        <Button size="xs" variant={card && (accept.effect === 'installs' || accept.effect === 'applies') ? 'tonal' : 'secondary'}
+        <Button size={inBar ? 'sm' : 'xs'} variant={card && (accept.effect === 'installs' || accept.effect === 'applies') ? (inBar ? 'primary' : 'tonal') : 'secondary'}
           loading={busy || reading} disabled={!!off} disabledReason={off} ariaLabel={`${verb}: ${subject}`} onClick={press} className={ANSWER}>
           <Check size={13} aria-hidden="true" /> {verb}
         </Button>
       )}
-      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+      <Button size={inBar ? 'sm' : 'xs'} variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
         ariaLabel={`${no}: ${subject}`} onClick={() => onAnswer('reject', done(no))} className={ANSWER}>
         <X size={13} aria-hidden="true" /> {no}
       </Button>
@@ -777,10 +780,12 @@ function ReadSaid({ told }: { told: Told }) {
 /** A skill proposal's pair on its card: its card's verb (Add refinement, Install skill), `tonal`,
  *  and Reject. The press reads the proposal again first: a skill removed since the list was read
  *  means accepting installs it as new, which it asks once more about. */
-function SkillAnswers({ proposal, subject, busy, off, onAnswer }: {
+export function SkillAnswers({ proposal, subject, busy, off, onAnswer, inBar = false }: {
   proposal: NonNullable<Extract<NeedsYouRow, { origin: 'proposal' }>['proposal']>
   subject: string; busy: boolean; off?: string
   onAnswer: (action: 'accept' | 'reject', done: string) => void
+  /** In the panel's decide bar: its accept is the bar's `primary`. */
+  inBar?: boolean
 }) {
   const verb = proposal.card?.accept.verb || 'Accept'
   const joins = proposal.kind === 'refine' ? !proposal.accept_target : !!proposal.accept_target
@@ -817,11 +822,11 @@ function SkillAnswers({ proposal, subject, busy, off, onAnswer }: {
   }
   return (
     <>
-      <Button size="xs" variant="tonal" loading={busy || reading} disabled={!!off} disabledReason={off}
+      <Button size={inBar ? 'sm' : 'xs'} variant={inBar ? 'primary' : 'tonal'} loading={busy || reading} disabled={!!off} disabledReason={off}
         ariaLabel={`${verb}: ${subject}`} onClick={press} className={ANSWER}>
         <Check size={13} aria-hidden="true" /> {verb}
       </Button>
-      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+      <Button size={inBar ? 'sm' : 'xs'} variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
         ariaLabel={`Reject: ${subject}`} onClick={() => onAnswer('reject', 'Rejected.')} className={ANSWER}>
         <X size={13} aria-hidden="true" /> Reject
       </Button>
@@ -1146,7 +1151,7 @@ function YesNo({ subject, busy, yes, no, onYes, onNo, yesVariant = 'secondary', 
 
 /** How a card's answer went, in words, in a live region: a card that only changed colour is one a
  *  screen-reader user cannot tell from a pending one. */
-function CardOutcome({ outcome }: { outcome: Outcome | undefined }) {
+export function CardOutcome({ outcome }: { outcome: Outcome | undefined }) {
   if (!outcome || outcome.state === 'busy') return null
   if (outcome.state === 'failed') {
     return (
@@ -1245,13 +1250,27 @@ function ReplyField({ subject, busy, onSend, onCard = false, placeholder = 'Repl
 
 /** The last few lines of the conversation an ask came from, read-only: what the agent said before
  *  it asked, so the owner can answer from here. */
-function ConversationTail({ session }: { session: string }) {
+export function ConversationTail({ session, before, hosted = false }: {
+  session: string
+  /** Only the lines at or before this time (a proposal's `created_at`), so a chat used since shows
+   *  what it said up to the proposal, not its newest lines. */
+  before?: string
+  /** Inside a part of the panel that names it: a surface step, no region of its own. */
+  hosted?: boolean
+}) {
   const { data, error, refresh } = useQuery(`chat:peek:${session}`, async () => api.chatSessionDetail(session), { persist: false })
   if (error && !data) return <InlineLoadError what="the conversation it came from" error={error} onRetry={refresh} />
-  const lines = (data?.messages ?? []).filter((m) => m.role === 'user' || m.role === 'assistant').slice(-4)
+  const until = before ? Date.parse(before) : NaN
+  const lines = (data?.messages ?? [])
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .filter((m) => Number.isNaN(until) || !m.ts || Date.parse(m.ts) <= until)
+    .slice(-4)
   if (lines.length === 0) return null
+  const frame = hosted
+    ? { className: 'flex min-w-0 flex-col gap-xs rounded-md bg-surface-low p-m' }
+    : { role: 'region', 'aria-label': 'The conversation it came from', className: 'flex min-w-0 flex-col gap-xs border-l-2 border-outline-variant/40 pl-m' }
   return (
-    <section role="region" aria-label="The conversation it came from" className="flex min-w-0 flex-col gap-xs border-l-2 border-outline-variant/40 pl-m">
+    <section {...frame}>
       {/* Each line renders as the transcript does: the agent's as its reply (any widget block left
           out), yours as text written in lines; each cut at a block boundary, never in a fence. */}
       {lines.map((m, i) => (

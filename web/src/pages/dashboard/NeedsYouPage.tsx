@@ -18,7 +18,8 @@ import { TOUCH_TARGET } from '../../ui/Toggle'
 import { TopBar } from '../../ui/TopBar'
 import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
 import { Group } from './Group'
-import { ENDED_ELSEWHERE, NeedCard, NeedDetail, NeedsUnreadable, needHeading, needName, rowKey, type Outcome } from './NeedCards'
+import { ENDED_ELSEWHERE, NeedCard, NeedTagRow, NeedsUnreadable, needHeading, needName, rowKey, type Outcome } from './NeedCards'
+import { NeedPanel, panelOwnsBody } from './needs/NeedPanel'
 import { LARGE_LIST } from './RunningLane'
 import { useNeedActions } from './useNeedActions'
 
@@ -227,7 +228,8 @@ export function NeedsYouPage({ query, setQuery, navigate }: RouteProps) {
   const detail: CapabilityDetail | null = !open ? null : selectedRow ? {
     id: open, title: needName(selectedRow), heading: needHeading(selectedRow), onClose: close,
     followsSelection: followed === open,
-    body: <NeedDetail row={selectedRow} outcome={outcomeOf(selectedRow)} actions={actions} now={now} />,
+    eyebrow: panelOwnsBody(selectedRow) ? <NeedTagRow row={selectedRow} now={now} /> : undefined,
+    body: <NeedPanel row={selectedRow} outcome={outcomeOf(selectedRow)} actions={actions} now={now} />,
   } : needs.data ? {
     id: open, title: 'This is no longer waiting on you', onClose: close,
     body: <p data-type="body-m" className="text-on-surface">This is no longer waiting on you. It was decided or ended somewhere else.</p>,
@@ -311,7 +313,7 @@ export function NeedsYouPage({ query, setQuery, navigate }: RouteProps) {
 
   return (
     <ListBesideDetail header={header} detail={detail} noun="Needs you"
-      listWidth={720} splitWidth={440} headingScrolls compactTargets focusOnOpen edgeFade>
+      listWidth={720} splitWidth={440} headingScrolls compactTargets focusOnOpen edgeFade decideBar>
       <section ref={listRef} role="region" aria-label="Needs you" data-tour="approvals" onKeyDown={onListKey}
         className="flex min-h-full w-full min-w-0 flex-col gap-l px-l py-l">
         {offline ? (
