@@ -1210,23 +1210,30 @@ def withdrawn_words(rows: Iterable[Any]) -> dict[str, tuple[str, str]]:
 
 
 def _withdraw_inbox_item(pid: str) -> None:
-    """Dismiss the withdrawn proposal's Inbox row, its copy of the proposal's body cleared, and
-    give the row's notifications :data:`WITHDRAWN_NOTE` in place of the words they copied."""
+    """Dismiss the withdrawn proposal's Inbox row, its copy of the proposal's title and body
+    cleared, and give the row's notifications, in the log and waiting for the digest,
+    :data:`WITHDRAWN_NOTE` in place of the words they copied."""
     try:
         from personalclaw.inbox import set_item_status
+        from personalclaw.notification_rules import retext_digest_queue
         from personalclaw.proposals_contract import REFS_KEY
 
         state, store, rows = _inbox_rows(pid)
+        words = withdrawn_words(rows)
         for row in rows:
+            # The proposal's own copy on the row (the Inbox's proposals view reads its title)
+            # keeps none of its words either: its title is the label the row now has.
             payload = row.refs.get(REFS_KEY)
             if isinstance(payload, dict):
                 payload["preview"] = ""
-        words = withdrawn_words(rows)
+                payload["title"] = words.get(row.id, ("", ""))[0]
         if rows and not set_item_status(state, store, rows, "dismissed"):
-            store.save()  # already dismissed: the cleared preview is still written
+            store.save()  # already dismissed: the cleared copy is still written
         retext = getattr(state, "retext_item_notifications", None)
         if words and callable(retext):
             retext(words)
+        # A note waiting for the digest copied the row's words too.
+        retext_digest_queue(words)
     except Exception:
         logger.warning("could not withdraw learning proposal %s from the Inbox", pid, exc_info=True)
 

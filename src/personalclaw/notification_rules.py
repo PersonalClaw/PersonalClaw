@@ -45,9 +45,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from personalclaw import bounded_log, notification_addressing
 from personalclaw import notification_kinds as nk
@@ -110,6 +111,10 @@ DEFAULT_DIGEST_SCHEDULE = "0 8 * * *"
 #: (cron disabled, machine asleep) cannot grow without bound.
 DIGEST_QUEUE_NAME = "digest_queue.jsonl"
 DIGEST_QUEUE_CAP = 500
+
+#: One writer of the digest queue at a time in this process: an append, a drain and a retext each
+#: read and write the whole file or its end, so two at once could lose a note or bring one back.
+_DIGEST_LOCK = threading.Lock()
 
 _RULES_ENTITY = "notification_rules"
 
@@ -617,14 +622,15 @@ def queue_for_digest(note: dict[str, Any]) -> None:
     loss. The exception is logged and swallowed.
     """
     path = digest_queue_path()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(note, ensure_ascii=False) + "\n")
-    except OSError:
-        logger.warning("digest queue append failed", exc_info=True)
-        return
-    _trim_digest_queue(path)
+    with _DIGEST_LOCK:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(note, ensure_ascii=False) + "\n")
+        except OSError:
+            logger.warning("digest queue append failed", exc_info=True)
+            return
+        _trim_digest_queue(path)
 
 
 def _trim_digest_queue(path: Path) -> None:
@@ -648,13 +654,18 @@ def drain_digest_queue() -> list[dict[str, Any]]:
     not strand every queued notification.
     """
     path = digest_queue_path()
-    if not path.is_file():
-        return []
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        logger.warning("digest queue read failed", exc_info=True)
-        return []
+    with _DIGEST_LOCK:
+        if not path.is_file():
+            return []
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning("digest queue read failed", exc_info=True)
+            return []
+        try:
+            atomic_write(path, "")
+        except OSError:
+            logger.warning("digest queue truncate failed", exc_info=True)
     out: list[dict[str, Any]] = []
     for line in raw.splitlines():
         line = line.strip()
@@ -667,11 +678,50 @@ def drain_digest_queue() -> list[dict[str, Any]]:
             continue
         if isinstance(parsed, dict):
             out.append(parsed)
-    try:
-        atomic_write(path, "")
-    except OSError:
-        logger.warning("digest queue truncate failed", exc_info=True)
     return out
+
+
+def retext_digest_queue(texts: Mapping[str, tuple[str, str]]) -> int:
+    """Give every queued note that is a view of a row in *texts* (row id -> its new title and
+    body, masked as the note shows them) those words, as the notification log's copies are given
+    theirs (``DashboardState.retext_item_notifications``). A note waiting for the digest copied
+    its row's words when it was raised, so a row withdrawn since would still be summarised in
+    them. Returns how many it changed; best-effort, as the queue is."""
+    path = digest_queue_path()
+    if not texts:
+        return 0
+    with _DIGEST_LOCK:
+        if not path.is_file():
+            return 0
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            logger.warning("digest queue read failed", exc_info=True)
+            return 0
+        changed = 0
+        out: list[str] = []
+        for line in lines:
+            try:
+                note = json.loads(line) if line.strip() else None
+            except json.JSONDecodeError:
+                note = None
+            words = texts.get(str(note.get("inbox_item") or "")) if isinstance(note, dict) else None
+            if (
+                isinstance(note, dict)
+                and words is not None
+                and (note.get("title"), note.get("body")) != words
+            ):
+                note["title"], note["body"] = words
+                line = json.dumps(note, ensure_ascii=False)
+                changed += 1
+            out.append(line)
+        if changed:
+            try:
+                atomic_write(path, "\n".join(out) + "\n")
+            except OSError:
+                logger.warning("digest queue retext failed", exc_info=True)
+                return 0
+        return changed
 
 
 # ── The digest ──────────────────────────────────────────────────────────
