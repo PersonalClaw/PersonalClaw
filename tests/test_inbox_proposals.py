@@ -81,7 +81,9 @@ def test_enqueue_raises_a_proposal_item(home):
     assert item.status == ItemStatus.PENDING
     assert item.refs["skill_proposal"] == prop.id
     assert item.refs["session"] == "chat-1"
-    assert "extract-tables" in item.message
+    # It leads with what the skill does; its slug is the card's name slot.
+    assert item.refs["card"]["name"] == "extract-tables"
+    assert item.message.startswith(item.refs["card"]["headline"])
 
 
 def test_enqueue_notifies_once_through_the_registered_kind(home):
@@ -104,7 +106,8 @@ def test_a_refine_proposal_is_labelled_differently(home):
         "personalclaw.inbox_providers.native_source.get_dashboard_state", return_value=state
     ):
         _enqueue(kind="refine", refine_target="pdf-reader")
-    assert "Refine" in state.notify.call_args[0][1]
+    # The label is the notification's tag, the opening of its body under the headline.
+    assert any("Refine a skill" in str(arg) for arg in state.notify.call_args[0][1:])
 
 
 def test_re_enqueueing_the_same_proposal_does_not_stack_rows(home):

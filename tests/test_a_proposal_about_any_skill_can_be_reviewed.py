@@ -321,7 +321,7 @@ async def test_its_inbox_row_opens_and_accepts_it(
     prop = _stumble(IMPORTED)
     assert prop is not None
     row = _row_for(store, prop.id)
-    assert row.message.startswith("Refine a skill")
+    assert row.message.split("\n\n")[1].startswith("Refine a skill")
 
     # The Inbox panel opens and installs the proposal by the id its row carries.
     pid = row.refs["skill_proposal"]
