@@ -2009,10 +2009,13 @@ class NativeAgentRuntime(
                 context_usage_pct=self._last_context_pct,
             )
         else:
+            from personalclaw import context_compaction as cc
+
             yield AgentEvent(
                 kind=EVENT_COMPACTION_STATUS,
                 text="noop",
                 context_usage_pct=self._last_context_pct,
+                tool_meta={"why": cc.why_nothing_folds(self._messages)},
             )
 
     def _compacted_on_its_own(self, before: int, after: int) -> AgentEvent:

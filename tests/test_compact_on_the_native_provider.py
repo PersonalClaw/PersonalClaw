@@ -33,6 +33,7 @@ from typing import Any
 
 import pytest
 
+from personalclaw import context_compaction as cc
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.context_compaction import total_chars
@@ -82,6 +83,22 @@ def _runtime() -> NativeAgentRuntime:
 
 async def _drain(stream) -> list[AgentEvent]:
     return [ev async for ev in stream]
+
+
+def _the_long_opening() -> dict:
+    """An opening of about 81,000 characters, in lines: one unbroken word that long would make
+    the file-reference scan of a pass that folds take tens of seconds."""
+    return {"role": "user", "content": "log line\n" * 9000}
+
+
+def _the_eleven() -> list[dict]:
+    """Eleven short messages: with an opening, more than the head and the tail hold, and a
+    middle too little to fold shorter."""
+    return [{"role": "assistant" if i % 2 == 0 else "user", "content": f"m{i}"} for i in range(11)]
+
+
+def _role_and_content(messages: list[dict]) -> list[tuple[Any, Any]]:
+    return [(m.get("role"), m.get("content")) for m in messages]
 
 
 # ── the capability, and the two questions it must not collapse ────────────────
@@ -137,6 +154,52 @@ class TestTheCommandRunsTheRealPass:
         assert [e.kind for e in events] == [EVENT_COMPACTION_STATUS]
         assert events[0].text == "noop"
         assert rt._messages == [{"role": "user", "content": "hello"}]
+
+    @pytest.mark.asyncio
+    async def test_a_noop_says_why_nothing_folded(self):
+        """A noop carries why the pass folded nothing, so the chat can say what holds the
+        context: too few messages to have a middle, or a middle the pass keeps whole."""
+        rt = _runtime()
+        rt._messages = [{"role": "user", "content": "hello"}]
+        events = await _drain(rt.stream_command("/compact"))
+        assert events[0].text == "noop"
+        assert events[0].tool_meta == {"why": "too_few_messages"}
+
+        rt = _runtime()
+        rt._messages = [{"role": "user", "content": "system + first message"}, *_the_eleven()]
+        events = await _drain(rt.stream_command("/compact"))
+        assert events[0].text == "noop"
+        assert events[0].tool_meta == {"why": "all_kept"}
+
+    @pytest.mark.asyncio
+    async def test_compaction_keeps_the_opening_and_the_latest_messages_word_for_word(self):
+        """What the "nothing to compact" sentences promise: the session's opening and its latest
+        messages are kept word for word, whether the pass folds nothing or folds the middle."""
+        for history in (
+            [_the_long_opening(), {"role": "assistant", "content": "ok"}],
+            [_the_long_opening(), *_the_eleven()],
+        ):
+            rt = _runtime()
+            rt._messages = [dict(m) for m in history]
+            before = _role_and_content(rt._messages)
+            await _drain(rt.stream_command("/compact"))
+            assert _role_and_content(rt._messages) == before
+
+        rt = _runtime()
+        rt._messages = [
+            _the_long_opening(),
+            *(
+                {"role": "assistant" if i % 2 == 0 else "user", "content": "log line\n" * 300}
+                for i in range(30)
+            ),
+            {"role": "assistant", "content": "final"},
+        ]
+        before = _role_and_content(rt._messages)
+        events = await _drain(rt.stream_command("/compact"))
+        assert events[0].text == "completed", "this history has a middle the pass folds"
+        after = _role_and_content(rt._messages)
+        assert after[: cc._PROTECT_HEAD] == before[: cc._PROTECT_HEAD]
+        assert after[-cc._PROTECT_TAIL :] == before[-cc._PROTECT_TAIL :]
 
     @pytest.mark.asyncio
     async def test_any_other_command_is_still_the_plain_prompt_fallback(self):
@@ -272,6 +335,53 @@ class TestTheReportedSentence:
         assert session.appended and session.appended[0][1] == text
         assert state.told == [("dashboard:s1", text)], "the linked channel is told the same"
 
+    @staticmethod
+    async def _said_after_compact(messages: list[dict], pct: float | None) -> list[str]:
+        """What the session is given when ``/compact`` runs on a runtime holding *messages* at a
+        context reading of *pct*."""
+        rt = _runtime()
+        rt._messages = messages
+        rt._last_context_pct = pct
+        events = await _drain(rt.stream_command("/compact"))
+        session = _FakeSession()
+        await _broadcast_compaction_result(_FakeState(), session, events[0])
+        return [content for _role, content, _cls in session.appended]
+
+    @pytest.mark.asyncio
+    async def test_a_full_context_of_its_opening_and_one_answer_is_not_called_short(self):
+        said = await self._said_after_compact(
+            [_the_long_opening(), {"role": "assistant", "content": "ok"}], 77.0
+        )
+        assert said == [_SAID_OF_TOO_FEW.format(pct=77)]
+        assert "already short enough" not in said[0]
+
+    @pytest.mark.asyncio
+    async def test_a_full_context_whose_middle_is_too_little_to_fold_says_so(self):
+        said = await self._said_after_compact([_the_long_opening(), *_the_eleven()], 77.0)
+        assert said == [_SAID_OF_ALL_KEPT.format(pct=77)]
+
+    @pytest.mark.asyncio
+    async def test_a_short_conversation_is_still_already_short_enough(self):
+        said = await self._said_after_compact(
+            [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}], 3.0
+        )
+        assert said == [_ALREADY_SHORT]
+
+    @pytest.mark.asyncio
+    async def test_a_noop_with_no_reason_or_no_reading_is_still_already_short_enough(self):
+        """An agent CLI's noop carries no reason, and an unmeasured reading says nothing of how
+        full the context is: both keep the short sentence."""
+        for event in (
+            AgentEvent(kind=EVENT_COMPACTION_STATUS, text="noop", context_usage_pct=77.0),
+            AgentEvent(
+                kind=EVENT_COMPACTION_STATUS, text="noop", tool_meta={"why": "too_few_messages"}
+            ),
+        ):
+            session = _FakeSession()
+            text = await _broadcast_compaction_result(_FakeState(), session, event)
+            assert text == _ALREADY_SHORT
+            assert [content for _r, content, _c in session.appended] == [_ALREADY_SHORT]
+
     @pytest.mark.asyncio
     async def test_an_unknown_status_is_not_reported_at_all(self):
         """The `None` return is what tells the chat runner `saw_compaction` did NOT happen,
@@ -286,6 +396,21 @@ class TestTheReportedSentence:
             is None
         )
         assert state.told == []
+
+
+_ALREADY_SHORT = "Nothing to compact — this conversation is already short enough."
+_SAID_OF_TOO_FEW = (
+    "Nothing to compact — the context is {pct}% full, but this session holds only its opening "
+    "(the agent's instructions, the safety rules, memory and any earlier messages of this chat) "
+    "and its latest messages, which compaction keeps word for word. To free room, start a new "
+    "chat."
+)
+_SAID_OF_ALL_KEPT = (
+    "Nothing to compact — the context is {pct}% full, but nearly all of it is this session's "
+    "opening (the agent's instructions, the safety rules, memory and any earlier messages of "
+    "this chat) and its latest messages, which compaction keeps word for word. To free room, "
+    "start a new chat."
+)
 
 
 class _FakeSession:
