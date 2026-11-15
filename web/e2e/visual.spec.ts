@@ -236,7 +236,7 @@ for (const { key, theme, width, height } of AGENTS_BAND_SHOTS) {
       await answerTheBandsReads(page)
       const settle = await gotoRoute(page, 'dashboard?view=overview', BUDGET)
       expect(settle.exhausted, `the overview never reached rest: ${settle.exhausted.join(', ')}`).toEqual([])
-      await expect(band(page).getByText('2 asks wait on you · 1 failed today')).toBeVisible()
+      await expect(band(page).locator('p', { hasText: /^2 need you · 1 running · 1 failed today$/ })).toBeVisible()
       await expect(band(page)).toHaveScreenshot(`${key}.png`, { animations: 'disabled' })
     })
   })
