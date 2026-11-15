@@ -29,10 +29,11 @@ def _wt_root(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _init_repo(path: str, *, commit: bool = True) -> None:
+def _init_repo(path: str, *, commit: bool = True, branch: str = "") -> None:
     """A repository with an identity configured in it, as its owner sets one: PersonalClaw
     commits only as the identity git is configured with (``worktree.commit_identity``)."""
-    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    init = ["git", "init", "-q", *(["-b", branch] if branch else [])]
+    subprocess.run(init, cwd=path, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
     if commit:
@@ -340,3 +341,27 @@ class TestConflictDetection:
         assert wt.merge_worktree(str(d), "t-conf").ok is False
         # after merge_worktree aborted the conflicted merge, the tree is clean again
         assert wt.conflict_paths(str(d)) == []
+
+
+class TestTheBranchAMergeGoesInto:
+    def test_a_detached_head_names_no_branch_and_its_review_names_the_commit(self, tmp_path):
+        d = tmp_path / "repo"
+        d.mkdir()
+        _init_repo(str(d), branch="trunk")
+        subprocess.run(["git", "checkout", "-q", "--detach"], cwd=str(d), check=True)
+        short = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(d),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert wt.base_branch(str(d)) == ""
+        assert wt.merge_target(str(d)) == f"a detached HEAD at {short}"
+        assert wt.merge_review(str(d), [])["into"] == f"a detached HEAD at {short}"
+
+    def test_an_unborn_head_names_its_branch(self, tmp_path):
+        d = tmp_path / "repo"
+        d.mkdir()
+        _init_repo(str(d), commit=False, branch="trunk")
+        assert wt.base_branch(str(d)) == "trunk"

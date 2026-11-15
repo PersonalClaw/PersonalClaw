@@ -23,6 +23,9 @@ class PollGit(NamedTuple):
     parallel: bool
     #: Where the run starts, to record at its first poll; ``""`` for nothing to record.
     base: str
+    #: Where the workspace is when no branch is checked out there (``worktree.merge_target``);
+    #: ``""`` when one is, or when it is no repository.
+    head: str = ""
 
 
 class Review(NamedTuple):

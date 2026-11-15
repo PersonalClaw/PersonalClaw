@@ -129,11 +129,24 @@ def can_parallelize(workspace: str) -> bool:
 
 
 def base_branch(workspace: str) -> str:
-    """The repo's current branch (the merge target for task worktrees). Falls back
-    to 'main' if it can't be resolved (e.g. an unborn HEAD on a fresh init)."""
+    """The branch checked out in *workspace*, the one its tasks' work merges into, or ``""`` when
+    none is: a detached HEAD (a tag or a commit checked out on its own), or a folder git cannot
+    answer for. An unborn HEAD on a fresh ``git init`` names its branch, as git does."""
     rc, out = _git(workspace, "symbolic-ref", "--short", "HEAD")
     name = out.strip()
-    return name if (rc == 0 and name) else "main"
+    return name if (rc == 0 and name) else ""
+
+
+def merge_target(workspace: str) -> str:
+    """What a merge into *workspace* goes into, as a loop's texts name it: its checked-out branch
+    (:func:`base_branch`), or ``a detached HEAD at <short commit>`` when no branch is checked out.
+    Every merge review, merge record and conflict question names it so, never a branch the merge
+    does not move."""
+    branch = base_branch(workspace)
+    if branch:
+        return branch
+    rc, out = _git(workspace, "rev-parse", "--short", "HEAD", errors=False)
+    return f"a detached HEAD at {out.strip()}" if rc == 0 and out.strip() else "a detached HEAD"
 
 
 # A task id is filename-safe (mirrors store._TASK_ID_RE): alphanumerics, '_' and '-'
@@ -948,8 +961,9 @@ def merge_review(workspace: str, task_ids) -> dict:
     """What merging *task_ids*' branches into the workspace's checked-out branch would bring in:
     for each, its branch, the commit it is at, its commits (``HEAD..branch``) and its diff against
     the point it left the branch (``HEAD...branch``), the same text git shows. The diffs together
-    are capped at :data:`REVIEW_DIFF_CHARS`, and a review that was cut says so."""
-    into = base_branch(workspace)
+    are capped at :data:`REVIEW_DIFF_CHARS`, and a review that was cut says so. ``into`` names
+    what the merge goes into (:func:`merge_target`)."""
+    into = merge_target(workspace)
     budget = REVIEW_DIFF_CHARS
     tasks: list[dict] = []
     cut = False
