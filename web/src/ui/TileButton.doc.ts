@@ -11,6 +11,7 @@ const doc: UiDoc = {
     { name: 'children', description: 'The card content — preview area, title/metadata rows. The tile owns only the chrome around them.' },
     { name: 'onClick', description: 'Activation handler; the whole tile is the click target.' },
     { name: 'active', description: 'Marks the tile as the current selection (primary-tinted border).' },
+    { name: 'current', description: "The tile whose detail is open beside its grid (a library card previewed): `aria-current=\"true\"` in place of active's `aria-pressed`, the selected border, and `CURRENT_OUTLINE`, the 2 px `Highlight` outline forced colours keep. Unset, the tile is as before." },
     { name: 'title', description: 'Supplementary native tooltip.' },
     { name: 'className', description: 'Extra classes (tokens only — no raw hex/px).' },
   ],

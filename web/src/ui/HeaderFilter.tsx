@@ -23,6 +23,9 @@ export function headerFilterLabel(sections: FilterSectionDef[], prefix = 'Show')
   return prefix ? `${prefix}: ${chosen.join(' · ')}` : chosen.join(' · ')
 }
 
+/** The panel form's width: two columns of sections. */
+const PANEL_WIDTH = 560
+
 /** How many sections hold something other than their default: what the shed button's dot says. */
 export function headerFilterSet(sections: FilterSectionDef[]): number {
   return sections.reduce((n, s) => n + (s.value !== s.defaultKey ? 1 : 0), 0)
@@ -38,8 +41,17 @@ export function headerFilterSet(sections: FilterSectionDef[]): number {
  *  section holds something other than its default; its accessible name and tooltip still say the
  *  whole label. It is never pushed into the `…` menu, since a menu row cannot open this one, and
  *  a filter the page is under must stay in sight. */
-export function HeaderFilter({ sections, prefix = 'Show', className }: {
+export function HeaderFilter({ sections, prefix = 'Show', className, panel = false, phoneSheet = false, foot }: {
   sections: FilterSectionDef[]
+  /** From 320 to 768 px, open as a phone sheet (`Popover`'s `phoneSheet`): 44 px rows, one Clear at
+   *  its top, and `foot` in place of Done. Off by default. */
+  phoneSheet?: boolean
+  /** The sheet's counting foot, "Show 3,344 items": what the filter leaves. Pressing it closes it. */
+  foot?: string
+  /** The panel form (the library's Filter): a 560 px panel of two columns, each section in the
+   *  column it names (`column`), its choices drawn as check boxes and radios, and no Done
+   *  (`FilterSections`' `panel`). Unset, the Filter is today's 264 px column. */
+  panel?: boolean
   /** Added to the trigger. It has the compact widths' 44 px hit box (`TOUCH_TARGET`) already. */
   className?: string
   /** The word before the choices: "Show", or nothing where the choices say it themselves (a sort
@@ -51,7 +63,7 @@ export function HeaderFilter({ sections, prefix = 'Show', className }: {
   const { tier, mark } = useHeaderChild({ priority: 'default', canIcon: true, neverOverflow: true, menu: { label, icon: SlidersHorizontal } })
   const iconOnly = tier === 'icon' || tier === 'overflow'
   return mark(
-    <Popover portal placement="bottom" align="right" width={264}
+    <Popover portal placement="bottom" align="right" width={panel ? PANEL_WIDTH : 264} phoneSheet={phoneSheet}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-haspopup="dialog" aria-expanded={open} aria-label={label} title={label}
           data-type="label-s" data-header-filter={set > 0 ? 'set' : 'default'}
@@ -69,7 +81,7 @@ export function HeaderFilter({ sections, prefix = 'Show', className }: {
           {iconOnly && set > 0 && <span aria-hidden data-header-set className="absolute right-2 top-2 size-1.5 rounded-pill bg-primary" />}
         </button>
       )}>
-      {(close) => <FilterSections sections={sections} close={close} />}
+      {(close) => <FilterSections sections={sections} close={close} panel={panel} foot={foot} />}
     </Popover>
   )
 }

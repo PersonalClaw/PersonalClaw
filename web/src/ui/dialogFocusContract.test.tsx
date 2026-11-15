@@ -89,6 +89,9 @@ describe('the rail: aria-modal implies a focus trap', () => {
     const modal = files.filter((f) => /aria-modal="true"/.test(f.src)).map((f) => f.rel).sort()
     expect(modal).toEqual([
       'ui/Modal.tsx',
+      // A menu or picker as a phone draws it: a bottom sheet over a scrim, named by what opened it.
+      // It owns the focus while open (Tab cycles its stops), so it carries the trap.
+      'ui/PhoneSheet.tsx',
       // The snip overlay. It covers the page to take a region selection, so
       // it owes containment for the same reason as the rest of this list.
       'ui/SnipOverlay.tsx',

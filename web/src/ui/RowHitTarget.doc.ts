@@ -14,6 +14,7 @@ const doc: UiDoc = {
   bestPractices: [
     { guidance: true, description: 'Give the wrapper `relative` + `tabIndex={-1}` and keep `onClick` on it — Motion\'s whileTap/whileHover sets tabindex="0" otherwise, which would be a second, nameless tab stop per row.' },
     { guidance: true, description: 'Draw the focus ring on the WRAPPER via `has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary` — this button sits at -z-10, so its own ring would paint behind the row background.' },
+    { guidance: true, description: "Show the selected row under forced colours with `SELECTED_ROW_OUTLINE` on the WRAPPER: a 2 px `Highlight` outline while the button carries `aria-current`. Forced colours drop the fill and border colour a selected row is drawn with, so without it the row the detail is open for looks like every other row. `CURRENT_OUTLINE` is the same outline for a control that is itself the current one (`TileButton`'s `current`, `Segmented`'s `markCurrent`)." },
     { guidance: false, description: "Do not add children — an empty overlay is what keeps the row's own controls out of an interactive ancestor. Nested controls keep working because they already stopPropagation and this button's click bubbles to the wrapper." },
   ],
   anatomy: ['absolutely-positioned inset-0 button at -z-10 (empty, aria-labelled, no outline of its own)'],

@@ -107,7 +107,8 @@ describe('the five shadowed names that are NOT drift', () => {
   it('FileTree ContextMenu takes explicit coords; the shared one wraps a child', () => {
     // The signatures are the evidence: {x,y,items,onClose} vs {items,children,disabled}.
     expect(read('pages/files/browse/FileTree.tsx')).toMatch(/function ContextMenu\(\{ x, y, items, onClose \}/)
-    expect(read('ui/motion/ContextMenu.tsx')).toMatch(/export function ContextMenu\(\{ items, children, disabled \}/)
+    // The shared one's later props (a phone sheet, its name) follow these three.
+    expect(read('ui/motion/ContextMenu.tsx')).toMatch(/export function ContextMenu\(\{ items, children, disabled[,} ]/)
   })
 
   it('the two Sparks are unrelated: a brand mark and a sparkline', () => {

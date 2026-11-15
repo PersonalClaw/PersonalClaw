@@ -3,7 +3,7 @@ import type { LucideIcon } from 'lucide-react'
 import { Segmented } from '../ui/Segmented'
 import { TOUCH_TARGET } from '../ui/Toggle'
 import { CornersClearedAbove, TopBar } from '../ui/TopBar'
-import { useIsMobile } from './useIsMobile'
+import { useIsMobile, useNarrowerThan } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
 
 /** One tab of a destination whose tabs are pages with addresses of their own. */
@@ -36,8 +36,16 @@ const PILL_TARGET = `${TOUCH_TARGET} max-lg:min-w-11!`
  *
  *  Below the width the labels need, the strip folds into one pill naming the tab, which opens the
  *  others (`Segmented`'s `collapse="menu"`), icon-only on a phone. Below 1024 px that pill is a
- *  44 px target (`TOUCH_TARGET`), as the shell's corner controls are. */
-export function DestinationTabs({ name, tabs, tab, navigate, fallback, children }: Pick<RouteProps, 'navigate'> & {
+ *  44 px target (`TOUCH_TARGET`), as the shell's corner controls are.
+ *
+ *  Two opt-ins, off by default so a strip that passes neither draws as before (Capabilities',
+ *  Automations'), and passed by the Library's alone:
+ *   · `keepLabels`: on a phone the strip keeps its words where they fit, its options 44 px targets,
+ *     folding to the one pill naming the tab where they don't; only below 360 px does the pill draw
+ *     its icon alone (named by the tab).
+ *   · `markCurrent`: the current tab draws the forced-colours outline (`Segmented`'s `markCurrent`),
+ *     where the strip's fill and weight are dropped. */
+export function DestinationTabs({ name, tabs, tab, navigate, fallback, children, keepLabels = false, markCurrent = false }: Pick<RouteProps, 'navigate'> & {
   /** The destination's name, which names the strip. */
   name: string
   /** The tabs, in the order the strip shows them. */
@@ -48,8 +56,14 @@ export function DestinationTabs({ name, tabs, tab, navigate, fallback, children 
   fallback: ReactNode
   /** The tab's page. */
   children: ReactNode
+  /** Keep the tabs' words on a phone, as 44 px targets (above). */
+  keepLabels?: boolean
+  /** Outline the current tab under forced colours (above). */
+  markCurrent?: boolean
 }) {
   const isMobile = useIsMobile()
+  const tiny = useNarrowerThan(360)
+  const iconOnly = keepLabels ? tiny : isMobile
   const choose = (id: string) => {
     const next = tabs.find((t) => t.id === id)
     if (next && next.id !== tab) navigate(next.address, { replace: true })
@@ -57,7 +71,8 @@ export function DestinationTabs({ name, tabs, tab, navigate, fallback, children 
   return (
     <div className="flex h-full flex-col">
       <TopBar keepCornerPadding left={
-        <Segmented ariaLabel={name} collapse="menu" collapsedClassName={PILL_TARGET} iconOnly={isMobile} value={tab} onChange={choose}
+        <Segmented ariaLabel={name} collapse="menu" collapsedClassName={PILL_TARGET} iconOnly={iconOnly} value={tab} onChange={choose}
+          optionClassName={keepLabels ? TOUCH_TARGET : undefined} markCurrent={markCurrent}
           options={tabs.map(({ id, label, icon }) => ({ key: id, label, icon }))} />
       } />
       <div className="min-h-0 flex-1">

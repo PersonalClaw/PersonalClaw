@@ -6,6 +6,7 @@ import { fvs } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
 import { menuCursorKeydown, useMenuCursor } from '../lib/useMenuCursor'
 import { useFieldLabelId } from './forms'
+import { CURRENT_OUTLINE } from './RowHitTarget'
 
 export interface SegOption { key: string; label?: string; tone?: string; icon?: LucideIcon; title?: string }
 
@@ -55,7 +56,7 @@ function laidOutWidth(box: Element): number {
  *  status). Inner option height is h-8 to line up with `Button size="sm"` and
  *  search inputs in a header row. `iconOnly` renders square icon buttons (for a
  *  compact view-switch); otherwise icon + label. */
-export function Segmented({ options, value, onChange, iconOnly = false, ariaLabel, disabled = false, size = 'md', collapse, collapsedClassName }: {
+export function Segmented({ options, value, onChange, iconOnly = false, ariaLabel, disabled = false, size = 'md', collapse, collapsedClassName, markCurrent = false, optionClassName = '' }: {
   options: SegOption[]
   value: string
   onChange: (k: string) => void
@@ -79,6 +80,13 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
   /** Added to the folded pill (`collapse='menu'`), e.g. the compact widths' 44 px hit box
    *  (`TOUCH_TARGET`). The strip's own options keep their size. */
   collapsedClassName?: string
+  /** The checked option draws `CURRENT_OUTLINE` under forced colours, where today's fill and weight
+   *  are dropped. Off by default, so every other page's control looks as it did; the library's List
+   *  or Grid and its strip pass it (`HeaderSegmented`'s and `DestinationTabs`' `markCurrent`). */
+  markCurrent?: boolean
+  /** Added to every option, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) on a strip
+   *  that keeps its words on a phone (`DestinationTabs`' `keepLabels`). */
+  optionClassName?: string
 }) {
   const sm = size === 'sm'
   // Claim the enclosing `Field`'s label, the same contract `TextInput` already honours: an explicit
@@ -207,7 +215,7 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
             // 470 would bolden every unchecked option) and the checked option's inline
             // 550 (below) wins over both.
             data-type={sm ? 'caption' : 'body-s'}
-            className={`relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${sm ? 'fw-400' : ''} ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5' : 'h-8 px-m')}`}
+            className={`relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${sm ? 'fw-400' : ''} ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5' : 'h-8 px-m')}${on && markCurrent ? ` ${CURRENT_OUTLINE}` : ''}${optionClassName ? ` ${optionClassName}` : ''}`}
             style={on ? withWeight({ color: fg }, 550) : { color: fg }}>
             {on && (
               <span

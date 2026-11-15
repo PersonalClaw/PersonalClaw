@@ -15,6 +15,7 @@ const doc: UiDoc = {
     { name: 'onClose', description: 'Called on any dismiss — the X button, Escape, or a scrim click. Required.' },
     { name: 'size', description: "'sheet' (the default) caps the sheet at the dialog width; 'compact' at SURFACE_WIDTHS.compactModal (520px), for one short form or a few choices (Chat preferences)." },
     { name: 'describedBy', description: 'The id of the element that describes the dialog, as aria-describedby: its first line.' },
+    { name: 'phoneSheet', description: "From 320 to 768 px, rise from the bottom as a phone sheet: full width with a grab line, its MenuRows and FilterRows 44 px (PhoneSheetRows). Escape, the scrim and Close close it as before. Off by default; wider, the dialog is centred as before." },
     { name: 'title', description: 'The modal heading, shown in the pinned header (also the aria-label when a string). A compact modal wraps a long title, so a question is whole on a phone; a sheet cuts it short.' },
   ],
   bestPractices: [
