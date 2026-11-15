@@ -121,11 +121,20 @@ describe('both composing surfaces use the one helper', () => {
   const read = (rel: string) => readSource(join(SRC, rel))
   const codeOf = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-  it("Home's Needs you composes through it", () => {
+  it("Needs you composes its own subject through it, with no cut and its own joiner", () => {
     // Its cards are drawn from `NeedCards.tsx`, Home's one copy, which a project's page can draw too.
+    // Needs you builds its subjects itself (`needSubject`): a thing's slot leads ("<tag> <slot>:
+    // <headline>"), a source follows with ", ", which no screen reader reads aloud, and nothing is
+    // cut beyond the server's own 120 (a cut at 55 dropped what told two proposals apart).
     const code = codeOf('pages/dashboard/NeedCards.tsx')
-    expect(code).toMatch(/const subject = rowSubject\(\[needName\(row\), row\.raisedBy, previewLine\(row\.subtitle\)\]\)/)
+    expect(code).toMatch(/const subject = needSubject\(row\)/)
+    expect(code).toMatch(/rowSubject\(\[headline, sourceSlot\(row\)\], Infinity, \{ joiner: ', ' \}\)/)
     expect(code, 'no hand-rolled join').not.toMatch(/`\$\{row\.title\} — \$\{row\.subtitle\}`/)
+  })
+
+  it('the joiner joins, and the default stays a dash for its other callers', () => {
+    expect(rowSubject(['Ship it?', 'Workflow release'], Infinity, { joiner: ', ' })).toBe('Ship it?, Workflow release')
+    expect(rowSubject(['Ship it?', 'Workflow release'])).toBe('Ship it? — Workflow release')
   })
 
   it('the notification rows compose through it', () => {

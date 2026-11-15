@@ -93,7 +93,7 @@ describe("a card's controls keep their press", () => {
 
   it("a run's choice answers it and opens nothing", async () => {
     const { opened } = mount()
-    await userEvent.click(await screen.findByRole('button', { name: /^Answer Which branch should I push\? .*Ship it$/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Ship it: Which branch should I push\?/ }))
     await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalled())
     expect(opened()).toBe(false)
   })
@@ -161,7 +161,7 @@ describe("a card's answers keep their keys: Enter or Space acts and opens nothin
 
   it.each([['Enter', '{Enter}'], ['Space', ' ']])("%s on a run's choice answers it and opens nothing", async (_what, key) => {
     const { opened } = mount()
-    await press(await screen.findByRole('button', { name: /^Answer Which branch should I push\? .*Ship it$/ }), key)
+    await press(await screen.findByRole('button', { name: /^Ship it: Which branch should I push\?/ }), key)
     await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalled())
     expect(opened()).toBe(false)
   })

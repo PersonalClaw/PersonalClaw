@@ -15,8 +15,9 @@ import {
 // A source the gateway could not read is carried as `unreadable`, so the view says it could not
 // read it instead of drawing an empty group: an empty Needs you is this page's "all clear".
 
-/** A skill proposal as Needs you reads it. */
+/** A skill proposal as Needs you reads it: its card, when the gateway wrote one, leads its card. */
 export type ProposalInput = Pick<SkillProposal, 'id' | 'slug' | 'description' | 'created_at'>
+  & Partial<Pick<SkillProposal, 'kind' | 'card' | 'accept_target' | 'target_resolves'>>
 
 /** An Inbox row as Needs you reads it. */
 export type NoteInput = Pick<
@@ -172,12 +173,15 @@ export function needsYou(
     if (p === null || typeof p !== 'object' || typeof p.id !== 'string' || p.id === '') continue
     if (typeof p.slug !== 'string' || p.slug === '') continue
     proposalIds.add(p.id)
+    // It leads with what it changes, in the gateway's words (`card`); a proposal read before the
+    // card existed says its slug and description, as it did.
+    const card = p.card && typeof p.card === 'object' ? p.card : null
     asks.push({
       key: `proposal:${p.id}`,
       origin: 'proposal',
-      title: proposalTitle(p),
+      title: card?.headline || proposalTitle(p),
       raisedBy: 'Skills',
-      subtitle: proposalSummary(p),
+      subtitle: card ? card.detail : proposalSummary(p),
       at: isoSeconds(p.created_at),
       proposal: p,
     })
@@ -188,12 +192,16 @@ export function needsYou(
     // A proposal's own Inbox row while the proposal is listed: the proposal is the card.
     if (note.item_kind === 'proposal' && proposalIds.has(mirroredProposalId(note))) continue
     if (note.item_kind !== 'user_note' && note.item_kind !== 'proposal') continue
+    // A learning proposal's row carries its card (`refs.card`): its headline and its one line. A row
+    // filed before it reads its message's first line, as it did.
+    const card = record(record(note.refs).card)
+    const learned = typeof card.headline === 'string' && card.headline !== ''
     asks.push({
       key: `note:${note.id}`,
       origin: 'note',
-      title: firstLine(note.message) || firstLine(note.context_summary) || '(no message)',
+      title: learned ? String(card.headline) : firstLine(note.message) || firstLine(note.context_summary) || '(no message)',
       raisedBy: note.item_kind === 'user_note' ? 'Your note' : inboxRaisedBy(note),
-      subtitle: '',
+      subtitle: learned && typeof card.detail === 'string' ? card.detail : '',
       at: typeof note.created_at === 'number' && Number.isFinite(note.created_at) ? note.created_at : null,
       note,
     })

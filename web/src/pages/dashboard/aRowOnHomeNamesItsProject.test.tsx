@@ -77,9 +77,11 @@ describe("a card on Needs you names its work's project", () => {
     const asker = await within(needsYou()).findByText('PersonalClaw in “Seed order”')
     const card = asker.closest('li')!
     const chip = await within(card).findByRole('link', { name: 'Open project Garden' })
-    expect(asker.parentElement?.contains(chip), "on the asker's line").toBe(true)
+    // The asker is the tag row's name slot, and the chip ends that row.
+    const slot = asker.closest('[data-name-slot]')!
+    expect(slot.parentElement?.contains(chip), "on the asker's line").toBe(true)
     // A long project name never takes the asker's line: the asker keeps at least half of it.
-    expect(asker.className).toContain('min-w-[50%]')
+    expect(slot.className).toContain('min-w-[50%]')
     const answer = within(card).getByRole('link', { name: /Answer it where it asks/ })
     expect(answer.contains(chip)).toBe(false)
   })

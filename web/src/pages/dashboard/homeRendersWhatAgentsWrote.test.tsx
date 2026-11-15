@@ -157,7 +157,7 @@ describe('Needs you renders what agents wrote', () => {
     render(<NeedsYouHarness />)
     const lines = await screen.findAllByText(/open the report/)
     // The sink is the card's title line, not the link's own span inside it.
-    const sinks = [...new Set(lines.map((line) => line.closest('p[data-type="label-m"]')))]
+    const sinks = [...new Set(lines.map((line) => line.closest('p[data-type="title-m"]')))]
     expect(sinks).toHaveLength(1)
     expect(sinks[0], "the card's title").not.toBeNull()
     expect(inert(sinks[0]!)).toEqual([])
@@ -176,7 +176,7 @@ describe('Needs you renders what agents wrote', () => {
     chatSessions.mockResolvedValue([])
     render(<NeedsYouHarness />)
     const card = (await screen.findByRole('button', { name: /^Show the details of / })).parentElement!
-    expect(card.querySelector('p[data-type="label-m"]')!.textContent).toBe(firstLine(text))
+    expect(card.querySelector('p[data-type="title-m"]')!.textContent).toBe(firstLine(text))
   })
 
 })

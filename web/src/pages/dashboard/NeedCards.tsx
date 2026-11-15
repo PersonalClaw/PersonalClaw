@@ -7,7 +7,9 @@ import type { NeedsYouRow } from '../../lib/needsYou'
 import {
   waitingAnswerId, waitingQuestion, waitingReply, type CardQuestion, type ReplyTarget,
 } from '../../lib/waitingAnswer'
-import { approvalOf, isStale } from '../../lib/waitingList'
+import { approvalOf, isStale, staleAt } from '../../lib/waitingList'
+import { kindOf, learningCardOf, type KindWords } from '../../lib/needsYouKinds'
+import { StatusPill } from '../../ui/StatusPill'
 import { rowSubject } from '../../lib/rowSubject'
 import { PendingApprovalCard } from '../../app/PendingApprovalCard'
 import { Button } from '../../ui/Button'
@@ -97,6 +99,46 @@ export const needName = (row: NeedsYouRow) => (isApproval(row) ? row.title : pre
 /** An ask's title as a heading: text for an approval, rendered for any other. */
 export const needHeading = (row: NeedsYouRow) => (isApproval(row) ? row.title : <MarkdownLine text={row.title} />)
 
+/** What a deadline leaves, as a card's tag row says it: "4 min left" while it is under 15 minutes
+ *  away, "Answer by 11:32" beyond, nothing with none or once it has passed (the expired line says
+ *  so). In caption, no colour, moving with the card's `now`. */
+export function timeLeft(item: { expires_at?: string | null }, now: number): string {
+  const at = staleAt(item as never)
+  if (at === null || at <= now) return ''
+  const ms = at - now
+  return ms < 15 * 60_000 ? `${Math.max(1, Math.ceil(ms / 60_000))} min left` : `Answer by ${clockTime(item.expires_at)}`
+}
+
+/** The name of the thing a proposal is about, when its headline leads with what it does: a
+ *  template's or a skill's slug, a workflow, a project (its card's `name`). `""` for an ask, whose
+ *  tag row names its source instead. */
+export function thingName(row: NeedsYouRow): string {
+  if (row.origin === 'proposal') return row.proposal.card?.name ?? ''
+  const card = learningCardOf(row)
+  return card && typeof card.name === 'string' ? card.name : ''
+}
+
+/** The words a source's line says that the tag doesn't: what names specific work. "Loop · Docs"
+ *  under the tag Loop names "Docs"; an agent in its chat names itself whole; a source that is only
+ *  a kind ("Browser", "Skills", "Your note") names nothing the tag hasn't. */
+const GENERIC_SOURCES = new Set(['Browser', 'Skills', 'Your note', 'Folder trust', 'Control bridge', 'Loop', 'Workflow run', 'Chat'])
+export function sourceSlot(row: NeedsYouRow): string {
+  const by = (row.raisedBy ?? '').trim()
+  if (!by || GENERIC_SOURCES.has(by)) return ''
+  const cut = by.indexOf(' · ')
+  return cut === -1 ? by : by.slice(cut + 3).trim()
+}
+
+/** A card's name for assistive tech, with no cut beyond the server's own: "<tag> <thing>:
+ *  <headline>" when the tag row names the thing itself, else "<headline>, <source>" (`rowSubject`'s
+ *  `', '` joiner, which no screen reader reads aloud as a symbol). */
+export function needSubject(row: NeedsYouRow): string {
+  const thing = thingName(row)
+  const headline = previewLine(needName(row))
+  if (thing) return thing === headline ? `${kindOf(row).tag} ${thing}` : `${kindOf(row).tag} ${thing}: ${headline}`
+  return rowSubject([headline, sourceSlot(row)], Infinity, { joiner: ', ' })
+}
+
 /** The key a row is selected by, in `?open=`. */
 export function rowKey(row: NeedsYouRow): string {
   return row.key
@@ -139,6 +181,41 @@ export interface CardActions {
   reply: (key: string, target: ReplyTarget, text: string) => Promise<boolean>
   /** A folder's trust, recorded by its own button (`TrustFolderButton`): the card says so. */
   trusted: (key: string) => void
+}
+
+/** A card's kind, its first word: a neutral pill with its icon and noun from the registry
+ *  (`needsYouKinds`), no tab stop, never coral. */
+function KindTag({ kind }: { kind: KindWords }) {
+  const Icon = kind.icon
+  return (
+    <StatusPill tone="neutral" groundedOn="var(--color-surface-low)" className="inline-flex shrink-0 items-center gap-1">
+      <Icon size={12} aria-hidden="true" />{kind.tag}
+    </StatusPill>
+  )
+}
+
+/** A card's tag row: its kind, then the thing it is about or its source, the dot and the name one
+ *  unit so a wrapped row never leaves the dot behind; at its end the project chip and the time left
+ *  to answer. */
+function NeedTagRow({ row, chip, now }: { row: NeedsYouRow; chip?: ReactNode; now: number }) {
+  const slot = thingName(row) || sourceSlot(row)
+  const left = row.origin === 'waiting' ? timeLeft(row.item, now) : ''
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-xs">
+      <KindTag kind={kindOf(row)} />
+      {slot ? (
+        <span data-type="caption" data-name-slot="" className="inline-flex min-w-[50%] items-baseline gap-1 text-on-surface-low">
+          <span aria-hidden="true">·</span><span className="min-w-0 truncate">{slot}</span>
+        </span>
+      ) : null}
+      {chip || left ? (
+        <span className="ml-auto flex shrink-0 items-center gap-xs">
+          {chip}
+          {left ? <span data-type="caption" className="text-on-surface-low">{left}</span> : null}
+        </span>
+      ) : null}
+    </div>
+  )
 }
 
 /** What a card's answer carries on every card: a 44 px box below 1024 px and a transparent edge,
@@ -262,7 +339,10 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
 }) {
   const settled = outcome?.state === 'done' || outcome?.state === 'ended'
   const busy = outcome?.state === 'busy'
-  const subject = rowSubject([needName(row), row.raisedBy, previewLine(row.subtitle)])
+  const subject = needSubject(row)
+  // A proposal's or a note's lines are clamped (the panel holds them whole); what an ask's answer
+  // decides on never is, since its answer acts in one press.
+  const clamped = row.origin !== 'waiting'
   const item = row.origin === 'waiting' ? row.item : null
   const expired = item ? isStale(item, now) : false
   const answersRef = useRef<HTMLDivElement>(null)
@@ -280,7 +360,8 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
     if (approval && !expired) {
       return (
         <div className="flex min-w-0 flex-col gap-xs">
-          <PendingApprovalCard approval={approval} busy={busy || !!off} form="queue" tagEnd={chip}
+          <PendingApprovalCard approval={approval} busy={busy || !!off} form="queue"
+            tagEnd={chip || timeLeft(item, now) ? <>{chip}{timeLeft(item, now) ? <span data-type="caption" className="text-on-surface-low">{timeLeft(item, now)}</span> : null}</> : undefined}
             answersReplacedBy={replaced ?? undefined}
             onDecide={(action) => actions.approval(row.key, approval.id, action)} />
           {outcome?.state === 'failed' ? <CardOutcome outcome={outcome} /> : null}
@@ -303,17 +384,11 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
     || ((item?.kind === 'browse_grant' || item?.kind === 'bridge_confirmation') && answerId))
   return (
     <div className="flex min-w-0 flex-col gap-xs">
-      {row.raisedBy && chip ? (
-        <div className="flex min-w-0 items-center gap-xs">
-          <p data-type="label-s" className="min-w-[50%] flex-1 truncate text-on-surface-low">{row.raisedBy}</p>
-          {chip}
-        </div>
-      ) : row.raisedBy ? <p data-type="label-s" className="min-w-0 truncate text-on-surface-low">{row.raisedBy}</p>
-        : chip ? <div className="flex min-w-0 justify-end">{chip}</div> : null}
+      <NeedTagRow row={row} chip={chip} now={now} />
       {/* What an agent, a loop or a person wrote renders as its line; an approval's title is a tool's
           name, and a browse grant's second line is ours, so both stay text. */}
-      <p data-type="label-m" className="min-w-0 text-on-surface-var">{item?.kind === 'approval' ? row.title : <MarkdownLine text={row.title} />}</p>
-      {row.subtitle ? <p data-type="body-s" className="min-w-0 text-on-surface-low">{item?.kind === 'browse_grant' ? row.subtitle : <MarkdownLine text={row.subtitle} />}</p> : null}
+      <p data-type="title-m" className={`min-w-0 break-words text-on-surface${clamped ? ' line-clamp-2' : ''}`}>{item?.kind === 'approval' ? row.title : <MarkdownLine text={row.title} tooltip={false} />}</p>
+      {row.subtitle ? <p data-type="body-s" className={`min-w-0 break-words text-on-surface${clamped ? ' line-clamp-1' : ''}`}>{item?.kind === 'browse_grant' ? row.subtitle : <MarkdownLine text={row.subtitle} tooltip={false} />}</p> : null}
       {/* A gate's or a trigger's prompt is a body, with any widget block left out. */}
       {question?.prompt && question.prompt !== row.title ? (
         <div data-type="body-s" className="my-1 min-w-0 text-on-surface"><Markdown>{widgetlessText(question.prompt)}</Markdown></div>
@@ -403,11 +478,11 @@ function YesNo({ subject, busy, yes, no, onYes, onNo, yesVariant = 'secondary', 
   return (
     <>
       <Button size="xs" variant={yesVariant} loading={busy} disabled={!!off} disabledReason={off}
-        ariaLabel={`${yes} ${subject}`} onClick={onYes} className={ANSWER}>
+        ariaLabel={`${yes}: ${subject}`} onClick={onYes} className={ANSWER}>
         <Check size={13} aria-hidden="true" /> {yes}
       </Button>
       <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
-        ariaLabel={`${no} ${subject}`} onClick={onNo} className={ANSWER}>
+        ariaLabel={`${no}: ${subject}`} onClick={onNo} className={ANSWER}>
         <X size={13} aria-hidden="true" /> {no}
       </Button>
     </>
@@ -449,7 +524,7 @@ function QuestionActions({ question, subject, busy, onAnswer, off }: {
   if (question.event) {
     return (
       <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
-        ariaLabel={`Wake ${subject} now`} onClick={() => onAnswer(true)} className={ANSWER}>
+        ariaLabel={`Wake it now: ${subject}`} onClick={() => onAnswer(true)} className={ANSWER}>
         <Play size={13} aria-hidden="true" /> Wake it now
       </Button>
     )
@@ -474,7 +549,7 @@ function QuestionActions({ question, subject, busy, onAnswer, off }: {
     <>
       {question.choices.map((choice) => (
         <WrappingAnswer key={choice} disabled={busy || !!off} ariaBusy={busy}
-          ariaLabel={`Answer ${subject} — ${choice}`} onClick={() => onAnswer(choice)}>
+          ariaLabel={`${choice}: ${subject}`} onClick={() => onAnswer(choice)}>
           {choice}
         </WrappingAnswer>
       ))}

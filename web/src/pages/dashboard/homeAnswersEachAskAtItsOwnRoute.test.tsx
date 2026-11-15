@@ -145,8 +145,8 @@ describe('a run’s gate', () => {
   it('offers its options as answers, and resumes the run with the chosen one and its token', async () => {
     waiting.mockResolvedValue(waitingList([gateItem()]))
     render(<NeedsYouHarness />)
-    expect(await within(needsYou()).findByText('Workflow · release')).toBeTruthy()
-    await userEvent.click(within(needsYou()).getByRole('button', { name: /Ship it$/ }))
+    expect(await within(needsYou()).findByText('release')).toBeTruthy()
+    await userEvent.click(within(needsYou()).getByRole('button', { name: /^Ship it: / }))
     await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: 'Ship it', resume_token: 'tok-9' }))
     expect(await within(needsYou()).findByText('Answered “Ship it” — the run is moving again.')).toBeTruthy()
   })
@@ -155,9 +155,9 @@ describe('a run’s gate', () => {
     resumeWorkflowRun.mockRejectedValue(new Error('the run moved on'))
     waiting.mockResolvedValue(waitingList([gateItem()]))
     render(<NeedsYouHarness />)
-    await userEvent.click(await within(needsYou()).findByRole('button', { name: /Hold$/ }))
+    await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Hold: / }))
     expect(await within(needsYou()).findByText(/Could not send that answer: the run moved on/)).toBeTruthy()
-    expect(within(needsYou()).getByRole('button', { name: /Hold$/ })).toBeEnabled()
+    expect(within(needsYou()).getByRole('button', { name: /^Hold: / })).toBeEnabled()
   })
 
   it('with no preset options, says where to answer it instead of faking a text box', async () => {
@@ -188,7 +188,7 @@ describe('a run’s gate', () => {
   it('a parked run is woken, and offers nothing to decide', async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'event', prompt: 'Waiting for the next check' })]))
     render(<NeedsYouHarness />)
-    await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Wake .* now$/ }))
+    await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Wake it now: / }))
     await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: true, resume_token: 'tok-9' }))
     expect(within(needsYou()).queryByRole('button', { name: /^Deny/ })).toBeNull()
   })
@@ -203,7 +203,7 @@ describe('the other asks', () => {
       route: '#/automations?open=t1',
     })]))
     render(<NeedsYouHarness />)
-    expect(await within(needsYou()).findByText('Trigger · Check my balance')).toBeTruthy()
+    expect(await within(needsYou()).findByText('Check my balance')).toBeTruthy()
     await userEvent.click(within(needsYou()).getByRole('button', { name: /^Approve/ }))
     await waitFor(() => expect(answerTriggerPark).toHaveBeenCalledWith('t1', { resume_token: 'pk', answer: true }))
     expect(await within(needsYou()).findByText(/Could not send that answer: the trigger was edited since it asked/)).toBeTruthy()
@@ -216,7 +216,7 @@ describe('the other asks', () => {
       answer: { method: 'POST', path: '/api/browse/grants/g1/{answer}', takes: ['approve', 'reject'], body: {} }, route: '#/dashboard',
     })]))
     render(<NeedsYouHarness />)
-    await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Refuse Order the groceries/ }))
+    await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Refuse: Order the groceries/ }))
     await waitFor(() => expect(browseGrantResolve).toHaveBeenCalledWith('g1', 'reject'))
   })
 
@@ -243,7 +243,7 @@ describe('the other asks', () => {
     render(<NeedsYouHarness />)
     const links = await within(needsYou()).findAllByRole('link', { name: /^Answer it where it asks/ })
     expect(links.map((a) => a.getAttribute('href'))).toEqual(['#/chat/chat-1', '#/loops/l1', '#/loops/l2'])
-    expect(within(needsYou()).getByText('Loop · Docs')).toBeTruthy()
+    expect(within(needsYou()).getByText('Docs')).toBeTruthy()
     expect(within(needsYou()).getByText('Review the plan: Split the module')).toBeTruthy()
     expect(within(needsYou()).queryAllByRole('button', { name: /^(Approve|Allow|Deny)/ })).toEqual([])
   })
@@ -277,7 +277,7 @@ describe('a skill proposal and a note, after every waiting item', () => {
     expect(text.indexOf(proposalTitle(WRITEUP))).toBeLessThan(text.indexOf('Call the bank'))
     expect(within(needsYou()).getByRole('link', { name: /^Open it in the Inbox: Call the bank/ })).toHaveAttribute('href', '#/inbox?open=note-1')
 
-    await userEvent.click(within(needsYou()).getByRole('button', { name: new RegExp(`^Accept ${proposalTitle(WRITEUP)}`) }))
+    await userEvent.click(within(needsYou()).getByRole('button', { name: new RegExp(`^Accept: ${proposalTitle(WRITEUP)}`) }))
     await waitFor(() => expect(acceptSkillProposal).toHaveBeenCalledWith('proposal_a'))
     expect(await within(needsYou()).findByText('Accepted — the skill is saved.')).toBeTruthy()
   })
@@ -286,9 +286,9 @@ describe('a skill proposal and a note, after every waiting item', () => {
     acceptSkillProposal.mockRejectedValue(new Error('the skill folder is read-only'))
     skillProposals.mockResolvedValue({ proposals: [WRITEUP], lastReview: null })
     render(<NeedsYouHarness />)
-    await userEvent.click(await within(needsYou()).findByRole('button', { name: new RegExp(`^Accept ${proposalTitle(WRITEUP)}`) }))
+    await userEvent.click(await within(needsYou()).findByRole('button', { name: new RegExp(`^Accept: ${proposalTitle(WRITEUP)}`) }))
     expect(await within(needsYou()).findByText(/Could not accept this proposal: the skill folder is read-only/)).toBeTruthy()
-    expect(within(needsYou()).getByRole('button', { name: new RegExp(`^Reject ${proposalTitle(WRITEUP)}`) })).toBeEnabled()
+    expect(within(needsYou()).getByRole('button', { name: new RegExp(`^Reject: ${proposalTitle(WRITEUP)}`) })).toBeEnabled()
   })
 
   it('a refused install says its reason once; a proposal answered elsewhere is no longer waiting', async () => {
@@ -298,7 +298,7 @@ describe('a skill proposal and a note, after every waiting item', () => {
     ))
     skillProposals.mockResolvedValue({ proposals: [WRITEUP], lastReview: null })
     render(<NeedsYouHarness />)
-    const accept = () => within(needsYou()).findByRole('button', { name: new RegExp(`^Accept ${proposalTitle(WRITEUP)}`) })
+    const accept = () => within(needsYou()).findByRole('button', { name: new RegExp(`^Accept: ${proposalTitle(WRITEUP)}`) })
     await userEvent.click(await accept())
     expect(await within(needsYou()).findByText(
       "Could not accept this proposal: The skill could not be installed (could not write skill 'incident-writeup' (invalid, oversized, or exists)), so the proposal is still waiting. Nothing was recorded — it still needs you, so try again.",

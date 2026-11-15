@@ -3254,7 +3254,20 @@ export interface EphemeralDraft { slug: string; title: string; body: string; cre
 /** `trigger` is the STUMBLE that produced a refine proposal (`correction` | `failure_retry` |
  *  `rejection`), or absent/'' for one a model proposed. It is the review surface's answer to
  *  "why am I being asked this?" — a refine row without it can only say what it changes. */
-export interface SkillProposal { id: string; slug: string; description: string; triggers: string; kind: string; refine_target?: string; trigger?: string; session_key: string; created_at: string; status: string; procedure_preview: string }
+/** A proposal's card as the gateway writes it (`skills.proposals.card_of`, `learning.cards.card_for`):
+ *  what it asks, its one line, the thing it is about, what its Accept does and its kind's label. */
+export interface ProposalCard {
+  headline: string
+  detail: string
+  name: string
+  label: string
+  accept: { verb: string; sentence: string; effect?: 'installs' | 'applies' | 'records' | 'none'; confirm?: boolean }
+  kind?: string
+  variant?: string
+}
+export interface SkillProposal { id: string; slug: string; description: string; triggers: string; kind: string; refine_target?: string; trigger?: string; session_key: string; created_at: string; status: string; procedure_preview: string
+  /** Its card, worked out on this read, and where its Accept lands: `accept_target` the skill it refines, `""` when accepting adds a new one. */
+  card?: ProposalCard; accept_target?: string; target_resolves?: boolean }
 /** The most recent skill-ladder pass. `null` on the feed means the ladder has never
  *  run — which is the only thing that distinguishes an idle ladder from a broken one
  *  when `proposals` is empty. Both looked identical before this existed. */
