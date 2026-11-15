@@ -5,7 +5,7 @@
  *  it attaches, at 1440 and 390 in both themes, are the band as a person meets it. */
 import { test, expect } from '@playwright/test'
 import { answerTheBandsReads, band } from './agentsBandFixture'
-import { gotoRoute, seedTheme } from './helpers'
+import { gotoRoute, seedTheme, settleEntranceAnimations } from './helpers'
 import { MIN_TARGET_PX, axeFindings } from './surfaceChecks'
 import { CLIPPED_RING } from './nonAxeA11yChecks'
 
@@ -93,6 +93,11 @@ test.describe('Your agents today', () => {
       await answerTheBandsReads(page)
       await gotoRoute(page, 'dashboard')
       await expect(band(page).locator('p', { hasText: /^2 need you · 1 running · 1 failed today$/ })).toBeVisible()
+      // Home's sections fade in, one after another (`data-entrance-region="staggered"`), and axe
+      // reads a heading's contrast as painted: one still fading reads as low contrast. The band's
+      // line shows before the sections below it have landed, so the entrance settles first, as
+      // the a11y sweep's does.
+      await settleEntranceAnimations(page)
       expect(await axeFindings(page, 'dashboard')).toEqual([])
     })
 
