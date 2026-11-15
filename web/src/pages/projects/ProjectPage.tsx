@@ -520,8 +520,15 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
     // same 60rem the work and About do (it shows only while About sits after the work).
     <div className="@container/page flex h-full flex-col overflow-hidden">
       <TopBar keepCornerPadding left={left} right={right} below={below} />
-      <div className="min-h-0 flex-1">
-        <PaneHost surface="project" size={{ def: 336, min: 320, max: 640 }} pane={pane}>
+      {/* A flex row, as ChatPage gives it: PaneHost grows into it (`flex-1`), so the work's scroller
+          below has a height and scrolls. In a block PaneHost took its content's height, and the frame's
+          overflow cut the page at the fold. */}
+      <div className="flex min-h-0 min-w-0 flex-1">
+        {/* The detail scrolls in its own scroller: PaneHost's body slot gives it the pane's height and no
+            overflow, and none of the details here (a need, a task, the new task form, the folder, what
+            a new chat is told) scrolls itself. */}
+        <PaneHost surface="project" size={{ def: 336, min: 320, max: 640 }}
+          pane={pane && { ...pane, body: <div className="h-full overflow-y-auto">{pane.body}</div> }}>
           <div className="h-full overflow-y-auto">
             <div className="mx-auto grid w-full min-w-0 grid-cols-1 gap-l px-l py-l @[60rem]/page:grid-cols-[minmax(0,1fr)_336px]">
               <div className="min-w-0">{work}</div>
