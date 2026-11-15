@@ -2,7 +2,7 @@ import { vi } from 'vitest'
 import { render } from '@testing-library/react'
 import { useState } from 'react'
 import {
-  api, ApiError, type AlwaysOnResponse, type ChatSessionSummary, type Loop, type ProjectItem, type RunningRow, type TaskItem,
+  api, ApiError, type AlwaysOnResponse, type ChatSessionSummary, type LibraryItem, type LibraryResponse, type Loop, type ProjectItem, type RunningRow, type TaskItem,
   type TaskListItem, type WaitingItem, type WaitingKind, type WorkBoard, type WorkRow,
 } from '../lib/api'
 import { ProjectsSection } from '../pages/projects/ProjectsSection'
@@ -73,6 +73,30 @@ export interface PageFixture {
   folder?: 'there' | number
   /** Settings › Legibility writes the context into files in the folder. */
   adapters?: boolean
+  /** The library read (`GET /api/library?project=`): its rows and facets, or a failure. */
+  library?: LibraryResponse | Error
+  /** The page's address id (`#/projects/<id>`), when not `PID`; give `project` the same id. */
+  id?: string
+}
+
+/** A library item in Garden, as `GET /api/library` answers it. */
+export function libraryItem(ref: string, title: string, over: Partial<LibraryItem> = {}): LibraryItem {
+  const store = ref.startsWith('artifact:') ? 'artifacts' : 'knowledge'
+  return {
+    ref, title, kind: store === 'artifacts' ? 'document' : 'note', format: store === 'artifacts' ? 'html' : 'markdown', store,
+    made: 'chats', made_label: 'Chats', from: null, contributor: '', project: { id: PID, name: 'Garden' }, collections: [], tags: [],
+    created_at: '2026-11-10T09:00:00Z', activity_at: '2026-11-11T09:00:00Z', read: null, pinned: false, archived: false,
+    running: false, conflicts: [], missing_tags: [], state: '', excerpt: '', size: null, version: null, thumb: null, match: null, ...over,
+  }
+}
+
+/** The library read over *items*, its store facet counting *counts* (or the rows). */
+export function libraryRead(items: LibraryItem[], counts: Partial<Record<'artifacts' | 'knowledge', number>> = {}, failed: string[] = []): LibraryResponse {
+  const n = (s: string) => items.filter((i) => i.store === s).length
+  return {
+    items, total: items.length, complete: failed.length === 0, failed,
+    facets: { store: { artifacts: counts.artifacts ?? n('artifacts'), knowledge: counts.knowledge ?? n('knowledge') } }, sort: 'activity',
+  }
 }
 
 export const navigate = vi.fn()
@@ -110,6 +134,9 @@ export function mountPage(f: PageFixture = {}) {
   vi.spyOn(api, 'learningProposals').mockResolvedValue({
     rows: (f.proposals ?? []) as never, total: (f.proposals ?? []).length, by_kind: {}, by_tier: {}, flagged: 0, unrenderable: [], bulk_acceptable: 0,
   })
+  vi.spyOn(api, 'library').mockImplementation(() => answer(f.library ?? libraryRead([])))
+  vi.spyOn(api, 'researchReports').mockResolvedValue({ reports: [] } as never)
+  vi.spyOn(api, 'knowledgeIntents').mockResolvedValue({ intents: [] } as never)
   vi.spyOn(api, 'personalclawConfig').mockResolvedValue({ legibility: { context_adapters: !!f.adapters } } as Awaited<ReturnType<typeof api.personalclawConfig>>)
   vi.spyOn(api, 'browseDirs').mockImplementation(() => (f.folder === undefined || f.folder === 'there'
     ? Promise.resolve({ path: '', entries: [] } as unknown as Awaited<ReturnType<typeof api.browseDirs>>)
@@ -128,7 +155,7 @@ export function mountPage(f: PageFixture = {}) {
         return next
       })
     }
-    return <ProjectsSection sub={PID} navigate={navigate} navEpoch={0} query={query} setQuery={setQuery} />
+    return <ProjectsSection sub={f.id ?? PID} navigate={navigate} navEpoch={0} query={query} setQuery={setQuery} />
   }
   const view = render(<><Host /><DialogHost /></>)
   return { ...view, updateSettings, updateProject, address, writes }

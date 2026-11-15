@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { api, type AlwaysOnResponse, type ProjectItem } from '../../lib/api'
+import { api, type AlwaysOnResponse, type LibraryItem, type ProjectItem } from '../../lib/api'
 import { invalidateKeys } from '../../lib/data'
 import { rebaseText, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
@@ -12,6 +12,10 @@ import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { TextLink } from '../../ui/TextLink'
 import { TOUCH_TARGET } from '../../ui/Toggle'
 import { TrustFolderButton } from '../triggers/HeldBackNote'
+import { LibraryAddMenu, type AddForm } from '../../ui/LibraryAddMenu'
+import { LibraryRow } from '../../ui/LibraryRow'
+import { libraryOf, SourceFailed } from './ProjectWork'
+import type { ProjectLibraryPart } from './useProjectLibrary'
 import type { WorkspaceState } from '../../lib/useWorkspaceMissing'
 
 /** ── About this project: the parts every chat and loop here works from ─────────────────────────
@@ -20,7 +24,7 @@ import type { WorkspaceState } from '../../lib/useWorkspaceMissing'
  *  Each part says what it is and has one way to change it: the brief (inline), the instructions (a
  *  window over the revision it read), the folder and what automations may do there, what a new chat
  *  here is told (opened beside), and the project's secrets. The knowledge is the library's
- *  (commit 2). After a save each part says, once and politely, who gets the change (§1.4 item 3). */
+ *  (`KnowledgePart`). After a save each part says, once and politely, who gets the change (§1.4 item 3). */
 
 /** What each part says after a save: who gets the change, never that work already going keeps
  *  the old one where it does not. */
@@ -333,6 +337,54 @@ export function SecretsPart({ project }: { project: Pick<ProjectItem, 'id' | 'na
 }
 
 /** The aside itself: one card, its parts in order, hairlines between them. */
+/** The knowledge rows the part names: the first three. */
+export const KNOWLEDGE_SHOWN = 3
+
+/** About › Knowledge: how many items the project holds (the read's store facet), the first three as
+ *  the library's compact rows (a shared item says "From Personal", a teammate's "Added by Sam"), each
+ *  opening the library's preview beside the work, and Add, the library's own menu filing into the
+ *  project, with Open in Library. A store that failed says so and draws no count. */
+export function KnowledgePart({ project, part, open, onOpen, onAdd, onRetry, offReason }: {
+  project: Pick<ProjectItem, 'id' | 'name'>
+  part: ProjectLibraryPart
+  /** The item whose preview is open beside the work, by its ref. */
+  open?: string
+  onOpen: (item: LibraryItem) => void
+  /** Open one of the library's add forms beside the work, filing into the project. */
+  onAdd: (form: AddForm) => void
+  onRetry: () => void
+  offReason?: string
+}) {
+  const count = part.count
+  const rows = part.rows.slice(0, KNOWLEDGE_SHOWN)
+  return (
+    <Part title="Knowledge">
+      {part.failed ? <SourceFailed text="Couldn't load its knowledge." onRetry={onRetry} />
+        : count === 0 && rows.length === 0
+          ? <p data-type="body-s" className="text-on-surface-var">{`Nothing saved for ${project.name} yet. Notes and files saved from its chats show up here.`}</p>
+          : (
+            <>
+              {count !== null ? <p data-type="body-s" className="text-on-surface-var">{count === 1 ? '1 item' : `${count} items`}</p> : null}
+              {rows.length > 0 ? (
+                <ul className="flex min-w-0 flex-col">
+                  {rows.map((item) => (
+                    <li key={item.ref} className="min-w-0">
+                      <LibraryRow item={item} compact selected={open === item.ref} onOpen={() => onOpen(item)} ctx={{ project: project.id }} />
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          )}
+      <div className="flex min-w-0 flex-wrap items-center gap-xs">
+        <LibraryAddMenu project={{ id: project.id, name: project.name }} onOpen={onAdd} phoneSheet className={TOUCH_TARGET}
+          disabled={!!offReason} disabledReason={offReason} />
+        <TextLink href={libraryOf(project.id, 'knowledge')} size="sm" className={TOUCH_TARGET}>Open in Library</TextLink>
+      </div>
+    </Part>
+  )
+}
+
 export function ProjectAbout({ id, children }: { id: string; children: ReactNode }) {
   return (
     <aside id={id} aria-labelledby={`${id}-title`} className="flex min-w-0 flex-col">

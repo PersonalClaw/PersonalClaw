@@ -283,11 +283,34 @@ export const GARDEN_READS: StubbedRead[] = [{
   why: "the run's home has no project, so no task of one",
 }]
 
+const gardenItem = (ref: string, title: string, over: Record<string, unknown>) => {
+  const store = ref.startsWith('artifact:') ? 'artifacts' : 'knowledge'
+  return {
+    ref, title, kind: 'note', format: 'markdown', store, made: 'chats', made_label: 'Chats', from: null, contributor: '',
+    project: { id: 'p-0a1b2c3d', name: 'Garden' }, collections: [], tags: [], created_at: '2026-10-30T09:00:00Z',
+    activity_at: '2026-11-01T09:00:00Z', read: null, pinned: false, archived: false, running: false, conflicts: [],
+    missing_tags: [], state: '', excerpt: '', size: null, version: null, thumb: null, match: null, ...over,
+  }
+}
+
+/** What Garden's work made and what its agents know, as `GET /api/library?project=` answers: two
+ *  results (one from its chat) and two knowledge items, newest first, with the store facet. */
+const GARDEN_LIBRARY = {
+  items: [
+    gardenItem('artifact:bed-plan-e2e', 'Spring bed plan', { kind: 'document', format: 'html', from: { ref: 'chat:chat-e2e-garden', title: 'When to sow the beans' }, activity_at: '2026-11-02T10:30:00Z' }),
+    gardenItem('artifact:sensor-chart-e2e', 'Soil moisture, last week', { kind: 'page', format: 'widget', activity_at: '2026-11-01T15:00:00Z' }),
+    gardenItem('knowledge:k-e2e-1', 'Bean varieties that like clay', { made: 'you', made_label: 'You', activity_at: '2026-11-01T12:00:00Z' }),
+    gardenItem('knowledge:k-e2e-2', 'Sensor calibration notes', { kind: 'link', format: 'bookmark', activity_at: '2026-10-31T09:00:00Z' }),
+  ],
+  total: 4, complete: true, failed: [], facets: { store: { artifacts: 2, knowledge: 2 } }, sort: 'activity',
+}
+
 /** The page's reads at rest, each answered whole: Garden's own, what a new chat there is told,
  *  the instruction changes proposed for it (one, so About › Instructions says "1 change
  *  proposed"), its folder's check, what waits and runs in it (`PROJECTS_LIST`'s two live rows),
- *  and its one chat. What the page does with each is held by
- *  `src/pages/projects/aProjectsPageIsHomeForOneProject.test.tsx` and its siblings. */
+ *  its one chat, and its library rows (Results and About › Knowledge). What the page does with
+ *  each is held by `src/pages/projects/aProjectsPageIsHomeForOneProject.test.tsx` and its
+ *  siblings, the library's by `theResultsAndKnowledgeAreTheLibrarysRows.test.tsx`. */
 export const PROJECT_PAGE: StubbedRead[] = [...GARDEN_READS, {
   url: /\/api\/legibility\/always-on(\?.*)?$/,
   json: GARDEN_TOLD,
@@ -313,6 +336,10 @@ export const PROJECT_PAGE: StubbedRead[] = [...GARDEN_READS, {
     created: '2026-11-01T16:00:00+00:00', last_activity_ts: '2026-11-02T10:30:00+00:00', run_state: { session: 'chat-e2e-garden', phase: 'idle' },
   }],
   why: "the run's home has no project, so no chat in one, and other specs' chats are whatever ran first",
+}, {
+  url: /\/api\/library\?(.*&)?project=p-0a1b2c3d(&.*)?$/,
+  json: GARDEN_LIBRARY,
+  why: "the run's home has no project, so nothing its work made or its agents know",
 }]
 
 /** The `?open=folder` tree's listing of Garden's folder. Only that substate asks it. */

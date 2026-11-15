@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, screen } from '@testing-library/react'
 import { resetDataStore } from '../../lib/data'
-import { board, chat, failed, mountPage, PID, task, taskList, workRow } from '../../test/projectPageHarness'
+import { board, chat, failed, libraryItem, libraryRead, mountPage, PID, task, taskList, workRow } from '../../test/projectPageHarness'
 
 // ── A project's page that fails partway (§5.13) ─────────────────────────────────────────────────
 //
 // Each source failing alone draws its line and the rest: the runs, the loops, the tasks, the thread
 // read, the always-on read, waiting or running. A `?open=` naming a gone task says "This task no
 // longer exists." with Close. The project read itself: a 404 draws "This project no longer exists."
-// with Back to Projects, and any other failure `LoadError` with `what="project"`. (The library read's
-// lines are the library's parts, commit 2.)
+// with Back to Projects, and any other failure `LoadError` with `what="project"`. The library read:
+// a store it names in `failed` draws that part's line (Results' or Knowledge's) and the other part's
+// rows, and a failed request draws both lines.
 
 beforeEach(() => { resetDataStore() })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); resetDataStore() })
@@ -66,5 +67,34 @@ describe("a project's page fails partway", () => {
     expect(screen.getByText(/the gateway is restarting/)).toBeTruthy()
     expect(screen.queryByText('This project no longer exists.')).toBeNull()
     expect(screen.getByRole('button', { name: /Retry/ })).toBeTruthy()
+  })
+
+  // The library read, split by store: a store it names in `failed` draws its own line and no count,
+  // while the other draws its rows; only a failed request draws both lines.
+  const LIB = [libraryItem('artifact:report-1', 'Spring planting plan'), libraryItem('knowledge:k-1', 'Tomato varieties')]
+
+  it("the library's artifacts store: Results says so, with no count, and Knowledge draws its rows", async () => {
+    mountPage({ sessions: [chat('c-1', 'Seed ideas', PID)], library: libraryRead(LIB, { knowledge: 6 }, ['artifacts']) })
+    expect(await screen.findByText(/^Couldn't load what its work made\. The rest of the page is still here\./)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'See all in Library' })).toBeTruthy()
+    expect(screen.getByText('Tomato varieties')).toBeTruthy()
+    expect(screen.getByText('6 items')).toBeTruthy()
+    expect(screen.queryByText(/Couldn't load its knowledge/)).toBeNull()
+  })
+
+  it("the library's knowledge store: Knowledge says so, with no count, and Results draws its tiles", async () => {
+    mountPage({ sessions: [chat('c-1', 'Seed ideas', PID)], library: libraryRead(LIB, { artifacts: 12 }, ['knowledge']) })
+    expect(await screen.findByText(/^Couldn't load its knowledge\. The rest of the page is still here\./)).toBeTruthy()
+    expect(screen.queryByText(/ items$/)).toBeNull()
+    expect(screen.getByRole('button', { name: /^Spring planting plan/ })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'See all 12 in Library' })).toBeTruthy()
+    expect(screen.queryByText(/Couldn't load what its work made/)).toBeNull()
+  })
+
+  it('the library request: both stores say so', async () => {
+    mountPage({ sessions: [chat('c-1', 'Seed ideas', PID)], library: failed(500) })
+    expect(await screen.findByText(/^Couldn't load what its work made\./)).toBeTruthy()
+    expect(screen.getByText(/^Couldn't load its knowledge\./)).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 2, name: 'Recent' })).toBeTruthy()
   })
 })

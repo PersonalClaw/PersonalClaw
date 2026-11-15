@@ -72,6 +72,15 @@
       - listitem:
         - 'button "Task: Plant the beans, in progress"'
         - text: In progress Plant the beans medium priority
+  - region "Results":
+    - heading "Results" [level=#]
+    - link "See all # in Library":
+      - /url: "#/library?project=p-#a#b#c#d&store=artifacts"
+    - list:
+      - listitem:
+        - button "Spring bed plan, From When to sow the beans · Today": Spring bed plan From When to sow the beans · Today
+      - listitem:
+        - button "Soil moisture, last week, Yesterday": Soil moisture, last week Yesterday
   - region "Recent":
     - heading "Recent" [level=#]
     - list:

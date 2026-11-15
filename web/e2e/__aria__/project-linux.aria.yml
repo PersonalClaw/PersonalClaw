@@ -72,6 +72,15 @@
       - listitem:
         - 'button "Task: Plant the beans, in progress"'
         - text: In progress Plant the beans medium priority
+  - region "Results":
+    - heading "Results" [level=#]
+    - link "See all # in Library":
+      - /url: "#/library?project=p-#a#b#c#d&store=artifacts"
+    - list:
+      - listitem:
+        - button "Spring bed plan, From When to sow the beans · Today": Spring bed plan From When to sow the beans · Today
+      - listitem:
+        - button "Soil moisture, last week, Yesterday": Soil moisture, last week Yesterday
   - region "Recent":
     - heading "Recent" [level=#]
     - list:
@@ -98,6 +107,19 @@
       - button "Change"
       - button "Remove folder"
       - button "Trust this folder"
+    - region "Knowledge":
+      - heading "Knowledge" [level=#]
+      - paragraph: # items
+      - list:
+        - listitem:
+          - button "Bean varieties that like clay"
+          - text: Bean varieties that like clay
+        - listitem:
+          - button "Sensor calibration notes"
+          - text: Sensor calibration notes
+      - button "Add"
+      - link "Open in Library":
+        - /url: "#/library?project=p-#a#b#c#d&store=knowledge"
     - region "What a new chat here is told":
       - heading "What a new chat here is told" [level=#]
       - paragraph: Each new chat here starts with the brief.
