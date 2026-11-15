@@ -28,6 +28,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The gateway keeps answering while a code loop lands a finished task and on every poll: git merges the task's work back, reads it for its owner's review and answers the poll's checks off the gateway's event loop. A loop stopped or paused meanwhile is asked nothing, a merge already under way is recorded, and a task taken off the queue meanwhile is not merged.**
 - **Saving a fact again with the value it already has no longer hides the episodes that agree with it. Memory retires the episodes that mention a fact's old value only when the value changes, so a consolidation or an Add fact that restates a fact leaves them in recall.**
 - **/compact no longer calls a conversation "already short enough" when its context is more than a quarter full. When compaction can fold nothing there, the chat says how full the context is and that it holds the session's opening and its latest messages, which compaction keeps word for word.**
+- **The Tools page checks PersonalClaw's own tool server, `personalclaw-core`, from the gateway's own install. It started the first `personalclaw` in `~/.local/bin` or on PATH, so on a machine with another install, a gateway from a development clone, a wheel under test or the desktop app ran that install's server against its own home and listed that install's tools.**
 
 ### Security
 

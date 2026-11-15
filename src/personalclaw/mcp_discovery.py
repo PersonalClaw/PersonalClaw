@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import re
-import shutil
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
 from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_name
-from personalclaw.env import augmented_path, gateway_env, startup_path
+from personalclaw.env import augmented_path, gateway_env
 from personalclaw.hooks import safe_read_file
 from personalclaw.mcp_argument_secrets import HEADER_FLAGS, SCHEME_RE, flag_carries, looks_secret
 from personalclaw.mcp_status import switched_off
@@ -748,38 +747,35 @@ def _server_from_spec(name: str, spec: dict, source: str) -> McpServerInfo:
 
 _MANAGED_SERVER_NAMES = {"personalclaw-core"}
 
-# Cached resolved binary path — avoids subprocess.run on every list_servers() call.
+#: The command :func:`_fix_stale_managed_command` resolved, so a later call does not look again.
 _resolved_managed_bin: str | None = None
 
 
 def _fix_stale_managed_command(name: str, spec: dict) -> None:
-    """Re-resolve command for managed MCP servers to the running binary.
+    """Point a managed MCP server's command at this install's own ``personalclaw``.
 
-    Always re-resolves — the stored path may exist as a file/symlink but
-    still crash at runtime (e.g. stale build output after a reinstall).
-    The running gateway knows its own binary, so we always overwrite.
+    The stored command is the one the agent config was last written with, perhaps by another
+    install that shares this home (a development clone, a wheel under check, an older release),
+    and a path that exists can still be another program, so the running gateway always puts its
+    own in its place. It is found by the rule the agent config is written with
+    (``agent._resolve_personalclaw_bin``): a frozen bundle's own launcher, the script of the
+    install this package belongs to or the one beside this interpreter, and only when there is
+    none, the first ``personalclaw`` on ``PATH``. When none is found the stored command stays.
     """
     if name not in _MANAGED_SERVER_NAMES:
         return
     global _resolved_managed_bin
-    # Use cached result to avoid blocking subprocess.run on every call.
-    if _resolved_managed_bin:
-        cmd = spec.get("command", "")
-        if cmd != _resolved_managed_bin:
-            logger.info("Re-resolved %s command: %s → %s", name, cmd, _resolved_managed_bin)
-            spec["command"] = _resolved_managed_bin
-        return
-    resolved: str | None = None
-    # Prefer a personalclaw binary on the user's augmented PATH.
-    if not resolved:
-        resolved = shutil.which("personalclaw", path=augmented_path(startup_path() or ""))
-    if not resolved:
-        return
-    _resolved_managed_bin = resolved
+    if not _resolved_managed_bin:
+        from personalclaw.agent import _resolve_personalclaw_bin  # circular: agent imports this
+
+        resolved = _resolve_personalclaw_bin()
+        if not os.path.isabs(resolved):
+            return  # its last resort, the bare name: no file was found
+        _resolved_managed_bin = resolved
     cmd = spec.get("command", "")
-    if cmd != resolved:
-        logger.info("Re-resolved %s command: %s → %s", name, cmd, resolved)
-        spec["command"] = resolved
+    if cmd != _resolved_managed_bin:
+        logger.info("Re-resolved %s command: %s → %s", name, cmd, _resolved_managed_bin)
+        spec["command"] = _resolved_managed_bin
 
 
 def list_servers(*, include_disabled: bool = False) -> list[McpServerInfo]:
