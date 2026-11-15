@@ -1,6 +1,6 @@
 ---
 name: loop-worker
-description: Per-cycle protocol for an autonomous goal loop worker — the unified autonomous goal engine that runs one self-directed cycle per turn until its goal is met, then self-retires. Drives one cycle against a loop's file interface (status.json gate, brief.md goal, guidance.txt nudges, findings/cycle_NNN.json, FINDINGS.md, the type-appropriate deliverable, STOP sentinel). The worker produces work and reports evidence; a deterministic check or a separate judge — never the worker — decides done-ness.
+description: Per-cycle protocol for an autonomous goal loop worker — the unified autonomous goal engine that runs one self-directed cycle per turn until its goal is met, then self-retires. Drives one cycle against a loop's file interface (status.json gate, brief.md goal, findings/cycle_NNN.json, FINDINGS.md, the type-appropriate deliverable, STOP sentinel), with the user's steers arriving in the cycle's message. The worker produces work and reports evidence; a deterministic check or a separate judge — never the worker — decides done-ness.
 triggers: goal loop, autonomous, autonomy loop, self-nudge, goal-driven loop, run until done, keep going, continuous improvement, north star, definition of done, next cycle, monitor, verifiable
 tags: [skill, personalclaw, autonomous, loop]
 ---
@@ -22,13 +22,15 @@ The nudge is only a trigger. This protocol is the work.
 
 ## The loop directory (your file interface)
 
-Everything you read and write lives in the loop dir named in the nudge:
+Everything you read and write lives in the loop dir named in the nudge. The files the supervisor
+writes are the loop's own records: read them, never change, move or delete them (PersonalClaw
+refuses it). The user's steer arrives in the cycle's message, headed `USER STEERING`.
 
 | File | Who writes | Meaning |
 |---|---|---|
 | `status.json` | supervisor | The cycle gate. `{status, loop_id, ts}`. |
 | `brief.md` | supervisor | Goal type, goal, sub-goals, scope, attendedness, definition of done / verification check. Written once at launch. |
-| `guidance.txt` | user (via nudge) | A mid-flight steer. Present only when the user sent one. |
+| `guidance.txt` | supervisor (the user's steer) | A steer waiting to reach you: the supervisor hands it over in your next cycle's message. It is the supervisor's file; leave it be. |
 | `questions.json` | you (attended only) | One clarification question, when the brief permits it. |
 | `findings/cycle_NNN.json` | you | One structured finding per cycle. |
 | `FINDINGS.md` | you | Your working log — cumulative findings + a `## State` handoff note. |
@@ -56,9 +58,9 @@ Everything you read and write lives in the loop dir named in the nudge:
 
 1. **Gate + STOP.** Read `status.json`. If `status` is not `running`, **stop and
    end the turn now**. Likewise if the `STOP` sentinel exists: halt immediately.
-2. **Brief + guidance.** Read `brief.md` (goal type, goal, sub-goals, scope,
-   attendedness, DoD/check). If `guidance.txt` exists, incorporate it and
-   **delete it** (it is consumed).
+2. **Brief + steer.** Read `brief.md` (goal type, goal, sub-goals, scope,
+   attendedness, DoD/check). If the cycle's message carries a `USER STEERING`
+   part, incorporate it: the supervisor handed it over and keeps its record.
 3. **Orient from compact signals.** Skim the one-line `summary`/`key_insight` of
    the most recent `findings/cycle_*.json` and the `## State` section of
    `FINDINGS.md`. Do **not** re-read every prior finding — work from the
@@ -110,7 +112,7 @@ Everything you read and write lives in the loop dir named in the nudge:
 - **Attended:** if the goal/scope is genuinely ambiguous in a way that would
   change your direction, you MAY write **one** `{"question": ..., "why": ...}` to
   `questions.json` and end the turn — the loop pauses and the user answers via a
-  nudge (arriving as `guidance.txt`). Keep the bar high.
+  steer (arriving in the next cycle's message). Keep the bar high.
 - **Unattended:** **never** write `questions.json`. If a question arises,
   INVESTIGATE it yourself — research it in context, pick the best-reasoned
   answer, record the assumption in your finding, and proceed.

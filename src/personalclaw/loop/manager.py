@@ -871,7 +871,9 @@ async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop 
                     )
     # The cycle this steer was sent at, projected off the ledger rather than read
     # from the retired `loops.total_cycles` column.
-    loop_files.append_nudge(loop_id, text, sent_at_cycle=loop_files.cycles_completed(loop_id))
+    loop_files.append_nudge(
+        loop_id, text, sent_at_cycle=loop_files.cycles_completed(loop_id), task_id=task_id
+    )
     # A steer on a NEEDS_INPUT (awaiting answer), BLOCKED (stall-paused, its nudge loop
     # deactivated) or STAGNANT (cut off by the supervisor, which polls only running loops) loop
     # must RE-ARM the worker so the steer is actually consumed (guidance.txt is read by no one
@@ -895,6 +897,25 @@ async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop 
         loop_files.clear_question(loop_id)
         return await start(state, svc, loop_id)
     return loop
+
+
+#: How a cycle's message heads the owner's steer it carries (:func:`steer_message`).
+STEER_HEADING = "USER STEERING"
+
+
+def steer_message(key: str) -> str:
+    """The owner's steer for the loop worker whose session is *key*, as the cycle message the
+    gateway delivers to it carries it, or ``""``: handed over from the loop's own records
+    (``loop_files.hand_over_steer``), never left for the worker to find and delete. Called by the
+    cycle driver once it knows the cycle is delivered."""
+    loop_id, task_id = worker_ids(key)
+    if not loop_id:
+        return ""
+    words = loop_files.hand_over_steer(loop_id, task_id)
+    if not words:
+        return ""
+    whose = "THIS TASK" if task_id else "THIS CYCLE"
+    return f"{STEER_HEADING} FOR {whose}, from the user — apply it:\n{words}"
 
 
 def task_session_key(loop_id: str, task_id: str) -> str:
@@ -982,7 +1003,6 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
         for c in (getattr(task, "exit_criteria", None) or [])
         if c.get("description")
     )
-    pending = loop_files.read_task_guidance(loop.id, task.id)
     finding = loop_files.finding_file(loop_dir, task.id)
     outside = kinds.outside_blocker_line(
         loop,
@@ -1004,7 +1024,6 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
             "task_description": getattr(task, "description", ""),
             "plan": plan,
             "criteria": crit,
-            "guidance": pending.strip(),
             "outside_rule": outside,
         },
     )
@@ -1029,12 +1048,11 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
         lines += ["Action plan:", plan]
     if crit:
         lines += ["Done when:", crit]
-    if pending.strip():
-        lines += ["", f"USER STEERING FOR THIS TASK — apply it:\n{pending.strip()}"]
     lines += [
         "",
-        f"ALSO: if {loop_dir}/guidance_{task.id}.txt exists (a steer arriving mid-run), "
-        "read it — the user's steering for THIS task — apply it, then delete the file.",
+        "A steer from the user for THIS task arrives in a cycle's message, headed "
+        f"{STEER_HEADING}: apply it. Its file in the loop's own folder is the gateway's; leave "
+        "it be.",
         "",
         f"Mark the task in_progress now (task_update {task.id} in_progress). Implement it "
         "end-to-end in this checkout, validate its done-conditions, then mark it done "

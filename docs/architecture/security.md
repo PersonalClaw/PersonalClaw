@@ -739,6 +739,38 @@ own git and her own shell run what they hold, outside any sandbox.
   (`~/.local/share` when unset) too; and the X session scripts `~/.xprofile`, `~/.xsessionrc`,
   `~/.xsession` and `~/.xinitrc`.
 
+A loop's own records are owner-only too: they are the gateway's, not an agent's. PersonalClaw
+writes them for the loop and its owner's surfaces, and its workers only read them.
+
+- **What they are.** The loops' root `loop/` in the home and every entry in it: each loop's folder
+  as a whole, and the loops' database `loops.db` with `loops.db-wal`, `loops.db-shm` and
+  `loops.db-journal`. In each loop's folder: its brief `brief.md`, its run state `status.json`, the
+  owner's steers `guidance.txt` and `guidance_<task>.txt`, their history `nudges.json` and the
+  record of each one's hand-over `delivered_steers.json`, the stop file `STOP`, the cycle credits
+  `credited.json`, the ledger `events.jsonl` and `journal.jsonl`, the walkthrough
+  `plan_session.json`, the merge record `merges.jsonl`, and the folders of outputs later stages
+  read, `outputs/` and `artifacts/`. Names are compared regardless of case.
+- **What stays a worker's.** Everything else in a loop's folder: its findings (`findings/`), its
+  log (`FINDINGS.md`), its deliverable, the loop's question (`questions.json`, attended only) and
+  the planner's own folder (`planner/`). A word a command uses only as the folder a `cd` moves to
+  is not a change to a loop's folder, so a worker writes its finding from there.
+- **How a steer reaches its worker.** The gateway hands it over in the worker's next delivered
+  cycle message, headed `USER STEERING`, and takes the steer's file itself; it sends it again with
+  each cycle until a finding the worker writes after the hand-over credits it, and a steer counts
+  as applied only once it was handed over. No worker is told to delete or move a steer's file.
+- **What holds them.** The screen and the native shell refuse a command that changes one, the gate
+  an agent CLI asks reads the files its call names, and the native file tools refuse a change to
+  one: before any approval path, whatever a chat's Trust or YOLO, an agent's Always allow, the
+  Approval mode, a loop's own grant or an Unattended loop would answer. A command that reads one
+  and writes another file is refused as a whole; the worker reads the record in a call of its own.
+  On macOS the sandbox's profile denies writes to them by pattern, at every level, since a loop's
+  folder and a steer's file are made after the shell starts. On Linux only the screen and the tools
+  hold them: `loop/` stays writable for the workers' own files, and a bind cannot hold a name
+  inside a folder that stays writable (`docs/security/limitations.md`).
+- **Kept in step.** `tests/rails/test_a_loops_records_writer_census_tree.py` holds every name the
+  loop's own code and the ledger write in a loop's folder to these records or to the worker's list,
+  so a new record is named before an agent could change it.
+
 Every path an agent writes by refuses a change to one, before anyone is asked and whatever the
 chat's Trust, YOLO or a standing grant would answer, in the words the home's refusal uses: the
 native file tools wherever a place reaches one (`file_scope.FileScope.resolve`: a repository in the

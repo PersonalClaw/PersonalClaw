@@ -316,11 +316,16 @@ def read_task_guidance(loop_id: str, task_id: str) -> str:
 
 
 def clear_task_guidance(loop_id: str, task_id: str) -> None:
+    """The task's pending steer and the steers it was handed, gone with its worker."""
     name = _task_guidance_name(task_id)
     d = safe_loop_dir(loop_id)
     f = d / name if (d and name) else None
     if f and f.exists():
         f.unlink()
+    if d is not None and name:
+        delivered = _read_delivered(d)
+        if delivered.pop(task_id, None) is not None:
+            atomic_write(d / DELIVERED_STEERS_FILE, json.dumps(delivered, indent=2))
 
 
 # Stop sentinel.
@@ -650,50 +655,149 @@ def get_merges(loop_id: str) -> list[dict[str, Any]]:
 
 
 # Nudges (durable steer trail).
-def append_nudge(loop_id: str, text: str, sent_at_cycle: int) -> None:
+def append_nudge(loop_id: str, text: str, sent_at_cycle: int, task_id: str = "") -> None:
+    """One steer on the loop's steer history: its words, when and at which cycle it was sent,
+    and the task it steers (``""``: the loop, every worker of it). :func:`hand_over_steer` marks
+    when it reached a worker, and :func:`credit_delivered_steers` the cycle it was applied in."""
     d = loop_dir(loop_id)
     if d is None:
         return
     p = d / "nudges.json"
-    try:
-        log = json.loads(p.read_text()) if p.exists() else []
-        if not isinstance(log, list):
-            log = []
-    except (json.JSONDecodeError, OSError):
-        log = []
+    log = _read_nudges(p)
     log.append(
         {
             "text": text,
             "sent_at": time.time(),
             "sent_at_cycle": sent_at_cycle,
+            "task_id": task_id,
+            "delivered_at": None,
             "applied_cycle": None,
         }
     )
     atomic_write(p, json.dumps(log, indent=2))
 
 
-def mark_nudges_applied(loop_id: str, cycle: int) -> None:
-    d = safe_loop_dir(loop_id)
-    p = d / "nudges.json" if d else None
-    if not p or not p.exists():
-        return
+def _read_nudges(p: Path) -> list:
     try:
-        log = json.loads(p.read_text())
-        if not isinstance(log, list):
-            return
+        log = json.loads(p.read_text()) if p.exists() else []
     except (json.JSONDecodeError, OSError):
-        return
+        return []
+    return log if isinstance(log, list) else []
+
+
+def _steers_worker(entry: dict, channel: str) -> bool:
+    """Whether the history *entry* steers the worker of *channel* (a task's id, ``""`` for the
+    stage worker): its own task's, or the loop's, which every worker is given."""
+    return str(entry.get("task_id") or "") in ("", channel)
+
+
+def _mark_nudges(d: Path, channel: str, *, delivered_at: float = 0.0, credited: tuple = ()) -> None:
+    """Mark the history entries steering *channel*: handed over at *delivered_at*, or, for
+    *credited* ``(cycle, finding time)``, applied at that cycle once handed over before it."""
+    p = d / "nudges.json"
+    log = _read_nudges(p)
     changed = False
     for n in log:
-        if (
-            isinstance(n, dict)
-            and n.get("applied_cycle") is None
-            and int(n.get("sent_at_cycle", 0)) < cycle
-        ):
-            n["applied_cycle"] = cycle
+        if not isinstance(n, dict) or not _steers_worker(n, channel):
+            continue
+        if delivered_at and not n.get("delivered_at"):
+            n["delivered_at"] = delivered_at
             changed = True
+        if credited and n.get("applied_cycle") is None:
+            cycle, at = credited
+            if n.get("delivered_at") and float(n["delivered_at"]) <= at:
+                n["applied_cycle"] = cycle
+                changed = True
     if changed:
         atomic_write(p, json.dumps(log, indent=2))
+
+
+# Steers handed over (the gateway's own record, `owner_only.LOOP`): the owner's steer reaches its
+# worker in the cycle's own message, from the gateway, never by the worker reading and deleting
+# the steer file.
+DELIVERED_STEERS_FILE = "delivered_steers.json"
+
+
+def _read_delivered(d: Path) -> dict[str, list[dict]]:
+    p = d / DELIVERED_STEERS_FILE
+    try:
+        data = json.loads(p.read_text()) if p.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(k): [s for s in v if isinstance(s, dict)]
+        for k, v in data.items()
+        if isinstance(v, list)
+    }
+
+
+def hand_over_steer(loop_id: str, task_id: str = "") -> str:
+    """The owner's steer for the worker of *task_id* (``""``: the stage worker), as the gateway
+    hands it over in that worker's next cycle message; ``""`` when there is none.
+
+    The pending steer file (``guidance.txt``, ``guidance_<task>.txt``) is taken: its words are
+    recorded as handed over (:data:`DELIVERED_STEERS_FILE`), its history entries marked delivered,
+    and the file removed, by the gateway. Every steer handed over to this worker that no finding
+    since has credited (:func:`credit_delivered_steers`) is handed over again, oldest first, so a
+    steer given to a turn that failed is not lost. Called only for a cycle that is delivered."""
+    d = loop_dir(loop_id)
+    name = _task_guidance_name(task_id) if task_id else "guidance.txt"
+    if d is None or name is None:
+        return ""
+    delivered = _read_delivered(d)
+    pending = d / name
+    text = pending.read_text().strip() if pending.is_file() else ""
+    if text:
+        now = time.time()
+        delivered.setdefault(task_id, []).append(
+            {"text": text, "delivered_at": now, "findings": _findings_of(d, task_id)}
+        )
+        atomic_write(d / DELIVERED_STEERS_FILE, json.dumps(delivered, indent=2))
+        _mark_nudges(d, task_id, delivered_at=now)
+    if pending.exists():
+        pending.unlink()
+    words = [str(s.get("text") or "") for s in delivered.get(task_id, [])]
+    return "\n\n".join(dict.fromkeys(w for w in words if w))
+
+
+def credit_delivered_steers(loop_id: str, *, cycle: int) -> None:
+    """Credit each steer a worker was handed with the first finding of that worker written after
+    the hand-over (its findings on disk outnumber those at the hand-over): a task's finding
+    credits its task's steers, a stage finding the stage worker's. A credited steer is not handed
+    over again, and its history entries are applied at *cycle*. A finding written before the
+    hand-over credits nothing."""
+    d = safe_loop_dir(loop_id)
+    if d is None:
+        return
+    delivered = _read_delivered(d)
+    changed = False
+    for channel, steers in list(delivered.items()):
+        now = _findings_of(d, channel)
+        credited = [s for s in steers if now > int(s.get("findings") or 0)]
+        if credited:
+            changed = True
+            last = max(float(s.get("delivered_at") or 0.0) for s in credited)
+            _mark_nudges(d, channel, credited=(cycle, last))
+        kept = [s for s in steers if s not in credited]
+        if kept:
+            delivered[channel] = kept
+        else:
+            delivered.pop(channel)
+    if changed:
+        atomic_write(d / DELIVERED_STEERS_FILE, json.dumps(delivered, indent=2))
+
+
+def _findings_of(d: Path, channel: str) -> int:
+    """How many finding files the worker of *channel* has written in the loop's folder *d*: a
+    task's own (``task_<id>_NNN.json``), or the stage worker's (``cycle_NNN.json``). Counted on
+    disk, where the worker writes them, so a finding is counted the moment it exists."""
+    folder = d / "findings"
+    if not folder.is_dir():
+        return 0
+    pattern = f"task_{channel}_*.json" if channel else "cycle_*.json"
+    return sum(1 for f in folder.glob(pattern) if f.is_file())
 
 
 def get_nudges(loop_id: str) -> list[dict]:

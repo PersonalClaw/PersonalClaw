@@ -50,6 +50,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A plan step is approved only as it was shown: a change to a step after you read it, or after you approved it, is put to you again before anything builds or runs it, and so is a plan a step you approved is gone from. A deleted chat's plan goes with it.**
 - **An app you installed reads only the learning and skill proposals from conversations it started, and reads a proposal, a waiting item and a run's open asks masked as their own views show them, never with the token that answers a gate. A notification carries its row's ids, not the row's card or token; deleting a chat withdraws the proposals still waiting that were learned from it; and the second-opinion check reads a row's words masked and fenced.**
 - **A Library item's file is sent as a download unless it is a type that is shown inline (an image, audio, video or a PDF), and never runs script, even opened in a tab of its own.**
+- **A loop's own records are PersonalClaw's, not an agent's. An agent's change to a loop's brief, run state, steers and their history, ledger, merges or plan is refused whatever the chat or the loop allows, and your steer reaches its worker in the cycle's own message, sent again until that worker's next finding, rather than through a file the worker deletes.**
 
 ### Added
 

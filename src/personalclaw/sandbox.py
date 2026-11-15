@@ -1407,6 +1407,12 @@ def _build_seatbelt_profile(sandbox_level: str = "strict", *, network: bool = Tr
     for target, is_dir in _owner_only_targets():
         escaped = target.replace('"', '\\"')
         rules.append(f'(deny file-write* ({"subpath" if is_dir else "literal"} "{escaped}"))')
+    # A loop's own records (`owner_only.LOOP`): the loops' root, every entry in it (a loop's folder
+    # as a whole, the loops' database) and, in each loop's folder, its records, never written from
+    # in here, at any level. By pattern, since a loop's folder and a steer file are made after the
+    # shell starts; the profile's patterns match regardless of case, as the disk opens a name. The
+    # rest of a loop's folder stays its workers' to write. On Linux the screen holds them alone.
+    rules.extend(_loop_record_rules())
     # The owner's own files that make her tools run commands as her (`owner_only.owners_own`: her
     # git settings, her shells' startup files), at any level, and each folder that could move
     # one aside (`_owners_own_fence`). A repository's own settings and hooks are not here: git
@@ -1454,6 +1460,37 @@ def _build_seatbelt_profile(sandbox_level: str = "strict", *, network: bool = Tr
         rules.append("(deny network*)")
 
     return _SEATBELT_PROFILE.format(deny_rules="\n".join(rules))
+
+
+#: What a sandbox profile's pattern reads as other than itself.
+_PATTERN_SPECIALS = frozenset(".^$*+?()[]{}|\\")
+
+
+def _as_pattern(text: str) -> str:
+    """*text* as a profile pattern that matches it and nothing else."""
+    return "".join(f"\\{c}" if c in _PATTERN_SPECIALS else c for c in text)
+
+
+def _loop_record_rules() -> list[str]:
+    """The profile's rules for a loop's own records (`owner_only.LOOP`), for each spelling of the
+    loops' root: the root itself, every entry in it, each loop's record files (one task's steer by
+    its name rule) and everything in its record folders."""
+    from personalclaw.owner_only import LOOP_RECORD_DIRS, LOOP_RECORD_FILES, loop_roots
+
+    files = "|".join([*map(_as_pattern, LOOP_RECORD_FILES), "guidance_[^/]+\\.txt"])
+    folders = "|".join(map(_as_pattern, LOOP_RECORD_DIRS))
+    rules: list[str] = []
+    for root in loop_roots():
+        if '"' in root:
+            continue  # a profile cannot name it; the screen and the tools still hold it
+        at = _as_pattern(root)
+        rules += [
+            f'(deny file-write* (literal "{root}"))',
+            f'(deny file-write* (regex #"^{at}/[^/]+$"))',
+            f'(deny file-write* (regex #"^{at}/[^/]+/({files})$"))',
+            f'(deny file-write* (regex #"^{at}/[^/]+/({folders})(/.*)?$"))',
+        ]
+    return rules
 
 
 def _owner_only_home() -> tuple[str, list[str]]:
