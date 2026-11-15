@@ -563,7 +563,7 @@
    "variant": "masked",
    "filed": {
     "kind": "template",
-    "title": "Deploy with the key sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA to the staging host",
+    "title": "Deploy with API_KEY=fake-anthropic-test-0001 to the staging host",
     "body": "- Fetch\n- Deploy",
     "tags": [
      "ad_hoc_to_template",
@@ -573,7 +573,7 @@
    "card": {
     "kind": "template",
     "variant": "template.named",
-    "headline": "Deploy with the key [REDACTED: credential] to the staging host",
+    "headline": "Deploy with [REDACTED: credential] to the staging host",
     "detail": "2 steps: Fetch → Deploy",
     "name": "deploy",
     "accept": {

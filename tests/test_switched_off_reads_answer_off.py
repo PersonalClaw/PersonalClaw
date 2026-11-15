@@ -100,11 +100,13 @@ def _learning_gets() -> dict[str, object]:
 
 def test_every_learning_read_but_the_drill_down_answers_off(monkeypatch):
     """DERIVED from the route table, so a new read the Learning page loads cannot arrive answering
-    off with a 404: every GET except one proposal's must answer the flag alone."""
+    off with a 404: every GET except one proposal's (its record, and its review) must answer the
+    flag alone."""
     monkeypatch.setattr(learning_h, "_enabled", lambda: False)
     gets = _learning_gets()
-    drill_down = "/api/learning/proposals/{id}"
-    reads = {path: h for path, h in gets.items() if path != drill_down}
+    drill_downs = {"/api/learning/proposals/{id}", "/api/learning/proposals/{id}/review"}
+    assert drill_downs <= set(gets), sorted(gets)
+    reads = {path: h for path, h in gets.items() if path not in drill_downs}
     # Vacuity floor: the proposal list, the week, health, the summary and the identity report.
     assert len(reads) == 5, sorted(reads)
     for path, handler in reads.items():
@@ -114,11 +116,14 @@ def test_every_learning_read_but_the_drill_down_answers_off(monkeypatch):
 
 
 def test_one_proposal_and_every_decision_still_refuse_while_learning_is_off(monkeypatch):
-    """A proposal, an accept and a dismiss each address a proposal, and there is no inbox while
-    learning is off — 404, not 403, which would imply one behind a permission wall."""
+    """A proposal, its review, an accept and a dismiss each address a proposal, and there is no
+    inbox while learning is off — 404, not 403, which would imply one behind a permission wall —
+    and each says learning is off (``learning_disabled``), not that the proposal is gone, which is
+    what one that never read the switch would answer."""
     monkeypatch.setattr(learning_h, "_enabled", lambda: False)
     for coro in (
         learning_h.api_learning_proposal(_get("/api/learning/proposals/p1", id="p1")),
+        learning_h.api_learning_proposal_review(_get("/api/learning/proposals/p1/review", id="p1")),
         learning_h.api_learning_proposal_accept(
             make_mocked_request(
                 "POST",
@@ -136,7 +141,9 @@ def test_one_proposal_and_every_decision_still_refuse_while_learning_is_off(monk
             )
         ),
     ):
-        assert _run(coro).status == 404
+        resp = _run(coro)
+        assert resp.status == 404
+        assert _body(resp)["error"]["code"] == "learning_disabled"
 
 
 # ── the way back on, and the save that answers what it stored ───────────────

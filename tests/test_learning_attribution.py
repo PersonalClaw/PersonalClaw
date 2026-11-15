@@ -20,7 +20,9 @@ The properties covered:
 
 from __future__ import annotations
 
+import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from table_rows import row
@@ -28,7 +30,9 @@ from table_rows import row
 from personalclaw.learning import accountability
 from personalclaw.learning import attribution as A
 from personalclaw.learning import proposals as P
+from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import journal as journal_mod
+from personalclaw.workflows import native_defs
 from personalclaw.workflows import store as store_mod
 from personalclaw.workflows.models import Failure, FailureClass, RunStatus, WorkflowRun
 from personalclaw.workflows.step_usage import NOTHING_SENT
@@ -41,13 +45,21 @@ def home(tmp_path, monkeypatch):
     `proposals`/`attribution` resolve `config_dir` inside their functions, but `workflows.store`
     binds it at import — so, like the run-end suite, setting `PERSONALCLAW_HOME` (re-read live by
     `config_dir()`) is what actually isolates the whole write path. The inbox side-effects are
-    neutralized so an accept does not try to resolve a real inbox item.
+    neutralized so an accept does not try to resolve a real inbox item. The native workflow store
+    is registered, so a change's accept applies it to its workflow before it is recorded, as it
+    does in the gateway.
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     monkeypatch.setattr(P, "_surface_in_inbox", lambda prop: None)
     monkeypatch.setattr(P, "_resolve_inbox_item", lambda pid, status: None)
-    return tmp_path
+    provider = native_defs.NativeWorkflowDefProvider()
+    registered = defs_mod.get_provider(provider.name) is None
+    if registered:
+        defs_mod.register_provider(provider)
+    yield tmp_path
+    if registered:
+        defs_mod.unregister_provider(provider.name)
 
 
 def _run(name: str, *, status: RunStatus = RunStatus.COMPLETE) -> WorkflowRun:
@@ -68,15 +80,47 @@ def _fail(run: WorkflowRun, node: str, text: str, *, exhausted: bool = True) -> 
     )
 
 
+#: The workflow a change is accepted against, and the typed change to it (``template_diff``):
+#: accepting a change applies it to its workflow before the accept is recorded.
+_ROOT = {
+    "kind": "sequence",
+    "id": "root",
+    "children": [{"kind": "stage", "id": "load", "config": {"prompt": "load the feed"}}],
+}
+_OPS = [
+    {"op": "update_node", "node_id": "load", "fields": {"prompt": "load the feed, and check it"}}
+]
+
+
+def _save_workflow(name: str) -> None:
+    """Save *name* as a native workflow, from a test with an event loop running or none: the save
+    is a coroutine, run on a thread of its own when this one already has a loop."""
+
+    def save() -> None:
+        asyncio.run(
+            defs_mod.get_provider("native").save_def(name=name, root=_ROOT, description="d")
+        )
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        save()
+        return
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(save).result()
+
+
 def _accept_a_change(target: str, predicted: list[str]) -> P.Proposal:
     """File and accept a proposal for `target` predicting `predicted` fixes → returns the accepted
-    proposal. The accept path is what records the attribution snapshot."""
+    proposal. The accept path is what records the attribution snapshot. `target` is saved as a
+    workflow first, so the change applies to it."""
+    _save_workflow(target)
     manifest = P.ChangeManifest(
         component=target,
         failure_pattern="x",
         evidence_refs=["r"],
         root_cause="x",
-        targeted_fix="x",
+        targeted_fix=_OPS,
         predicted_fixes=predicted,
     )
     verdict, prop = P.enqueue(
@@ -117,6 +161,42 @@ def test_accepting_a_change_records_it_for_grading(home):
     assert before.id in rec.baseline_run_ids
     assert rec.source == "refiner"
     assert not rec.resolved and rec.verdict == "PENDING"
+
+
+def test_a_change_with_nothing_to_apply_is_refused_and_not_recorded(home):
+    """A template change is applied before its accept is recorded. One with no typed ops has
+    nothing to apply, so its accept is refused, it still waits, and no bet is recorded to grade:
+    a change that never ran cannot be judged by the runs after it."""
+    before = _run("nightly", status=RunStatus.FAILED)
+    _fail(before, "load", _SCHEMA)
+    _save_workflow("nightly")
+    manifest = P.ChangeManifest(
+        component="nightly",
+        failure_pattern="x",
+        evidence_refs=["r"],
+        root_cause="x",
+        targeted_fix="x",
+        predicted_fixes=["schema_violation"],
+    )
+    verdict, prop = P.enqueue(
+        kind=P.Kind.TEMPLATE_DIFF.value,
+        title="tune nightly",
+        body="a change with no ops",
+        target="nightly",
+        provenance="refiner",
+        change_manifest=manifest,
+        evidence_refs=["r1"],
+        evidence_strength="correlated",
+        confidence=0.6,
+        occurrences=3,
+        min_evidence=1,
+    )
+    assert prop is not None, verdict
+    with pytest.raises(P.NotAppliedError):
+        P.accept(prop.id, actor="user")
+    assert A._all() == []
+    still = P.get(prop.id)
+    assert still is not None and still.status == "pending"
 
 
 def test_a_change_with_no_target_is_not_recorded(home):

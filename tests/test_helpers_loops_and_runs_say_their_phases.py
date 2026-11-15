@@ -398,16 +398,28 @@ def _plain(value: Any) -> Any:
     return type(value).__name__
 
 
+def _homeless(value: Any, home: str) -> Any:
+    """*value* with its world's home said as ``<home>``: each world has a home of its own, and an
+    approval carries the folder its call runs in, which is under it."""
+    if isinstance(value, str):
+        return value.replace(home, "<home>")
+    if isinstance(value, dict):
+        return {k: _homeless(v, home) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_homeless(v, home) for v in value)
+    return value
+
+
 def _hook_absent(state: Any, entry: Any, *, waiting: bool) -> None:
     """The registry as it was before a helper said its waits: no hook at all."""
 
 
 async def _an_approval_ends(tmp_path, approval_id: str, ending: str, hook: Any) -> list:
-    """Ask *approval_id* through the real registry, in a home of its own (*tmp_path*), and end it
-    as *ending*, with the helper's phase hook replaced by *hook*: every effect the registry has, in
-    order, and what each party was answered, with the helper's own frames left out, and the
-    running list's and the waiting list's rings, which go out on their own clock once their window
-    closes."""
+    """Ask *approval_id* through the real registry, in a home of its own (*tmp_path*, said as
+    ``<home>``), and end it as *ending*, with the helper's phase hook replaced by *hook*: every
+    effect the registry has, in order, and what each party was answered, with the helper's own
+    frames left out, and the running list's and the waiting list's rings, which go out on their own
+    clock once their window closes."""
     from personalclaw import auto_denials, inbox, work_phases
     from personalclaw.triggers import lifecycle_fire
 
@@ -475,7 +487,11 @@ async def _an_approval_ends(tmp_path, approval_id: str, ending: str, hook: Any) 
         effects.append(("asked", await asyncio.wait_for(asked, timeout=5), "answered", answered))
     effects.append(("audit", _plain([(c[0], c[1], c[2]) for c in audit.mock_calls])))
     effects.append(("pending", sorted(w.state._pending_approvals), w.state.ended_as(approval_id)))
-    return effects
+    # Each world's approval carries the folder its call runs in, under that world's own home: said
+    # here, whole, so the comparison of two worlds may say each one's home as ``<home>``.
+    folders = [e[2].get("cwd") for e in effects if e[0] == "frame" and e[1] == "approval"]
+    assert folders and set(folders) == {str(tmp_path / "workspace")}, folders
+    return _homeless(effects, str(tmp_path))
 
 
 @pytest.mark.parametrize("ending", ["approved", "rejected", "expired", "cancelled"])

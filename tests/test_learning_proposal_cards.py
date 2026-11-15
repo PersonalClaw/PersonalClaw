@@ -61,7 +61,7 @@ def test_no_card_line_carries_an_em_dash():
 def test_a_credential_in_a_proposal_never_reaches_its_card():
     [masked] = [e for e in EXAMPLES if e["variant"] == "masked"]
     card = cards.card_for(_filed(masked))
-    assert "sk-ant-api03" not in json.dumps(card)
+    assert "fake-anthropic-test" not in json.dumps(card)
     assert "[REDACTED: " in card["headline"]
 
 
@@ -69,7 +69,11 @@ def test_a_cut_line_keeps_its_mask_whole():
     prop = proposals.Proposal(
         id="lp-cut",
         kind="knowledge_draft",
-        title="Rotate the deploy key " + "word " * 18 + "sk-ant-api03-" + "B" * 95 + " soon",
+        title="Rotate the deploy key "
+        + "word " * 18
+        + "API_KEY=fake-anthropic-test-"
+        + "B" * 95
+        + " soon",
         body="",
     )
     headline = cards.card_for(prop)["headline"]
