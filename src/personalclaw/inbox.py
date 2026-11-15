@@ -886,6 +886,23 @@ def evaluate_alert(item: InboxItem, user_name: str = "") -> str:
     return rule.conditions.matches(text, user_name)
 
 
+def _mask_proposal_copies(refs: object) -> None:
+    """Mask, in place, a row's copies of a proposal's words: its card's lines and its accept's
+    sentence, and a fixed (non-editable) proposal's title and preview."""
+    if not isinstance(refs, dict):
+        return
+    from personalclaw.security import redact_values_for_display
+
+    card = refs.get("card")
+    if isinstance(card, dict):
+        refs["card"] = redact_values_for_display(card)
+    payload = refs.get("proposal")
+    if isinstance(payload, dict) and not payload.get("editable"):
+        for key in ("title", "preview"):
+            if isinstance(payload.get(key), str):
+                payload[key] = redact_for_display(payload[key])
+
+
 def redact_item(item: dict) -> dict:
     """Redact LLM-generated fields, and stamp the feedback-producer meta, on one item dict.
 
@@ -916,6 +933,10 @@ def redact_item(item: dict) -> dict:
         for record in item.get("attachments") or []
         if isinstance(record, dict)
     ]
+    # A proposal's card (`learning.cards`, `skills.proposals.card_of`) and a fixed proposal's own
+    # words are copies of what a producer wrote: masked on every read, as the row's message is. An
+    # editable proposal's words stay as its editor is seeded, and its save puts each mask back.
+    _mask_proposal_copies(item.get("refs"))
     # A pending approval's row, the note an unanswered one leaves and an agent's question name where
     # they are answered (`approval_place.place_refs`); one written before they did is read the same
     # way here, so no surface reads its session key's shape.

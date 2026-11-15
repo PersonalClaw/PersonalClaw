@@ -1187,14 +1187,23 @@ WITHDRAWN_NOTE = "Withdrawn: a chat it was learned from was deleted."
 
 
 def withdrawn_words(rows: Iterable[Any]) -> dict[str, tuple[str, str]]:
-    """Give each withdrawn proposal's Inbox row in *rows* :data:`WITHDRAWN_NOTE` as its body, its
-    title (the kind's label) kept, and return each row's new words for its notifications
-    (``DashboardState.retext_item_notifications``)."""
+    """Give each withdrawn proposal's Inbox row in *rows* the kind's label as its title and
+    :data:`WITHDRAWN_NOTE` as its body, its card blanked to that label, and return each row's new
+    words for its notifications (``DashboardState.retext_item_notifications``).
+
+    The label, never the row's own title: a row leads with the proposal's headline
+    (``learning.cards``), which quotes what it was learned from. A row filed before the card
+    led with the label, which its first paragraph still is."""
     from personalclaw.security import redact_for_display
 
     out: dict[str, tuple[str, str]] = {}
     for row in rows:
-        title = redact_for_display(str(row.message or "").partition("\n\n")[0])
+        card = row.refs.get("card") if isinstance(row.refs, dict) else None
+        if isinstance(card, dict):
+            title = str(card.get("label") or "")
+            row.refs["card"] = {"label": title} if title else {}
+        else:
+            title = redact_for_display(str(row.message or "").partition("\n\n")[0])
         row.message = f"{title}\n\n{WITHDRAWN_NOTE}" if title else WITHDRAWN_NOTE
         out[row.id] = (title, WITHDRAWN_NOTE)
     return out

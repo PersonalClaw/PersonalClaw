@@ -654,6 +654,15 @@ def test_deleting_a_chat_withdraws_the_proposals_learned_from_it(
     for note in state._notification_log:
         if note.get("inbox_item") in (row.id, skill_row.id):
             assert "Withdrawn" in note["body"], note
+            # Its title is the kind's label, not the proposal's own words, which quote the chat.
+            assert "out of the log" not in note["title"], note
+            assert "Sends the report" not in note["title"], note
+    # The withdrawn rows keep none of the proposal's words: their title is the label, and their
+    # card is blanked to it.
+    for withdrawn, words in ((row, "out of the log"), (skill_row, "Sends the report")):
+        assert words not in withdrawn.message, withdrawn.message
+        card = withdrawn.refs.get("card") or {}
+        assert set(card) <= {"label"}, card
 
 
 # ── the second-opinion check ────────────────────────────────────────────────────────────────
@@ -702,3 +711,37 @@ def test_a_claim_the_screen_refuses_is_not_handed_to_the_model(monkeypatch):
         == SKIPPED
     )
     assert seen == []
+
+
+# ── every copy of a proposal's words an Inbox read serves is masked ─────────────────────────────
+
+
+def test_an_inbox_read_masks_a_rows_card_and_a_fixed_proposals_words():
+    from personalclaw.inbox import redact_item
+
+    item = {
+        "message": "m",
+        "refs": {
+            "card": {
+                "headline": f"Rotate {SECRET}",
+                "detail": f"It is {SECRET}",
+                "name": "n",
+                "label": "Lessons to review",
+                "accept": {"effect": "records", "verb": "Accept", "sentence": f"Uses {SECRET}"},
+            },
+            "proposal": {"title": f"Move {SECRET}", "preview": f"Body {SECRET}", "editable": False},
+        },
+    }
+    shown = json.dumps(redact_item(item))
+    assert SECRET not in shown
+    assert "Lessons to review" in shown
+
+
+def test_an_editable_proposals_words_stay_as_its_editor_is_seeded():
+    from personalclaw.inbox import redact_item
+
+    item = {
+        "message": "m",
+        "refs": {"proposal": {"title": "Move it", "preview": f"Body {SECRET}", "editable": True}},
+    }
+    assert redact_item(item)["refs"]["proposal"]["preview"] == f"Body {SECRET}"
