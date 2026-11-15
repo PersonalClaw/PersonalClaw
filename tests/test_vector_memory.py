@@ -325,6 +325,53 @@ class TestConflictResolution:
         assert "user" in msg.lower()
 
 
+class TestRestatingAFactKeepsItsEpisodes:
+    """A write retires the episodes that mention a fact's old value only when it changes it."""
+
+    EPISODE = "favorite color: red, said while picking a theme"
+
+    def _store(self, tmp_path: Path) -> VectorMemoryStore:
+        store = VectorMemoryStore(db_path=tmp_path / "mem.db")
+        store.init()
+        # No model: the episode is matched by its text alone.
+        store.embed_fn = None
+        assert store.set_semantic("user.favorite_color", "red", 1.0, "user_explicit") is None
+        assert store.write_episodic(self.EPISODE)
+        assert [e["text"] for e in store.get_episodic_list()] == [self.EPISODE]
+        return store
+
+    @staticmethod
+    def _retired(store: VectorMemoryStore) -> list[dict]:
+        return [e for e in store.get_events(limit=100) if e["event_type"] == "conflict_retire"]
+
+    def test_restating_a_fact_keeps_the_episodes_that_agree_with_it(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        assert store.set_semantic("user.favorite_color", "red", 1.0, "user_explicit") is None
+        assert [e["text"] for e in store.get_episodic_list()] == [self.EPISODE]
+        found = store.search_episodic(query_text="favorite color red")
+        assert [r["text"] for r in found] == [self.EPISODE]
+        assert self._retired(store) == []
+
+    def test_a_changed_value_still_retires_the_old_values_episodes(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        assert store.set_semantic("user.favorite_color", "blue", 1.0, "user_explicit") is None
+        assert store.get_episodic_list() == []
+        assert len(self._retired(store)) == 1
+
+    def test_a_value_stored_in_another_json_spelling_is_the_same_value(
+        self, tmp_path: Path
+    ) -> None:
+        store = self._store(tmp_path)
+        store.db.execute(
+            "UPDATE semantic_memory SET value_json = ? WHERE key = ?",
+            (' "r\\u0065d" ', "user.favorite_color"),
+        )
+        store.db.commit()
+        assert store.set_semantic("user.favorite_color", "red", 1.0, "user_explicit") is None
+        assert [e["text"] for e in store.get_episodic_list()] == [self.EPISODE]
+        assert self._retired(store) == []
+
+
 class TestInjectionDetection:
     def test_known_patterns_blocked(self, tmp_path: Path) -> None:
         store = VectorMemoryStore(db_path=tmp_path / "mem.db")
