@@ -87,6 +87,11 @@ export function useNeedActions(refreshNeeds: () => void): {
       void send(key, sent, action === 'accept' ? 'Accepted. The chat is organized as suggested.' : 'Declined. It won’t be suggested again.',
         `${action} this`, () => invalidateKeys('inbox', true))
     },
+    gateReply: (key, runId, resumeToken, value) => {
+      const sent = api.resumeWorkflowRun(runId, { answer: value, resume_token: resumeToken || undefined })
+      void send(key, sent, 'Answered. The run is moving again.', 'send that answer')
+      return sent
+    },
     chatReply: (key, ref, reply) => {
       const sent = api.answerChatQuestion(ref.session, ref.question, reply)
       void send(key, sent, 'skip' in reply ? 'Skipped. The agent goes on without your answer.' : 'Answered. The agent carries on.', 'send that answer')

@@ -146,3 +146,18 @@ describe('a chat’s question with several parts is answered in its panel', () =
     expect(await within(p).findByText('Answered. The agent carries on.')).toBeInTheDocument()
   })
 })
+
+describe('a run’s form gate is answered in its panel', () => {
+  it('the run’s own ask, hosted: its fields and Submit, sent with the gate’s token', async () => {
+    resumeWorkflowRun.mockResolvedValue({ ok: true })
+    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'form', prompt: 'Fill in the release', fields: [{ name: 'version', type: 'text', label: 'Version' }] })]))
+    render(<NeedsYouHarness query={{ open: 'waiting:gate:run-77:gate.push:1' }} />)
+    const p = await pane()
+    expect(p.querySelector('[data-ask-form="hosted"]')).not.toBeNull()
+    expect(within(p).queryByText('Answer it in the panel')).toBeNull()
+    await userEvent.type(within(p).getByRole('textbox', { name: 'Version' }), '1.2.0')
+    await userEvent.click(within(p).getByRole('button', { name: /Submit/ }))
+    await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: { version: '1.2.0' }, resume_token: 'tok-9' }))
+    expect(await within(p).findByText('Answered. The run is moving again.')).toBeInTheDocument()
+  })
+})

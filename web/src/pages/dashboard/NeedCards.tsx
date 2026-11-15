@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
-import { api, ApiError, hasApiCode, isSwitchedOff, type AgentQuestion, type OrganizeProposal } from '../../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, type AgentQuestion, type OrganizeProposal, type WorkflowContinuation } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { clockTime } from '../../lib/epoch'
 import type { NeedsYouRow } from '../../lib/needsYou'
@@ -32,6 +32,7 @@ import { Markdown } from '../../ui/Markdown'
 import { UnifiedDiff } from '../../ui/UnifiedDiff'
 import { openable } from './RunningLane'
 import { QuestionCard } from '../chat/QuestionCard'
+import { WorkflowAsk } from '../workflows/WorkflowAsk'
 import { dropBody, redoBody } from '../code/MergeConflict'
 import { capsHaveRoom, retryWindow, spendCapStop } from '../workflows/attentionMeta'
 import { proposalsKey } from '../learning/proposalCache'
@@ -234,6 +235,9 @@ export interface CardActions {
   /** A chat's question answered in full in the panel (several questions or choices): the answer
    *  as the chat's own card sends it; its promise is the send's, so the card says why it failed. */
   chatReply?: (key: string, ref: { session: string; question: string }, reply: { answers: { selected: number[]; other: string }[] } | { skip: true }) => Promise<unknown>
+  /** A run's form gate (or a choice gate that names no choices) answered in the panel, as the run's
+   *  page answers it; its promise is the send's, so the form says why it failed. */
+  gateReply?: (key: string, runId: string, resumeToken: string, value: unknown) => Promise<unknown>
   /** An agent's one question in a chat: one of its options, by its place, or Skip. */
   chat?: (key: string, ref: { session: string; question: string }, answer: { pick: number; label: string } | 'skip') => void
   /** A plan step's approve, as the list read it; a loop's plan launched. */
@@ -369,11 +373,21 @@ export function NeedDetail({ row, outcome, actions, now }: {
   // them all here (the card offered Skip and sent you here).
   const hostsQuestion = !!(ref && actions.chatReply && !isStale(item!, now)
     && (questions.length > 1 || (questions[0] as { multiSelect?: boolean } | undefined)?.multiSelect))
+  // A form gate, or a choice gate that names no choices: the run's own ask, hosted, answers it here.
+  const gate = item ? waitingQuestion(item) : null
+  const hostsGate = !!(gate && item && actions.gateReply && !isStale(item, now) && !gate.approval && !gate.event
+    && (gate.kind === 'form' || (gate.kind === 'choice' && gate.choices.length === 0)))
   // The parts, in the panel's order: the thing itself (the ask's own lines, `NeedBody`), where it
   // came from (who asked, and the chat's last lines), its facts and one way out; the answers are
   // the decide bar at the foot.
   const parts = (
     <>
+      {hostsGate && gate && item ? (
+        <WorkflowAsk hosted runId={gate.runId} busy={outcome?.state === 'busy'}
+          continuation={{ resume_token: gate.resumeToken, node_id: gate.nodeId, instance_path: '', expires_at: 0, expired: false,
+            ask: (item.brief.ask ?? {}) as WorkflowContinuation['ask'], handoff: (item.brief.handoff ?? {}) as WorkflowContinuation['handoff'] }}
+          onAnswer={async (c, value) => { await actions.gateReply?.(row.key, gate.runId, c.resume_token, value) }} />
+      ) : null}
       {hostsQuestion && ref && item ? (
         <QuestionCard hosted
           seg={{ kind: 'question', id: ref.question, toolCallId: '', questions: questions as AgentQuestion[], askedBy: '', answerable: true }}
@@ -405,7 +419,7 @@ export function NeedDetail({ row, outcome, actions, now }: {
   )
   return (
     <div className="flex min-w-0 flex-col gap-l">
-      <NeedBody row={row} outcome={outcome} actions={actions} now={now} panel beforeAnswers={parts} hostsAnswers={hostsQuestion} />
+      <NeedBody row={row} outcome={outcome} actions={actions} now={now} panel beforeAnswers={parts} hostsAnswers={hostsQuestion || hostsGate} />
     </div>
   )
 }
