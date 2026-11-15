@@ -460,6 +460,71 @@ def test_an_empty_repository_with_no_identity_gets_no_invented_commit(tmp_path):
     assert worktree.commit_identity(str(repo)) is None
 
 
+# ── no branch checked out: asked for, never merged onto a detached HEAD ──────────────────
+
+
+@pytest.mark.parametrize("attended", [True, False])
+def test_on_a_detached_head_the_loop_merges_nothing_and_asks_for_a_branch(tmp_path, code, attended):
+    repo = _repo(tmp_path)
+    _git(repo, "checkout", "-q", "--detach")
+    loop = _loop(repo, attended=attended)
+    _finished_task_worktree(repo)
+    before = _git(repo, "rev-parse", "HEAD")
+    short = _git(repo, "rev-parse", "--short", "HEAD")
+    ctx = _Ctx()
+
+    paused = _schedule(code, loop, ctx)
+
+    assert paused is True and store.get(loop.id).status == "needs_input"
+    assert _git(repo, "rev-parse", "HEAD") == before == _git(repo, "rev-parse", "main")
+    assert worktree.branch_exists(str(repo), TASK), "the task's branch went"
+    assert loop_files.get_merges(loop.id) == []
+    asked = loop_files.pending_question(loop.id)
+    assert asked and "merge" not in asked, asked
+    assert f"it is on a detached HEAD at {short}" in asked["question"]
+    assert asked["question"].endswith("Check out a branch there, then resume.")
+    assert ctx.events == ["needs_input"]
+
+
+@pytest.mark.parametrize("attended", [True, False])
+def test_once_a_branch_is_checked_out_resume_merges_into_it(tmp_path, code, attended):
+    repo = _repo(tmp_path)
+    _git(repo, "checkout", "-q", "--detach")
+    loop = _loop(repo, attended=attended)
+    _finished_task_worktree(repo)
+    ctx = _Ctx()
+    _schedule(code, loop, ctx)
+
+    _git(repo, "checkout", "-q", "main")
+    loop_files.clear_question(loop.id)
+    store.update_status(loop.id, LoopStatus.RUNNING)
+    _schedule(code, loop, ctx)
+
+    if attended:
+        asked = loop_files.pending_question(loop.id)
+        assert asked and asked["merge"]["into"] == "main", asked
+        assert "ready to merge into main" in asked["question"]
+    else:
+        assert "escaped once" in (repo / "digest.py").read_text()
+        (merged,) = loop_files.get_merges(loop.id)
+        assert merged["into"] == "main"
+        assert merged["head"] == _git(repo, "rev-parse", "main")
+
+
+def test_a_pass_while_another_is_under_way_asks_nothing(tmp_path, code, monkeypatch):
+    repo = _repo(tmp_path)
+    _git(repo, "checkout", "-q", "--detach")
+    loop = _loop(repo, attended=True)
+    _finished_task_worktree(repo)
+    monkeypatch.setattr(code, "_scheduling", {loop.id})
+    ctx = _Ctx()
+
+    assert _schedule(code, loop, ctx) is False
+    assert loop_files.pending_question(loop.id) is None
+    assert store.get(loop.id).status == "running"
+    assert ctx.events == []
+
+
 # ── the review and the approval, through their routes ────────────────────────────────────
 
 

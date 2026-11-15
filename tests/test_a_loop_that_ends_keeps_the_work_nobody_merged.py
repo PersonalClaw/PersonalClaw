@@ -1064,6 +1064,21 @@ def test_work_committed_under_another_name_is_not_merged(repo):
     assert LINE not in (repo / "CHANGELOG.md").read_text()
 
 
+def test_on_a_detached_head_kept_work_says_where_it_merges(repo):
+    loop, tid, wt, state = _budget_spent(repo)
+    _git(repo, repo.parent, "checkout", "-q", "--detach")
+    short = _git(repo, repo.parent, "rev-parse", "--short", "HEAD").stdout.strip()
+
+    status, body = _call(H.api_loop_kept_work, state, "GET", "/", id=loop.id)
+    assert status == 200 and body["into"] == f"a detached HEAD at {short}"
+
+    status, body = _call(H.api_loop_kept_work_merge, state, "POST", "/", id=loop.id, task_id=tid)
+
+    assert (status, body["kept"]) == (200, [])
+    (merged,) = loop_files.get_merges(loop.id)
+    assert merged["into"] == f"a detached HEAD at {short}"
+
+
 def test_a_stop_while_finished_work_waits_for_her_merge_keeps_it_for_review(repo):
     """An Attended loop paused on finished work waiting for her merge, and she stopped it: the
     work is kept, its merge question is gone, and the end screen reviews it the same way."""

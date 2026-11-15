@@ -482,8 +482,9 @@ class CodeKind(LoopKindStrategy):
     def _poll_git(self, loop: Loop, ws: str) -> sdlc_git.PollGit:
         """Everything a poll asks git before it schedules anything, in one worker thread: whether
         *ws* is a repository, whether git has an identity to commit as there, whether it can cut
-        worktrees there, and, at the run's first poll, where the run starts
-        (:meth:`_note_start_point`). Each is a git process, seconds apart under load."""
+        worktrees there, whether a branch is checked out there, and, at the run's first poll, where
+        the run starts (:meth:`_note_start_point`). Each is a git process, seconds apart under
+        load."""
         from personalclaw.loop import worktree
         from personalclaw.loop.loop import effective_dir
 
@@ -492,7 +493,8 @@ class CodeKind(LoopKindStrategy):
         base = ""
         if self._start_point_unknown(loop) and not loop_files.cycles_completed(loop.id):
             base = worktree.start_point(effective_dir(loop) or "")
-        return sdlc_git.PollGit(repo, named, repo and worktree.git_available(), base)
+        head = "" if not repo or worktree.base_branch(ws) else worktree.merge_target(ws)
+        return sdlc_git.PollGit(repo, named, repo and worktree.git_available(), base, head)
 
     def _live_task_workers(self, loop: Loop, svc) -> list[str]:
         """Queued task ids that currently have an armed worker loop (occupying a pool
@@ -1777,9 +1779,9 @@ class CodeKind(LoopKindStrategy):
         When the last of a stage's task workers is reaped, the stage is judged then and there
         (:meth:`_judge_on_drain`; *judge_on_drain* is off for :meth:`on_new_cycle`, which judges
         next anyway). Returns True iff the loop stopped running: it paused for its owner (a merge
-        the scheduler could not settle, a task that ran out of cycles), it stopped, paused or went
-        while the poll's git ran, the pass read its tasks or git readied their worktrees
-        (:meth:`_still_ours`), or that judgement ended it."""
+        the scheduler could not settle, a task that ran out of cycles, no branch to merge into), it
+        stopped, paused or went while the poll's git ran, the pass read its tasks or git readied
+        their worktrees (:meth:`_still_ours`), or that judgement ended it."""
         from personalclaw.loop import store
 
         # Git answers in a worker thread, so the gateway keeps answering meanwhile; a loop that
@@ -1813,6 +1815,10 @@ class CodeKind(LoopKindStrategy):
             self._landed.discard(loop.id)
             self._scheduling.add(loop.id)
             try:
+                # No branch checked out (the poll read it): the work would land on no branch.
+                if polled.head:
+                    self._ask_for_a_branch(loop, ws, polled.head, ctx)
+                    return True
                 if await self._schedule_parallel(
                     loop, stage, (loop.workspace_dir or "").strip(), ctx
                 ):
@@ -2253,6 +2259,20 @@ class CodeKind(LoopKindStrategy):
         store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
         ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
 
+    def _ask_for_a_branch(self, loop: Loop, ws: str, head: str, ctx) -> None:
+        """Pause *loop* for its owner, since no branch is checked out in *ws* (*head*: where it is
+        instead, which the poll read): its tasks' work would land on no branch."""
+        from personalclaw.loop import store
+
+        question = (
+            f"This loop merges each finished task's work into the branch checked out in {ws}, and "
+            f"no branch is checked out there: it is on {head}. Nothing was merged and no new task "
+            "was started. Check out a branch there, then resume."
+        )
+        loop_files.write_question(loop.id, question, asked_by=loop_files.SCHEDULER_QUESTION)
+        store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
+        ctx.publish(loop.id, "needs_input", {"loop_id": loop.id})
+
     async def _land(self, loop: Loop, tid: str, task, ws: str, ctx) -> bool:
         """A finished task's work goes into the workspace's checked-out branch: at once for an
         Unattended loop, and for an Attended one only at the commit its owner approved merging
@@ -2358,7 +2378,7 @@ class CodeKind(LoopKindStrategy):
         from personalclaw.loop import store, worktree
 
         def read() -> tuple[str, dict[str, str]]:
-            return worktree.base_branch(ws), {
+            return worktree.merge_target(ws), {
                 tid: worktree.branch_tip(ws, tid) for tid, _ in waiting
             }
 
@@ -2423,7 +2443,7 @@ class CodeKind(LoopKindStrategy):
         title = str(getattr(task, "title", "") or tid)
 
         def merge() -> tuple[str, list[str], worktree.MergeResult, str]:
-            into = worktree.base_branch(ws)
+            into = worktree.merge_target(ws)
             commits = worktree.branch_commits(ws, tid)
             result = worktree.merge_worktree(ws, tid, loop.tasks_project_id)
             return into, commits, result, "" if result.ok else worktree.branch_tip(ws, tid)

@@ -112,9 +112,10 @@ async def merge(svc, loop: Loop, task_id: str, tip: str) -> Outcome:
     configured to commit there, and a branch holding a commit made under another name is not
     merged. What the worktree holds and has not committed is committed on its branch first, so a
     branch that is then at another commit than the one reviewed is not merged: its review is read
-    again (``loop_merge_moved``). The branch is merged into the workspace's checked-out branch, the
-    merge is recorded on the loop's page, and the worktree and branch go. A conflict undoes the
-    merge and keeps the work as it was."""
+    again (``loop_merge_moved``). The branch is merged into the workspace's checked-out branch, or
+    onto its detached HEAD when none is, as its review and record name it; the merge is recorded on
+    the loop's page, and the worktree and branch go. A conflict undoes the merge and keeps the work
+    as it was."""
     from personalclaw.loop import files as loop_files
     from personalclaw.loop.kinds.sdlc import MERGED_BY_OWNER
 
@@ -137,7 +138,7 @@ async def merge(svc, loop: Loop, task_id: str, tip: str) -> Outcome:
     other = await asyncio.to_thread(worktree.commits_not_by, ws, task_id, identity)
     if other:
         return Outcome("kept_work_other_name", named=tuple(other))
-    into = await asyncio.to_thread(worktree.base_branch, ws)
+    into = await asyncio.to_thread(worktree.merge_target, ws)
     commits = await asyncio.to_thread(worktree.branch_commits, ws, task_id)
     result = await asyncio.to_thread(worktree.merge_worktree, ws, task_id, project)
     if not result.ok:
