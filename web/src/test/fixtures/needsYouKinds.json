@@ -1,0 +1,589 @@
+{
+ "_about": "Needs you's cards, one per producer, as each files its proposal and as its card reads. Read by tests/test_learning_proposal_cards.py, which builds each `filed` proposal and checks learning.cards.card_for against `card`, and by the web's card tests, which draw `card`.",
+ "learning": [
+  {
+   "variant": "template.named",
+   "filed": {
+    "kind": "template",
+    "title": "Draft the Friday status email from the week's merged changes",
+    "body": "- Fetch the changes merged in {{week}}\n- Group the result by project\n- Summarize each group in two lines\n- Draft the status email\n- Send it to the team channel",
+    "session_key": "dashboard:c1",
+    "run_id": "weekly-status-report",
+    "tags": [
+     "ad_hoc_to_template",
+     "auto_file",
+     "name:weekly-status-report"
+    ]
+   },
+   "card": {
+    "kind": "template",
+    "variant": "template.named",
+    "headline": "Draft the Friday status email from the week's merged changes",
+    "detail": "5 steps: Fetch the changes merged in {{week}} → Group the result by project → Summarize each group in two lines → Draft the status email → Send it to the team…",
+    "name": "weekly-status-report",
+    "accept": {
+     "effect": "installs",
+     "verb": "Save template",
+     "sentence": "Saves the template weekly-status-report to Workflows",
+     "confirm": false
+    },
+    "label": "New template proposed"
+   }
+  },
+  {
+   "variant": "template.plan_shape",
+   "filed": {
+    "kind": "template",
+    "title": "Repeated plan shape in release-notes",
+    "body": "4 recent run(s) match this plan's shape closely enough to be the same procedure.\n\nThe plans share their stages.\n\nPrior runs: r1, r2, r3, r4\n\nNaming it as a template makes the next one a single call instead of a re-plan.",
+    "target": "similar:release-notes",
+    "source_cadence": "run_end",
+    "run_id": "r5",
+    "tags": [
+     "plan_similarity",
+     "run_end"
+    ],
+    "reinforcements": 4
+   },
+   "card": {
+    "kind": "template",
+    "variant": "template.plan_shape",
+    "headline": "Repeated plan shape in release-notes",
+    "detail": "4 recent runs built this same plan",
+    "name": "",
+    "accept": {
+     "effect": "none",
+     "verb": "",
+     "sentence": "This names a repeated pattern. It has no steps to save, so it can't be accepted. Open the latest run to make a template from it, or reject this.",
+     "confirm": false
+    },
+    "label": "New template proposed"
+   }
+  },
+  {
+   "variant": "template.recurring_path",
+   "filed": {
+    "kind": "template",
+    "title": "Recurring successful path: fetch_feeds>summarize>send_digest",
+    "body": "These 3 successful runs of `weekly-digest` all took the same path:\n\n1. fetch_feeds\n2. summarize\n3. send_digest\n\nMining what already works: a repeated successful sequence is a procedure worth naming, not a coincidence.\n\nRuns: r1, r2, r3",
+    "target": "fetch_feeds>summarize>send_digest",
+    "source_cadence": "run_end",
+    "run_id": "r1",
+    "tags": [
+     "name:weekly-digest-path",
+     "positive_path",
+     "trace_mining",
+     "workflow:weekly-digest"
+    ],
+    "reinforcements": 3
+   },
+   "card": {
+    "kind": "template",
+    "variant": "template.recurring_path",
+    "headline": "Recurring path in weekly-digest: fetch_feeds → summarize → send_digest",
+    "detail": "3 successful runs took exactly this path",
+    "name": "",
+    "accept": {
+     "effect": "installs",
+     "verb": "Save template",
+     "sentence": "Saves the template weekly-digest-path to Workflows",
+     "confirm": false
+    },
+    "label": "New template proposed"
+   }
+  },
+  {
+   "variant": "lesson.failed_run",
+   "filed": {
+    "kind": "lesson_batch",
+    "title": "Run failure in pricing-digest/fetch-metrics: empty_result",
+    "body": "Step `fetch-metrics` of template `pricing-digest` failed (empty_result). A future run of this template should account for this failure mode.",
+    "target": "pricing-digest:empty_result:abc",
+    "source_cadence": "run_end",
+    "run_id": "r7",
+    "source_excerpt": "Traceback (most recent call last):\n  File \"fetch.py\", line 12, in run\nValueError: The metrics query returned an empty result",
+    "tags": [
+     "run_end",
+     "workflow_run",
+     "empty_result"
+    ]
+   },
+   "card": {
+    "kind": "lesson_batch",
+    "variant": "lesson.failed_run",
+    "headline": "fetch-metrics: The metrics query returned an empty result",
+    "detail": "Accepting it changes nothing yet",
+    "name": "",
+    "accept": {
+     "effect": "records",
+     "verb": "Accept",
+     "sentence": "Accepting records that you agree. It changes nothing the agent reads yet.",
+     "confirm": false
+    },
+    "label": "Lessons to review"
+   }
+  },
+  {
+   "variant": "lesson.outcome",
+   "filed": {
+    "kind": "lesson_batch",
+    "title": "Outcome of pricing-page-test: raise the trial to 21 days",
+    "body": "trial_to_paid 4.1% against a baseline of 3.2% (+0.9). The window closed with 412 sign-ups.",
+    "source_cadence": "run_end",
+    "tags": [
+     "run_end",
+     "outcome",
+     "confirmed"
+    ]
+   },
+   "card": {
+    "kind": "lesson_batch",
+    "variant": "lesson.outcome",
+    "headline": "Outcome of pricing-page-test: raise the trial to 21 days",
+    "detail": "trial_to_paid 4.1% against a baseline of 3.2% (+0.9)",
+    "name": "",
+    "accept": {
+     "effect": "records",
+     "verb": "Accept",
+     "sentence": "Accepting records that you agree. It changes nothing the agent reads yet.",
+     "confirm": false
+    },
+    "label": "Lessons to review"
+   }
+  },
+  {
+   "variant": "lesson.working_habit",
+   "filed": {
+    "kind": "lesson_batch",
+    "title": "Observed working habit: direct + bash,edit,read",
+    "body": "The harness handled direct work with bash, edit and read and it kept working.",
+    "target": "user.selfmodel.principle.workflow",
+    "source_cadence": "self_model",
+    "tags": [
+     "self_model",
+     "workflow"
+    ],
+    "reinforcements": 6
+   },
+   "card": {
+    "kind": "lesson_batch",
+    "variant": "lesson.working_habit",
+    "headline": "Direct work with bash, edit and read",
+    "detail": "Seen in 6 turns before it was proposed",
+    "name": "",
+    "accept": {
+     "effect": "installs",
+     "verb": "Save principle",
+     "sentence": "Saves this as a working principle the agent follows",
+     "confirm": false
+    },
+    "label": "Lessons to review"
+   }
+  },
+  {
+   "variant": "lesson.conflict",
+   "filed": {
+    "kind": "lesson_batch",
+    "title": "A learned lesson would replace one you taught: “Use tabs in Makefiles”",
+    "body": "A lesson learned from your correction in a chat would replace one you taught.",
+    "source_cadence": "after_turn_review",
+    "tags": [
+     "lesson_conflict"
+    ],
+    "change_manifest": {
+     "component": "lessons",
+     "targeted_fix": [
+      {
+       "memory": "",
+       "rule": "Indent Makefiles with spaces",
+       "negative": "",
+       "scope": "global",
+       "scope_ref": "",
+       "replacing": [],
+       "yours": [
+        "Use tabs in Makefiles"
+       ]
+      }
+     ]
+    }
+   },
+   "card": {
+    "kind": "lesson_batch",
+    "variant": "lesson.conflict",
+    "headline": "“Use tabs in Makefiles” → “Indent Makefiles with spaces”",
+    "detail": "learned from your correction in a chat",
+    "name": "",
+    "accept": {
+     "effect": "installs",
+     "verb": "Use the learned one",
+     "sentence": "It replaces yours in your memory.",
+     "confirm": true
+    },
+    "label": "Lessons to review"
+   }
+  },
+  {
+   "variant": "lesson.captures",
+   "filed": {
+    "kind": "lesson_batch",
+    "title": "12 capture(s) staged while no model was bound",
+    "body": "- Prefers squash merges for doc-only changes\n- capture_turn: a turn\n- Keeps PR titles under 70 characters\n- Uses tabs\n- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h",
+    "source_cadence": "per_turn",
+    "staging_refs": [
+     "u1",
+     "u2",
+     "u3",
+     "u4",
+     "u5",
+     "u6",
+     "u7",
+     "u8",
+     "u9",
+     "u10",
+     "u11",
+     "u12"
+    ]
+   },
+   "card": {
+    "kind": "lesson_batch",
+    "variant": "lesson.captures",
+    "headline": "Prefers squash merges for doc-only changes · +11 more",
+    "detail": "12 captures saved while no model was connected",
+    "name": "",
+    "accept": {
+     "effect": "records",
+     "verb": "Accept them",
+     "sentence": "Accepting records that you agree. It changes nothing the agent reads yet.",
+     "confirm": false
+    },
+    "label": "Lessons to review"
+   }
+  },
+  {
+   "variant": "skill.promoted",
+   "filed": {
+    "kind": "skill",
+    "title": "You rebuilt it the same way in three chats",
+    "body": "1. Run npm ci in web/\n2. Run npm run build\n3. Restart the gateway",
+    "target": "rebuild-the-web-ui\u001fRebuild and restart the web UI after a dependency bump",
+    "source_cadence": "skill_promotion",
+    "tags": [
+     "skill_promotion",
+     "positive_path"
+    ]
+   },
+   "card": {
+    "kind": "skill",
+    "variant": "skill.promoted",
+    "headline": "Rebuild and restart the web UI after a dependency bump",
+    "detail": "You rebuilt it the same way in three chats",
+    "name": "auto/rebuild-the-web-ui",
+    "accept": {
+     "effect": "installs",
+     "verb": "Install skill",
+     "sentence": "Installs auto/rebuild-the-web-ui with this procedure",
+     "confirm": false
+    },
+    "label": "New skill proposed"
+   }
+  },
+  {
+   "variant": "template_diff",
+   "filed": {
+    "kind": "template_diff",
+    "title": "Refine release-notes",
+    "body": "Retry the fetch step once and keep the summary under 200 words. The last 4 runs failed at the fetch and wrote long summaries.",
+    "target": "release-notes",
+    "source_cadence": "refiner",
+    "provenance": "agent",
+    "tags": [
+     "refiner",
+     "low"
+    ],
+    "change_manifest": {
+     "component": "release-notes",
+     "failure_pattern": "x",
+     "evidence_refs": [
+      "r1",
+      "r2",
+      "r3",
+      "r4"
+     ],
+     "targeted_fix": [
+      {
+       "op": "set_config",
+       "node": "fetch",
+       "key": "retries",
+       "value": 1
+      },
+      {
+       "op": "set_config",
+       "node": "summarize",
+       "key": "max_words",
+       "value": 200
+      },
+      {
+       "op": "set_config",
+       "node": "summarize",
+       "key": "tone",
+       "value": "plain"
+      }
+     ]
+    }
+   },
+   "card": {
+    "kind": "template_diff",
+    "variant": "template_diff",
+    "headline": "Retry the fetch step once and keep the summary under 200 words",
+    "detail": "3 changes · low risk · from 4 runs",
+    "name": "release-notes",
+    "accept": {
+     "effect": "applies",
+     "verb": "Apply changes",
+     "sentence": "Saves release-notes as a new version with these 3 changes",
+     "confirm": false
+    },
+    "label": "Template change proposed"
+   }
+  },
+  {
+   "variant": "retirement",
+   "filed": {
+    "kind": "retirement",
+    "title": "Retire web-search-fallback — ablation measured no delta",
+    "body": "With it on, 0.71; off, 0.71, over 40 trials. The report is in evals/ablation/web-search-fallback.json.",
+    "target": "ablation.web-search-fallback",
+    "source_cadence": "ablation",
+    "tags": [
+     "ablation",
+     "skill",
+     "remove"
+    ]
+   },
+   "card": {
+    "kind": "retirement",
+    "variant": "retirement",
+    "headline": "Retire web-search-fallback: ablation measured no delta",
+    "detail": "With it on, 0.71; off, 0.71, over 40 trials",
+    "name": "",
+    "accept": {
+     "effect": "none",
+     "verb": "",
+     "sentence": "Nothing removes it from here yet.",
+     "confirm": false
+    },
+    "label": "Something to retire"
+   }
+  },
+  {
+   "variant": "retirement.text_not_typed",
+   "filed": {
+    "kind": "retirement",
+    "title": "Check what may have been learned from text you didn't type",
+    "body": "Learning used to read the whole message the agent was sent.\n\n- Preference: always reply in French (the same as in the saved prompt “French replies”)\n- Fact: the NAS is at 10.0.0.5 (the same as in the file notes.md)\n- Glossary: VLAN 20 is IoT (the same as in the file network.md)\n\nRemove them, or keep them.",
+    "target": "learning.text_not_typed",
+    "source_cadence": "cleanup",
+    "tags": [
+     "learned_from_text_not_typed"
+    ]
+   },
+   "card": {
+    "kind": "retirement",
+    "variant": "retirement.text_not_typed",
+    "headline": "Preference: “always reply in French”",
+    "detail": "Check 3 things learned from text you didn't type",
+    "name": "",
+    "accept": {
+     "effect": "installs",
+     "verb": "Remove them",
+     "sentence": "Removes these 3 items from memory",
+     "confirm": true
+    },
+    "label": "Something to retire"
+   }
+  },
+  {
+   "variant": "tier",
+   "filed": {
+    "kind": "tier_migration",
+    "title": "Distill weekly-digest to a fixed template — it never varies",
+    "body": "19 of 20 runs took the same path. About $0.04 saved a run.",
+    "target": "tier:weekly-digest",
+    "source_cadence": "run_end",
+    "tags": [
+     "tier_migration",
+     "distill"
+    ]
+   },
+   "card": {
+    "kind": "tier_migration",
+    "variant": "tier",
+    "headline": "Distill weekly-digest to a fixed template: it never varies",
+    "detail": "19 of 20 runs took the same path",
+    "name": "",
+    "accept": {
+     "effect": "none",
+     "verb": "",
+     "sentence": "Nothing makes this change from here yet.",
+     "confirm": false
+    },
+    "label": "Move to a different tier"
+   }
+  },
+  {
+   "variant": "project_instruction",
+   "filed": {
+    "kind": "project_instruction",
+    "title": "You asked for digests in three Home Lab chats",
+    "body": "Always pin container images by digest, never by tag\nTags move; digests don't.",
+    "target": "proj-gone",
+    "source_cadence": "project_context_review",
+    "tags": [
+     "project_context",
+     "project_instruction"
+    ]
+   },
+   "card": {
+    "kind": "project_instruction",
+    "variant": "project_instruction",
+    "headline": "Always pin container images by digest, never by tag",
+    "detail": "You asked for digests in three Home Lab chats",
+    "name": "a removed project",
+    "accept": {
+     "effect": "none",
+     "verb": "",
+     "sentence": "Its project was removed, so it can't be accepted here.",
+     "confirm": false
+    },
+    "label": "Project instruction proposed"
+   }
+  },
+  {
+   "variant": "knowledge",
+   "filed": {
+    "kind": "knowledge_draft",
+    "title": "Home network VLAN plan",
+    "body": "Three VLANs: 10 for servers, 20 for IoT devices, 30 for guests. Each has its own DHCP range.",
+    "source_cadence": "knowledge_gap",
+    "tags": [
+     "knowledge"
+    ]
+   },
+   "card": {
+    "kind": "knowledge_draft",
+    "variant": "knowledge",
+    "headline": "Home network VLAN plan",
+    "detail": "Three VLANs: 10 for servers, 20 for IoT devices, 30 for guests",
+    "name": "",
+    "accept": {
+     "effect": "none",
+     "verb": "",
+     "sentence": "A knowledge draft can't be accepted from here yet.",
+     "confirm": false
+    },
+    "label": "Knowledge entry drafted for review"
+   }
+  },
+  {
+   "variant": "template.card",
+   "filed": {
+    "kind": "template",
+    "title": "Turn a meeting transcript into decisions and action items",
+    "body": "Review this card.\n\n```json\n{\"target\": \"template\", \"name\": \"meeting-notes\", \"description\": \"Turn a meeting transcript into decisions and action items\", \"steps\": [{\"id\": \"read\", \"prompt\": \"Read the transcript\"}, {\"id\": \"decide\", \"prompt\": \"List the decisions\"}, {\"id\": \"act\", \"prompt\": \"List the action items\"}]}\n```",
+    "tags": [
+     "prompt-card"
+    ]
+   },
+   "card": {
+    "kind": "template",
+    "variant": "template.card",
+    "headline": "Turn a meeting transcript into decisions and action items",
+    "detail": "3 steps · from a card you pasted",
+    "name": "meeting-notes",
+    "accept": {
+     "effect": "installs",
+     "verb": "Save template",
+     "sentence": "Saves the template meeting-notes to Workflows",
+     "confirm": false
+    },
+    "label": "New template proposed"
+   }
+  },
+  {
+   "variant": "prompt.card",
+   "filed": {
+    "kind": "prompt",
+    "title": "Summarize yesterday's commits for the standup",
+    "body": "Review this card.\n\n```json\n{\"target\": \"prompt\", \"name\": \"standup-summary\", \"description\": \"Summarize yesterday's commits for the standup\", \"content\": \"Summarize {{repo}} since {{since}}\", \"variables\": [{\"name\": \"repo\"}, {\"name\": \"since\"}]}\n```",
+    "tags": [
+     "prompt-card"
+    ]
+   },
+   "card": {
+    "kind": "prompt",
+    "variant": "prompt.card",
+    "headline": "Summarize yesterday's commits for the standup",
+    "detail": "Uses {{repo}}, {{since}} · from a card you pasted",
+    "name": "standup-summary",
+    "accept": {
+     "effect": "installs",
+     "verb": "Save prompt",
+     "sentence": "Saves the prompt standup-summary",
+     "confirm": false
+    },
+    "label": "New prompt proposed"
+   }
+  },
+  {
+   "variant": "agent.card",
+   "filed": {
+    "kind": "agent",
+    "title": "Runs a release from branch cut to published notes",
+    "body": "Review this card.\n\n```json\n{\"target\": \"agent\", \"name\": \"release-captain\", \"description\": \"Runs a release from branch cut to published notes\", \"system_prompt\": \"You coordinate a release: cut, freeze, tag, write the notes. You never push to main yourself.\"}\n```",
+    "tags": [
+     "prompt-card"
+    ]
+   },
+   "card": {
+    "kind": "agent",
+    "variant": "agent.card",
+    "headline": "Runs a release from branch cut to published notes",
+    "detail": "You coordinate a release: cut, freeze, tag, write the notes",
+    "name": "release-captain",
+    "accept": {
+     "effect": "installs",
+     "verb": "Save agent",
+     "sentence": "Saves the agent release-captain",
+     "confirm": false
+    },
+    "label": "New agent proposed"
+   }
+  },
+  {
+   "variant": "masked",
+   "filed": {
+    "kind": "template",
+    "title": "Deploy with the key sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA to the staging host",
+    "body": "- Fetch\n- Deploy",
+    "tags": [
+     "ad_hoc_to_template",
+     "name:deploy"
+    ]
+   },
+   "card": {
+    "kind": "template",
+    "variant": "template.named",
+    "headline": "Deploy with the key [REDACTED: credential] to the staging host",
+    "detail": "2 steps: Fetch → Deploy",
+    "name": "deploy",
+    "accept": {
+     "effect": "installs",
+     "verb": "Save template",
+     "sentence": "Saves the template deploy to Workflows",
+     "confirm": false
+    },
+    "label": "New template proposed"
+   }
+  }
+ ]
+}

@@ -350,6 +350,12 @@ def install_accepted_prompt_card(data: dict[str, Any]) -> str:
     return f"template:{_save_def_sync(typed)}"
 
 
+def payload_from_body(body: str) -> dict[str, Any]:
+    """The JSON block a card proposal's *body* carries (what its review read). Raises
+    :class:`PromptCardError` when it has none; ``learning.cards`` reads its name and words here."""
+    return _payload_from_body(body)
+
+
 def _payload_from_body(body: str) -> dict[str, Any]:
     """The JSON block a review body carries. A body without one is not installable."""
     start = body.find("```json")

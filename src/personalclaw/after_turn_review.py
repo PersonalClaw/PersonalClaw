@@ -732,6 +732,8 @@ async def _review_template_candidate(decision: dict, *, session_key: str) -> str
         title=description or f"Template: {slug}",
         body="\n".join(f"- {s}" for s in steps),
         name=slug,
+        # The reason its own schema asks for, which its panel says as the agent's.
+        why=str(decision.get("rationale", "")).strip(),
     )
     logger.info(
         "template gate: %s for %s (score %.2f, recorded=%s)",

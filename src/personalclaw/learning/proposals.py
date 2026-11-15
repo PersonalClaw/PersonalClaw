@@ -870,6 +870,27 @@ if _unlabelled:  # pragma: no cover - import-time guard
     raise RuntimeError(f"proposal kinds without an inbox label: {sorted(_unlabelled)}")
 
 
+#: How much of a proposal's body its Inbox row carries as the preview: the row is copied into the
+#: log and the digest, and the whole body is the proposal's own read.
+PREVIEW_CHARS = 2000
+
+
+def _preview(text: str) -> str:
+    """*text* up to :data:`PREVIEW_CHARS`, cut at the last paragraph break before it (else a line
+    break), never inside a mask."""
+    from personalclaw.security import cut_outside_masks
+
+    if len(text) <= PREVIEW_CHARS:
+        return text
+    head = text[:PREVIEW_CHARS]
+    for brk in ("\n\n", "\n"):
+        at = head.rfind(brk)
+        if at >= PREVIEW_CHARS // 2:
+            head = head[:at]
+            break
+    return head[: cut_outside_masks(text, len(head))].rstrip() + "\n\n…"
+
+
 def _surface_in_inbox(prop: Proposal) -> None:
     """Raise the proposal as a durable inbox item.
 
@@ -888,21 +909,27 @@ def _surface_in_inbox(prop: Proposal) -> None:
         except Exception:
             logger.debug("proposal inbox surface: no dashboard state", exc_info=True)
 
-        title = _KIND_LABELS.get(prop.kind, "Proposal")
         # The row carries the proposals-contract payload, so approving it dispatches through the
         # ONE proposals contract (`apply.skill_promotion` → this module's `accept`) instead
         # of the inbox handler hard-wiring this queue by name. `refs["learning_proposal"]`
         # stays for the existing readers — the contract is additive, not a replacement.
+        from personalclaw.learning.cards import card_for
         from personalclaw.proposals_contract import REFS_KEY, Proposal
         from personalclaw.security import redact_for_display
 
-        # The row's copies of the proposal's words are masked as its own read is (`shown`): the
-        # row's text is copied into its notification, the log and the digest, and accepting goes
-        # through the stored proposal, never this copy (`editable=False`).
-        shown_title = redact_for_display(prop.title or "")
+        # The row leads with what the proposal asks (`learning.cards`): its headline is the
+        # row's title and the bell's, and its kind's label is the tag, which a notification's body
+        # opens with ("New template proposed · 5 steps: …"). Every copy is masked as the
+        # proposal's own read is: the row's text is copied into its notification, the log and the
+        # digest, and accepting goes through the stored proposal, never this copy
+        # (`editable=False`).
+        card = card_for(prop)
+        label = card["label"]
+        headline = card["headline"] or redact_for_display(prop.title or "") or label
+        line = " · ".join(part for part in (label, card["detail"]) if part)
         payload = Proposal(
-            title=shown_title or title,
-            preview=redact_for_display(prop.body or prop.title or ""),
+            title=headline,
+            preview=_preview(redact_for_display(prop.body or prop.title or "")),
             preview_kind="text",
             provenance="learning",
             editable=False,
@@ -913,11 +940,12 @@ def _surface_in_inbox(prop: Proposal) -> None:
             source="learning",
             kind="proposal",
             item_kind=ItemKind.PROPOSAL.value,
-            title=title,
-            body=shown_title,
+            title=headline,
+            body=line,
             refs={
                 "learning_proposal": prop.id,
                 "session": prop.session_key,
+                "card": card,
                 REFS_KEY: payload.to_dict(),
             },
             dedup_key=f"learning_proposal:{prop.id}",

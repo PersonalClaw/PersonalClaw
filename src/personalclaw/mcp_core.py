@@ -332,6 +332,13 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "One line on what the procedure accomplishes.",
                     },
+                    "why": {
+                        "type": "string",
+                        "description": (
+                            "Optional: one line on why it is worth a template. The user reads it "
+                            "as yours when they decide."
+                        ),
+                    },
                 },
                 "required": ["name", "steps"],
             },
@@ -2072,6 +2079,7 @@ def _save_template_from_session(args: dict[str, Any]) -> str:
         title=description or f"Template: {slug}",
         body="\n".join(f"- {s}" for s in steps),
         name=slug,
+        why=str(args.get("why") or "").strip(),
     )
     if outcome.filed:
         return (

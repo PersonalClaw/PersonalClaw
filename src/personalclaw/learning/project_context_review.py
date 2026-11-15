@@ -171,6 +171,37 @@ def is_project_context_proposal(proposal_dict: dict) -> bool:
     return str(proposal_dict.get("kind") or "") in PROJECT_KINDS
 
 
+def project_name(project_id: str) -> str:
+    """The name of the project *project_id*, or ``""`` when it no longer resolves (its card then
+    says "a removed project")."""
+    if not project_id:
+        return ""
+    try:
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        project = HierarchyStore().get_project(project_id)
+    except Exception:
+        logger.debug("project name for %s could not be read", project_id, exc_info=True)
+        return ""
+    return str(getattr(project, "name", "") or "") if project is not None else ""
+
+
+def context_file_exists(target: str) -> bool:
+    """Whether the context file a ``project_file`` proposal's *target* names is there now: its
+    Accept then replaces what it holds, which its card says and asks once more about."""
+    project_id, name = _decode_target(str(target or ""))
+    safe = _safe_filename(name)
+    if not project_id or not safe:
+        return False
+    try:
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        return (HierarchyStore().context_dir(project_id) / safe).is_file()
+    except Exception:
+        logger.debug("context file for %s could not be checked", target, exc_info=True)
+        return False
+
+
 def install_accepted_project_context(proposal_dict: dict) -> bool:
     """Apply EXACTLY one accepted project-context proposal. Called only AFTER `require_human`.
 

@@ -67,6 +67,26 @@ def _learned_from(source: str) -> str:
     return _LEARNED_FROM.get(source, "A lesson PersonalClaw learned")
 
 
+def learned_from_words(source: str) -> str:
+    """What learned a lesson, as its card's line says it after the memory: "learned from your
+    correction in a chat"."""
+    words = _learned_from(source)
+    if words.startswith("A lesson the app "):
+        return "written by the app " + words.removeprefix("A lesson the app ").removesuffix(
+            " wrote"
+        )
+    return words.removeprefix("A lesson ")
+
+
+def memory_words(memory: str) -> str:
+    """The memory a question's lessons are in, as its card says it ("the memory of
+    ~/code/home-lab", the folder its body names), or ``""`` for the global memory and one that
+    can't be named."""
+    part = memory_locality.partition_named(memory) if memory else None
+    shown = part.shown if part is not None else ""
+    return f"the memory of {shown}" if shown else ""
+
+
 def _quoted(text: str) -> str:
     return f"“{text}”"
 

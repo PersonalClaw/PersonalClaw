@@ -209,9 +209,10 @@ def install(prop: Any, *, service: Any = None) -> str:
             template_install.why_not(data) if template_install.is_template_proposal(data) else ""
         )
         raise proposals.NoProposalInstallerError(
-            reason
-            or f"nothing installs a {kind!r} proposal yet: nothing was changed and the proposal is "
-            "still pending"
+            f"{reason} Nothing changed, and it is still pending."
+            if reason
+            else f"nothing installs a {kind!r} proposal yet: nothing was changed and the proposal "
+            "is still pending"
         )
 
     logger.debug("accept install: %s proposal took the %r branch", kind, branch)

@@ -151,6 +151,31 @@ def test_the_proposal_body_carries_a_failure_capsule(svc, home):
     assert prop.source_excerpt
 
 
+def test_the_lesson_opens_with_what_to_do_in_plain_words(svc, home):
+    """The body opens with the lesson for its failure mode, in plain words naming the step, which
+    the lesson's panel shows. It used to open with "A future run of this template should account
+    for this failure mode." whatever the failure was."""
+    run = _terminal_run()
+    _fail(run, "transform", "AttributeError: NoneType has no attribute 'foo'")
+    run_end.capture(run, svc, journal=journal_mod)
+    (prop,) = P.list_pending(kind=P.Kind.LESSON_BATCH.value)
+    mode = next(t for t in prop.tags if t not in ("run_end", "workflow_run"))
+    assert mode in run_end.LESSON_LINES, mode
+    assert prop.body.startswith(run_end.lesson_line(mode, "transform"))
+    assert "`transform`" in run_end.lesson_line(mode, "transform")
+    assert run_end.UNMAPPED_LESSON not in prop.body
+
+
+def test_every_failure_mode_but_unknown_has_its_lesson_and_unknown_keeps_todays():
+    from personalclaw.learning.detectors import FailureMode
+
+    named = {m.value for m in FailureMode} - {FailureMode.UNKNOWN.value}
+    assert set(run_end.LESSON_LINES) == named
+    for line in run_end.LESSON_LINES.values():
+        assert "{step}" in line and "—" not in line
+    assert run_end.lesson_line("unknown", "x") == ""
+
+
 def test_the_key_is_template_mode_signature(svc, home):
     """The lesson is keyed by `(template, failure_mode, signature)` so it can be
     re-injected on future runs of the SAME template."""

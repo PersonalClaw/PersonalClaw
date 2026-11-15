@@ -109,20 +109,16 @@ def why_not(data: dict[str, Any]) -> str:
     """Why the template proposal *data* can't be installed, or ``""`` when it can."""
     if PLAN_SHAPE_TAG in [str(t) for t in data.get("tags") or []]:
         return (
-            "This template names a repeated pattern. It has no steps to save, so it can't be "
-            "accepted, and it is still pending. Open the latest run to make a template from it, "
-            "or reject this."
+            "This names a repeated pattern. It has no steps to save, so it can't be accepted. "
+            "Open the latest run to make a template from it, or reject this."
         )
     if not template_name(data):
         return (
-            "This template has no name to save it under, so it can't be accepted, and it is "
-            "still pending. Reject it, and save the steps from the chat with a name."
+            "This template has no name to save it under, so it can't be accepted. Reject it, "
+            "and save the steps from the chat with a name."
         )
     if len(template_steps(str(data.get("body") or ""))) < 2:
-        return (
-            "This template has fewer than two steps to save, so it can't be accepted, and it is "
-            "still pending."
-        )
+        return "This template has fewer than two steps to save, so it can't be accepted."
     return ""
 
 
