@@ -25,31 +25,16 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - radiogroup "Library":
-    - radio "Knowledge" [checked]
+    - radio "Library" [checked]
     - radio "Memory"
     - radio "Files"
-    - radio "Artifacts"
-  - heading "Knowledge" [level=#]
-  - radiogroup "Knowledge view":
-    - radio "Home"
-    - radio "All items"
-    - radio "Graph"
-    - radio "Intents"
-    - radio "Tags"
-    - radio "Conflicts" [checked]
-    - radio "Decisions"
-  - button "Sources"
-  - button "Reports"
-  - button "Add knowledge"
-  - text: # items # entities # relations semantic search off
-  - heading "Knowledge base is empty" [level=#]
-  - paragraph: Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve.
-  - button "Add knowledge"
-  - complementary "A tip from Discover":
-    - paragraph: Start a conversation
-    - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.
-    - link "Open Chat":
-      - /url: "#/chat/new"
-    - button "Dismiss this tip"
+  - heading "Library" [level=#]
+  - button "More actions"
+  - button "Add"
+  - region "Conflicts":
+    - button "Library"
+    - heading "Conflicts" [level=#]
+    - heading "No contradictions recorded" [level=#]
+    - paragraph: When two stored claims disagree about the same subject, both are kept and the disagreement shows up here.
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

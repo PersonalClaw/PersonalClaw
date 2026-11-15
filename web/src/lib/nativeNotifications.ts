@@ -61,7 +61,8 @@ export const NOTIFICATION_SOURCE_ROUTES: Record<string, string> = {
   heartbeat: 'notifications',
   hook: 'notifications',
   inbox: 'inbox',
-  knowledge: 'knowledge',
+  // The library (#6101): `#/knowledge` is a redirect row onto it now.
+  knowledge: 'library',
   learning: 'learning',
   loop: 'loops',
   // `mcp/description_changed` — a server whose read-only labels she does not trust changed what a
@@ -89,14 +90,20 @@ export function routeForNote(note: Record<string, unknown>): string {
   return NOTIFICATION_SOURCE_ROUTES[source] || DEFAULT_NOTIFICATION_ROUTE
 }
 
+/** The shape a report's id is minted in (`research_reports`: `rpt-` and eight hex digits). */
+const REPORT_ID = /^rpt-[0-9a-f]{8}$/
+
 /** The item route a note names for itself, '' when it names none: a scheduled report's finding
- *  (a `knowledge` note) carries the write-up its run rewrote, `knowledge_item_id`, copied from its
- *  Inbox row's refs, and opens that write-up's page. Only an id in a shape the store mints a
- *  knowledge item's id in is taken (`isKnowledgeItemId`); any other note keeps its source's route. */
+ *  (a `knowledge` note) carries its report, `research_report_id`, and the write-up its run rewrote,
+ *  `knowledge_item_id`, both copied from its Inbox row's refs. It opens the report in the library,
+ *  or the write-up's page when the note names no report. Only an id in the shape its store mints is
+ *  taken (`REPORT_ID`, `isKnowledgeItemId`); any other note keeps its source's route. */
 export function itemRouteForNote(note: Record<string, unknown>): string {
+  if (note.source !== 'knowledge') return ''
+  const report = note.research_report_id
+  if (typeof report === 'string' && REPORT_ID.test(report)) return `library?item=report%3A${report}`
   const id = note.knowledge_item_id
-  if (note.source !== 'knowledge' || !isKnowledgeItemId(id)) return ''
-  return `knowledge/item/${id}`
+  return isKnowledgeItemId(id) ? `knowledge/item/${id}` : ''
 }
 
 /** True only when the gateway said THIS note is a native one.

@@ -2,69 +2,13 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
-        "button \"Regenerate intelligence\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Tags\""
-      ],
-      "390": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
-        "button \"Regenerate intelligence\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
         "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
       ],
-      "412": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
-        "button \"Regenerate intelligence — Nothing in the library yet\"",
-        "button \"Regenerate intelligence\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
-      ],
-      "768": [
-        "button \"Add knowledge\"",
-        "button \"Regenerate intelligence — Nothing in the library yet\"",
-        "button \"Regenerate intelligence\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Home\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
-      ]
+      "390": [],
+      "412": [],
+      "768": []
     },
     "known": {
       "200% text zoom": [
@@ -75,69 +19,13 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
-        "button \"Regenerate intelligence\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Tags\""
-      ],
-      "390": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
-        "button \"Regenerate intelligence\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
         "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
       ],
-      "412": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
-        "button \"Regenerate intelligence — Nothing in the library yet\"",
-        "button \"Regenerate intelligence\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
-      ],
-      "768": [
-        "button \"Add knowledge\"",
-        "button \"Regenerate intelligence — Nothing in the library yet\"",
-        "button \"Regenerate intelligence\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Home\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
-      ]
+      "390": [],
+      "412": [],
+      "768": []
     },
     "known": {
       "200% text zoom": [

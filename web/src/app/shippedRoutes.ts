@@ -89,6 +89,8 @@ export const SAMPLE = {
   writeUp: '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d',
   intent: 'cheap-ways-to-cut-the-power-bill',
   artifact: 'report-1',
+  /** A report's id as the store mints them (`rpt-` and eight hex digits). */
+  report: 'rpt-0a1b2c3d',
   run: '11b9a34c',
   node: 'synthesize',
   workflow: 'daily-digest',
@@ -111,9 +113,11 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'dashboard', from: ['router', 'palette', 'deep-link', 'tray', 'documented'], since: 'v0.1.0' },
   { route: 'chat', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
   { route: 'projects', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
-  // Library (#3815): one sidebar row, whose tabs are Knowledge, Memory, Files and Artifacts.
-  { route: 'library', from: ['router', 'palette', 'deep-link'], since: UNRELEASED },
-  { route: 'knowledge', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
+  // Library (#3815): one sidebar row, whose tabs are Library, Memory and Files. Its list is the Knowledge
+  // list and the Artifacts grid in one (#6101): their addresses are redirect rows onto it, and the
+  // router still serves both for their item pages.
+  { route: 'library', from: ['router', 'palette', 'deep-link', 'notification'], since: UNRELEASED },
+  { route: 'knowledge', from: ['router', 'deep-link', 'documented'], since: 'v0.1.0', lands: 'library' },
   // Library's Memory tab, which was Settings › Memory.
   { route: 'memory', from: ['router', 'palette', 'deep-link', 'documented'], since: UNRELEASED },
   { route: 'tasks', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
@@ -123,7 +127,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'automations', from: ['router', 'palette', 'deep-link', 'documented'], since: UNRELEASED },
   { route: 'triggers', from: ['router', 'deep-link', 'notification', 'gateway', 'documented'], since: 'v0.1.0' },
   { route: 'files', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
-  { route: 'artifacts', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.3' },
+  { route: 'artifacts', from: ['router', 'deep-link', 'documented'], since: 'v0.1.3', lands: 'library' },
   { route: 'terminal', from: ['router', 'palette', 'deep-link', 'documented'], since: 'v0.1.0' },
   // Capabilities (#3817): one sidebar row, whose tabs are the five routes below it and the Store.
   { route: 'capabilities', from: ['router', 'palette', 'deep-link'], since: UNRELEASED },
@@ -216,21 +220,54 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   // A report's write-up: the palette's report hit, the Inbox finding, and the report's notification.
   { route: `knowledge/item/${S.writeUp}`, from: ['palette', 'notification'] },
   { route: `knowledge/item/${S.knowledge}?read=1`, from: ['documented'] },
+  // Opened from a project's page: its back control names the project and returns there (#6101).
+  { route: `knowledge/item/${S.knowledge}?back=project:${S.project}`, from: ['documented'] },
   { route: `knowledge/item/${S.knowledge}?loc=p3`, from: ['gateway'] },
-  { route: 'knowledge/sources', from: ['documented'] },
-  { route: 'knowledge/sources/new', from: ['documented'] },
-  // Also where a palette hit on a report opens while its write-up can't be found.
-  { route: 'knowledge/reports', from: ['palette', 'documented'] },
-  { route: 'knowledge?view=graph', from: ['documented'] },
-  { route: 'knowledge?view=home', from: ['documented'] },
-  // The item list's own key, from when the view was called Library; the view is All items now.
-  { route: 'knowledge?view=library', from: ['documented'] },
-  { route: 'knowledge?view=intents', from: ['documented'] },
-  // What an intent found has no page of its own yet: the palette opens the Intents view on it.
-  { route: `knowledge?view=intents&intent=${S.intent}`, from: ['palette'] },
-  { route: 'knowledge?view=tags', from: ['documented'] },
-  { route: 'knowledge?view=conflicts', from: ['documented'] },
-  { route: 'knowledge?view=decisions', from: ['documented'] },
+  // The old Sources and Reports pages: each lands on its own group of the library's set-up panel.
+  { route: 'knowledge/sources', from: ['documented'], lands: 'library?setup=feeds' },
+  { route: 'knowledge/sources/new', from: ['documented'], lands: 'library?setup=source:new' },
+  { route: 'knowledge/reports', from: ['documented'], lands: 'library?setup=reports' },
+  // The old Knowledge page's views: the library keeps `view`, and draws each in place.
+  { route: 'knowledge?view=graph', from: ['documented'], lands: 'library?view=graph' },
+  { route: 'knowledge?view=home', from: ['documented'], lands: 'library?view=home' },
+  // The item list's own key, from when the view was called Library.
+  { route: 'knowledge?view=library', from: ['documented'], lands: 'library?view=library' },
+  { route: 'knowledge?view=intents', from: ['documented'], lands: 'library?view=intents' },
+  { route: `knowledge?view=intents&intent=${S.intent}`, from: ['documented'], lands: `library?view=intents&intent=${S.intent}` },
+  { route: 'knowledge?view=tags', from: ['documented'], lands: 'library?view=tags' },
+  { route: 'knowledge?view=conflicts', from: ['documented'], lands: 'library?view=conflicts' },
+  { route: 'knowledge?view=decisions', from: ['documented'], lands: 'library?view=decisions' },
+
+  // ── Library ───────────────────────────────────────────────────────────────────────────────────
+  // The set-up panel and its forms in the pane (#6101): the palette's Action rows open the panel and
+  // its three New forms; the old Sources and Reports pages land on their groups.
+  { route: 'library?setup=all', from: ['palette', 'documented'] },
+  { route: 'library?setup=intent:new', from: ['palette', 'documented'] },
+  { route: 'library?setup=source:new', from: ['palette', 'documented'] },
+  { route: 'library?setup=report:new', from: ['palette', 'documented'] },
+  { route: 'library?setup=feeds', from: ['documented'] },
+  { route: 'library?setup=reports', from: ['documented'] },
+  { route: 'library?manage=tags', from: ['documented'] },
+  { route: 'library?q=backup', from: ['documented'] },
+  { route: 'library?layout=grid', from: ['documented'] },
+  // The old views, drawn in place until the power-user view gives them tabs.
+  { route: 'library?view=graph', from: ['documented'] },
+  { route: 'library?view=tags', from: ['documented'] },
+  { route: 'library?view=conflicts', from: ['documented'] },
+  { route: 'library?view=decisions', from: ['documented'] },
+  { route: 'library?view=home', from: ['documented'] },
+  { route: 'library?view=library', from: ['documented'] },
+  { route: 'library?view=intents', from: ['documented'] },
+  { route: `library?view=intents&intent=${S.intent}`, from: ['documented'] },
+  // A project's things, and one thing selected: a copied link, and the palette's report and findings hits.
+  { route: `library?project=${S.project}`, from: ['documented'] },
+  { route: `library?project=${S.project}&store=knowledge`, from: ['documented'] },
+  { route: `library?project=${S.project}&store=artifacts`, from: ['documented'] },
+  { route: `library?item=artifact:${S.artifact}`, from: ['documented'] },
+  { route: `library?item=knowledge:${S.knowledge}`, from: ['documented'] },
+  // A report with no write-up yet: the palette's hit, and its finding's notification.
+  { route: `library?item=report:${S.report}`, from: ['palette', 'notification'] },
+  { route: `library?item=findings:${S.intent}`, from: ['palette'] },
 
   // ── Tasks ─────────────────────────────────────────────────────────────────────────────────────
   { route: 'tasks/new', from: ['documented'] },
@@ -273,6 +310,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: `files/${S.artifact}`, from: ['documented'], lands: `artifacts/${S.artifact}` },
   { route: 'files?file=src%2Fapp.py', from: ['documented'] },
   { route: `artifacts/${S.artifact}`, from: ['palette', 'deep-link', 'documented'] },
+  { route: `artifacts/${S.artifact}?back=project:${S.project}`, from: ['documented'] },
   { route: `artifacts/${S.artifact}?v=2`, from: ['documented'] },
 
   // ── Memory ────────────────────────────────────────────────────────────────────────────────────

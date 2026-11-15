@@ -131,12 +131,16 @@ export interface WindowedListProps<T> {
   enableRowKeyboard?: boolean
   /** The list's name, for a list a page names ("Projects"); unnamed by default, as before. */
   ariaLabel?: string
+  /** A list whose items are not all rows (a grouped list, whose group headings are list items):
+   *  each item's place among the rows, or null for an item that is no row, which then carries no
+   *  `aria-posinset` or `aria-setsize`. Without it every item is a row, as before. */
+  positionOf?: (item: T, index: number) => { posinset: number; setsize: number } | null
   children: (item: T, index: number, ctx: WindowedListRenderContext) => ReactNode
 }
 
 export function WindowedList<T>({
   items, rowKey, rowHeights, estimateRowHeight, gap = 0, noun, findHint,
-  anchorKey, revealKey, overscan = DEFAULT_OVERSCAN, className, enableRowKeyboard = true, ariaLabel, children,
+  anchorKey, revealKey, overscan = DEFAULT_OVERSCAN, className, enableRowKeyboard = true, ariaLabel, positionOf, children,
 }: WindowedListProps<T>) {
   const total = items.length
   const windowed = total > WINDOWING_THRESHOLD
@@ -437,6 +441,7 @@ export function WindowedList<T>({
   const slice: ReactNode[] = []
   for (let i = start; i < end; i++) {
     const key = keys[i]
+    const place = positionOf ? positionOf(items[i], i) : { posinset: i + 1, setsize: total }
     slice.push(
       <div
         key={key}
@@ -445,8 +450,8 @@ export function WindowedList<T>({
         // 🔑 ALWAYS the true total, never `end - start`. A windowed list that tells a
         // screen reader "item 3 of 28" when the library holds 5,000 has traded a
         // rendering cost for an accessibility lie.
-        aria-posinset={i + 1}
-        aria-setsize={total}
+        aria-posinset={place?.posinset}
+        aria-setsize={place?.setsize}
         ref={attachRow}
       >
         {children(items[i], i, { windowed })}

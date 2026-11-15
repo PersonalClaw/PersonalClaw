@@ -739,7 +739,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
 /** Type-aware preview, in ONE uniform framed container across all 12 types: bookmark
  *  → link card; image/audio/video → inline player; file types → a download row; text
  *  /gist → a rendered body preview. Keeps the sidebar's at-a-glance view consistent. */
-function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm: ReturnType<typeof resolveType>; fullscreen?: boolean; prominent?: boolean }) {
+export function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm: ReturnType<typeof resolveType>; fullscreen?: boolean; prominent?: boolean }) {
   const baseFrame = 'rounded-lg border border-outline-variant/40 bg-surface-container overflow-hidden'
   // `prominent` (the dedicated page) lets a preview fill the full available column
   // height — but ONLY for types with growable content (image/video, long text/gist,

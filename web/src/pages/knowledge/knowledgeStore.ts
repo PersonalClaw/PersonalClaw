@@ -29,6 +29,8 @@ export async function getKnowledge(id: string): Promise<KnowledgeItem | null> {
 export async function createKnowledge(input: {
   type: KnowledgeItem['type']; title?: string; content?: string; url?: string
   tags?: string[]; gist_language?: string
+  /** The project it is filed in, or none. */
+  project_id?: string
 }): Promise<KnowledgeItem> {
   return api.createKnowledgeItem({
     type: input.type,
@@ -37,6 +39,7 @@ export async function createKnowledge(input: {
     url: input.url || '',
     tags: input.tags ?? [],
     ...(input.gist_language ? { gist_language: input.gist_language } : {}),
+    ...(input.project_id ? { project_id: input.project_id } : {}),
   })
 }
 
@@ -57,8 +60,10 @@ export async function uploadKnowledgeFile(
   file: File,
   onProgress?: (p: UploadProgress) => void,
   signal?: AbortSignal,
+  /** The project it is filed in, or none. */
+  projectId?: string,
 ): Promise<{ item_id?: string; type?: string; status: string; deduped?: boolean }> {
-  return api.ingestKnowledgeFile(file, onProgress, signal)
+  return api.ingestKnowledgeFile(file, onProgress, signal, projectId)
 }
 
 /** 🔴 THIS READ MUST REJECT, BECAUSE ITS ZEROS ARE CLAIMS AND ONE OF THEM GIVES ADVICE.

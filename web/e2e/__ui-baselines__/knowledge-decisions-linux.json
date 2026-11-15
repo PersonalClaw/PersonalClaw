@@ -2,73 +2,24 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
         "button \"Open chat\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Tags\""
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
       ],
       "390": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
-        "button \"Open chat\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Home\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
+        "button \"Open chat\""
       ],
       "412": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
-        "button \"Open chat\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Home\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
+        "button \"Open chat\""
       ],
       "768": [
-        "button \"Add knowledge\"",
-        "button \"Open chat\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Home\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
+        "button \"Open chat\""
       ]
     },
     "known": {
       "200% text zoom": [
+        "<div> \"LibraryAddAddAdd LibraryDecisionsNo deci\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ]
     }
@@ -76,73 +27,24 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
         "button \"Open chat\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Tags\""
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
       ],
       "390": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
-        "button \"Open chat\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Home\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
+        "button \"Open chat\""
       ],
       "412": [
-        "button \"Add knowledge\"",
-        "button \"More actions\"",
-        "button \"Open chat\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Home\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
+        "button \"Open chat\""
       ],
       "768": [
-        "button \"Add knowledge\"",
-        "button \"Open chat\"",
-        "button \"Reports\"",
-        "button \"Sources\"",
-        "button[role=radio] \"All items\"",
-        "button[role=radio] \"Artifacts\"",
-        "button[role=radio] \"Conflicts\"",
-        "button[role=radio] \"Decisions\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Graph\"",
-        "button[role=radio] \"Home\"",
-        "button[role=radio] \"Intents\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
-        "button[role=radio] \"Tags\""
+        "button \"Open chat\""
       ]
     },
     "known": {
       "200% text zoom": [
+        "<div> \"LibraryAddAddAdd LibraryDecisionsNo deci\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ]
     }

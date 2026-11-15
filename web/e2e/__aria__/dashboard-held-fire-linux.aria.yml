@@ -31,8 +31,8 @@
   - link "Manage agents":
     - /url: "#/agents"
   - paragraph: Nothing ran today.
-  - heading "Pinned artifacts" [level=#]
-  - paragraph: No pinned artifacts. Pin one from its page to keep it here.
+  - heading "Shown on Home" [level=#]
+  - paragraph: Nothing shown here yet. Choose Show on Home on a page in your library.
   - heading "Discover" [level=#]
   - paragraph: Start a conversation
   - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.

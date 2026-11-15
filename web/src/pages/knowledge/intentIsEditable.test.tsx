@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /**
  * #542 — a knowledge intent is editable and pausable, not create-only.
  *
@@ -27,6 +28,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 import type { KnowledgeIntent } from '../../lib/api'
 
 const EXISTING: KnowledgeIntent = {
@@ -268,14 +270,20 @@ describe('the page can actually reach the editor', () => {
   it('routes every intent write through the single writer', () => {
     // Two call sites hand-assembling a whole-record upsert body is how `enabled: true` got
     // hard-coded in the first place. The upsert is two api calls now — a create names no base, an
-    // edit names the revision it replaces — and each may be spelled exactly once, inside the writer.
+    // edit names the revision it replaces — and each may be spelled exactly once in the whole tree,
+    // inside the writer (`intentRecord.ts`), which the library's set-up rows and form share.
+    const files = filesUnder(join(process.cwd(), 'src'), (n) => /\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n))
+      .filter((f) => !f.endsWith(join('lib', 'api.ts')))
     for (const call of [/api\.createKnowledgeIntent\(/g, /api\.saveKnowledgeIntent\(/g]) {
-      expect(src.match(call) ?? [], `only \`writeIntent\` may call ${call.source}`).toHaveLength(1)
+      const sites = files.flatMap((f) => (readSource(f).match(call) ?? []).map(() => f.slice(process.cwd().length + 1)))
+      expect(sites, `only \`writeIntent\` may call ${call.source}`).toEqual(['src/pages/knowledge/intentRecord.ts'])
     }
-    const at = src.indexOf('function writeIntent(')
+    const writerSrc = readFileSync(join(process.cwd(), 'src/pages/knowledge/intentRecord.ts'), 'utf8')
+    const at = writerSrc.indexOf('function writeIntent(')
     expect(at, 'the single writer must exist').toBeGreaterThan(-1)
-    const writer = src.slice(at, src.indexOf('\n}\n', at))
+    const writer = writerSrc.slice(at, writerSrc.indexOf('\n}\n', at))
     expect(writer).toMatch(/api\.createKnowledgeIntent\(/)
     expect(writer).toMatch(/api\.saveKnowledgeIntent\(/)
-  })
-})
+    // And the intents view still writes through it.
+    expect(src).toMatch(/from '\.\/intentRecord'/)
+  })})

@@ -21,7 +21,7 @@ const CACHE_KEY = 'knowledge:reports'
 /** A blank definition. `cite-source-only` is the default because the narrower policy is the
  *  one a reader can trust without knowing the report's configuration: every marker points at
  *  something the report was actually asked to monitor. */
-function blank(): ResearchReportInput {
+export function blank(): ResearchReportInput {
   return {
     name: '',
     prompt: '',
@@ -36,7 +36,7 @@ function blank(): ResearchReportInput {
 }
 
 /** The editable part of a report, for its edit form. */
-function editable(r: ResearchReport): ResearchReportInput {
+export function editable(r: ResearchReport): ResearchReportInput {
   return {
     name: r.name,
     prompt: r.prompt,
@@ -65,7 +65,7 @@ function when(r: ResearchReport): string {
 
 /** A next run as a date and time in the zone the report runs in ("Mon, Oct 5, 8:00 AM EDT"),
  *  and how far off it is. A zone this browser does not know reads in the browser's own. */
-function nextRun(iso: string, timezone: string): string {
+export function nextRun(iso: string, timezone: string): string {
   const at = new Date(iso)
   if (Number.isNaN(at.getTime())) return ''
   const style: Intl.DateTimeFormatOptions = {
@@ -187,7 +187,7 @@ export function ReportRow({ report, onChanged }: {
 /** What an edit changed: only the fields that differ from the report as it was opened, so a save
  *  that touched the prompt sends no schedule, and a schedule the form cannot show (an interval or
  *  a one-off set elsewhere) is never rewritten by a save that left it alone. */
-function changed(draft: ResearchReportInput, initial: ResearchReportInput): Partial<ResearchReportInput> {
+export function changed(draft: ResearchReportInput, initial: ResearchReportInput): Partial<ResearchReportInput> {
   const out: Partial<ResearchReportInput> = {}
   for (const key of Object.keys(draft) as (keyof ResearchReportInput)[]) {
     if (JSON.stringify(draft[key]) !== JSON.stringify(initial[key])) Object.assign(out, { [key]: draft[key] })
@@ -200,7 +200,7 @@ function changed(draft: ResearchReportInput, initial: ResearchReportInput): Part
  *  of the feature, so they are visible together rather than behind an "advanced" disclosure. And
  *  it says first what a report can read, because a question it cannot answer from your knowledge
  *  ("what shipped this week, with links") reads like one it can. */
-function ReportForm({ initial, reportId, onSaved, onCancel }: {
+export function ReportForm({ initial, reportId, onSaved, onCancel }: {
   initial: ResearchReportInput
   reportId?: string
   onSaved: () => void
@@ -233,7 +233,7 @@ function ReportForm({ initial, reportId, onSaved, onCancel }: {
     <div className="flex flex-col gap-m rounded-xl border border-outline-variant/60 bg-surface-container/50 p-l">
       <p data-type="body-s" className="text-on-surface-var">
         A report reads only your knowledge: what your sources, notes and imports have brought in. It does
-        not search the web. To report on a website, <TextLink href="#/knowledge/sources" ink="emphasis">watch
+        not search the web. To report on a website, <TextLink href="#/library?setup=source:new" ink="emphasis">watch
         it as a source</TextLink> first, and the report reads what it brings in.
       </p>
       <Field label="Name">

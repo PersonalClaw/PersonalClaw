@@ -1,0 +1,64 @@
+- navigation:
+  - button "PersonalClaw, Home":
+    - img "PersonalClaw"
+    - text: PersonalClaw
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Chat history":
+    - button "New chat"
+    - button "Open Chat history"
+    - searchbox "Search chats"
+    - 'button "Sort and filter: Recent activity · Active"'
+    - status
+    - text: No chats yet
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - radiogroup "Library":
+    - radio "Library" [checked]
+    - radio "Memory"
+    - radio "Files"
+  - heading "Library" [level=#]
+  - button "More actions"
+  - button "Add"
+  - region "Library items":
+    - paragraph: # items
+    - status
+    - heading "Your library is empty" [level=#]
+    - paragraph: Files, links and notes you add show up here. So do the pages and documents your chats make.
+    - button "Upload files"
+    - button "Add a link"
+    - button "Write a note"
+    - paragraph: Or drop files anywhere on this page.
+  - region "New intent":
+    - button "Back to Feeds, intents and reports"
+    - heading "New intent" [level=#]
+    - paragraph: Tell the agent what to look out for. It checks each item you add and keeps what matches.
+    - group:
+      - text: Look out for
+      - textbox "Look out for":
+        - /placeholder: Ideas for the garden's spring beds
+      - paragraph: "For example: anything that could improve my homelab."
+      - paragraph: In
+      - radiogroup "In":
+        - radio "Everything you add" [checked]
+        - radio "Only these kinds"
+      - text: Write a report from what it finds
+      - switch "Write a report from what it finds"
+      - checkbox "Offer to build a skill from what it finds"
+      - text: Offer to build a skill from what it finds. Adds Generate skill to its findings log.
+    - paragraph: Your model checks each new item once for this intent.
+    - button "Cancel"
+    - button "Start looking" [disabled]
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

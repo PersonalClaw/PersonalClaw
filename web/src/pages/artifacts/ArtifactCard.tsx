@@ -112,7 +112,7 @@ function KindTile({ icon: Icon, tone }: { icon: LucideIcon; tone: string }) {
 /** The live iframe preview — srcdoc per kind, sandboxed + inert + scaled. A react artifact's
  *  document waits for its component to be compiled (`reactPreview`): *pending* shows until then,
  *  and a component that does not compile says so instead of drawing a frame. */
-function LivePreview({ art, content, mode, pending }: { art: Artifact; content: string; mode: 'dark' | 'light'; pending: ReactNode }) {
+function LivePreview({ art, content, mode, pending }: { art: Pick<Artifact, 'kind' | 'name'>; content: string; mode: 'dark' | 'light'; pending: ReactNode }) {
   const isReact = art.kind === 'react'
   // widget/html/infographic/document/svg all render through the standard themed
   // srcdoc (document/svg get readable theme colors; scripts stay sandboxed).
@@ -142,12 +142,19 @@ function LivePreview({ art, content, mode, pending }: { art: Artifact; content: 
   )
 }
 
-export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
-  art: Artifact
-  onOpen: (a: Artifact) => void
+/** An artifact's face as a card draws it: its live page (one of `IFRAME_CAP` live at once, LRU), its
+ *  image, an excerpt of its text, or its kind's tile, fetched once the card is near the viewport.
+ *  `tone` draws the placeholder and the tile in one ink (the library's cards, whose kinds are words,
+ *  `web/DESIGN.md`'s Kind-Is-A-Word Rule); without it each kind keeps its tone, as the artifact grid
+ *  draws it. `onDirty` hears whether the file it was snapshotted from changed since. */
+export function ArtifactFace({ art, tone, onDirty }: {
+  art: Pick<Artifact, 'slug' | 'kind' | 'version' | 'name'>
+  tone?: string
+  onDirty?: (dirty: boolean) => void
 }) {
   const { mode } = useMode()
   const km = artifactKindMeta(art.kind)
+  const ink = tone ?? km.tone
   const rootRef = useRef<HTMLDivElement>(null)
   // near: the card is close to the viewport (IntersectionObserver) → fetch + mount.
   const [near, setNear] = useState(false)
@@ -155,8 +162,7 @@ export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
   const [live, setLive] = useState(false)
   const [content, setContent] = useState<string | null>(null)
   // The lazy detail fetch also carries live_dirty (computed by get(), not list) —
-  // the drift badge on file-backed cards rides the same request as the preview.
-  const [dirty, setDirty] = useState(false)
+  // the drift badge on file-backed cards rides the same request as the preview (`onDirty`).
   const slotRef = useRef<number | null>(null)
 
   const ctype = useMemo(() => resolveContentType({ kind: art.kind }), [art.kind])
@@ -190,7 +196,7 @@ export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
     if (!near || isThumbnail || isKindTile || content !== null) return
     let alive = true
     api.artifact(art.slug)
-      .then((a) => { if (alive) { setContent(a.content ?? ''); setDirty(!!a.live_dirty) } })
+      .then((a) => { if (alive) { setContent(a.content ?? ''); onDirty?.(!!a.live_dirty) } })
       .catch(() => { if (alive) setContent('') })
     return () => { alive = false }
   }, [near, isThumbnail, isKindTile, content, art.slug])
@@ -210,26 +216,34 @@ export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
     // The kind tile is FINAL and needs neither viewport proximity nor a fetch, so it
     // renders ahead of the `near` gate: there is nothing better arriving later, and
     // swapping a label pill for an icon on scroll would be motion with no meaning.
-    if (isKindTile) return <KindTile icon={km.icon} tone={km.tone} />
-    if (!near) return <Placeholder tone={km.tone} label={km.label} />
+    if (isKindTile) return <KindTile icon={km.icon} tone={ink} />
+    if (!near) return <Placeholder tone={ink} label={km.label} />
     if (isThumbnail) {
       // The version's own URL: a page keeps the image one URL gave it, so an unversioned /raw
       // left the card on the first version after the artifact had its next.
       return <SignedImg src={`/api/artifacts/${encodeURIComponent(art.slug)}/raw?version=${art.version}`} alt={art.name} loading="lazy" className="h-full w-full object-cover" />
     }
-    if (content === null) return <Placeholder tone={km.tone} label={km.label} />
+    if (content === null) return <Placeholder tone={ink} label={km.label} />
     if (isExcerpt) return <ExcerptPreview content={content} />
-    if (live) return <LivePreview art={art} content={content} mode={mode} pending={<Placeholder tone={km.tone} label={km.label} />} />
-    return <Placeholder tone={km.tone} label={km.label} />
+    if (live) return <LivePreview art={art} content={content} mode={mode} pending={<Placeholder tone={ink} label={km.label} />} />
+    return <Placeholder tone={ink} label={km.label} />
   })()
+  return <div ref={rootRef} className="h-full w-full">{preview}</div>
+}
 
+export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
+  art: Artifact
+  onOpen: (a: Artifact) => void
+}) {
+  const km = artifactKindMeta(art.kind)
+  const [dirty, setDirty] = useState(false)
   const Icon = km.icon
   return (
-    <div ref={rootRef}>
+    <div>
     <TileButton onClick={() => onOpen(art)} title={art.name} ariaLabel={art.name}
       className="h-full w-full">
       <div className="h-36 w-full shrink-0 overflow-hidden border-b border-outline-variant/30 bg-surface">
-        {preview}
+        <ArtifactFace art={art} onDirty={setDirty} />
       </div>
       <div className="flex min-w-0 flex-col gap-0.5 px-3 py-2">
         <div className="flex items-center gap-1.5">

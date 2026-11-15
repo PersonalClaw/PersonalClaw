@@ -222,6 +222,15 @@ function consumers(): Array<{ rel: string; tag: string }> {
   )
 }
 
+/** Named predicates over a page's query that are false at rest, so an `active` that calls one
+ *  announces only once the reader narrows. Each is listed by its call, not by a pattern: a
+ *  `Boolean(query)` is true at rest and announces at idle. */
+const QUIET_AT_REST = [
+  // The library's: a search or one of its filter keys (`pages/library/useLibrary.ts`), shared with
+  // its count line.
+  String.raw`\bisNarrowed\(query\)`,
+]
+
 describe('EVERY list bar passes a result count — the ratchet', () => {
   it('the census finds the population', () => {
     const all = consumers()
@@ -233,13 +242,21 @@ describe('EVERY list bar passes a result count — the ratchet', () => {
       .toEqual([])
   })
 
+  it('🔴 control: a named predicate counts only when it is listed as quiet at rest', () => {
+    const quiet = new RegExp(`(!!|\\w+\\s*!==|${QUIET_AT_REST.join('|')})`)
+    expect('(isNarrowed(query))').toMatch(quiet)
+    expect('(Boolean(query))', 'true at rest: it would announce at idle').not.toMatch(quiet)
+    expect('(isNarrowedish(query))').not.toMatch(quiet)
+  })
+
   it('`active` is derived on every one of them, never hardcoded', () => {
     for (const { rel, tag } of consumers()) {
       const line = tag.split('\n').find((l) => l.includes('results={{')) ?? tag
       expect(line, `${rel}: active must not be hardcoded — it would announce at idle`)
         .not.toMatch(/active:\s*true/)
       const expr = activeExpr(code(join(SRC, rel)), line)
-      expect(expr, `${rel}: active must reference the query or a filter`).toMatch(/(!!|\w+\s*!==)/)
+      // Or one of the named predicates below, each over its page's query and false at rest.
+      expect(expr, `${rel}: active must reference the query or a filter`).toMatch(new RegExp(`(!!|\\w+\\s*!==|${QUIET_AT_REST.join('|')})`))
     }
   })
 

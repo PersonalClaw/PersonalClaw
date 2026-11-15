@@ -59,7 +59,7 @@ describe('the dashboard pin widget survives a failed artifact read', () => {
     // The pin is real — the user chose it. Hiding it because a LIST read failed is the defect.
     await waitFor(() => expect(screen.getByText('a1')).toBeInTheDocument())
     expect(screen.getByText(/details unavailable/), 'and it says why it is thin').toBeInTheDocument()
-    expect(screen.queryByText(/No pinned artifacts/), 'not the "you have none" claim').toBeNull()
+    expect(screen.queryByText(/Nothing shown here yet/), 'not the "you have none" claim').toBeNull()
   })
 
   it('still drops a pin whose artifact is genuinely gone', async () => {
@@ -67,7 +67,7 @@ describe('the dashboard pin widget survives a failed artifact read', () => {
     // rather than rendered as a broken row. Only the failed-read case changed.
     mockApi({ artifacts: () => Promise.resolve([]) })
     await mountPins()
-    await waitFor(() => expect(screen.getByText(/No pinned artifacts/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/Nothing shown here yet/)).toBeInTheDocument())
   })
 
   it('says the PINS read failed rather than "no pinned artifacts"', async () => {
@@ -75,7 +75,7 @@ describe('the dashboard pin widget survives a failed artifact read', () => {
     mockApi({ pinnedArtifacts: boom })
     await mountPins()
     await waitFor(() => expect(screen.getByText(/Could ?n.t load your pins/i)).toBeInTheDocument())
-    expect(screen.queryByText(/Pin one from its page/), 'not an invitation to start pinning').toBeNull()
+    expect(screen.queryByText(/Choose Show on Home/), 'not an invitation to show one').toBeNull()
   })
 
   it('renders the resolved name when everything works', async () => {

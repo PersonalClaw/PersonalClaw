@@ -22,6 +22,7 @@ import { ArtifactIteratePanel, ITERATE_PENDING } from './ArtifactIteratePanel'
 import { DeployedAppsMenu } from './ArtifactDeploy'
 import { ArtifactPinButton } from './ArtifactPin'
 import { PageTitle } from '../../ui/PageTitle'
+import { useItemBack } from '../../app/itemBack'
 
 const SOURCES = ['chat', 'cron', 'subagent', 'manual', 'import'] as const
 const SORTS = [
@@ -175,7 +176,9 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
   }, [artifacts, currentSearch, searchQuery, kind, src, col, sort])
 
   const open = (a: Artifact) => navigate(`artifacts/${a.slug}`)
-  const back = () => { setVParam(''); setIterate(''); navigate('artifacts') }
+  // Back returns to the library with this artifact selected, or to the project that opened it.
+  const backTo = useItemBack(`artifact:${slug}`, routeQuery.back)
+  const back = () => { setVParam(''); setIterate(''); navigate(backTo.path) }
 
   // "Source file" on a file-backed artifact opens it in the Files page (its home).
   const openSourceFile = useCallback((path: string) => {
@@ -223,7 +226,7 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
         keepCornerPadding
         left={<div className="flex min-w-0 items-center gap-m">
           {slug
-            ? <QuietButton onClick={back} title="Back to the library"><ArrowLeft size={13} /> Library</QuietButton>
+            ? <QuietButton onClick={back} title={`Back to ${backTo.label}`}><ArrowLeft size={13} /> {backTo.label}</QuietButton>
             : <PageTitle className="shrink-0">Artifacts</PageTitle>}
           {slug && active && <span className="truncate text-on-surface" data-type="title-l">{active.name}</span>}
         </div>}

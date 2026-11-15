@@ -59,7 +59,7 @@
   - heading "Give it context" [level=#]
   - paragraph: Build a knowledge base it can draw on
   - paragraph: Save documents, notes, and facts to the knowledge base and PersonalClaw retrieves the relevant pieces on its own the next time they matter.
-  - button "Open Knowledge"
+  - button "Open Library"
   - button "Dismiss — don't suggest this again"
   - paragraph: See what it remembers about you
   - paragraph: PersonalClaw remembers preferences and facts across conversations. Review and curate that memory so it keeps working from an accurate picture of you.

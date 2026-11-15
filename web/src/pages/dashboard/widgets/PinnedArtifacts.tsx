@@ -88,7 +88,7 @@ export function PinnedArtifacts({ navigate }: RouteProps) {
   if (resolved.length === 0) {
     return (
       <SlotEmptyState icon={Package}>
-        No pinned artifacts. Pin one from its page to keep it here.
+        Nothing shown here yet. Choose Show on Home on a page in your library.
       </SlotEmptyState>
     )
   }

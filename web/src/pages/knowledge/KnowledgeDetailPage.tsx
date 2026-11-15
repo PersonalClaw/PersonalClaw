@@ -46,9 +46,11 @@ const canvasInk = (tone: string) => (tone === 'var(--color-primary)' ? 'var(--co
  *  in the TopBar, the item detail as the centered body, and the per-node extracted
  *  content / entities / relations / related items behind a "More details" side panel
  *  (what used to be the panel's "Extracted" tab). */
-export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }: {
+export function KnowledgeDetailPage({ id, onBack, backLabel = 'Library', onOpenItem, query, setQuery }: {
   id: string
   onBack: () => void
+  /** What the back control says and names: "Library", or the project it returns to. */
+  backLabel?: string
   onOpenItem: (id: string) => void
   query: RouteProps['query']
   setQuery: RouteProps['setQuery']
@@ -167,7 +169,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
           contentAligned
           left={
             <div className="flex items-center gap-s min-w-0">
-              <IconButton icon={ArrowLeft} label="Back to Knowledge" size={40} onClick={onBack} />
+              <IconButton icon={ArrowLeft} label={`Back to ${backLabel}`} size={40} onClick={onBack} />
               {/* While EDITING, the wide action cluster (Cancel/Save/Pin/…) leaves no room
                   for the breadcrumb, and the title is edited inline in the body anyway —
                   so collapse the trail to just the back arrow. In view mode show the full
@@ -187,7 +189,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
                       clip on the left and 2px outside top/bottom — it computes and never paints
                       (WCAG 2.4.7). Negative offset draws the same ring just inside the box, where
                       the clip cannot reach it. Same fix, same reason as DisclosureCard's header. */}
-                  <button type="button" onClick={onBack} data-type="body-m" className="text-on-surface-low hover:text-on-surface transition-colors whitespace-nowrap shrink-0 focus-visible:-outline-offset-2">Knowledge</button>
+                  <button type="button" onClick={onBack} data-type="body-m" className="text-on-surface-low hover:text-on-surface transition-colors whitespace-nowrap shrink-0 focus-visible:-outline-offset-2">{backLabel}</button>
                   <span className="text-on-surface-low shrink-0">/</span>
                   {/* `canvasInk`, not `tm.tone`: this segment is 13px accent text on the CANVAS.
                       The icon travels with the label so the segment stays ONE ink — it passes at

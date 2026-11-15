@@ -93,6 +93,21 @@ export const ROUTE_REDIRECTS: readonly RouteRedirect[] = [
   { from: 'settings/diagnostics', to: 'settings/health?section=diagnostics', pr: 5897 },
   { from: 'settings/portability', to: 'settings/durability?section=portability', pr: 5897 },
   { from: 'settings/documents', to: 'settings/durability?section=documents', pr: 5897 },
+  // The Library became one page of everything you keep (#6101): the Knowledge list and the Artifacts
+  // grid are its rows, and the Sources and Reports pages its set-up panel. The Knowledge list keeps
+  // the keys the library reads or maps (its `type` and `provider`, a bare `item`, and its `view`,
+  // which the library draws in place); the Artifacts grid's kind, source, collection and sort are
+  // read under the library's own names, and the library maps their values. Each set-up page lands
+  // on its own group of the panel, which the panel scrolls to the top.
+  {
+    from: 'knowledge', to: 'library',
+    keeps: { q: 'q', type: 'type', tag: 'tag', collection: 'collection', item: 'item', view: 'view', entity: 'entity', intent: 'intent', provider: 'provider', project: 'project' },
+    pr: 6101,
+  },
+  { from: 'knowledge/sources', to: 'library?setup=feeds', pr: 6101 },
+  { from: 'knowledge/sources/new', to: 'library?setup=source:new', pr: 6101 },
+  { from: 'knowledge/reports', to: 'library?setup=reports', pr: 6101 },
+  { from: 'artifacts', to: 'library', keeps: { q: 'q', kind: 'kind', src: 'made', col: 'collection', sort: 'sort', project: 'project' }, pr: 6101 },
 ]
 
 /** A segment as the router hands it to a page: decoded, or as written when it is not valid
@@ -128,13 +143,16 @@ export function redirectFor(address: string, table: readonly RouteRedirect[] = R
     if (!captured) continue
     const [path, fixed = ''] = row.to.split('?')
     const target = path.split('/').map((part) => (part.startsWith(':') ? captured[part.slice(1)] : part)).join('/')
+    // The row's own query lands as the row writes it (`setup=source:new`, never `source%3Anew`); a
+    // carried value is encoded, as the old address held it.
     const query = new URLSearchParams(fixed)
     const old = new URLSearchParams(at < 0 ? '' : bare.slice(at + 1))
+    const carried = new URLSearchParams()
     for (const [key, name] of Object.entries(row.keeps ?? {})) {
       const value = old.getAll(key).at(-1)
-      if (value !== undefined && !query.has(name)) query.set(name, value)
+      if (value !== undefined && !query.has(name)) carried.set(name, value)
     }
-    const written = query.toString()
+    const written = [fixed, carried.toString()].filter(Boolean).join('&')
     return written ? `${target}?${written}` : target
   }
   return null

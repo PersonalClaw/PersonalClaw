@@ -1,0 +1,58 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Back to Library\"",
+        "button \"Try again\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
+      ],
+      "390": [
+        "button \"Back to Library\"",
+        "button \"Try again\""
+      ],
+      "412": [
+        "button \"Back to Library\"",
+        "button \"Try again\""
+      ],
+      "768": [
+        "button \"Back to Library\"",
+        "button \"Try again\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Back to Library\"",
+        "button \"Try again\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
+      ],
+      "390": [
+        "button \"Back to Library\"",
+        "button \"Try again\""
+      ],
+      "412": [
+        "button \"Back to Library\"",
+        "button \"Try again\""
+      ],
+      "768": [
+        "button \"Back to Library\"",
+        "button \"Try again\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

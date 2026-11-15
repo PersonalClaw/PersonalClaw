@@ -25,10 +25,9 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - radiogroup "Library":
-    - radio "Knowledge"
+    - radio "Library"
     - radio "Memory" [checked]
     - radio "Files"
-    - radio "Artifacts"
   - heading "Memory" [level=#]
   - searchbox "Search memories"
   - button "Filter"

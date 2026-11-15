@@ -51,7 +51,9 @@ type SourceSettings = { spec: Record<string, unknown>; budget: Record<string, un
  *  message and the action come from the backend's `remediation` verdict, so this component
  *  never decides which advice applies; collapsing them into one "nothing found" strip would
  *  send half the users the wrong way. */
-function Remediation({ source, onChanged }: { source: WatchedSource; onChanged: () => void }) {
+/** What the user can do about a source's last poll, with its fix (the Sources page's row and the
+ *  library's set-up row draw the same one). */
+export function Remediation({ source, onChanged }: { source: WatchedSource; onChanged: () => void }) {
   const rem = source.remediation
   const [url, setUrl] = useState(String(source.spec?.url ?? ''))
   const [busy, setBusy] = useState(false)

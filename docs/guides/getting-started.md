@@ -583,7 +583,7 @@ defaults flipped, and some routes refuse input they used to accept. Run
   embedded do not record which embedding model wrote their vectors, and nothing else can
   tell one model's vector from another's, so the first start re-embeds them in the
   background with the model bound in Settings → Models & Providers → Models. Until an item is re-embedded,
-  search finds it by keyword. Settings → Models & Providers → Models and the Knowledge page show the re-index
+  search finds it by keyword. Settings → Models & Providers → Models and the library's Re-index search by meaning row show the re-index
   and its progress while it runs, and if PersonalClaw stops part way, the next start
   resumes where it stopped. No model bound means nothing is re-embedded until you choose
   one.

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronRight, GitMerge, Loader2, Pencil, Tag as TagIcon, Trash2 } from 'lucide-react'
+import { TextLink } from '../../ui/TextLink'
 import { api, ApiError, type KnowledgeTag } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirmDelete, confirmDestructive, promptInput } from '../../ui/dialog'
@@ -20,7 +21,18 @@ import { fvs } from '../../design/fontWeight'
  *  re-seeds from the server's returned tree instead of patching local state, because a
  *  rename can move a child, a merge can re-parent one, and a delete re-parents to root
  *  — guessing those locally is how a management UI drifts from its own data. */
-export function TagManager({ onChanged }: { onChanged?: () => void }) {
+/** "Used by Weekly perf digest." for a tag a report reads, '' for one none reads. */
+export function usedBy(t: Pick<KnowledgeTag, 'reports'>): string {
+  const names = (t.reports ?? []).map((r) => r.name)
+  if (!names.length) return ''
+  return `Used by ${names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0]}.`
+}
+
+export function TagManager({ onChanged, onFilter }: {
+  onChanged?: () => void
+  /** Each tag's count opens the list filtered by that tag (the library's Manage tags). */
+  onFilter?: (name: string) => void
+}) {
   const [tags, setTags] = useState<KnowledgeTag[] | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const [note, setNote] = useState('')
@@ -100,8 +112,11 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
   }
 
   const rename = (t: KnowledgeTag) => run(t.id, `Renamed “${t.name}”`, async () => {
+    // A rename carries a report that reads the tag along, so it reads what it read.
+    const used = usedBy(t)
     const name = await promptInput({
       title: `Rename “${t.name}”`, label: 'Tag name', initial: t.name,
+      ...(used ? { body: `${used} It keeps reading this tag under its new name.` } : {}),
     })
     if (!name || name === t.name) return
     return api.renameKnowledgeTag(t.id, { name })
@@ -128,6 +143,7 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
           kids.length
             ? ` Its ${kids.length} nested tag${kids.length === 1 ? '' : 's'} become top-level rather than being deleted.`
             : '',
+          usedBy(t) ? ` ${usedBy(t)} It reads “${into.name}” from then on.` : '',
           ' This cannot be undone.',
         ].join(''),
         { confirmLabel: 'Merge' },
@@ -146,6 +162,8 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
         kids.length
           ? ` Its ${kids.length} nested tag${kids.length === 1 ? '' : 's'} become top-level rather than being deleted.`
           : '',
+        // A delete leaves the report naming a tag that is gone, and the report says so.
+        usedBy(t) ? ` ${usedBy(t)} It will read nothing from this tag.` : '',
       ].join(''),
     })
     if (!ok) return
@@ -209,11 +227,17 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
               <span data-type="body-m" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(500)} title={tag.name}>
                 {tag.name}
               </span>
-              <span data-type="caption" className="shrink-0 text-on-surface-low">
-                {tag.usage_count === 0
-                  ? 'unused'
-                  : `${tag.usage_count} item${tag.usage_count === 1 ? '' : 's'}`}
-              </span>
+              {onFilter && tag.usage_count > 0 ? (
+                <TextLink size="xs" onClick={() => onFilter(tag.name)} aria-label={`Show the ${tag.usage_count} item${tag.usage_count === 1 ? '' : 's'} tagged ${tag.name}`}>
+                  {`${tag.usage_count} item${tag.usage_count === 1 ? '' : 's'}`}
+                </TextLink>
+              ) : (
+                <span data-type="caption" className="shrink-0 text-on-surface-low">
+                  {tag.usage_count === 0
+                    ? 'unused'
+                    : `${tag.usage_count} item${tag.usage_count === 1 ? '' : 's'}`}
+                </span>
+              )}
               {busy === tag.id
                 ? <Loader2 size={13} className="shrink-0 animate-spin text-on-surface-low" />
                 : (

@@ -72,17 +72,12 @@
   - option "Apps Go to"
   - option "Store Go to"
   - option "Add a tool server Action"
-  - option "Knowledge Go to"
+  - 'option "Library: feeds, intents and reports Action"'
+  - option "New intent Action"
+  - option "Follow a feed or folder Action"
+  - option "Schedule a report Action"
   - option "Memory Go to"
   - option "Files Go to"
-  - option "Artifacts Go to"
-  - option "Personal Go to"
-  - option "Repeatable Go to"
-  - option "Start a chat in Personal Action"
-  - option "Start a chat in Repeatable Action"
-  - option "New project Action"
-  - option "Import a project Action"
-  - option "All loops Go to"
   - option "Workflows Go to"
   - option "Start a loop Action"
   - option "Open Settings Action"
@@ -109,4 +104,11 @@
   - option "Approve the focused request Move focus to an approval, then press the key there Action · Ctrl+Enter" [disabled]
   - option "Restore the last prompt Press it in an empty composer Action · ↑" [disabled]
   - option "Stop the running turn Press it in a chat while a turn runs Action · Esc" [disabled]
+  - option "Personal Go to"
+  - option "Repeatable Go to"
+  - option "Start a chat in Personal Action"
+  - option "Start a chat in Repeatable Action"
+  - option "New project Action"
+  - option "Import a project Action"
+  - option "All loops Go to"
 - text: navigate select Ctrl+K or Ctrl+Shift+P toggle

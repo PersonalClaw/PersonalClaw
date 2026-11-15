@@ -5,8 +5,8 @@ import { notify } from '../../app/appSdk'
 import { failureSentence, reportActionFailure } from '../../app/reportingWrite'
 import { HeaderControl } from '../../ui/HeaderActions'
 
-/** Pin the open artifact to Home, or unpin it — the control Home's "Pinned artifacts" card sends
- *  people to ("Pin one from its page to keep it here").
+/** Show the open artifact on Home, or remove it from there: the control Home's "Shown on Home" card
+ *  sends people to ("Choose Show on Home on a page in your library").
  *
  *  Offered on every artifact, a read-only record included: a pin is a bookmark in Home's list
  *  (`entity_settings/pinned_artifacts.json`), not a write to the artifact. Whether this one is
@@ -39,18 +39,18 @@ export function ArtifactPinButton({ slug, name }: { slug: string; name: string }
         const now = pins.some((p) => p.slug === slug)
         setPinned(now)
         setReadError(null)
-        notify(now ? `Pinned ${name} to Home.` : `Unpinned ${name} from Home.`, 'success')
+        notify(now ? `Showing “${name}” on Home.` : `Took “${name}” off Home.`, 'success')
       })
-      .catch(reportActionFailure(want ? `pin ${name} to Home` : `unpin ${name} from Home`))
+      .catch(reportActionFailure(want ? `show ${name} on Home` : `remove ${name} from Home`))
       .finally(() => setBusy(false))
   }
 
   const title = pinned === true ? 'Take this artifact off Home'
-    : pinned === false ? 'Keep this artifact on Home, under Pinned artifacts'
-    : `${failureSentence('read your pins', readError)} Pinning keeps it on Home either way.`
+    : pinned === false ? 'Keep this artifact on Home'
+    : `${failureSentence('read what is shown on Home', readError)} Showing it on Home keeps it there either way.`
   // A header member: measured with the row, and into the `…` when it is tight.
   return (
-    <HeaderControl icon={pinned === true ? PinOff : Pin} label={pinned === true ? 'Unpin from Home' : 'Pin to Home'}
+    <HeaderControl icon={pinned === true ? PinOff: Pin} label={pinned === true ? 'Remove from Home' : 'Show on Home'}
       title={title} onClick={toggle} disabled={busy} />
   )
 }

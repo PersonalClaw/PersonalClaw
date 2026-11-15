@@ -33,15 +33,15 @@ describe('item refs', () => {
     for (const raw of [undefined, null, 42, { kind: 'knowledge', id: 'k1' }]) expect(parseItemRef(raw)).toBeNull()
   })
 
-  it('a ref opens at its own page; a report at its write-up, and what an intent found on its intent', () => {
+  it('a ref opens at its own page; a report at its write-up, and what an intent found in the library', () => {
     expect(pageOfItem({ kind: 'knowledge', id: 'k1' })).toBe('knowledge/item/k1')
     expect(pageOfItem({ kind: 'artifact', id: 'lisbon' })).toBe('artifacts/lisbon')
     expect(pageOfItem({ kind: 'report', id: 'rpt-1' }, '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d'))
       .toBe('knowledge/item/0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d')
     expect(pageOfItem({ kind: 'report', id: 'rpt-1' }, '3f9a0c1d2e4b'), 'the persist step\'s 12-hex id').toBe('knowledge/item/3f9a0c1d2e4b')
-    expect(pageOfItem({ kind: 'report', id: 'rpt-1' }), 'no write-up yet: the Reports page').toBe('knowledge/reports')
-    expect(pageOfItem({ kind: 'report', id: 'rpt-1' }, 'k-0a1b2c3d'), 'a write-up id the store does not mint').toBe('knowledge/reports')
-    expect(pageOfItem({ kind: 'report', id: 'rpt-1' }, 'x/../y'), 'a write-up id of no shape is no page').toBe('knowledge/reports')
-    expect(pageOfItem({ kind: 'findings', id: 'power-bill' })).toBe('knowledge?view=intents&intent=power-bill')
+    expect(pageOfItem({ kind: 'report', id: 'rpt-1' }), 'no write-up yet: the report, in the library').toBe('library?item=report%3Arpt-1')
+    expect(pageOfItem({ kind: 'report', id: 'rpt-1' }, 'k-0a1b2c3d'), 'a write-up id the store does not mint').toBe('library?item=report%3Arpt-1')
+    expect(pageOfItem({ kind: 'report', id: 'rpt-1' }, 'x/../y'), 'a write-up id of no shape is no page').toBe('library?item=report%3Arpt-1')
+    expect(pageOfItem({ kind: 'findings', id: 'power-bill' })).toBe('library?item=findings%3Apower-bill')
   })
 })

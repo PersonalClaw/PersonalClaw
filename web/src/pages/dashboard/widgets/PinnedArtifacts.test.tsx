@@ -73,7 +73,7 @@ describe('a pin whose artifact is gone', () => {
     artifacts = []
     render(<PinnedArtifacts {...route} />)
     // The empty state, not a row that navigates nowhere.
-    expect(await screen.findByText(/no pinned artifacts/i)).toBeTruthy()
+    expect(await screen.findByText(/Nothing shown here yet/)).toBeTruthy()
   })
 
   it('does NOT delete the pin from the store', async () => {
@@ -81,7 +81,7 @@ describe('a pin whose artifact is gone', () => {
     // user's pin because one list read came back short would be worse than hiding the row.
     artifacts = []
     render(<PinnedArtifacts {...route} />)
-    await screen.findByText(/no pinned artifacts/i)
+    await screen.findByText(/Nothing shown here yet/)
     expect(unpinned).toEqual([])
   })
 })
@@ -125,11 +125,11 @@ describe('the empty state', () => {
   it('says how to get here rather than just being blank', async () => {
     pins = []
     render(<PinnedArtifacts {...route} />)
-    expect(await screen.findByText(/pin one from its page/i)).toBeTruthy()
+    expect(await screen.findByText(/Choose Show on Home on a page in your library/)).toBeTruthy()
   })
 
   it('renders nothing at all before the first load resolves', () => {
-    // Not an empty state during load: flashing "no pinned artifacts" before the data arrives
+    // Not an empty state during load: flashing "Nothing shown here yet" before the data arrives
     // would tell the user something false.
     const { container } = render(<PinnedArtifacts {...route} />)
     expect(container.textContent).toBe('')

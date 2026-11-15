@@ -1,0 +1,40 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
+      ],
+      "390": [],
+      "412": [],
+      "768": [
+        "button \"Clear search your library\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
+      ],
+      "390": [],
+      "412": [],
+      "768": [
+        "button \"Clear search your library\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

@@ -2380,12 +2380,10 @@ class KnowledgeConfig:
         default=True,
         metadata=_meta(
             "Index Artifacts For Search",
-            "Mirror text artifacts (markdown, HTML, text, JSON, CSV) into knowledge search so "
-            "something you wrote into an artifact is findable from the one place you look for "
-            "what you know. Artifacts stay in the Artifacts library — they are never listed as "
-            "knowledge items, only found by a search. Indexing is local: a mirrored artifact "
-            "never reaches a model. Off stops new artifacts being indexed and removes nothing "
-            "already indexed.",
+            "Mirror text artifacts (markdown, HTML, text, JSON, CSV) into search, so something "
+            "written into an artifact is found where you look for what you know. They are listed "
+            "in your library either way. Indexing is local: a mirrored artifact never reaches a "
+            "model. Off stops new artifacts being indexed and removes nothing already indexed.",
         ),
     )
     vault_mode: str = field(

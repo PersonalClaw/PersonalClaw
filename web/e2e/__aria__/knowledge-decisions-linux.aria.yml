@@ -25,25 +25,17 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - radiogroup "Library":
-    - radio "Knowledge" [checked]
+    - radio "Library" [checked]
     - radio "Memory"
     - radio "Files"
-    - radio "Artifacts"
-  - heading "Knowledge" [level=#]
-  - radiogroup "Knowledge view":
-    - radio "Home"
-    - radio "All items"
-    - radio "Graph"
-    - radio "Intents"
-    - radio "Tags"
-    - radio "Conflicts"
-    - radio "Decisions" [checked]
-  - button "Sources"
-  - button "Reports"
-  - button "Add knowledge"
-  - text: # items # entities # relations semantic search off
-  - heading "No decisions logged yet" [level=#]
-  - paragraph: Log a decision in chat — what you decided, what you expect to happen, and how confident you are. It comes back on its own when the horizon arrives.
-  - button "Open chat"
+  - heading "Library" [level=#]
+  - button "More actions"
+  - button "Add"
+  - region "Decisions":
+    - button "Library"
+    - heading "Decisions" [level=#]
+    - heading "No decisions logged yet" [level=#]
+    - paragraph: Log a decision in chat — what you decided, what you expect to happen, and how confident you are. It comes back on its own when the horizon arrives.
+    - button "Open chat"
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

@@ -210,8 +210,8 @@ function paletteAddresses(app: string): string[] {
     chatFindPath(SAMPLE.chat, 'report'),
     pageOfItem({ kind: 'knowledge', id: SAMPLE.knowledge }),
     pageOfItem({ kind: 'artifact', id: SAMPLE.artifact }),
-    pageOfItem({ kind: 'report', id: 'rpt-0a1b2c3d' }, SAMPLE.writeUp),
-    pageOfItem({ kind: 'report', id: 'rpt-0a1b2c3d' }),
+    pageOfItem({ kind: 'report', id: SAMPLE.report }, SAMPLE.writeUp),
+    pageOfItem({ kind: 'report', id: SAMPLE.report }),
     pageOfItem({ kind: 'findings', id: SAMPLE.intent }),
   ]
 }
@@ -265,6 +265,7 @@ describe('the router\'s tables and the palette\'s rows are catalogued', () => {
 const notificationAddresses = [
   ...Object.values(NOTIFICATION_SOURCE_ROUTES), DEFAULT_NOTIFICATION_ROUTE,
   itemRouteForNote({ source: 'knowledge', knowledge_item_id: SAMPLE.writeUp }),
+  itemRouteForNote({ source: 'knowledge', research_report_id: SAMPLE.report, knowledge_item_id: SAMPLE.writeUp }),
 ]
 
 /** Where an approval is answered, for each place `approvalDestination` reads (`approval_place`). */
@@ -307,6 +308,7 @@ const FIXTURE_NAMES: Record<string, string> = {
   'e2e-ui-fixture': SAMPLE.app,
   'not-a-real-item': SAMPLE.knowledge,
   'e2e-ap-1': SAMPLE.approval,
+  'not-a-real-artifact': SAMPLE.artifact,
 }
 
 function manifestAddresses(tiers: readonly (readonly { route: string }[])[]): string[] {

@@ -93,6 +93,10 @@ const FORWARDED: Record<string, RegExp> = {
   'pages/files/browse/FileTree.tsx': /label: 'Upload here', onClick: \(\) => uploadInput\.current\?\.click\(\)/,
   'ui/Composer.tsx': /onAttach=\{\(\) => fileRef\.current\?\.click\(\)\}/,
   'pages/projects/ProjectList.tsx': /<HeaderControl[^>]*label="Import a project…" onClick=\{\(\) => importInput\.current\?\.click\(\)\}/,
+  // The library's first run: its empty state's Upload files.
+  'pages/library/LibraryPage.tsx': /action=\{\{ label: 'Upload files', icon: Upload, onClick: \(\) => fileInput\.current\?\.click\(\)/,
+  // The library's Add, and a project's: its Upload files row.
+  'ui/LibraryAddMenu.tsx': /\{ label: 'Upload files', icon: Upload, hint: '[^']*', group: 'add', onSelect: \(\) => input\.current\?\.click\(\) \}/,
 }
 
 describe('every file picker can be reached without a mouse', () => {

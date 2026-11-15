@@ -1368,6 +1368,9 @@ const FETCHER_SWALLOW_BUDGET: Record<string, number> = {
 const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   'app/App.tsx': 1,
   'app/onboarding/EssentialsStep.tsx': 1,
+  // A KEEP: an item page's back control names the project it returns to from the shell's projects
+  // read. Unread or failed, it says "Project" and still goes back there; nothing waits on it.
+  'app/itemBack.ts': 1,
   'app/usePlatform.ts': 1,
   // 6 → 5: the chat's voice-settings read moved to `pages/chat/voiceConfig.ts`, below. 5 → 3: the
   // stream's two settings reads (the reveal cadence, thinking shown inline) moved with it to
@@ -1408,6 +1411,15 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   'pages/discover/DiscoverTip.tsx': 1,
   'pages/knowledge/KnowledgeCreatePage.tsx': 1,
   'pages/knowledge/KnowledgeListPage.tsx': 3,
+  // KEEPS, all beside the library's rows, whose own read says when it fails. The page's projects and
+  // stats reads name the project on the count line and say whether search matches meaning: unread or
+  // failed, the line says "in this project" and makes no claim about meaning. The context's intents
+  // and reports reads add a findings count and a report's schedule to a row: a failed one leaves that
+  // part out, and the row still draws. The preview's intents reads put an intent's words on its
+  // report's bar and its findings' bar: unread, the report's bar says its schedule alone and the
+  // findings show without the bar.
+  'pages/library/LibraryPage.tsx': 2,
+  'pages/library/useLibrary.ts': 3,
   'pages/projects/ProjectsSection.tsx': 4,
   // `PromptDetail`, `SnippetDetail` and `AppsPanel` are GONE from this map, not zeroed. All three
   // were the pure eternal-spinner shape with nothing else wrong: the fetcher propagated correctly,
@@ -1452,6 +1464,8 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // agree about it rather than one blessing what the other flags.
   'pages/workflows/WorkflowsListPage.tsx': 1,
   'ui/Composer.tsx': 1,
+  // The preview's two intents reads, kept for the reason beside `pages/library/LibraryPage.tsx` above.
+  'ui/LibraryPreview.tsx': 2,
 }
 
 describe('§D the error contract, per invocation — the fetcher AND the destructuring', () => {

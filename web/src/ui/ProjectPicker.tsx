@@ -8,6 +8,11 @@ import { projectOrder } from '../lib/projectPulse'
 import { ProjectMark } from './ProjectMark'
 import { menuCursorKeydown, useMenuCursor } from '../lib/useMenuCursor'
 import { InlineLoadError } from './ListScaffold'
+import { Modal } from './Modal'
+import { SearchField } from './SearchField'
+import { ResultAnnouncement } from './ListControls'
+import { Button } from './Button'
+import { TOUCH_TARGET } from './Toggle'
 import { overlayEnter, physics } from '../design/motion'
 
 /** A compact project chooser for the create flows (a loop, a chat, a secret).
@@ -222,5 +227,111 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
         </Suspense>
       )}
     </div>
+  )
+}
+
+/** The projects past which the dialog form draws its search. */
+export const PICKER_SEARCH_PAST = 7
+
+/** The dialog form of the picker (the library's Add to project…): a `Modal`, a sheet on a
+ *  phone with `phoneSheet`, over the Projects list's own rows in their one order (`pickerProjects`),
+ *  each with its `sm` mark. A search shows past seven projects. The project the item is in keeps its
+ *  place, marked "In it now" and not pickable; "Last opened" and "Default" mark theirs. While the
+ *  item is in a project, **No project** heads the list. Repeatable is left out (it holds task lists),
+ *  and "New project…" is last, which opens the New project dialog and picks what it made.
+ *
+ *  The sentence under the title says what the write does: "It's filed under <the project picked>. It
+ *  stays in your library."; for No project, "It leaves Homelab. It stays in your library." The
+ *  primary names the write: "Add to Trip planning", "Move to Garden" (with "It leaves Homelab." by
+ *  the button), "Remove from Homelab". */
+export function ProjectPickerDialog({ itemTitle, heading, current, lastOpened = '', defaultProject = '', onPick, onClose, phoneSheet = false }: {
+  /** The item's title, in the dialog's heading. */
+  itemTitle: string
+  /** The heading for several items at once ("Add 3 items to a project"), in place of the one
+   *  item's. */
+  heading?: string
+  /** The project the item is in: `{ id, name }`, or null for none. */
+  current: { id: string; name: string } | null
+  /** The project you last opened on this device, marked "Last opened". */
+  lastOpened?: string
+  /** The default project, marked "Default". */
+  defaultProject?: string
+  /** The write, with the project picked: null for No project. The dialog closes after. */
+  onPick: (to: { id: string; name: string } | null) => void
+  onClose: () => void
+  /** A phone sheet from 320 to 768 px, its primary at its foot. */
+  phoneSheet?: boolean
+}) {
+  const [projects, setProjects] = useState<ProjectItem[] | null>(null)
+  const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [q, setQ] = useState('')
+  const [picked, setPicked] = useState<string | null | undefined>(undefined)
+  const [creating, setCreating] = useState(false)
+  const { pins } = useProjectPins()
+  const load = useCallback(() => {
+    setLoadErr(null)
+    api.projects().then(setProjects).catch(setLoadErr)
+  }, [])
+  useEffect(load, [load])
+  const rows = projects
+    ? pickerProjects(projects, pins, current?.id ?? '').filter((p) => !(p.is_builtin && p.name === 'Repeatable'))
+    : []
+  const needle = q.trim().toLowerCase()
+  const shown = needle ? rows.filter((p) => p.name.toLowerCase().includes(needle)) : rows
+  const choice = picked === undefined ? undefined: picked === null ? null: rows.find((p) => p.id === picked) ?? null
+  const chose = picked !== undefined
+  const toName = choice?.name ?? ''
+  const sentence = chose && choice === null && current
+    ? `It leaves ${current.name}. It stays in your library.`
+    : `It's filed under ${toName || current?.name || 'the project you pick'}. It stays in your library.`
+  const primary = !chose ? 'Add to project'
+    : choice === null ? `Remove from ${current?.name ?? 'its project'}`
+    : current ? `Move to ${toName}` : `Add to ${toName}`
+  const leaves = chose && choice && current && choice.id !== current.id ? `It leaves ${current.name}.` : ''
+  const row = (id: string | null, name: string, mark: string, pickable: boolean) => (
+    <button key={id ?? '__none'} type="button" role="radio" aria-checked={id === null ? picked === null: picked === id || (!pickable && id === current?.id)}
+      disabled={!pickable} title={pickable ? undefined: 'It is in this project now.'} onClick={() => setPicked(id)}
+      className={`flex w-full items-center gap-s rounded-md px-m py-s text-left max-lg:min-h-11 ${picked === id ? 'bg-surface-highest' : 'hover:bg-surface-high'} disabled:cursor-default`}>
+      {id === null ? <FolderKanban size={18} className="shrink-0 text-on-surface-var" aria-hidden /> : <ProjectMark name={name} size="sm" />}
+      <span data-type="body-m" className="min-w-0 flex-1 truncate text-on-surface">{name}</span>
+      {mark && <span data-type="caption" className="shrink-0 text-on-surface-low">{mark}</span>}
+      {(picked === id || (!pickable && id === current?.id)) && <Check size={16} aria-hidden className="shrink-0 text-primary" />}
+    </button>
+  )
+  return (
+    <Modal title={heading ?? `Add “${itemTitle}” to a project`} onClose={onClose} phoneSheet={phoneSheet}>
+      <div className="flex flex-col gap-m">
+        <p data-type="body-s" className="text-on-surface-var">{sentence}</p>
+        {rows.length > PICKER_SEARCH_PAST && (
+          <>
+            <SearchField value={q} onChange={setQ} placeholder="Search projects" ariaLabel="Search projects" variant="inline" />
+            <ResultAnnouncement count={shown.length} noun="projects" active={!!needle && !!projects} />
+          </>
+        )}
+        {loadErr && !projects ? <InlineLoadError what="projects" error={loadErr} onRetry={load} /> : (
+          <div role="radiogroup" aria-label="Projects" className="flex max-h-[50vh] flex-col gap-0.5 overflow-y-auto">
+            {current && row(null, 'No project', '', true)}
+            {shown.map((p) => row(p.id, p.name,
+              p.id === current?.id ? 'In it now' : p.id === lastOpened ? 'Last opened' : p.id === defaultProject ? 'Default' : '',
+              p.id !== current?.id))}
+            <button type="button" onClick={() => setCreating(true)}
+              className="flex w-full items-center gap-s rounded-md px-m py-s text-left text-on-surface-var hover:bg-surface-high max-lg:min-h-11">
+              <Plus size={18} aria-hidden className="shrink-0" /><span data-type="body-m">New project…</span>
+            </button>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center justify-end gap-s">
+          {leaves && <span data-type="caption" className="mr-auto text-on-surface-low">{leaves}</span>}
+          <Button variant="secondary" onClick={onClose} className={TOUCH_TARGET}>Cancel</Button>
+          <Button variant="primary" disabled={!chose} disabledReason="Pick a project first." onClick={() => { onPick(choice ?? null); onClose() }} className={TOUCH_TARGET}>{primary}</Button>
+        </div>
+      </div>
+      {creating && (
+        <Suspense fallback={null}>
+          <NewProjectModal taken={(projects ?? []).map((p) => p.name)} onClose={() => setCreating(false)}
+            onCreated={(p) => { setCreating(false); setProjects((list) => (list ? [...list, p] : [p])); setPicked(p.id) }} />
+        </Suspense>
+      )}
+    </Modal>
   )
 }

@@ -90,7 +90,8 @@ export const VIEW_ROUTES: RouteEntry[] = [
   // Needs you (#6149): every ask waiting on you, a page of its own the badge opens. The sidebar has
   // no row for it; Home stays lit while it shows. It was a non-nav page while it was Mission Control.
   { route: 'mission-control', id: 'mission-control', label: 'Home › Needs you', needsData: true },
-  { route: 'knowledge', id: 'knowledge', label: 'Library › Knowledge', needsData: true },
+  // The Knowledge list is the library's now (#6101): its row is the set-up panel, in the pane.
+  { route: 'library?setup=all', id: 'library-setup', label: 'Library › Feeds, intents and reports', needsData: true },
   // All tasks, every project's: a project's own are its Tasks view (#3818), and the sidebar has no
   // Tasks row. It keeps the address, the visual baseline and the scans it had as a row.
   { route: 'tasks', id: 'tasks', label: 'Projects › All tasks', needsData: true },
@@ -99,10 +100,12 @@ export const VIEW_ROUTES: RouteEntry[] = [
   // scans it had as a row.
   { route: 'terminal', id: 'terminal', label: 'Terminal (full page)' },
   { route: 'files', id: 'files', label: 'Library › Files', needsData: true },
-  { route: 'artifacts', id: 'artifacts', label: 'Library › Artifacts', needsData: true },
+  // The Artifacts grid is the library's grid now (#6101).
+  { route: 'library?layout=grid', id: 'library-grid', label: 'Library › Grid', needsData: true },
   { route: 'triggers', id: 'triggers', label: 'Automations, at #/triggers', needsData: true },
   { route: 'workflows', id: 'workflows', label: 'Automations › Workflows', needsData: true },
-  { route: 'knowledge?view=graph', id: 'knowledge-graph', label: 'Knowledge › Graph', needsData: true },
+  // Today's graph, drawn inside the library until the power-user view gives it a tab (#6101).
+  { route: 'library?view=graph', id: 'knowledge-graph', label: 'Library › Graph', needsData: true },
   // The reading experience, reached at `#/knowledge/item/<id>?read=1` — the sharable
   // reader URL `KnowledgeSection` navigates to (its `onOpenReader`). It belongs in VIEW_ROUTES,
   // not the other two tiers, and the reason is `routeManifestParity.test.ts`: ROUTES must mirror
@@ -156,11 +159,13 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   { route: 'memory?tab=inspect', id: 'memory-inspect', label: 'Library › Memory › inspect', needsData: true },
   { route: 'memory?tab=audit', id: 'memory-audit', label: 'Library › Memory › audit', needsData: true },
   { route: 'memory?tab=settings', id: 'memory-settings', label: 'Library › Memory › settings', needsData: true },
-  { route: 'knowledge?view=home', id: 'knowledge-home', label: 'Knowledge › home', needsData: true },
-  { route: 'knowledge?view=intents', id: 'knowledge-intents', label: 'Knowledge › intents', needsData: true },
-  { route: 'knowledge?view=tags', id: 'knowledge-tags', label: 'Knowledge › tags', needsData: true },
-  { route: 'knowledge?view=conflicts', id: 'knowledge-conflicts', label: 'Knowledge › conflicts', needsData: true },
-  { route: 'knowledge?view=decisions', id: 'knowledge-decisions', label: 'Knowledge › decisions', needsData: true },
+  // The old Knowledge views' rows, each replaced (#6101): a search and the New intent form in their
+  // place, and the three views the library still draws in place.
+  { route: 'library?q=backup', id: 'library-search', label: 'Library › search', needsData: true },
+  { route: 'library?setup=intent:new', id: 'library-intent-new', label: 'Library › New intent', needsData: true },
+  { route: 'library?view=tags', id: 'knowledge-tags', label: 'Library › tags', needsData: true },
+  { route: 'library?view=conflicts', id: 'knowledge-conflicts', label: 'Library › conflicts', needsData: true },
+  { route: 'library?view=decisions', id: 'knowledge-decisions', label: 'Library › decisions', needsData: true },
   { route: 'workflows?tab=defs', id: 'workflows-defs', label: 'Automations › Workflows › definitions', needsData: true },
   { route: 'prompts?tab=system', id: 'prompts-system', label: 'Prompts › system', needsData: true },
   { route: 'prompts?tab=bundled', id: 'prompts-bundled', label: 'Prompts › bundled', needsData: true },
@@ -258,6 +263,10 @@ export const NON_NAV_ROUTES: RouteEntry[] = [
   // on fixture state, and the point is a DETERMINISTIC 404 branch. `needsData` because the
   // EmptyState only appears once `/api/apps/{name}` has answered.
   { route: 'app/not-a-real-app', id: 'app-host-not-installed', label: 'App host › not installed', needsData: true },
+  // One artifact's page: what `#/artifacts` routes now that its bare address opens the library
+  // (#6101). A slug no artifact has, like the app host's above: the e2e home seeds no artifacts, so
+  // the viewer draws its deterministic could-not-load branch.
+  { route: 'artifacts/not-a-real-artifact', id: 'artifact-missing', label: 'Artifacts › an artifact that is not there', needsData: true },
   // App-AUTHORED DOM, mounted into the HOST document by the app's own ESM bundle. The fixture is
   // installed into the e2e home by playwright.config.ts; the boot fails if it is not there, because
   // an absent app would silently fall back to the shell's 404 branch on the line above.

@@ -132,6 +132,22 @@ describe('the redirect table', () => {
     expect(chains(ROUTE_REDIRECTS)).toEqual([])
   })
 
+  it('🔑 a row lands at its new address as written: no value it sets is encoded again', () => {
+    // `knowledge/sources/new` landed at `library?setup=source%3Anew`, an address no link writes, so
+    // the old address's landing never matched its shipped entry.
+    const fixed = ROUTE_REDIRECTS.filter((row) => !row.from.includes(':') && !row.to.split('?')[0].includes(':'))
+    expect(fixed.length, 'rows with no carried segment').toBeGreaterThan(10)
+    expect(fixed.filter((row) => redirectFor(row.from, [row]) !== row.to).map((row) => `${row.from} -> ${redirectFor(row.from, [row])}`)).toEqual([])
+    expect(redirectFor('knowledge/sources/new')).toBe('library?setup=source:new')
+  })
+
+  it('🔑 a value the row sets wins over one the old address carries under the same name', () => {
+    // No row of the table keeps a key into one its own address sets (the rule above refuses it), so
+    // this guard is held here, on a row of its own.
+    const row: RouteRedirect = { from: 'old/setup', to: 'new?setup=feeds', keeps: { setup: 'setup', q: 'q' }, pr: 1 }
+    expect(redirectFor('old/setup?setup=reports&q=router', [row])).toBe('new?setup=feeds&q=router')
+  })
+
   it('🔴 control: a bad row, two rows for one address and a chain are each reported', () => {
     expect(malformed([
       { from: 'old/:id', to: 'https://elsewhere.test/:id', pr: 1 },

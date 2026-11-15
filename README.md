@@ -25,7 +25,7 @@ dashboard you own. Local-first, provider-agnostic, no analytics, MIT.
 <table>
 <tr>
 <td width="50%"><img src="docs/screenshots/light/02-chat.png" alt="Agentic chat, grounded in your knowledge — light theme" /></td>
-<td width="50%"><img src="docs/screenshots/dark/03-knowledge.png" alt="Knowledge base with entity graph — dark theme" /></td>
+<td width="50%"><img src="docs/screenshots/dark/03-knowledge.png" alt="Library, everything you keep in one list beside a preview — dark theme" /></td>
 </tr>
 </table>
 

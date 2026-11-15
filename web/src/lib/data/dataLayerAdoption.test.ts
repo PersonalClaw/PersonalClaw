@@ -196,6 +196,10 @@ describe('§3 the remaining hand-rolled server-data caches are a shrinking, name
     // shared layer owns that value's cache, its age and its bust; nothing fetched here is written
     // to storage, so nothing can paint stale.
     'ui/Composer.tsx': 'the composer resting height the reader dragged to',
+    // Same discriminator, same verdict: the stored values are List or Grid and the Sort by the reader
+    // picked, two choices of theirs. The rows are the shared layer's (`useLibrary`, `useQuery`), and
+    // nothing fetched in the module is written to storage.
+    'pages/library/LibraryPage.tsx': 'List or Grid, and the Sort by an address names none of',
   }
 
   /** A module that writes server data into web storage under a cache-ish prefix of its own. */

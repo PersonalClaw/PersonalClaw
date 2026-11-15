@@ -158,7 +158,7 @@ describe('the report form', () => {
     const said = screen.getByText(/A report reads only your knowledge/)
     expect(said.textContent).toMatch(/It does\s+not search the web\./)
     const link = screen.getByRole('link', { name: /watch\s+it as a source/ })
-    expect(link.getAttribute('href')).toBe('#/knowledge/sources')
+    expect(link.getAttribute('href')).toBe('#/library?setup=source:new')
   })
 
   it('🔑 edits a report in place, and sends only what changed', async () => {

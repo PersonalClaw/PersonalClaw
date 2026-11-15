@@ -1,4 +1,6 @@
 import { StaleNotice } from './StaleNotice'
+import { TextLink } from './TextLink'
+import { TOUCH_TARGET } from './Toggle'
 
 // The list's status (`ListStatus`) and its announcement (`ResultAnnouncement`). The controls bar
 // this module was named for, `ListControls`, is gone: every page-level control is in the page's
@@ -6,10 +8,13 @@ import { StaleNotice } from './StaleNotice'
 
 /** A list's status under the header, now that its controls are in the header: the stale notice
  *  when the rows came from the cache past their freshness, and the announcement of what a search or
- *  filter just did (`ResultAnnouncement`, sr-only). No control sits here: every page-level control
- *  is in the page header's action area. Without `line` it draws nothing visible while the rows are
- *  fresh; with `line` it draws that line, the list's own count in words ("6 projects"). */
-export function ListStatus({ results, stale, line }: {
+ *  filter just did (`ResultAnnouncement`, sr-only). Every page-level control is in the page header's
+ *  action area; a line's `actions` act only on what the line names (Clear the filter it names, Open
+ *  the project it names), so they are the line's own. Without `line` or `lead` it draws nothing
+ *  visible while the rows are fresh; with them it draws the line: the `lead` (what a search or filter
+ *  left, "23 matches"), the `line` ("6 projects"), then the `actions`, on one line that wraps between
+ *  its parts, never inside one. */
+export function ListStatus({ results, stale, line, lead, actions }: {
   /** How many rows the current search/filter leaves, what to call them, and whether the user has
    *  narrowed the list, as `ResultAnnouncement` reads them. */
   results: { count: number; noun: string; active: boolean }
@@ -18,20 +23,48 @@ export function ListStatus({ results, stale, line }: {
   /** The line under the title, visible, in the caption type and the meta ink: what the list holds
    *  ("6 projects"; "2 projects and 4 chats match" while searching). While the list is narrowed
    *  the announcement says these same words, in place of "<count> <noun>"; at rest it stays
-   *  empty, as without it. Holds no control. */
+   *  empty, as without it. */
   line?: string
+  /** The line's first words, before `line`, in the label ink at weight 540: what a search or filter
+   *  left ("23 matches", "34 items in Homelab", "Trips"). A line may be its lead alone. The
+   *  announcement says it first, then the line, joined by a comma. */
+  lead?: string
+  /** After the text, each a `TextLink`, a 44 px box from 320 to 768 px: what acts on what the line
+   *  names (Clear, Open project, Rename). The announcement leaves them out. */
+  actions?: { label: string; onSelect: () => void }[]
 }) {
+  // Each part, then what follows it: a space after a part that ends in a full stop, " · " after any
+  // other, nothing after the last.
+  const parts = [
+    ...(lead ? [{ key: 'lead', text: lead }] : []),
+    ...(line ? [{ key: 'line', text: line }] : []),
+    ...(actions ?? []).map((a) => ({ key: `action:${a.label}`, text: a.label, action: a })),
+  ] as { key: string; text: string; action?: { label: string; onSelect: () => void } }[]
+  const after = (i: number) => (i === parts.length - 1 ? '' : /\.$/.test(parts[i].text) ? ' ' : ' · ')
+  const drawn = line !== undefined || lead !== undefined
+  const says = [lead, line].filter(Boolean).join(', ') || undefined
   return (
     <>
-      {line !== undefined && (
-        <p data-type="caption" data-list-line className="text-on-surface-low">{line}</p>
+      {drawn && (
+        <p data-type="caption" data-list-line className="text-on-surface-low">
+          {parts.map((p, i) => (
+            <span key={p.key} data-line-part={p.key.startsWith('action:') ? 'action' : p.key}
+              className={`inline-block${p.key === 'lead' ? ' text-on-surface-var' : ''}`}
+              style={p.key === 'lead' ? { fontWeight: 540 } : undefined}>
+              {p.action
+                ? <TextLink onClick={p.action.onSelect} size="sm" className={`inline-flex items-center ${TOUCH_TARGET}`}>{p.action.label}</TextLink>
+                : p.text}
+              {after(i)}
+            </span>
+          ))}
+        </p>
       )}
       {stale && (
         <div className="mx-auto flex w-full justify-end px-l pt-s">
           <StaleNotice stale what={results.noun} />
         </div>
       )}
-      <ResultAnnouncement {...results} says={line} />
+      <ResultAnnouncement {...results} says={says} />
     </>
   )
 }

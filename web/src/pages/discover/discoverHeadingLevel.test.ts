@@ -115,11 +115,17 @@ describe("Discover's area headings sit one rung under the page title", () => {
     //     heading-order pass's to measure per surface (#3941), not this file census's.
     //   · `chat/beside/LoopBeside` JOINED it (#3824): a loop's detail tile, whose title the pane
     //     host draws as the h2, heads its "Sub-goals" and "Latest cycles" with h3s. Panel-level.
+    // 2026-11-14, re-done again:
+    //   · `library/setup/SetupPanel` JOINED it: the set-up pane's title, "Feeds, intents and reports",
+    //     is its h2, and each group (Feeds, Intents, Reports) heads its own region with an h3.
+    //   · `ui/LibraryPreview` JOINED it: the preview's title is the item's h2, and its "About this
+    //     item" section heads its rows with an h3. Panel-level both, correctly nested.
     expect(withH3.sort(), 'files still using h3').toEqual([
       'pages/chat/beside/LoopBeside.tsx',
       'pages/chat/transcript/SourcesRow.tsx',
       // The cockpit's task title, which moved with the task detail out of `CodeCockpitPage`.
       'pages/code/cockpit/tasks/TaskDetailView.tsx',
+      'pages/library/setup/SetupPanel.tsx',
       'pages/settings/VoicePanel.tsx',
       'pages/settings/VoiceProfilesSection.tsx',
       'pages/workflows/IntrospectPanel.tsx',
@@ -130,6 +136,7 @@ describe("Discover's area headings sit one rung under the page title", () => {
       // `ui/Markdown` is the odd one and is CORRECT: it maps a `###` in authored content to an h3,
       // which is the tag that source asked for. It is not a page chrome decision at all.
       'ui/BuddyCard.tsx',
+      'ui/LibraryPreview.tsx',
       'ui/Markdown.tsx',
     ])
   })

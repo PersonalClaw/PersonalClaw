@@ -194,7 +194,7 @@
     - status
     - heading "Artifacts" [level=#]
     - paragraph: Artifacts you and the agent write, mirrored into knowledge search.
-    - text: "Index artifacts for search Make text artifacts (markdown, HTML, text, JSON, CSV) findable from knowledge search. They stay in the Artifacts library and are never listed as knowledge items — only found by a search. Indexing is local: a mirrored artifact never reaches a model. Off stops indexing new changes and removes nothing already indexed."
+    - text: "Index artifacts for search Make text artifacts (markdown, HTML, text, JSON, CSV) findable from search. They are listed in your library either way. Indexing is local: a mirrored artifact never reaches a model. Off stops indexing new changes and removes nothing already indexed."
     - status
     - switch "Index artifacts for search" [checked]
     - heading "Watched scratchpad" [level=#]

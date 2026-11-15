@@ -57,7 +57,9 @@ function navRoutes(): string[] {
 }
 
 const VIEW_ROUTES = entries('VIEW_ROUTES')
-const GRAPH_ROUTE = 'knowledge?view=graph'
+// The graph is drawn inside the library now, at the key `knowledge?view=graph` lands on (#6101): the
+// harness names that landing, since the old address is a redirect row onto it.
+const GRAPH_ROUTE = 'library?view=graph'
 
 describe('the knowledge graph is reachable as a harness route', () => {
   it('parses a non-empty sub-view list — the vacuity floor', () => {
@@ -111,7 +113,7 @@ describe('the knowledge graph is reachable as a harness route', () => {
     const [param, value] = qs.split('=')
 
     // 1. the base path is a real page the harness already knows: a nav route, or a destination's
-    //    tab at an address of its own (Knowledge is Library's, #3815)
+    //    tab at an address of its own (the graph is the library's, #6101)
     expect([...navRoutes(), ...VIEW_ROUTES.map((e) => e.route)], `${path} must be a nav route or a tab's`).toContain(path)
 
     // 2. the router splits a query off the hash path, so `#/path?x=y` resolves to `path`
@@ -119,27 +121,20 @@ describe('the knowledge graph is reachable as a harness route', () => {
     expect(hash, 'the hash router must parse a query string').toMatch(/new URLSearchParams\(qs\)/)
     expect(hash, 'and must resolve the route from the path only').toMatch(/segs\[0\] \|\| fallback/)
 
-    // 3. the shell routes that path to the knowledge section, passing the query through
+    // 3. the shell routes that path to the library page, passing the query through
     const app = read('src/app/App.tsx')
-    expect(app).toMatch(new RegExp(`case '${path}': return <KnowledgeSection \\{\\.\\.\\.r\\} />`))
+    expect(app).toMatch(new RegExp(`case '${path}': return <LibraryPage \\{\\.\\.\\.r\\} />`))
 
-    // 4. which hands `query`/`setQuery` to the list page.
-    //    NOT `<KnowledgeListPage[^>]*…`: the props include arrow functions, so a matcher that
-    //    stops at the first `>` never reaches the props it is looking for and reds on a correct
-    //    file. Non-greedy across the element instead.
-    expect(read('src/pages/knowledge/KnowledgeSection.tsx'))
-      .toMatch(/<KnowledgeListPage[\s\S]*?query=\{query\} setQuery=\{setQuery\}/)
+    // 4. which draws the old views in place for THIS param name (`InPlaceView`, until the power-user
+    //    view gives them tabs) and draws the list by default, which is why the bare route never
+    //    reached the graph
+    const page = read('src/pages/library/LibraryPage.tsx')
+    expect(page, `the library must draw the '${param}' views in place`).toMatch(new RegExp(`isInPlaceView\\(query\\.${param}\\)`))
 
-    // 5. which reads THIS param name — and defaults to something else, which is precisely why
-    //    scanning the bare nav route never reached the graph
-    const page = read('src/pages/knowledge/KnowledgeListPage.tsx')
-    const decl = new RegExp(`useQueryParam\\(query, setQuery, '${param}', '([a-z]+)'`).exec(page)
-    expect(decl, `KnowledgeListPage must read the '${param}' query param`).toBeTruthy()
-    expect(decl![1], `the default view must NOT be '${value}', or this route would be redundant`)
-      .not.toBe(value)
-
-    // 6. and renders the graph at THIS value
-    expect(page, `view === '${value}' must render the graph`)
+    // 5. and renders the graph at THIS value
+    const views = read('src/pages/library/InPlaceView.tsx')
+    expect(views, `'${value}' must be one of the views drawn in place`).toMatch(new RegExp(`IN_PLACE_VIEWS = \\[[^\\]]*'${value}'`))
+    expect(views, `view === '${value}' must render the graph`)
       .toMatch(new RegExp(`view === '${value}' &&[\\s\\S]{0,400}<KnowledgeGraph`))
   })
 })
