@@ -3,8 +3,8 @@
 // themed, can't be reached from a keyboard and never opens on touch. Each tip there is the themed
 // `Tooltip`, a key label kept in it: the approval's queue form (its choices and its risk and reach
 // chips), the panel's heading, Back and Close, and the corner (the rail tab, the terminal, the
-// YOLO mark, the badge, the bell, the model chip). The chat's own approval card keeps its titles.
-import { cleanup, render, screen } from '@testing-library/react'
+// YOLO mark, the badge, the bell, the model chip), and a link a body wrote that goes nowhere.
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApprovalSegment } from '../pages/chat/chatTypes'
 import { tipOf } from '../test/tipOf'
@@ -30,6 +30,8 @@ const { ApprovalCard } = await import('../pages/chat/ApprovalCard')
 const { ListBesideDetail } = await import('../pages/capabilities/ListBesideDetail')
 const { ShellCornerLeft, ShellCornerRight } = await import('./ShellCorners')
 const { bindingLabel } = await import('../app/keymap')
+const { WebLink, REFUSED } = await import('./WebLink')
+const { TOOLTIP_DELAY_MS } = await import('./Tooltip')
 
 const titled = (root: ParentNode = document) => [...root.querySelectorAll('[title]')].map((el) => el.outerHTML.slice(0, 120))
 
@@ -86,5 +88,21 @@ describe('no native tooltip on Needs you', () => {
     expect(titled()).toEqual([])
     expect(tipOf(screen.getByRole('button', { name: 'Collapse sidebar' }))).toContain(bindingLabel('sidebar'))
     expect(tipOf(screen.getByRole('button', { name: 'Open terminal' }))).toContain(bindingLabel('drawer'))
+  })
+})
+
+describe('a link that is not a web or email address', () => {
+  it('keeps its words, opens nothing, and says why in the themed tooltip on hover', () => {
+    vi.useFakeTimers()
+    try {
+      const { container } = render(<WebLink href="javascript:alert(1)">the build log</WebLink>)
+      expect(titled(container)).toEqual([])
+      expect(container.querySelector('a')).toBeNull()
+      // No hidden copy in the sentence: its words are all a copy of it carries.
+      expect(container.textContent).toBe('the build log')
+      act(() => { fireEvent.pointerEnter(screen.getByText('the build log'), { pointerType: 'mouse' }) })
+      act(() => { vi.advanceTimersByTime(TOOLTIP_DELAY_MS) })
+      expect(document.querySelector('[data-tooltip-bubble]')?.textContent).toBe(REFUSED)
+    } finally { vi.useRealTimers() }
   })
 })
