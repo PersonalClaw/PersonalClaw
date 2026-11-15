@@ -17,6 +17,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.uploads.content_scan import ContentRefused
 
 from personalclaw.dashboard.sse import stream_response
+from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.knowledge import conflict_calls, intent_runs, project_scope
 from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE, ARTIFACT_SOURCE_PROVIDER
@@ -544,12 +545,47 @@ def _serve_item_path(store, item_id: str, *, thumbnail: bool) -> tuple[Path | No
     return resolved, mime
 
 
+#: The types a Library item's file is shown inline as: what the item page draws or plays in place
+#: (an image, audio, video) and a PDF. Every other type is sent as a download, so a page, an SVG or
+#: anything else that can carry script is never shown on the dashboard's origin.
+_INLINE_FILE_TYPES = frozenset(
+    {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "application/pdf"}
+)
+_INLINE_FILE_KINDS = ("audio/", "video/")
+#: An item's file loads nothing and runs nothing, even opened as a page of its own; an image, audio
+#: or video element that loads it ignores the policy. A PDF goes without it, since a sandboxed
+#: document shows no PDF, and is shown inline only when its bytes are a PDF's.
+_ITEM_FILE_CSP = "default-src 'none'; sandbox"
+
+
+def _shown_inline(path: Path, mime: str) -> bool:
+    """Whether an item's file of type *mime* is shown inline rather than sent as a download."""
+    if mime == "application/pdf":
+        with path.open("rb") as f:
+            return f.read(5) == b"%PDF-"
+    return mime in _INLINE_FILE_TYPES or mime.startswith(_INLINE_FILE_KINDS)
+
+
 async def get_item_file(request: web.Request) -> web.StreamResponse:
-    """GET /api/knowledge/items/{id}/file -- serve a media item's original bytes."""
-    path, mime = _serve_item_path(_store(request), request.match_info["id"], thumbnail=False)
+    """GET /api/knowledge/items/{id}/file -- serve a media item's original bytes.
+
+    Never sniffed, and shown inline only as one of :data:`_INLINE_FILE_TYPES` (or audio or video);
+    anything else is a download, named for the item. Every answer but a PDF's carries
+    :data:`_ITEM_FILE_CSP`, so even opened in a tab of its own the file runs no script."""
+    item_id = request.match_info["id"]
+    path, mime = _serve_item_path(_store(request), item_id, thumbnail=False)
     if path is None:
         return web.json_response({"error": "not found"}, status=404)
-    return web.FileResponse(path, headers={"Content-Type": mime})
+    inline = await asyncio.to_thread(_shown_inline, path, mime)
+    headers = {"Content-Type": mime, "X-Content-Type-Options": "nosniff"}
+    if not (inline and mime == "application/pdf"):
+        headers["Content-Security-Policy"] = _ITEM_FILE_CSP
+    if not inline:
+        title = str((_store(request).get_item(item_id) or {}).get("title") or "") or path.name
+        if not title.lower().endswith(path.suffix.lower()):
+            title += path.suffix
+        headers["Content-Disposition"] = attachment_disposition(title)
+    return web.FileResponse(path, headers=headers)
 
 
 async def get_item_thumbnail(request: web.Request) -> web.StreamResponse:
