@@ -5,7 +5,9 @@ again from its message and deletes the attempt it replaces, the calls that attem
 included. The turn asked again does not see them, so it may make them again: a file written twice,
 a command run twice, a message sent twice. So the regenerate route answers such a Retry with a
 question naming those calls and runs nothing until the request comes back with that question's
-``confirm``. A turn whose finished calls only read, or that finished none, retries as before.
+``confirm``. A call still running when the turn ended is asked about as one that finished, since it
+may have made its change. A turn whose calls only read, or that made none that finished or was still
+running, retries as before.
 
 Whether a call may have changed something is read from what its tool declares, as the approval gate
 reads it (``task_modes.reads_only``): the platform's ``read_file`` and a read-only shell command are
@@ -179,13 +181,110 @@ async def test_a_turn_that_only_read_retries_unasked(state, runs, audit):
 
 @pytest.mark.asyncio
 async def test_a_turn_that_finished_no_call_retries_unasked(state, runs, audit):
-    # A write that was still running when the turn ended, and one her Deny refused.
+    # A write her Deny refused.
     denied = json.dumps({"request_id": "c2", "tool_call_id": "c2", "resolved": "rejected"})
     _turn(
         state,
-        ("write_file", _call("c1", "write_file", {"path": "a.md", "content": "x"}, done=False)),
         ("write_file", _call("c2", "write_file", {"path": "b.md", "content": "x"})),
         rows=[("permission", "write_file", denied)],
+    )
+
+    resp, data = await _post(state)
+
+    assert resp.status == 200, data
+    assert runs.messages == [QUESTION]
+
+
+# ── a call still running when the turn ended ────────────────────────────────────────────────────
+# A restart, a crash, a lost agent CLI or a timeout ends a turn under a call that has no result.
+# A write among them may have made its change, so it is asked about as a finished one is.
+
+
+@pytest.mark.asyncio
+async def test_a_write_still_running_when_the_turn_ended_is_asked_about(state, runs, audit):
+    session = _turn(
+        state,
+        ("write_file", _call("c1", "write_file", {"path": "a.md", "content": "x"}, done=False)),
+    )
+    before = [dict(m) for m in session.messages]
+
+    resp, data = await _post(state)
+
+    assert resp.status == 409, data
+    detail = data["error"]["detail"]
+    assert detail["steps"] == [{"tool": "write_file", "target": "a.md", "running": True}]
+    assert detail["said"] == (
+        "This turn ended while 1 step that may have changed something was still running. "
+        "Running the turn again replaces this attempt and may repeat it."
+    )
+    assert runs.messages == [], "the turn ran again before anyone said yes"
+    assert session.messages == before
+
+    resp, data = await _post(state, {"confirm": detail["confirm"]})
+
+    assert resp.status == 200, data
+    assert runs.messages == [QUESTION]
+
+
+@pytest.mark.asyncio
+async def test_a_finished_step_and_one_still_running_are_both_asked_about(state, runs, audit):
+    _turn(
+        state,
+        ("bash", _call("c1", "bash", {"command": "make deploy"})),
+        ("write_file", _call("c2", "write_file", {"path": "b.md", "content": "x"}, done=False)),
+    )
+
+    resp, data = await _post(state)
+
+    assert resp.status == 409, data
+    detail = data["error"]["detail"]
+    assert detail["steps"] == [
+        {"tool": "bash", "target": "make deploy"},
+        {"tool": "write_file", "target": "b.md", "running": True},
+    ]
+    assert detail["said"] == (
+        "This turn finished 1 step that may have changed something, and 1 more was still "
+        "running when it ended. Running the turn again replaces this attempt and may repeat them."
+    )
+    assert runs.messages == []
+
+
+@pytest.mark.asyncio
+async def test_a_read_still_running_when_the_turn_ended_is_not_asked_about(state, runs, audit):
+    _turn(state, ("read_file", _call("c1", "read_file", {"path": "notes/plan.md"}, done=False)))
+
+    resp, data = await _post(state)
+
+    assert resp.status == 200, data
+    assert runs.messages == [QUESTION]
+
+
+@pytest.mark.asyncio
+async def test_a_running_call_a_gate_said_was_not_run_is_not_asked_about(state, runs, audit):
+    from personalclaw.dashboard.step_notes import ABOUT_CALL, NOT_RUN, NOTE
+
+    why = f"{NOT_RUN}the chat's task mode is Ask."
+    _turn(
+        state,
+        ("write_file", _call("c1", "write_file", {"path": "a.md", "content": "x"}, done=False)),
+        (f"write_file — {why}", {ABOUT_CALL: "c1", NOTE: why}),
+    )
+
+    resp, data = await _post(state)
+
+    assert resp.status == 200, data
+    assert runs.messages == [QUESTION]
+
+
+@pytest.mark.asyncio
+async def test_a_running_call_whose_approval_a_stop_cancelled_is_not_asked_about(
+    state, runs, audit
+):
+    cancelled = json.dumps({"request_id": "c1", "tool_call_id": "c1", "resolved": "cancelled"})
+    _turn(
+        state,
+        ("write_file", _call("c1", "write_file", {"path": "a.md", "content": "x"}, done=False)),
+        rows=[("permission", "write_file", cancelled)],
     )
 
     resp, data = await _post(state)

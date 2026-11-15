@@ -49,6 +49,11 @@ describe('repeatsAsked', () => {
     expect(repeatsAsked(question({ ...DETAIL, confirm: '' }))).toBeNull()
     expect(repeatsAsked(new Error('network'))).toBeNull()
   })
+
+  it('keeps that a step was still running when the turn ended', () => {
+    const steps = [{ tool: 'write_file', target: 'b.md', running: true }]
+    expect(repeatsAsked(question({ ...DETAIL, steps }))?.steps).toEqual(steps)
+  })
 })
 
 describe('the question', () => {
@@ -64,6 +69,13 @@ describe('the question', () => {
       // A failed step is still asked about, and says it failed, as its card does.
       'Run commandmake deploybash· failed',
     ])
+  })
+
+  it('says which step was still running when the turn ended', () => {
+    const steps = [{ tool: 'bash', target: 'make deploy', running: true }]
+    render(<RepeatedSteps asked={{ ...(DETAIL as RepeatsAsked), steps }} />)
+    const items = within(screen.getByRole('list', { name: 'Steps that may repeat' })).getAllByRole('listitem')
+    expect(items.map((li) => li.textContent)).toEqual(['Run commandmake deploybash· was still running'])
   })
 
   it('counts the steps it does not list', () => {

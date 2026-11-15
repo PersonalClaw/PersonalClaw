@@ -82,6 +82,11 @@ def _call_row(call_id: str, tool: str, args: dict) -> tuple[str, dict]:
     return tool, {"tool_call_id": call_id, "input": json.dumps(args), "done": True, "output": "ok"}
 
 
+def _running_row(call_id: str, tool: str, args: dict) -> tuple[str, dict]:
+    """A call still running when the turn ended (a restart, a crash): no result was kept."""
+    return tool, {"tool_call_id": call_id, "input": json.dumps(args)}
+
+
 def _turn(session, text: str, *calls: tuple[str, dict], ends: tuple[str, str]) -> None:
     session.append("user", text)
     for tool, meta in calls:
@@ -197,6 +202,29 @@ async def test_each_door_asks_before_it_runs_a_turn_that_wrote(door, state, runs
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("door", sorted(HTTP_DOORS))
+async def test_each_door_asks_before_it_runs_a_turn_whose_write_was_still_running(
+    door, state, runs, audit
+):
+    path, body = HTTP_DOORS[door](state, _running_row("c1", *WRITE))
+    session = state._sessions["s1"]
+    before = [dict(m) for m in session.messages]
+
+    resp, data = await _post(state, path, body)
+
+    assert resp.status == 409, data
+    detail = data["error"]["detail"]
+    assert detail["steps"] == [{"tool": "write_file", "target": "notes/plan.md", "running": True}]
+    assert runs.messages == [], f"{door} ran the turn again before anyone said yes"
+    assert session.messages == before, f"{door} changed the chat before anyone said yes"
+
+    resp, data = await _post(state, path, {**body, "confirm": detail["confirm"]})
+
+    assert resp.status == 200, data
+    assert runs.messages == [QUESTION]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("door", sorted(HTTP_DOORS))
 async def test_each_door_runs_a_turn_that_only_read_unasked(door, state, runs, audit):
     path, body = HTTP_DOORS[door](state, _call_row("c1", *READ))
 
@@ -261,6 +289,18 @@ async def test_a_move_does_not_send_a_turn_that_wrote_again_on_its_own(state):
     to = running_turn.answering_label(session, session._rebinding)
     assert session.messages[-1]["role"] == "error", "the chat does not offer Retry on it"
     assert session.messages[-1]["content"] == turn_endings.moved_without_answering_notice(to, 1)
+
+
+@pytest.mark.asyncio
+async def test_a_move_does_not_send_a_turn_whose_write_was_still_running_again(state):
+    session, send_again = await _move(state, _running_row("c1", *WRITE))
+
+    send_again.assert_not_called()
+    to = running_turn.answering_label(session, session._rebinding)
+    assert session.messages[-1]["role"] == "error", "the chat does not offer Retry on it"
+    assert session.messages[-1]["content"] == turn_endings.moved_without_answering_notice(
+        to, 1, running=True
+    )
 
 
 @pytest.mark.asyncio
