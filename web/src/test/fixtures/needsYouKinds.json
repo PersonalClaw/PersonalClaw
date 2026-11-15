@@ -585,5 +585,52 @@
     "label": "New template proposed"
    }
   }
- ]
+ ],
+ "tags": {
+  "_about": "Each kind's tag on its card, its noun as Learning, Skills and the Proposals view read it.",
+  "learning": {
+   "template.named": "New template",
+   "template.plan_shape": "New template",
+   "template.recurring_path": "New template",
+   "template.card": "New template",
+   "prompt.card": "New prompt",
+   "agent.card": "New agent",
+   "lesson": "Lesson",
+   "lesson.failed_run": "Lesson",
+   "lesson.outcome": "Lesson",
+   "lesson.working_habit": "Working habit",
+   "lesson.conflict": "Lesson conflict",
+   "lesson.captures": "Captures",
+   "skill.promoted": "New skill",
+   "template_diff": "Template change",
+   "retirement": "Retirement",
+   "retirement.text_not_typed": "Retirement",
+   "tier": "Tier change",
+   "tier.wider_scope": "Wider scope",
+   "project_instruction": "Project instruction",
+   "project_file": "Project file",
+   "project_skill": "Project skill",
+   "knowledge": "Knowledge draft",
+   "prompt": "New prompt",
+   "agent": "New agent"
+  },
+  "skills": {
+   "refine": "Skill change",
+   "new": "New skill"
+  },
+  "waiting": {
+   "approval": "Permission needed",
+   "question": "Question",
+   "loop_question": "Loop",
+   "gate": "Workflow",
+   "park": "Automation",
+   "browse_grant": "Browser",
+   "plan_review": "Plan",
+   "bridge_confirmation": "Control bridge",
+   "folder_trust": "Folder trust",
+   "held_action": "Held action",
+   "declined_wait": "Workflow",
+   "escalated_run": "Workflow"
+  }
+ }
 }
