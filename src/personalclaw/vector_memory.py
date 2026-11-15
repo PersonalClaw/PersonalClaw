@@ -1020,6 +1020,16 @@ def _row_value(row: object, column: str, default: object) -> object:
     return default if value is None else value
 
 
+def _same_value(stored: str, value_json: str) -> bool:
+    """Whether a write of *value_json* leaves the value a row holds (its ``value_json``,
+    *stored*) as it was: both parse to the same JSON value, so a difference of spacing or
+    escaping alone is no change. Text that does not parse is compared as written."""
+    try:
+        return json.loads(stored) == json.loads(value_json)
+    except (TypeError, ValueError):
+        return stored == value_json
+
+
 def _conflict(existing: Any, confidence: float, source: str) -> str | None:
     """Why conflict resolution keeps the live row *existing* over a write of *confidence* from
     *source*, or None when the write wins."""
@@ -2144,8 +2154,9 @@ class VectorMemoryStore(MemoryProvider):
         for old_key, old_value in retired:
             self._log_event("supersede", "semantic", old_key, old_value, key, source)
 
-        # 9. Retire conflicting episodic entries that reference the old value
-        if replaces:
+        # 9. Retire conflicting episodic entries that reference the old value, when the write
+        # changed it: a fact restated with the value it holds leaves the episodes that agree.
+        if replaces and not _same_value(existing["value_json"], value_json):
             old_val = existing["value_json"]
             try:
                 old_text = json.loads(old_val) if isinstance(old_val, str) else str(old_val)

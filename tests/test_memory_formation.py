@@ -232,6 +232,17 @@ class TestVerdictMapping:
         assert report.added == 1
         assert store.get_semantic("pref.new") is not None
 
+    def test_a_candidate_with_no_verdict_that_restates_a_fact_retires_no_episode(self, store):
+        """An ADD that restates a fact with the value it holds keeps the episodes that agree."""
+        store.embed_fn = None
+        store.set_semantic("user.favorite_color", "red", 0.9, "seed")
+        assert store.write_episodic("favorite color: red, said while picking a theme")
+        cands = mf.gather(store, [_cand(0, "user.favorite_color", "red")])
+        report = mf.apply_decisions(store, cands, {}, source="test")
+        assert report.added == 1
+        assert len(store.get_episodic_list()) == 1
+        assert _events(store, "conflict_retire") == []
+
     def test_an_unknown_verdict_is_discarded_not_obeyed(self, store):
         cands = [_cand(0, "pref.new", "x")]
         parsed = mf.parse_decisions({"verdicts": [{"index": 0, "verdict": "DELETE"}]}, cands)
