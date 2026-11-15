@@ -1,31 +1,23 @@
 import { KnowledgeListPage } from './KnowledgeListPage'
 import { KnowledgeCreatePage } from './KnowledgeCreatePage'
 import { KnowledgeDetailPage } from './KnowledgeDetailPage'
-import { SourcesPage } from './SourcesPage'
-import { SourceCreatePage } from './SourceCreatePage'
-import { ReportsPage } from './ReportsPage'
 import { MODELS_PATH } from '../chat/NoModelSetupState'
 import type { RouteProps } from '../../app/useQueryState'
+import { useItemBack } from '../../app/itemBack'
 
-/** Knowledge navigation — URL-addressable: `#/knowledge` (list; view toggle
- *  Library/Graph/Intents + type/provider filter + search via ?query),
- *  `#/knowledge/new` (type-grid → per-type authoring), `#/knowledge/item/<id>`
- *  (the dedicated full-screen item detail page), and `#/knowledge/sources`
- *  (+ `/sources/new`) — the watched sources that fill the library on their own.
- *  `#/knowledge/reports` is the scheduled research reports that
- *  write their findings back into the library. */
+/** The knowledge store's own pages: `#/knowledge/new` (type grid, then per-type authoring) and
+ *  `#/knowledge/item/<id>` (the full-screen item page, whose back control returns to the library
+ *  with it selected, or to the project `?back=project:<id>` names). The list, the Sources and the
+ *  Reports pages are the library's now (#6101): their addresses are redirect rows onto it, so the
+ *  router hands this section only a deeper path no row retires. */
 export function KnowledgeSection({ sub, navigate, query, setQuery, navEpoch }: RouteProps) {
   const parts = (sub || '').split('/')
+  const itemId = parts[0] === 'item' ? parts[1] ?? '' : ''
+  const back = useItemBack(`knowledge:${itemId}`, query.back)
   if (parts[0] === 'new')
-    return <KnowledgeCreatePage onBack={() => navigate('knowledge')} onCreated={() => navigate('knowledge')} />
-  if (parts[0] === 'sources' && parts[1] === 'new')
-    return <SourceCreatePage onBack={() => navigate('knowledge/sources')} onCreated={() => navigate('knowledge/sources')} />
-  if (parts[0] === 'reports')
-    return <ReportsPage key={navEpoch} onBack={() => navigate('knowledge')} />
-  if (parts[0] === 'sources')
-    return <SourcesPage key={navEpoch} onBack={() => navigate('knowledge')} onCreate={() => navigate('knowledge/sources/new')} />
-  if (parts[0] === 'item' && parts[1])
-    return <KnowledgeDetailPage key={parts[1]} id={parts[1]} onBack={() => navigate('knowledge')} onOpenItem={(id) => navigate(`knowledge/item/${id}`)} query={query} setQuery={setQuery} />
+    return <KnowledgeCreatePage onBack={() => navigate('library')} onCreated={() => navigate('library')} />
+  if (itemId)
+    return <KnowledgeDetailPage key={itemId} id={itemId} backLabel={back.label} onBack={() => navigate(back.path)} onOpenItem={(id) => navigate(`knowledge/item/${id}`)} query={query} setQuery={setQuery} />
   // `onOpenReader` is the same destination with the reading mode already on (`?read=1`, the param
   // KnowledgeDetailPage reads) — the library home's continue-reading shelf resumes INTO the reader,
   // not into the metadata view, because the position it saved belongs to the reader's scroller.

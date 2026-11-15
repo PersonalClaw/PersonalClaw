@@ -62,7 +62,7 @@ describe("⌘K's Library group", () => {
       'Lisbon trip plan': 'artifacts/lisbon',
       'Router manual': 'knowledge/item/k1',
       'Weekly perf digest': `knowledge/item/${WRITE_UP}`,
-      'Cheap ways to cut the power bill': 'knowledge?view=intents&intent=power-bill',
+      'Cheap ways to cut the power bill': 'library?item=findings%3Apower-bill',
     })
     // The matched passage is the second line, without the index's marks; else the row's excerpt.
     expect(hits[0].detail).toBe('two days in Lisbon')
@@ -78,11 +78,12 @@ describe("⌘K's Library group", () => {
     expect(h.researchReports).not.toHaveBeenCalled()
   })
 
-  it('a report whose write-up cannot be found opens the Reports page, not nowhere', async () => {
+  it('a report whose write-up cannot be found opens the report in the library, not nowhere', async () => {
     h.researchReports.mockRejectedValue(new Error('the reports could not be read'))
-    expect((await searchLibrary('perf')).find((x) => x.label === 'Weekly perf digest')?.path).toBe('knowledge/reports')
+    const inLibrary = 'library?item=report%3Arpt-1a2b3c4d'
+    expect((await searchLibrary('perf')).find((x) => x.label === 'Weekly perf digest')?.path).toBe(inLibrary)
     h.researchReports.mockResolvedValue({ reports: [{ id: 'rpt-1a2b3c4d', name: 'Weekly perf digest', finding_item_id: '' }] })
-    expect((await searchLibrary('perf')).find((x) => x.label === 'Weekly perf digest')?.path).toBe('knowledge/reports')
+    expect((await searchLibrary('perf')).find((x) => x.label === 'Weekly perf digest')?.path).toBe(inLibrary)
   })
 
   it('takes five hits, and a row whose ref names no kind is left out', async () => {

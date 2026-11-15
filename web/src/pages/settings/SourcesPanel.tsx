@@ -127,7 +127,7 @@ export function SourcesPanel() {
       <Section title="Artifacts" hint="Artifacts you and the agent write, mirrored into knowledge search.">
         <RowGroup>
           <ToggleRow label="Index artifacts for search" cfg={knowledgeCfg} field="auto_ingest_artifacts" patch={patchKnowledge}
-            hint="Make text artifacts (markdown, HTML, text, JSON, CSV) findable from knowledge search. They stay in the Artifacts library and are never listed as knowledge items — only found by a search. Indexing is local: a mirrored artifact never reaches a model. Off stops indexing new changes and removes nothing already indexed." />
+            hint="Make text artifacts (markdown, HTML, text, JSON, CSV) findable from search. They are listed in your library either way. Indexing is local: a mirrored artifact never reaches a model. Off stops indexing new changes and removes nothing already indexed." />
         </RowGroup>
       </Section>
 

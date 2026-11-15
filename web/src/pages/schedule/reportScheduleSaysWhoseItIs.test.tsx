@@ -50,7 +50,7 @@ describe("a report's schedule on the Triggers page", () => {
   it('says whose schedule it is, and where the report itself is renamed or deleted', () => {
     mount(job())
     expect(screen.getByText(NOTE)).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Knowledge › Reports' }).getAttribute('href')).toBe('#/knowledge/reports')
+    expect(screen.getByRole('link', { name: 'Library › Feeds, intents and reports' }).getAttribute('href')).toBe('#/library?setup=reports')
   })
 
   it('says it in the edit form too, where a rename is refused', () => {

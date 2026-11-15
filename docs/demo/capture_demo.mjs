@@ -347,9 +347,9 @@ const BEATS = [
     id: 'B5-knowledge',
     seconds: 12,
     async act() {
-      await tap(nav('Knowledge'), 'nav → Knowledge');
+      await tap(nav('Library'), 'nav → Library');
       await dwell(1400);
-      await tap(page.getByPlaceholder('Search knowledge'), 'the knowledge search box');
+      await tap(page.getByPlaceholder('Search your library'), 'the library search box');
       await page.keyboard.type('digest', { delay: 110 });
       await dwell(2000);
       await glide(page.getByText('What makes a weekly digest actually get read', { exact: true }), 'the matching note');
@@ -360,7 +360,8 @@ const BEATS = [
     id: 'B6-artifact',
     seconds: 12,
     async act() {
-      await tap(nav('Artifacts'), 'nav → Artifacts');
+      // The artifact is a row of the library, with everything else you keep (#6101).
+      await tap(nav('Library'), 'nav → Library');
       // This artifact exists only because the gate in B3 was approved. It is looked up by
       // the slug the prompt asked for, so a model that named it something else fails the
       // beat loudly instead of the capture quietly showing some other artifact.

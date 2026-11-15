@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
 
 // ── Home's section of what you keep on it says it is empty once, and only when it is ─────────────
 //
-// The tiles you keep on Home moved into the Overview's section for pinned artifacts, above the
+// The tiles you keep on Home moved into the Overview's Shown on Home section, above the
 // pins. The pins' own list said "No pinned artifacts. Pin one from its page to keep it here." when
 // it held none, so with a tile there the section said it was empty under the tile. Now the
 // sentence is said only when the section holds neither, and once.
@@ -41,9 +41,9 @@ const { registerBuiltinContentTypes } = await import('../../ui/content/registerB
 registerBuiltinContentTypes()
 
 const route = { sub: '', navigate: vi.fn(), navEpoch: 0, query: {}, setQuery: vi.fn() }
-const EMPTY = /No pinned artifacts\. Pin one from its page to keep it here\./
+const EMPTY = /Nothing shown here yet\. Choose Show on Home on a page in your library\./
 const TILE = { ref: 'artifact:metrics', size: 'm', order: 0, added_by: 'user', refresh: { mode: 'manual', ttl_secs: 0, skeleton: '', data: [] } }
-const section = () => screen.getByRole('heading', { name: 'Pinned artifacts' }).closest('section')!
+const section = () => screen.getByRole('heading', { name: 'Shown on Home' }).closest('section')!
 
 beforeEach(() => {
   resetDataStore(); sessionStorage.clear(); localStorage.clear()

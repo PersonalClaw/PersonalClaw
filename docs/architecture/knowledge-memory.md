@@ -375,7 +375,7 @@ start after that update re-embeds each once.
 It is the one re-index, and every surface reaches it the same way. The gateway's
 start runs it for what the bound model has not embedded: items, and the passages
 a stop left after the items (`_pending_reembed` counts both), each at the width the
-model writes. Settings → Models & Providers → Models and the Knowledge page's embedding chip read the
+model writes. Settings → Models & Providers → Models and the library's Re-index search by meaning row read the
 running job (`GET /api/models/embedding/reindex`) and follow its progress through
 `web/src/lib/useEmbeddingReindex.ts`, and the chip's re-embed starts or joins it
 (`POST /api/models/embedding/reindex` answers the running job rather than a second).
@@ -745,7 +745,7 @@ holds every row the filter leaves (up to 10,000), a true `total`, each filter va
   into memory — the boundary holds inside the vault. Every sync (the one after a chat
   ends, and Sync now in Library → Memory) is followed by the sweep
   (`MemoryVault.sweep_raw`, on the gateway's event loop), which takes each file as the
-  Knowledge page takes an upload (`knowledge.file_items.take_file`): typed by its kind
+  library takes an upload (`knowledge.file_items.take_file`): typed by its kind
   (`media.classify`), held to the size the upload policy allows it, its bytes scanned,
   and kept in the library's own files, so the reader for its kind reads it when it is
   ingested (a document's text, which the ingest scans too; a script's code, read and

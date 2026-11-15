@@ -54,7 +54,7 @@ describe("the Overview holds what Home's Attention view held", () => {
     const tiles = await screen.findByTestId('pinned-tiles')
     const agents = screen.getByRole('heading', { name: 'Your agents today' })
     expect(agents.compareDocumentPosition(tiles) & Node.DOCUMENT_POSITION_FOLLOWING, 'the tiles come after the band').toBeTruthy()
-    const section = screen.getByRole('heading', { name: 'Pinned artifacts' }).closest('section')!
+    const section = screen.getByRole('heading', { name: 'Shown on Home' }).closest('section')!
     expect(section.contains(tiles)).toBe(true)
   })
 

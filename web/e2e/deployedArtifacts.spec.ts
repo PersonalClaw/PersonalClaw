@@ -63,7 +63,9 @@ async function readProbe(probe: ReturnType<Page['getByTestId']>): Promise<Report
 }
 
 test('a deployed page loads its own files and reaches nothing of the dashboard, framed or in a tab', async ({ page, context }) => {
-  await gotoRoute(page, 'artifacts')
+  // Any page of the shell will do: the requests below go from its tab. `#/artifacts` is a redirect
+  // row onto the library now (#6101).
+  await gotoRoute(page, 'library')
   await assertShellMounted(page)
 
   const name = `seal-probe-${test.info().workerIndex}-${test.info().retry}`

@@ -3,13 +3,14 @@ import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
 import { installPushCuePlayback } from './pushCuePlayback'
-import { Bell, Blocks, BookOpen, Brain, Compass, Database, FileCode, FileText, Files, FolderKanban, Hand, Inbox, LayoutDashboard, Library, ListChecks, Loader2, MessageSquare, Plus, Puzzle, Repeat, Settings, Smartphone, Sparkles, Store, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
+import { Bell, Blocks, Brain, CalendarClock, Compass, Database, FileText, Files, FolderKanban, Hand, Inbox, LayoutDashboard, Library, ListChecks, Loader2, MessageSquare, Plus, Puzzle, Repeat, Rss, Settings, Smartphone, Sparkles, Store, Target, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellThreadRail, threadNumberRoute } from './threadRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
 import { IncidentBanner } from './IncidentBanner'
 import { DisconnectedBanner } from './DisconnectedBanner'
 import { GatewayConnectionProvider } from './gatewayConnection'
+import { rememberPlace } from './lastPlace'
 import { StatusLine } from './StatusLine'
 import { PinnedContextReading } from './pinnedContext'
 import { ModelWaits } from '../ui/ModelWaitNotice'
@@ -24,7 +25,7 @@ import { onSetupRerun } from './onboarding/rerun'
 import { ProductTour } from './onboarding/ProductTour'
 import { useHashRoute } from './useHashRoute'
 import { BuddyRoutePage } from '../pages/buddy/buddyRoute'
-import { chatLaunchPath, linkStatePatch, showsNewThread, withLinkState } from './linkState'
+import { chatLaunchPath, linkStatePatch, readChatLaunch, showsNewThread, withLinkState } from './linkState'
 import { useIsMobile } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
 import { ErrorBoundary, WidgetBoundary } from './ErrorBoundary'
@@ -81,6 +82,7 @@ const InboxPage = lazy(() => import('../pages/inbox/InboxPage').then((m) => ({ d
 const FilesSection = lazy(() => import('../pages/files/FilesSection').then((m) => ({ default: m.FilesSection })))
 const ArtifactsSection = lazy(() => import('../pages/artifacts/ArtifactsSection').then((m) => ({ default: m.ArtifactsSection })))
 const MemoryPage = lazy(() => import('../pages/library/MemoryPage').then((m) => ({ default: m.MemoryPage })))
+const LibraryPage = lazy(() => import('../pages/library/LibraryPage').then((m) => ({ default: m.LibraryPage })))
 const AppsSection = lazy(() => import('../pages/apps/AppsSection').then((m) => ({ default: m.AppsSection })))
 const AppHostPage = lazy(() => import('../pages/apps/AppHostPage').then((m) => ({ default: m.AppHostPage })))
 const TerminalPage = lazy(() => import('../pages/terminal/TerminalPage').then((m) => ({ default: m.TerminalPage })))
@@ -128,6 +130,9 @@ const NAV: NavItem[] = [
 // The six pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`), and so
 // do Library's four (`libraryTabs.ts`) and Automations' Workflows tab; the list's address from
 // before it was Automations, `#/triggers`, still opens it (`automationTabs.ts`).
+/** The Library row's palette words: what was the Knowledge and Artifacts rows'. */
+const LIBRARY_KEYWORDS = 'knowledge notes documents sources reports graph artifacts made outputs pages'
+
 const ROUTABLE = new Set([...NAV.map((n) => n.id), 'dashboard', 'tasks', 'terminal', 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control', 'triggers', 'workflows'])
 /** The routes the shell renders ITSELF, full-screen, from an early return above the nav switch —
  *  `#/onboarding`, `#/companion`, and the buddy (`#/buddy`, and its playground `#/buddy/playground`). Deliberately
@@ -188,10 +193,10 @@ function renderPage(active: string, r: RouteProps) {
     case 'automations': return <TriggersSection {...r} />
     case 'tasks': return <TasksSection {...r} />
     case 'projects': return <ProjectsSection {...r} />
+    // The knowledge store's item pages (`knowledge/item/<id>`, `knowledge/new`): its list is the
+    // Library's (`#/knowledge` is a redirect row onto `#/library`).
     case 'knowledge': return <KnowledgeSection {...r} />
-    // Library's own address opens its first tab. After the tab's own case, so the route tables the
-    // censuses read place each page on its tab's route.
-    case 'library': return <KnowledgeSection {...r} />
+    case 'library': return <LibraryPage {...r} />
     case 'memory': return <MemoryPage {...r} />
     case 'inbox': return <InboxPage {...r} />
     // Notifications are a filter of the Inbox (#3818). `#/notifications` and its keys are retired to
@@ -258,6 +263,11 @@ function AppInner() {
   const linkPatchKey = linkPatch ? JSON.stringify(linkPatch) : ''
   const onNewThread = showsNewThread(route, sub)
   const wasOnNewThread = useRef(false)
+  // The navigation memory the library's Use in chat reads: the chat you opened last and the
+  // project of the last project page or project chat, on this device, written from the route.
+  // A project chat names its project with the chat's own launch key, which `linkState` reads.
+  const chatProject = readChatLaunch(query).project
+  useEffect(() => { rememberPlace(route, sub, chatProject) }, [route, sub, chatProject])
   useEffect(() => {
     if (linkPatch) setQuery(linkPatch, { replace: true, remount: 'seed' in linkPatch && wasOnNewThread.current })
   }, [route, sub, linkPatchKey]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -844,7 +854,8 @@ function AppInner() {
   const commands: Command[] = [
     // Home has no row in the sidebar (its link is the icon and name, #5880), and keeps its "Go to".
     { id: 'go:dashboard', label: HOME.label, hint: 'Go to', icon: HOME.icon, keywords: 'home overview', run: () => navigate('dashboard') },
-    ...NAV.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: n.section ?? '', run: () => navigate(n.id) })),
+    // Library's row carries the words of the Knowledge and Artifacts rows it replaced (#6101).
+    ...NAV.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: n.id === 'library' ? LIBRARY_KEYWORDS: n.section ?? '', run: () => navigate(n.id) })),
     // pinned app tiles are nav destinations too — same "Go to" contract
     ...appNavItems.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: 'app', run: () => navigate(n.id) })),
     { id: 'go:mission-control', label: 'Needs you', hint: 'Go to', icon: Hand, keywords: 'attention mission control approvals questions proposals waiting', run: () => navigate('mission-control') },
@@ -864,10 +875,14 @@ function AppInner() {
     { id: 'go:store', label: 'Store', hint: 'Go to', icon: Store, keywords: 'Capabilities apps install browse', run: () => navigate('apps?view=store') },
     { id: 'act:add-tool-server', label: 'Add a tool server', hint: 'Action', icon: Plus, keywords: 'Capabilities tools mcp server connect', run: () => navigate('tools?add=1') },
     // Library's tabs, each a row of its own: they left the sidebar (and Settings) for the one Library row.
-    { id: 'go:knowledge', label: 'Knowledge', hint: 'Go to', icon: BookOpen, keywords: 'Library notes documents sources reports graph', run: () => navigate('knowledge') },
+    // What adds to the library on its own, one Action row each: the set-up panel and its three
+    // New forms, in the library's pane.
+    { id: 'act:library-setup', label: 'Library: feeds, intents and reports', hint: 'Action', icon: Repeat, keywords: 'Library sources feeds folders intents reports automations set up', run: () => navigate('library?setup=all') },
+    { id: 'act:new-intent', label: 'New intent', hint: 'Action', icon: Target, keywords: 'Library look out for topic findings', run: () => navigate('library?setup=intent:new') },
+    { id: 'act:follow-feed', label: 'Follow a feed or folder', hint: 'Action', icon: Rss, keywords: 'Library source watch rss blog folder', run: () => navigate('library?setup=source:new') },
+    { id: 'act:schedule-report', label: 'Schedule a report', hint: 'Action', icon: CalendarClock, keywords: 'Library research digest weekly', run: () => navigate('library?setup=report:new') },
     { id: 'go:memory', label: 'Memory', hint: 'Go to', icon: Database, keywords: 'Library facts episodes lessons recall audit remember', run: () => navigate('memory') },
     { id: 'go:files', label: 'Files', hint: 'Go to', icon: Files, keywords: 'Library workspace home outbox explorer', run: () => navigate('files') },
-    { id: 'go:artifacts', label: 'Artifacts', hint: 'Go to', icon: FileCode, keywords: 'Library made reports outputs', run: () => navigate('artifacts') },
     // Automations' Workflows tab, a row of its own: it left the sidebar for the one Automations row.
     { id: 'go:workflows', label: 'Workflows', hint: 'Go to', icon: Workflow, keywords: 'Automations definitions runs', run: () => navigate('workflows') },
     // The loop composer has no rail tile (loops start from Projects), so this row is its way in.

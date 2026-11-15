@@ -341,7 +341,11 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
     // schedule panel's Run now publishes its run as `loading`); 74 (an automation's Dry run
     // publishes its own run as `loading` too); **75 now** (the explain question's Use the default
     // waits on the choice that is saving and carries the shared reason: a class D bystander, whose
-    // honest answer is a reason, not `loading=`). The
+    // honest answer is a reason, not `loading=`); **79 now**: the library's four set-up and add forms
+    // (an intent, a report, a feed, a link or note) each hold Cancel while their Save, which publishes
+    // `loading={saving}`, is saving, and say so with `BUSY_REASON`: class D bystanders again; **80**:
+    // the library's report Run now is off while the report writes one, which a scheduled fire as
+    // often owns as this button, and says "It's already writing one": a bystander's reason. The
     // converted sites drop out of the population entirely, because `disabled={busy}` is GONE from them
     // rather than supplemented. A CEILING, not a floor: each future fix lowers it (lower it in that
     // PR), and a NEW `<Button disabled={busy}>` with no `loading=` raises it and reds this.
@@ -371,7 +375,7 @@ describe('the `aria-busy` exemption is measured, not asserted by comment', () =>
       'a busy-gated Button that announces nothing to assistive tech:\n  ' +
         unannounced.slice(0, 12).map((s) => `${s.at}  disabled={${s.gate}}`).join('\n  ') +
         `\n  …and ${Math.max(0, unannounced.length - 12)} more`,
-    ).toBeLessThanOrEqual(75)
+    ).toBeLessThanOrEqual(80)
   })
 
   it('records the classes, because they want OPPOSITE fixes', () => {

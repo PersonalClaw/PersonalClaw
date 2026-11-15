@@ -25,12 +25,11 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - radiogroup "Library":
-    - radio "Knowledge" [checked]
+    - radio "Library" [checked]
     - radio "Memory"
     - radio "Files"
-    - radio "Artifacts"
-  - button "Back to Knowledge"
-  - button "Knowledge"
+  - button "Back to Library"
+  - button "Library"
   - text: /
   - heading "Not found" [level=#]
   - text: This knowledge item no longer exists.

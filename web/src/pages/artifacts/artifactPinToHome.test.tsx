@@ -61,39 +61,39 @@ const open = () => render(
   <ArtifactsSection sub="kitchen-render" navigate={vi.fn()} navEpoch={0} query={{}} setQuery={() => {}} />,
 )
 
-describe('Pin to Home on the artifact page', () => {
+describe('Show on Home on the artifact page', () => {
   it('pins the open artifact, and then offers to unpin it', async () => {
     open()
-    const pin = await screen.findByRole('button', { name: /Pin to Home/ })
+    const pin = await screen.findByRole('button', { name: /Show on Home/ })
     await act(async () => { fireEvent.click(pin) })
     expect(pinCalls).toEqual([{ slug: 'kitchen-render', pinned: true }])
-    const unpin = await screen.findByRole('button', { name: /Unpin from Home/ })
+    const unpin = await screen.findByRole('button', { name: /Remove from Home/ })
     await act(async () => { fireEvent.click(unpin) })
     expect(pinCalls[1]).toEqual({ slug: 'kitchen-render', pinned: false })
-    expect(await screen.findByRole('button', { name: /Pin to Home/ })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /Show on Home/ })).toBeTruthy()
   })
 
   it('reads an existing pin as pinned', async () => {
     pins = [{ slug: 'kitchen-render', pinned_at: '2026-09-28T00:00:00Z', run_id: '' }]
     open()
-    expect(await screen.findByRole('button', { name: /Unpin from Home/ })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /Remove from Home/ })).toBeTruthy()
   })
 
   it('says the pin list could not be read, and still pins', async () => {
     pinsReadFails = true
     open()
-    const pin = await screen.findByRole('button', { name: /Pin to Home/ })
-    expect(pin.getAttribute('title')).toContain("Couldn't read your pins")
+    const pin = await screen.findByRole('button', { name: /Show on Home/ })
+    expect(pin.getAttribute('title')).toContain("Couldn't read what is shown on Home")
     expect(pin.getAttribute('title')).not.toContain('Keep this artifact on Home')
     await act(async () => { fireEvent.click(pin) })
     expect(pinCalls).toEqual([{ slug: 'kitchen-render', pinned: true }])
-    expect(await screen.findByRole('button', { name: /Unpin from Home/ })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /Remove from Home/ })).toBeTruthy()
   })
 
   it('is offered on a read-only record too', async () => {
     readonlyArtifact = true
     open()
-    expect(await screen.findByRole('button', { name: /Pin to Home/ })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /Show on Home/ })).toBeTruthy()
     await waitFor(() => expect(screen.queryByRole('button', { name: /Iterate with agent/ })).toBeNull())
   })
 })

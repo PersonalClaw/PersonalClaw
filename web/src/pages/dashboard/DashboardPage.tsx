@@ -44,9 +44,9 @@ export function HomeOverview(route: RouteProps) {
           <AgentDay />
         </EntranceRegion>
 
-        {/* Pinned artifacts: a pin is a slug in a list that THIS component renders. */}
+        {/* Shown on Home: a pin is a slug in a list that THIS component renders. */}
         <EntranceRegion className="min-w-0">
-          <Section label="Pinned artifacts" icon={Package}>
+          <Section label="Shown on Home" icon={Package}>
             {/* The tiles you keep on Home, above the pins: each renders nothing when it holds nothing. */}
             <WidgetBoundary what="your pinned tiles"><PinnedTiles /></WidgetBoundary>
             <PinnedArtifacts {...route} />

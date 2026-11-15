@@ -151,7 +151,7 @@ CATALOG: tuple[DiscoverTip, ...] = (
             "Save documents, notes, and facts to the knowledge base and PersonalClaw "
             "retrieves the relevant pieces on its own the next time they matter."
         ),
-        try_it=_try("knowledge", "Open Knowledge"),
+        try_it=_try("library", "Open Library"),
         engaged_key="knowledge",
     ),
     DiscoverTip(

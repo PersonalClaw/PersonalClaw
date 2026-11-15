@@ -476,6 +476,13 @@ export function notify(message: string, level: 'info' | 'success' | 'error' = 'i
   catch { /* SSR guard */ }
 }
 
+/** A toast offering one action on the change it reports, as the library's "Added “Lisbon trip plan”
+ *  to Trip planning. Undo" does. Host code only (`Toaster`'s `action`). */
+export function notifyWithAction(message: string, action: { label: string; run: () => void }, level: 'info' | 'success' | 'error' = 'success'): void {
+  try { window.dispatchEvent(new CustomEvent('ne:toast', { detail: { message, level, action } })) }
+  catch { /* SSR guard */ }
+}
+
 /** Surface a toast from a contributed app. Dispatches `ne:toast`; the shell
  *  renders it (ShellCorners listens). */
 export function useNotify() {

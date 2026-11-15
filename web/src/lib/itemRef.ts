@@ -58,15 +58,14 @@ export function parseItemRef(raw: unknown): ItemRef | null {
 /** The page a thing opens at, as a route the shell's `navigate` takes.
  *
  *  A knowledge item and an artifact open at their own pages. A report opens at its write-up's
- *  page, `writeUp` (its `finding_item_id`), and at the Reports page while it has none. What an
- *  intent found has no page of its own: it opens the Intents view on that intent, which shows its
- *  findings beside the list. */
+ *  page, `writeUp` (its `finding_item_id`), and in the library while it has none. What an intent
+ *  found opens in the library, which shows its findings in the pane beside the list. */
 export function pageOfItem(ref: ItemRef, writeUp = ''): string {
   const id = encodeURIComponent(ref.id)
   switch (ref.kind) {
     case 'knowledge': return `knowledge/item/${id}`
     case 'artifact': return `artifacts/${id}`
-    case 'report': return isKnowledgeItemId(writeUp) ? `knowledge/item/${writeUp}` : 'knowledge/reports'
-    case 'findings': return `knowledge?view=intents&intent=${id}`
+    case 'report': return isKnowledgeItemId(writeUp) ? `knowledge/item/${writeUp}` : `library?item=report%3A${id}`
+    case 'findings': return `library?item=findings%3A${id}`
   }
 }

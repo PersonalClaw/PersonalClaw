@@ -1,10 +1,12 @@
-/** Library is one destination, and each of its tabs is its own address (#3815).
+/** Library is one destination, and each of its tabs is its own address (#3815, #6101).
  *
  *  Knowledge, Files and Artifacts were three sidebar rows, and the memory studio a page of
- *  Settings. They are the four tabs of Library. Knowledge, Files and Artifacts keep the addresses
- *  their pages always had, so a bookmark, a reload, Back and a copied link open the tab they opened
- *  before. Memory leaves Settings for `#/memory`: its old address is retired by one row of the
- *  redirect table, which carries the view and the record the old link named.
+ *  Settings. They are Library's tabs: Library (one list of everything you keep, which the Knowledge
+ *  list and the Artifacts grid became, #6101), Memory and Files. The Knowledge and Artifacts lists'
+ *  addresses, and the Sources and Reports pages', are redirect rows onto the library, which carry
+ *  what they named; their item pages keep their addresses, inside Library. Memory leaves Settings
+ *  for `#/memory`: its old address is retired by one row of the redirect table, which carries the
+ *  view and the record the old link named.
  *
  *  The real shell is booted as `main.tsx` boots it, on a set-up home whose reads are still on their
  *  way (what a page shows while it waits is that page), at each address, and asserted on what a
@@ -58,6 +60,7 @@ registerBuiltinContentTypes()
 beforeAll(async () => {
   await Promise.all([
     import('../pages/knowledge/KnowledgeSection'),
+    import('../pages/library/LibraryPage'),
     import('../pages/library/MemoryPage'),
     import('../pages/files/FilesSection'),
     import('../pages/artifacts/ArtifactsSection'),
@@ -79,10 +82,9 @@ afterEach(() => {
 
 /** Each tab: its label, its address, and the heading its page shows. */
 const TABS = [
-  ['Knowledge', 'knowledge', 'Knowledge'],
+  ['Library', 'library', 'Library'],
   ['Memory', 'memory', 'Memory'],
   ['Files', 'files', 'Files'],
-  ['Artifacts', 'artifacts', 'Artifacts'],
 ] as const
 
 /** The knowledge item and the artifact the deeper addresses name, as the gateway answers them. */
@@ -95,10 +97,8 @@ const ARTIFACT = {
   version: 1, content: 'The quarter, in short.', created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
 }
 
-/** The Knowledge page's view switcher, and the view it has checked. */
-const knowledgeViews = () => screen.getByRole('radiogroup', { name: 'Knowledge view' })
-const checkedView = () => within(knowledgeViews()).getAllByRole('radio').filter((r) => r.getAttribute('aria-checked') === 'true')
-  .map((r) => r.textContent)
+/** The pane's or the in-place view's own heading, under the page's. */
+const subheading = () => document.querySelector('main h2')?.textContent ?? ''
 /** The reader's article, or null where the item is not open in it. */
 const reader = () => screen.queryByRole('group', { name: 'Article body' })
 /** The Memory view the page has selected: its header's view switch. */
@@ -108,23 +108,23 @@ const memoryView = () => within(screen.getByRole('radiogroup', { name: 'Memory v
 /** The deeper addresses the issue names, each with the tab it belongs to and what it draws there,
  *  the sub-view the address names. Each opens as itself. */
 const DEEPER = [
-  { address: `knowledge/item/${SAMPLE.knowledge}`, tab: 'Knowledge', draws: () => {
+  { address: `knowledge/item/${SAMPLE.knowledge}`, tab: 'Library', draws: () => {
     expect(heading(), 'the item\'s own page').toBe(ITEM.title)
     expect(reader(), 'not yet in the reader').toBeNull()
   } },
-  { address: `knowledge/item/${SAMPLE.knowledge}?read=1`, tab: 'Knowledge', draws: () => {
+  { address: `knowledge/item/${SAMPLE.knowledge}?read=1`, tab: 'Library', draws: () => {
     expect(heading()).toBe(ITEM.title)
     expect(reader(), 'the item, open in the reader').not.toBeNull()
   } },
-  { address: 'knowledge?view=graph', tab: 'Knowledge', draws: () => expect(checkedView()).toEqual(['Graph']) },
-  { address: 'knowledge/sources', tab: 'Knowledge', draws: () => expect(heading()).toBe('Watched sources') },
-  { address: 'knowledge/new', tab: 'Knowledge', draws: () => expect(heading()).toBe('Add knowledge') },
+  { address: 'library?view=graph', tab: 'Library', draws: () => expect(subheading(), 'the graph, drawn in place').toBe('Graph') },
+  { address: 'library?setup=feeds', tab: 'Library', draws: () => expect(subheading()).toBe('Feeds, intents and reports') },
+  { address: 'knowledge/new', tab: 'Library', draws: () => expect(heading()).toBe('Add knowledge') },
   { address: 'files?dir=docs', tab: 'Files', draws: () => {
     expect((screen.getByRole('textbox', { name: 'Go to path' }) as HTMLInputElement).value, 'the folder the address names').toBe('docs')
   } },
-  { address: `artifacts/${SAMPLE.artifact}`, tab: 'Artifacts', draws: () => {
+  { address: `artifacts/${SAMPLE.artifact}`, tab: 'Library', draws: () => {
     expect(heading(), 'the artifact\'s own page, not the grid').toBe('')
-    expect(screen.getByTitle('Back to the library')).toBeTruthy()
+    expect(screen.getByTitle('Back to Library')).toBeTruthy()
     expect(within(document.querySelector('main')!).getByText(ARTIFACT.name)).toBeTruthy()
   } },
   { address: 'memory?tab=audit', tab: 'Memory', draws: () => expect(memoryView()).toContain('Audit') },
@@ -137,7 +137,17 @@ const RETIRED = [
   ['settings/memory?tab=settings&pref=pref.tone', 'memory?tab=settings&pref=pref.tone', 'Memory'],
   ['settings/memory?tab=studio&sel=fact%3Aa', 'memory?tab=studio&sel=fact%3Aa', 'Memory'],
   ['settings/memory?tab=audit&partition=p-0a1b2c3d', 'memory?tab=audit&partition=p-0a1b2c3d', 'Memory'],
-  [`files/${SAMPLE.artifact}`, `artifacts/${SAMPLE.artifact}`, 'Artifacts'],
+  [`files/${SAMPLE.artifact}`, `artifacts/${SAMPLE.artifact}`, 'Library'],
+  // The Knowledge list and the Artifacts grid are the library's rows (#6101), with what they named.
+  ['knowledge', 'library', 'Library'],
+  ['knowledge?view=graph&entity=NAS', 'library?view=graph&entity=NAS', 'Library'],
+  ['knowledge?type=pdf&q=router', 'library?q=router&type=pdf', 'Library'],
+  ['artifacts', 'library', 'Library'],
+  ['artifacts?src=chat&col=c1', 'library?made=chat&collection=c1', 'Library'],
+  // The Sources and Reports pages land on their groups of the set-up panel.
+  ['knowledge/sources', 'library?setup=feeds', 'Library'],
+  ['knowledge/sources/new', 'library?setup=source:new', 'Library'],
+  ['knowledge/reports', 'library?setup=reports', 'Library'],
 ] as const
 
 /** Boot the shell fresh at `address`, as a copied link or a reload opens it, and wait until it has
@@ -214,10 +224,10 @@ describe('each tab of Library is its own address', () => {
     expect(railLit()).toEqual(['Library'])
   })
 
-  it('#/library, the sidebar row\'s own address, opens the first tab, Knowledge', async () => {
+  it('#/library, the sidebar row\'s own address, opens the first tab, Library', async () => {
     await open('library')
-    expect(checkedTab()).toBe('Knowledge')
-    expect(heading()).toBe('Knowledge')
+    expect(checkedTab()).toBe('Library')
+    expect(heading()).toBe('Library')
     expect(location.hash).toBe('#/library')
     expect(railLit()).toEqual(['Library'])
   })
@@ -228,7 +238,7 @@ describe('each tab of Library is its own address', () => {
   })
 
   it('choosing a tab writes its address in place of the one before, keeps the strip, and a reload opens it', async () => {
-    await open('knowledge')
+    await open('library')
     const before = strip()
     expect(before, 'no Library strip').not.toBeNull()
     const entries = history.length
@@ -239,15 +249,15 @@ describe('each tab of Library is its own address', () => {
     expect(history.length, 'a tab is a view of one destination, so it replaces the entry: Back leaves Library').toBe(entries)
     expect(strip(), 'the strip stays where it is, and the focus with it').toBe(before)
 
-    fireEvent.click(within(strip()!).getByRole('radio', { name: 'Artifacts' }))
+    fireEvent.click(within(strip()!).getByRole('radio', { name: 'Files' }))
     await settle()
-    expect(location.hash).toBe('#/artifacts')
-    expect(checkedTab()).toBe('Artifacts')
+    expect(location.hash).toBe('#/files')
+    expect(checkedTab()).toBe('Files')
 
     // A reload is the shell booted again on the address the bar holds.
     await open(location.hash.slice(2))
-    expect(checkedTab()).toBe('Artifacts')
-    expect(heading()).toBe('Artifacts')
+    expect(checkedTab()).toBe('Files')
+    expect(heading()).toBe('Files')
   })
 })
 
@@ -296,18 +306,19 @@ describe('an old Settings › Memory link opens the record it named', () => {
   })
 })
 
-describe('Knowledge\'s own item list is no longer called Library', () => {
-  it('it is All items, the view the Knowledge tab opens on', async () => {
-    await open('knowledge')
-    expect(within(knowledgeViews()).getAllByRole('radio').map((r) => r.textContent)).toEqual(['Home', 'All items', 'Graph', 'Intents', 'Tags', 'Conflicts', 'Decisions'])
-    expect(checkedView()).toEqual(['All items'])
+describe('the old Knowledge views open in the library, at their own key', () => {
+  it('the item list, from when it was called Library, opens the list in place', async () => {
+    await open('knowledge?view=library')
+    expect(location.hash).toBe('#/library?view=library')
+    expect(checkedTab()).toBe('Library')
+    expect(heading()).toBe('Library')
+    expect(subheading(), 'the list, not a view of its own').not.toBe('Graph')
   })
 
-  it('an old #/knowledge?view=library link still opens it, at the address it was', async () => {
-    await open('knowledge?view=library')
-    expect(location.hash).toBe('#/knowledge?view=library')
-    expect(checkedTab()).toBe('Knowledge')
-    expect(checkedView()).toEqual(['All items'])
+  it('the Intents view opens the set-up panel in place, never rewritten', async () => {
+    await open('knowledge?view=intents')
+    expect(location.hash).toBe('#/library?view=intents')
+    expect(subheading()).toBe('Feeds, intents and reports')
   })
 })
 
@@ -330,10 +341,13 @@ describe('the palette and the catalogue cover every tab', () => {
   /** Each row: its id, its words, and the address it opens. */
   const ROWS = [
     ['go:library', 'Library', 'library'],
-    ['go:knowledge', 'Knowledge', 'knowledge'],
     ['go:memory', 'Memory', 'memory'],
     ['go:files', 'Files', 'files'],
-    ['go:artifacts', 'Artifacts', 'artifacts'],
+    // What adds to the library on its own: the panel and its three New forms, in the pane.
+    ['act:library-setup', 'Library: feeds, intents and reports', 'library?setup=all'],
+    ['act:new-intent', 'New intent', 'library?setup=intent:new'],
+    ['act:follow-feed', 'Follow a feed or folder', 'library?setup=source:new'],
+    ['act:schedule-report', 'Schedule a report', 'library?setup=report:new'],
   ] as const
 
   it.each(ROWS)('the palette row %s, "%s", opens #/%s', async (id, label, address) => {
@@ -355,9 +369,21 @@ describe('the palette and the catalogue cover every tab', () => {
       expect(entry(address)?.from, `#/${address}`).toContain('palette')
       expect(entry(address)?.lands, `#/${address} opens as itself`).toBeUndefined()
     }
-    // The item list's key from when the view was called Library, so the shell opens it with the rest.
-    expect(entry('knowledge?view=library'), '#/knowledge?view=library').toBeTruthy()
-    expect(entry('knowledge?view=library')?.lands, '#/knowledge?view=library opens as itself').toBeUndefined()
+    // The Knowledge and Artifacts lists are retired to the library, which draws their views in place.
+    expect(entry('knowledge')?.lands).toBe('library')
+    expect(entry('artifacts')?.lands).toBe('library')
+    expect(entry('knowledge')?.from, 'its Go to row is retired').not.toContain('palette')
+    expect(entry('artifacts')?.from, 'its Go to row is retired').not.toContain('palette')
+    expect(entry('knowledge?view=library')?.lands).toBe('library?view=library')
+    expect(entry('library?view=library')?.lands, '#/library?view=library opens as itself').toBeUndefined()
+  })
+
+  it('the palette has no Go to row for Knowledge or Artifacts, and Library\'s row finds their words', async () => {
+    await open('dashboard')
+    expect(rows.find((r) => r.id === 'go:knowledge'), 'no Go to Knowledge row').toBeUndefined()
+    expect(rows.find((r) => r.id === 'go:artifacts'), 'no Go to Artifacts row').toBeUndefined()
+    expect(rows.find((r) => r.id === 'go:library')?.keywords).toEqual(expect.stringContaining('knowledge'))
+    expect(rows.find((r) => r.id === 'go:library')?.keywords).toEqual(expect.stringContaining('artifacts'))
   })
 
   it('the old Settings › Memory address is retired to the Memory tab, its view and record carried', () => {

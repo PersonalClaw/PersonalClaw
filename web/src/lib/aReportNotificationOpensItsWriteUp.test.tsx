@@ -38,22 +38,36 @@ function fakeBridge() {
 }
 
 const live = { native: { deliver: true, reason: '' } }
-const finding = (knowledge_item_id: unknown) => ({
+/** A report's finding note; `null` for a report id leaves the report out, as an older note does. */
+const finding = (knowledge_item_id: unknown, research_report_id: unknown = 'rpt-1a2b3c4d') => ({
   kind: 'knowledge/research_finding', source: 'knowledge', title: 'Weekly perf digest', body: 'Two regressions this week.',
-  research_report_id: 'rpt-1a2b3c4d', knowledge_item_id, ...live,
+  research_report_id, knowledge_item_id, ...live,
 })
+/** Where a note naming its report opens: the report, selected in the library (#6101). */
+const REPORT = 'library?item=report%3Arpt-1a2b3c4d'
 
 beforeEach(() => { deliver = null })
 afterEach(() => { delete (window as unknown as { pclawDesktop?: unknown }).pclawDesktop })
 
 describe("a report's notification", () => {
-  it('🔑 raises its banner with the write-up\'s route, and its tap opens the write-up', () => {
+  it('🔑 raises its banner with its report\'s route in the library, and its tap opens the report', () => {
     const id = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d'
     const bridge = fakeBridge()
     const navigate = vi.fn()
     renderHook(() => useNativeNotifications(navigate))
     deliver!({ type: 'notification', data: finding(id) })
-    expect(bridge.shown).toEqual([{ title: 'Weekly perf digest', body: 'Two regressions this week.', route: `knowledge/item/${id}` }])
+    expect(bridge.shown).toEqual([{ title: 'Weekly perf digest', body: 'Two regressions this week.', route: REPORT }])
+    bridge.tap(REPORT)
+    expect(navigate).toHaveBeenCalledWith(REPORT)
+  })
+
+  it('🔑 a note that names no report, only its write-up, opens the write-up\'s page', () => {
+    const id = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d'
+    const bridge = fakeBridge()
+    const navigate = vi.fn()
+    renderHook(() => useNativeNotifications(navigate))
+    deliver!({ type: 'notification', data: finding(id, null) })
+    expect(bridge.shown.map((n) => n.route)).toEqual([`knowledge/item/${id}`])
     bridge.tap(`knowledge/item/${id}`)
     expect(navigate).toHaveBeenCalledWith(`knowledge/item/${id}`)
   })
@@ -64,19 +78,19 @@ describe("a report's notification", () => {
     renderHook(() => useNativeNotifications(navigate))
     bridge.tap('knowledge/item/1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e')
     expect(navigate).not.toHaveBeenCalled()
-    // The source's own route still opens.
-    bridge.tap('knowledge')
-    expect(navigate).toHaveBeenCalledWith('knowledge')
+    // The source's own route still opens: the library, which `#/knowledge` is a redirect row onto.
+    bridge.tap('library')
+    expect(navigate).toHaveBeenCalledWith('library')
   })
 
-  it('🔑 a knowledge note without the id, or with one of another shape, keeps the knowledge route', () => {
+  it('🔑 a knowledge note naming neither id, or ones of another shape, keeps the knowledge route', () => {
     const bridge = fakeBridge()
     const navigate = vi.fn()
     renderHook(() => useNativeNotifications(navigate))
-    for (const id of [undefined, '', 'k-0a1b2c3d', '../settings', '0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D', 7, '3f9a0c1d2e4', '3f9a0c1d2e4bc']) {
-      deliver!({ type: 'notification', data: finding(id) })
-    }
-    expect(bridge.shown.map((n) => n.route)).toEqual(Array(8).fill('knowledge'))
+    const odd = [undefined, '', 'k-0a1b2c3d', '../settings', '0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D', 7, '3f9a0c1d2e4', '3f9a0c1d2e4bc']
+    const oddReports = [null, '', 'rpt-1', 'rpt-1A2B3C4D', 'rpt-1a2b3c4d/../x', 7, 'report-1', 'rpt-1a2b3c4d5']
+    odd.forEach((id, i) => deliver!({ type: 'notification', data: finding(id, oddReports[i]) }))
+    expect(bridge.shown.map((n) => n.route)).toEqual(Array(8).fill('library'))
     bridge.tap('knowledge/item/k-0a1b2c3d')
     expect(navigate).not.toHaveBeenCalled()
   })
@@ -87,7 +101,7 @@ describe("a report's notification", () => {
     const bridge = fakeBridge()
     const navigate = vi.fn()
     renderHook(() => useNativeNotifications(navigate))
-    deliver!({ type: 'notification', data: finding('3f9a0c1d2e4b') })
+    deliver!({ type: 'notification', data: finding('3f9a0c1d2e4b', null) })
     expect(bridge.shown.map((n) => n.route)).toEqual(['knowledge/item/3f9a0c1d2e4b'])
     bridge.tap('knowledge/item/3f9a0c1d2e4b')
     expect(navigate).toHaveBeenCalledWith('knowledge/item/3f9a0c1d2e4b')
@@ -96,6 +110,8 @@ describe("a report's notification", () => {
   it('only a knowledge note names its write-up: another source keeps its own route', () => {
     const id = '2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f'
     expect(itemRouteForNote({ source: 'knowledge', knowledge_item_id: id })).toBe(`knowledge/item/${id}`)
+    expect(itemRouteForNote({ source: 'knowledge', research_report_id: 'rpt-1a2b3c4d', knowledge_item_id: id })).toBe(REPORT)
+    expect(itemRouteForNote({ source: 'inbox', research_report_id: 'rpt-1a2b3c4d' })).toBe('')
     expect(itemRouteForNote({ source: 'inbox', knowledge_item_id: id })).toBe('')
     expect(itemRouteForNote({ knowledge_item_id: id })).toBe('')
   })

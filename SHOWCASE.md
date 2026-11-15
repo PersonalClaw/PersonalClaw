@@ -95,9 +95,9 @@ code sessions and its task lists.
 
 Ingest notes, gists, bookmarks, documents, and media. A node-graph pipeline extracts
 entities and relations, generates summaries, and embeds every item for semantic search, all
-reachable by the agent in chat. Here, **five seeded notes and bookmarks**: extraction and
-semantic search start once a model is bound, so the counters still read 0 entities and 0
-relations. Knowledge, Memory, Files and Artifacts sit together under Library.
+reachable by the agent in chat. Library is one list of what you saved and what the agent made,
+with a preview beside it; here, **five seeded notes and bookmarks**, and extraction and semantic
+search start once a model is bound. Library, Memory and Files are its three tabs.
 
 | Light | Dark |
 |---|---|

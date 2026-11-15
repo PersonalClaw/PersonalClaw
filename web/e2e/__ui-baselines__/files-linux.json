@@ -5,38 +5,29 @@
         "button \"More actions\"",
         "button \"Show explorer\"",
         "button[role=radio] \"Context: Personal\"",
-        "button[role=radio] \"Context: Repeatable\""
+        "button[role=radio] \"Context: Repeatable\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
       ],
       "390": [
         "button \"More actions\"",
         "button \"Show explorer\"",
-        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Uploads\""
       ],
       "412": [
         "button \"More actions\"",
         "button \"Show explorer\"",
-        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Uploads\""
       ],
       "768": [
         "button \"Show explorer\"",
-        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Outbox\"",
         "button[role=radio] \"Uploads\"",
         "button[role=radio] \"Workspace\""
@@ -55,38 +46,29 @@
         "button \"More actions\"",
         "button \"Show explorer\"",
         "button[role=radio] \"Context: Personal\"",
-        "button[role=radio] \"Context: Repeatable\""
+        "button[role=radio] \"Context: Repeatable\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
       ],
       "390": [
         "button \"More actions\"",
         "button \"Show explorer\"",
-        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Uploads\""
       ],
       "412": [
         "button \"More actions\"",
         "button \"Show explorer\"",
-        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Uploads\""
       ],
       "768": [
         "button \"Show explorer\"",
-        "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Knowledge\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Outbox\"",
         "button[role=radio] \"Uploads\"",
         "button[role=radio] \"Workspace\""

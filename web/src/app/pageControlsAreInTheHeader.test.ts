@@ -22,6 +22,9 @@ import { isThePrimary } from '../ui/HeaderActions'
 //    that section: those are named below with why;
 //  · a link in the title (a breadcrumb, such as a project's name before "Tasks", back to its
 //    Overview) says where you are, in `TopBar.left`: navigation, not a page control, so not counted.
+//  · a count line's `actions` (`ListStatus`: Clear, Open project, Rename, Delete collection) act only
+//    on what the line names, the filter, project or collection it says, so they are the line's own,
+//    as a section's controls are its section's, not page-level controls.
 //
 // So no page draws `ListControls`, a `FilterMenu` or a `FilterChip`, and a page that owns a header
 // draws no `Segmented`, `SearchField` or row of pressed toggles (a `role="group"` of `aria-pressed`

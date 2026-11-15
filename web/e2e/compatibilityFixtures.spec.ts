@@ -84,12 +84,14 @@ function look(page: Page): Promise<Seen> {
       const name = nameOf(group)
       if (on && name) chosen[name] = (on.getAttribute('title') || on.textContent || '').trim()
     }
-    // A strip with no room folds into one pill naming its option (`Segmented`'s collapse='menu').
+    // A strip with no room folds into one pill naming its option (`Segmented`'s collapse='menu'), whose
+    // name holds the value it shows: "Library: Library", the strip's name and then its option.
     for (const pill of document.querySelectorAll('button[aria-haspopup="listbox"]')) {
-      const name = pill.getAttribute('aria-label') ?? ''
+      const label = pill.getAttribute('aria-label') ?? ''
+      const at = label.indexOf(': ')
+      const name = at < 0 ? label : label.slice(0, at)
       if (!shown(pill) || !name || name in chosen) continue
-      const title = pill.getAttribute('title') ?? ''
-      chosen[name] = title.startsWith(`${name}: `) ? title.slice(name.length + 2) : (pill.textContent ?? '').trim()
+      chosen[name] = at < 0 ? (pill.textContent ?? '').trim() : label.slice(at + 2)
     }
     const rail = document.querySelector('[role="dialog"][aria-label="Navigation"] nav') ?? document.querySelector('nav[data-tour="rail"]')
     // Home is the icon and name at the top (#5880), named by the wordmark the personality shows
@@ -403,7 +405,8 @@ const FIXTURES: Fixture[] = [
       showing: showing(s, ['Garden plan', 'Viewing historical v2', 'Second draft', 'Third draft']),
     }),
     expected: (form) => ({
-      hash: `#/artifacts/${ARTIFACT}?v=2`, ...(form === 'wide' ? { lit: 'Library' } : {}), tab: 'Artifacts',
+      // Artifacts are the library's rows (#6101): an artifact's page is the Library tab's.
+      hash: `#/artifacts/${ARTIFACT}?v=2`, ...(form === 'wide' ? { lit: 'Library' } : {}), tab: 'Library',
       showing: ['Garden plan', 'Viewing historical v2', 'Second draft'],
     }),
     drawer: { lit: 'Library' },

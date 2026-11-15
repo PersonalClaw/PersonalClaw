@@ -3,7 +3,7 @@ import type { UiDoc } from './uiDoc'
 // Doc object for ProjectPicker — the compact project chooser for create flows.
 // Authored: keywords, prose, per-prop descriptions, Do/Don't, anatomy. Prop
 // type/required are DERIVED from ProjectPicker.tsx at build time.
-const doc: UiDoc = {
+const picker: UiDoc = {
   name: 'ProjectPicker',
   keywords: ['project', 'picker', 'chooser', 'dropdown', 'scope', 'listbox', 'create', 'select'],
   description:
@@ -29,4 +29,27 @@ const doc: UiDoc = {
   anatomy: ['relative wrapper (outside-click / Escape boundary)', 'trigger pill (folder icon + current label + spring chevron)', 'AnimatePresence listbox (overlayEnter)', 'empty option (its flow\'s words)', 'a 1 px rule, then the project rows (ProjectMark sm, check on selected, archived tag)', 'a 1 px rule, then the "New project…" row (opens the New project dialog)'],
 }
 
-export default doc
+// The dialog form: Add to project….
+const dialog: UiDoc = {
+  name: 'ProjectPickerDialog',
+  keywords: ['project', 'picker', 'dialog', 'modal', 'add to project', 'move', 'file', 'library'],
+  description:
+    'Add to project…: a Modal (a sheet on a phone) that files one thing, or several, in a project. Its sentence names what the pick does ("It\'s filed under Garden. It stays in your library."; "It leaves Homelab."); search shows past seven projects; the rows are `pickerProjects`\' order, marked "In it now", "Last opened" and "Default"; No project heads the list while the thing is in one, and "New project…" ends it. Its primary reads Add to <project>, Move to <project> or Remove from <project>.',
+  props: [
+    { name: 'itemTitle', description: 'The item\'s title, in the dialog\'s heading.' },
+    { name: 'heading', description: 'The heading for several items at once ("Add 3 items to a project"), in place of the one item\'s.' },
+    { name: 'current', description: 'The project the item is in, `{ id, name }`, or null for none.' },
+    { name: 'lastOpened', description: 'The project you last opened on this device, marked "Last opened".' },
+    { name: 'defaultProject', description: 'The default project, marked "Default".' },
+    { name: 'onPick', description: 'The write, with the project picked: null for No project. The dialog closes after.' },
+    { name: 'onClose', description: 'Cancel, Escape and the backdrop.' },
+    { name: 'phoneSheet', description: 'A phone sheet from 320 to 768 px, its primary at its foot.' },
+  ],
+  bestPractices: [
+    { guidance: true, description: 'Undo the write from its toast (`notifyWithAction`), as the library\'s Add to project does.' },
+    { guidance: false, description: 'Do not offer the Repeatable project as a place to file a thing: the dialog leaves it out.' },
+  ],
+  anatomy: ['Modal (sheet on a phone)', 'sentence', 'search (past seven projects)', 'radio rows with their marks', 'New project…', 'Cancel and the primary'],
+}
+
+export default [picker, dialog]

@@ -44,7 +44,7 @@ function ReportScheduleNote() {
   return (
     <p role="note" data-type="body-s" className="text-on-surface-var">
       This is the schedule of a report: changing its time or switching it off here changes the report
-      too. Rename or delete the report itself in <TextLink href="#/knowledge/reports">Knowledge › Reports</TextLink>.
+      too. Rename or delete the report itself in <TextLink href="#/library?setup=reports">Library › Feeds, intents and reports</TextLink>.
     </p>
   )
 }

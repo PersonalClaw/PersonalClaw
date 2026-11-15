@@ -25,35 +25,21 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - radiogroup "Library":
-    - radio "Knowledge" [checked]
+    - radio "Library" [checked]
     - radio "Memory"
     - radio "Files"
-    - radio "Artifacts"
-  - heading "Knowledge" [level=#]
-  - button "Search knowledge"
-  - button "Filter"
-  - radiogroup "Knowledge view":
-    - radio "Home"
-    - radio "All items" [checked]
-    - radio "Graph"
-    - radio "Intents"
-    - radio "Tags"
-    - radio "Conflicts"
-    - radio "Decisions"
-  - button "Regenerate intelligence" [disabled]
-  - button "Sources"
-  - button "Reports"
-  - button "Add knowledge"
-  - status
-  - text: # items # entities # relations semantic search off
-  - heading "Knowledge base is empty" [level=#]
-  - paragraph: Add notes, code gists, bookmarks, documents, images, audio, and video. Content is extracted, entities surfaced, and everything indexed for agents to retrieve.
-  - button "Add knowledge"
-  - complementary "A tip from Discover":
-    - paragraph: Start a conversation
-    - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.
-    - link "Open Chat":
-      - /url: "#/chat/new"
-    - button "Dismiss this tip"
+  - heading "Library" [level=#]
+  - button "More actions"
+  - button "Add"
+  - region "Library items":
+    - paragraph: # items
+    - status
+    - heading "Your library is empty" [level=#]
+    - paragraph: Files, links and notes you add show up here. So do the pages and documents your chats make.
+    - button "Upload files"
+    - button "Add a link"
+    - button "Write a note"
+    - paragraph: Or drop files anywhere on this page.
+  - paragraph: Pick an item to see it here.
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

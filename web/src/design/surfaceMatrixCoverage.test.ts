@@ -17,7 +17,9 @@ import * as tiers from '../../e2e/routes'
 
 /** Every route `a11y.spec.ts` and `walkthrough.spec.ts` visited, once per theme. */
 const VISITED_ROUTES = [
-  'dashboard', 'chat', 'projects', 'knowledge', 'tasks', 'inbox', 'triggers', 'files', 'artifacts',
+  // The Knowledge list and the Artifacts grid are one page now, the library (#6101): their addresses
+  // are redirect rows onto it, and the matrix visits it, its grid and its graph at their own.
+  'dashboard', 'chat', 'projects', 'library', 'tasks', 'inbox', 'triggers', 'files', 'library?layout=grid',
   'terminal', 'agents', 'tools', 'skills', 'learning', 'workflows', 'prompts', 'apps', 'settings',
   // Settings' forty pages, at the seventeen addresses that hold them now (#5897): each page that
   // became a section is visited, and scanned, on the page it moved to, as Memory was below.
@@ -25,7 +27,7 @@ const VISITED_ROUTES = [
   'settings/models', 'settings/agent', 'settings/evals', 'settings/automations', 'settings/apps',
   'settings/usage', 'settings/security', 'settings/devices', 'settings/health', 'settings/secrets',
   'settings/durability', 'settings/updates',
-  'knowledge?view=graph', 'knowledge/item/not-a-real-item?read=1', 'mission-control',
+  'library?view=graph', 'knowledge/item/not-a-real-item?read=1', 'mission-control',
   'notifications', 'discover', 'app/not-a-real-app', 'app/e2e-ui-fixture',
   // Settings › Memory, the same page at the address it moved to: Library's Memory tab (#3815).
   'memory',

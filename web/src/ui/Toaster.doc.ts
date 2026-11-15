@@ -13,6 +13,7 @@ const doc: UiDoc = {
   bestPractices: [
     { guidance: true, description: 'Mount Toaster exactly once in the app shell (next to UpdateProgressOverlay / DialogHost) — it is a singleton host, not a per-page component.' },
     { guidance: true, description: 'Fire toasts by dispatching the `ne:toast` CustomEvent ({ level, message }) — via the SDK useNotify — rather than rendering toast cards yourself.' },
+    { guidance: true, description: 'Offer one action on the change a toast reports (the library\'s Undo of a move) with `notifyWithAction(message, { label, run })` from `app/appSdk`: the toast draws it as a link and goes once it runs. Host code only: a function cannot cross into the event from a contributed app\'s frame.' },
     { guidance: false, description: "Do not pass a level other than 'info' | 'success' | 'error' — anything else silently falls back to 'info'." },
     { guidance: false, description: 'Do not disable its animation ad hoc — reduced-motion is already honored via the root MotionConfig.' },
   ],

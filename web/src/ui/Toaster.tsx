@@ -27,6 +27,10 @@ interface Toast {
   href?: string
   /** The link's text. It must say where it goes; "Open" alone is what a toast is replacing. */
   hrefLabel?: string
+  /** An action the toast offers on the change it reports (the library's Undo of a move): its label
+   *  and what it runs, then the toast goes. Host code only: a function cannot cross into the event
+   *  from a contributed app's frame, so `notify()` from an app never carries one. */
+  action?: { label: string; run: () => void }
   /** The message is someone else's words (a notification's), so it renders as a line, and its
    *  announcement is the line as plain text. The app's own `notify()` sentences are not markdown
    *  and stay the text they are. */
@@ -128,7 +132,9 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
       const href = String(d.href ?? '')
       const linked = href.startsWith('#/') ? href : ''
       const hrefLabel = String(d.hrefLabel ?? '').trim() || 'Open'
-      setToasts((prev) => [...prev, { id, message, level, href: linked || undefined, hrefLabel, markdown: d.markdown === true }])
+      const action = d.action && typeof d.action.run === 'function' && String(d.action.label ?? '').trim()
+        ? { label: String(d.action.label).trim(), run: d.action.run as () => void } : undefined
+      setToasts((prev) => [...prev, { id, message, level, href: linked || undefined, hrefLabel, action, markdown: d.markdown === true }])
       clocks.current.set(id, { left: TOAST_MS, endsAt: 0 })
       if (!heldNow.current) run(id)
     }
@@ -210,6 +216,14 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
                   <div className="mt-1">
                     <TextLink href={t.href} size="xs" ink="emphasis" aria-label={`${t.hrefLabel}: ${spoken}`}>
                       {t.hrefLabel}
+                    </TextLink>
+                  </div>
+                )}
+                {t.action && (
+                  <div className="mt-1">
+                    <TextLink size="xs" ink="emphasis" aria-label={`${t.action.label}: ${spoken}`}
+                      onClick={() => { t.action!.run(); dismiss(t.id) }}>
+                      {t.action.label}
                     </TextLink>
                   </div>
                 )}

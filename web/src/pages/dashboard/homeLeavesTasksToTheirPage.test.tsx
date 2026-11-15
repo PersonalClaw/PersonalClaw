@@ -7,7 +7,7 @@ import type { BrowseStatus, ComputerUseLiveView } from '../../lib/api'
 //
 // Tasks are what agents keep their goals in and track them by. The owner works with the agents, not
 // with their tasks, so Home's Overview has no Tasks band: tasks keep their own page (`#/tasks`, and
-// each project's). The Overview's bands run, top to bottom: Your agents today, Pinned artifacts,
+// each project's). The Overview's bands run, top to bottom: Your agents today, Shown on Home,
 // the live views while something is live, Discover, and Recent activity last.
 //
 // The bands' contents are stubs: what is pinned is which bands the Overview draws, and in what order.
@@ -55,11 +55,11 @@ beforeEach(() => {
 })
 
 describe("Home's Overview", () => {
-  it('🔴 runs Your agents today, Pinned artifacts, Discover, then Recent activity, with no Tasks band', async () => {
+  it('🔴 runs Your agents today, Shown on Home, Discover, then Recent activity, with no Tasks band', async () => {
     render(<HomeOverview {...route} />)
     await waitFor(() => expect(browseStatus).toHaveBeenCalled())
 
-    expect(bands()).toEqual(['Your agents today', 'Pinned artifacts', 'Discover', 'Recent activity'])
+    expect(bands()).toEqual(['Your agents today', 'Shown on Home', 'Discover', 'Recent activity'])
     expect(screen.queryByRole('button', { name: /new task/i })).toBeNull()
     expect(document.querySelector('a[href^="#/tasks"]')).toBeNull()
   })
@@ -72,7 +72,7 @@ describe("Home's Overview", () => {
     await screen.findByRole('heading', { name: 'Desktop live view' })
 
     expect(bands()).toEqual([
-      'Your agents today', 'Pinned artifacts', 'Desktop live view', 'Browse live view', 'Discover', 'Recent activity',
+      'Your agents today', 'Shown on Home', 'Desktop live view', 'Browse live view', 'Discover', 'Recent activity',
     ])
   })
 })

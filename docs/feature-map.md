@@ -12,17 +12,17 @@ file and the app differ.
 | Route | Opens | In the sidebar | Palette | Linked from |
 |---|---|---|---|---|
 | `#/dashboard` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 10 more |
-| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 15 more |
-| `#/projects` | Projects | Projects | Projects | `app/paletteProjectRows.tsx`, `pages/code/CodeSection.tsx`, `pages/tasks/TasksSection.tsx`, `ui/ProjectChip.tsx` |
-| `#/library` | Library | Library | Library | none |
-| `#/knowledge` | Knowledge | Library, its Knowledge tab | Knowledge | `lib/rowSubject.ts`, `pages/discover/DiscoverPage.tsx`, `pages/loop/LoopComposer.tsx`, `pages/schedule/ScheduleDetail.tsx` and 5 more |
+| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 18 more |
+| `#/projects` | Projects | Projects | Projects | `app/paletteProjectRows.tsx`, `pages/code/CodeSection.tsx`, `pages/library/LibraryPage.tsx`, `pages/library/libraryActions.tsx` and 3 more |
+| `#/library` | Library | Library | Follow a feed or folder (Action); Library; Library: feeds, intents and reports (Action); New intent (Action); Schedule a report (Action) | `app/itemBack.ts`, `pages/knowledge/KnowledgeSection.tsx`, `pages/knowledge/ReportsPage.tsx`, `pages/schedule/ScheduleDetail.tsx` and 1 more |
+| `#/knowledge` | Library | Library | Follow a feed or folder (Action); Library; Library: feeds, intents and reports (Action); New intent (Action); Schedule a report (Action) | `app/itemBack.ts`, `pages/knowledge/KnowledgeSection.tsx`, `pages/knowledge/ReportsPage.tsx`, `pages/schedule/ScheduleDetail.tsx` and 1 more |
 | `#/memory` | Memory | Library, its Memory tab | Memory | `pages/chat/chatTypes.ts`, `pages/chat/composer/ChatComposer.tsx`, `pages/chat/inspector/sections.tsx`, `pages/chat/transcript/RecallLine.tsx` and 5 more |
 | `#/tasks` | All tasks | not in the sidebar | All tasks | `design/tokenRegistry.ts`, `pages/agents/AgentCreatePage.tsx`, `pages/companion/CompanionSections.tsx`, `pages/loops/LoopsSection.tsx` and 8 more |
 | `#/inbox` | Inbox | Platform › Inbox | Inbox; Notifications | `app/approvalDestination.ts`, `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/NeedCards.tsx` and 6 more |
 | `#/automations` | Automations | Platform › Automations | Automations | `pages/schedule/ScheduleDetail.tsx`, `pages/triggers/TriggersSection.tsx` |
 | `#/triggers` | Automations | Automations, its Automations tab | none | `lib/api.ts`, `pages/automations/automationTabs.ts`, `pages/chat/ManualAutomationCard.tsx`, `pages/dashboard/widgets/ScheduleWidget.tsx` and 5 more |
 | `#/files` | Files | Library, its Files tab | Files | `pages/artifacts/ArtifactsSection.tsx`, `pages/loops/LoopCockpitPage.tsx`, `pages/projects/ProjectsSection.tsx`, `ui/TopBar.tsx` |
-| `#/artifacts` | Artifacts | Library, its Artifacts tab | Artifacts | `pages/chat/history/useChatHistory.ts`, `pages/chat/transcript/TurnArtifacts.tsx`, `pages/dashboard/PinnedTiles.tsx`, `pages/dashboard/widgets/PinnedArtifacts.tsx` and 7 more |
+| `#/artifacts` | Library | Library | Follow a feed or folder (Action); Library; Library: feeds, intents and reports (Action); New intent (Action); Schedule a report (Action) | `app/itemBack.ts`, `pages/knowledge/KnowledgeSection.tsx`, `pages/knowledge/ReportsPage.tsx`, `pages/schedule/ScheduleDetail.tsx` and 1 more |
 | `#/terminal` | Terminal | not in the sidebar | Terminal | none |
 | `#/capabilities` | Capabilities | Platform › Capabilities | Capabilities | none |
 | `#/agents` | Agents | Capabilities, its Agents tab | Agents | `pages/chat/RoomMembersPanel.tsx`, `pages/dashboard/agents/AgentDay.tsx`, `pages/settings/PacksPanel.tsx` |
@@ -32,7 +32,7 @@ file and the app differ.
 | `#/prompts` | Prompts | Capabilities, its Prompts tab | Prompts | `pages/tasks/TasksListPage.tsx`, `ui/forms.tsx` |
 | `#/workflows` | Workflows | Automations, its Workflows tab | Workflows | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/data/keys.ts` and 10 more |
 | `#/apps` | Apps | Capabilities, its Apps tab | Apps; Store | `pages/settings/AppsPanel.tsx`, `pages/settings/SearchPanel.tsx`, `pages/settings/SenderTrustPanel.tsx`, `pages/settings/VoiceProfilesSection.tsx` and 1 more |
-| `#/settings` | Settings | Settings | Open Settings (Action); Settings | `app/Onboarding.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/openDuringSetup.ts`, `design/tokenLintRule.ts` and 36 more |
+| `#/settings` | Settings | Settings | Open Settings (Action); Settings | `app/Onboarding.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/openDuringSetup.ts`, `design/tokenLintRule.ts` and 38 more |
 | `#/notifications` | Inbox | Platform › Inbox | Inbox; Notifications | `app/approvalDestination.ts`, `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/NeedCards.tsx` and 6 more |
 | `#/discover` | Discover | not in the sidebar | Discover | `pages/dashboard/widgets/Discover.tsx` |
 | `#/mission-control` | Needs you | not in the sidebar | Needs you | `pages/buddy/cardFixtures.ts`, `pages/buddy/liveCard.ts`, `pages/buddy/stageCard.ts`, `pages/dashboard/DashboardPage.tsx` and 5 more |

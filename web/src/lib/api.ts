@@ -1940,6 +1940,10 @@ export type KnowledgeConflict = {
   prefer: 'left' | 'right' | ''
   detail: string
   confidence: number
+  /** The pair's id, the same whichever item holds the entry: a hash of the two item ids. */
+  id?: string
+  /** The owner's call on the pair: the id of the item to go by, `both`, or "" for none. */
+  choice?: string
 }
 
 /** One typed edge between knowledge ITEMS (`item_relations`), distinct from the
@@ -1965,6 +1969,8 @@ export interface KnowledgeTag {
   parent_id: number | null
   parent_name: string | null
   usage_count: number
+  /** The reports whose scope reads it, by naming it or one of its ancestors. */
+  reports?: { id: string; name: string }[]
 }
 /** Curation ops the bulk endpoint accepts. `delete` is deliberately not one of them:
  *  every op here is reversible, and an irreversible action beside them would be one
@@ -4767,6 +4773,17 @@ export interface LibraryResponse {
   capped?: boolean
 }
 
+/** `POST /api/library/bulk`'s body: its operation, the refs, and the operation's own argument. */
+export type LibraryBulkBody =
+  | { op: 'pin' | 'favorite'; refs: string[]; value?: boolean }
+  | { op: 'archive' | 'restore'; refs: string[] }
+  | { op: 'read_state'; refs: string[]; state: 'unread' | 'reading' | 'read' }
+  | { op: 'project'; refs: string[]; project_id: string }
+  | { op: 'collect' | 'uncollect'; refs: string[]; collection_id: string }
+  | { op: 'delete'; refs: string[]; expect: number }
+/** One ref's answer: done, or why not (`not_found`, `not_applicable`, `failed`). */
+export interface LibraryBulkResult { ref: string; ok: boolean; error?: string }
+
 /** `GET /api/library`'s keys. A multi-valued key takes several values. */
 export interface LibraryParams {
   q?: string
@@ -4805,6 +4822,9 @@ export type KnowledgeItemEdit = Record<string, unknown> & {
 export interface ResearchScope {
   tags: string[]
   window_secs: number
+  /** An intent whose findings this scope reads in place of tags (a report written from an
+   *  intent's findings); absent or "" for a tag scope. */
+  intent?: string
 }
 
 /** A scheduled research report definition.
@@ -4847,12 +4867,16 @@ export interface ResearchReport {
    *  window, what it may look at while writing, and that it does not search the web. Worded by
    *  the server from the same scope a run reads. */
   sources_shown: string
+  /** A run holds the report's claim now. */
+  running?: boolean
+  /** The names of its scopes that were deleted and match no tag now. */
+  missing_tags?: string[]
 }
 
 export type ResearchReportInput = Omit<
   ResearchReport,
   'id' | 'created_ts' | 'last_run_ts' | 'last_status' | 'last_error' | 'last_result' | 'watermark_ts'
-  | 'schedule_shown' | 'sources_shown'
+  | 'schedule_shown' | 'sources_shown' | 'running' | 'missing_tags'
 >
 
 /** What a report's Run now answers once the run is over: whether it ran, what it did (`outcome`:
@@ -4912,6 +4936,8 @@ export interface KnowledgeIntent {
   id: string; goal?: string; enabled?: boolean
   enabled_for?: string[]; propose_skill?: boolean
   outcome_count?: number  // recorded outcomes (list badge)
+  /** When it last kept a finding (ISO), "" for never. */
+  last_found_at?: string
   /** The revision of the stored RECORD (never `outcome_count`), on every read of one — what an
    *  edit, which replaces the whole record, names as its base (`saveKnowledgeIntent`). */
   revision?: string
@@ -5052,6 +5078,8 @@ export interface SourcePreviewResult {
 export interface IntentOutcomeField { name: string; type: string; value: unknown }
 /** An intent's match against one item, stored BY VALUE (survives item deletion —
  *  item_id goes null but the takeaway + fields persist). */
+/** An intent's background run over the saved items. */
+export interface IntentRun { status: 'running' | 'done' | 'stopped' | 'failed'; done: number; total: number; kept: number }
 export interface IntentOutcome {
   id: string; intent_id: string; intent_name?: string
   item_id: string | null; item_title?: string
@@ -10697,6 +10725,11 @@ export const api = {
     const q = qs.toString()
     return get<LibraryResponse>(`/api/library${q ? `?${q}` : ''}`)
   },
+  /** One operation on many things across both stores (`POST /api/library/bulk`), answered for each
+   *  ref in order, never stopping at the first that fails: the one write path for Pin, Archive,
+   *  Mark as read, a project and a collection, on a row, the preview or the bulk bar. A delete
+   *  names `expect`, the number of things its confirm showed. */
+  libraryBulk: (body: LibraryBulkBody) => post<{ op: string; results: LibraryBulkResult[] }>('/api/library/bulk', body),
   // ── Lexicon / Vocabulary ──
   lexiconTerms: (opts: { source?: string; search?: string } = {}) =>
     get<{ terms: LexiconTerm[]; total: number }>(
@@ -10779,9 +10812,34 @@ export const api = {
   saveKnowledgeIntent: (record: KnowledgeIntentRecord, base: string) =>
     post<{ intents: KnowledgeIntent[]; id: string }>('/api/knowledge/intents', record, basedOn(base)),
   deleteKnowledgeIntent: (id: string) => del(`/api/knowledge/intents/${encodeURIComponent(id)}`),
+  /** How many saved items a run of an intent over `enabledFor` would check (`GET …/intents/candidates`):
+   *  the number "Also check the N items…" says, never the library's total. */
+  intentCandidates: (enabledFor: string[] = []) =>
+    get<{ total: number }>(`/api/knowledge/intents/candidates${enabledFor.length ? `?enabled_for=${encodeURIComponent(enabledFor.join(','))}` : ''}`),
+  /** Check the saved items for an intent in the background (`POST …/intents/{id}/runs`, 202 `{total}`);
+   *  409 `already_running`, and 409 `paused` for a paused intent. */
+  startIntentRun: (id: string) => post<{ total: number }>(`/api/knowledge/intents/${encodeURIComponent(id)}/runs`, {}),
+  /** The intent's latest background run: `running`, `done`, `stopped` or `failed`; 404 `no_run`. */
+  intentRun: (id: string) => get<IntentRun>(`/api/knowledge/intents/${encodeURIComponent(id)}/runs/current`),
+  /** Stop the run, keeping what it found. */
+  stopIntentRun: (id: string) => del<IntentRun>(`/api/knowledge/intents/${encodeURIComponent(id)}/runs/current`),
+  /** Clear the findings an intent kept; the intent keeps looking. */
+  clearIntentFindings: (id: string) => del(`/api/knowledge/intents/${encodeURIComponent(id)}/outcomes`),
+  /** Remove a feed or folder, keeping what it added. The artifacts' own mirror is refused. */
+  deleteKnowledgeSource: (id: string) => del(`/api/knowledge/sources/${encodeURIComponent(id)}`),
+  /** Check a feed now, in the background; 409 `already_running`. */
+  checkKnowledgeSource: (id: string) => post<Record<string, unknown>>(`/api/knowledge/sources/${encodeURIComponent(id)}/check`, {}),
+  /** Record which of two disagreeing items to go by: one's id, or `both`. */
+  decideKnowledgeConflict: (id: string, choice: string) =>
+    post<Record<string, unknown>>(`/api/knowledge/conflicts/${encodeURIComponent(id)}/decision`, { choice }),
   // Everything an intent has gathered (outcomes link back to source items by id).
   knowledgeIntentOutcomes: (id: string) =>
     get<{ intent: KnowledgeIntent; outcomes: IntentOutcome[] }>(`/api/knowledge/intents/${encodeURIComponent(id)}/outcomes`),
+  /** One page of an intent's findings, newest first: `before` is where the next page starts,
+   *  "" after the last. */
+  knowledgeIntentOutcomesPage: (id: string, limit: number, before = '') =>
+    get<{ intent: KnowledgeIntent; outcomes: IntentOutcome[]; before: string }>(
+      `/api/knowledge/intents/${encodeURIComponent(id)}/outcomes?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
   // Retroactively run an intent against all already-ingested items.
   runKnowledgeIntent: (id: string) =>
     post<{ recorded: number; matched: number; new: number; errors: number; evaluated: number; outcomes: IntentOutcome[] }>(`/api/knowledge/intents/${encodeURIComponent(id)}/run`, {}),
@@ -10969,13 +11027,24 @@ export const api = {
     file: File,
     onProgress?: (p: UploadProgress) => void,
     signal?: AbortSignal,
+    /** The project it is filed in. The single post names it; a chunked upload, whose route
+     *  takes none, files the new item afterwards through the library's one write path. */
+    projectId?: string,
   ): Promise<{ item_id?: string; type?: string; status: string; deduped?: boolean }> => {
     const { needsChunked, chunkedUpload } = await import('./chunkedUpload')
     if (await needsChunked(file)) {
-      return chunkedUpload(file, { target: 'knowledge', onProgress, signal })
+      const done: { item_id?: string; type?: string; status: string; deduped?: boolean } = await chunkedUpload(file, { target: 'knowledge', onProgress, signal })
+      if (projectId && done.item_id && !done.deduped) {
+        // The file is in the library either way: a failed filing says so rather than reading as a
+        // failed upload.
+        await post<{ op: string; results: LibraryBulkResult[] }>('/api/library/bulk', { op: 'project', refs: [`knowledge:${done.item_id}`], project_id: projectId })
+          .catch(() => { throw new Error(`Added “${file.name}” to your library, but couldn't file it in the project.`) })
+      }
+      return done
     }
     const fd = new FormData(); fd.append('file', file)
-    const r = await pairFetch('/api/knowledge/ingest', { method: 'POST', headers: { ...SK }, body: fd, signal })
+    const at = projectId ? `/api/knowledge/ingest?project_id=${encodeURIComponent(projectId)}` : '/api/knowledge/ingest'
+    const r = await pairFetch(at, { method: 'POST', headers: { ...SK }, body: fd, signal })
     if (!r.ok) throw new Error(await errText(r))
     return r.json()
   },

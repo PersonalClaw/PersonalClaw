@@ -219,7 +219,7 @@ describe('SquareIconButton asks the right question of the right caller', () => {
   })
 })
 
-describe('the SquareIconButton state family is classified, all fourteen of it', () => {
+describe('the SquareIconButton state family is classified, all fifteen of it', () => {
   const SRC = join(process.cwd(), 'src')
   const walkTsx = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
 
@@ -247,7 +247,10 @@ describe('the SquareIconButton state family is classified, all fourteen of it', 
     return out
   }
 
-  it('is 8 disclosures and 6 toggles — and nothing unclassified', () => {
+  it('is 9 disclosures and 6 toggles — and nothing unclassified', () => {
+    // 9, not 8: a library row's "…" joined the family. It is a disclosure because it opens the
+    // row's menu below it, as a project card's does.
+    //
     // 8, not 7: a project card's "…" on the Projects list joined the family. It is a disclosure
     // because it opens the card's menu below it.
     //
@@ -261,8 +264,8 @@ describe('the SquareIconButton state family is classified, all fourteen of it', 
     // 6 toggles, not 5: the per-server trust in an MCP server's read-only labels joined it beside
     // that grant, for the same reason: whether the labels are trusted is the whole answer.
     const all = stateBearing()
-    expect(all.length, 'the state-bearing population').toBe(14)
-    expect(all.filter((x) => x.kind === 'disclosure').length, 'disclosures').toBe(8)
+    expect(all.length, 'the state-bearing population').toBe(15)
+    expect(all.filter((x) => x.kind === 'disclosure').length, 'disclosures').toBe(9)
     expect(all.filter((x) => x.kind === 'toggle').length, 'toggles').toBe(6)
   })
 
@@ -293,6 +296,7 @@ describe('the SquareIconButton state family is classified, all fourteen of it', 
       ['pages/chat/history/ChatHistoryPage.tsx', /ariaExpanded=\{open\}/],
       ['ui/content/ContentSurface.tsx', /ariaExpanded=\{exportOpen\}/],
       ['pages/projects/ProjectList.tsx', /ariaExpanded=\{open\}/],
+      ['ui/LibraryRow.tsx', /ariaExpanded=\{open\}/],
     ]
     for (const [rel, re] of pairs) {
       expect(readSource(join(SRC, rel)), `${rel} must bind ${re}`).toMatch(re)

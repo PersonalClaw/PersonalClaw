@@ -74,6 +74,20 @@ const EXEMPT: Record<string, string> = {
   // install that restarts: the safe answer, so no caller decides what an unknown kind means. The
   // Updates panel reads the same key and says a failed read itself.
   'app/applyUpdate.ts:useInstallKind': 'an unread kind is undefined — the update then asks first, the safe answer',
+  // An item page's back control names the project it returns to from the shell's projects read.
+  // Unread or failed, it says "Project" and still goes back there; `ui/loadErrorCensus.test.ts`
+  // budgets the read as a keep.
+  'app/itemBack.ts:useItemBack': 'an unread project name says "Project" — the back control still goes there',
+  // Not an adapter: it returns `useQuery`'s own result, so the library page reads the list's
+  // `error` and `status` as the read's own.
+  'pages/library/useLibrary.ts:useLibrary': "returns useQuery's own result, error and status included",
+  // The library's intents and reports, which add a findings count and a report's schedule to a row:
+  // a failed read leaves that part out and the row still draws, while the list's own read says when
+  // the gateway fails. Budgeted as keeps in `ui/loadErrorCensus.test.ts`.
+  'pages/library/useLibrary.ts:useLibraryContext': "a failed read leaves a row's count or schedule out — the list's own read reports",
+  // Which write-up each report wrote. Unread, a report row knows no write-up yet, as before its
+  // first one; the list's own read says when the gateway fails.
+  'pages/library/useLibrary.ts:useWriteUps': "unread, a report knows no write-up yet — the list's own read reports",
 }
 
 describe('an adapter hook re-exposes useQuery\'s error', () => {
