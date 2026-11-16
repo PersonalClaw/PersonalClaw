@@ -19,6 +19,7 @@ on a thread that is not the loop's. The answers stay what they were.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib.abc
 import importlib.machinery
 import json
@@ -26,6 +27,7 @@ import sys
 import threading
 import time
 import types
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -170,6 +172,70 @@ def test_the_usage_fold_leaves_the_gateway_answering_and_refreshes_one_at_a_time
     assert [json.loads(r.body) for r in responses] == [expected, expected]
 
 
+def _sdk_modules() -> dict[str, Any]:
+    """``openai`` and everything under it that ``sys.modules`` holds now."""
+    return {k: m for k, m in sys.modules.items() if k == "openai" or k.startswith("openai.")}
+
+
+@contextlib.contextmanager
+def _openai_unloaded() -> Iterator[None]:
+    """``openai`` (and anything under it) out of ``sys.modules`` inside, and ``sys.modules``
+    exactly as it was afterwards: absent if it was absent, the same module objects if it was
+    loaded. The SDK tests import a stand-in for the SDK, and the stand-in must not outlive them: a
+    later test on the same worker that imports ``openai`` would get the empty stand-in (``module
+    'openai' has no attribute 'AsyncOpenAI'``). Deleting the entry with ``monkeypatch`` restores
+    only what it deleted, so when the SDK had not been imported before, the stand-in stayed."""
+    before = _sdk_modules()
+    for name in before:
+        del sys.modules[name]
+    try:
+        yield
+    finally:
+        for name in _sdk_modules():
+            del sys.modules[name]
+        sys.modules.update(before)
+
+
+@pytest.fixture
+def _no_openai_loaded() -> Iterator[None]:
+    with _openai_unloaded():
+        yield
+
+
+def _as_it_was(saved: dict[str, Any]) -> None:
+    """Put ``sys.modules``' SDK entries back to *saved*, without the helper under test."""
+    for name in list(_sdk_modules()):
+        del sys.modules[name]
+    sys.modules.update(saved)
+
+
+def test_a_stand_in_sdk_is_gone_after_a_test_that_found_no_sdk_loaded():
+    """🔴 Red before: the stand-in stayed in ``sys.modules`` for every later test on the worker."""
+    saved = _sdk_modules()
+    _as_it_was({})
+    try:
+        with _openai_unloaded():
+            sys.modules["openai"] = types.ModuleType("openai")
+        assert "openai" not in sys.modules, "the stand-in SDK outlived its test"
+    finally:
+        _as_it_was(saved)
+
+
+def test_a_loaded_sdk_is_the_same_module_again_after_the_test():
+    """The SDK a test found loaded (and its submodules) is back afterwards, the same objects."""
+    saved = _sdk_modules()
+    sdk, sub = types.ModuleType("openai"), types.ModuleType("openai.types")
+    _as_it_was({"openai": sdk, "openai.types": sub})
+    try:
+        with _openai_unloaded():
+            assert "openai" not in sys.modules and "openai.types" not in sys.modules
+            sys.modules["openai"] = types.ModuleType("openai")
+        assert sys.modules.get("openai") is sdk, "the loaded SDK was not put back"
+        assert sys.modules.get("openai.types") is sub, "a loaded submodule was not put back"
+    finally:
+        _as_it_was(saved)
+
+
 class _SlowSDK(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     """Finds ``openai`` and takes as long as the real package's first import to load it."""
 
@@ -190,15 +256,14 @@ class _SlowSDK(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 
 
 def test_the_first_models_list_imports_the_image_sdk_off_the_event_loop(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, _no_openai_loaded: None
 ):
     """🔴 Red before: an OpenAI-family image provider imported the ``openai`` package on the event
     loop to say it can make images, and healthz waited the whole import behind it."""
     sdk = _SlowSDK()
-    monkeypatch.delitem(sys.modules, "openai", raising=False)
     monkeypatch.setattr(sys, "meta_path", [sdk, *sys.meta_path])
     provider = OpenAIImageProvider(
-        provider_name="openai", provider_type="openai", api_key="sk-test"
+        provider_name="openai", provider_type="openai", api_key="fake-openai-test"
     )
 
     available, slowest, answered = asyncio.run(_while_healthz_answers(provider.is_available()))
@@ -210,7 +275,9 @@ def test_the_first_models_list_imports_the_image_sdk_off_the_event_loop(
     assert answered >= 3
 
 
-def test_an_image_provider_without_the_sdk_still_says_so(monkeypatch: pytest.MonkeyPatch):
+def test_an_image_provider_without_the_sdk_still_says_so(
+    monkeypatch: pytest.MonkeyPatch, _no_openai_loaded: None
+):
     """The import moved; what a missing package means did not: the provider is not available."""
 
     class _Missing(importlib.abc.MetaPathFinder):
@@ -219,10 +286,9 @@ def test_an_image_provider_without_the_sdk_still_says_so(monkeypatch: pytest.Mon
                 raise ModuleNotFoundError("No module named 'openai'", name="openai")
             return None
 
-    monkeypatch.delitem(sys.modules, "openai", raising=False)
     monkeypatch.setattr(sys, "meta_path", [_Missing(), *sys.meta_path])
     provider = OpenAIImageProvider(
-        provider_name="openai", provider_type="openai", api_key="sk-test"
+        provider_name="openai", provider_type="openai", api_key="fake-openai-test"
     )
 
     assert asyncio.run(provider.is_available()) is False
