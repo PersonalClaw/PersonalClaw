@@ -77,16 +77,16 @@
             - /url: "#/inbox?open=ib-e#e-#"
             - text: Open it in the Inbox
   - region "bash":
+    - text: Permission needed Automation “Nightly”
     - button "Close"
     - heading "bash" [level=#]
     - group "Permission needed to run bash":
-      - text: Permission needed Destructive From automation “Nightly”
       - paragraph: bash(rm -rf build)
       - paragraph: Clear the build folder
       - button "Allow bash — automation “Nightly” — Clear the build folder": Allow
       - button "Deny bash — automation “Nightly” — Clear the build folder": Deny
-    - term: Asked by
-    - definition: Automation “Nightly”
+    - heading "Where it came from" [level=#]
+    - paragraph: Automation “Nightly”
     - term: Asked
     - definition: #:# <am/pm>
 - contentinfo "Status":
