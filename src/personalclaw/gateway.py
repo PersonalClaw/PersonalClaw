@@ -5546,6 +5546,9 @@ class GatewayOrchestrator:
         link is made. The startup links of earlier starts that no browser opened end first.
         """
         retire_startup_links()
+        from personalclaw.dashboard.scoped_sessions import end_idle_sessions
+
+        end_idle_sessions()
         host = resolve_dashboard_host(self._local_only, self._configured_host)
         base_url = f"http://{host}:{self._dashboard_port}"
         shown = _shown_at_a_terminal()

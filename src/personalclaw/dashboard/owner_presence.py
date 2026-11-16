@@ -99,7 +99,17 @@ def require_owner_presence(
     owner's password (and code) is the one proof accepted — the route asks for the credential
     itself, so no session, however recent, stands in for it. Every outcome is written to the
     security log, the refusals included.
+
+    An automation client's session (a scoped pairing, ``device_scopes``) is never the owner,
+    however recently it paired, and whatever credential it sends: it gets the uniform refusal
+    every route outside its scope gives, which names its scope and never the route.
     """
+    scope = _device_scope(request)
+    if scope and not _auth_is_off(request):
+        from personalclaw.dashboard.device_scopes import refused
+
+        _audit(request, action, "denied", error="a scoped session is not the owner")
+        return refused(scope)
     if identity is not None:
         return _check_identity(request, action, identity)
     proof = presence_proof(request)
@@ -113,7 +123,7 @@ def presence_proof(request: web.Request) -> str:
     """How *request* shows the owner is here now (a ``PROOF_*``), or ``""`` when it does not."""
     if _auth_is_off(request):
         return PROOF_AUTH_OFF
-    if request.get("app"):
+    if request.get("app") or _device_scope(request):
         return ""
     if _local_secret_presented(request):
         return PROOF_LOCAL_SECRET
@@ -313,6 +323,17 @@ def _window_of_this_start(request: web.Request, record: Any) -> bool:
     if not is_loopback(request.remote or ""):
         return False
     return hmac.compare_digest(record.started_by, started_by_digest(secret))
+
+
+def _device_scope(request: web.Request) -> tuple[str, ...]:
+    """The scope of the automation client *request* came from, or ``()``: what the sign-in
+    check recorded, else what the store holds for the session that authorized it (the
+    local-network bypass names a session without validating it as the check does)."""
+    scope = tuple(request.get("device_scope") or ())
+    if scope:
+        return scope
+    record = _session_record(request)
+    return tuple(getattr(record, "scope", ()) or ()) if record is not None else ()
 
 
 def _session_record(request: web.Request) -> Any:

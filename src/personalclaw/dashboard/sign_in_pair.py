@@ -32,6 +32,7 @@ import json
 import re
 from typing import Any
 
+from personalclaw.dashboard import hmac_domains
 from personalclaw.dashboard.socket_protocols import PAIR_PROTOCOL_PREFIX
 
 #: The header every request on a bound session carries the pair in.
@@ -93,7 +94,7 @@ def is_pair(value: object) -> bool:
 
 def pair_for(secret: bytes, nonce: str) -> str:
     """The pair of the session *nonce* names, under the signing key *secret*."""
-    digest = hmac.new(secret, b"pair\0" + nonce.encode(), hashlib.sha256).digest()
+    digest = hmac.new(secret, hmac_domains.PAIR + nonce.encode(), hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 
 

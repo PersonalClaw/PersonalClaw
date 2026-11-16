@@ -262,6 +262,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "device_pair_expired": "The pairing code has expired.",
     "device_pair_origin_rejected": "The request origin is not allowed to pair a device.",
     "device_pair_locked_out": "Too many failed pairing attempts; try again later.",
+    "device_pair_scope_invalid": (
+        "An automation client's pairing code can be made only for the scopes listed."
+    ),
+    "device_pair_lifetime_invalid": "An automation client's sign-in lasts 1 to 90 days.",
+    "device_pair_scope_unbindable": (
+        "An automation client can't be paired while sign-in checks are off on this gateway."
+    ),
+    # ── an automation client's session (dashboard/device_scopes.py) ──
+    "device_scope_refused": "This automation client's scope doesn't include this.",
     "device_unknown": "No such paired device.",
     # Settings → Devices → Integrations: the token was already revoked, or was replaced.
     "integration_unknown": (

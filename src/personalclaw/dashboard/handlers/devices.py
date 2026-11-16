@@ -51,6 +51,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.dashboard import device_scopes
 from personalclaw.dashboard.handlers.page_shell import page_document
 from personalclaw.dashboard.origin import check_origin
 from personalclaw.dashboard.owner_presence import ACTION_PAIR_DEVICE, require_owner_presence
@@ -91,6 +92,11 @@ ERR_ORIGIN = "device_pair_origin_rejected"
 ERR_LOCKED_OUT = "device_pair_locked_out"
 ERR_UNKNOWN_DEVICE = "device_unknown"
 ERR_UNKNOWN_INTEGRATION = "integration_unknown"
+#: A scoped pairing code asked for a scope it can't be made for, a lifetime out of range, or
+#: on a gateway where nothing would hold the session to its scope.
+ERR_SCOPE_INVALID = "device_pair_scope_invalid"
+ERR_LIFETIME_INVALID = "device_pair_lifetime_invalid"
+ERR_SCOPE_UNBINDABLE = "device_pair_scope_unbindable"
 
 #: The user id a paired device authenticates as. Distinct from `enrolled-device` so the auth
 #: log says which door was used.
@@ -164,6 +170,10 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
     phone in too" path — and the code redeems for a device sign-in of its own, which outlives the
     session that asked, so it needs a recent sign-in, not just a live one (``owner_presence``).
     The code is returned ONCE; nothing can read it back, because the store holds only its hash.
+
+    With ``scope`` (a list from ``device_scopes.GRANTABLE``) and ``days`` (1 to 90, 30 unless
+    given), the code is an automation client's: it redeems for a session that reaches only that
+    scope and lasts that long (:func:`_scoped_code_asked`).
     """
     if not check_origin(request):
         _audit("device_pair_started", "denied", error="origin rejected")
@@ -176,8 +186,12 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
 
     body = await json_object_body(request)
     label = sanitize_device_name(body.get("label", ""))
+    asked = _scoped_code_asked(request, body)
+    if isinstance(asked, web.Response):
+        return asked
+    scope, lifetime_secs = asked
 
-    code, expires_at = pairing.issue_code(label=label)
+    code, expires_at = pairing.issue_code(label=label, scope=scope, lifetime_secs=lifetime_secs)
     formatted = pairing.format_code(code)
     base = _pair_base_url(request)
     # The QR payload: a single URL a phone camera can act on. The code rides in it because a
@@ -186,15 +200,71 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
     # scanning phone needs the LAN address, and a browser-composed URL hands it `127.0.0.1`.
     pairing_url = f"{base}/pair?code={formatted}" if base else ""
 
-    _audit("device_pair_started", "ok", resources=f"label={label}" if label else "")
+    days = lifetime_secs // 86400
+    described = [f"label={label}"] if label else []
+    if scope:
+        described += [f"scope={','.join(scope)}", f"lifetime_days={days}"]
+    _audit("device_pair_started", "ok", resources=" ".join(described))
     return web.json_response(
         {
             "code": formatted,
             "pairing_url": pairing_url,
             "expires_at": expires_at,
             "expires_in": pairing.PAIR_CODE_TTL_SECS,
+            # An automation client's code says what its session will hold, and for how long.
+            **({"scope": list(scope), "lifetime_days": days} if scope else {}),
         }
     )
+
+
+def _scoped_code_asked(
+    request: web.Request, body: dict[str, Any]
+) -> tuple[tuple[str, ...], int] | web.Response:
+    """``(scope, lifetime_secs)`` for the code *body* asks for — ``((), 0)`` for an unscoped
+    one — or the refusal to send instead.
+
+    Refused: a scope outside :data:`device_scopes.GRANTABLE`, or not a non-empty list
+    (``device_pair_scope_invalid``); a lifetime that isn't a whole number of days from 1 to 90
+    (``device_pair_lifetime_invalid``); and a scope on a gateway where nothing would hold the
+    session to it, with authentication off or the local-network bypass on
+    (``device_pair_scope_unbindable``).
+    """
+    if "scope" not in body:
+        if "days" not in body:
+            return (), 0
+        # A lifetime is a scoped pairing's: sent alone it is refused, never dropped.
+        _audit("device_pair_started", "denied", error="days without a scope")
+        return json_error(
+            ERR_LIFETIME_INVALID, message="days applies only to a scoped pairing.", status=400
+        )
+    try:
+        scope = device_scopes.normalize_scope(body.get("scope"))
+    except ValueError:
+        scope = ()
+    if not scope or any(name not in device_scopes.GRANTABLE for name in scope):
+        _audit("device_pair_started", "denied", error="scope outside what a code may hold")
+        return json_error(ERR_SCOPE_INVALID, status=400)
+    days = body.get("days", device_scopes.DEFAULT_LIFETIME_DAYS)
+    if (
+        not isinstance(days, int)
+        or isinstance(days, bool)
+        or not device_scopes.MIN_LIFETIME_DAYS <= days <= device_scopes.MAX_LIFETIME_DAYS
+    ):
+        _audit("device_pair_started", "denied", error="lifetime out of range")
+        return json_error(ERR_LIFETIME_INVALID, status=400)
+    if _scope_unbindable(request):
+        _audit("device_pair_started", "denied", error="no sign-in check would hold the scope")
+        return json_error(ERR_SCOPE_UNBINDABLE, status=400)
+    return scope, days * 86400
+
+
+def _scope_unbindable(request: web.Request) -> bool:
+    """Whether this gateway admits requests without checking their session, so a scoped
+    session's scope would hold nothing: authentication off, or the local-network bypass armed."""
+    from personalclaw.dashboard.origin import auth_is_off, local_network_bypass_enabled
+
+    cfg = request.app.get("auth_cfg")
+    return local_network_bypass_enabled() or (cfg is not None and auth_is_off(cfg))
 
 
 #: The phone's own surface: approvals first, then what is running, its tasks and its inbox, with
@@ -203,13 +273,16 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
 COMPANION_HOME = "/#/companion"
 
 
-def landing_for(kind: str) -> str:
-    """Where a device that has just signed in by pairing lands: a phone on the companion, any
-    other device on the dashboard.
+def landing_for(kind: str, *, scoped: bool = False) -> str:
+    """Where a device that has just signed in by pairing lands: an automation client on the
+    loops, a phone on the companion, any other device on the dashboard.
 
-    Chosen from the device kind the gateway derived and clamped (`session_store.DEVICE_KINDS`),
-    never from anything the request names, so a pairing can send the browser nowhere else.
+    Chosen from the code's scope and the device kind the gateway derived and clamped
+    (`session_store.DEVICE_KINDS`), never from anything the request names, so a pairing can send
+    the browser nowhere else.
     """
+    if scoped:
+        return device_scopes.LANDING
     return COMPANION_HOME if kind == "mobile" else "/"
 
 
@@ -297,22 +370,36 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
 
     # A device session at the same TTL as a browser login (`auth.session_ttl`, 30 days by
     # default) rather than the 90-day limit: a phone in a drawer should not hold a live session
-    # for the longest a credential may last.
-    ttl = browser_session_ttl(cfg)
+    # for the longest a credential may last. An automation client's lasts what its code says,
+    # which the owner chose when making it; nothing in this body names or widens its scope.
+    scope = outcome.scope
+    ttl = outcome.lifetime_secs if scope else browser_session_ttl(cfg)
     derived_name, derived_kind = _described(request)
+    if scope:
+        # The gateway alone sets the kind, from the code's scope: what the client declares is
+        # ignored. An unscoped redemption that declares it gets `unknown`
+        # (`sanitize_device_kind`).
+        kind = device_scopes.AUTOMATION_KIND
+    elif kind == "unknown":
+        kind = derived_kind
     device = DeviceInfo(
         id=secrets.token_hex(8),
         # The device's own name wins, then the owner's label from `pair/start`, then a derived
         # one. None of the three is trusted text — all went through `sanitize_device_name`.
         name=name or sanitize_device_name(outcome.label) or derived_name,
-        # An explicit kind wins; otherwise the derived one, already clamped.
-        kind=kind if kind != "unknown" else derived_kind,
+        kind=kind,
         minted_at=time.time(),
         ip=ip[:64],
     )
     previous = _replaced_sign_in(request)
     minted = mint_session(
-        PAIRED_DEVICE_USER, ttl, issuer=ISSUER_PAIR, device=device, bound=True, spare=previous
+        PAIRED_DEVICE_USER,
+        ttl,
+        issuer=ISSUER_PAIR,
+        device=device,
+        bound=True,
+        spare=previous,
+        scope=scope,
     )
     token = minted.token
     if not minted.persisted:
@@ -327,12 +414,10 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
     if previous:
         # This browser's earlier sign-in is the one the pairing's cookie replaces.
         sign_out([previous], END_REPLACED, actor=PAIRED_DEVICE_USER)
-    _audit(
-        "device_paired",
-        "granted",
-        caller=ip,
-        resources=f"device={device.id} kind={device.kind}",
-    )
+    granted = f"device={device.id} kind={device.kind}"
+    if scope:
+        granted += f" scope={','.join(scope)}"
+    _audit("device_paired", "granted", caller=ip, resources=granted)
 
     resp = web.json_response(
         {
@@ -342,7 +427,7 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
             "kind": device.kind,
             "expires_in": ttl,
             # Where the redeem page sends the device next (`landing_for`).
-            "landing": landing_for(device.kind),
+            "landing": landing_for(device.kind, scoped=bool(scope)),
             # The page keeps it (`owner_token_url.keepPair`); it is never in the cookie.
             "pair": minted.pair,
         }
@@ -514,6 +599,11 @@ async def api_devices_list(request: web.Request) -> web.Response:
     or expires. ``current`` marks the one asking. ``limits`` is how many of each kind may be
     signed in at once. Never returns a nonce: this list is something the owner reads out loud.
     """
+    from personalclaw.dashboard.scoped_sessions import end_idle_sessions
+
+    # An automation client unused past its idle end is signed out before the list is read, so
+    # the list never shows one that its next request would find ended.
+    end_idle_sessions()
     current = str(request.get("session_nonce") or "")
     rows = [_row(nonce, record, current) for nonce, record in signed_in_sessions().items()]
     rows.sort(key=lambda r: (not r["current"], -float(r["last_seen"] or r["minted_at"] or 0.0)))
