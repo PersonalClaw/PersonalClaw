@@ -275,7 +275,16 @@ async def _apply_skill_promotion(args: dict[str, Any], ctx: "ApplyContext") -> d
             elif skill_promotion_mod.is_skill_promotion_proposal(data):
                 skill_promotion_mod.install_accepted_skill(data)
 
-    prop = learning_proposals.accept(pid, installer=installer, actor=ctx.actor)
+    try:
+        prop = learning_proposals.accept(pid, installer=installer, actor=ctx.actor)
+    except learning_proposals.AcceptError as exc:
+        # Learning's sentence already says what happened and that the proposal still waits, so it
+        # is the answer as it is, with no class name. An installer that broke (its error wrapped
+        # by `accept`, the cause no refusal of its own) is still logged as the bug it is.
+        cause = exc.__cause__
+        if cause is not None and not isinstance(cause, learning_proposals.AcceptError):
+            logger.warning("learning proposal %s: its installer failed", pid, exc_info=cause)
+        raise ProposalError(str(exc)) from exc
     return {"pid": pid, "status": getattr(prop, "status", "")}
 
 

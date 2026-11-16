@@ -38,6 +38,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A code loop paused while its stage gate runs the stage's check, asks its judge or scores the stage's quality is no longer advanced over the Pause: the gate reads the loop again after each, so the stage stays where it was, and the stage worker's nudge and the loop's owner are left as the Pause left them.**
 - **Accepting a proposed template saves it to Workflows, as the agent's save tool says.**
 - **A workflow step that asks you to pick, to type an answer or to fill in a form is answered in Needs you as it asks, where it showed Approve and Deny and refused the answer: its choices on its card, a typed line in its reply field, its form in its panel, and a parked step woken. A step that asks for a pick and lists no choices takes your own words, on its run's page too, and an empty answer is refused.**
+- **The Inbox's Proposals lens says beside each learning proposal's kind what its Accept does (saves the template, records that you agree), and offers no Approve on one that can't be accepted here. A refused Approve shows the gateway's sentence once, with no error's class name, and a learned template refused for a step holding something shaped like a credential says so, what to do, and that it still waits.**
 
 ### Security
 

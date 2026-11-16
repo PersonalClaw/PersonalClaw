@@ -46,7 +46,14 @@ TARGETS: dict[str, str] = {"prompt": "prompt", "template": "template", "agent": 
 
 
 class PromptCardError(Exception):
-    """A card that cannot be imported: empty, oversized, or an unusable model answer."""
+    """A card that cannot be imported: empty, oversized, or an unusable model answer.
+
+    ``codes`` are the workflow validator's codes when the card's template wouldn't run, so a
+    caller can say why in its own words (``learning.template_install``)."""
+
+    def __init__(self, message: str, *, codes: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.codes = codes
 
 
 _INSTRUCTIONS = """\
@@ -239,8 +246,11 @@ def _validate_spec(spec: dict[str, Any]) -> None:
 
     result = validate_spec(spec, strict=True)
     if not result.ok:
-        codes = ", ".join(sorted({i.code for i in result.issues})) or "invalid"
-        raise PromptCardError(f"the card produced an unrunnable template ({codes})")
+        codes = tuple(sorted({i.code for i in result.issues}))
+        raise PromptCardError(
+            f"the card produced an unrunnable template ({', '.join(codes) or 'invalid'})",
+            codes=codes,
+        )
 
 
 def _render_body(target: str, payload: dict[str, Any]) -> str:

@@ -150,7 +150,7 @@ def install_accepted_template(data: dict[str, Any]) -> str:
             }
         )
     except prompt_cards.PromptCardError as exc:
-        raise proposals.AcceptError(f"The template {name} was not saved: {exc}") from exc
+        raise proposals.AcceptError(_not_saved(name, exc)) from exc
     spec["tags"] = [SPEC_TAG]
     from personalclaw.workflows.versions import AGENT
 
@@ -181,3 +181,26 @@ def _workflow_names() -> set[str]:
         for d in (listed or {}).get("defs") or []
         if isinstance(d, dict)
     }
+
+
+#: The validator's code for a step holding something shaped like a credential.
+_CREDENTIAL_CODE = "WF_INLINE_SECRET"
+
+
+def _not_saved(name: str, exc: Exception) -> str:
+    """Why the template *name* was not saved, in words: what happened, what to do, and that the
+    proposal still waits. Never the value, and never the prompt-card path's own words ("the
+    card"), which aren't this proposal's."""
+    codes = tuple(getattr(exc, "codes", ()) or ())
+    if _CREDENTIAL_CODE in codes:
+        return (
+            f"The template {name} was not saved: one of its steps holds something shaped like a "
+            "credential. Reject it, or make the template yourself with the credential kept as a "
+            "secret. It still waits."
+        )
+    if codes:
+        return (
+            f"The template {name} was not saved: its steps wouldn't make a template that runs "
+            f"({', '.join(codes)}). It still waits."
+        )
+    return f"The template {name} was not saved: {str(exc).rstrip('.')}. It still waits."

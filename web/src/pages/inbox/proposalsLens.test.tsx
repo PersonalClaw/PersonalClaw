@@ -128,7 +128,7 @@ describe('Proposals lens', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /^Approve$/ })[0])
     const msg = await waitFor(() => screen.getByText(/Not applied/))
     expect(msg.textContent).toMatch(/no workflow/)
-    expect(msg.textContent).toMatch(/Still pending/)
+    expect(msg.textContent).toMatch(/It still waits/)
   })
 
   it('edit-then-approve is offered ONLY for an editable payload, and sends the edited apply', async () => {
