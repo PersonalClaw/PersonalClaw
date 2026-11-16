@@ -2,58 +2,52 @@
   "dark": {
     "targets": {
       "320": [
-        "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
-        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
+        "a \"Answer it where it asks: May I archive last year’s mail?, So\"",
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\""
       ],
       "390": [
-        "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
-        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
+        "a \"Answer it where it asks: May I archive last year’s mail?, So\"",
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\""
       ],
       "412": [
-        "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
-        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
+        "a \"Answer it where it asks: May I archive last year’s mail?, So\"",
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\""
       ],
       "768": [
-        "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
-        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
+        "a \"Answer it where it asks: May I archive last year’s mail?, So\"",
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#",
+        "<p> \"Write up an incident from its timeline a\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
-        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
+        "a \"Answer it where it asks: May I archive last year’s mail?, So\"",
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\""
       ],
       "390": [
-        "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
-        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
+        "a \"Answer it where it asks: May I archive last year’s mail?, So\"",
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\""
       ],
       "412": [
-        "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
-        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
+        "a \"Answer it where it asks: May I archive last year’s mail?, So\"",
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\""
       ],
       "768": [
-        "a \"Answer it where it asks: May I archive last year’s mail? — L\"",
-        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\"",
-        "a \"Review it in Skills: Skill: incident-writeup — Skills — Writ\""
+        "a \"Answer it where it asks: May I archive last year’s mail?, So\"",
+        "a \"Open it in the Inbox: Keep a weekly digest of what the agent\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#",
+        "<p> \"Write up an incident from its timeline a\" clips at #%: #x# in #x#"
       ]
     }
   }
