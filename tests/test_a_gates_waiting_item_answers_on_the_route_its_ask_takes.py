@@ -195,3 +195,81 @@ async def _sleep() -> None:
     import asyncio
 
     await asyncio.sleep(0.02)
+
+
+class _Notes:
+    """The attention state a run is handed: every notification it is asked to deliver, as given."""
+
+    def __init__(self) -> None:
+        self.notes: list[Any] = []
+
+    def notify(self, *args: Any, **kwargs: Any) -> None:
+        self.notes.append({"args": args, "kwargs": kwargs})
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("key", sorted(GATES))
+async def test_a_gates_token_stays_with_the_gate_and_its_inbox_row(isolated, key):
+    """The resume token the waiting list hands you answers the gate, so it is kept only where the
+    gate is answered from: its continuation and its Inbox row (yours alone, ``GET /api/inbox``),
+    whose refs let the Inbox answer it in place (``attention.raise_gate_item``). Its notification
+    (the bell, the lock screen, a channel, a push, which carries only ``{kind, item_id}``) and
+    every other file the gateway wrote for it (the run's journal, the notification log, the
+    security event log) hold none of it (``inbox._note_refs``)."""
+    from personalclaw import push
+    from personalclaw.workflows import store as wstore
+    from personalclaw.workflows.controller import EngineServices, RunController
+    from personalclaw.workflows.human_input import list_continuations
+    from personalclaw.workflows.models import RunStatus, WorkflowRun
+
+    state = _Notes()
+    spec = _spec(key)
+    run = wstore.create(WorkflowRun(id="", workflow_name=spec["name"]))
+    wstore.write_spec(run.id, spec)
+    controller = RunController(run, spec, services=EngineServices(attention_state=state))
+    await controller.run_to_completion(timeout=3)
+    assert wstore.get(run.id).status == RunStatus.NEEDS_INPUT
+    [cont] = list_continuations(run.id)
+    token = cont.token
+    assert len(token) >= 16, "vacuity: a token long enough that a match is the token"
+
+    assert state.notes, "vacuity: the gate raised its notification"
+    assert token not in json.dumps(state.notes, default=str), "a notification carried the token"
+    for note in state.notes:
+        kwargs = note["kwargs"]
+        item_id = str(kwargs.get("inbox_item") or kwargs.get("item_id") or "row")
+        payload = push.content_free_payload(str(kwargs.get("kind") or "gate"), item_id)
+        assert token not in json.dumps(payload), "a push payload carried the token"
+
+    holders = sorted(
+        str(p.relative_to(isolated))
+        for p in isolated.rglob("*")
+        if p.is_file() and token.encode() in p.read_bytes()
+    )
+    assert any("inbox" in h for h in holders), f"vacuity: the gate's Inbox row holds it: {holders}"
+    others = [h for h in holders if "inbox" not in h and "continuation" not in h]
+    assert others == [], f"the token was written beyond the gate and its row: {others}"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("empty", ["", "   "])
+async def test_an_empty_answer_to_a_choice_that_lists_none_is_refused_and_it_still_waits(
+    isolated, monkeypatch, empty
+):
+    """A choice that lists no choices takes any answer, but an empty one picks nothing: it is
+    refused (400 ``invalid_answer``) before the token is spent, and the gate still waits for a
+    real one. 🔴 Red before: ``""`` was taken, and the run went on with no answer."""
+    from personalclaw.workflows import store as wstore
+    from personalclaw.workflows.human_input import list_continuations
+    from personalclaw.workflows.models import RunStatus
+
+    run, watchdog = await _parked(monkeypatch, "choice_open")
+    answer = _gate_item(run.id)["answer"]
+    body = {"answer": empty, "resume_token": answer["body"]["resume_token"]}
+    async with TestClient(TestServer(_app(watchdog))) as client:
+        resp = await client.post(answer["path"], json=body)
+        payload = await resp.json()
+    assert resp.status == 400, payload
+    assert payload["error"]["code"] == "invalid_answer", payload
+    assert wstore.get(run.id).status == RunStatus.NEEDS_INPUT, "the run went on with no answer"
+    assert len(list_continuations(run.id)) == 1, "the empty answer spent the gate's token"

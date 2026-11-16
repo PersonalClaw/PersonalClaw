@@ -197,6 +197,9 @@ class Ask:
             value = answer.get("choice") if isinstance(answer, dict) else answer
             if not isinstance(value, str):
                 return "choice expects a string"
+            # A choice that lists none takes any answer, but an empty one picks nothing.
+            if not self.choices and not value.strip():
+                return "choice expects a non-empty string"
             if self.choices and value not in self.choices:
                 return f"{value!r} is not one of: {', '.join(self.choices)}"
             return ""

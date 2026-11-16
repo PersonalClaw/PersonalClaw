@@ -37,7 +37,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The gateway keeps answering while a code loop's stage gate reads what the stage changed: git reads it off the gateway's event loop, and a loop stopped, paused or deleted meanwhile is not judged.**
 - **A code loop paused while its stage gate runs the stage's check, asks its judge or scores the stage's quality is no longer advanced over the Pause: the gate reads the loop again after each, so the stage stays where it was, and the stage worker's nudge and the loop's owner are left as the Pause left them.**
 - **Accepting a proposed template saves it to Workflows, as the agent's save tool says.**
-- **A workflow step that asks you to pick, to type an answer or to fill in a form is answered in Needs you as it asks, where it showed Approve and Deny and refused the answer: its choices on its card, a typed line in its reply field, its form in its panel, and a parked step woken. A step that asks for a pick and lists no choices takes your own words, on its run's page too.**
+- **A workflow step that asks you to pick, to type an answer or to fill in a form is answered in Needs you as it asks, where it showed Approve and Deny and refused the answer: its choices on its card, a typed line in its reply field, its form in its panel, and a parked step woken. A step that asks for a pick and lists no choices takes your own words, on its run's page too, and an empty answer is refused.**
 
 ### Security
 
