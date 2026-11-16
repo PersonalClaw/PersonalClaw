@@ -76,6 +76,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The desktop buddy draws the same claw ring, its poses in strokes: done is its open ring with a check, and the closed mark stays the chat's.**
 - **A project's page shows what its work made, as the library's cards under its tasks, and what its agents know, in About, with Add to write a note, add a link, record audio or upload files into the project. Each opens its preview beside the work.**
 - **Needs you's cards lead with what they ask: what a template does and its steps, what went wrong in a run, the change to a skill, with the kind as a small tag and the time left to answer. Every card that holds a decision has its own answer, asking once more where its panel does, so you open the panel only for a question with several parts or choices, or a form.**
+- **Needs you's panel shows the proposal itself, as its producer wrote it: a template's steps, a run's failure and its error, a skill's change as the block it appends, why it was proposed and where it came from, with what Accept does at its foot, and Next ask once it is decided. A question with several parts, a run's form and a loop's work waiting to merge or in conflict are shown and answered there too. Learning opens the proposal a link names.**
 
 ## [0.3.8] — 2026-11-11
 

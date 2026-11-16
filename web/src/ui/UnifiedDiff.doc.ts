@@ -12,6 +12,7 @@ const doc: UiDoc = {
     { name: 'patch', type: 'string', required: true, description: 'The unified diff. Empty lines keep a non-breaking space so a blank context line does not collapse and shift the alignment of every line after it.' },
     { name: 'label', type: 'string', required: false, description: "The accessible name for the scroll region (default 'Diff'). Pass something specific when two patches can appear on one page — two regions both named 'Diff' are an ambiguous name, not a name." },
     { name: 'className', type: 'string', required: false, description: 'Overrides the default <pre> classes. Keep overflow-x-auto and a mono font; the box is focusable so a keyboard user can scroll it.' },
+    { name: 'wrap', type: 'boolean', required: false, description: "Its lines wrap, for a pane where nothing scrolls inside (Needs you's panel): no tab stop then, since nothing scrolls, and the @@ lines take the quiet on-surface-low ink, the only colour a hunk header needs; ink only, no row tints." },
   ],
   bestPractices: [
     { guidance: true, description: 'Give it a specific label when the surface can show more than one patch — the proposal surface names the skill it is changing.' },

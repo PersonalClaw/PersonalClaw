@@ -158,9 +158,10 @@ describe('a free-text ask, answered from its peek', () => {
     })]))
     render(<NeedsYouHarness />)
     const pane = await peek('Which version?')
-    const tail = await within(pane).findByRole('region', { name: 'The conversation it came from' })
+    const tail = (await within(pane).findByRole('heading', { level: 3, name: 'Where it came from' })).closest('section')!
+    await within(tail).findByText('Which version are these notes for?')
     expect(within(tail).getByText('Which version are these notes for?')).toBeInTheDocument()
-    await userEvent.type(within(pane).getByRole('textbox', { name: 'Reply to Which version?' }), '2.0{Enter}')
+    await userEvent.type(within(pane).getByRole('textbox', { name: /^Reply to Which version\?/ }), '2.0{Enter}')
     await waitFor(() => expect(answerChatQuestion).toHaveBeenCalledWith('chat-1', 'q1', { answers: [{ selected: [], other: '2.0' }] }))
     expect(await within(pane).findByText('Answered. The agent carries on.')).toBeInTheDocument()
   })

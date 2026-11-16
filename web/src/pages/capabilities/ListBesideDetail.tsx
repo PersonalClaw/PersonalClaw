@@ -55,6 +55,10 @@ export interface PaneOptions {
   /** Both scrollers fade at a cut edge (`ScrollFade`): the list from the canvas, the pane from
    *  `surface`. */
   edgeFade?: boolean
+  /** The pane's scroller is a size container, so a body's decide bar (`data-decide-bar`) sticks to
+   *  its foot only while the pane is 32rem tall or more; with `edgeFade`, the bottom fade lies on
+   *  the bar's top edge while it is stuck. */
+  decideBar?: boolean
 }
 
 /** The list's width beside a detail on a tab *room* px wide, with *options*: `listWidth` while
@@ -155,8 +159,18 @@ function DetailPane({ detail, compact, noun, options }: { detail: CapabilityDeta
   }, [compact, focusOnOpen])
   // Escape closes the detail, as it closes a side panel. A control that handles its own Escape (a
   // menu, a dialog) stops it before it reaches the window.
+  // In a field, the first Escape only leaves it, and one that ends a composition (an IME) does
+  // neither: a reply half typed in the pane is never closed away.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) close.current() }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return
+      const at = e.target
+      if (at instanceof HTMLElement && (at.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(at.tagName))) {
+        at.blur()
+        return
+      }
+      close.current()
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
@@ -178,8 +192,8 @@ function DetailPane({ detail, compact, noun, options }: { detail: CapabilityDeta
         {!compact && <IconButton icon={X} label="Close" tip={options.compactTargets ? 'Close' : undefined} size={34} iconSize={18} onClick={detail.onClose} {...target} />}
       </div>
       {options.edgeFade
-        ? <ScrollFade ground="surface">{body}</ScrollFade>
-        : <div className="min-h-0 flex-1 overflow-y-auto">{body}</div>}
+        ? <ScrollFade ground="surface" style={options.decideBar ? { containerType: 'size' } : undefined}>{body}</ScrollFade>
+        : <div className="min-h-0 flex-1 overflow-y-auto" style={options.decideBar ? { containerType: 'size' } : undefined}>{body}</div>}
     </section>
   )
 }

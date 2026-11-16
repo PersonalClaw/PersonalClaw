@@ -12,7 +12,7 @@ file and the app differ.
 | Route | Opens | In the sidebar | Palette | Linked from |
 |---|---|---|---|---|
 | `#/dashboard` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 10 more |
-| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 19 more |
+| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 20 more |
 | `#/projects` | Projects | Projects | Projects | `app/paletteProjectRows.tsx`, `pages/code/CodeSection.tsx`, `pages/library/LibraryPage.tsx`, `pages/library/libraryActions.tsx` and 3 more |
 | `#/library` | Library | Library | Follow a feed or folder (Action); Library; Library settings; Library › Conflicts; Library › Decisions; Library › Graph; Library › Tags; Library: feeds, intents and reports (Action); New intent (Action); Schedule a report (Action); Turn on Power user view (Action) | `app/itemBack.ts`, `pages/knowledge/KnowledgeSection.tsx`, `pages/projects/ProjectWork.tsx`, `pages/schedule/ScheduleDetail.tsx` and 1 more |
 | `#/knowledge` | Library | Library | Follow a feed or folder (Action); Library; Library settings; Library › Conflicts; Library › Decisions; Library › Graph; Library › Tags; Library: feeds, intents and reports (Action); New intent (Action); Schedule a report (Action); Turn on Power user view (Action) | `app/itemBack.ts`, `pages/knowledge/KnowledgeSection.tsx`, `pages/projects/ProjectWork.tsx`, `pages/schedule/ScheduleDetail.tsx` and 1 more |
@@ -27,15 +27,15 @@ file and the app differ.
 | `#/capabilities` | Capabilities | Platform › Capabilities | Capabilities | none |
 | `#/agents` | Agents | Capabilities, its Agents tab | Agents | `pages/chat/RoomMembersPanel.tsx`, `pages/dashboard/agents/AgentDay.tsx`, `pages/settings/PacksPanel.tsx` |
 | `#/tools` | Tools | Capabilities, its Tools tab | Add a tool server (Action); Tools | `pages/chat/composer/ChatComposer.tsx`, `pages/chat/composer/useChatComposer.ts`, `pages/chat/inspector/sections.tsx` |
-| `#/skills` | Skills | Capabilities, its Skills tab | Skills | `pages/agents/AgentForm.tsx`, `pages/chat/chatTypes.ts`, `pages/dashboard/NeedCards.tsx`, `pages/inbox/InboxDetail.tsx` and 1 more |
-| `#/learning` | Learning | Capabilities, its Learning tab | Learning | `pages/dashboard/NeedCards.tsx`, `pages/projects/ProjectPage.tsx`, `pages/settings/EvalsPanel.tsx`, `pages/settings/SettingsPage.tsx` and 1 more |
+| `#/skills` | Skills | Capabilities, its Skills tab | Skills | `pages/agents/AgentForm.tsx`, `pages/chat/chatTypes.ts`, `pages/dashboard/NeedCards.tsx`, `pages/dashboard/needs/NeedPanel.tsx` and 2 more |
+| `#/learning` | Learning | Capabilities, its Learning tab | Learning | `pages/dashboard/NeedCards.tsx`, `pages/dashboard/needs/NeedPanel.tsx`, `pages/projects/ProjectPage.tsx`, `pages/settings/EvalsPanel.tsx` and 2 more |
 | `#/prompts` | Prompts | Capabilities, its Prompts tab | Prompts | `pages/tasks/TasksListPage.tsx`, `ui/forms.tsx` |
-| `#/workflows` | Workflows | Automations, its Workflows tab | Workflows | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/data/keys.ts` and 10 more |
+| `#/workflows` | Workflows | Automations, its Workflows tab | Workflows | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/data/keys.ts` and 11 more |
 | `#/apps` | Apps | Capabilities, its Apps tab | Apps; Store | `pages/settings/AppsPanel.tsx`, `pages/settings/SearchPanel.tsx`, `pages/settings/SenderTrustPanel.tsx`, `pages/settings/VoiceProfilesSection.tsx` and 1 more |
 | `#/settings` | Settings | Settings | Open Settings (Action); Settings | `app/Onboarding.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/openDuringSetup.ts`, `design/tokenLintRule.ts` and 41 more |
 | `#/notifications` | Inbox | Platform › Inbox | Inbox; Notifications | `app/approvalDestination.ts`, `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/NeedCards.tsx` and 6 more |
 | `#/discover` | Discover | not in the sidebar | Discover | `pages/dashboard/widgets/Discover.tsx` |
-| `#/mission-control` | Needs you | not in the sidebar | Needs you | `pages/buddy/cardFixtures.ts`, `pages/buddy/liveCard.ts`, `pages/buddy/stageCard.ts`, `pages/dashboard/DashboardPage.tsx` and 5 more |
+| `#/mission-control` | Needs you | not in the sidebar | Needs you | `pages/buddy/cardFixtures.ts`, `pages/buddy/liveCard.ts`, `pages/buddy/stageCard.ts`, `pages/dashboard/DashboardPage.tsx` and 6 more |
 | `#/loop` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectPage.tsx` and 1 more |
 | `#/loops` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectPage.tsx` and 1 more |
 | `#/code` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectPage.tsx` and 1 more |

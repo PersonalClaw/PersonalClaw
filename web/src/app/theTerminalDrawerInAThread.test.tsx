@@ -166,7 +166,7 @@ describe('Run in terminal, from a thread', () => {
   it('opens the drawer and runs the command once, in the one session it opened for it', async () => {
     await openChat(SESSION, /RUN THIS ONE/)
     expect(drawerOpen()).toBe(false)
-    fireEvent.click(screen.getByTitle('Run in terminal'))
+    fireEvent.click(screen.getByRole('button', { name: 'Run', description: 'Run in terminal' }))
 
     await waitFor(() => expect(drawerOpen()).toBe(true))
     await waitFor(() => expect(runsOf(COMMAND)).toEqual([['pty-1', `${COMMAND}\n`]]), { timeout: 4000 })
@@ -178,7 +178,7 @@ describe('Run in terminal, from a thread', () => {
     expect(pty.created[0]).toEqual([])
 
     // With the drawer open, Run sends to its open session, and opens no other.
-    fireEvent.click(screen.getByTitle('Run in terminal'))
+    fireEvent.click(screen.getByRole('button', { name: 'Run', description: 'Run in terminal' }))
     await waitFor(() => expect(runsOf(COMMAND)).toHaveLength(2))
     expect(runsOf(COMMAND).map(([id]) => id)).toEqual(['pty-1', 'pty-1'])
     expect(pty.created).toHaveLength(1)

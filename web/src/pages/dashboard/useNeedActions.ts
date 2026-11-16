@@ -87,6 +87,18 @@ export function useNeedActions(refreshNeeds: () => void): {
       void send(key, sent, action === 'accept' ? 'Accepted. The chat is organized as suggested.' : 'Declined. It won’t be suggested again.',
         `${action} this`, () => invalidateKeys('inbox', true))
     },
+    gateReply: (key, runId, resumeToken, value, alwaysAllow) => {
+      const sent = api.resumeWorkflowRun(runId, {
+        answer: value, resume_token: resumeToken || undefined, ...(alwaysAllow === undefined ? {} : { always_allow: alwaysAllow }),
+      })
+      void send(key, sent, 'Answered. The run is moving again.', 'send that answer')
+      return sent
+    },
+    chatReply: (key, ref, reply) => {
+      const sent = api.answerChatQuestion(ref.session, ref.question, reply)
+      void send(key, sent, 'skip' in reply ? 'Skipped. The agent goes on without your answer.' : 'Answered. The agent carries on.', 'send that answer')
+      return sent
+    },
     chat: (key, ref, answer) => {
       const sent = api.answerChatQuestion(ref.session, ref.question,
         answer === 'skip' ? { skip: true } : { answers: [{ selected: [answer.pick], other: '' }] })
@@ -116,6 +128,8 @@ export function useNeedActions(refreshNeeds: () => void): {
         choice === 'redo' ? 'The task runs again on top of your branch.' : 'Dropped. The loop carries on without it.',
         choice === 'redo' ? 'redo the task' : 'drop its work')
     },
+    loopResume: (key, loopId) =>
+      send(key, api.uLoopAction(loopId, 'resume'), 'Resumed. The loop merges it, or asks again if it still conflicts.', 'resume the loop'),
     run: (key, runId, action) => {
       const sent = action === 'resume' ? api.resumeWorkflowRun(runId, {}) : api.cancelWorkflowRun(runId)
       void send(key, sent, action === 'resume' ? 'Resumed. The run is moving again.' : 'Cancelled. Completed work is kept.',

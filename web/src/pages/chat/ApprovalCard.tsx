@@ -262,7 +262,6 @@ export function ApprovalCard({
   /** The queue form only: what stands where its answers were (`ApprovalPrompt`). */
   answersReplacedBy?: ReactNode
 }) {
-  const queue = form === 'queue'
   // The narrowest scope is the initial one: a click on Allow with nothing else touched
   // grants once and remembers nothing. Broadening is always a deliberate act.
   const [scope, setScope] = useState<RememberScope>('once')
@@ -319,9 +318,9 @@ export function ApprovalCard({
       purpose={seg.purpose}
       source={source}
       sourceHref={sourceHref}
-      badge={seg.risk ? <RiskChip risk={seg.risk} themedTip={queue} /> : undefined}
+      badge={seg.risk ? <RiskChip risk={seg.risk} themedTip /> : undefined}
       meta={<>
-        <BlastRadiusChips radius={seg.blastRadius} themedTip={queue} />
+        <BlastRadiusChips radius={seg.blastRadius} themedTip />
         {seg.reach && <p data-type="caption" className="mt-xs text-on-surface-var">{seg.reach}</p>}
         {/* Who asked for the turn when it was not her, on every surface the call is asked on. */}
         {seg.askedFor && <p data-type="caption" className="mt-xs text-on-surface-var">{seg.askedFor}</p>}

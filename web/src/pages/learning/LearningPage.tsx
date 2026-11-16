@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Tooltip } from '../../ui/Tooltip'
 import { AlertTriangle, Brain, Check, RefreshCw, Sparkles, TrendingDown, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -58,7 +59,7 @@ const ATTENTION_KEY = 'learning:attention'
  *  bulk eligibility, and renderability all arrive decided — this renders them. Re-deriving any of
  *  them in TS would eventually disagree with the server, and the FE would be the copy shipping the
  *  permissive answer. */
-export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
+export function LearningPage({ navigate, query = {} }: Pick<RouteProps, 'navigate'> & Partial<Pick<RouteProps, 'query'>>) {
   const [kind, setKind] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
@@ -191,6 +192,19 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
   }
 
   const rows = proposals?.rows ?? []
+  // An address that names a proposal (`#/learning?open=<id>`, Needs you's "Open in Learning")
+  // scrolls it into view and moves the focus to it, once its row is drawn.
+  const listRef = useRef<HTMLDivElement>(null)
+  const opened = useRef('')
+  const want = typeof query.open === 'string' ? query.open : ''
+  useEffect(() => {
+    if (!want || opened.current === want) return
+    const found = listRef.current?.querySelector<HTMLElement>(`[data-learning-proposal="${CSS.escape(want)}"]`)
+    if (!found) return
+    opened.current = want
+    found.scrollIntoView?.({ block: 'nearest' })
+    found.focus({ preventScroll: true })
+  }, [want, rows])
   // `?? 0`, so an older gateway that does not send the field reads as "none pending" and the
   // original empty state renders — a missing count must not claim proposals exist.
   const skillPending = proposals?.skill_proposals_pending ?? 0
@@ -334,7 +348,7 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
                 />
               )
             ) : (
-              <div className="flex flex-col gap-s">
+              <div className="flex flex-col gap-s" ref={listRef}>
                 {rows.map((row) => (
                   <ProposalRow
                     key={row.id}
@@ -355,6 +369,23 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
 
 /** One proposal row. Everything a reviewer needs to decide without opening anything else — each
  *  field is there because its absence produces a specific bad review. */
+/** A chip whose detail shows on hover in the themed tip, never as a native title, and is read with
+ *  the chip by a screen reader unless the row already says it (`said`: the gate's and the replay's
+ *  figures are their own columns). */
+function DetailChip({ detail, said = false, className, style, children }: {
+  detail: string; said?: boolean; className: string; style: CSSProperties; children: ReactNode
+}) {
+  return (
+    <Tooltip text={detail} describes={false}>
+      {({ ref, onPointerEnter, onPointerLeave }) => (
+        <span ref={ref} onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave} className={className} style={style}>
+          {children}{said ? null : <span className="sr-only">: {detail}</span>}
+        </span>
+      )}
+    </Tooltip>
+  )
+}
+
 function ProposalRow({ row, busy, onAccept, onReject }: {
   row: LearningRow
   busy: boolean
@@ -364,7 +395,7 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
   const Icon = kindIcon(row.kind)
   const blocked = bulkBlockedReason(row)
   return (
-    <div className="rounded-lg bg-surface-container px-l py-l">
+    <div className="rounded-lg bg-surface-container px-l py-l" data-learning-proposal={row.id} tabIndex={-1}>
       <div className="flex items-start gap-l">
         <div className="mt-0.5 shrink-0 text-on-surface-var"><Icon size={18} /></div>
         <div className="min-w-0 flex-1">
@@ -384,25 +415,25 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
               {kindLabel(row.kind)}
             </span>
             {!row.manifest_valid && (
-              <span
+              <DetailChip
+                detail={row.manifest_issues.join('; ')}
                 className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]"
                 style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)', color: 'var(--color-warn)' }}
-                title={row.manifest_issues.join('; ')}
               >
                 <AlertTriangle size={12} /> manifest
-              </span>
+              </DetailChip>
             )}
             {/* A MEASURED score drop is the one gate outcome that earns a chip. An ungated row does
                 not get one: "we did not measure" is not a warning, and dressing it as one would
                 train reviewers to ignore the chip that means something. */}
             {gateRegressed(row) && (
-              <span
+              <DetailChip
+                detail={gateLabel(row)} said
                 className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]"
                 style={{ background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}
-                title={gateLabel(row)}
               >
                 <TrendingDown size={12} /> score drop
-              </span>
+              </DetailChip>
             )}
             {/* The replay harness's own chip, separate from the gate's. A row can regress on the
                 shipped scenario library and improve on the user's captured turns (or the reverse),
@@ -410,13 +441,13 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
                 the disagreement a reviewer most needs to see. Same rule as the gate chip: only a
                 MEASURED drop earns one, because "we did not replay" is not a warning. */}
             {replayRegressed(row) && (
-              <span
+              <DetailChip
+                detail={replayLabel(row)} said
                 className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]"
                 style={{ background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}
-                title={replayLabel(row)}
               >
                 <TrendingDown size={12} /> replay drop
-              </span>
+              </DetailChip>
             )}
           </div>
           <div className="mt-1 text-on-surface-var text-[0.8125rem]">

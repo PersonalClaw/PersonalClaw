@@ -103,3 +103,38 @@ describe('a pane opts into its own layout', () => {
     expect(screen.getByRole('button', { name: 'Close' }).className).not.toContain(TOUCH_TARGET.split(' ')[0])
   })
 })
+
+describe('a pane with a decide bar', () => {
+  it('its scroller is a size container, so the bar sticks only while the pane is tall enough', () => {
+    const { container } = open({ ...NEEDS_YOU, decideBar: true })
+    const scroller = container.querySelector('section[role="region"] .overflow-y-auto') as HTMLElement
+    expect(scroller.style.containerType).toBe('size')
+  })
+
+  it('a pane without one keeps its scroller as it was', () => {
+    const { container } = open(NEEDS_YOU)
+    const scroller = container.querySelector('section[role="region"] .overflow-y-auto') as HTMLElement
+    expect(scroller.style.containerType).toBe('')
+  })
+})
+
+describe('Escape in the pane', () => {
+  it('in a field only leaves the field; once out of it, Escape closes the pane', () => {
+    const onClose = vi.fn()
+    open(NEEDS_YOU, { onClose, body: <input aria-label="Reply" /> })
+    const field = screen.getByRole('textbox', { name: 'Reply' })
+    field.focus()
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement).not.toBe(field)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('one that ends a composition does nothing', () => {
+    const onClose = vi.fn()
+    open(NEEDS_YOU, { onClose })
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, isComposing: true }))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+})

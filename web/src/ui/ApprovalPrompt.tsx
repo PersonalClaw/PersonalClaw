@@ -47,8 +47,10 @@ import { useHeldHeight } from '../lib/useHeldHeight'
  */
 export type ApprovalDensity = 'compact' | 'roomy'
 
-/** Where the prompt is drawn: in a conversation (`chat`), or as one card of a queue (`queue`). */
-export type ApprovalForm = 'chat' | 'queue'
+/** Where the prompt is drawn: in a conversation (`chat`), as one card of a queue (`queue`), or in
+ *  the panel beside that card (`hosted`): the queue form without its head row, which the panel's
+ *  header already says in the same words ("Permission needed", its risk and who asked). */
+export type ApprovalForm = 'chat' | 'queue' | 'hosted'
 
 /** How many lines of a call's whole input the queue form shows before it folds the rest. */
 export const QUEUE_FOLD_LINES = 40
@@ -172,7 +174,8 @@ export function ApprovalPrompt({
   answersReplacedBy?: ReactNode
 }) {
   const roomy = density === 'roomy'
-  const queue = form === 'queue'
+  const queue = form === 'queue' || form === 'hosted'
+  const hosted = form === 'hosted'
   const answersRef = useRef<HTMLDivElement>(null)
   const held = useHeldHeight(answersRef, queue && !answersReplacedBy)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -239,8 +242,8 @@ export function ApprovalPrompt({
   if (queue) {
     return (
       <div ref={rootRef} role="group" aria-label={`Permission needed to run ${tool}`} tabIndex={-1} onKeyDown={onKeyDown}
-        data-approval-form="queue" className={`flex min-w-0 flex-col gap-xs${className ? ` ${className}` : ''}`}>
-        <div className="flex min-w-0 flex-wrap items-center gap-xs">
+        data-approval-form={form} className={`flex min-w-0 flex-col gap-xs${className ? ` ${className}` : ''}`}>
+        {hosted ? null : <div className="flex min-w-0 flex-wrap items-center gap-xs">
           <StatusPill tone="neutral" groundedOn="var(--color-surface-low)" className="inline-flex items-center gap-1">
             <ShieldQuestion size={12} aria-hidden />Permission needed
           </StatusPill>
@@ -248,7 +251,7 @@ export function ApprovalPrompt({
           {/* Who asked, in the registry's words, as plain text: the panel's "Who asked" links it. */}
           {source && <span data-type="caption" className="min-w-0 truncate text-on-surface-low">From {source}</span>}
           {tagEnd && <span className="ml-auto flex shrink-0 items-center gap-xs">{tagEnd}</span>}
-        </div>
+        </div>}
         <CompactArgs tool={tool} args={args} queue />
         {purpose && <p data-type="body-s" className="break-words text-on-surface">{purpose}</p>}
         {meta}
@@ -452,13 +455,19 @@ function ApprovalChoiceButton({ choice, roomy, buttonRef, queue = false }: {
     : tone === 'danger'
       ? { background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }
       : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }
+  // The chat's choices take the same themed tip as the queue's, never a native title.
   return (
-    <button ref={buttonRef} type="button" onClick={() => { void onClick() }} disabled={busy} aria-busy={busy || undefined}
-      title={tip} aria-label={name || undefined}
-      data-type={roomy ? 'body-m' : 'caption'}
-      className={`inline-flex items-center justify-center gap-1 rounded-pill transition-colors disabled:opacity-50 ${roomy ? 'h-11 min-w-[6.5rem] gap-2 px-l' : 'h-7 px-2.5'}`}
-      style={palette}>
-      <Icon size={roomy ? 16 : 12} aria-hidden /> {label}
-    </button>
+    <Tooltip text={tip} describes={false} description={approves ? bindingLabel('approve-focused') : undefined}>
+      {(trigger: TooltipTriggerProps) => (
+        <button {...trigger} ref={(el) => { trigger.ref(el); assignRef(buttonRef, el) }}
+          type="button" onClick={() => { void onClick() }} disabled={busy} aria-busy={busy || undefined}
+          aria-label={name || undefined}
+          data-type={roomy ? 'body-m' : 'caption'}
+          className={`inline-flex items-center justify-center gap-1 rounded-pill transition-colors disabled:opacity-50 ${roomy ? 'h-11 min-w-[6.5rem] gap-2 px-l' : 'h-7 px-2.5'}`}
+          style={palette}>
+          <Icon size={roomy ? 16 : 12} aria-hidden /> {label}
+        </button>
+      )}
+    </Tooltip>
   )
 }

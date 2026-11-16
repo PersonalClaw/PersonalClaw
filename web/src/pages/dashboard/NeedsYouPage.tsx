@@ -18,7 +18,8 @@ import { TOUCH_TARGET } from '../../ui/Toggle'
 import { TopBar } from '../../ui/TopBar'
 import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
 import { Group } from './Group'
-import { ENDED_ELSEWHERE, NeedCard, NeedDetail, NeedsUnreadable, needHeading, needName, rowKey, type Outcome } from './NeedCards'
+import { ENDED_ELSEWHERE, NeedCard, NeedTagRow, NeedsUnreadable, needHeading, needName, rowKey, type Outcome } from './NeedCards'
+import { NeedPanel, panelOwnsBody } from './needs/NeedPanel'
 import { LARGE_LIST } from './RunningLane'
 import { useNeedActions } from './useNeedActions'
 
@@ -186,6 +187,14 @@ export function NeedsYouPage({ query, setQuery, navigate }: RouteProps) {
 
   // ── The selection ──
   const selectedRow = rows.find((r) => rowKey(r) === open)
+  /** The row after *r* in Needs you's order that still waits on an answer: what "Next ask" opens. */
+  const nextAfter = (r: NeedsYouRow): NeedsYouRow | undefined => {
+    const at = rows.indexOf(r)
+    return rows.slice(at + 1).find((n) => {
+      const o = outcomes[rowKey(n)]
+      return !(o?.state === 'done' || o?.state === 'ended')
+    })
+  }
   const panelOpen = open !== ''
   const columns = useColumns(reviewGrid, panelOpen)
   const [allAsks, setAllAsks] = useState(false)
@@ -227,7 +236,9 @@ export function NeedsYouPage({ query, setQuery, navigate }: RouteProps) {
   const detail: CapabilityDetail | null = !open ? null : selectedRow ? {
     id: open, title: needName(selectedRow), heading: needHeading(selectedRow), onClose: close,
     followsSelection: followed === open,
-    body: <NeedDetail row={selectedRow} outcome={outcomeOf(selectedRow)} actions={actions} now={now} />,
+    eyebrow: panelOwnsBody(selectedRow) ? <NeedTagRow row={selectedRow} now={now} /> : undefined,
+    body: <NeedPanel row={selectedRow} outcome={outcomeOf(selectedRow)} actions={actions} now={now}
+      onNext={nextAfter(selectedRow) ? () => select(rowKey(nextAfter(selectedRow)!)) : undefined} />,
   } : needs.data ? {
     id: open, title: 'This is no longer waiting on you', onClose: close,
     body: <p data-type="body-m" className="text-on-surface">This is no longer waiting on you. It was decided or ended somewhere else.</p>,
@@ -311,7 +322,7 @@ export function NeedsYouPage({ query, setQuery, navigate }: RouteProps) {
 
   return (
     <ListBesideDetail header={header} detail={detail} noun="Needs you"
-      listWidth={720} splitWidth={440} headingScrolls compactTargets focusOnOpen edgeFade>
+      listWidth={720} splitWidth={440} headingScrolls compactTargets focusOnOpen edgeFade decideBar>
       <section ref={listRef} role="region" aria-label="Needs you" data-tour="approvals" onKeyDown={onListKey}
         className="flex min-h-full w-full min-w-0 flex-col gap-l px-l py-l">
         {offline ? (

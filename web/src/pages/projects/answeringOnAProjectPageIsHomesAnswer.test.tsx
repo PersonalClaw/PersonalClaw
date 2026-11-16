@@ -80,7 +80,8 @@ describe('answering on a project page', () => {
     await within(await needs()).findByText('Which bed first?')
     await userEvent.click(within(await needs()).getByRole('button', { name: /^Show the details of / }))
     expect(address.query.open).toMatch(/^need:/)
-    const field = await screen.findByPlaceholderText('Reply in one line: Enter sends, Escape closes')
+    // The panel's reply field promises only what it does: PaneHost leaves Escape to a field (PaneHost.tsx:203).
+    const field = await screen.findByPlaceholderText('Reply in one line: Enter sends')
     await userEvent.type(field, 'The north bed{Enter}')
     await waitFor(() => expect(answer).toHaveBeenCalledWith('c-1', 'q-1', { answers: [{ selected: [], other: 'The north bed' }] }))
   })

@@ -32,10 +32,19 @@ export function dropBody(branch: string, n: number): string {
  *  the loop pauses here with what it would bring in. You choose: redo the task on top of your branch
  *  as it is now, resolve the conflict yourself and Resume (the loop merges it then), or drop the
  *  work. Redo and Drop name the commit shown; work that moved after you read it is read again. */
-export function MergeConflict({ loopId, conflict, onChosen }: {
+export function MergeConflict({ loopId, conflict, onChosen, onResume, answered, hosted = false }: {
   loopId: string
   conflict: LoopMergeConflict
   onChosen: () => void
+  /** Resume sent by its host, which says how it went (Needs you's card outcome); without it the
+   *  loop is resumed here and a failure is reported here. */
+  onResume?: () => Promise<unknown>
+  /** Where its host answers it too: *sending* while an answer is on its way (Resume waits), and
+   *  *settled* once one landed (Resume goes; the work stays to read). */
+  answered?: 'sending' | 'settled'
+  /** In Needs you's panel: no frame or region of its own, and Redo and Drop are the panel's decide
+   *  bar, which reads the review again and asks once more; Resume stays here. */
+  hosted?: boolean
 }) {
   const [review, setReview] = useState<LoopConflictReview | null>(null)
   const [loadErr, setLoadErr] = useState('')
@@ -71,14 +80,18 @@ export function MergeConflict({ loopId, conflict, onChosen }: {
   async function resume() {
     if (busy) return
     setBusy('resume')
-    try { await api.uLoopAction(loopId, 'resume'); onChosen() }
+    try {
+      if (onResume) { await onResume(); return }
+      await api.uLoopAction(loopId, 'resume'); onChosen()
+    }
     catch (e) { reportActionFailure('resume this project')(e) }
     finally { setBusy(null) }
   }
 
   return (
-    <section role="region" aria-label={`“${title}” conflicts with ${into}`} data-type="body-s"
-      className="mb-s rounded-lg border border-outline-variant bg-surface-container p-m">
+    <section role={hosted ? undefined : 'region'} aria-label={hosted ? undefined : `“${title}” conflicts with ${into}`} data-type="body-s"
+      data-conflict-form={hosted ? 'hosted' : undefined}
+      className={hosted ? 'min-w-0' : 'mb-s rounded-lg border border-outline-variant bg-surface-container p-m'}>
       <div className="mb-xs inline-flex items-center gap-xs" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
         <GitBranch size={14} aria-hidden /> “{title}” conflicts with {into}
       </div>
@@ -103,12 +116,12 @@ export function MergeConflict({ loopId, conflict, onChosen }: {
       ) : (
         <div className="mt-s flex flex-col gap-s">
           <TaskChanges task_id={task.task_id} title={title} branch={task.branch} commits={task.commits}
-            stat={task.stat} diff={task.diff} summary="What its work changes" />
+            stat={task.stat} diff={task.diff} summary="What its work changes" wrap={hosted} open={hosted} />
           {review?.cut && (
             <p data-type="caption" className="text-on-surface-low">The diff is longer than one review shows; the rest is on the branch.</p>
           )}
           <ul className="flex flex-col gap-s">
-            <li className="flex flex-wrap items-center gap-s">
+            {hosted ? null : <li className="flex flex-wrap items-center gap-s">
               <p data-type="caption" className="min-w-0 flex-1 text-on-surface-var">
                 Run the task again from {into} as it is now. The work it did is set aside.
               </p>
@@ -116,19 +129,19 @@ export function MergeConflict({ loopId, conflict, onChosen }: {
                 loading={busy === 'redo'} onClick={() => choose('redo')}>
                 <RotateCcw size={13} aria-hidden /> Redo on top of {into}…
               </Button>
-            </li>
-            <li className="flex flex-wrap items-center gap-s">
+            </li>}
+            {answered === 'settled' ? null : <li className="flex flex-wrap items-center gap-s">
               <p data-type="caption" className="min-w-0 flex-1 text-on-surface-var">
                 Resolve it yourself: merge <code>{task.branch}</code> into {into} in your workspace and resolve the conflict
                 there, or resolve it on the branch in its folder <code className="select-all break-all">{task.path}</code>.
                 Then Resume: the loop merges it, and asks again if it still conflicts.
               </p>
-              <Button variant="ghost" size="xs" disabled={!!busy} disabledReason={BUSY_REASON}
+              <Button variant="ghost" size="xs" disabled={!!busy || answered === 'sending'} disabledReason={BUSY_REASON}
                 loading={busy === 'resume'} onClick={resume}>
                 <Play size={13} aria-hidden /> Resume
               </Button>
-            </li>
-            <li className="flex flex-wrap items-center gap-s">
+            </li>}
+            {hosted ? null : <li className="flex flex-wrap items-center gap-s">
               <p data-type="caption" className="min-w-0 flex-1 text-on-surface-var">
                 Drop its work: its branch and folder are deleted and the task is cancelled. The loop carries on without it.
               </p>
@@ -136,7 +149,7 @@ export function MergeConflict({ loopId, conflict, onChosen }: {
                 loading={busy === 'drop'} onClick={() => choose('drop')}>
                 <Trash2 size={13} aria-hidden /> Drop its work…
               </Button>
-            </li>
+            </li>}
           </ul>
         </div>
       )}

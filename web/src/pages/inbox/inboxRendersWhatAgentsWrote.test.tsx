@@ -120,7 +120,7 @@ describe("a proposal's title and preview", () => {
   it('the title renders as a line; the checkbox is named in plain text', () => {
     render(<ProposalsLens items={[proposal('lp-1', { title: MD_LINE })]} onChanged={() => {}} />)
     expect(screen.getByRole('checkbox', { name: `Select proposal: ${SEEN}` })).toBeInTheDocument()
-    expect(rendersLine(screen.getByTitle(SEEN))).toEqual([])
+    expect(rendersLine((document.querySelector('[data-type=\"label-m\"]') as HTMLElement))).toEqual([])
   })
 
   it('a text preview renders as a body, and a diff stays a diff', () => {
@@ -135,7 +135,7 @@ describe("a proposal's title and preview", () => {
 
   it('a hostile title is inert', () => {
     render(<ProposalsLens items={[proposal('lp-3', { title: HOSTILE })]} onChanged={() => {}} />)
-    for (const link of screen.getAllByText(/open the report/)) expect(inert(link.closest('[title]')!)).toEqual([])
+    for (const link of screen.getAllByText(/open the report/)) expect(inert(link.closest('[data-type="label-m"]')!)).toEqual([])
   })
 })
 

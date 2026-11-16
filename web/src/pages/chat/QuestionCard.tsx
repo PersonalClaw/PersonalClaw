@@ -26,9 +26,12 @@ const NOT_READY = 'Choose an option or write an answer for each question first.'
  *  Once it ends the card says how: what she answered, that she skipped it, or why it was withdrawn
  *  (her Stop, nobody answering in time). A question whose tool PersonalClaw cannot send an answer
  *  to shows its questions and says so (`note`), with nothing to press. */
-export function QuestionCard({ seg, onAnswer }: {
+export function QuestionCard({ seg, onAnswer, hosted = false }: {
   seg: QuestionSegment
   onAnswer: (id: string, reply: QuestionReply) => Promise<unknown>
+  /** In Needs you's panel: no frame, title, "From …" line, rise or alert of its own; the panel's
+   *  header and heading say what it is and who asked. */
+  hosted?: boolean
 }) {
   const titleId = useId()
   const [picked, setPicked] = useState<number[][]>(() => seg.questions.map(() => []))
@@ -71,7 +74,7 @@ export function QuestionCard({ seg, onAnswer }: {
   }
 
   return (
-    <Shell titleId={titleId} title="Question for you" askedBy={seg.askedBy} alert>
+    <Shell titleId={titleId} title="Question for you" askedBy={seg.askedBy} alert hosted={hosted}>
       {seg.questions.map((q, qi) => {
         const qid = `${titleId}-q${qi}`
         return (
@@ -110,13 +113,17 @@ export function QuestionCard({ seg, onAnswer }: {
   )
 }
 
-function Shell({ titleId, title, askedBy, alert = false, children }: {
+function Shell({ titleId, title, askedBy, alert = false, hosted = false, children }: {
   titleId: string
   title: string
   askedBy: string
   alert?: boolean
+  hosted?: boolean
   children: React.ReactNode
 }) {
+  if (hosted) {
+    return <div role="group" aria-label={title} data-question-form="hosted" className="min-w-0">{children}</div>
+  }
   return (
     <motion.div variants={messageEnter} initial="initial" animate="animate"
       role="group" aria-labelledby={titleId}

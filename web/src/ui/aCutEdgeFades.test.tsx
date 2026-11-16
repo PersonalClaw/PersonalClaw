@@ -123,3 +123,33 @@ describe('a cut edge fades', () => {
     expect(pane(container).style.scrollPaddingBottom).toBe('24px')
   })
 })
+
+describe('a decide bar stuck to the pane’s foot is where its content is cut', () => {
+  function withBar(sticky: boolean) {
+    const out = render(
+      <ScrollFade ground="surface" data-testid="pane">
+        <p>a long proposal</p>
+        <div data-decide-bar="" style={sticky ? { position: 'sticky', bottom: 0 } : undefined}>Save template</div>
+      </ScrollFade>,
+    )
+    const bar = out.container.querySelector('[data-decide-bar]') as HTMLElement
+    bar.getBoundingClientRect = () => ({ height: 56, width: 0, top: 0, left: 0, right: 0, bottom: 56, x: 0, y: 0, toJSON: () => ({}) })
+    metrics(pane(out.container), { client: 400, scroll: 900 })
+    resized()
+    return out.container
+  }
+
+  it('while it is stuck the bottom fade lies on its top edge, and a reveal stops clear of both', () => {
+    const container = withBar(true)
+    const fade = container.querySelector('[data-fade="bottom"]') as HTMLElement
+    expect(fade.style.bottom).toBe('56px')
+    expect(pane(container).style.scrollPaddingBottom).toBe('80px')
+  })
+
+  it('a bar that sits at the content’s end leaves the fade on the pane’s own edge', () => {
+    const container = withBar(false)
+    const fade = container.querySelector('[data-fade="bottom"]') as HTMLElement
+    expect(fade.style.bottom).toBe('')
+    expect(pane(container).style.scrollPaddingBottom).toBe('24px')
+  })
+})

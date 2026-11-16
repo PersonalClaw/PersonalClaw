@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, Ban, Check, CheckCircle2, Play, X } from 'lucide-react'
-import { api, ApiError, hasApiCode, isSwitchedOff, type AgentQuestion, type OrganizeProposal } from '../../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, type AgentQuestion, type LoopMergeConflict, type LoopMergeWaiting, type OrganizeProposal, type WorkflowContinuation } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { clockTime } from '../../lib/epoch'
 import type { NeedsYouRow } from '../../lib/needsYou'
@@ -11,6 +11,7 @@ import {
 import { approvalOf, isStale, staleAt } from '../../lib/waitingList'
 import { kindOf, learningCardOf, type KindWords } from '../../lib/needsYouKinds'
 import { StatusPill } from '../../ui/StatusPill'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { rowSubject } from '../../lib/rowSubject'
 import { PendingApprovalCard } from '../../app/PendingApprovalCard'
 import { Button } from '../../ui/Button'
@@ -30,7 +31,10 @@ import { widgetlessText } from '../../ui/widget/blocks'
 import { Markdown } from '../../ui/Markdown'
 import { UnifiedDiff } from '../../ui/UnifiedDiff'
 import { openable } from './RunningLane'
-import { dropBody, redoBody } from '../code/MergeConflict'
+import { QuestionCard } from '../chat/QuestionCard'
+import { WorkflowAsk } from '../workflows/WorkflowAsk'
+import { MergeReview } from '../code/MergeReview'
+import { MergeConflict, dropBody, redoBody } from '../code/MergeConflict'
 import { capsHaveRoom, retryWindow, spendCapStop } from '../workflows/attentionMeta'
 import { proposalsKey } from '../learning/proposalCache'
 
@@ -229,6 +233,13 @@ export interface CardActions {
   appProposal?: (key: string, itemId: string, action: 'approve' | 'reject') => void
   /** A chat to file: Accept or Decline, the proposal rebuilt from its row. */
   organize?: (key: string, session: string, proposal: OrganizeProposal, action: 'accept' | 'decline') => void
+  /** A chat's question answered in full in the panel (several questions or choices): the answer
+   *  as the chat's own card sends it; its promise is the send's, so the card says why it failed. */
+  chatReply?: (key: string, ref: { session: string; question: string }, reply: { answers: { selected: number[]; other: string }[] } | { skip: true }) => Promise<unknown>
+  /** A run's form gate (or a choice gate that names no choices) answered in the panel, as the run's
+   *  page answers it, its "Don't ask again for this step in this run" with it (*alwaysAllow*); its
+   *  promise is the send's, so the form says why it failed. */
+  gateReply?: (key: string, runId: string, resumeToken: string, value: unknown, alwaysAllow?: boolean) => Promise<unknown>
   /** An agent's one question in a chat: one of its options, by its place, or Skip. */
   chat?: (key: string, ref: { session: string; question: string }, answer: { pick: number; label: string } | 'skip') => void
   /** A plan step's approve, as the list read it; a loop's plan launched. */
@@ -240,6 +251,9 @@ export interface CardActions {
   merge?: (key: string, loopId: string, tips: Record<string, string>, done: string) => void
   /** A conflict's Redo or Drop at the tip its review named. */
   conflict?: (key: string, loopId: string, choice: 'redo' | 'drop', taskId: string, tip: string) => void
+  /** A loop whose conflict you resolved yourself, resumed: it merges the work, or asks again.
+   *  Settles once the card says how it went, so it never rejects. */
+  loopResume?: (key: string, loopId: string) => Promise<unknown>
   /** A run that waits after a declined step: resumed, or cancelled. */
   run?: (key: string, runId: string, action: 'resume' | 'cancel') => void
   /** An escalated run started again, as its page retries it: a fork of it, started. */
@@ -268,7 +282,7 @@ function KindTag({ kind }: { kind: KindWords }) {
 /** A card's tag row: its kind, then the thing it is about or its source, the dot and the name one
  *  unit so a wrapped row never leaves the dot behind; at its end the project chip and the time left
  *  to answer. */
-function NeedTagRow({ row, chip, now }: { row: NeedsYouRow; chip?: ReactNode; now: number }) {
+export function NeedTagRow({ row, chip, now }: { row: NeedsYouRow; chip?: ReactNode; now: number }) {
   const slot = thingName(row) || sourceSlot(row)
   const left = row.origin === 'waiting' ? timeLeft(row.item, now) : ''
   return (
@@ -288,6 +302,10 @@ function NeedTagRow({ row, chip, now }: { row: NeedsYouRow; chip?: ReactNode; no
     </div>
   )
 }
+
+/** The panel's decide bar: at the pane's foot, sticky while the pane is 32rem tall or more (a size
+ *  query on its scroller, `ListBesideDetail`'s `decideBar`), the body's last part otherwise. */
+export const DECIDE_BAR = '-mx-l flex min-w-0 flex-col border-t border-outline-variant/40 bg-surface px-l py-s [@container(min-height:32rem)]:sticky [@container(min-height:32rem)]:bottom-0'
 
 /** What a card's answer carries on every card: a 44 px box below 1024 px and a transparent edge,
  *  which forced colours draw as `ButtonBorder`, so a pair keeps its edges there. */
@@ -354,13 +372,43 @@ export function NeedDetail({ row, outcome, actions, now }: {
   const route = own.replace(/^#\/?/, '').split('?')[0] === 'mission-control' ? '' : own
   const asked = row.origin === 'waiting' ? clockTime(row.item.asked_at) : ''
   const item = row.origin === 'waiting' ? row.item : null
-  const reply = item ? waitingReply(item) : null
-  const settled = outcome?.state === 'done' || outcome?.state === 'ended'
   const questions = item?.kind === 'question' && Array.isArray(item.brief.questions) ? item.brief.questions : []
-  return (
-    <div className="flex min-w-0 flex-col gap-m">
-      <NeedBody row={row} outcome={outcome} actions={actions} now={now} />
-      {questions.length > 1 ? (
+  const ref = item ? waitingQuestionRef(item) : null
+  // Several questions, or one with several choices: the chat's own question card, hosted, answers
+  // them all here (the card offered Skip and sent you here).
+  const hostsQuestion = !!(ref && actions.chatReply && !isStale(item!, now)
+    && (questions.length > 1 || (questions[0] as { multiSelect?: boolean } | undefined)?.multiSelect))
+  // A loop's merge or conflict: its review, hosted, shows the work (its commits, its files, its
+  // diff); the decide bar under it merges, redoes or drops, reading the work again first.
+  const loopChoice = item ? waitingLoopChoice(item) : null
+  // A form gate, or a choice gate that names no choices: the run's own ask, hosted, answers it here.
+  const gate = item ? waitingQuestion(item) : null
+  const hostsGate = !!(gate && item && actions.gateReply && !isStale(item, now) && !gate.approval && !gate.event
+    && (gate.kind === 'form' || (gate.kind === 'choice' && gate.choices.length === 0)))
+  // The parts, in the panel's order: the thing itself (the ask's own lines, `NeedBody`), where it
+  // came from (who asked, and the chat's last lines), its facts and one way out; the answers are
+  // the decide bar at the foot.
+  const parts = (
+    <>
+      {loopChoice?.kind === 'merge' && item && item.brief.merge && typeof item.brief.merge === 'object' ? (
+        <MergeReview hosted loopId={loopChoice.loopId} waiting={item.brief.merge as LoopMergeWaiting} onMerged={() => {}} />
+      ) : null}
+      {loopChoice?.kind === 'conflict' && item && item.brief.conflict && typeof item.brief.conflict === 'object' ? (
+        <MergeConflict hosted loopId={loopChoice.loopId} conflict={item.brief.conflict as LoopMergeConflict} onChosen={() => {}}
+          onResume={actions.loopResume ? () => actions.loopResume!(row.key, loopChoice.loopId) : undefined}
+          answered={outcome?.state === 'busy' ? 'sending' : outcome && outcome.state !== 'failed' ? 'settled' : undefined} />
+      ) : null}
+      {hostsGate && gate && item ? (
+        <WorkflowAsk hosted runId={gate.runId} busy={outcome?.state === 'busy'}
+          continuation={{ resume_token: gate.resumeToken, node_id: gate.nodeId, instance_path: '', expires_at: 0, expired: false,
+            ask: (item.brief.ask ?? {}) as WorkflowContinuation['ask'], handoff: (item.brief.handoff ?? {}) as WorkflowContinuation['handoff'] }}
+          onAnswer={async (c, value, always) => { await actions.gateReply?.(row.key, gate.runId, c.resume_token, value, always).catch(() => {}) }} />
+      ) : null}
+      {hostsQuestion && ref && item ? (
+        <QuestionCard hosted
+          seg={{ kind: 'question', id: ref.question, toolCallId: '', questions: questions as AgentQuestion[], askedBy: '', answerable: true }}
+          onAnswer={(_id, reply) => actions.chatReply?.(row.key, ref, reply) ?? Promise.resolve()} />
+      ) : questions.length > 1 ? (
         <ol className="flex min-w-0 list-decimal flex-col gap-xs pl-l">
           {questions.map((q, i) => (
             <li key={i} data-type="body-s" className="text-on-surface">
@@ -369,22 +417,25 @@ export function NeedDetail({ row, outcome, actions, now }: {
           ))}
         </ol>
       ) : null}
-      {item?.session ? <ConversationTail session={item.session} /> : null}
-      {/* A loop's line and a text gate's are on its card (`NeedBody`), and so in its panel: a chat's
-          question takes its words here too. */}
-      {reply && reply.kind === 'question' && item && !settled && !isStale(item, now) ? (
-        <ReplyField subject={needName(row)} busy={outcome?.state === 'busy'}
-          placeholder="Reply in one line: Enter sends, Escape closes"
-          onSend={(text) => actions.reply(row.key, reply, text)} />
+      {row.raisedBy || item?.session ? (
+        <section className="flex min-w-0 flex-col gap-s">
+          <Eyebrow as="h3">Where it came from</Eyebrow>
+          {row.raisedBy ? <p data-type="body-s" className="text-on-surface">{row.raisedBy}</p> : null}
+          {item?.session ? <ConversationTail session={item.session} hosted /> : null}
+        </section>
       ) : null}
-      <dl data-type="body-s" className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs text-on-surface-var">
-        {row.raisedBy ? <><dt className="text-on-surface-low">Asked by</dt><dd>{row.raisedBy}</dd></> : null}
-        {asked ? <><dt className="text-on-surface-low">Asked</dt><dd>{asked}</dd></> : null}
-        {row.origin === 'waiting' && row.item.expires_at ? (
-          <><dt className="text-on-surface-low">Answer by</dt><dd>{clockTime(row.item.expires_at)}</dd></>
-        ) : null}
-      </dl>
+      {asked || item?.expires_at ? (
+        <dl data-type="body-s" className="grid grid-cols-[auto_1fr] gap-x-m gap-y-xs">
+          {asked ? <><dt className="text-on-surface-low">Asked</dt><dd className="text-on-surface">{asked}</dd></> : null}
+          {item?.expires_at ? <><dt className="text-on-surface-low">Answer by</dt><dd className="text-on-surface">{clockTime(item.expires_at)}</dd></> : null}
+        </dl>
+      ) : null}
       {route ? <TextLink href={route} ink="emphasis" size="sm">Open where it asks</TextLink> : null}
+    </>
+  )
+  return (
+    <div className="flex min-w-0 flex-col gap-l">
+      <NeedBody row={row} outcome={outcome} actions={actions} now={now} panel beforeAnswers={parts} hostsAnswers={hostsQuestion || hostsGate} />
     </div>
   )
 }
@@ -399,7 +450,7 @@ export function NeedDetail({ row, outcome, actions, now }: {
  *  confirmation's, `useHeldHeight`), and a failure says why under them, so a press moves nothing
  *  above or beside the pointer. Every answer to what waits is `secondary`, a skill proposal's accept
  *  `tonal`: none is solid coral on a card. */
-function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
+function NeedBody({ row, outcome, actions, now, chip, selected = false, off, panel = false, beforeAnswers, hostsAnswers = false }: {
   row: NeedsYouRow
   outcome: Outcome | undefined
   actions: CardActions
@@ -407,6 +458,13 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
   chip?: ReactNode
   selected?: boolean
   off?: string
+  /** In the panel: the pane's header holds the tag row and the heading the headline, so neither is
+   *  drawn again; an approval is its hosted form, and the answers sit in the decide bar. */
+  panel?: boolean
+  /** In the panel: its other parts, drawn after the ask's own lines and before the decide bar. */
+  beforeAnswers?: ReactNode
+  /** In the panel: a hosted component in `beforeAnswers` answers it, so no bar of its own. */
+  hostsAnswers?: boolean
 }) {
   const settled = outcome?.state === 'done' || outcome?.state === 'ended'
   const busy = outcome?.state === 'busy'
@@ -434,11 +492,12 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
     if (approval && !expired) {
       return (
         <div className="flex min-w-0 flex-col gap-xs">
-          <PendingApprovalCard approval={approval} busy={busy || !!off} form="queue"
+          <PendingApprovalCard approval={approval} busy={busy || !!off} form={panel ? 'hosted' : 'queue'}
             tagEnd={chip || timeLeft(item, now) ? <>{chip}{timeLeft(item, now) ? <span data-type="caption" className="text-on-surface-low">{timeLeft(item, now)}</span> : null}</> : undefined}
             answersReplacedBy={replaced ?? undefined}
             onDecide={(action) => actions.approval(row.key, approval.id, action)} />
           {outcome?.state === 'failed' ? <CardOutcome outcome={outcome} /> : null}
+          {panel ? beforeAnswers : null}
         </div>
       )
     }
@@ -467,10 +526,11 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
     || (item?.kind === 'declined_wait' && runOf) || inboxRow)
   return (
     <div className="flex min-w-0 flex-col gap-xs">
-      <NeedTagRow row={row} chip={chip} now={now} />
+      {panel ? null : <NeedTagRow row={row} chip={chip} now={now} />}
       {/* What an agent, a loop or a person wrote renders as its line; an approval's title is a tool's
-          name, and a browse grant's second line is ours, so both stay text. */}
-      <p data-type="title-m" className={`min-w-0 break-words text-on-surface${clamped ? ' line-clamp-2' : ''}`}>{item?.kind === 'approval' ? row.title : <MarkdownLine text={row.title} tooltip={false} />}</p>
+          name, and a browse grant's second line is ours, so both stay text. In the panel it is the
+          pane's heading. */}
+      {panel ? null : <p data-type="title-m" className={`min-w-0 break-words text-on-surface${clamped ? ' line-clamp-2' : ''}`}>{item?.kind === 'approval' ? row.title : <MarkdownLine text={row.title} tooltip={false} />}</p>}
       {row.subtitle ? <p data-type="body-s" className={`min-w-0 break-words text-on-surface${clamped ? ' line-clamp-1' : ''}`}>{item?.kind === 'browse_grant' ? row.subtitle : <MarkdownLine text={row.subtitle} tooltip={false} />}</p> : null}
       {appPreview ? <AppPreview preview={appPreview} /> : null}
       {/* A gate's or a trigger's prompt is a body, with any widget block left out. */}
@@ -503,10 +563,11 @@ function NeedBody({ row, outcome, actions, now, chip, selected = false, off }: {
 
       {/* Settled or expired, the verbs are GONE, not disabled: a second answer on a settled item
           is a real action. A FAILED card keeps them: retrying is the point of being told. */}
+      {panel ? beforeAnswers : null}
       {replaced && (settled || answerable) ? (
         <div data-held-answers="" style={held ? { minHeight: held } : undefined}>{replaced}</div>
-      ) : expired || settled || !answerable ? null : (
-        <div ref={answersRef} className="flex min-w-0 flex-col gap-xs">
+      ) : expired || settled || !answerable || hostsAnswers ? null : (
+        <div ref={answersRef} className={panel ? `${DECIDE_BAR} gap-xs` : 'flex min-w-0 flex-col gap-xs'} data-decide-bar={panel ? '' : undefined}>
           {cardReply || !answerable ? null : (
             <div className="flex min-w-0 flex-wrap items-start gap-xs">
               {proposal ? (
@@ -679,9 +740,11 @@ function rejectVerb(variant: string): string {
  *  that replaces or removes what is there asks once more, inline, in the review's words, and nothing
  *  is sent before its yes. A row filed before the card (no `refs.card`) can't tell from its kind
  *  what its Accept does, so its Accept always asks once more. */
-function LearningAnswers(props: {
+export function LearningAnswers(props: {
   pid: string; card: Record<string, unknown> | null; subject: string; busy: boolean; off?: string
   onAnswer: (action: 'accept' | 'reject', done: string) => void
+  /** In the panel's decide bar: an accept that installs or applies is its `primary`. */
+  inBar?: boolean
 }) {
   // While Learning is off nothing here can decide a learning card: one read a page says so, the
   // same read Learning's page makes (`GET /api/learning/proposals` answers `{enabled: false}`).
@@ -698,9 +761,10 @@ function LearningAnswers(props: {
   return <LearningPair {...props} />
 }
 
-function LearningPair({ pid, card, subject, busy, off, onAnswer }: {
+function LearningPair({ pid, card, subject, busy, off, onAnswer, inBar = false }: {
   pid: string; card: Record<string, unknown> | null; subject: string; busy: boolean; off?: string
   onAnswer: (action: 'accept' | 'reject', done: string) => void
+  inBar?: boolean
 }) {
   const accept = (card?.accept ?? {}) as { effect?: string; verb?: string; sentence?: string }
   const variant = String(card?.variant ?? '')
@@ -738,12 +802,12 @@ function LearningPair({ pid, card, subject, busy, off, onAnswer }: {
       {none ? (
         <p data-type="body-s" className="basis-full text-on-surface">{told?.state === 'none' ? told.text : accept.sentence}</p>
       ) : (
-        <Button size="xs" variant={card && (accept.effect === 'installs' || accept.effect === 'applies') ? 'tonal' : 'secondary'}
+        <Button size={inBar ? 'sm' : 'xs'} variant={card && (accept.effect === 'installs' || accept.effect === 'applies') ? (inBar ? 'primary' : 'tonal') : 'secondary'}
           loading={busy || reading} disabled={!!off} disabledReason={off} ariaLabel={`${verb}: ${subject}`} onClick={press} className={ANSWER}>
           <Check size={13} aria-hidden="true" /> {verb}
         </Button>
       )}
-      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+      <Button size={inBar ? 'sm' : 'xs'} variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
         ariaLabel={`${no}: ${subject}`} onClick={() => onAnswer('reject', done(no))} className={ANSWER}>
         <X size={13} aria-hidden="true" /> {no}
       </Button>
@@ -777,10 +841,12 @@ function ReadSaid({ told }: { told: Told }) {
 /** A skill proposal's pair on its card: its card's verb (Add refinement, Install skill), `tonal`,
  *  and Reject. The press reads the proposal again first: a skill removed since the list was read
  *  means accepting installs it as new, which it asks once more about. */
-function SkillAnswers({ proposal, subject, busy, off, onAnswer }: {
+export function SkillAnswers({ proposal, subject, busy, off, onAnswer, inBar = false }: {
   proposal: NonNullable<Extract<NeedsYouRow, { origin: 'proposal' }>['proposal']>
   subject: string; busy: boolean; off?: string
   onAnswer: (action: 'accept' | 'reject', done: string) => void
+  /** In the panel's decide bar: its accept is the bar's `primary`. */
+  inBar?: boolean
 }) {
   const verb = proposal.card?.accept.verb || 'Accept'
   const joins = proposal.kind === 'refine' ? !proposal.accept_target : !!proposal.accept_target
@@ -817,11 +883,11 @@ function SkillAnswers({ proposal, subject, busy, off, onAnswer }: {
   }
   return (
     <>
-      <Button size="xs" variant="tonal" loading={busy || reading} disabled={!!off} disabledReason={off}
+      <Button size={inBar ? 'sm' : 'xs'} variant={inBar ? 'primary' : 'tonal'} loading={busy || reading} disabled={!!off} disabledReason={off}
         ariaLabel={`${verb}: ${subject}`} onClick={press} className={ANSWER}>
         <Check size={13} aria-hidden="true" /> {verb}
       </Button>
-      <Button size="xs" variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
+      <Button size={inBar ? 'sm' : 'xs'} variant="secondary" loading={busy} disabled={!!off} disabledReason={off}
         ariaLabel={`Reject: ${subject}`} onClick={() => onAnswer('reject', 'Rejected.')} className={ANSWER}>
         <X size={13} aria-hidden="true" /> Reject
       </Button>
@@ -866,7 +932,7 @@ function ChatAnswers({ questions, subject, busy, off, onAnswer, onReply }: {
         ariaLabel={`Skip: ${subject}`} onClick={() => onAnswer('skip')} className={ANSWER}>
         Skip
       </Button>
-      {one?.free_text ? (
+      {one && (one.free_text || options.length === 0) ? (
         <div className="basis-full"><ReplyField subject={subject} busy={busy} off={off} onCard onSend={onReply} /></div>
       ) : null}
       {one ? null : <InThePanel />}
@@ -1146,7 +1212,7 @@ function YesNo({ subject, busy, yes, no, onYes, onNo, yesVariant = 'secondary', 
 
 /** How a card's answer went, in words, in a live region: a card that only changed colour is one a
  *  screen-reader user cannot tell from a pending one. */
-function CardOutcome({ outcome }: { outcome: Outcome | undefined }) {
+export function CardOutcome({ outcome }: { outcome: Outcome | undefined }) {
   if (!outcome || outcome.state === 'busy') return null
   if (outcome.state === 'failed') {
     return (
@@ -1245,13 +1311,27 @@ function ReplyField({ subject, busy, onSend, onCard = false, placeholder = 'Repl
 
 /** The last few lines of the conversation an ask came from, read-only: what the agent said before
  *  it asked, so the owner can answer from here. */
-function ConversationTail({ session }: { session: string }) {
+export function ConversationTail({ session, before, hosted = false }: {
+  session: string
+  /** Only the lines at or before this time (a proposal's `created_at`), so a chat used since shows
+   *  what it said up to the proposal, not its newest lines. */
+  before?: string
+  /** Inside a part of the panel that names it: a surface step, no region of its own. */
+  hosted?: boolean
+}) {
   const { data, error, refresh } = useQuery(`chat:peek:${session}`, async () => api.chatSessionDetail(session), { persist: false })
   if (error && !data) return <InlineLoadError what="the conversation it came from" error={error} onRetry={refresh} />
-  const lines = (data?.messages ?? []).filter((m) => m.role === 'user' || m.role === 'assistant').slice(-4)
+  const until = before ? Date.parse(before) : NaN
+  const lines = (data?.messages ?? [])
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .filter((m) => Number.isNaN(until) || !m.ts || Date.parse(m.ts) <= until)
+    .slice(-4)
   if (lines.length === 0) return null
+  const frame = hosted
+    ? { className: 'flex min-w-0 flex-col gap-xs rounded-md bg-surface-low p-m' }
+    : { role: 'region', 'aria-label': 'The conversation it came from', className: 'flex min-w-0 flex-col gap-xs border-l-2 border-outline-variant/40 pl-m' }
   return (
-    <section role="region" aria-label="The conversation it came from" className="flex min-w-0 flex-col gap-xs border-l-2 border-outline-variant/40 pl-m">
+    <section {...frame}>
       {/* Each line renders as the transcript does: the agent's as its reply (any widget block left
           out), yours as text written in lines; each cut at a block boundary, never in a fence. */}
       {lines.map((m, i) => (

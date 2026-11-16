@@ -46,7 +46,10 @@ export const APPLY_CASE_LABEL: Record<ApplyCase, string> = {
  *  can't disagree. */
 export function groupKey(it: Pick<InboxItem, 'refs' | 'item_kind'>): string {
   const p = proposalOf(it)
-  return `${p?.provenance ?? ''}|${it.item_kind ?? ''}`
+  // A learning row also by its card's variant: a template and a lesson are never one batch.
+  const card = (it.refs as Record<string, unknown> | undefined)?.card as { variant?: unknown } | undefined
+  const variant = card && typeof card.variant === 'string' ? `|${card.variant}` : ''
+  return `${p?.provenance ?? ''}|${it.item_kind ?? ''}${variant}`
 }
 
 /** Human-readable half of the group, for the batch button's label. */

@@ -29,13 +29,15 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *  same resume path the typed controls use — the run advances instead of the answer landing
  *  in a chat. `runId` is required rather than optional precisely so a caller cannot render
  *  an interactive gate widget whose submit has nowhere to go. */
-export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption, stepName = '' }: {
+export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption, stepName = '', hosted = false }: {
   continuation: WorkflowContinuation
   runId: string
   busy: boolean
   onAnswer: (c: WorkflowContinuation, value: unknown, alwaysAllow: boolean) => void | Promise<void>
   /** What the asking step is called where the caller knows it (the run page: its label). */
   stepName?: string
+  /** In Needs you's panel: no frame of its own; the panel's header and heading say what it is. */
+  hosted?: boolean
   /** What Approve and Deny do for a step that parked (`ask.rerun`), when its owner is not a run —
    *  a trigger's park runs again from the trigger, and Deny leaves it for its next run. */
   rerunCaption?: string
@@ -99,7 +101,7 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption,
   )
 
   return (
-    <div className="flex flex-col gap-m rounded-xl border border-outline-variant p-l">
+    <div className={hosted ? 'flex min-w-0 flex-col gap-m' : 'flex flex-col gap-m rounded-xl border border-outline-variant p-l'} data-ask-form={hosted ? 'hosted' : undefined}>
       {gateWidget ? (
         <>
           {promptText && <p data-type="body-m" className="text-on-surface">{promptText}</p>}
@@ -215,7 +217,7 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption,
             {/* Deny is quiet, not destructive-styled: rejecting a gate is a normal answer,
                 and dressing it in red implies the run broke. Off while any answer is out, like
                 Approve: a Deny pressed after an Approve would send the opposite answer. */}
-            <QuietButton onClick={() => answerWith('deny', false, rerun ? false : alwaysAllow)} title="Deny this step"
+            <QuietButton onClick={() => answerWith('deny', false, rerun ? false : alwaysAllow)}
               disabled={busy || answering !== null} disabledReason={BUSY_REASON}>
               <X size={13} /> Deny
             </QuietButton>
