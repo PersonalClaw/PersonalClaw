@@ -246,9 +246,9 @@ Notifications is **Missed or interrupted runs to review**.
   frontend renders it (`web/src/pages/schedule/scheduleMeta.ts:151`), and
   `web/src/pages/triggers/triggerStatusVocabulary.test.ts` fails if a run status the backend can
   record has no rendering there.
-- `src/personalclaw/triggers/review.py:259` — `cards_from_orphans`, the interrupted run's card,
-  `review.py:204` — `cards_from_boot`, the missed slots' card (`missed.review_at_boot` walks a cron's
-  schedule as well as an interval's grid), and `review.py:382` — `take_unannounced`, the cards a
+- `src/personalclaw/triggers/review.py:264` — `cards_from_orphans`, the interrupted run's card,
+  `review.py:209` — `cards_from_boot`, the missed slots' card (`missed.review_at_boot` walks a cron's
+  schedule as well as an interval's grid), and `review.py:475` — `take_unannounced`, the cards a
   stop kept that the next start's notice counts.
 - `src/personalclaw/dashboard/handlers/triggers.py:2404` — `api_trigger_review`, the cards and the
   decision; the decision's outcome comes from `src/personalclaw/triggers/missed.py:461`,
@@ -272,9 +272,11 @@ What a missed time does is a setting on each scheduled automation, **If a time i
 
 - **Wait for me to decide** (the default). It does not run late by itself. The Automations page shows
   it under **Waiting for your decision**, with **Run now** and **Dismiss**, and the bell has one
-  "Missed scheduled runs" notice saying how many were missed and why. A one-time automation whose
-  time was missed is switched off with its time taken, so nothing runs it later unless you choose
-  **Run now**.
+  "Missed scheduled runs" notice saying how many were missed and why. Once the automation has run
+  on schedule since, and that run did its work, the card goes on its own: a Run now would only
+  repeat that run. Its history says the missed times were let go, as a **Dismiss** does. A one-time
+  automation whose time was missed is switched off with its time taken, so nothing runs it later
+  unless you choose **Run now**.
 - **Run it once, late.** It runs once by itself within a few minutes of PersonalClaw being back,
   however many of its times were missed, and gets no card. Its history row reads **ran late**, with
   how many minutes after the time it stood in for. The notice still counts it, and says it will

@@ -56,8 +56,8 @@
     - text: Headless Chrome on <platform> This device Browser · Last seen <when> · from #.#.#.# · Signed in with the harness token (--json-ready) Signed in <when> · session expires <month> #, #:# <am/pm>
     - button "Sign out of this device": Sign out
     - heading "Tokens (#)" [level=#]
-    - paragraph: "Links and tokens that no browser has opened: from personalclaw token, personalclaw run, a script, or the gateway's startup line. Each lasts what it was minted for; up to # can be live at once, and past that the one used least recently is signed out."
-    - text: Script Token · Last seen <when> · from #.#.#.# · The harness token (--json-ready) Issued <when> · stops working <month> #, #:# <am/pm>
+    - paragraph: Links and tokens from personalclaw token, personalclaw run, a script, or the gateway's startup line. A link a browser opened says which, and still works as a token until it ends. Each lasts what it was minted for; up to # can be live at once, and past that the one used least recently is signed out.
+    - text: Script Token · Last seen <when> · from #.#.#.# · The harness token (--json-ready) Opened <when> · still works as a token until <month> #, #:# <am/pm>
     - button "Sign out Script": Sign out
   - region "Sender trust":
     - heading "Sender trust" [level=#]

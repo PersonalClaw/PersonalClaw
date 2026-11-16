@@ -893,7 +893,7 @@ def _waiting_decisions() -> dict[str, float]:
     oldest: dict[str, float] = {}
     for card in cards:
         row = store.get(card.trigger_id)
-        if row is None:
+        if row is None or review.settling_run(card, base_dir=store.base_dir) is not None:
             continue
         rid = f"{_SCHEDULE if row.trigger.kind == 'clock' else _STORE}:{card.trigger_id}"
         at = card.oldest or card.latest
@@ -2559,7 +2559,7 @@ async def api_trigger_review(request: web.Request) -> web.Response:
     store = _trigger_store()
     if request.method == "GET":
         cards = []
-        for card in _review.pending(base_dir=store.base_dir):
+        for card in await _review.unsettled(store, _service, state.push_refresh):
             row = store.get(card.trigger_id)
             if row is None:
                 # The automation was deleted after the boot that found this; nothing to decide.

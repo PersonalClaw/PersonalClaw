@@ -35,6 +35,12 @@ const CELL_TONE: Record<CellState, { bg: string; fg: string }> = {
   mixed: { bg: 'color-mix(in srgb, var(--color-primary) 34%, transparent)', fg: 'var(--color-on-surface)' },
 }
 
+/** A trigger the week names, by the name the list shows: a `truncated` key is an occurrence's
+ *  `trigger_id`, and its `trigger_name` is that name. The key stands only if no occurrence names it. */
+function nameOfTrigger(week: WeekProjection, key: string): string {
+  return week.occurrences.find((o) => o.trigger_id === key)?.trigger_name || key
+}
+
 export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: string) => void }) {
   // Week offset in days from today. Kept in component state rather than the URL: the grid is a
   // glance surface, and a deep-linked "week of" is a different feature (the trigger itself is the
@@ -117,7 +123,7 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
           <AlertTriangle size={15} style={{ color: 'var(--color-warn)' }} className="mt-0.5 shrink-0" />
           <span>
             {week.truncated.length} trigger{week.truncated.length === 1 ? '' : 's'} fire too often to plot in full
-            — this week is partial for {week.truncated.join(', ')}.
+            — this week is partial for {week.truncated.map((key) => nameOfTrigger(week, key)).join(', ')}.
           </span>
         </div>
       )}

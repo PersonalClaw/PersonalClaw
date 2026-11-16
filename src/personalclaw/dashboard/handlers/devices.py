@@ -500,6 +500,10 @@ def _row(nonce: str, record: Any, current: str) -> dict[str, Any]:
         "pool": pool_of(record),
         "expires_at": record.expiry,
         "current": bool(current) and nonce == current,
+        # A link's row only: the browser that opened it, by its sign-in's name, and when (0.0:
+        # never).
+        "opened_by": device.opened_by,
+        "opened_at": device.opened_at,
     }
 
 

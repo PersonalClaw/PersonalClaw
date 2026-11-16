@@ -57,13 +57,13 @@ const keep = (key: string, value: string) => { try { if (value) localStorage.set
 export const SEARCH_SETTLE_MS = 250
 
 /** The Power user view's detail on the Items count line: how much can be found by meaning, and how
- *  much waits to be read; a part that would read 0 is left out. */
-function detailParts(stats: KnowledgeStats): string[] {
-  const ent = stats.enrichment?.entities
-  const waiting = ent ? ent.not_run + ent.running : 0
+ *  much is still being read, by the list's own state facet (never the names the graph has not
+ *  taken); a part that would read 0 is left out. */
+function detailParts(stats: KnowledgeStats, state: Record<string, number> | undefined): string[] {
+  const reading = state?.being_read ?? 0
   return [
     stats.embeddings.enabled && stats.embeddings.embedded_items ? `${n(stats.embeddings.embedded_items)} can be found by meaning` : '',
-    waiting ? `${n(waiting)} waiting to be read` : '',
+    reading ? `${n(reading)} still being read` : '',
   ].filter(Boolean)
 }
 
@@ -348,7 +348,7 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
           <div className="px-l pb-s">
             {line && (
               <ListStatus results={{ count: data?.total ?? 0, noun: 'items', active: narrowed }} stale={stale}
-                lead={line.lead} line={powerOn && !narrowed && stats ? [line.line, ...detailParts(stats)].filter(Boolean).join(' · ') : line.line}
+                lead={line.lead} line={powerOn && !narrowed && stats ? [line.line, ...detailParts(stats, data?.facets?.state)].filter(Boolean).join(' · ') : line.line}
                 actions={line.actions.map((a) => ({ label: a.label, onSelect: lineAction(a.key) }))} />
             )}
             {failed && (
@@ -400,8 +400,8 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
         </div>
       )}
       {place.tab ? (
-      <div className="flex min-h-0 flex-1">
-        <PowerUserTabs tab={place.tab} onOpen={openTab} visit={place.visit} onKeepOn={() => void power.save(true)} />
+      <div className={`flex min-h-0 flex-1 ${phone ? 'flex-col' : ''}`}>
+        <PowerUserTabs tab={place.tab} onOpen={openTab} visit={place.visit} onKeepOn={() => void power.save(true)} strip={phone} />
         <div role="tabpanel" id={panelId(place.tab)} aria-labelledby={tabId(place.tab)} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
           {place.tab === 'items' ? listAndPane : (
             <PowerTabPanel tab={place.tab} entity={query.entity} stats={stats} navigate={navigate}

@@ -72,9 +72,15 @@ export function LibrarySettingsPanel({ navigate, openTab, filterItems, processAl
   const e = stats.embeddings
   const ready = e.embedded_items ?? 0
   const stale = e.stale_items ?? Math.max(0, stats.items - ready)
+  // Reading is counted from the list's own state facet, the one Show them filters by: "Being read"
+  // once counted the graph's name taking, which fails while there is no model, so it said "24
+  // couldn't be read" of notes that had been read, and Show them opened "0 items".
+  const reading = facets?.state?.being_read ?? 0
+  const unread = facets?.state?.unreadable ?? 0
+  // The names the graph has not taken yet, waiting or failed: a row of their own.
   const ent = stats.enrichment?.entities
-  const waiting = ent ? ent.not_run + ent.running : 0
-  const failed = ent?.failed ?? 0
+  const untaken = ent ? ent.not_run + ent.running + ent.failed : 0
+  const noModel = stats.enrichment ? !stats.enrichment.model_available : false
   const undecided = new Set((conflicts?.conflicts ?? []).filter((c) => !c.choice).map((c) => c.id)).size
   const running = job?.status === 'running'
   const rows: Row[] = [
@@ -93,10 +99,15 @@ export function LibrarySettingsPanel({ navigate, openTab, filterItems, processAl
       says: `${n(stats.entities)} people, places and ideas${stats.relations ? `, with ${n(stats.relations)} ${stats.relations === 1 ? 'link' : 'links'} between them` : ''}`,
       action: { label: 'Open graph', run: () => openTab('graph') },
     }] : []),
-    ...(waiting || failed ? [{
+    ...(reading || unread ? [{
       title: 'Being read',
-      says: [waiting ? `${n(waiting)} waiting` : '', failed ? `${n(failed)} couldn't be read` : ''].filter(Boolean).join(' · '),
+      says: [reading ? `${n(reading)} still being read` : '', unread ? `${n(unread)} couldn't be read` : ''].filter(Boolean).join(' · '),
       action: { label: 'Show them', run: () => filterItems('being_read,unreadable') },
+    }] : []),
+    ...(untaken ? [{
+      title: 'Names for the graph',
+      says: `Not taken yet from ${n(untaken)} ${untaken === 1 ? 'item' : 'items'}.${noModel ? ' Taking them needs a model.' : ''}`,
+      ...(noModel ? { action: { label: 'Set up a model', run: () => navigate('settings/models') } } : {}),
     }] : []),
     ...(undecided ? [{
       title: 'Conflicts', says: `${n(undecided)} ${undecided === 1 ? 'place where items disagree' : 'places where items disagree'}`,

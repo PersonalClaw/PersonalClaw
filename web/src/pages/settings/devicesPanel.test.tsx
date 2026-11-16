@@ -40,6 +40,8 @@ function device(over: Partial<DeviceRec> = {}): DeviceRec {
     last_seen: 0,
     ip: '',
     issuer: 'pair',
+    opened_by: '',
+    opened_at: 0,
     pool: 'device',
     expires_at: 1_790_000_000,
     current: false,
@@ -485,6 +487,56 @@ describe('the list names every sign-in, and signs any of them out', () => {
     mount()
     await waitFor(() => expect(screen.getByText('Unrecognised client')).toBeTruthy())
     expect(screen.getAllByText('Token not used yet'), 'only the one with no use listed').toHaveLength(1)
+  })
+
+  it('🔴 a link a browser opened says so, by that browser, and that it still works as a token', async () => {
+    // Found walking the app: the link `personalclaw token` printed was listed as "Unrecognised
+    // client" under "Links and tokens that no browser has opened", right after a browser opened it.
+    vi.spyOn(api, 'devices').mockResolvedValue([
+      device({ id: 'chrome', name: 'Chrome on Mac', kind: 'browser', issuer: 'token', pool: 'browser', last_seen: now() - 60, minted_at: now() - 660 }),
+      device({
+        id: 'link', name: '', kind: 'unknown', issuer: 'token', pool: 'token', last_seen: now() - 600,
+        minted_at: now() - 660, expires_at: now() + 86_400, opened_by: 'Chrome on Mac', opened_at: now() - 600,
+      }),
+    ])
+    mount()
+    await screen.findByText(/^Tokens \(1\)$/)
+    const tokens = screen.getByText(/^Tokens \(1\)$/).closest('section') ?? document.body
+    expect(tokens.textContent).toMatch(/Link opened in Chrome on Mac/)
+    expect(tokens.textContent).not.toMatch(/Unrecognised client/)
+    expect(tokens.textContent).toMatch(/Opened 10m ago · still works as a token until/)
+    expect(tokens.textContent, 'the list does not say no browser opened them').not.toMatch(/no browser has opened/)
+  })
+
+  it('🔴 a link a browser opened that has a name of its own keeps it, and its line says which browser opened it', async () => {
+    // The harness token, used by a script and then opened by a browser: "Script" is the token's own
+    // name, so the row keeps it, and only the line under it can say the browser that opened it.
+    vi.spyOn(api, 'devices').mockResolvedValue([
+      device({ id: 'chrome', name: 'Chrome on Mac', kind: 'browser', issuer: 'token', pool: 'browser', last_seen: now() - 60, minted_at: now() - 660 }),
+      device({
+        id: 'script', name: 'Script', kind: 'cli', issuer: 'ready', pool: 'token', last_seen: now() - 30,
+        minted_at: now() - 660, expires_at: now() + 86_400, opened_by: 'Chrome on Mac', opened_at: now() - 600,
+      }),
+    ])
+    mount()
+    await screen.findByText(/^Tokens \(1\)$/)
+    const tokens = screen.getByText(/^Tokens \(1\)$/).closest('section') ?? document.body
+    expect(tokens.textContent).toMatch(/Script/)
+    expect(tokens.textContent).toMatch(/Opened in Chrome on Mac 10m ago · still works as a token until/)
+  })
+
+  it('a link its own client opened says only when, never "Opened in" its own name', async () => {
+    vi.spyOn(api, 'devices').mockResolvedValue([
+      device({
+        id: 'script', name: 'Script', kind: 'cli', issuer: 'ready', pool: 'token', last_seen: now() - 30,
+        minted_at: now() - 660, expires_at: now() + 86_400, opened_by: 'Script', opened_at: now() - 600,
+      }),
+    ])
+    mount()
+    await screen.findByText(/^Tokens \(1\)$/)
+    const tokens = screen.getByText(/^Tokens \(1\)$/).closest('section') ?? document.body
+    expect(tokens.textContent).toMatch(/Opened 10m ago · still works as a token until/)
+    expect(tokens.textContent).not.toMatch(/Opened in Script/)
   })
 
   it('signing ANOTHER device out names it, and sends its id', async () => {

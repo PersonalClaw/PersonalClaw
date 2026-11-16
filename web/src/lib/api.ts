@@ -1043,6 +1043,9 @@ export interface DeviceRec {
   pool: 'device' | 'browser' | 'token'
   expires_at: number
   current: boolean
+  /** A link's row only: the browser that opened it, by its sign-in's name, and when (0 never). */
+  opened_by: string
+  opened_at: number
 }
 /** One row of Settings → Devices → Integrations: a token an external agent reaches an inbound
  *  surface with. `kind: 'surface'` is a surface's own token (`personalclaw inbound token create`);

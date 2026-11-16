@@ -183,6 +183,11 @@ async def open_link(
         ta.sign_out([previous], ta.END_REPLACED, actor=user_id or "owner")
     if startup:
         ta.sign_out([link_nonce], ta.END_LINK_OPENED, actor=user_id or "owner")
+    else:
+        # The link stays a token beside the browser's sign-in: its row says that browser opened it.
+        from personalclaw.dashboard.session_store import note_link_opened
+
+        note_link_opened(link_nonce, by=device.name)
     _deliver(request, resp, minted, port=port, remaining=remaining)
     ta._log_auth(request, user_id, "ok", "", identity=request["session_nonce"])
     return resp
