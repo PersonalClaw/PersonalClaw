@@ -343,7 +343,12 @@ class TestNewSession:
     async def test_env_entries_ride_into_the_worker(self, tmux_shim, tmp_path):
         """The `-e K=V` plumbing: what run_step forwards (PATH/PYTHONPATH/step env) must
         actually reach the worker's environment. The worker stays up after writing its mark:
-        `new_session` answers True only for a command still running when it asks."""
+        `new_session` answers True only for a command still running when it asks.
+
+        The worker writes its mark to `mark.tmp` and renames it into place, so `mark` exists only
+        once it holds the whole value. It wrote `mark` itself, which exists from the moment `open`
+        makes it, while the value lands only when the file closes: a test that saw it exist and
+        read it at once could read "" (CI, under load: `assert '' == '42'`)."""
         ws = tmp_path / "envws"
         ws.mkdir()
         ok = await tmux_substrate.new_session(
@@ -352,8 +357,9 @@ class TestNewSession:
             command=[
                 sys.executable,
                 "-c",
-                "import os, time; open('mark', 'w').write(os.environ.get('PCLAW_MARK', ''));"
-                " time.sleep(60)",
+                "import os, time; f = open('mark.tmp', 'w');"
+                " f.write(os.environ.get('PCLAW_MARK', '')); f.close();"
+                " os.replace('mark.tmp', 'mark'); time.sleep(60)",
             ],
             env={"PCLAW_MARK": "42"},
         )
