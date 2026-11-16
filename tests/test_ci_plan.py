@@ -590,16 +590,25 @@ def _git(repo: Path, *args: str) -> str:
     return done.stdout
 
 
-def test_reaches_matches_what_git_ls_files_selects(tmp_path) -> None:
+@pytest.fixture(scope="module")
+def _listed_tree(tmp_path_factory) -> Path:
+    """:data:`_FILES` in a repository of their own, made once for every case below: each case asks
+    git for one listing, so its work is one ``git ls-files`` however loaded the machine is. Fifty
+    listings in one test took longer than the 30 s cap on a machine at a 1-minute load of 40."""
+    tree = tmp_path_factory.mktemp("ls-files-tree")
     for rel in _FILES:
-        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / rel).write_text("x\n")
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "add", "-A")
-    for specs in _SPECS:
-        want = set(_git(tmp_path, "ls-files", "--", *specs).splitlines())
-        got = {f for f in _FILES if planner.reaches(tuple(specs), f)}
-        assert got == want, specs
+        (tree / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tree / rel).write_text("x\n")
+    _git(tree, "init", "-q")
+    _git(tree, "add", "-A")
+    return tree
+
+
+@pytest.mark.parametrize("specs", _SPECS, ids=[" ".join(s) for s in _SPECS])
+def test_reaches_matches_what_git_ls_files_selects(_listed_tree: Path, specs: list[str]) -> None:
+    want = set(_git(_listed_tree, "ls-files", "--", *specs).splitlines())
+    got = {f for f in _FILES if planner.reaches(tuple(specs), f)}
+    assert got == want, specs
 
 
 # ── the rails floor ──────────────────────────────────────────────────────────────────────────

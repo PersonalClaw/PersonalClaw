@@ -15,6 +15,7 @@ via ``base_url``.
 
 import asyncio
 import base64
+import importlib
 import logging
 import os
 from typing import Any
@@ -82,7 +83,10 @@ class OpenAIImageProvider(ImageGenProvider):
         if not self._resolve_api_key():
             return False
         try:
-            import openai  # noqa: F401
+            # The SDK's first import takes about a second, so it runs in a worker thread: on the
+            # event loop it held every request the gateway serves, the first models list after a
+            # start included (`GET /api/models/available` asks every image provider this).
+            await asyncio.to_thread(importlib.import_module, "openai")
         except ImportError:
             return False
         return True
