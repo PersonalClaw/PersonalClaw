@@ -35,7 +35,11 @@
  *  budget spends it on nothing. Same correction the inbox row got, moved to where the
  *  rule lives so every consumer inherits it.
  */
-export function rowSubject(parts: (string | null | undefined)[], cap = 55): string {
+export function rowSubject(parts: (string | null | undefined)[], cap = 55, { joiner = ' — ' }: {
+  /** What joins the parts: `' — '` by default; Needs you's names join with `', '`, which no screen
+   *  reader reads aloud as a symbol. */
+  joiner?: string
+} = {}): string {
   const seen: string[] = []
   for (const raw of parts) {
     const part = (raw ?? '').replace(/\s+/g, ' ').trim()
@@ -44,6 +48,6 @@ export function rowSubject(parts: (string | null | undefined)[], cap = 55): stri
     if (!part || seen.some((s) => s === part || s.startsWith(part) || part.startsWith(s))) continue
     seen.push(part)
   }
-  const full = seen.join(' — ')
+  const full = seen.join(joiner)
   return full.length > cap ? `${full.slice(0, cap - 1)}…` : full
 }

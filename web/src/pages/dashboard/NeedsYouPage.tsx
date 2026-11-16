@@ -18,7 +18,7 @@ import { TOUCH_TARGET } from '../../ui/Toggle'
 import { TopBar } from '../../ui/TopBar'
 import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
 import { Group } from './Group'
-import { NeedCard, NeedDetail, NeedsUnreadable, needHeading, needName, rowKey, type Outcome } from './NeedCards'
+import { ENDED_ELSEWHERE, NeedCard, NeedDetail, NeedsUnreadable, needHeading, needName, rowKey, type Outcome } from './NeedCards'
 import { LARGE_LIST } from './RunningLane'
 import { useNeedActions } from './useNeedActions'
 
@@ -68,7 +68,7 @@ const FOLLOW_MS = 150
  *  the width takes, one on a phone and at 200% text. */
 const COLUMNS = 'grid-cols-[repeat(auto-fill,minmax(min(100%,24rem),1fr))]'
 
-const GONE = 'It is no longer waiting: it was answered or ended somewhere else.'
+const GONE = ENDED_ELSEWHERE
 
 /** How many columns *grid* draws now, read off its computed tracks. */
 function columnsOf(grid: HTMLElement | null): number {
@@ -230,7 +230,7 @@ export function NeedsYouPage({ query, setQuery, navigate }: RouteProps) {
     body: <NeedDetail row={selectedRow} outcome={outcomeOf(selectedRow)} actions={actions} now={now} />,
   } : needs.data ? {
     id: open, title: 'This is no longer waiting on you', onClose: close,
-    body: <p data-type="body-m" className="text-on-surface">This is no longer waiting on you. It was answered or ended somewhere else.</p>,
+    body: <p data-type="body-m" className="text-on-surface">This is no longer waiting on you. It was decided or ended somewhere else.</p>,
   } : null
 
   // ── The list's own keys: a grid of cards' open targets, never taken from a field ──

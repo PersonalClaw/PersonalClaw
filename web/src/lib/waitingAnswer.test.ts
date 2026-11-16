@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { WaitingItem, WaitingKind } from './api'
-import { waitingAnswerId, waitingQuestion, waitingQuestionRef, waitingReply } from './waitingAnswer'
+import { waitingAnswerId, waitingLoopChoice, waitingPlan, waitingQuestion, waitingQuestionRef, waitingReply } from './waitingAnswer'
 import { waitingItem } from '../test/waiting'
 
 // ── An item is answered on its own route's exact shape, or not at all (#3888) ──────────────────
@@ -163,9 +163,46 @@ describe('a typed reply goes to its own route alone', () => {
     expect(waitingReply(text('gate', ROUTES.gate_resume, { ask: { kind: 'choice', choices: ['a', 'b'] } }))).toBeNull()
     expect(waitingReply(text('gate', ROUTES.gate_confirm, GATE_TEXT))).toBeNull()
     expect(waitingReply(text('gate', ROUTES.gate_resume, { ask: { kind: 'event' } }))).toBeNull()
+    // A form is filled in its panel: a line would answer only its first field.
+    expect(waitingReply(text('gate', ROUTES.gate_resume, { ask: { kind: 'form', prompt: 'Fill it in' } }))).toBeNull()
     expect(waitingReply(text('question', ROUTES.question, { questions: [{ question: 'A?' }, { question: 'B?' }] }))).toBeNull()
     for (const kind of ['approval', 'park', 'browse_grant', 'plan_review', 'bridge_confirmation'] as const) {
       for (const path of Object.values(ROUTES)) expect(waitingReply(text(kind, path)), `${kind} on ${path}`).toBeNull()
     }
+  })
+})
+
+// A merge, a conflict and a plan are answered on their own routes too, read the same way.
+describe('a loop’s merge or conflict, and a plan, are read off their own routes', () => {
+  const on = (kind: WaitingKind, method: string, path: string, body: Record<string, unknown> = {}, headers?: Record<string, string>) =>
+    waitingItem({ kind, answer: { method, path, takes: [], body, ...(headers ? { headers } : {}) } })
+
+  it('a merge and a conflict name their loop; any other route is neither', () => {
+    expect(waitingLoopChoice(on('loop_question', 'POST', '/api/loops/loop%3A7/merge'))).toEqual({ kind: 'merge', loopId: 'loop:7' })
+    expect(waitingLoopChoice(on('loop_question', 'POST', '/api/loops/l-1/conflict'))).toEqual({ kind: 'conflict', loopId: 'l-1' })
+    for (const path of ['/api/loops/l-1/nudge', '/api/loops/%2E%2E/merge', '/api/loops/a%2Fb/conflict', '/api/loops/l-1/merge/x', ...BROKEN]) {
+      expect(waitingLoopChoice(on('loop_question', 'POST', path)), path).toBeNull()
+    }
+    expect(waitingLoopChoice(on('gate', 'POST', '/api/loops/l-1/merge'))).toBeNull()
+  })
+
+  it('a step names its loop or chat, its step and the revision the list read', () => {
+    const rev = { 'If-Match': '"rev-1"' }
+    expect(waitingPlan(on('plan_review', 'POST', ROUTES.plan_review, { step_id: 's1' }, rev)))
+      .toEqual({ kind: 'step', on: 'loop', id: 'l-1', stepId: 's1', base: 'rev-1' })
+    expect(waitingPlan(on('plan_review', 'POST', '/api/chat/sessions/c-1/plan/approve', { step_id: 's1' }, rev)))
+      .toEqual({ kind: 'step', on: 'chat', id: 'c-1', stepId: 's1', base: 'rev-1' })
+    expect(waitingPlan(on('plan_review', 'PATCH', '/api/loops/l-1', { action: 'start' }))).toEqual({ kind: 'launch', loopId: 'l-1' })
+  })
+
+  it('a step with no revision or no step id, a launch with no start, or another route, is not answered', () => {
+    expect(waitingPlan(on('plan_review', 'POST', ROUTES.plan_review, { step_id: 's1' }))).toBeNull()
+    expect(waitingPlan(on('plan_review', 'POST', ROUTES.plan_review, {}, { 'If-Match': '"rev-1"' }))).toBeNull()
+    expect(waitingPlan(on('plan_review', 'POST', ROUTES.plan_review, { step_id: 's1' }, { 'If-Match': 'rev-1' }))).toBeNull()
+    expect(waitingPlan(on('plan_review', 'PATCH', '/api/loops/l-1', { action: 'stop' }))).toBeNull()
+    for (const path of [...Object.values(ROUTES).filter((p) => p !== ROUTES.plan_review), ...BROKEN]) {
+      expect(waitingPlan(on('plan_review', 'POST', path, { step_id: 's1' }, { 'If-Match': '"rev-1"' })), path).toBeNull()
+    }
+    expect(waitingPlan(on('gate', 'POST', ROUTES.plan_review, { step_id: 's1' }, { 'If-Match': '"rev-1"' }))).toBeNull()
   })
 })

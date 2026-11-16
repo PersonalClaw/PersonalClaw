@@ -10,6 +10,7 @@ const doc: UiDoc = {
     { name: 'children', description: "The answer, in the words its server wrote." },
     { name: 'ariaLabel', description: "Its name, \"Answer <ask> — <choice>\", so each choice in a list is told apart." },
     { name: 'ariaBusy', description: 'True while the answer is on its way.' },
+    { name: 'ariaDescribedBy', description: 'The id of what the answer means beyond its name, such as an option’s description drawn under its label.' },
   ],
   bestPractices: [
     { guidance: true, description: 'Use it for answers whose words come from a server; an answer the app names keeps `Button`.' },

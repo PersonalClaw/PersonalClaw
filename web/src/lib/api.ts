@@ -3254,7 +3254,31 @@ export interface EphemeralDraft { slug: string; title: string; body: string; cre
 /** `trigger` is the STUMBLE that produced a refine proposal (`correction` | `failure_retry` |
  *  `rejection`), or absent/'' for one a model proposed. It is the review surface's answer to
  *  "why am I being asked this?" — a refine row without it can only say what it changes. */
-export interface SkillProposal { id: string; slug: string; description: string; triggers: string; kind: string; refine_target?: string; trigger?: string; session_key: string; created_at: string; status: string; procedure_preview: string }
+/** A proposal's card as the gateway writes it (`skills.proposals.card_of`, `learning.cards.card_for`):
+ *  what it asks, its one line, the thing it is about, what its Accept does and its kind's label. */
+export interface ProposalCard {
+  headline: string
+  detail: string
+  name: string
+  label: string
+  accept: { verb: string; sentence: string; effect?: 'installs' | 'applies' | 'records' | 'none'; confirm?: boolean }
+  kind?: string
+  variant?: string
+}
+/** A learning proposal's review (`learning.review.review_for`): its card's lines, why it was
+ *  proposed, the thing itself by type, where it came from, and what Accept and Reject do, worked out
+ *  at the read. */
+export interface LearningProposalReview {
+  id: string; kind: string; variant: string; status: string; created_at: string; updated_at: string
+  headline: string; detail: string; name: string; label: string; why: string
+  content: { type: string } & Record<string, unknown>
+  accept: { effect: 'installs' | 'applies' | 'records' | 'none'; verb: string; sentence: string; confirm: boolean }
+  reject: { verb: string; sentence: string }
+  session_key: string; source_gone: boolean; runs: string[]
+}
+export interface SkillProposal { id: string; slug: string; description: string; triggers: string; kind: string; refine_target?: string; trigger?: string; session_key: string; created_at: string; status: string; procedure_preview: string
+  /** Its card, worked out on this read, and where its Accept lands: `accept_target` the skill it refines, `""` when accepting adds a new one. */
+  card?: ProposalCard; accept_target?: string; target_resolves?: boolean }
 /** The most recent skill-ladder pass. `null` on the feed means the ladder has never
  *  run — which is the only thing that distinguishes an idle ladder from a broken one
  *  when `proposals` is empty. Both looked identical before this existed. */
@@ -10355,6 +10379,12 @@ export const api = {
   },
   learningProposal: (id: string) =>
     get<Record<string, unknown>>(`/api/learning/proposals/${encodeURIComponent(id)}`),
+  /** What a proposal's panel reads, and what its card's press reads first: its Accept worked out
+   *  now (`GET /api/learning/proposals/{id}/review`). `capture` opens one capture whole. */
+  learningProposalReview: (id: string, capture?: string) =>
+    get<LearningProposalReview>(
+      `/api/learning/proposals/${encodeURIComponent(id)}/review${capture ? `?capture=${encodeURIComponent(capture)}` : ''}`,
+    ),
   acceptLearningProposal: (id: string) =>
     post<{ ok: boolean }>(`/api/learning/proposals/${encodeURIComponent(id)}/accept`, {}),
   // `del` is non-generic (it resolves void and throws ApiError on !ok) — measured against its own

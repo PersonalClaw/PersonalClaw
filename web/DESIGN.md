@@ -260,6 +260,12 @@ Controls are pill-shaped and tonal; every interactive component has default, hov
 - **Shadow Strategy:** tonal difference first; rest shadow only when the card floats (composer).
 - **Border:** none or 1px #444746 hairline.
 
+### Ask cards (Needs you)
+- **Tag row first:** the kind as a neutral `StatusPill` with its 12 px icon and noun from `lib/needsYouKinds.ts` (the one registry Learning, Skills and the Proposals view read too), then the name of the thing it is about or the work that asks, then the time left to answer at its end ("4 min left", "Answer by 11:32"). The tag is never coral and no tab stop.
+- **Then what it asks:** the headline in `title-m` and one line of detail in `body-s`. Only a proposal's or a note's lines are clamped (2 and 1), since the panel holds them whole; what an ask's answer decides on is never clamped.
+- **Its answer on the card:** every card that holds a decision answers with the panel closed, in its panel's words, through its panel's route. Answers to what waits are `secondary`; a proposal's accept that installs or applies is `tonal`, one that only records is `secondary`, one nothing here can do is its sentence beside Reject. A second confirmation opens inline on `InlineConfirm`, and a proposal's or a merge's press reads it again first. A card says "Answer it in the panel" only for what needs more than one press or one line.
+- **Outcomes say what happened for that card, by the gateway's code:** done, ended elsewhere (its answers go), or still waiting with the reason (its answers stay).
+
 ### Inputs / Fields
 - Tonal fill (surface-low/container), 1px hairline stroke, 8–12px radius, ink text with ink-low placeholder (metadata only — placeholders never carry required information).
 - **Focus:** ordinary inputs get the global 2px coral `:focus-visible` outline. In the default look the composer's focus is a plain 2px coral ring: no animated gradient ring, no rim glow, no spring rise. Claw Arcade adds them (§7).
@@ -295,6 +301,8 @@ Controls are pill-shaped and tonal; every interactive component has default, hov
 - **Don't** bounce opacity or color — overshoot belongs to spatial properties only; effects are critically damped.
 - **Don't** put coral on inactive states, decorative fills, or more than ~10% of a task screen; semantic colors (green/orange/red/blue) never decorate.
 - **Don't** use uppercase tracked eyebrows or display sizes inside panels — weight steps carry hierarchy.
+- **Don't** lead a card with its kind's label: the kind is the tag, and the headline is what it asks.
+- **Don't** keep a card's full text only in a native tooltip: a clamp fits it, and the panel holds it whole.
 
 ## 7. Identities
 

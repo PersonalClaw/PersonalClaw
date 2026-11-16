@@ -53,7 +53,7 @@ describe('with a card’s panel open', () => {
   it('every other card keeps its own answers', async () => {
     render(<NeedsYouHarness query={{ open: 'waiting:approval:appr-1' }} />)
     await screen.findByRole('region', { name: 'shell.run' })
-    await waitFor(() => expect(within(card('waiting:gate:run-77:gate.push:1')).getByRole('button', { name: /Ship it$/ })).toBeInTheDocument())
+    await waitFor(() => expect(within(card('waiting:gate:run-77:gate.push:1')).getByRole('button', { name: /^Ship it: / })).toBeInTheDocument())
     expect(within(card('waiting:gate:run-77:gate.push:1')).queryByText('Answer it in the panel')).toBeNull()
   })
 
@@ -67,9 +67,9 @@ describe('with a card’s panel open', () => {
   it('an answer in the panel is the one answer, and closing the panel gives the card its answers back', async () => {
     render(<NeedsYouHarness query={{ open: 'waiting:gate:run-77:gate.push:1' }} />)
     const pane = await screen.findByRole('region', { name: 'Which branch should I push?' })
-    expect(within(card('waiting:gate:run-77:gate.push:1')).queryByRole('button', { name: /Ship it$/ })).toBeNull()
+    expect(within(card('waiting:gate:run-77:gate.push:1')).queryByRole('button', { name: /^Ship it: / })).toBeNull()
     await userEvent.click(within(pane).getByRole('button', { name: 'Close' }))
-    await waitFor(() => expect(within(card('waiting:gate:run-77:gate.push:1')).getByRole('button', { name: /Ship it$/ })).toBeInTheDocument())
+    await waitFor(() => expect(within(card('waiting:gate:run-77:gate.push:1')).getByRole('button', { name: /^Ship it: / })).toBeInTheDocument())
     expect(within(card('waiting:gate:run-77:gate.push:1')).queryByText('Answer it in the panel')).toBeNull()
   })
 })

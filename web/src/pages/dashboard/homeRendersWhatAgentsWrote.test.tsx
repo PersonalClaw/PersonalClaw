@@ -119,7 +119,8 @@ describe('Needs you renders what agents wrote', () => {
   it("the reply field is named for the ask in plain text", async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'text', prompt: MD_LINE }, { id: 'gate:run-9:g:3' })]))
     render(<NeedsYouHarness query={{ open: 'waiting:gate:run-9:g:3' }} />)
-    expect(await screen.findByRole('textbox', { name: `Reply to ${SEEN}` })).toBeInTheDocument()
+    const field = await screen.findByRole('textbox', { name: (name) => name.startsWith(`Reply to ${SEEN}`) })
+    expect(field).toBeInTheDocument()
   })
 
   it("a hostile gate prompt is inert in its body", async () => {
@@ -157,7 +158,7 @@ describe('Needs you renders what agents wrote', () => {
     render(<NeedsYouHarness />)
     const lines = await screen.findAllByText(/open the report/)
     // The sink is the card's title line, not the link's own span inside it.
-    const sinks = [...new Set(lines.map((line) => line.closest('p[data-type="label-m"]')))]
+    const sinks = [...new Set(lines.map((line) => line.closest('p[data-type="title-m"]')))]
     expect(sinks).toHaveLength(1)
     expect(sinks[0], "the card's title").not.toBeNull()
     expect(inert(sinks[0]!)).toEqual([])
@@ -176,7 +177,7 @@ describe('Needs you renders what agents wrote', () => {
     chatSessions.mockResolvedValue([])
     render(<NeedsYouHarness />)
     const card = (await screen.findByRole('button', { name: /^Show the details of / })).parentElement!
-    expect(card.querySelector('p[data-type="label-m"]')!.textContent).toBe(firstLine(text))
+    expect(card.querySelector('p[data-type="title-m"]')!.textContent).toBe(firstLine(text))
   })
 
 })

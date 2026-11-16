@@ -188,6 +188,7 @@ describe('showing the difference', () => {
 const NO_GUARD_OF_ITS_OWN: Record<string, string> = {
   'pages/chat/bundledModelDownload.tsx': 'it writes the chat chain only while the chain is empty, so there is no edit of the user’s to keep or re-apply',
   'ui/widget/WidgetFrame.tsx': 'a widget holds no draft: a snapshot over a body that moved is refused as the widget’s own error',
+  'pages/dashboard/useNeedActions.ts': 'a card’s Approve holds no draft: a step changed since the list read it is refused, and the card says it changed and sends its reader to the panel',
 }
 
 /** The methods of `api` that replace a whole document over a base revision. */
@@ -296,7 +297,8 @@ describe('the census of saves that replace what they read', () => {
   it('every caller holds the guard, shows the notice, and is reached from a route', () => {
     expect(census.violations).toEqual([])
     // 43: a project's page saves its instructions (`ProjectAbout`) and its overview (`ProjectDetails`).
-    expect(census.callers.map((c) => `${c.route} › ${c.module}`)).toHaveLength(43)
+    // 44: a Needs you card's plan-step Approve (`useNeedActions`), exempt above.
+    expect(census.callers.map((c) => `${c.route} › ${c.module}`)).toHaveLength(44)
     // Placed by the route tables, not by a list: a settings panel on its sub-page, a page on its
     // route, onboarding on the shell.
     expect(census.callers).toContainEqual(expect.objectContaining({ module: 'pages/settings/ProjectionRulesPanel.tsx', route: 'settings/tool-output' }))

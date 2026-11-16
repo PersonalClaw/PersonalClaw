@@ -20,17 +20,19 @@ export function wrapping(look: { className: string; role: string }): { className
 
 /** A card's answer whose words a server wrote (a run's choice), drawn in the kit's secondary pill
  *  made to wrap (`wrapping`), so a long one never runs past the card at 320 px. */
-export function WrappingAnswer({ children, ariaLabel, ariaBusy, ...button }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className' | 'type' | 'aria-label' | 'aria-busy'> & {
+export function WrappingAnswer({ children, ariaLabel, ariaBusy, ariaDescribedBy, ...button }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className' | 'type' | 'aria-label' | 'aria-busy' | 'aria-describedby'> & {
   children: ReactNode
   /** The answer's name, "<verb> <subject>". */
   ariaLabel?: string
   /** While the answer is on its way. */
   ariaBusy?: boolean
+  /** What the answer means, beyond its name (a question's option's description). */
+  ariaDescribedBy?: string
 }) {
   const look = wrapping(buttonLook('secondary', 'xs', 'pill'))
   return (
     <button {...button} type="button" aria-label={ariaLabel} aria-busy={ariaBusy || undefined}
-      data-type={look.role} className={look.className}>{children}</button>
+      aria-describedby={ariaDescribedBy} data-type={look.role} className={look.className}>{children}</button>
   )
 }
 

@@ -77,7 +77,7 @@ describe('while the pointer is over the list', () => {
     fireEvent.pointerEnter(list())
     await nextRead(waitingList([ask(2), ask(3)]))
     expect(shown()).toEqual(['tool-1', 'tool-2', 'tool-3'])
-    expect(within(list()).getByText('It is no longer waiting: it was answered or ended somewhere else.')).toBeInTheDocument()
+    expect(within(list()).getByText('It is no longer waiting: it was decided or ended somewhere else.')).toBeInTheDocument()
   })
 
   it('a new ask waits behind the header’s "1 new ask · Show them", and moves no card', async () => {

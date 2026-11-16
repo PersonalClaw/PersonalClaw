@@ -213,7 +213,7 @@ describe('every state', () => {
     waiting.mockResolvedValue(waitingList([waitingItem()]))
     render(<NeedsYouHarness />)
     await userEvent.click(await within(page()).findByRole('button', { name: /^Allow/ }))
-    expect(await within(page()).findByText('It is no longer waiting: it was answered or ended somewhere else.')).toBeInTheDocument()
+    expect(await within(page()).findByText('It is no longer waiting: it was decided or ended somewhere else.')).toBeInTheDocument()
     expect(within(page()).queryByRole('button', { name: /^Allow/ })).toBeNull()
   })
 
@@ -231,7 +231,7 @@ describe('every state', () => {
   it('a gone ?open= says it is no longer waiting, in the panel', async () => {
     render(<NeedsYouHarness query={{ open: 'waiting:approval:gone' }} />)
     const pane = await screen.findByRole('region', { name: 'This is no longer waiting on you' })
-    expect(within(pane).getByText(/It was answered or ended somewhere else/)).toBeInTheDocument()
+    expect(within(pane).getByText(/It was decided or ended somewhere else/)).toBeInTheDocument()
   })
 
   it('a frame that something waits reads the list again, and the new ask shows', async () => {
@@ -271,7 +271,9 @@ describe('the asks only some sources raised are cards like any other', () => {
     const card = (await within(await asksDrawn()).findByRole('button', { name: new RegExp(`^Show the details of ${title}`) })).parentElement!
     expect(within(card).getByText(title)).toBeInTheDocument()
     expect(within(card).getByText(why)).toBeInTheDocument()
-    expect(within(card).getByText('Loop · Docs')).toBeInTheDocument()
+    // Its tag says it is a loop, and its name slot which one.
+    expect(within(card).getByText('Loop')).toBeInTheDocument()
+    expect(within(card).getByText('Docs')).toBeInTheDocument()
     expect(within(card).getByRole('textbox', { name: new RegExp(`^Reply to ${title}`) })).toBeInTheDocument()
   })
 
@@ -286,17 +288,19 @@ describe('the asks only some sources raised are cards like any other', () => {
   })
 
   it.each([
-    ['held_action', { title: 'Send the invoice to Acme', body: 'Held until you say yes.', action_type: 'email' }, 'Send the invoice to Acme', 'Held until you say yes.', 'Held for your OK · email'],
-    ['declined_wait', { body: 'Release — waits after you declined its push' }, 'Release waits after you declined one of its steps', 'waits after you declined its push', 'Workflow run'],
-    ['escalated_run', { body: 'Release — investigate escalated', loop_kind: 'goal' }, 'Release stopped before it finished', 'investigate escalated', 'Loop'],
-  ])('%s says what it is, what happened, and opens in the Inbox, where it is answered', async (kind, brief, title, subtitle, raisedBy) => {
+    ['held_action', { title: 'Send the invoice to Acme', body: 'Held until you say yes.', action_type: 'email' }, 'Send the invoice to Acme', 'Held until you say yes.', 'Held action', 'email'],
+    ['declined_wait', { body: 'Release — waits after you declined its push' }, 'Release waits after you declined one of its steps', 'waits after you declined its push', 'Workflow', ''],
+    ['escalated_run', { body: 'Release — investigate escalated', loop_kind: 'goal' }, 'Release stopped before it finished', 'investigate escalated', 'Workflow', ''],
+  ])('%s says what it is, what happened, and opens in the Inbox, where it is answered', async (kind, brief, title, subtitle, tag, slot) => {
     waiting.mockResolvedValue(waitingList([inboxAsk(kind, brief)]))
     render(<NeedsYouHarness />)
     const card = (await within(await asksDrawn()).findByRole('button', { name: new RegExp(`^Show the details of ${title}`) })).parentElement!
     expect(within(card).getByText(title)).toBeInTheDocument()
     expect(within(card).getByText(subtitle)).toBeInTheDocument()
-    expect(within(card).getByText(raisedBy)).toBeInTheDocument()
-    expect(within(card).getByRole('link', { name: new RegExp(`^Open it in the Inbox: ${title} — `) })).toHaveAttribute('href', '#/inbox?open=i1')
+    // Its tag says its kind, and its name slot the work it names, when it names one.
+    expect(within(card).getByText(tag)).toBeInTheDocument()
+    if (slot) expect(within(card).getByText(slot)).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: new RegExp(`^Open it in the Inbox: ${title}`) })).toHaveAttribute('href', '#/inbox?open=i1')
   })
 
   it('a browser grant, answered here, draws no link to where it asks: that is this page', async () => {
