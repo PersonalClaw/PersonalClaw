@@ -914,6 +914,15 @@ secret files. The shell's screen is defence in depth, not a fence:
   level, which hides no single file and none of `~/.aws`, `~/.kube` and `~/.ssh`, and where the
   operating system offers no sandbox none runs. An agent CLI's own sign-in stays readable inside
   its sandbox, because the CLI reads it to sign in.
+- **The security log's key is the one file the sandbox hides at every level.** In the home in use
+  and in the default one, an agent-started process can neither read the key (`sel_hmac.key`) nor
+  change the log or its archive, so no row it writes passes the log's check; PersonalClaw's own
+  tool server in an agent CLI hands its rows to the gateway to sign. Where no sandbox runs, only
+  this screen keeps the key. On Linux the fence holds a home that is there when the command
+  starts: a default home made later, from inside, could be given a key of the program's own,
+  which a gateway first started on that home would take. A `personalclaw` command run from an
+  agent's shell fails closed where it would write a row of its own: it reads no key, so it signs
+  none.
 - **An agent CLI's own shell and file tools are screened only when the CLI asks first.** One it
   runs without asking reads inside the CLI (§1, §11).
 

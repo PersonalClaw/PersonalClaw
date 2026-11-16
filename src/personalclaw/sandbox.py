@@ -866,124 +866,10 @@ def _hidden_files(home: str, sandbox_level: str, *, realpath_only: bool) -> list
 # ── Backend: Linux namespace sandbox ──
 
 
-def _build_launcher_script(sandbox_level: str = "strict", *, network: bool = True) -> str:
-    """Build a Python launcher script for the Linux namespace sandbox.
-
-    The launcher is executed as a subprocess.  It:
-
-    1. Forks a child.
-    2. Child calls ``unshare(CLONE_NEWUSER)`` and signals the parent.
-    3. Parent writes identity UID/GID map (``uid uid 1``) to
-       ``/proc/<child>/{setgroups,uid_map,gid_map}`` and signals back.
-    4. Child calls ``unshare(CLONE_NEWNS)``, and without *network* also
-       ``unshare(CLONE_NEWNET)``: a network namespace of its own, whose one
-       interface (its loopback) is down, so no address is reachable from it,
-       this machine's own included. It never runs the command when that fails.
-    5. Child sets mount propagation private, bind-mounts empty dirs over
-       credential paths, scrubs env vars, and ``exec``s the real command.
-
-    The child retains the real UID/GID — no UID 0, no UID 65534.
-    """
-    home = str(Path.home())
-    uid = os.getuid()
-    gid = os.getgid()
-    if sandbox_level == "standard":
-        dirs = _STANDARD_DIRS
-    elif sandbox_level == "cc":
-        dirs = _CC_DIRS
-    else:
-        dirs = _STRICT_DIRS
-    expose_files = _CC_EXPOSE_FILES if sandbox_level == "cc" else []
-    env_prefixes = list(_SENSITIVE_ENV_PREFIXES)
-    if sandbox_level in ("cc", "strict"):
-        # Block agent subprocesses from reading credentials via os.environ
-        # (the file-level bind-mount of the credential store hides them on disk;
-        # config/loader.py seeds them into os.environ for trusted children
-        # only — sandboxed agents must not see them either way).
-        env_prefixes = env_prefixes + list(_AGENT_DENIED_ENV_KEYS)
-    hide_ssh = sandbox_level == "strict"
-    dirs_json = json.dumps([os.path.join(home, d) for d in dirs])
-    # A bind hides the file itself, whatever the path the child names, so one spelling is enough.
-    files_json = json.dumps(_hidden_files(home, sandbox_level, realpath_only=True))
-    expose_json = json.dumps([(os.path.join(home, f), f.split("/")[-1]) for f in expose_files])
-    env_prefixes_json = json.dumps(env_prefixes)
-    ssh_dir = json.dumps(os.path.join(home, ".ssh"))
-    ssh_known_hosts = json.dumps(os.path.join(home, ".ssh", "known_hosts"))
-    owner_home, owner_only_names = _owner_only_home()
-    owner_home_json = json.dumps(owner_home)
-    owner_only_names_json = json.dumps(owner_only_names)
-    pinned_json = json.dumps(_pinned_dirs(realpath_only=True, include_home=False))
-    memory_json = json.dumps(_memory_fence(realpath_only=True))
-    memory_hidden_json = json.dumps(_memory_hidden(realpath_only=True))
-    strict_host_key_opt = (
-        " -o StrictHostKeyChecking=accept-new" if _ssh_supports_accept_new() else ""
-    )
-
-    return f'''#!/usr/bin/env python3
-"""Namespace sandbox launcher — spawned by PersonalClaw."""
-import ctypes
-import ctypes.util
-import os
-import shutil
-import signal
-import stat
-import sys
-import tempfile
-
-_CLONE_NEWUSER = 0x10000000
-_CLONE_NEWNS   = 0x00020000
-_CLONE_NEWNET  = 0x40000000
-_MS_BIND       = 4096
-_MS_REC        = 16384
-_MS_PRIVATE    = 1 << 18
-_MS_RDONLY     = 1
-_MS_NOSUID     = 2
-_MS_NODEV      = 4
-_MS_NOEXEC     = 8
-_MS_REMOUNT    = 32
-
-REAL_UID = {uid}
-REAL_GID = {gid}
-SENSITIVE_DIRS = {dirs_json}
-SENSITIVE_FILES = {files_json}
-EXPOSE_FILES = {expose_json}
-ENV_PREFIXES = {env_prefixes_json}
-SSH_DIR = {ssh_dir}
-SSH_KNOWN_HOSTS = {ssh_known_hosts}
-HIDE_SSH = {hide_ssh}
-OWNER_HOME = {owner_home_json}
-OWNER_ONLY_NAMES = {owner_only_names_json}
-PINNED = {pinned_json}
-MEMORY_FOLDERS = {memory_json}
-MEMORY_HIDDEN = {memory_hidden_json}
-NO_NETWORK = {not network}
-
-# The tmpfs the empty bind sources come from, first usable one wins. Same-fs binds (e.g. /tmp
-# on ext4 over ~/.personalclaw/.env on ext4) can corrupt the target's host directory entry via
-# a kernel propagation race when the private NS is torn down — leaving the host file pointing
-# at the empty source inode permanently. Cross-fs binds use distinct inode spaces and cannot
-# leak that way.
-RUNTIME_DIRS = [f"/run/user/{{REAL_UID}}", "/dev/shm"]
-# Each launch keeps its bind sources in one folder of its own, named for the launcher's pid,
-# and removes it when its command exits. A launcher that was killed (a timeout signals the
-# whole group) cannot, so each launch first removes the folders of launchers that are gone.
-SCRATCH_PREFIX = "personalclaw_sb_"
-
-
-def _load_libc():
-    """The two syscalls the child needs. Loaded when a launch runs, not at import: ``unshare``
-    is Linux-only, and the launcher is also loaded to be driven with them stood in for."""
-    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
-    libc.mount.argtypes = [
-        ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
-        ctypes.c_ulong, ctypes.c_void_p,
-    ]
-    libc.mount.restype = ctypes.c_int
-    libc.unshare.argtypes = [ctypes.c_int]
-    libc.unshare.restype = ctypes.c_int
-    return libc
-
-
+#: The launcher's helpers that take no value from :func:`_build_launcher_script`, kept out of its
+#: f-string: the scratch folder the bind sources come from, the flags a read-only remount keeps,
+#: and the security log's fence (``owner_only.AUDIT_FENCED``).
+_LAUNCHER_HELPERS = r'''
 def _home_device():
     try:
         return os.stat(os.path.expanduser("~")).st_dev
@@ -1035,7 +921,7 @@ def _remove_stale_scratch(parent):
 def _make_scratch():
     """This launch's folder for the bind sources, on the first usable tmpfs."""
     home_dev = _home_device()
-    prefix = f"{{SCRATCH_PREFIX}}{{os.getpid()}}_"
+    prefix = f"{SCRATCH_PREFIX}{os.getpid()}_"
     for candidate in RUNTIME_DIRS:
         try:
             if home_dev is not None and os.stat(candidate).st_dev == home_dev:
@@ -1049,6 +935,203 @@ def _make_scratch():
     # than to refuse to start.
     _remove_stale_scratch(tempfile.gettempdir())
     return tempfile.mkdtemp(prefix=prefix)
+
+
+def _is_audit_name(name):
+    """Whether *name*, an entry at the top of a home, is one of the security log's that the fence
+    holds (``owner_only.AUDIT_FENCED``): its key, its log, its archive, or a file the log adopts
+    into its archive."""
+    return (
+        name == AUDIT_KEY
+        or name in AUDIT_NAMES
+        or any(fnmatch.fnmatchcase(name, p) for p in AUDIT_PATTERNS)
+    )
+
+
+def _audit_inodes(home):
+    """The files *home*'s security-log entries are, by ``(device, inode)``, read before any of
+    them is hidden: a hard link at the top of the home to one of them is that file, and is fenced
+    with it."""
+    found = set()
+    try:
+        names = os.listdir(home)
+    except OSError:
+        return found
+    for name in names:
+        if _is_audit_name(name):
+            try:
+                st = os.lstat(os.path.join(home, name))
+            except OSError:
+                continue
+            found.add((st.st_dev, st.st_ino))
+    return found
+
+
+def _hide_audit_key(libc, scratch, home):
+    """Bind an empty file of this launch's over *home*'s security-log key, when it has one, so the
+    command reads nothing there: with the key a program in here could sign rows that pass the
+    log's check. A key that cannot be hidden stops the command."""
+    key = os.path.join(home, AUDIT_KEY)
+    if not os.path.isfile(key):
+        return
+    fd, empty = tempfile.mkstemp(dir=scratch)
+    os.close(fd)
+    if libc.mount(empty.encode(), key.encode(), None, _MS_BIND, None) != 0:
+        sys.exit(f"sandbox: could not hide the security log's key: errno {ctypes.get_errno()}")
+
+
+def _fence_audit_home(libc, home, inodes):
+    """Fence the security log of a home that is not the one in use (the owner's default home,
+    beside a dev or a test one), as the home in use is fenced: *home* bound onto itself and made
+    read-only, each entry in it bound back writable first except the log's own
+    (:func:`_is_audit_name`) and the files *inodes* holds. Its log and archive then cannot be
+    changed, no key can be made or replaced in it, and as a mount point it cannot be moved
+    aside. A home that cannot be fenced stops the command."""
+    if not os.path.isdir(home) or os.path.islink(home):
+        return
+    h = home.encode()
+    if libc.mount(h, h, None, _MS_BIND | _MS_REC, None) != 0:
+        sys.exit(f"sandbox: could not fence the security log: errno {ctypes.get_errno()}")
+    for name in sorted(os.listdir(home)):
+        path = os.path.join(home, name)
+        try:
+            st = os.lstat(path)
+        except OSError:
+            continue
+        if _is_audit_name(name) or (st.st_dev, st.st_ino) in inodes:
+            continue
+        if stat.S_ISDIR(st.st_mode) or stat.S_ISREG(st.st_mode):
+            p = path.encode()
+            libc.mount(p, p, None, _MS_BIND | _MS_REC, None)
+    readonly = _MS_BIND | _MS_REMOUNT | _MS_RDONLY | _kept_flags(home)
+    if libc.mount(None, h, None, readonly, None) != 0:
+        sys.exit(f"sandbox: could not fence the security log: errno {ctypes.get_errno()}")
+'''
+
+
+def _build_launcher_script(sandbox_level: str = "strict", *, network: bool = True) -> str:
+    """Build a Python launcher script for the Linux namespace sandbox.
+
+    The launcher is executed as a subprocess.  It:
+
+    1. Forks a child.
+    2. Child calls ``unshare(CLONE_NEWUSER)`` and signals the parent.
+    3. Parent writes identity UID/GID map (``uid uid 1``) to
+       ``/proc/<child>/{setgroups,uid_map,gid_map}`` and signals back.
+    4. Child calls ``unshare(CLONE_NEWNS)``, and without *network* also
+       ``unshare(CLONE_NEWNET)``: a network namespace of its own, whose one
+       interface (its loopback) is down, so no address is reachable from it,
+       this machine's own included. It never runs the command when that fails.
+    5. Child sets mount propagation private, bind-mounts empty dirs over
+       credential paths, scrubs env vars, and ``exec``s the real command.
+
+    The child retains the real UID/GID — no UID 0, no UID 65534.
+    """
+    home = str(Path.home())
+    uid = os.getuid()
+    gid = os.getgid()
+    if sandbox_level == "standard":
+        dirs = _STANDARD_DIRS
+    elif sandbox_level == "cc":
+        dirs = _CC_DIRS
+    else:
+        dirs = _STRICT_DIRS
+    expose_files = _CC_EXPOSE_FILES if sandbox_level == "cc" else []
+    env_prefixes = list(_SENSITIVE_ENV_PREFIXES)
+    if sandbox_level in ("cc", "strict"):
+        # Block agent subprocesses from reading credentials via os.environ
+        # (the file-level bind-mount of the credential store hides them on disk;
+        # config/loader.py seeds them into os.environ for trusted children
+        # only — sandboxed agents must not see them either way).
+        env_prefixes = env_prefixes + list(_AGENT_DENIED_ENV_KEYS)
+    hide_ssh = sandbox_level == "strict"
+    dirs_json = json.dumps([os.path.join(home, d) for d in dirs])
+    # A bind hides the file itself, whatever the path the child names, so one spelling is enough.
+    files_json = json.dumps(_hidden_files(home, sandbox_level, realpath_only=True))
+    expose_json = json.dumps([(os.path.join(home, f), f.split("/")[-1]) for f in expose_files])
+    env_prefixes_json = json.dumps(env_prefixes)
+    ssh_dir = json.dumps(os.path.join(home, ".ssh"))
+    ssh_known_hosts = json.dumps(os.path.join(home, ".ssh", "known_hosts"))
+    owner_home, owner_only_names = _owner_only_home()
+    owner_home_json = json.dumps(owner_home)
+    owner_only_names_json = json.dumps(owner_only_names)
+    memory_json = json.dumps(_memory_fence(realpath_only=True))
+    memory_hidden_json = json.dumps(_memory_hidden(realpath_only=True))
+    audit_json, audit_pinned = _audit_launch()
+    pinned = dict.fromkeys(_pinned_dirs(realpath_only=True, include_home=False) + audit_pinned)
+    pinned_json = json.dumps(sorted(pinned, key=lambda p: p.count(os.sep)))
+    strict_host_key_opt = (
+        " -o StrictHostKeyChecking=accept-new" if _ssh_supports_accept_new() else ""
+    )
+
+    return f'''#!/usr/bin/env python3
+"""Namespace sandbox launcher — spawned by PersonalClaw."""
+import ctypes
+import ctypes.util
+import fnmatch
+import os
+import shutil
+import signal
+import stat
+import sys
+import tempfile
+
+_CLONE_NEWUSER = 0x10000000
+_CLONE_NEWNS   = 0x00020000
+_CLONE_NEWNET  = 0x40000000
+_MS_BIND       = 4096
+_MS_REC        = 16384
+_MS_PRIVATE    = 1 << 18
+_MS_RDONLY     = 1
+_MS_NOSUID     = 2
+_MS_NODEV      = 4
+_MS_NOEXEC     = 8
+_MS_REMOUNT    = 32
+
+REAL_UID = {uid}
+REAL_GID = {gid}
+SENSITIVE_DIRS = {dirs_json}
+SENSITIVE_FILES = {files_json}
+EXPOSE_FILES = {expose_json}
+ENV_PREFIXES = {env_prefixes_json}
+SSH_DIR = {ssh_dir}
+SSH_KNOWN_HOSTS = {ssh_known_hosts}
+HIDE_SSH = {hide_ssh}
+OWNER_HOME = {owner_home_json}
+OWNER_ONLY_NAMES = {owner_only_names_json}
+PINNED = {pinned_json}
+MEMORY_FOLDERS = {memory_json}
+MEMORY_HIDDEN = {memory_hidden_json}
+NO_NETWORK = {not network}
+AUDIT_HOMES, AUDIT_KEY, AUDIT_NAMES, AUDIT_PATTERNS = {audit_json}
+
+# The tmpfs the empty bind sources come from, first usable one wins. Same-fs binds (e.g. /tmp
+# on ext4 over ~/.personalclaw/.env on ext4) can corrupt the target's host directory entry via
+# a kernel propagation race when the private NS is torn down — leaving the host file pointing
+# at the empty source inode permanently. Cross-fs binds use distinct inode spaces and cannot
+# leak that way.
+RUNTIME_DIRS = [f"/run/user/{{REAL_UID}}", "/dev/shm"]
+# Each launch keeps its bind sources in one folder of its own, named for the launcher's pid,
+# and removes it when its command exits. A launcher that was killed (a timeout signals the
+# whole group) cannot, so each launch first removes the folders of launchers that are gone.
+SCRATCH_PREFIX = "personalclaw_sb_"
+
+
+def _load_libc():
+    """The two syscalls the child needs. Loaded when a launch runs, not at import: ``unshare``
+    is Linux-only, and the launcher is also loaded to be driven with them stood in for."""
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    libc.mount.argtypes = [
+        ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+        ctypes.c_ulong, ctypes.c_void_p,
+    ]
+    libc.mount.restype = ctypes.c_int
+    libc.unshare.argtypes = [ctypes.c_int]
+    libc.unshare.restype = ctypes.c_int
+    return libc
+
+
+{_LAUNCHER_HELPERS}
 
 
 def _write_id_maps(pid):
@@ -1129,6 +1212,7 @@ def main():
 
         # Private mount propagation
         libc.mount(None, b"/", None, _MS_REC | _MS_PRIVATE, None)
+        audit_inodes = {{home: _audit_inodes(home) for home in AUDIT_HOMES}}
 
         # Pre-read files that must survive dir hiding
         expose_data = {{}}
@@ -1178,6 +1262,10 @@ def main():
                 with open(os.path.join(SSH_DIR, "known_hosts"), "wb") as fh:
                     fh.write(kh_data)
 
+        # The security log's key in each home it is fenced for, at every level (`owner_only`).
+        for home in AUDIT_HOMES:
+            _hide_audit_key(libc, scratch, home)
+
         # The home's owner-only paths (`owner_only`), fenced by the home's own entries rather
         # than by whichever files are there when the shell starts. A bind on one
         # file holds that inode: it cannot hold a name that does not exist yet, and the kernel
@@ -1209,7 +1297,7 @@ def main():
             except OSError as exc:
                 sys.exit(f"sandbox: could not fence memory: {{exc.strerror or exc}}")
         if os.path.isdir(OWNER_HOME) and not os.path.islink(OWNER_HOME):
-            fenced = set()
+            fenced = set(audit_inodes.get(OWNER_HOME, ()))
             for name in OWNER_ONLY_NAMES:
                 try:
                     st = os.lstat(os.path.join(OWNER_HOME, name))
@@ -1220,7 +1308,7 @@ def main():
             if libc.mount(h, h, None, _MS_BIND | _MS_REC, None) != 0:
                 sys.exit(f"sandbox: could not fence the home: errno {{ctypes.get_errno()}}")
             for name in sorted(os.listdir(OWNER_HOME)):
-                if name in OWNER_ONLY_NAMES:
+                if name in OWNER_ONLY_NAMES or _is_audit_name(name):
                     continue
                 path = os.path.join(OWNER_HOME, name)
                 try:
@@ -1238,6 +1326,9 @@ def main():
             readonly = _MS_BIND | _MS_REMOUNT | _MS_RDONLY | _kept_flags(OWNER_HOME)
             if libc.mount(None, h, None, readonly, None) != 0:
                 sys.exit(f"sandbox: could not fence the home: errno {{ctypes.get_errno()}}")
+        for home in AUDIT_HOMES:
+            if home != OWNER_HOME:
+                _fence_audit_home(libc, home, audit_inodes[home])
 
         # Long-term memory, for a command started for work that may change none of it: each
         # memory folder (made above when it was missing) is bound onto itself read-only, so
@@ -1336,6 +1427,8 @@ def namespace_argv(
     if real_argv:
         real_argv[0] = _resolve_real_agent_bin(real_argv[0])
 
+    _make_the_audit_key()
+    _make_the_audit_spool()
     script = _build_launcher_script(sandbox_level, network=network)
     fd, path = tempfile.mkstemp(suffix=".py", prefix="personalclaw_sandbox_")
     os.write(fd, script.encode())
@@ -1445,6 +1538,8 @@ def _build_seatbelt_profile(sandbox_level: str = "strict", *, network: bool = Tr
     for target in dict.fromkeys(os.path.dirname(t) for t in memory):
         escaped = target.replace('"', '\\"')
         rules.append(f'(deny file-write* (literal "{escaped}"))')
+    # The security log of each home it is fenced for (`owner_only.AUDIT_FENCED`), at any level.
+    rules.extend(_audit_rules())
     # The home, and every folder above it the owner could rename, cannot itself be renamed,
     # removed or re-moded from in here: the rules above name paths, and moving the home aside,
     # editing it there and moving it back would otherwise walk every one of them. Entries inside
@@ -1646,6 +1741,123 @@ def _owner_only_targets() -> list[tuple[str, bool]]:
     return out
 
 
+def _audit_homes() -> tuple[str, list[str]]:
+    """The real path of the home in use, and of each home whose security log the fence holds
+    (``owner_only.audit_homes``: the one in use, and the default one when that is another)."""
+    from personalclaw.owner_only import audit_homes
+
+    active = _owner_only_home()[0]
+    return active, list(dict.fromkeys(os.path.realpath(home) for home in audit_homes()))
+
+
+def _audit_launch() -> tuple[str, list[str]]:
+    """What the Linux launcher fences of the security log (``owner_only.AUDIT_FENCED``), as the
+    JSON of its four constants (the homes' real paths, the key's name, the other names, the
+    patterns), and the folders above each home besides the one in use that the owner could rename,
+    for its PINNED: that home is bound onto itself whole, which pins it, but not what holds it."""
+    from personalclaw.owner_only import AUDIT_FENCED, AUDIT_KEY
+
+    active, homes = _audit_homes()
+    names = [e.name for e in AUDIT_FENCED if not e.pattern and e.name != AUDIT_KEY]
+    patterns = [e.name for e in AUDIT_FENCED if e.pattern]
+    pinned = [p for home in homes if home != active for p in _renameable_from(home) if p != home]
+    return json.dumps([homes, AUDIT_KEY, names, patterns]), pinned
+
+
+def _audit_rules() -> list[str]:
+    """The Seatbelt rules for the security log of each home the fence holds
+    (``owner_only.AUDIT_FENCED``), at every level: the key neither read nor written, the log and
+    the files the log adopts into its archive never written, the archive folder whole, in both
+    spellings of each home (as named, and its real path). A home besides the one in use that is
+    there is pinned with the folders above it the owner could rename, as the home in use is
+    (:func:`_pinned_dirs`): the rules name paths, and a home moved aside would walk them all.
+
+    The spool's own entry is held where it is too, while the files in it stay written: the
+    gateway reads the spool by its name (``sel_intake.take_in_spool``)."""
+    from personalclaw.owner_only import AUDIT_FENCED, AUDIT_SPOOL, audit_homes
+
+    active = _owner_only_home()[0]
+    rules: list[str] = []
+    for home in audit_homes():
+        spellings = list(dict.fromkeys((os.path.abspath(home), os.path.realpath(home))))
+        for spelling in spellings:
+            for entry in AUDIT_FENCED:
+                if entry.pattern:
+                    pattern = _seatbelt_regex(spelling + os.sep, entry.name)
+                    rules.append(f'(deny file-write* (regex #"{pattern}"))')
+                    continue
+                kind = "subpath" if entry.is_dir else "literal"
+                target = os.path.join(spelling, entry.name).replace('"', '\\"')
+                if entry.hidden:
+                    rules.append(f'(deny file-read* ({kind} "{target}"))')
+                rules.append(f'(deny file-write* ({kind} "{target}"))')
+            spool = os.path.join(spelling, AUDIT_SPOOL).replace('"', '\\"')
+            rules.append(f'(deny file-write* (literal "{spool}"))')
+        if os.path.realpath(home) != active and os.path.isdir(home):
+            for folder in dict.fromkeys(p for sp in spellings for p in [sp, *_renameable_from(sp)]):
+                escaped = folder.replace('"', '\\"')
+                rules.append(f'(deny file-write* (literal "{escaped}"))')
+    return rules
+
+
+#: The characters a Seatbelt regex reads as more than themselves.
+_SEATBELT_REGEX_SPECIAL = frozenset("\\.^$|?*+()[]{}")
+
+
+def _seatbelt_regex(folder: str, pattern: str) -> str:
+    """A Seatbelt regex for the files in *folder* whose name *pattern* (an ``fnmatch`` pattern of
+    literal text and ``*``) matches: *folder* and the pattern's text escaped, each ``*`` any run
+    of characters but ``/``. A ``"`` in *folder*, which the profile's raw string cannot hold, is
+    matched by any character: a wider deny, never a narrower one."""
+
+    def literal(text: str) -> str:
+        return "".join(
+            "." if c == '"' else f"\\{c}" if c in _SEATBELT_REGEX_SPECIAL else c for c in text
+        )
+
+    name = "[^/]*".join(literal(part) for part in pattern.split("*"))
+    return f"^{literal(folder)}{name}$"
+
+
+def _make_the_audit_key() -> None:
+    """Make the security log's key of the home in use when it has none, before a launch hides it:
+    the Linux launcher can hide only a file that is there, and a key the gateway made while the
+    command ran would be one the command could read. Best effort, and only for a home that is
+    there: a key that cannot be made here cannot be made from inside either, where the home is
+    read-only."""
+    from personalclaw.owner_only import AUDIT_KEY
+    from personalclaw.sel import read_or_make_key
+
+    home = _owner_only_home()[0]
+    if not home or not os.path.isdir(home) or os.path.lexists(os.path.join(home, AUDIT_KEY)):
+        return
+    try:
+        read_or_make_key(Path(home))
+    except OSError as exc:
+        logger.debug("could not make the security log's key before a launch: %s", exc)
+
+
+def _make_the_audit_spool() -> None:
+    """Make the security log's spool in the home in use when it has none, before a launch fences
+    it: the fence holds the spool's own entry where it is (macOS refuses its making, removal or
+    replacing; on Linux no entry is added at the top of the home), so a spool that is not there
+    when the command starts cannot be made by it, and the rows its tool server reports while the
+    gateway does not answer would have nowhere to go. Best effort, and only for a home that is
+    there; an entry already under the spool's name is left as it is (the gateway takes rows only
+    from a folder of its own, ``sel_intake``)."""
+    from personalclaw.owner_only import AUDIT_SPOOL
+
+    home = _owner_only_home()[0]
+    if not home or not os.path.isdir(home):
+        return
+    try:
+        os.mkdir(os.path.join(home, AUDIT_SPOOL), 0o700)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        logger.debug("could not make the security log's spool before a launch: %s", exc)
+
+
 def sandbox_exec_argv(
     argv: list[str],
     sandbox_level: str = "strict",
@@ -1679,6 +1891,7 @@ def sandbox_exec_argv(
             f"cannot build a sandbox-exec wrap: {', '.join(missing)} not found on the "
             f"system utility path ({_system_utility_path()})"
         )
+    _make_the_audit_spool()
     profile = _build_seatbelt_profile(sandbox_level, network=network)
     fd, path = tempfile.mkstemp(suffix=".sb", prefix="personalclaw_sandbox_")
     os.write(fd, profile.encode())

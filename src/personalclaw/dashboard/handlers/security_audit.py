@@ -1,11 +1,17 @@
-"""The security audit surface — the paginated SEL read and its chain verification.
+"""The security audit surface — the paginated SEL read and its chain verification, and the door
+a process that holds no key reports its rows by.
 
-Two routes, registered beside the rest of ``/api/security/*``:
+Two reads, registered beside the rest of ``/api/security/*``:
 
 * ``GET /api/security/audit`` — a cursor-paginated, filtered page of security events.
 * ``GET /api/security/audit/verify`` — ``{checked, ok}`` over the HMAC chain.
 
-Both are OWNER-ONLY. Both fail CLOSED on a malformed request: an unknown filter key, an
+And one internal write, ``POST /api/security-log/reported`` (:func:`api_security_log_reported`),
+which only PersonalClaw's own processes reach with the internal credential: the tool server an
+agent CLI runs hands it each row, since the CLI's sandbox keeps the log's key from it
+(``sel_intake``).
+
+Both reads are OWNER-ONLY. Both fail CLOSED on a malformed request: an unknown filter key, an
 out-of-range limit, an unparseable time bound, or an expired cursor is refused, never
 ignored. Ignoring a filter is the dangerous direction — it returns more than was asked
 for while looking like it worked.
@@ -24,6 +30,7 @@ from aiohttp import web
 
 from personalclaw.dashboard.token_auth import RESERVED_QUERY_PARAMS
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import json_object_body
 from personalclaw.sel import (
     _VERIFY_WINDOW,
     AUDIT_FILTER_FIELDS,
@@ -247,7 +254,45 @@ async def api_security_audit_verify(request: web.Request) -> web.Response:
     )
 
 
+async def api_security_log_reported(request: web.Request) -> web.Response:
+    """POST /api/security-log/reported — a security-log row an agent CLI's tool server reports.
+
+    The tool server runs in the CLI's sandbox and holds no key, so it hands its rows here
+    (``sel.report_rows_to_the_gateway``).
+
+    Body ``{"row": {...}, "process": "mcp-core", "pid": 123}``. The gateway takes the event's own
+    fields only, stamps who reported it (the process and pid the body names, and the chat the
+    request names in ``X-Session-Key``), signs it and appends it to its log (``sel_intake``), then
+    takes in what the spool holds. Answers ``{"ok": true, "taken": true}``, ``"taken": false``
+    for a row it had already taken. A body that is not a row is refused
+    (``security_row_refused``), and nothing is written.
+    """
+    from personalclaw import approval_answer, sel_intake
+    from personalclaw.sel import sel_log_async
+
+    body = await json_object_body(request, empty_ok=False)
+    event = sel_intake.event_of(
+        body.get("row"),
+        process=body.get("process"),
+        pid=body.get("pid"),
+        session=approval_answer.work_of_request(request) or "",
+        spooled=False,
+    )
+    if event is None:
+        return json_error("security_row_refused", status=400)
+    taken: list[bool] = []
+
+    def write() -> None:
+        taken.append(sel_intake.take(event))
+        sel_intake.take_in_spool()
+
+    await sel_log_async(write)
+    return web.json_response({"ok": True, "taken": bool(taken and taken[0])})
+
+
 def register_security_audit_routes(app: web.Application) -> None:
-    """Register the audit surface beside the other ``/api/security/*`` reads."""
+    """Register the audit surface beside the other ``/api/security/*`` reads, and the internal
+    door reported rows come in by."""
     app.router.add_get("/api/security/audit", api_security_audit)
     app.router.add_get("/api/security/audit/verify", api_security_audit_verify)
+    app.router.add_post("/api/security-log/reported", api_security_log_reported)

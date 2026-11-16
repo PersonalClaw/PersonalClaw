@@ -2445,9 +2445,11 @@ def make_its_folders() -> None:
     as the CLI runs. These hold what the tools this server makes itself write: the skills folder (a
     session's drafts and the library; a gateway's start seeds the shipped skills into it), the
     locks folder (the library's lock, which every skill read takes), the artifacts folder (what
-    the artifact and document tools save; a gateway's start lists it for the search index) and the
+    the artifact and document tools save; a gateway's start lists it for the search index), the
     workflows folder (the template tools' records, beside the run store the refiner reads; a
-    gateway's start reads that store). Nothing else makes any of them before its first write, and
+    gateway's start reads that store) and the security log's spool (the rows this server reports
+    that its gateway did not answer for, ``sel.spool_row``). Nothing else makes any of them before
+    its first write, and
     a start that skips that step makes none. A tool whose store is a file at the top of the home is
     made by the gateway instead (``gateway_makes``). A folder that cannot be made is logged and the
     CLI still starts: only the tools that write in it fail, and they say so. An existing folder is
@@ -2456,11 +2458,13 @@ def make_its_folders() -> None:
     from personalclaw.artifacts.native import artifacts_root
     from personalclaw.atomic_write import PRIVATE_DIR_MODE, ensure_home_for
     from personalclaw.concurrency import LOCKS_DIR_NAME
+    from personalclaw.owner_only import AUDIT_SPOOL
     from personalclaw.skills.loader import skills_dir
     from personalclaw.workflows.store import workflows_dir
 
     locks = config_dir() / LOCKS_DIR_NAME
-    for folder in (skills_dir(), locks, artifacts_root(), workflows_dir()):
+    spool = config_dir() / AUDIT_SPOOL
+    for folder in (skills_dir(), locks, artifacts_root(), workflows_dir(), spool):
         try:
             ensure_home_for(folder)
             folder.mkdir(mode=PRIVATE_DIR_MODE, exist_ok=True)
@@ -2472,16 +2476,40 @@ def make_its_folders() -> None:
             )
 
 
+#: Where this server hands its gateway a security-log row it holds no key to sign (``sel_intake``).
+SECURITY_ROW_ROUTE = "/api/security-log/reported"
+#: How long a row waits for the gateway to take it before it goes to the spool: a gateway that is
+#: there answers at once, and one that stopped answering must not hold the call it records.
+SECURITY_ROW_TIMEOUT_SECS = 5.0
+#: What this server says it is, in each row it reports.
+REPORTED_BY = "mcp-core"
+
+
+def _report_row(row: dict[str, Any]) -> bool:
+    """Hand one security-log row to the gateway, through the door this server makes every call to
+    it by (:func:`_post`): whether the gateway took it. A server that names no chat (an agent CLI
+    kept warm before it is given one) makes no call, since the gateway refuses every internal call
+    that names no work: the row goes to the spool, which the gateway takes in at the next row
+    reported to it or at its next start."""
+    if not _resolve_session_key():
+        return False
+    body = {"row": row, "process": REPORTED_BY, "pid": os.getpid()}
+    reply = _post(SECURITY_ROW_ROUTE, body, timeout=SECURITY_ROW_TIMEOUT_SECS)
+    return reply.get("ok") is True
+
+
 def run_mcp_core_server() -> None:
     """Run MCP stdio server for core agent tools — the single endpoint an ACP CLI
     consumes, aggregating every native tool category into one surface. Each call runs as the chat
     it serves (:func:`_call_as_its_session`), and what only the gateway holds is reached through
-    it (:func:`serves_an_agent_cli`). A security-log row the CLI's sandbox no longer lets this
-    process write is said in its own log (``sel.say_rows_the_file_cannot_take``)."""
+    it (:func:`serves_an_agent_cli`). It runs in the CLI's sandbox, which keeps the security log's
+    key from it and its log unchangeable by it, so it signs no row: each is handed to the gateway
+    to sign (:func:`_report_row`), or left in the spool when the gateway does not answer
+    (``sel.report_rows_to_the_gateway``)."""
     from personalclaw.mcp_shared import run_mcp_stdio_loop
-    from personalclaw.sel import say_rows_the_file_cannot_take
+    from personalclaw.sel import report_rows_to_the_gateway
 
     global _SERVES_AN_AGENT_CLI
     _SERVES_AN_AGENT_CLI = True
-    say_rows_the_file_cannot_take()
+    report_rows_to_the_gateway(_report_row, process=REPORTED_BY)
     run_mcp_stdio_loop("personalclaw-core", "1.0.0", _aggregated_list_tools, _call_as_its_session)

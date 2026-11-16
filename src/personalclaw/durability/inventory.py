@@ -1645,6 +1645,21 @@ INVENTORY: tuple[StateEntry, ...] = (
         # The rotation's cross-process lock: state of THIS process tree, not of the trail.
         derived_within=(".rotate.lock",),
     ),
+    # The rows an agent CLI's tool server reported while its gateway did not answer
+    # (`sel.spool_row`), unsigned, until the gateway signs them in (`sel_intake.take_in_spool`, at
+    # each start and each reported row). Written from inside the sandbox on purpose, so carried
+    # nowhere: another home's spool, restored or taken in, would be rows this gateway signs as
+    # reported to it that no process of its own reported. Derived: nothing in it outlives a start.
+    StateEntry(
+        id="security_events_spool",
+        kind=KIND_TREE,
+        path="sel_spool",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        derived=True,
+        merged_in=False,
+        help="security-log rows an agent CLI's tool server reported while its gateway was away",
+    ),
     # The client registry EXPORTS: it holds an integration's
     # label and bindings, which a user restoring a home expects back, and losing it
     # silently means every external client stops working after a restore with no

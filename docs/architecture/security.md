@@ -1748,6 +1748,20 @@ tradeoff — [limitations §1](../security/limitations.md#1-an-agent-cli-is-held
   processes append to the one log without coordinating, so their links interleave and the check
   allows breaks in the chain on purpose; an entry deleted from the file goes unreported. It reads
   only the live file, so a rotated file in `sel_archive/` is not checked again.
+- **Who can write an entry that passes it:** only a process that reads the key. The OS sandbox
+  keeps the key from every agent-started process, unread as well as unwritten, at every level and
+  in the home in use and the default one, and keeps the log, its archive and the files the log
+  adopts into its archive unchangeable there (`owner_only.AUDIT_FENCED`, on both backends). The
+  tool server an agent CLI runs (`mcp-core`) is in the CLI's sandbox, so it holds no key: it hands
+  each row to the gateway (`POST /api/security-log/reported`, internal only), or leaves it in
+  `sel_spool/` when the gateway does not answer, and the gateway takes only the event's own fields,
+  signs it and stamps `metadata.reported_by` (the process and pid the sender names, the chat its
+  request names, whether it came by the spool; `sel_intake`). A reported entry passes the check
+  like any other and is never taken for one the gateway wrote itself. A key that cannot be read,
+  or is empty, fails closed: nothing is signed with another, and no second key is made. A new
+  key is linked into place, so one another process made first is never replaced
+  (`sel.read_or_make_key`). With the sandbox off, or where the system offers none, the agent's
+  shell is kept from the key only by its screen ([limitations §13](../security/limitations.md#13-the-agents-shell-is-screened-not-fenced-from-your-credential-files)).
 
 Events carry caller, operation, outcome, and `downstream_service` labels (the generic value is
 `"channel"`; no vendor names). API denials, webhook auth failures, and app lifecycle events all

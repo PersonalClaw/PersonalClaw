@@ -487,6 +487,10 @@ async def _ownership_denial(request: web.Request, app_name: str, route: str) -> 
 # the credential holds open for nobody. A rail holds the list to the calls in the source, both
 # ways: `tests/test_every_internal_call_names_an_operation_that_takes_it.py`.
 
+#: The routes whose request is itself a security-log row, so the audit middleware writes none
+#: beside it: a row the tool server an agent CLI runs reports (`sel_intake`).
+_ROWS_OF_THEIR_OWN = frozenset({"/api/security-log/reported"})
+
 #: Called only by PersonalClaw's processes, so from off this computer they are refused outright.
 INTERNAL_ROUTES: frozenset[str] = frozenset(
     {
@@ -503,6 +507,9 @@ INTERNAL_ROUTES: frozenset[str] = frozenset(
         # surface drives the desktop, and admitting cookie auth on this one route would put the
         # operator's keyboard behind the weakest browser path.
         "POST /api/computer-use/dispatch",
+        # A security-log row from the tool server an agent CLI runs, which holds no key
+        # (`sel_intake`). Not mixed: no browser surface writes the log.
+        "POST /api/security-log/reported",
         *agent_routes.AGENT_ONLY_TOOL_ROUTES,  # an agent's workflow tools, listed there
     }
 )
@@ -532,6 +539,37 @@ MIXED_INTERNAL_ROUTES: frozenset[str] = frozenset(
         *agent_routes.AGENT_TOOL_ROUTES,  # the owner's workflow routes those tools reach
     }
 )
+
+
+def _settle_what_was_left() -> None:
+    """What an earlier release or run left for this start to settle, right after the stored
+    settings move (:func:`_move_stored_settings`) and before the registry sync reads config.json.
+    None of them blocks the start: each failure is logged, and the next start retries."""
+    # `credentials.json`, the second store an earlier release kept, before the registry sync
+    # resolves a provider entry's `credential` by name. Deleted only once every value in it reads
+    # back from the store; what it cannot settle, the Doctor lists.
+    from personalclaw.llm.credentials import move_credentials_file
+
+    try:
+        move_credentials_file()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("moving credentials.json into the credential store failed", exc_info=True)
+    # The browse "profile keys" an earlier release minted and nothing ever used, which the
+    # Secrets page would list and could not delete (`browse.handoff.forget_unused_profile_keys`).
+    from personalclaw.browse.handoff import forget_unused_profile_keys
+
+    try:
+        forget_unused_profile_keys()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("deleting the unused browse profile keys failed", exc_info=True)
+    # The security-log rows an agent CLI's tool server left in the spool while no gateway
+    # answered it, signed now and recorded as reported through the spool (`sel_intake`).
+    from personalclaw.sel_intake import take_in_spool
+
+    try:
+        take_in_spool()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("taking in the security log's spool failed", exc_info=True)
 
 
 def _move_stored_settings() -> None:
@@ -710,23 +748,7 @@ async def start_dashboard(
     # HERE: after extensions load, so every app's declared-sensitive fields are known, and
     # before the registry sync below reads config.json.
     _move_stored_settings()
-    # And `credentials.json`, the second store an earlier release kept, before the registry
-    # sync below resolves a provider entry's `credential` by name. Deleted only once every value
-    # in it reads back from the store; what it cannot settle, the Doctor lists.
-    from personalclaw.llm.credentials import move_credentials_file
-
-    try:
-        move_credentials_file()
-    except Exception:  # noqa: BLE001 — never block boot; the next start retries
-        logger.warning("moving credentials.json into the credential store failed", exc_info=True)
-    # And the browse "profile keys" an earlier release minted and nothing ever used, which the
-    # Secrets page would list and could not delete (`browse.handoff.forget_unused_profile_keys`).
-    from personalclaw.browse.handoff import forget_unused_profile_keys
-
-    try:
-        forget_unused_profile_keys()
-    except Exception:  # noqa: BLE001 — never block boot; the next start retries
-        logger.warning("deleting the unused browse profile keys failed", exc_info=True)
+    _settle_what_was_left()
     # Sync config.json provider entries into the LLM registry IMMEDIATELY after
     # extensions load (types are now registered). Must happen BEFORE any handler
     # resolves a provider (e.g. embedding/knowledge auto-embed at boot).
@@ -814,7 +836,8 @@ async def start_dashboard(
         handler: object,
     ) -> web.StreamResponse:
         logged = request.method in _sel_log_methods and request.path.startswith("/api/")
-        if logged and not _webhook_door(request.path):  # no dashboard user; it logs its own
+        # A webhook door has no dashboard user and logs its own; a reported row is its own record.
+        if logged and not _webhook_door(request.path) and request.path not in _ROWS_OF_THEIR_OWN:
             from personalclaw.sel import sel
 
             try:

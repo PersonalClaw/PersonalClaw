@@ -8,11 +8,15 @@ home; a file that was there at launch is still written in place, and so is anyth
 that was there; an owner-only entry is not written at all. A top-level entry the gateway replaces
 while the process runs (an atomic save, a log's rotation) is a new file the process can only read.
 
+The security log's entries are fenced like the owner-only ones (``owner_only.AUDIT_FENCED``), and
+its key is hidden: the real launcher binds an empty file over it, so nothing of it is read.
+
 This module stands in for that fence where the host offers no such sandbox, for the one process it
 is the ``sitecustomize`` of (:func:`fenced`): each operation the fence would refuse that the
-process makes from Python is refused with the error the kernel gives (EROFS), and recorded in a
-log a test reads (:func:`refused`). What a process writes below Python (SQLite's journal) is not
-seen; the real sandbox is driven on a Linux host that runs it.
+process makes from Python is refused with the error the kernel gives (EROFS), an open of the
+hidden key with EACCES, and recorded in a log a test reads (:func:`refused`). What a process
+writes below Python (SQLite's journal) is not seen; the real sandbox is driven on a Linux host that
+runs it.
 """
 
 from __future__ import annotations
@@ -58,14 +62,23 @@ def refused(log: Path) -> list[dict[str, Any]]:
 
 
 def _install(home: str, log: str) -> None:
-    from personalclaw.owner_only import OWNER_ONLY_DIRS, OWNER_ONLY_FILES
+    import fnmatch
+
+    from personalclaw.owner_only import AUDIT_FENCED, OWNER_ONLY_DIRS, OWNER_ONLY_FILES
 
     root = os.path.realpath(home)
     owner_only = {*OWNER_ONLY_FILES, *OWNER_ONLY_DIRS}
+    owner_only.update(entry.name for entry in AUDIT_FENCED if not entry.pattern)
+    patterns = [entry.name for entry in AUDIT_FENCED if entry.pattern]
+    hidden = {entry.name for entry in AUDIT_FENCED if entry.hidden}
+
+    def fenced_name(name: str) -> bool:
+        return name in owner_only or any(fnmatch.fnmatchcase(name, p) for p in patterns)
+
     # The entries the sandbox binds back writable: each one there now, by the file it is.
     bound: dict[str, tuple[int, int]] = {}
     for name in os.listdir(root):
-        if name in owner_only:
+        if fenced_name(name):
             continue
         info = os.lstat(os.path.join(root, name))
         bound[name] = (info.st_dev, info.st_ino)
@@ -91,14 +104,21 @@ def _install(home: str, log: str) -> None:
             return False
         return bound.get(name) == (info.st_dev, info.st_ino)
 
-    def refuse(event: str, path: Any) -> None:
+    def refuse(event: str, path: Any, code: int = errno.EROFS) -> None:
         line = json.dumps({"event": event, "path": os.fsdecode(path)}) + "\n"
         os.write(record, line.encode())
-        raise OSError(errno.EROFS, os.strerror(errno.EROFS), os.fsdecode(path))
+        raise OSError(code, os.strerror(code), os.fsdecode(path))
 
     def hook(event: str, args: tuple[Any, ...]) -> None:
         if event == "open":
             path, _mode, flags = (*args, None, None)[:3]
+            # Only a path that names a hidden entry is worked out for a read: every import opens.
+            if isinstance(path, (str, bytes, os.PathLike)) and any(
+                name in os.fsdecode(path) for name in hidden
+            ):
+                where = entry(path)
+                if where is not None and where[0] in hidden:
+                    refuse(event, path, errno.EACCES)
             if not isinstance(flags, int) or not flags & _WRITES:
                 return
             where = entry(path)
