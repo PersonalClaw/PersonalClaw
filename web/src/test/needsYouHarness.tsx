@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ChatSessionSummary, RunningRow, WaitingItem, WaitingList } from '../lib/api'
 import type { RouteProps } from '../app/useQueryState'
 import { NeedsYouPage } from '../pages/dashboard/NeedsYouPage'
+import { fixtureGate, gateAskKey } from './waitingGates'
 
 /** Needs you, mounted with the route props the shell hands it: its address's query is state here, so
  *  a selection (`?open=`) a test makes is what the next render reads, as a hash change is in the app.
@@ -44,16 +45,16 @@ export function waitingItem(over: Partial<WaitingItem> = {}): WaitingItem {
   }
 }
 
-/** A run's gate, as the list serves one: answered at the run's resume route with its token. */
+/** A run's gate, as the list serves one (`waitingGates.fixtureGate`, held to the gateway): an
+ *  approval answered at the run's confirm route with a verb, any other ask at its resume route with
+ *  its answer, each with the gate's token. */
 export function gateItem(ask: Record<string, unknown> = { kind: 'choice', prompt: 'Which branch should I push?', choices: ['Ship it', 'Hold'] }, over: Partial<WaitingItem> = {}): WaitingItem {
-  return waitingItem({
-    id: 'gate:run-77:gate.push:1', kind: 'gate', work: 'workflow:run-77', session: '',
-    brief: { workflow: 'release', node_id: 'gate.push', ask, handoff: {} },
-    consequence: ask.kind === 'approval' ? 'changes' : 'asks', risk: '',
-    answer: { method: 'POST', path: '/api/workflows/runs/run-77/resume', takes: [ask.kind], body: { resume_token: 'tok-9' } },
-    route: '#/workflows/runs/run-77',
+  const gate = fixtureGate(gateAskKey(ask), { run: 'run-77', token: 'tok-9', workflow: 'release', node: 'gate.push', ask })
+  return {
+    ...gate,
+    id: 'gate:run-77:gate.push:1', asked_at: '2026-10-21T10:00:00Z', age_secs: 60,
     ...over,
-  })
+  }
 }
 
 /** The list, with no source unread unless said. */

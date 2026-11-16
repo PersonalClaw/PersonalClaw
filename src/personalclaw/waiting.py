@@ -612,7 +612,13 @@ def _gates(now: float) -> list[dict[str, Any]]:
                 kind = str(cont.ask.get("kind") or "approval")
                 base = _path("/api/workflows/runs", run.id)
                 token = {"resume_token": cont.token}
-                if cont.confirmation_id:
+                # A yes or a no is answered by its verb (`/confirm`, which resumes the gate with the
+                # verb's approval). Any other ask (a choice, a text answer, a form, an event's wake)
+                # takes its answer itself, on `/resume`, as the run's page sends it: `/confirm` can
+                # only send a yes or a no, which such a gate refuses (`invalid_answer`). Every gate
+                # carries a confirmation id (`gate_answers.ensure_continuation`), so the id does not
+                # say which route answers it; the ask's kind does.
+                if kind == "approval":
                     answer = _answer(
                         "POST", f"{base}/confirm", ("approve", "reject", "skip", "quit"), token
                     )

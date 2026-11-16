@@ -45,6 +45,10 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption,
   const { ask, handoff, expired } = continuation
   const kind = ask.kind || 'approval'
   const event = kind === 'event'
+  // A choice that names no choices is open: any answer is one (`AskSpec.validate_answer`), so it
+  // takes your words, as a text ask does, rather than a list with nothing to pick.
+  const open = kind === 'choice' && !(ask.choices ?? []).length
+  const typed = kind === 'text' || open
   const [text, setText] = useState('')
   const [choice, setChoice] = useState(ask.choices?.[0] ?? '')
   const [form, setForm] = useState<Record<string, unknown>>(() => {
@@ -126,7 +130,7 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption,
         </div>
       )}
 
-      {kind === 'choice' && (
+      {kind === 'choice' && !open && (
         <Field label="Choose one">
           <Select
             value={choice}
@@ -136,7 +140,7 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption,
         </Field>
       )}
 
-      {kind === 'text' && (
+      {typed && (
         <Field label="Your answer">
           <TextArea value={text} onChange={setText} rows={3} ariaLabel="Your answer" />
         </Field>
@@ -225,12 +229,12 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer, rerunCaption,
         ) : (
           <Button
             onClick={() => send(
-              kind === 'choice' ? choice : kind === 'text' ? text : form,
+              typed ? text : kind === 'choice' ? choice : form,
               alwaysAllow,
             )}
             loading={answering === 'send'}
-            disabled={busy || answering !== null || (kind === 'text' && !text.trim())}
-            disabledReason={kind === 'text' && !text.trim() ? 'Type an answer first' : BUSY_REASON}
+            disabled={busy || answering !== null || (typed && !text.trim())}
+            disabledReason={typed && !text.trim() ? 'Type an answer first' : BUSY_REASON}
           >
             <Check size={14} /> Submit
           </Button>
