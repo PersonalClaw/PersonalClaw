@@ -47,6 +47,7 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   'theCodeStripFitsAPhone.spec.ts': { mode: 'shared', why: 'answers its code session\'s reads with route stubs, measures its strip and writes nothing' },
   'settingsRowsFitAPhone.spec.ts': { mode: 'shared', why: 'reads each settings page as the run\'s gateway answers it, measures its rows and writes nothing' },
   'theProjectsTitleReadsWholeOnAPhone.spec.ts': { mode: 'shared', why: 'answers the Projects list\'s reads with route stubs, measures its title and writes nothing' },
+  'aProjectsPageScrolls.spec.ts': { mode: 'shared', why: "answers a project page's reads with route stubs, scrolls it with the wheel and writes nothing" },
   'explanationsRow.spec.ts': { mode: 'shared', why: 'answers the Agent page\'s config read in the page itself, with one explanation chosen, and writes nothing' },
   'buddyPlayground.spec.ts': { mode: 'shared', why: 'plays the buddy playground, which reads nothing from the gateway and writes nothing' },
   'chat.spec.ts': {

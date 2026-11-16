@@ -64,9 +64,6 @@
       "200% text zoom": [
         "<h#> \"Garden\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryNew chatW\" clips at #%: #x# in #x#"
-      ],
-      "focus order": [
-        "focus moves backwards from <button .relative.inline-flex.shrink-#> \"Copy\" to <div .group/handle.absolute.top-#> \"Resize detail — arrow keys to resize\""
       ]
     }
   },
@@ -135,9 +132,6 @@
       "200% text zoom": [
         "<h#> \"Garden\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryNew chatW\" clips at #%: #x# in #x#"
-      ],
-      "focus order": [
-        "focus moves backwards from <button .relative.inline-flex.shrink-#> \"Copy\" to <div .group/handle.absolute.top-#> \"Resize detail — arrow keys to resize\""
       ]
     }
   }
