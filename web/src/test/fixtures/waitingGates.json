@@ -1,0 +1,366 @@
+{
+  "_doc": [
+    "A workflow gate of each ask, as GET /api/waiting serves it: its run id, token, confirmation id and times named here.",
+    "tests/test_a_gates_waiting_item_answers_on_the_route_its_ask_takes.py holds each item to what the gateway serves,",
+    "and answers it on its route with `sends` (what Needs you posts there, beside the token), through the real handlers.",
+    "The web's tests build their gates from these items, so a card is tested only against a gate as the gateway lists it."
+  ],
+  "gates": {
+    "approval": {
+      "item": {
+        "id": "gate:run-approval:conf-approval:0",
+        "kind": "gate",
+        "work": "workflow:run-approval",
+        "session": "",
+        "brief": {
+          "workflow": "gate-approval",
+          "node_id": "ask",
+          "ask": {
+            "kind": "approval",
+            "prompt": "Ship v1.2?",
+            "node_id": "ask",
+            "fields": [],
+            "choices": [],
+            "unattended_suppress": false,
+            "rerun": false
+          },
+          "handoff": {
+            "scope": "gate-approval",
+            "status": "blocked on human input",
+            "outstanding": [],
+            "checks_run": [],
+            "next_steps": [
+              "answer the gate at ask"
+            ],
+            "risks": [],
+            "attempted": []
+          }
+        },
+        "consequence": "changes",
+        "risk": "",
+        "asked_at": "2026-11-02T11:50:00+00:00",
+        "age_secs": 0,
+        "expires_at": null,
+        "current": true,
+        "interrupt": "deliver",
+        "answer": {
+          "method": "POST",
+          "path": "/api/workflows/runs/run-approval/confirm",
+          "takes": [
+            "approve",
+            "reject",
+            "skip",
+            "quit"
+          ],
+          "body": {
+            "resume_token": "tok-approval"
+          }
+        },
+        "route": "#/workflows/runs/run-approval",
+        "project_id": "",
+        "loop_kind": ""
+      },
+      "sends": {
+        "verb": "approve"
+      }
+    },
+    "choice": {
+      "item": {
+        "id": "gate:run-choice:conf-choice:0",
+        "kind": "gate",
+        "work": "workflow:run-choice",
+        "session": "",
+        "brief": {
+          "workflow": "gate-choice",
+          "node_id": "ask",
+          "ask": {
+            "kind": "choice",
+            "prompt": "Which bed first?",
+            "node_id": "ask",
+            "fields": [],
+            "choices": [
+              "north",
+              "south"
+            ],
+            "unattended_suppress": false,
+            "rerun": false
+          },
+          "handoff": {
+            "scope": "gate-choice",
+            "status": "blocked on human input",
+            "outstanding": [],
+            "checks_run": [],
+            "next_steps": [
+              "answer the gate at ask"
+            ],
+            "risks": [],
+            "attempted": []
+          }
+        },
+        "consequence": "asks",
+        "risk": "",
+        "asked_at": "2026-11-02T11:50:00+00:00",
+        "age_secs": 0,
+        "expires_at": null,
+        "current": true,
+        "interrupt": "deliver",
+        "answer": {
+          "method": "POST",
+          "path": "/api/workflows/runs/run-choice/resume",
+          "takes": [
+            "choice"
+          ],
+          "body": {
+            "resume_token": "tok-choice"
+          }
+        },
+        "route": "#/workflows/runs/run-choice",
+        "project_id": "",
+        "loop_kind": ""
+      },
+      "sends": {
+        "answer": "north"
+      }
+    },
+    "choice_open": {
+      "item": {
+        "id": "gate:run-choice_open:conf-choice_open:0",
+        "kind": "gate",
+        "work": "workflow:run-choice_open",
+        "session": "",
+        "brief": {
+          "workflow": "gate-choice_open",
+          "node_id": "ask",
+          "ask": {
+            "kind": "choice",
+            "prompt": "Which bed first?",
+            "node_id": "ask",
+            "fields": [],
+            "choices": [],
+            "unattended_suppress": false,
+            "rerun": false
+          },
+          "handoff": {
+            "scope": "gate-choice_open",
+            "status": "blocked on human input",
+            "outstanding": [],
+            "checks_run": [],
+            "next_steps": [
+              "answer the gate at ask"
+            ],
+            "risks": [],
+            "attempted": []
+          }
+        },
+        "consequence": "asks",
+        "risk": "",
+        "asked_at": "2026-11-02T11:50:00+00:00",
+        "age_secs": 0,
+        "expires_at": null,
+        "current": true,
+        "interrupt": "deliver",
+        "answer": {
+          "method": "POST",
+          "path": "/api/workflows/runs/run-choice_open/resume",
+          "takes": [
+            "choice"
+          ],
+          "body": {
+            "resume_token": "tok-choice_open"
+          }
+        },
+        "route": "#/workflows/runs/run-choice_open",
+        "project_id": "",
+        "loop_kind": ""
+      },
+      "sends": {
+        "answer": "the east bed"
+      }
+    },
+    "text": {
+      "item": {
+        "id": "gate:run-text:conf-text:0",
+        "kind": "gate",
+        "work": "workflow:run-text",
+        "session": "",
+        "brief": {
+          "workflow": "gate-text",
+          "node_id": "ask",
+          "ask": {
+            "kind": "text",
+            "prompt": "What is the release called?",
+            "node_id": "ask",
+            "fields": [],
+            "choices": [],
+            "unattended_suppress": false,
+            "rerun": false
+          },
+          "handoff": {
+            "scope": "gate-text",
+            "status": "blocked on human input",
+            "outstanding": [],
+            "checks_run": [],
+            "next_steps": [
+              "answer the gate at ask"
+            ],
+            "risks": [],
+            "attempted": []
+          }
+        },
+        "consequence": "asks",
+        "risk": "",
+        "asked_at": "2026-11-02T11:50:00+00:00",
+        "age_secs": 0,
+        "expires_at": null,
+        "current": true,
+        "interrupt": "deliver",
+        "answer": {
+          "method": "POST",
+          "path": "/api/workflows/runs/run-text/resume",
+          "takes": [
+            "text"
+          ],
+          "body": {
+            "resume_token": "tok-text"
+          }
+        },
+        "route": "#/workflows/runs/run-text",
+        "project_id": "",
+        "loop_kind": ""
+      },
+      "sends": {
+        "answer": "Orchard"
+      }
+    },
+    "form": {
+      "item": {
+        "id": "gate:run-form:conf-form:0",
+        "kind": "gate",
+        "work": "workflow:run-form",
+        "session": "",
+        "brief": {
+          "workflow": "gate-form",
+          "node_id": "ask",
+          "ask": {
+            "kind": "form",
+            "prompt": "Book the delivery",
+            "node_id": "ask",
+            "fields": [
+              {
+                "name": "day",
+                "type": "string",
+                "label": "Which day",
+                "required": true,
+                "default": null,
+                "choices": []
+              },
+              {
+                "name": "crates",
+                "type": "number",
+                "label": "How many crates",
+                "required": false,
+                "default": 2,
+                "choices": []
+              }
+            ],
+            "choices": [],
+            "unattended_suppress": false,
+            "rerun": false
+          },
+          "handoff": {
+            "scope": "gate-form",
+            "status": "blocked on human input",
+            "outstanding": [],
+            "checks_run": [],
+            "next_steps": [
+              "answer the gate at ask"
+            ],
+            "risks": [],
+            "attempted": []
+          }
+        },
+        "consequence": "asks",
+        "risk": "",
+        "asked_at": "2026-11-02T11:50:00+00:00",
+        "age_secs": 0,
+        "expires_at": null,
+        "current": true,
+        "interrupt": "deliver",
+        "answer": {
+          "method": "POST",
+          "path": "/api/workflows/runs/run-form/resume",
+          "takes": [
+            "form"
+          ],
+          "body": {
+            "resume_token": "tok-form"
+          }
+        },
+        "route": "#/workflows/runs/run-form",
+        "project_id": "",
+        "loop_kind": ""
+      },
+      "sends": {
+        "answer": {
+          "day": "Thursday",
+          "crates": 3
+        }
+      }
+    },
+    "event": {
+      "item": {
+        "id": "gate:run-event:conf-event:0",
+        "kind": "gate",
+        "work": "workflow:run-event",
+        "session": "",
+        "brief": {
+          "workflow": "gate-event",
+          "node_id": "ask",
+          "ask": {
+            "kind": "event",
+            "prompt": "Parked until the build finishes.",
+            "node_id": "ask",
+            "fields": [],
+            "choices": [],
+            "unattended_suppress": false,
+            "rerun": false
+          },
+          "handoff": {
+            "scope": "gate-event",
+            "status": "blocked on human input",
+            "outstanding": [],
+            "checks_run": [],
+            "next_steps": [
+              "answer the gate at ask"
+            ],
+            "risks": [],
+            "attempted": []
+          }
+        },
+        "consequence": "asks",
+        "risk": "",
+        "asked_at": "2026-11-02T11:50:00+00:00",
+        "age_secs": 0,
+        "expires_at": null,
+        "current": true,
+        "interrupt": "deliver",
+        "answer": {
+          "method": "POST",
+          "path": "/api/workflows/runs/run-event/resume",
+          "takes": [
+            "event"
+          ],
+          "body": {
+            "resume_token": "tok-event"
+          }
+        },
+        "route": "#/workflows/runs/run-event",
+        "project_id": "",
+        "loop_kind": ""
+      },
+      "sends": {
+        "answer": true
+      }
+    }
+  }
+}

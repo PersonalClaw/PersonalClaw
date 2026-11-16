@@ -172,17 +172,16 @@ describe('a run’s gate', () => {
     expect(within(needsYou()).queryByRole('textbox')).toBeNull()
   })
 
-  it('an approval gate is a yes or a no: Approve sends true, Deny false', async () => {
+  it('an approval gate is a yes or a no, on its confirm route: Deny sends reject', async () => {
     waiting.mockResolvedValue(waitingList([gateItem({ kind: 'approval', prompt: 'Push to main?' })]))
     render(<NeedsYouHarness />)
     await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Deny/ }))
-    await waitFor(() => expect(resumeWorkflowRun).toHaveBeenCalledWith('run-77', { answer: false, resume_token: 'tok-9' }))
+    await waitFor(() => expect(confirmWorkflowRun).toHaveBeenCalledWith('run-77', { verb: 'reject', resume_token: 'tok-9' }))
+    expect(resumeWorkflowRun).not.toHaveBeenCalled()
   })
 
   it('a confirmation is answered at its confirm route, with a verb', async () => {
-    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'approval', prompt: 'Send the email?' }, {
-      answer: { method: 'POST', path: '/api/workflows/runs/run-77/confirm', takes: ['approve', 'reject', 'skip', 'quit'], body: { resume_token: 'tok-9' } },
-    })]))
+    waiting.mockResolvedValue(waitingList([gateItem({ kind: 'approval', prompt: 'Send the email?' })]))
     render(<NeedsYouHarness />)
     await userEvent.click(await within(needsYou()).findByRole('button', { name: /^Approve/ }))
     await waitFor(() => expect(confirmWorkflowRun).toHaveBeenCalledWith('run-77', { verb: 'approve', resume_token: 'tok-9' }))

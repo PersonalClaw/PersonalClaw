@@ -160,6 +160,26 @@ export const PROJECTS_LIST: StubbedRead[] = [{
 // ── What waits on you, one of each shape (`FIXED_WAITING`), and Needs you's reads ─────────────────
 
 /** One waiting item as `GET /api/waiting` serves it, with the list's common fields. */
+/** A run's gate as `GET /api/waiting` serves it: the web's shared fixture
+ *  (`src/test/fixtures/waitingGates.json`), which
+ *  `tests/test_a_gates_waiting_item_answers_on_the_route_its_ask_takes.py` holds to the gateway, with
+ *  its run, token, workflow and step named for this run. So the stub's gate is on the route the gateway
+ *  names for its ask (an approval on `/confirm`, every other ask on `/resume`). */
+const WAITING_GATES = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'test', 'fixtures', 'waitingGates.json'), 'utf8')) as {
+  gates: Record<string, { item: Record<string, any> }>
+}
+/** A waiting item's fields the specs read, as every other stub here has them. */
+type StubbedWaiting = { id: string; kind: string; asked_at: string; answer: { method: string; path: string; takes: unknown[]; body: Record<string, unknown> }; [field: string]: unknown }
+function waitingGate(key: string, names: { run: string; token: string; workflow: string; node: string }): StubbedWaiting {
+  const text = JSON.stringify(WAITING_GATES.gates[key].item)
+    .split(`run-${key}`).join(names.run).split(`tok-${key}`).join(names.token).split(`gate-${key}`).join(names.workflow)
+  const item = JSON.parse(text)
+  item.brief.node_id = names.node
+  item.brief.ask.node_id = names.node
+  item.brief.handoff.next_steps = [`answer the gate at ${names.node}`]
+  return item
+}
+
 const fixedWaiting = <T extends Record<string, unknown>>(over: T) => ({
   work: '', session: '', risk: '', expires_at: null, current: true, interrupt: 'deliver', age_secs: 0, ...over,
 })
@@ -175,12 +195,7 @@ export const FIXED_WAITING = {
       brief: { tool: 'bash', tool_input: 'rm -rf build', tool_purpose: 'Clear the build folder', source_label: 'automation “Nightly”', confirms: ['deletes'] },
       answer: { method: 'POST', path: '/api/approvals/e2e-ap-1/{answer}', takes: ['approve', 'reject'], body: {} },
     }),
-    fixedWaiting({
-      id: 'gate:r-e2e:conf-1:0', kind: 'gate', work: 'workflow:r-e2e', consequence: 'changes',
-      asked_at: '2026-11-02T11:50:00+00:00', route: '#/workflows/runs/r-e2e',
-      brief: { workflow: 'release', node_id: 'approve', ask: { kind: 'approval', prompt: 'Ship v1.2?', choices: [] } },
-      answer: { method: 'POST', path: '/api/workflows/runs/r-e2e/confirm', takes: ['approve', 'reject'], body: { resume_token: 'tok-e2e' } },
-    }),
+    { ...waitingGate('approval', { run: 'r-e2e', token: 'tok-e2e', workflow: 'release', node: 'approve' }), id: 'gate:r-e2e:conf-1:0' },
     fixedWaiting({
       id: 'park:schedule:clock:e2e', kind: 'park', work: 'trigger:schedule:clock:e2e', consequence: 'changes',
       asked_at: '2026-11-02T11:55:00+00:00', route: '#/triggers?open=schedule%3Aclock%3Ae2e',

@@ -76,6 +76,11 @@ export function waitingQuestion(item: WaitingItem): CardQuestion | null {
     const ask = record(b.ask)
     const kind = text(ask.kind) || 'approval'
     const confirm = m?.[2] === 'confirm'
+    // The confirm route sends a yes or a no, and nothing else: a choice, a text answer, a form or
+    // an event's wake sent there is refused (`invalid_answer`). So a gate listed on it that asks
+    // for anything but a yes or a no is answered where it asks, never as Approve / Deny. The
+    // gateway lists only an approval on it (`waiting._gates`).
+    if (confirm && kind !== 'approval') return null
     const choices = (Array.isArray(ask.choices) ? ask.choices : [])
       .filter((c): c is string => typeof c === 'string' && c.length > 0)
     return {
@@ -84,11 +89,11 @@ export function waitingQuestion(item: WaitingItem): CardQuestion | null {
       nodeId: text(b.node_id),
       resumeToken: token,
       prompt: text(ask.prompt),
-      choices: confirm || kind === 'approval' ? [] : choices,
-      approval: confirm || kind === 'approval',
+      choices: kind === 'approval' ? [] : choices,
+      approval: kind === 'approval',
       confirm,
-      event: !confirm && kind === 'event',
-      kind: confirm ? 'approval' : kind,
+      event: kind === 'event',
+      kind,
     }
   }
   if (item.kind === 'park') {
