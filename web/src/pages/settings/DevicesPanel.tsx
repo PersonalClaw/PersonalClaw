@@ -54,14 +54,18 @@ function issuerLabel(d: DeviceRec): string {
   }
 }
 
-/** What to call a row: its name, else what it is. A token nothing has used has no client yet; one
- *  that HAS been used, by a client that did not say what it is, must not read as unused — the
- *  line under it lists that use. */
+/** What to call a row: its name, else what it is. A link a browser opened says which browser; a
+ *  token nothing has used has no client yet; one that HAS been used, by a client that did not say
+ *  what it is, must not read as unused — the line under it lists that use. */
 function rowName(d: DeviceRec): string {
   if (d.name) return d.name
   if (d.pool !== 'token') return 'Unnamed device'
+  if (opened(d)) return `Link opened in ${d.opened_by || 'a browser'}`
   return d.last_seen > 0 ? 'Unrecognised client' : 'Token not used yet'
 }
+
+/** A link a browser opened: it signed that browser in, and still works as a token until it ends. */
+const opened = (d: DeviceRec) => d.pool === 'token' && (d.opened_at ?? 0) > 0
 
 /** "Paired 3d ago" / "Signed in 3d ago" / "Issued 3d ago" — when it signed in, in its own verb. */
 function signedInLine(d: DeviceRec): string {
@@ -351,8 +355,15 @@ export function DevicesPanel() {
               <span>{issuerLabel(d)}</span>
             </div>
             <div data-type="caption" className="mt-0.5 text-on-surface-low">
-              {signedInLine(d)}
-              {d.expires_at > 0 ? ` · ${d.pool === 'token' ? 'stops working' : 'session expires'} ${absTime(d.expires_at)}` : ''}
+              {/* A row with a name of its own keeps it (the token's identity), so its line says which
+                  browser opened it; an unnamed row's name already does, and a client that opened its
+                  own link (the harness's script) adds nothing to its name. */}
+              {opened(d)
+                ? `Opened ${d.name && d.opened_by && d.opened_by !== d.name ? `in ${d.opened_by} ` : ''}${relPast(d.opened_at)}${d.expires_at > 0 ? ` · still works as a token until ${absTime(d.expires_at)}` : ''}`
+                : <>
+                  {signedInLine(d)}
+                  {d.expires_at > 0 ? ` · ${d.pool === 'token' ? 'stops working' : 'session expires'} ${absTime(d.expires_at)}` : ''}
+                </>}
             </div>
           </div>
         </div>
@@ -542,7 +553,7 @@ export function DevicesPanel() {
 
       {tokens.length > 0 && (
         <Section title={`Tokens (${tokens.length})`}
-          hint="Links and tokens that no browser has opened: from personalclaw token, personalclaw run, a script, or the gateway's startup line. Each lasts what it was minted for; up to 20 can be live at once, and past that the one used least recently is signed out.">
+          hint="Links and tokens from personalclaw token, personalclaw run, a script, or the gateway's startup line. A link a browser opened says which, and still works as a token until it ends. Each lasts what it was minted for; up to 20 can be live at once, and past that the one used least recently is signed out.">
           <RowGroup>{tokens.map(renderRow)}</RowGroup>
         </Section>
       )}

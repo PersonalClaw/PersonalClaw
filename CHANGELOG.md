@@ -39,6 +39,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Accepting a proposed template saves it to Workflows, as the agent's save tool says.**
 - **A workflow step that asks you to pick, to type an answer or to fill in a form is answered in Needs you as it asks, where it showed Approve and Deny and refused the answer: its choices on its card, a typed line in its reply field, its form in its panel, and a parked step woken. A step that asks for a pick and lists no choices takes your own words, on its run's page too, and an empty answer is refused.**
 - **The Inbox's Proposals lens says beside each learning proposal's kind what its Accept does (saves the template, records that you agree), and offers no Approve on one that can't be accepted here. A refused Approve shows the gateway's sentence once, with no error's class name, and a learned template refused for a step holding something shaped like a credential says so, what to do, and that it still waits.**
+- **A new chat scrolls on a phone: the last suggestions and the composer are in reach under the first-run small-model card, where the page cut them off at the fold.**
+- **On a phone the Library's Power user view shows its tabs as a strip above the panel, which has the page's whole width: beside it, a 184 px column left each panel about 205 px and cut its headings and titles.**
+- **Automations › Week names the automations it cannot plot in full by the names the list shows, no longer by their internal ids.**
+- **Settings › Devices lists a sign-in link a browser opened as "Link opened in" that browser, with when, and that it still works as a token until it ends. It no longer reads as an unrecognised client among links no browser has opened.**
+- **A missed-run card settles once its automation has run on schedule since the slots it missed and that run did its work: the history records the missed slots let go, as a Dismiss does. A card about a run a restart cut off still waits for you.**
+- **Library settings' Being read row counts the items still being read or that couldn't be read, the ones its Show them lists, no longer the names the graph could not take without a model; those have a row of their own, with Set up a model. The Library settings tab and the Items count line count the same.**
 
 ### Security
 

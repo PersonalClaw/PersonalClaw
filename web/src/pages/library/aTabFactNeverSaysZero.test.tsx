@@ -1,7 +1,7 @@
 /** A Power user view tab's fact never says 0.
  *
  *  Each tab says one fact under its name: "18,204 people, places and ideas", "5,012", "212", "3 to
- *  decide", "12 waiting to be read". A tab with nothing to say says nothing, so a 0 never reads as a
+ *  decide", "12 still being read". A tab with nothing to say says nothing, so a 0 never reads as a
  *  fact, and an unread count reads as nothing rather than as a 0. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
@@ -38,13 +38,16 @@ describe("a tab's fact never says zero", () => {
     }
     answers.knowledgeTagTree = Array.from({ length: 212 }, (_, i) => ({ name: `t${i}` }))
     answers.knowledgeConflicts = { conflicts: [{ id: 'c1' }, { id: 'c1' }, { id: 'c2' }, { id: 'c3' }, { id: 'c4', choice: 'both' }] }
+    // Still being read is the library's own state facet, never the graph's names (12 not taken above).
+    answers.library = answer([row('knowledge:k1', 'Router manual')], { facets: { state: { being_read: 12, unreadable: 1 } } })
     mount()
     await screen.findByRole('tablist', { name: 'Library views' })
     await screen.findByText('18,204 people, places and ideas')
     expect(fact('Items')).toBe('5,012')
     expect(await screen.findByText('212')).toBeTruthy()
     expect(fact('Conflicts')).toBe('3 to decide')
-    expect(fact('Library settings')).toBe('12 waiting to be read')
+    expect(await screen.findByText('12 still being read')).toBeTruthy()
+    expect(fact('Library settings')).toBe('12 still being read')
   })
 
   it('🔴 an empty library: no tab says 0, and none says anything', async () => {

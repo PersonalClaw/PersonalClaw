@@ -29,7 +29,7 @@ import fcntl
 import json
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -37,6 +37,7 @@ from typing import Any
 
 from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
+from personalclaw.triggers import run_source
 
 logger = logging.getLogger(__name__)
 
@@ -386,6 +387,84 @@ def record(cards: list[ReviewCard], *, base_dir: Path | str | None = None) -> li
     except Exception:  # noqa: BLE001 - see the docstring
         logger.warning("could not record %d trigger review card(s)", len(cards), exc_info=True)
         return []
+
+
+#: What a run that did its work records (`schedule_history.ScheduleRun.status`): it ran, did nothing
+#: because there was nothing to do, or did its work at its floor. A `launched` run only started work
+#: whose own ending is still to come, so it settles nothing.
+SETTLING_STATUSES = frozenset({"success", "skipped_noop", "degraded"})
+
+
+def settled_by(card: ReviewCard, rows: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The run in *rows* that settles a missed *card*, or None.
+
+    One the automation's own clock started (`run_source.SCHEDULE`) after the card's newest missed
+    slot, that did its work (`SETTLING_STATUSES`): the automation has run on schedule since, so
+    what the card offers (Run now, standing in for that slot) would only repeat it. A run of yours,
+    a failed one, or one from before the slot settles nothing. A card about a run a restart cut off
+    never settles this way: that run may have done part of its work, and running it again stays
+    your decision, whatever ran after it. Nor does a card that names no slot (`latest` unset).
+    """
+    if card.kind != MISSED or card.latest <= 0:
+        return None
+    for row in rows:
+        try:
+            started = float(row.get("started_at") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if (
+            started > card.latest
+            and run_source.of_row(row) == run_source.SCHEDULE
+            and str(row.get("status") or "") in SETTLING_STATUSES
+        ):
+            return row
+    return None
+
+
+#: Why a settled card was let go, in its `skipped_missed` row.
+SETTLED = "it has run on schedule since the slots it missed, so they were let go"
+
+
+def settling_run(card: ReviewCard, *, base_dir: Path | str) -> Mapping[str, Any] | None:
+    """The run that settles a missed *card* (:func:`settled_by`), from its trigger's newest runs
+    in *base_dir*, or None. Never raises: a history that cannot be read settles nothing, and the
+    card waits as before."""
+    if card.kind != MISSED or card.latest <= 0:
+        return None
+    try:
+        from personalclaw.schedule_history import ScheduleRunStore
+
+        rows, _total = ScheduleRunStore(Path(base_dir))._list_for_job_sync(card.trigger_id, 0, 20)
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.debug("runs unavailable to settle %s", card.trigger_id, exc_info=True)
+        return None
+    return settled_by(card, rows)
+
+
+async def unsettled(store: Any, service: Any, refresh: Callable[[str], Any]) -> list[ReviewCard]:
+    """Every pending card but the missed ones whose automation has run on schedule since
+    (:func:`settling_run`): a Run now would only repeat that run, so each is let go here as a
+    Dismiss lets one go, taken, with a ``skipped_missed`` row saying why, and the list refreshed.
+    One reader takes a card (:func:`take` holds the file's lock), so a read racing a Dismiss or a
+    Run now records one row. A card whose automation is gone stays, for the caller to forget."""
+    from personalclaw.triggers.models import Outcome
+
+    left: list[ReviewCard] = []
+    for card in pending(base_dir=store.base_dir):
+        row = store.get(card.trigger_id)
+        if row is None or settling_run(card, base_dir=store.base_dir) is None:
+            left.append(card)
+        elif take(card.trigger_id, card.kind, base_dir=store.base_dir) is not None:
+            # The row stands for the run the card was: the automation's own, which did not happen.
+            await service.record_dismissal(
+                card.trigger_id,
+                Outcome.SKIPPED_MISSED.value,
+                SETTLED,
+                source=run_source.fired(row.trigger),
+                base_dir=store.base_dir,
+            )
+            refresh("crons")
+    return left
 
 
 def pending(*, base_dir: Path | str | None = None) -> list[ReviewCard]:

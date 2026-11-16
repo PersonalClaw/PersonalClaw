@@ -303,9 +303,13 @@ class DeviceInfo:
     minted_at: float = 0.0
     last_seen: float = 0.0
     ip: str = ""
+    #: A link's row only: the name of the browser that opened it (its own sign-in's row's name) and
+    #: when. The link stays a token beside that sign-in; this is what its row says about it.
+    opened_by: str = ""
+    opened_at: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "id": self.id,
             "name": self.name,
             "kind": self.kind,
@@ -313,6 +317,10 @@ class DeviceInfo:
             "last_seen": self.last_seen,
             "ip": self.ip,
         }
+        if self.opened_at:
+            out["opened_by"] = self.opened_by
+            out["opened_at"] = self.opened_at
+        return out
 
 
 def new_device_id() -> str:
@@ -497,6 +505,10 @@ def _parse_device(raw: Any, nonce: str) -> DeviceInfo:
         last_seen = float(raw.get("last_seen") or 0.0)
     except (TypeError, ValueError):
         last_seen = 0.0
+    try:
+        opened_at = float(raw.get("opened_at") or 0.0)
+    except (TypeError, ValueError):
+        opened_at = 0.0
     return DeviceInfo(
         id=str(raw.get("id")),
         name=sanitize_device_name(raw.get("name", "")),
@@ -504,6 +516,8 @@ def _parse_device(raw: Any, nonce: str) -> DeviceInfo:
         minted_at=minted_at,
         last_seen=last_seen,
         ip=_sanitize_ip(raw.get("ip", "")),
+        opened_by=sanitize_device_name(raw.get("opened_by", "")) if opened_at else "",
+        opened_at=opened_at,
     )
 
 
@@ -872,6 +886,26 @@ def note_client(
     except Exception:  # noqa: BLE001 — best-effort by contract; see the docstring
         logger.debug("could not note the client of an authorized session", exc_info=True)
         return ClientNote()
+
+
+def note_link_opened(nonce: str, *, by: str, now: float | None = None) -> bool:
+    """Best-effort: on link *nonce*'s row, note that a browser named *by* opened it, and when.
+    Returns whether it WROTE. The link keeps its kind and stays a token; only its row's words
+    change. **Never raises**, as :func:`note_client` never does: the exchange has already
+    answered, and a failed note must not undo it."""
+    try:
+        stamp = time.time() if now is None else float(now)
+        state = _load_state()
+        record = state.records.get(nonce)
+        if record is None:
+            return False
+        record.device.opened_by = sanitize_device_name(by)
+        record.device.opened_at = stamp
+        _save_state(state)
+        return True
+    except Exception:  # noqa: BLE001 — best-effort by contract; see the docstring
+        logger.debug("could not note that a browser opened a link", exc_info=True)
+        return False
 
 
 def touch_device_last_seen(nonce: str, *, now: float | None = None) -> bool:

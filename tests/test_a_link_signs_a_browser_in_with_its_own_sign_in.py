@@ -23,6 +23,7 @@ from browser_sign_in import pair_of, shell
 
 from personalclaw.dashboard import owner_presence, session_store, token_auth
 from personalclaw.dashboard.handlers import auth as auth_h
+from personalclaw.dashboard.handlers import devices as devices_h
 from personalclaw.dashboard.session_store import (
     END_LINK_OPENED,
     END_REASONS,
@@ -133,6 +134,33 @@ async def test_a_token_or_ready_link_stays_a_token_beside_the_browser(issuer: st
         assert rows[browser].issuer == issuer, "the browser's row names the door it came through"
         bearer = await client.get("/api/probe", headers={"Authorization": f"Bearer {link.token}"})
         assert bearer.status == 200
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_token_link_a_browser_opened_says_which_browser_and_when() -> None:
+    """The link stays a token beside the browser's sign-in, and its row says the browser opened it:
+    by the name the browser's own row has, and when. Before, it read as an unnamed client that had
+    been "seen", under a list of links "no browser has opened"."""
+    client = await _client()
+    try:
+        link = _link(ISSUER_TOKEN)
+        unopened = _link(ISSUER_TOKEN)
+        before = time.time()
+        opened = await _open(client, link.token)
+        assert opened.status == 200
+        browser = token_auth.token_nonce(opened.cookies[COOKIE].value)
+        rows = _records()
+        row = rows[link.nonce].device
+        assert getattr(row, "opened_by", "") == rows[browser].device.name != ""
+        assert getattr(row, "opened_at", 0.0) >= before
+        assert session_store.pool_of(rows[link.nonce]) == session_store.POOL_TOKEN, "still a token"
+        assert getattr(rows[unopened.nonce].device, "opened_at", 0.0) == 0.0
+        listed = {r["id"]: r for r in [devices_h._row(n, rec, "") for n, rec in rows.items()]}
+        assert listed[row.id]["opened_by"] == rows[browser].device.name
+        assert listed[row.id]["opened_at"] >= before
+        assert listed[rows[unopened.nonce].device.id]["opened_at"] == 0.0
     finally:
         await client.close()
 

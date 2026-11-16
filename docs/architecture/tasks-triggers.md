@@ -1153,7 +1153,11 @@ cut off may already have done part of its work.
   neither did one whose next fire does the missed one's work
   (`models.MISSED_FIRE_SUPERSEDED_PROVIDERS`: the HEARTBEAT.md queue). A wake's
   review cards are kept by the tick that dropped the slots, and the gateway
-  announces them (`GatewayOrchestrator._surface_wake_review`).
+  announces them (`GatewayOrchestrator._surface_wake_review`). A missed card
+  settles once the schedule has run since its newest slot and that run did its
+  work (`review.settled_by`): the review lets it go with a `skipped_missed` row
+  saying so, and the list stops ordering by it. An interrupted run's card never
+  settles this way.
 - **Interrupted runs.** `triggers/reaper.terminalize_orphans` closes a run
   whose process is gone with the status `interrupted`
   (`RESTART_INTERRUPTED_STATUS`) and the reason in `error`. It is not

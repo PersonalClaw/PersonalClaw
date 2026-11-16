@@ -149,18 +149,26 @@ export function ChatHero({ name, stage, onPickStarter, onPickSuggestion, draftUn
   /** Runs once that window has gone: the composer's editor takes the focus. */
   onExplainClosed: () => void
 }) {
+  // The hero scrolls. It stands the greeting, the composer's stage (and the small-model card in
+  // it, on a fresh home) and the chips in one column, inside the page's frame, which clips: at a
+  // phone's width that column is taller than the window, and with no scroller of its own the frame
+  // cut the last chips off at the fold, out of reach, and on a shorter phone the composer with
+  // them. The column centres while it fits (`min-h-full` with `justify-center`); once it does not,
+  // it grows from the top and the hero scrolls it, so nothing is lost above the fold either.
   return (
-    <div className="group/hero relative flex-1 flex flex-col items-center justify-center px-l">
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialDefault}
-        className="flex flex-col items-center gap-l mb-2xl">
-        {/* One 64 px orb at a time: once voice mode is on, its orb in the composer is the one. */}
-        <AgentOrb phase="idle" size={64} className="group-has-[[data-voice-orb]]/hero:hidden" />
-        <h1 data-type="display-s" className="text-on-surface text-center">{greeting(name)}</h1>
-      </motion.div>
-      <div className="flex w-full flex-col items-center gap-2xl">
-        {stage}
-        <StarterChips onPick={onPickStarter} />
-        <SuggestionChips onPick={onPickSuggestion} />
+    <div className="group/hero relative min-h-0 flex-1 overflow-y-auto">
+      <div className="flex min-h-full flex-col items-center justify-center px-l">
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialDefault}
+          className="flex flex-col items-center gap-l mb-2xl">
+          {/* One 64 px orb at a time: once voice mode is on, its orb in the composer is the one. */}
+          <AgentOrb phase="idle" size={64} className="group-has-[[data-voice-orb]]/hero:hidden" />
+          <h1 data-type="display-s" className="text-on-surface text-center">{greeting(name)}</h1>
+        </motion.div>
+        <div className="flex w-full flex-col items-center gap-2xl">
+          {stage}
+          <StarterChips onPick={onPickStarter} />
+          <SuggestionChips onPick={onPickSuggestion} />
+        </div>
       </div>
       {/* Asked once, after setup, in a window over the hero: it portals, so nothing here moves. */}
       <ExplainQuestion draftUnderWay={draftUnderWay} onClosed={onExplainClosed} />

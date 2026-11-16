@@ -88,7 +88,10 @@ a tab with nothing to say says nothing.
 - **Tags**, **Conflicts** and **Decisions** are the tag tree, every disagreement with its Compare
   choices, and the decision journal.
 - **Library settings** says what is in your library, how it is found and what needs a look, each with
-  its one action: Re-index, Open graph, Show them, Review, Change, Process everything again….
+  its one action: Re-index, Open graph, Show them, Review, Change, Process everything again…. Its
+  Being read row counts the items still being read or that couldn't be read, the ones Show them
+  lists; the names the graph has not taken yet from your items have a row of their own, with Set up
+  a model while there is none to take them.
 
 Feeds, intents and reports show more too: a feed's kind, how often it is really checked and how its
 last check went; what an intent asks of your model; what a report reads and what it may cite.
