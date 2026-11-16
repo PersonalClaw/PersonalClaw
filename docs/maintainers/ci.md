@@ -88,7 +88,13 @@ the controller judged that head, so the gate finds the one pull request merged i
 commit, reads the verdict on its head with `merge_verdict.verify` ([the merge verdict's
 record](#the-merge-verdicts-record): the App `main`'s rule names, its newest run, completed
 green, with one receipt), and holds the receipt's tree to the commit's own, read from the
-checkout. No pull request, two, a red or pending newest verdict, another poster's, or a receipt
+checkout. Under `main`'s merge queue (0.4.0 A1) what lands is the queue commit, not the head:
+the pull request squashed on `main`'s tip or on the queue commit of the entry ahead, which the
+controller judged by its queue commit rules, below. So a commit that a `merge_group` run of
+`merge.yml` ran on is read by the verdict on itself, when the run's branch
+(`gh-readonly-queue/main/pr-<n>-<commit>`) names the pull request that landed it, and once `main`'s rules queue its merges, a
+commit with no such run is refused: the head's verdict judged another tree whenever the head was
+behind `main`. No pull request, two, a red or pending newest verdict, another poster's, or a receipt
 of another tree is refused, naming it. The job reads all of it with its own token, given
 `actions: read`, `checks: read` and `pull-requests: read` for that alone. Only then is the App's
 token made, asked for `contents: write` alone and handed only to the step that creates the

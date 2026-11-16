@@ -1084,11 +1084,12 @@ def _verdict_run(
     app: int = APP,
     conclusion: str | None = "success",
     status: str = "completed",
+    on: str = HEAD,
 ) -> dict[str, object]:
     return {
         "id": run_id,
         "name": merge_verdict.CHECK_NAME,
-        "head_sha": HEAD,
+        "head_sha": on,
         "status": status,
         "conclusion": conclusion,
         "app": {"id": app, "slug": "personalclaw-ci-controller"},
@@ -1108,6 +1109,10 @@ class VerdictApi:
         head_tree: str | None = None,
         required: list[dict[str, object]] | None = None,
         fail: str = "",
+        queue_runs: list[dict[str, object]] | None = None,
+        queued: bool = False,
+        commit_runs: list[dict[str, object]] | None = None,
+        first: dict[str, object] | None = None,
     ) -> None:
         repo = planted["repo"]
         assert isinstance(repo, Path)
@@ -1140,14 +1145,41 @@ class VerdictApi:
             },
             f"/repos/{REPOSITORY}/commits/{HEAD}/check-runs?check_name=merge-verdict&filter=all"
             "&per_page=100&page=1": {"total_count": len(listed), "check_runs": listed},
+            # main's merge queue: the commit's own merge_group runs of merge.yml, none by default.
+            f"/repos/{REPOSITORY}/actions/workflows/merge.yml/runs?head_sha={self.commit}"
+            "&event=merge_group&per_page=100": {
+                "total_count": len(queue_runs or []),
+                "workflow_runs": queue_runs or [],
+            },
         }
+        if queued:
+            rules = self.answers[f"/repos/{REPOSITORY}/rules/branches/main?per_page=100"]
+            assert isinstance(rules, list)
+            rules.append({"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}})
+        # A queue commit's own verdict: the receipt names the queue commit and the tree it holds.
+        self.queue_receipt: dict[str, object] = {**self.receipt, "head_sha": self.commit}
+        if commit_runs is not None:
+            self.answers[f"/repos/{REPOSITORY}/commits/{self.commit}"] = {
+                "commit": {"tree": {"sha": self.tree}}
+            }
+            self.answers[
+                f"/repos/{REPOSITORY}/commits/{self.commit}/check-runs?check_name=merge-verdict"
+                "&filter=all&per_page=100&page=1"
+            ] = {"total_count": len(commit_runs), "check_runs": commit_runs}
         self.fail = fail
+        # What the first read of a path holding each part answers instead (an exception raises).
+        self.first = dict(first or {})
         self.paths: list[str] = []
 
     def __call__(self, path: str) -> object:
         self.paths.append(path)
         if self.fail and self.fail in path:
             raise OSError("HTTP Error 502: Bad Gateway")
+        for part in [part for part in self.first if part in path]:
+            answer = self.first.pop(part)
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
         if path not in self.answers:
             raise OSError(f"HTTP Error 404: Not Found ({path})")
         return self.answers[path]
@@ -1232,7 +1264,155 @@ def test_no_verdict_counts_until_mains_rule_requires_it(planted: dict[str, objec
     assert "no required merge-verdict check" in said, said
 
 
-@pytest.mark.parametrize("part", ["/pulls", "/rules/", f"/commits/{HEAD}", "/check-runs"])
+def _queue_run(commit: str, run_id: int = 70, *, pull: int = PR) -> dict[str, object]:
+    return {
+        "id": run_id,
+        "run_number": 7,
+        "event": "merge_group",
+        "head_sha": commit,
+        "head_branch": f"gh-readonly-queue/main/pr-{pull}-{'a' * 40}",
+    }
+
+
+def test_a_queue_commit_is_judged_by_the_verdict_on_itself(planted: dict[str, object]) -> None:
+    """Under main's merge queue the commit that lands is the queue commit, the pull request
+    squashed on main's tip or on the entry ahead, and the controller judged it there: its own
+    verdict decides, with its tree, and the pull request's head, whose tree is another one when
+    it was behind main, is not what is read."""
+    probe = VerdictApi(planted)
+    api = VerdictApi(
+        planted,
+        queue_runs=[_queue_run(probe.commit)],
+        queued=True,
+        commit_runs=[_verdict_run(95, probe.queue_receipt, on=probe.commit)],
+        runs=[],
+    )
+    said = _verdict(planted, api)
+    assert f"#{PR}" in said and "queue commit" in said and api.commit in said, said
+    assert "check run 95" in said, said
+    assert not any(f"/commits/{HEAD}/" in path for path in api.paths), api.paths
+
+
+def test_a_queue_commit_with_no_green_verdict_of_its_own_is_refused_whatever_its_heads(
+    planted: dict[str, object],
+) -> None:
+    """A green verdict on the pull request's head says nothing of the queue commit that landed:
+    with none of its own, or a red one, the commit is refused."""
+    probe = VerdictApi(planted)
+    for commit_runs in (
+        [],
+        [_verdict_run(96, probe.queue_receipt, on=probe.commit, conclusion="failure")],
+    ):
+        api = VerdictApi(planted, queue_runs=[_queue_run(probe.commit)], commit_runs=commit_runs)
+        said = _verdict_refusal(planted, api)
+        assert f"#{PR}" in said and api.commit in said, said
+
+
+def test_a_queue_run_that_names_another_pull_requests_entry_is_refused(
+    planted: dict[str, object],
+) -> None:
+    """The queue commit's run must be the entry of the pull request that landed the commit; one
+    on another pull request's entry branch binds the commit to nothing it landed."""
+    probe = VerdictApi(planted)
+    api = VerdictApi(
+        planted,
+        queue_runs=[_queue_run(probe.commit, pull=PR + 7)],
+        commit_runs=[_verdict_run(95, probe.queue_receipt, on=probe.commit)],
+    )
+    said = _verdict_refusal(planted, api)
+    assert f"pr-{PR + 7}-" in said and f"#{PR}" in said, said
+
+
+def test_a_queue_commit_whose_own_verdict_judged_another_tree_is_refused(
+    planted: dict[str, object],
+) -> None:
+    """The queue commit's own green verdict counts only for the tree the commit holds, read from
+    the checkout: a verdict on a tree the API answers for the commit, but that is not the tree the
+    checkout's commit holds, says nothing of what landed."""
+    probe = VerdictApi(planted)
+    other = {**probe.queue_receipt, "tree_oid": "e" * 40}
+    api = VerdictApi(
+        planted,
+        queue_runs=[_queue_run(probe.commit)],
+        queued=True,
+        commit_runs=[_verdict_run(95, other, on=probe.commit)],
+        runs=[],
+    )
+    api.answers[f"/repos/{REPOSITORY}/commits/{api.commit}"] = {
+        "commit": {"tree": {"sha": "e" * 40}}
+    }
+    said = _verdict_refusal(planted, api)
+    assert "e" * 40 in said and "what landed is not what the controller judged" in said, said
+
+
+def test_every_queue_run_on_the_commit_must_be_the_landing_pull_requests_entry(
+    planted: dict[str, object],
+) -> None:
+    """Each merge_group run on the commit is read: one on the landing pull request's entry does
+    not stand for another beside it on a branch that is no queue entry of that pull request, or
+    on one only shaped like it."""
+    probe = VerdictApi(planted)
+    for stray in (
+        f"gh-readonly-queue/main/pr-{PR + 7}-{'a' * 40}",
+        f"gh-readonly-queue/main/pr-{PR}-not-a-commit",
+        f"gh-readonly-queue/main/pr-{PR}-{'a' * 40}-tail",
+    ):
+        api = VerdictApi(
+            planted,
+            queue_runs=[
+                _queue_run(probe.commit),
+                {**_queue_run(probe.commit, 71), "head_branch": stray},
+            ],
+            queued=True,
+            commit_runs=[_verdict_run(95, probe.queue_receipt, on=probe.commit)],
+            runs=[],
+        )
+        said = _verdict_refusal(planted, api)
+        assert stray in said and f"#{PR}" in said, said
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [OSError("HTTP Error 502: Bad Gateway"), {"message": "Server Error"}],
+    ids=["an error", "not a list"],
+)
+def test_a_rules_read_that_fails_only_for_the_queued_check_is_refused(
+    planted: dict[str, object], answer: object
+) -> None:
+    """Whether main's merges are queued is read, not assumed: a commit with no queue run whose
+    first read of main's rules fails is refused there, even when the verdict's own read of the
+    same rules answers after it and the head is green."""
+    api = VerdictApi(planted, queued=True, first={"/rules/branches/main": answer})
+    said = _verdict_refusal(planted, api)
+    assert "cannot read main's rules" in said, said
+
+
+def test_queue_runs_that_do_not_fit_one_page_are_refused_not_guessed(
+    planted: dict[str, object],
+) -> None:
+    """A page that holds fewer runs than the total may hide the commit's queue run, so which
+    verdict to read is not known: it is refused, never read as no queue run."""
+    api = VerdictApi(planted)
+    path = (
+        f"/repos/{REPOSITORY}/actions/workflows/merge.yml/runs?head_sha={api.commit}"
+        "&event=merge_group&per_page=100"
+    )
+    api.answers[path] = {"total_count": 101, "workflow_runs": []}
+    assert "do not fit one page" in _verdict_refusal(planted, api)
+
+
+def test_once_mains_merges_are_queued_a_commit_no_queue_run_built_is_refused(
+    planted: dict[str, object],
+) -> None:
+    """With a merge_queue rule on main every landing is a queue commit, so a commit with no
+    merge_group run of its own was not judged as what landed, even with a green head."""
+    said = _verdict_refusal(planted, VerdictApi(planted, queued=True))
+    assert "queued" in said and "merge_group" in said, said
+
+
+@pytest.mark.parametrize(
+    "part", ["/pulls", "/rules/", f"/commits/{HEAD}", "/check-runs", "/actions/workflows/"]
+)
 def test_an_answer_the_verdict_gate_cannot_read_is_refused_not_passed(
     planted: dict[str, object], part: str
 ) -> None:
