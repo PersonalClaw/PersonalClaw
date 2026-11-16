@@ -3,11 +3,12 @@ import { act, render } from '@testing-library/react'
 
 // ── A pose change moves at the buddy's frame rate, not the display's ────────────────────────────
 //
-// `docs/design/buddy/decisions/rig.md`, "The quiet re-measure": with the dots capped at 30 frames a
+// `docs/design/buddy/decisions/rig.md`, "The quiet re-measure": with the orb capped at 30 frames a
 // second, the motion library still moved the pose's values on every frame the display drew while a
 // change ran, so the 60 s loop drew about 3,030 frames at 120 Hz and 1,660 at 60 Hz, and neither
-// candidate passed the animating CPU bar at 120 Hz. The pose's values now step on the dots' capped
-// clock: a change asks for at most the buddy's frames a second, whatever the display offers.
+// candidate passed the animating CPU bar at 120 Hz. The pose's values, and the claw ring's morph
+// into the new state, now step on the orb's capped clock: a change asks for at most the buddy's
+// frames a second, whatever the display offers.
 //
 // The motion library captures `requestAnimationFrame` when it loads, so the counter is installed
 // before anything imports it. The display is simulated: at each refresh the timers due by then
@@ -24,8 +25,7 @@ const display = vi.hoisted(() => {
   return state
 })
 
-const { CandidateInPlace } = await import('./CandidateInPlace')
-const { CandidateLayered } = await import('./CandidateLayered')
+const { BuddyOrb } = await import('../ui/BuddyOrb')
 const { BUDDY_FPS } = await import('./poses')
 
 /** A 2D context that draws nothing. */
@@ -59,12 +59,10 @@ function displayFor(ms: number, hz: number): number {
   return display.asked - before
 }
 
-const moving = (container: HTMLElement) => (container.querySelector('[data-rig-candidate]') as HTMLElement).dataset.rigMoving
+const moving = (container: HTMLElement) => (container.querySelector('[data-buddy-orb]') as HTMLElement).dataset.buddyMoving
+const Candidate = ({ phase, size }: { phase: 'idle' | 'approval'; size: 48 }) => <BuddyOrb state={phase} line="" size={size} />
 
-describe.each([
-  ['in place', CandidateInPlace],
-  ['layered', CandidateLayered],
-] as const)('the %s candidate, between two still poses', (_name, Candidate) => {
+describe('the buddy orb, between two still poses', () => {
   it(`moves the pose at most ${BUDDY_FPS} frames a second on a 120 Hz display, and arrives`, async () => {
     const { container, rerender } = render(<Candidate phase="idle" size={48} />)
     displayFor(200, 120)
@@ -86,12 +84,5 @@ describe.each([
     displayFor(100, 120)
     unmount()
     expect(displayFor(1000, 120), 'an unmounted orb still moved its pose').toBe(0)
-  })
-
-  it('moves it on every frame the display draws only when nothing caps it: the control', () => {
-    const { rerender } = render(<Candidate phase="idle" size={48} fps={null} />)
-    displayFor(200, 120)
-    rerender(<Candidate phase="approval" size={48} fps={null} />)
-    expect(displayFor(500, 120), 'the counter does not see the frames an uncapped pose asks for').toBeGreaterThan(BUDDY_FPS)
   })
 })

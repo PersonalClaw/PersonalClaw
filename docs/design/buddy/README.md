@@ -1,6 +1,6 @@
 # Desktop buddy
 
-One orb of dots, in the same visual language as the chat's agent orb, living at the top edge of the
+One orb, drawn as the chat's agent orb is (the claw ring's strokes), living at the top edge of the
 screen or floating where the owner puts it. It shows what the agents are doing while the owner
 works in other apps, and asks only when something needs the owner. It is a new view of signals
 PersonalClaw already has, not a second app, and it adds no authority: it never approves, sends or
@@ -118,7 +118,7 @@ later work below.
   [maximum length per surface](copy.md#maximum-length-per-surface) and [tests](copy.md#tests).
 - [`settings.md`](settings.md): every setting's default and home, the opt-in that is off by default
   among them, and [where each setting lives, and why](settings.md#where-each-setting-lives-and-why).
-- [`character.md`](character.md): the orb of dots, with its [constraints](character.md#constraints),
+- [`character.md`](character.md): the orb, with its [constraints](character.md#constraints),
   [the choice](character.md#the-choice), made on 2026-10-18, with
   [the three directions it rejected](character.md#three-directions-to-explore),
   [the poses](character.md#the-poses),

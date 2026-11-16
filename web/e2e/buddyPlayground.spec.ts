@@ -1,5 +1,5 @@
-import { test, expect, type Page, type TestInfo } from '@playwright/test'
-import { seedTheme, gotoRoute } from './helpers'
+import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
+import { seedTheme, gotoRoute, settleEntranceAnimations } from './helpers'
 import { overflowFindings } from './surfaceChecks'
 import type { Theme } from './routes'
 
@@ -21,6 +21,9 @@ import type { Theme } from './routes'
 // alert kind, five pieces of work in sight, the running list's own states), saved in light, dark
 // and reduced motion, and at 320, 390 and 412 px, each card with the same overflow and cut-off
 // check, so the card stacks at the compact widths with nothing clipped.
+//
+// Each shot is the whole stage or card as a person sees it scrolled to it, once its entrance has
+// settled (`shoot` below): an alert's card fades in, and a shot taken at once caught it half drawn.
 
 interface Leg {
   name: string
@@ -68,6 +71,53 @@ async function clippedFindings(page: Page): Promise<string[]> {
   })
 }
 
+/** What of `target` is out of sight: each edge past the visible box of a scrolling ancestor or of
+ *  the window, in px. An element shot draws that part as the scroller's own background. */
+function outOfSight(target: Locator): Promise<string[]> {
+  return target.evaluate((el) => {
+    const r = el.getBoundingClientRect()
+    const out: string[] = []
+    const within = (name: string, top: number, bottom: number) => {
+      if (r.top < top - 0.5) out.push(`${Math.round(top - r.top)} px above ${name}`)
+      if (r.bottom > bottom + 0.5) out.push(`${Math.round(r.bottom - bottom)} px below ${name}`)
+    }
+    for (let a = el.parentElement; a; a = a.parentElement) {
+      if (!/auto|scroll|hidden|clip/.test(getComputedStyle(a).overflowY)) continue
+      const top = a.getBoundingClientRect().top + a.clientTop
+      within(`<${a.tagName.toLowerCase()}>`, top, top + a.clientHeight)
+    }
+    within('the window', 0, window.innerHeight)
+    return out
+  })
+}
+
+/** Saves `target` whole, as a person sees it scrolled to it, once its entrance has settled.
+ *
+ *  The page scrolls inside the shell, not the document, and an element shot draws only what that
+ *  scroller shows. At 390 px the stage is taller than the 844 px window, and its shots came out
+ *  with the shell's background over the stage's top, the orb under it. So when the target is
+ *  taller than its scroller, the window grows to fit it for the shot, at the same width (the
+ *  stage's layout reads its width, never the window's height), and goes back after. The shot
+ *  reds if any part of the target is still out of sight, or if its entrance has not settled:
+ *  an alert's card fades in, and a shot taken at once caught it half drawn. The wait is the one
+ *  the axe checks take for Home's entrance. */
+async function shoot(page: Page, target: Locator, path: string, size: { width: number; height: number }): Promise<void> {
+  const short = await target.evaluate((el) => {
+    let a = el.parentElement
+    while (a && !/auto|scroll/.test(getComputedStyle(a).overflowY)) a = a.parentElement
+    return Math.max(0, Math.ceil(el.getBoundingClientRect().height - (a ? a.clientHeight : window.innerHeight)))
+  })
+  if (short) await page.setViewportSize({ width: size.width, height: size.height + short + 32 })
+  await target.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+  // The mouse rests where it last pressed, and a scroll can bring the card under it: a hovered
+  // answer drew as picked. The page's corner is in its margin, off the stage and the cards.
+  await page.mouse.move(0, 0)
+  expect(await settleEntranceAnimations(page, 5_000), `${path}: its entrance did not settle`).toBe(true)
+  expect(await outOfSight(target), `${path}: part of it is out of sight`).toEqual([])
+  await target.screenshot({ path })
+  if (short) await page.setViewportSize({ width: size.width, height: size.height })
+}
+
 /** Where the stage is: its situation and family, as the page marks them. */
 async function stageState(page: Page): Promise<{ situation: string; family: string }> {
   const stage = page.locator('[data-stage]')
@@ -96,7 +146,7 @@ async function recordDay(page: Page, info: TestInfo, leg: Leg): Promise<void> {
     const { situation, family } = await stageState(page)
     if (family !== 'none') families.add(family)
     const shot = `${String(n).padStart(2, '0')}-${situation}.png`
-    await page.locator('[data-stage]').screenshot({ path: info.outputPath('buddy-day', leg.name, shot) })
+    await shoot(page, page.locator('[data-stage]'), info.outputPath('buddy-day', leg.name, shot), leg)
     const found = [...(await overflowFindings(page)), ...(await clippedFindings(page))]
     index.push(`${shot}\t${situation}\t${family}${found.length ? `\t${found.join('; ')}` : ''}`)
     expect(found, `step ${n} (${situation}) on the ${leg.name} leg`).toEqual([])
@@ -139,8 +189,7 @@ test.describe('the buddy playground: the expanded card, recorded', () => {
       expect(keys.length, 'the card tab draws its fixtures').toBeGreaterThanOrEqual(10)
       for (const key of keys) {
         const fixture = page.locator(`[data-card-fixture="${key}"]`)
-        await fixture.scrollIntoViewIfNeeded()
-        await fixture.screenshot({ path: info.outputPath('buddy-card', leg.name, `${key}.png`) })
+        await shoot(page, fixture, info.outputPath('buddy-card', leg.name, `${key}.png`), leg)
         const found = [...(await overflowFindings(page)), ...(await clippedFindings(page))]
         expect(found, `the ${key} card on the ${leg.name} leg`).toEqual([])
       }

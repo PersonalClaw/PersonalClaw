@@ -57,8 +57,6 @@ KNOWN_TOOLS = (
     "docs/screenshots/CAPTURE.md",
     "docs/demo/capture_demo.mjs",
     "docs/brand/social_preview.mjs",
-    "docs/design/buddy/decisions/rig-measure.mjs",
-    "docs/design/buddy/decisions/rig-window.cjs",
 )
 
 _HOME_LITERAL = re.compile(r"(?<![\w\]\-.])\.personalclaw(?![\w-])|\bCONFIG_DIR_NAME\b")

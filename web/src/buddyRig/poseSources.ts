@@ -1,28 +1,22 @@
 /** The pose set (`poseSet.ts`) drawn as layered SVG sources, and the contact sheets beside them
  *  (#3830). Each source is one whole orb, its pivot at its centre, holding three parts a renderer
- *  can move: the dots (the thinking-orbs drawing at the pose's frame, through that package's engine), the
- *  wash and the badge. Every colour is a token, set in a style, so one source is the pose in light
- *  and in dark and in every scheme; a dot's depth is its opacity, which is how the thinking-orbs
- *  painter shades a tinted dot toward the canvas. A template still is drawn in black, which the
- *  menu bar recolours, and has no wash. The whole orb only moves, turns or scales by one factor.
+ *  can move: the strokes (the agent orb's claw ring for the pose's state, as its pose moves it, in
+ *  the one geometry the canvas paints, `ui/orb/paintRing.ts`'s `ringStrokes`), the wash and the
+ *  badge. Every colour is a token, set in a style, so one source is the pose in light and in dark and
+ *  in every scheme. A template still is drawn in black, which the menu bar recolours, and has no
+ *  wash. The whole orb only moves or scales by one factor.
  *
  *  `poseSources.test.ts` writes them to `docs/design/buddy/poses/` and holds the committed files to
  *  what this draws. */
 
-import { resolvePreset } from 'thinking-orbs/engine'
 import type { PhaseTone } from '../lib/workPhase'
 import { tokenValue, type Mode } from '../design/tokenSheet'
-import { modeOf, poseFrame } from './arrange'
-import { PAD, RING_FROM, SOLID_MARKS, badgeDots, solidBadge, washDots } from './inPlaceParts'
+import { ringStrokes } from '../ui/orb/paintRing'
+import { PAD, RING_FROM, SINK_DROP, SOLID_MARKS, badgeAt, formOfFrame, markStrokes, ringWidth, strokeOutline, strokePoints, washArcs } from '../ui/buddy/buddyRing'
 import { FAMILIES, FAMILY_STATES, TRAY_SIZES, TRAY_STATES, familyOf, poseSet, stillOf, wordsOf, type Frame, type PoseSpec, type TrayStill } from './poseSet'
-import { tunedDrawingFor } from './poses'
 
 export { RING_FROM }
 
-/** The instant a moving frame's dots are drawn at, in the drawing's own seconds. */
-export const MOVING_AT = 2.1
-/** A dot fainter than this is not drawn. */
-const FAINT = 0.03
 /** The sizes the contact sheet draws every pose at, and the size it draws motion frames at. */
 export const SHEET_SIZES = [18, 24, 48, 96] as const
 const MOTION_SIZE = 48
@@ -34,33 +28,36 @@ const attr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quo
 
 const inkToken = (frame: Frame): string => (frame.ink === 'alive' ? '--color-orb-alive' : '--color-orb-rest')
 const toneToken = (tone: PhaseTone): string => (tone === 'neutral' ? '--color-orb-rest' : `--color-${tone}`)
-const fill = (token: string, template: boolean, stroke = false): string => {
-  const ink = template ? TEMPLATE_INK : `var(${token})`
-  return stroke ? `fill: ${ink}; stroke: ${ink}` : `fill: ${ink}`
+const colour = (token: string, template: boolean): string => (template ? TEMPLATE_INK : `var(${token})`)
+/** A part drawn in strokes: no fill, round caps, in its ink. */
+const stroked = (token: string, template: boolean): string => `fill: none; stroke: ${colour(token, template)}`
+const filled = (token: string, template: boolean): string => `fill: ${colour(token, template)}`
+
+/** A stroke through `pts`: a line, a curve through its control point, or a point a hair long. */
+function pathOf(pts: [number, number][]): string {
+  const [x0, y0] = pts[0]
+  if (pts.length === 1) return `M${num(x0)} ${num(y0)}h0.01`
+  if (pts.length === 2) return `M${num(x0)} ${num(y0)}L${num(pts[1][0])} ${num(pts[1][1])}`
+  return `M${num(x0)} ${num(y0)}Q${num(pts[1][0])} ${num(pts[1][1])} ${num(pts[2][0])} ${num(pts[2][1])}`
 }
+const disc = (x: number, y: number, r: number) => `M${num(x - r)} ${num(y)}a${num(r)} ${num(r)} 0 1 0 ${num(r * 2)} 0a${num(r)} ${num(r)} 0 1 0 ${num(-r * 2)} 0Z`
+const polygon = (pts: [number, number][]) => `M${pts.map(([x, y]) => `${num(x)} ${num(y)}`).join('L')}Z`
 
 interface Orb {
-  /** The clip path the dots are knocked out of under the badge, for the document's defs. */
+  /** The clip paths the strokes are knocked out of under the badge, and a solid badge's mark cut
+   *  out of it, for the document's defs. */
   defs: string
   /** The whole orb's group, in the orb's own frame (its box is 0 to `size`). */
   body: string
 }
 
-/** One frame of an orb at `size`: the whole orb with its parts. `id` names its clip path, which a
+/** One frame of an orb at `size`: the whole orb with its parts. `id` names its clip paths, which a
  *  sheet holding many orbs keeps apart. */
 export function drawOrb(frame: Frame, size: number, { id, template = false }: { id: string; template?: boolean }): Orb {
-  const preset = resolvePreset(frame.drawing, tunedDrawingFor(size))
-  const arrangement = { density: frame.density, spread: frame.spread, sink: frame.sink, lift: 0, swirl: frame.swirl }
-  const drawn = poseFrame(modeOf(frame.drawing), () => arrangement, { still: !frame.moving, lift: false })(size, MOVING_AT, preset.opts)
-  const shade = (white: number, a = 1): number => a * (1 - Math.min(1, Math.max(0, white))) * frame.dim
-  const lines = drawn.lines
-    .map((l) => ({ l, o: shade(l.white, l.a) }))
-    .filter(({ o }) => o >= FAINT)
-    .map(({ l, o }) => `<line x1="${num(l.x1)}" y1="${num(l.y1)}" x2="${num(l.x2)}" y2="${num(l.y2)}" stroke-width="${num(l.w)}" opacity="${num(o)}"/>`)
-  const dots = drawn.dots
-    .map((d) => ({ d, o: shade(d.white, d.a) }))
-    .filter(({ o }) => o >= FAINT)
-    .map(({ d, o }) => `<circle cx="${num(d.x)}" cy="${num(d.y)}" r="${num(d.r)}" opacity="${num(o)}"/>`)
+  // An error's strokes settle low in their own place; the badge and the wash stay.
+  const settle = SINK_DROP * frame.sink * size
+  const strokes = ringStrokes(formOfFrame(frame), size, 1)
+    .map((s) => `<path d="M${num(s.x0)} ${num(s.y0 + settle)}Q${num(s.cx)} ${num(s.cy + settle)} ${num(s.x1)} ${num(s.y1 + settle)}" stroke-width="${num(s.width)}"/>`)
   const c = size / 2
   const pad = size * PAD
   const parts: string[] = []
@@ -69,35 +66,42 @@ export function drawOrb(frame: Frame, size: number, { id, template = false }: { 
   if (frame.mark && frame.badge > 0) {
     const ring = size >= RING_FROM
     const solid = !ring && SOLID_MARKS.has(frame.mark)
-    const badge = solid ? solidBadge(size, frame.mark, 0) : badgeDots(size, frame.mark, 0, ring)
-    const hole = badge.radius * 1.15 * frame.badge
+    const { cx, cy, radius } = badgeAt(size, 0)
+    const hole = radius * 1.15 * frame.badge
     const box = `M${num(-pad)} ${num(-pad)}H${num(size + pad)}V${num(size + pad)}H${num(-pad)}Z`
-    const circle = `M${num(badge.cx - hole)} ${num(badge.cy)}a${num(hole)} ${num(hole)} 0 1 0 ${num(hole * 2)} 0a${num(hole)} ${num(hole)} 0 1 0 ${num(-hole * 2)} 0Z`
-    defs = `<clipPath id="${id}-knockout"><path clip-rule="evenodd" d="${box}${circle}"/></clipPath>`
+    defs = `<clipPath id="${id}-knockout"><path clip-rule="evenodd" d="${box}${disc(cx, cy, hole)}"/></clipPath>`
     clip = ` clip-path="url(#${id}-knockout)"`
-    const fold = frame.badge === 1 ? '' : ` transform="translate(${num(badge.cx)} ${num(badge.cy)}) scale(${num(frame.badge)}) translate(${num(-badge.cx)} ${num(-badge.cy)})" opacity="${num(frame.badge)}"`
-    let marks: string
-    if ('holes' in badge) {
-      // The mark is cut out of the one dot: a template keeps it, being one colour with holes.
-      const disc = (x: number, y: number, r: number) => `M${num(x - r)} ${num(y)}a${num(r)} ${num(r)} 0 1 0 ${num(r * 2)} 0a${num(r)} ${num(r)} 0 1 0 ${num(-r * 2)} 0Z`
-      defs += `<clipPath id="${id}-mark"><path clip-rule="evenodd" d="${disc(badge.cx, badge.cy, badge.radius)}${badge.holes.map((d) => disc(d.x, d.y, d.r)).join('')}"/></clipPath>`
-      marks = `<circle cx="${num(badge.cx)}" cy="${num(badge.cy)}" r="${num(badge.radius)}" clip-path="url(#${id}-mark)"/>`
+    const fold = frame.badge === 1 ? '' : ` transform="translate(${num(cx)} ${num(cy)}) scale(${num(frame.badge)}) translate(${num(-cx)} ${num(-cy)})" opacity="${num(frame.badge)}"`
+    const marks = markStrokes(size, frame.mark, 0, ring)
+    let drawn: string
+    if (solid) {
+      // The mark is cut out of the one disc, as holes of the strokes' outlines: a template keeps
+      // it, being one colour with holes.
+      const holes = marks.map((m) => polygon(strokeOutline(strokePoints(m.pts), m.width / 2))).join('')
+      defs += `<clipPath id="${id}-mark"><path clip-rule="evenodd" d="${disc(cx, cy, radius)}${holes}"/></clipPath>`
+      drawn = `<circle cx="${num(cx)}" cy="${num(cy)}" r="${num(radius)}" clip-path="url(#${id}-mark)" style="${filled(toneToken(frame.tone), template)}"/>`
     } else {
-      marks = badge.dots.map((d) => `<circle cx="${num(d.x)}" cy="${num(d.y)}" r="${num(d.r)}"/>`).join('')
+      const ringPart = ring ? `<circle cx="${num(cx)}" cy="${num(cy)}" r="${num(radius * 0.92)}" stroke-width="${num(ringWidth(radius))}"/>` : ''
+      drawn = `<g style="${stroked(toneToken(frame.tone), template)}" stroke-linecap="round">${ringPart}${marks.map((m) => `<path d="${pathOf(m.pts)}" stroke-width="${num(m.width)}"/>`).join('')}</g>`
     }
-    parts.push(`<g data-part="badge" data-mark="${frame.mark}"${solid ? ' data-solid="true"' : ''} style="${fill(toneToken(frame.tone), template)}"${fold}>${marks}</g>`)
+    parts.push(`<g data-part="badge" data-mark="${frame.mark}"${solid ? ' data-solid="true"' : ''}${fold}>${drawn}</g>`)
   }
   if (frame.wash > 0.01 && !template) {
-    const wash = washDots(size, frame.wash, 0).filter((d) => (d.a ?? 1) >= FAINT)
-    parts.unshift(`<g data-part="wash" style="${fill(toneToken(frame.tone), template)}">${wash.map((d) => `<circle cx="${num(d.x)}" cy="${num(d.y)}" r="${num(d.r)}" opacity="${num(d.a ?? 1)}"/>`).join('')}</g>`)
+    const arcs = washArcs(size, frame.wash).map(([r, from, to, alpha, width]) => {
+      const [x0, y0] = [c + r * Math.cos(from), c + r * Math.sin(from)]
+      const [x1, y1] = [c + r * Math.cos(to), c + r * Math.sin(to)]
+      return `<path d="M${num(x0)} ${num(y0)}A${num(r)} ${num(r)} 0 0 1 ${num(x1)} ${num(y1)}" stroke-width="${num(width)}" opacity="${num(alpha)}"/>`
+    })
+    parts.unshift(`<g data-part="wash" style="${stroked(toneToken(frame.tone), template)}" stroke-linecap="round">${arcs.join('')}</g>`)
   }
-  const dotsPart = `<g data-part="dots"${clip} style="${fill(inkToken(frame), template, lines.length > 0)}">${lines.join('')}${dots.join('')}</g>`
+  const dim = frame.dim === 1 ? '' : ` opacity="${num(frame.dim)}"`
+  const strokesPart = `<g data-part="strokes"${clip} style="${stroked(inkToken(frame), template)}" stroke-linecap="round"${dim}>${strokes.join('')}</g>`
   const dx = frame.sway * size
   const dy = frame.lift * size
   const transform = frame.swell === 1
     ? `translate(${num(dx)} ${num(dy)})`
     : `translate(${num(c + dx)} ${num(c + dy)}) scale(${num(frame.swell)}) translate(${num(-c)} ${num(-c)})`
-  const body = `<g data-part="orb" data-pivot="${num(c)} ${num(c)}" data-orb="${num(size)}" transform="${transform}">${dotsPart}${parts.join('')}</g>`
+  const body = `<g data-part="orb" data-pivot="${num(c)} ${num(c)}" data-orb="${num(size)}" transform="${transform}">${strokesPart}${parts.join('')}</g>`
   return { defs, body }
 }
 
@@ -122,7 +126,7 @@ export function poseSvg(pose: PoseSpec, which: 'still' | 'motion'): string {
     width: num(box), height: num(box), viewBox: `${num(-pad)} ${num(-pad)} ${num(box)} ${num(box)}`,
     role: 'img', 'aria-label': pose.words, 'data-pose': pose.id, 'data-frame': which,
     'data-moves': String(Boolean(pose.key)), 'data-group': (FAMILIES as readonly string[]).includes(family) ? 'family' : family,
-    'data-drawing': frame.drawing, 'data-badge': frame.badge > 0 ? frame.mark : null, 'data-room': size,
+    'data-form': frame.form, 'data-badge': frame.badge > 0 ? frame.mark : null, 'data-room': size,
   })
   return `<svg ${SVG} ${head}><title>${attr(pose.id)}: ${attr(pose.words)}</title><desc>${attr(`${which === 'motion' ? 'Its motion' : 'Its still for reduced motion'}. Moves: ${pose.motion}.`)}</desc>${orb.defs ? `<defs>${orb.defs}</defs>` : ''}${orb.body}</svg>\n`
 }
@@ -144,7 +148,7 @@ export function traySvg(still: TrayStill, size: number, template: boolean): stri
   const head = rootAttrs({
     width: size, height: size, viewBox: `0 0 ${size} ${size}`, role: 'img', 'aria-label': wordsOf(state),
     'data-pose': stem, 'data-frame': 'still', 'data-moves': 'false', 'data-group': 'tray',
-    'data-family': familyOf(state), 'data-template': String(template), 'data-drawing': frame.drawing,
+    'data-family': familyOf(state), 'data-template': String(template), 'data-form': frame.form,
     'data-badge': frame.mark, 'data-room': size,
   })
   return `<svg ${SVG} ${head}><title>${attr(stem)}: ${attr(wordsOf(state))}</title>${drawn.defs ? `<defs>${drawn.defs}</defs>` : ''}<g transform="translate(0 ${num(dy)})">${drawn.body}</g></svg>\n`

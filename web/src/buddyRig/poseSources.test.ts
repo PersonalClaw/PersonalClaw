@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SYSTEM_STATE_FAMILIES, WORK_PHASE_LOOKS } from '../lib/workPhase'
-import { FAMILIES, FAMILY_STATES, TRAY_STATES, familyOf, movesOf, poseSet, stillOf, type Frame } from './poseSet'
+import { FAMILIES, FAMILY_STATES, TRAY_STATES, familyOf, movesOf, orbLookOf, poseSet, stillOf, type Frame } from './poseSet'
 import { contactSheets, poseSources } from './poseSources'
 
 const WRITE_ENV = 'PC_WRITE_BUDDY_POSES'
@@ -51,7 +51,7 @@ describe('pose sources: generator', () => {
     }
   })
 
-  it('a drawing that moves a dot, or changes a word, is not the same drawing', () => {
+  it('a drawing that moves a point, or changes a word, is not the same drawing', () => {
     const a = '<circle cx="1.25" cy="2" r="0.5"/>'
     expect(sameDrawing(a, '<circle cx="1.26" cy="2" r="0.5"/>')).toBe(true)
     expect(sameDrawing(a, '<circle cx="1.3" cy="2" r="0.5"/>')).toBe(false)
@@ -74,11 +74,32 @@ describe('the pose set keeps to the phase contract', () => {
 
   it("queued is drawn alive in the scheme's primary, and listening's microphone keeps the warn tone", () => {
     expect(stillOf('queued')).toMatchObject({ ink: 'alive', tone: 'primary', mark: 'working' })
-    // Listening is the agent orb's ready state (`lib/orbState.ts`): the still dots, alive.
+    // Listening is the agent orb's ready state (`lib/orbState.ts`): the still ring, alive.
     // A still is never moving (`stillOf` draws the still frame); whether listening moves is movesOf's.
-    expect(stillOf('listening')).toMatchObject({ ink: 'alive', tone: 'warn', mark: 'listening', drawing: 'breathing' })
+    expect(stillOf('listening')).toMatchObject({ ink: 'alive', tone: 'warn', mark: 'listening', form: 'ready' })
     expect(movesOf('listening')).toBe(false)
     expect(WORK_PHASE_LOOKS.listening.tone).toBe('warn')
+  })
+
+  it('no buddy state, pose or still closes into the claw mark: done and an error hold ready’s open ring', () => {
+    // The owner's choice of 2026-10-18 (`docs/design/buddy/character.md`, "The choice"): the chat's
+    // orb closes into the mark at done; the buddy never draws it.
+    const states = [...FAMILIES.flatMap((f) => FAMILY_STATES[f]), ...Object.values(TRAY_STATES)]
+    for (const state of states) {
+      expect(stillOf(state).form, state).not.toBe('done')
+      expect(orbLookOf(state).state, state).not.toBe('done')
+    }
+    for (const pose of poseSet()) for (const f of [pose.still, pose.key].filter(Boolean)) expect(f!.form, pose.id).not.toBe('done')
+    expect(stillOf('done')).toMatchObject({ form: 'ready', mark: 'done' })
+    expect(stillOf('error')).toMatchObject({ form: 'ready', mark: 'error' })
+    expect(stillOf('error').sink, 'an error still droops').toBeGreaterThan(0)
+  })
+
+  it('offline is ready’s ring, dimmed, with the slash: it never borrows an error’s droop or wash', () => {
+    const offline = stillOf('offline')
+    expect(offline).toMatchObject({ form: 'ready', ink: 'rest', mark: 'offline', sink: 0, wash: 0 })
+    expect(offline.dim).toBeLessThan(1)
+    expect(stillOf('error').sink, 'the control: an error does droop').toBeGreaterThan(0)
   })
 
   it('an alert tone is only ever a badge or a wash, and a wash is only an alert', () => {

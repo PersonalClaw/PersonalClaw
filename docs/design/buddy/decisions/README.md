@@ -2,8 +2,8 @@
 
 The buddy's decisions that rest on evidence, one file each, with that evidence beside it: the rig,
 chosen by a measured spike, with its numbers and the candidates that lost ([`rig.md`](rig.md),
-[#3887]), measured by [`rig-measure.mjs`](rig-measure.mjs) and its scratch window
-[`rig-window.cjs`](rig-window.cjs), the record's raw numbers in `rig-runs/`, and the runs from
+[#3887]), measured by a script and a scratch window that went with the spike (#6117), the record's
+raw numbers in `rig-runs/`, and the runs from
 before the pose moved on the dots' clock: the spike's first, from before the buddy's frame rate, in
 `rig-runs/spike/`, the first record's in `rig-runs/loaded/`, and the re-measure on a quiet machine
 in `rig-runs/quiet/` (120 Hz) and `rig-runs/quiet-60hz/`; and the originality record, which

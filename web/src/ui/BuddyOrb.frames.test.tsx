@@ -4,7 +4,7 @@ import { act, render } from '@testing-library/react'
 // ── The buddy orb draws nothing while its pose holds (#3891) ────────────────────────────────────
 //
 // Frames run only while something moves: a held pose asks for no animation frame at all over a
-// minute, while the working hold (the dots moving in the agent orb's state for the phase) asks for
+// minute, while the working hold (the strokes moving as the agent orb's state for the phase does) asks for
 // them, at most the buddy's 30 a second. A pose change moves, arrives, and then holds as quietly.
 //
 // The motion library captures `requestAnimationFrame` when it loads, so the counter is installed

@@ -71,6 +71,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Approving a plan step names the step as you read it, in `If-Match` (its `review_revision` in the plan's read), as editing one names its draft. An approval without one is refused `428 revision_required`, and one of a step that changed since its read `409 stale_write`. Needs you's plan rows carry it in their answer's `headers`, so an answer sent as given approves the step as read.**
 - **Needs you is one list of what waits on your answer, across the whole width beside the sidebar and in columns when nothing is open, with proposals and notes after the asks that stop work. What runs, what finished and your chats moved to Home and the sidebar, where they already showed, and Home shows its pinned tiles again, in the section for what you keep on Home. The YOLO chip in every page's corner says what YOLO covers, and the badge counts what waits on your answer.**
 - **A project's page starts with a box to start a chat in it, then what needs you, what is running, what comes next, its tasks and the rest, with its brief, its instructions, its folder and what a new chat there is told beside it.**
+- **The desktop buddy draws the same claw ring, its poses in strokes: done is its open ring with a check, and the closed mark stays the chat's.**
 
 ## [0.3.8] — 2026-11-11
 

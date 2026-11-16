@@ -1,70 +1,111 @@
-import { paintFrame, resolvePreset } from 'thinking-orbs/engine'
-import { modeOf, poseFrame } from '../../buddyRig/arrange'
-import { PAD, RING_FROM, SOLID_MARKS, badgeDots, dot, solidBadge, washDots } from '../../buddyRig/inPlaceParts'
-import { tunedDrawingFor } from '../../buddyRig/poses'
-import type { Frame } from '../../buddyRig/poseSet'
+import type { Form } from '../orb/clawRing'
+import { paintRing, type Rgb } from '../orb/paintRing'
 import { tintOf } from '../orbDots'
 import { inkOf } from '../AgentOrb'
+import { PAD, RING_FROM, SOLID_MARKS, SINK_DROP, badgeAt, formOfFrame, markStrokes, ringWidth, washArcs, type Mark } from './buddyRing'
 import { poseOf, stillOf, type BuddyState } from './orbPoses'
 
-/** One frame of the orb's dots, as a drawing's `ModeFrame` returns it. */
-type Drawn = Parameters<typeof paintFrame>[1]
-type Tint = ReturnType<typeof tintOf>
-
-/** What one paint of the buddy orb needs besides its dots. */
+/** What one paint of the buddy orb needs besides its form. */
 export interface OrbPaint {
   size: number
   /** The canvas's room around the orb, in points, and its pixel ratio. */
   pad: number
   dpr: number
-  dark: boolean
-  ink: Tint
-  tone: Tint
-  /** The dots' brightness, the whole orb's rise (a share of its size) and the alert's wash. */
+  ink: Rgb | undefined
+  tone: Rgb | undefined
+  /** The strokes' brightness, the whole orb's rise (a share of its size), an error's settle (the
+   *  strokes alone) and the alert's wash. */
   dim: number
   lift: number
+  sink: number
   wash: number
-  mark: Frame['mark']
+  mark: Mark | null
+  /** The whole orb's move to one side (a share of its size) and its scale, one factor for both
+   *  axes, so it never squashes: an answer's shake and a swell. */
+  sway?: number
+  swell?: number
+  /** How far the badge is shown, 1 in full: it folds toward 0 as an answer elsewhere closes it. */
+  badge?: number
 }
 
-/** Paint the buddy orb into *ctx*: its dots, the alert's wash, and the badge cut out of the dots,
- *  in the badge's tone. The one painter: `BuddyOrb` calls it every frame it draws, and
+const rgb = (c: Rgb | undefined) => (c ? `rgb(${c.r}, ${c.g}, ${c.b})` : 'gray')
+
+function strokePath(ctx: CanvasRenderingContext2D, pts: [number, number][]): void {
+  ctx.beginPath()
+  ctx.moveTo(pts[0][0], pts[0][1])
+  // A point is a stroke a hair long: a canvas draws no cap on a stroke of no length at all.
+  if (pts.length === 1) ctx.lineTo(pts[0][0] + 0.01, pts[0][1])
+  else if (pts.length === 2) ctx.lineTo(pts[1][0], pts[1][1])
+  else ctx.quadraticCurveTo(pts[1][0], pts[1][1], pts[2][0], pts[2][1])
+  ctx.stroke()
+}
+
+/** Paint the buddy orb into `ctx`: its form, the alert's wash under it and its badge cut out of
+ *  it, in the badge's tone. The one painter: `BuddyOrb` calls it every frame it draws, and
  *  `stillOrbPng` once, for a still. */
-export function paintOrb(ctx: CanvasRenderingContext2D, dots: Drawn, p: OrbPaint): void {
+export function paintOrb(ctx: CanvasRenderingContext2D, form: Form, p: OrbPaint): void {
   const box = p.size + p.pad * 2
   ctx.setTransform(p.dpr, 0, 0, p.dpr, 0, 0)
   ctx.clearRect(0, 0, box, box)
-  ctx.setTransform(p.dpr, 0, 0, p.dpr, p.pad * p.dpr, p.pad * p.dpr)
-  ctx.globalAlpha = p.dim
-  paintFrame(ctx, dots, p.dark, p.ink)
-  ctx.globalAlpha = 1
   const dy = p.lift * p.size
-  if (p.wash > 0.01) paintFrame(ctx, { dots: washDots(p.size, p.wash, dy), lines: [] }, p.dark, p.tone)
-  if (!p.mark) return
-  const solid = p.size < RING_FROM && SOLID_MARKS.has(p.mark)
-  const badge = solid ? solidBadge(p.size, p.mark, dy) : badgeDots(p.size, p.mark, dy, p.size >= RING_FROM)
+  const settle = SINK_DROP * p.sink * p.size
+  const dx = (p.sway ?? 0) * p.size
+  const at = (x: number, y: number) => ctx.setTransform(p.dpr, 0, 0, p.dpr, (p.pad + dx + x) * p.dpr, (p.pad + y) * p.dpr)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  // The wash first, so the strokes sit over it.
+  at(0, dy)
+  ctx.strokeStyle = rgb(p.tone)
+  for (const [r, from, to, alpha, width] of washArcs(p.size, p.wash)) {
+    ctx.globalAlpha = alpha
+    ctx.lineWidth = width
+    ctx.beginPath()
+    ctx.arc(p.size / 2, p.size / 2, r, from, to)
+    ctx.stroke()
+  }
+  // The form, through the agent orb's own painter, in the buddy's box, over the wash.
+  ctx.globalAlpha = p.dim
+  paintRing(ctx, form, { size: p.size, dpr: p.dpr, ink: p.ink, scale: p.swell ?? 1, at: { x: p.pad + dx, y: p.pad + dy + settle }, clear: false })
+  ctx.globalAlpha = 1
+  const fold = p.badge ?? 1
+  if (!p.mark || fold <= 0.01) return
+  at(0, 0)
+  const ring = p.size >= RING_FROM
+  const solid = !ring && SOLID_MARKS.has(p.mark)
+  const { cx, cy, radius } = badgeAt(p.size, dy)
+  // A folding badge shrinks about its own centre.
+  ctx.translate(cx, cy)
+  ctx.scale(fold, fold)
+  ctx.translate(-cx, -cy)
   ctx.globalCompositeOperation = 'destination-out'
   ctx.beginPath()
-  ctx.arc(badge.cx, badge.cy, badge.radius * 1.15, 0, Math.PI * 2)
+  ctx.arc(cx, cy, radius * 1.15, 0, Math.PI * 2)
   ctx.fill()
   ctx.globalCompositeOperation = 'source-over'
-  if ('holes' in badge) {
-    // A waiting badge below 24 px is one solid dot in the tone with its mark cut out of it.
-    paintFrame(ctx, { dots: [dot(badge.cx, badge.cy, badge.radius, 1)], lines: [] }, p.dark, p.tone)
+  ctx.strokeStyle = rgb(p.tone)
+  ctx.fillStyle = rgb(p.tone)
+  const marks = markStrokes(p.size, p.mark, dy, ring)
+  if (solid) {
+    // A waiting badge below 24 px is one solid disc in the tone with its mark cut out of it.
+    ctx.beginPath()
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+    ctx.fill()
     ctx.globalCompositeOperation = 'destination-out'
-    for (const hole of badge.holes) {
-      ctx.beginPath()
-      ctx.arc(hole.x, hole.y, hole.r, 0, Math.PI * 2)
-      ctx.fill()
-    }
-    ctx.globalCompositeOperation = 'source-over'
-  } else {
-    paintFrame(ctx, { dots: badge.dots, lines: [] }, p.dark, p.tone)
+  } else if (ring) {
+    ctx.lineWidth = ringWidth(radius)
+    ctx.beginPath()
+    ctx.arc(cx, cy, radius * 0.92, 0, Math.PI * 2)
+    ctx.stroke()
   }
+  for (const s of marks) {
+    ctx.lineWidth = s.width
+    strokePath(ctx, s.pts)
+  }
+  ctx.globalCompositeOperation = 'source-over'
 }
 
-/** The ink token a still's dots take, and its badge's tone token, as `BuddyOrb` reads them at the
- *  platform's ordinary contrast. */
+/** The ink token a still's strokes take, and its badge's tone token, as `BuddyOrb` reads them at
+ *  the platform's ordinary contrast. */
 export function stillTokens(state: BuddyState): { ink: string; tone: string } {
   const f = stillOf(state)
   return {
@@ -92,15 +133,12 @@ export function stillOrbPng(state: BuddyState, size: 48 | 96 = 96): string {
   canvas.height = (size + pad * 2) * dpr
   const f = stillOf(state)
   const pose = poseOf(state)
-  const preset = resolvePreset(f.drawing, tunedDrawingFor(size))
-  const frame = poseFrame(modeOf(f.drawing), () => pose, { still: true, lift: true })
   const tokens = stillTokens(state)
-  paintOrb(ctx, frame(size, 0, preset.opts), {
+  paintOrb(ctx, formOfFrame({ ...f, ...pose, moving: false }), {
     size, pad, dpr,
-    dark: document.documentElement.dataset.mode === 'dark',
     ink: tintOf(inkOf(tokens.ink)),
     tone: tintOf(inkOf(tokens.tone)),
-    dim: f.dim, lift: pose.lift, wash: pose.wash, mark: f.mark,
+    dim: f.dim, lift: pose.lift, sink: pose.sink, wash: pose.wash, mark: f.mark,
   })
   try {
     return canvas.toDataURL('image/png')

@@ -1,38 +1,38 @@
 {
   "about": "Written by docs/design/buddy/render_stills.mjs. Re-run it after a change to a drawing; do not edit by hand.",
-  "script_sha256": "63b6933ca8fc0a3a5043028f9192bc6bf0c2525c818a1370506429ee50beebd4",
+  "script_sha256": "24aa42f193a762f7145ee7500a24798386821a11f9d06f865d952f25c09cfb54",
   "sources": [
     {
       "path": "docs/design/buddy/poses/tray-idle-18-template.svg",
-      "sha256": "c25cc9eaec22fdf23e13d9641cbc7ad5d3899e166ab4e3503765f24b91be4e99"
+      "sha256": "e22bcdba245f88b1419756f14e3e0b03a0f062afef7851718292a98275e8473e"
     },
     {
       "path": "docs/design/buddy/poses/tray-working-18-template.svg",
-      "sha256": "dc458b74d7aeb5f39d80dc3f2b82edc1e7600f77b6b1cf79112b0a792ecfb9ee"
+      "sha256": "d20fb438c1093af68474cada50758181dce278c5b2139af9b837a8e9171052f9"
     },
     {
       "path": "docs/design/buddy/poses/tray-needs-you-18-template.svg",
-      "sha256": "497e62083bbee4d62b139e3736b56244d66b174d0ea24cf4283b49ff56e05e8e"
+      "sha256": "1c94a94d4665ce3f4e324439eac8d8fdd493653e94efbd8858a2e600c35a1f31"
     },
     {
       "path": "docs/design/buddy/poses/tray-error-18-template.svg",
-      "sha256": "c64470c3e2c73a7c82ce469bda41247f6c414a7160c8054f83153f415fbce63e"
+      "sha256": "3251fd1a9d78a5d1b22cdd97c304b28eff1689214d232cc149aee0b2b2d71a62"
     },
     {
       "path": "docs/design/buddy/poses/tray-listening-18-template.svg",
-      "sha256": "74077d6afeab020ec3ffc97b1171dfd5888508cb84152f4ff0db5afd51b5b8b8"
+      "sha256": "9da816670836ccc99032a4e394ebea9be20c796a6797f39c8dd377a82d59dbd3"
     },
     {
       "path": "docs/design/buddy/poses/tray-offline-18-template.svg",
-      "sha256": "507fba12f86e62846d05f78af888847b0f46ac908ee03fd9907ffee0684cdfdf"
+      "sha256": "da113c2a7ecbc862a969565fde54e9cf411939312876f1e71eaffec84b1e820d"
     },
     {
       "path": "docs/design/buddy/poses/tray-needs-you-22.svg",
-      "sha256": "0bdc5f7e237384b332b8c076baa05a00763c011682496e5e9e5f5c913912b14f"
+      "sha256": "676a7aa4e47ca7eb60ce9740f4809420ae68b33ad5dac9412934219dcd665051"
     },
     {
       "path": "docs/design/buddy/poses/sheets/tray.svg",
-      "sha256": "2f41fa88b79bc93f60d835808bcd4bd1a8c1ec03e30675273f8f638d03b0cd36"
+      "sha256": "467377aad4c085cb20b57815e76753a08aa2ae9879fccfcdfbad7850be06f8d7"
     }
   ],
   "outputs": [
@@ -41,252 +41,252 @@
       "size": 18,
       "source": "docs/design/buddy/poses/tray-idle-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "f5782caf0be22050c3f61eda01eda517f9687abd4d446627df91355238df79a5"
+      "sha256": "95390626050a6ef83fc49ee9290eba85f8627672192e67f87bf68a226d01b31f"
     },
     {
       "path": "desktop/buddy/tray-idle-light@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-idle-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "005f6fc15eebc0b5f0c6dd71b0c000d266e6886b2e8e9816ff5fa7bf73510988"
+      "sha256": "992bd57d46a82739e0f6e80e043fd080d60ed431127fd121d2ea63fc63daef75"
     },
     {
       "path": "desktop/buddy/tray-idle-dark.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-idle-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "85c0e16128bf56a6a196039ed85931a823d1010783351116c6a2e71a32676d83"
+      "sha256": "c0c9a224c8f48bc72d4b64e22b8db0969d06c4640ea6112e774f4ab00756432e"
     },
     {
       "path": "desktop/buddy/tray-idle-dark@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-idle-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "6c2f32c4dd5bac3a4fde1d2bdd99a28e7555efcab9b5a9fa260e075088bbda0c"
+      "sha256": "0e3fd5089599ec9e5b5f528cc2f88b8312531f8cb56f03328e70d888468b2095"
     },
     {
       "path": "desktop/buddy/tray-idleTemplate.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-idle-18-template.svg",
-      "sha256": "85d2be80a0c6df5ca04eb799aefc91d05e36d5747f0a4d0ab395012fa5a9dc16"
+      "sha256": "e2a59fbcb042f7171c459cfb2b8708912a2fa340ac578cad5bd3e60687da65a9"
     },
     {
       "path": "desktop/buddy/tray-idleTemplate@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-idle-18-template.svg",
-      "sha256": "a2ffb127d1fea282af3dd28d4043333e6d14bffa1a6d40c0b3da58012c3bc4fd"
+      "sha256": "9a41aa36dc035acf28b5475b8babd2473dd09d3c8bd33cbafc311ffe60f44fc1"
     },
     {
       "path": "desktop/buddy/tray-working-light.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-working-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "5e52087c545c8c2e837a46bbd134442cd0085139c9c7de175d94d268472ddccc"
+      "sha256": "66ca211005c696651840999f22132e8d71dfbb4e5de6589654eeb560b2314434"
     },
     {
       "path": "desktop/buddy/tray-working-light@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-working-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "a74c30299c30d503ad88a80ea486aad59368842fa763572fe1b4e89bcdc89a7c"
+      "sha256": "2162e38d8165fba5488b6bfe646acf239e0f8a4bec49d790b0bd03ef2c2afc6e"
     },
     {
       "path": "desktop/buddy/tray-working-dark.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-working-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "0ee47f758604eb3c48edc8e1c120b49b940f4181379a5540f4ce085c2cfba4ff"
+      "sha256": "5baa7c18ef7a2c9d8e02541c6d219e0afa3b46f29edd6e2d5ef1ec46b973da5d"
     },
     {
       "path": "desktop/buddy/tray-working-dark@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-working-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "f5a9ba5842c5864be399c4e3abdffedd13416257ef987020b94e955d172fe39d"
+      "sha256": "72e71e5ffcfe525033cc678d5de364fc59726362bb43b14b094f380208e96c71"
     },
     {
       "path": "desktop/buddy/tray-workingTemplate.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-working-18-template.svg",
-      "sha256": "314c8693245c3d211a7c3631d47c60c135fb4f9a861f2382e1520d348c536478"
+      "sha256": "4c22bcb168fce2b47c3e10cc6e48804ddaa78a46363680c831903f31a4bf7c18"
     },
     {
       "path": "desktop/buddy/tray-workingTemplate@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-working-18-template.svg",
-      "sha256": "1c98a02a3033dead4a76d5c95c92e07ee4e1b771130a0308ca76fec3a30ce59c"
+      "sha256": "6279933216776102b45a1cd46ed1086b79046d8651703d71c53806cbba527e0e"
     },
     {
       "path": "desktop/buddy/tray-needs-you-light.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-needs-you-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "8853dea3f129ae5650875f1b014515e6d8d33d3b7f53293332d635366e5b01c4"
+      "sha256": "226bd1675688eeb5addab9e2a10c97f067b7fcd0137b2b5ea6d65b84b4d786c8"
     },
     {
       "path": "desktop/buddy/tray-needs-you-light@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-needs-you-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "eb507a8f2c5c8557572ca00990ad1bff63f7e51603f56a62b778a35d2d2762bd"
+      "sha256": "759e2496c914c446e8efe732fdb73ddec7d3c8570b51b9b65eb7fd5b2c704d6b"
     },
     {
       "path": "desktop/buddy/tray-needs-you-dark.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-needs-you-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "7b8cad0134172948f2e6891bb6592cd355d99d8fec7d08b696eeb2051f48b397"
+      "sha256": "768add330185d5b08786efebaf473988b4a75da3fa48bf65064253dbc669bd6f"
     },
     {
       "path": "desktop/buddy/tray-needs-you-dark@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-needs-you-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "b3dff1af907309224a4a0ccb2241082b843d92ff732694a3e5eac7b26c0fc6bf"
+      "sha256": "72d9d54d3ea857c308241dd51cf41cebef9a818ef6a28a77158d00395332ddfd"
     },
     {
       "path": "desktop/buddy/tray-needs-youTemplate.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-needs-you-18-template.svg",
-      "sha256": "7d777fc67d2a1a70de64a93ba83f9c37a191a9164b09dbf0848c9d50d2d5fc71"
+      "sha256": "5a60da4b5f3dd01d7ba7c3f663342d12e4535da77e2fe5f447214c7b1a493409"
     },
     {
       "path": "desktop/buddy/tray-needs-youTemplate@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-needs-you-18-template.svg",
-      "sha256": "b7633cbe3b8f4d04717ab8f26ee11d4321e14fa29bf141b5edc0b4fd33ac4790"
+      "sha256": "356ec7292bf1abb2584cde92ce3fb39ff10cdf66b457eeb86a4db55044a0e9a0"
     },
     {
       "path": "desktop/buddy/tray-error-light.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-error-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "507bcc4cfddf2f1f95cccf8f433af565b43157cb305a0cca48289c675cd045da"
+      "sha256": "92fd3210bc3eb8cd174fb1a60e2c0a71f5bcc3aa9e23bee2800afa4657ab45dc"
     },
     {
       "path": "desktop/buddy/tray-error-light@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-error-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "3b8575947f8c864551d6c322fc34023c3d151e160fd3f1883fea6187425d03b5"
+      "sha256": "478357355911a0e165f27cead9f52a65343876b17cb5ee3283718b763f9ab6d9"
     },
     {
       "path": "desktop/buddy/tray-error-dark.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-error-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "5f091ea07ed21afb0903b60b0cdd679cca4d573ddcae915baafb728a470d5c05"
+      "sha256": "8b90efc3b7f3b2121bda033e921feebf66507758a16e79bfa7a56b7384de2578"
     },
     {
       "path": "desktop/buddy/tray-error-dark@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-error-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "a480fd4a2277fa5cfa1e5b4ddf3d230f630606461daca7789fc016ba2e147613"
+      "sha256": "20004bf22937adcdf3b7fa5c4247a3968c29b7409aea0d0b1bb98f73ca037ead"
     },
     {
       "path": "desktop/buddy/tray-errorTemplate.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-error-18-template.svg",
-      "sha256": "b194f18efbe9c899e93fc4dd75a58f4dc1989385cb6ff4f611249b36d4bbefad"
+      "sha256": "28ab7636932f56a956f0fa2664aaab2b12ad4ad83d0ee9652f4a9d2b26b8a2d9"
     },
     {
       "path": "desktop/buddy/tray-errorTemplate@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-error-18-template.svg",
-      "sha256": "aa93c5758868a3e43ac5cc425896716757f1defd1ebbe2783e188b7ff3042ad4"
+      "sha256": "c6bbfb7a803a394e2f9c4104d7dae9602c648bfd60fca6c11c7e6168705799b3"
     },
     {
       "path": "desktop/buddy/tray-listening-light.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-listening-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "49cdcbe0c4af0761a97eb6c424566d4e69f87c595cc00d06d756e7d75e1b5b0d"
+      "sha256": "8312d3e0a49385dad9a8a5817d5fb7225e480c44441ca9c9f9406fb5594b1a8a"
     },
     {
       "path": "desktop/buddy/tray-listening-light@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-listening-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "95ec6ab8cda68e08901e12410ebcb6c62c059b95910d706e9f7c0ce1bbb9229d"
+      "sha256": "7355278bd80bd6a941e93b7b843a3fbb554d9b391d00d2c97fde1673c4514433"
     },
     {
       "path": "desktop/buddy/tray-listening-dark.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-listening-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "ea8f7112f821292e0ddfd2755c6a900783fd08c4b6ae1a9e7b7f425687d5f0c5"
+      "sha256": "b6548dc55bcb2dfb793ac16f78d1747a5fea327865fb78b1e3ceeb2261e1c229"
     },
     {
       "path": "desktop/buddy/tray-listening-dark@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-listening-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "c45cedccf12785fea6a2f081605b1a6ad341df2a3e0c34fd4cf75e194a513bef"
+      "sha256": "ade441eda2c0958c19574c73d026ffa01266596fd6edaac658c7762486b65d13"
     },
     {
       "path": "desktop/buddy/tray-listeningTemplate.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-listening-18-template.svg",
-      "sha256": "1c9e2804386726d0c4e2117717bdf5b86c3fb9edf18b01de1b69064864b4f6b7"
+      "sha256": "18f0dc9449a19d8ca69d58609be8e9788aeb1c85ae23d7f0a90515156d8b90b3"
     },
     {
       "path": "desktop/buddy/tray-listeningTemplate@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-listening-18-template.svg",
-      "sha256": "bfa297d8b0babbeb7720362ab82dc4b734946d993ed1e857e89ca6b1317e0308"
+      "sha256": "4c415f2c6dad9c603bb6ae2b62cc09b55c3bfe380b4bd9af8625dd46fd3388c2"
     },
     {
       "path": "desktop/buddy/tray-offline-light.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-offline-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "6e0c073a0153504373dae8b3ab6a212a2ba482141c26cd69141a63860b9aaa43"
+      "sha256": "ad07bed7c0a54778b99777e16e2ac287c24119967b972447b09e64a62f17531c"
     },
     {
       "path": "desktop/buddy/tray-offline-light@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-offline-18-template.svg",
       "ink": "--sheet-template (light)",
-      "sha256": "6d4439b9dd0c8cc5711b0200d39cb900e46ff56997a038157c6d9da0350bf2f4"
+      "sha256": "96743d4b6776fc638e32fab3c071078104f7bca8489baa7d0970986a2ff02e04"
     },
     {
       "path": "desktop/buddy/tray-offline-dark.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-offline-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "3ed17a2c1c44b993c93009f1360d885500f6cfa1c106abc2f50ccb96fb683d19"
+      "sha256": "4dd753b9bfe8afb44f6a84629f439202b54a2ae074b16be2bd6e641f920464f1"
     },
     {
       "path": "desktop/buddy/tray-offline-dark@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-offline-18-template.svg",
       "ink": "--sheet-template (dark)",
-      "sha256": "92cf4c0dd232ad0ad7f717fa7f5f0a166db1a7b38756ef4e6c0d2c5d7086ba1d"
+      "sha256": "b45f737102319e2224bc5752af79e8899191d4e60049d7ffda37a17a0ba3a5f1"
     },
     {
       "path": "desktop/buddy/tray-offlineTemplate.png",
       "size": 18,
       "source": "docs/design/buddy/poses/tray-offline-18-template.svg",
-      "sha256": "aa6d3a4dffc535b5616591eba6f3bb223b345d78742dac4a829e50d3101cdf08"
+      "sha256": "138b984497240e1d1d1a0455dc840ae989822ab2ad458e3bdc627054fe36c5e0"
     },
     {
       "path": "desktop/buddy/tray-offlineTemplate@2x.png",
       "size": 36,
       "source": "docs/design/buddy/poses/tray-offline-18-template.svg",
-      "sha256": "d5f52ac5e764002e7a5e320affb729d6b88ab0216c7d51e8515f3320fb22a33b"
+      "sha256": "4577be719c99d4f20a5fd34dc5333a2de8a9602aa91d66c6bb41eae39d7a9f80"
     },
     {
       "path": "desktop/buddy/dock-needs-you-light.png",
       "size": 512,
       "source": "docs/design/buddy/poses/tray-needs-you-22.svg",
-      "sha256": "d7a38ed96439813118eb0839e734c6ef354392a567d7685ea22eed4927c9842b"
+      "sha256": "deb5142c5d349ca17bc6e43dffc622ab8a7061d55ee1cd682485bf3975c59fa8"
     },
     {
       "path": "desktop/buddy/dock-needs-you-dark.png",
       "size": 512,
       "source": "docs/design/buddy/poses/tray-needs-you-22.svg",
-      "sha256": "d7d904926b3cf77ed58df00ced3fd42f871af53306341ac082451e354ddf7ded"
+      "sha256": "2b2610c7827e26ca4664eced611866915a55fd0c3520d9f45d921f7a42484882"
     }
   ]
 }

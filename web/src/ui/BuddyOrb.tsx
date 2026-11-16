@@ -1,29 +1,30 @@
-/** The buddy orb (#3891): the thinking-orbs drawing extended in place, the rig #3887 chose
- *  (`docs/design/buddy/decisions/rig.md`), for every state the buddy shows, in the agent orb's
- *  state for it (`lib/orbState.ts`), with its exact line beside it so the art never carries the
- *  state alone.
+/** The buddy orb (#3891): the agent orb's claw ring for every state the buddy shows, moved by its
+ *  pose (`docs/design/buddy/character.md`, "The poses"), with its exact line beside it so the art
+ *  never carries the state alone.
  *
- *  Everything is drawn into one canvas with the thinking-orbs package's engine and painter: the
- *  state's drawing with its pose's density and arrangement, the whole orb's rise and fall, and the
- *  badge and the wash drawn as dots in the alert's tone (`ui/buddy/orbPoses.ts`, #3830's poses). The dots
- *  take the alive ink while an agent works or waits on the owner and the rest ink where nothing is,
- *  both tokens, so a scheme change retints within a frame. One loop paints all of it, at most at the
- *  buddy's frame rate (`ui/orbDots.ts`), and only while the dots or the pose move: a pose that holds
- *  draws nothing. Under reduced motion every state is its still, the pose jumping between stills,
- *  and the branch is stated on `data-buddy-orb`. The buddy window, the playground, the card and the
- *  phone's views all draw this one component. */
+ *  Everything is drawn into one canvas with the agent orb's own form and painter: the state's form
+ *  (`lib/orbState.ts`, `ui/orb/clawRing.ts`), as its pose moves it, the whole orb's rise and fall,
+ *  and the badge and the wash in strokes in the alert's tone (`ui/buddy/buddyRing.ts`,
+ *  `ui/buddy/paintOrb.ts`). The strokes take the alive ink while an agent works or waits on the
+ *  owner and the rest ink where nothing is, both tokens, so a scheme change retints within a frame.
+ *  A change of state morphs as the agent orb's does (`ui/orb/useMorph.ts`); the buddy's done has no
+ *  bloom, since its form stays the open ring, and its flourish is done's turn.
+ *  One loop paints all of it, at most at the buddy's frame rate (`ui/orbDots.ts`), and only while
+ *  the strokes, the morph or the pose move: a pose that holds draws nothing. Under reduced motion
+ *  every state is its still, the pose and the form jumping between stills, and the branch is stated
+ *  on `data-buddy-orb`. The buddy window, the playground, the card and the phone's views all draw
+ *  this one component. */
 
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
-import { resolvePreset } from 'thinking-orbs/engine'
-import { useMode } from '../app/theme'
 import { prefersReducedMotion } from '../design/motion'
 import { runtime } from '../design/runtime'
 import { onEditorTokensChange } from '../design/editorTheme'
-import { modeOf, poseFrame } from '../buddyRig/arrange'
-import { PAD } from '../buddyRig/inPlaceParts'
-import { tunedDrawingFor, type BuddySize } from '../buddyRig/poses'
+import type { BuddySize } from '../buddyRig/poses'
 import { inkOf, onOrbMediaChange, orbContrast, useInk } from './AgentOrb'
-import { familyOf, movesOf, poseOf, stillOf, transitionOf, wordsOf, type BuddyState } from './buddy/orbPoses'
+import { formAt, restForm } from './orb/clawRing'
+import { useMorph } from './orb/useMorph'
+import { PAD, posedForm } from './buddy/buddyRing'
+import { familyOf, movesOf, orbLookOf, poseOf, stillOf, transitionOf, wordsOf, type BuddyState } from './buddy/orbPoses'
 import { paintOrb } from './buddy/paintOrb'
 import { useOrbPose } from './buddy/useOrbPose'
 import { runDots, tintOf, useOnScreen } from './orbDots'
@@ -42,7 +43,7 @@ export interface BuddyOrbProps {
   state: BuddyState
   /** The state's exact line (`lib/buddy/copy.ts`), shown beside the orb. */
   line: string
-  /** 18 and 24 px draw from the thinking-orbs package's 20 px drawing, 48 and 96 px from its 64 px one. */
+  /** 18 to 96 px: the strokes are drawn wider at 20 px and below, as the agent orb's are. */
   size?: BuddySize
   /** Hold even a moving state still: a contact sheet's frames. */
   still?: boolean
@@ -60,21 +61,19 @@ export function BuddyOrb({ state, line, size = 48, still = false }: BuddyOrbProp
     transitionOf: (key) => transitionOf(state, key),
   })
   const mayMove = !reduced && shown
-  // As the agent orb's: under more contrast the dots take the words' ink, and under forced colours
-  // the system's, the badge and the wash with them.
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const onScreen = useOnScreen(canvas)
+  // As the agent orb's: a change nobody can see is an instant swap, and one cut short settles.
+  const morph = useMorph(orbLookOf(state), !mayMove || still || !onScreen)
+  // As the agent orb's: under more contrast the strokes take the words' ink, and under forced
+  // colours the system's, the badge and the wash with them.
   const inkToken = contrast === 'forced' ? 'CanvasText' : contrast === 'more' ? '--color-on-surface' : frameOf.ink === 'alive' ? '--color-orb-alive' : '--color-orb-rest'
   const toneToken = contrast === 'forced' ? 'CanvasText' : frameOf.tone === 'neutral' ? '--color-orb-rest' : `--color-${frameOf.tone}`
   const ink = useInk(inkToken)
   const tone = useInk(toneToken)
-  const { mode } = useMode()
-  const canvas = useRef<HTMLCanvasElement>(null)
-  const onScreen = useOnScreen(canvas)
-  const dotsMove = movesOf(state) && !still && mayMove
-  const running = (dotsMove || (pose.moving && mayMove)) && onScreen
+  const strokesMove = movesOf(state) && !still && mayMove
+  const running = (strokesMove || (pose.moving && mayMove) || morph.changing !== 'none') && onScreen
   const { values } = pose
-
-  const preset = useMemo(() => resolvePreset(frameOf.drawing, tunedDrawingFor(size)), [frameOf.drawing, size])
-  const frame = useMemo(() => poseFrame(modeOf(frameOf.drawing), pose.read, { still: !dotsMove, lift: true }), [frameOf.drawing, pose.read, dotsMove])
 
   useEffect(() => {
     const el = canvas.current
@@ -85,28 +84,30 @@ export function BuddyOrb({ state, line, size = 48, still = false }: BuddyOrbProp
     const dpr = Math.min(2, (typeof devicePixelRatio !== 'undefined' && devicePixelRatio) || 1)
     el.width = Math.round(box * dpr)
     el.height = Math.round(box * dpr)
-    const dark = mode === 'dark'
     let inkTint = tintOf(ink)
     let toneTint = tintOf(tone)
-    const mark = frameOf.mark
-    const paint = (t: number) => paintOrb(ctx, frame(size, t, preset.opts), {
-      size, pad, dpr, dark, ink: inkTint, tone: toneTint,
-      dim: frameOf.dim, lift: values.lift.get(), wash: values.wash.get(), mark,
-    })
+    const paint = (t: number) => {
+      const base = morph.formOf(strokesMove ? formAt(frameOf.form, t) : restForm(frameOf.form))
+      const form = posedForm(base, { density: values.density.get(), spread: values.spread.get(), sink: values.sink.get(), swirl: values.swirl.get() })
+      paintOrb(ctx, form, {
+        size, pad, dpr, ink: inkTint, tone: toneTint, dim: frameOf.dim,
+        lift: values.lift.get(), sink: values.sink.get(), wash: values.wash.get(), mark: frameOf.mark, swell: morph.scale(),
+      })
+    }
     // A scheme change reaches the painter as the change lands: the tokens are read again and the
-    // dots repainted at once, moving or still.
+    // strokes repainted at once, moving or still.
     const retint = () => {
       inkTint = tintOf(inkOf(inkToken))
       toneTint = tintOf(inkOf(toneToken))
     }
-    return runDots(paint, { running, speed: preset.speed, retint })
-  }, [frame, preset, size, mode, ink, tone, inkToken, toneToken, running, values, frameOf, state, dials])
+    return runDots(paint, { running, speed: 1, retint })
+  }, [size, ink, tone, inkToken, toneToken, running, values, frameOf, strokesMove, state, dials, morph.changing]) // eslint-disable-line react-hooks/exhaustive-deps -- the morph is read through its refs at each paint
 
   const pad = Math.round(size * PAD)
   return (
     <span
-      data-buddy-orb={reduced ? 'still' : 'animated'} data-buddy-state={state} data-buddy-family={family}
-      data-buddy-moving={String(running)} data-buddy-ink={ink ?? ''} data-buddy-ink-token={inkToken} data-buddy-contrast={contrast} data-buddy-tone={frameOf.tone}
+      data-buddy-orb={reduced ? 'still' : 'animated'} data-buddy-state={state} data-buddy-family={family} data-buddy-form={frameOf.form}
+      data-buddy-moving={String(running)} data-buddy-change={morph.changing} data-buddy-ink={ink ?? ''} data-buddy-ink-token={inkToken} data-buddy-contrast={contrast} data-buddy-tone={frameOf.tone}
       {...(frameOf.mark ? { 'data-buddy-badge': frameOf.mark } : {})}
       className="inline-flex min-w-0 items-center gap-2"
     >

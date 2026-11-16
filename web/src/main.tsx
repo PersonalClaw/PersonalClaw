@@ -1,4 +1,4 @@
-import { StrictMode, Suspense, lazy } from 'react'
+import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './app/monacoSetup'  // bind Monaco to the local bundle + workers (no CDN) — before any editor mounts
 import './design/tokens.css'
@@ -23,11 +23,6 @@ installAppSdk()
 // ContentSurface mounts.
 registerBuiltinContentTypes()
 
-// The buddy rig spike's harness (#3887), at `#/buddy-rig`, only in a build made with
-// `VITE_BUDDY_RIG=1`. A release build leaves the flag unset, so this folds to `null` and the
-// bundler emits no part of the harness (`buddyRig/route.test.ts`).
-const BuddyRigEntry = import.meta.env.VITE_BUDDY_RIG === '1' ? lazy(() => import('./buddyRig/BuddyRigHarness')) : null
-
 // Install the service worker (production builds only) so the shell boots offline
 // and the companion can be installed to a phone's home screen. Fire-and-forget:
 // registration never gates the first render, and it swallows its own failures.
@@ -49,7 +44,7 @@ createRoot(document.getElementById('root')!).render(
               {/* The last line of defence: a throw that no page or widget boundary caught still
                   renders the error panel with Retry, never an empty body. */}
               <ErrorBoundary>
-                {BuddyRigEntry ? <Suspense fallback={null}><BuddyRigEntry app={<App />} /></Suspense> : <App />}
+                <App />
               </ErrorBoundary>
             </IdentityProvider>
           )}
