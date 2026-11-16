@@ -68,7 +68,8 @@ describe('answering on a project page', () => {
     const card = await within(await needs()).findByRole('group', { name: 'Permission needed to run bash' })
     await userEvent.click(within(card).getByRole('button', { name: /^Deny bash/ }))
     await waitFor(() => expect(resolve).toHaveBeenCalledWith('ap-1', 'reject'))
-    expect(await within(await needs()).findByText('It is no longer waiting: it was answered or ended somewhere else.')).toBeTruthy()
+    // Home's own sentence for any ask or proposal decided elsewhere (`ENDED_ELSEWHERE`).
+    expect(await within(await needs()).findByText('It is no longer waiting: it was decided or ended somewhere else.')).toBeTruthy()
     expect(within(await needs()).queryByText(/try again/)).toBeNull()
   })
 
