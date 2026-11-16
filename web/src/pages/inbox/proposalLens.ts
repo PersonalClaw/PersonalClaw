@@ -33,8 +33,40 @@ export function applyCase(p: InboxProposal): ApplyCase | '' {
 export const APPLY_CASE_LABEL: Record<ApplyCase, string> = {
   action: 'Runs an action',
   workflow: 'Starts a workflow',
-  skill_promotion: 'Installs a skill',
+  // Every learning proposal carries this one case, whatever its Accept does: a template saves a
+  // template, a lesson records that you agree. Its card says which (`acceptOf`); this is only
+  // what a row with no card says.
+  skill_promotion: 'Accepts the proposal',
   app_callback: 'Calls back into the app',
+}
+
+/** What a learning proposal's Accept does, as its card says it (`learning.review.accept_for`,
+ *  filed on the row as `refs.card.accept`, and what Needs you's card reads): `installs`,
+ *  `applies`, `records`, or `none` when nothing here can accept it, with the sentence that says
+ *  so. Null for a row with no card. The gateway's answer to the press is still the authority. */
+export type AcceptSaid = { effect: 'installs' | 'applies' | 'records' | 'none'; sentence: string }
+const EFFECTS: ReadonlyArray<AcceptSaid['effect']> = ['installs', 'applies', 'records', 'none']
+
+export function acceptOf(it: Pick<InboxItem, 'refs'>): AcceptSaid | null {
+  const card = it.refs?.card
+  const accept = card && typeof card === 'object' ? (card as { accept?: unknown }).accept : null
+  if (!accept || typeof accept !== 'object') return null
+  const { effect, sentence } = accept as { effect?: unknown; sentence?: unknown }
+  if (!EFFECTS.includes(effect as AcceptSaid['effect']) || typeof sentence !== 'string') return null
+  const said = sentence.trim()
+  return said ? { effect: effect as AcceptSaid['effect'], sentence: said } : null
+}
+
+/** A refused apply, said once. A learning proposal's refusal (*learning*: its `skill_promotion`
+ *  case) is learning's own sentence, which already says the proposal still waits: it is shown as
+ *  it is. Any other case's error is the app's or the provider's words, so it keeps the frame
+ *  whatever it says: "Not applied: <what it said>. It still waits." */
+export function refusalText(error?: string, learning = false): string {
+  const said = String(error ?? '').trim().replace(/[\s.]+$/, '')
+  if (!said) return 'Not applied. It still waits.'
+  const stop = /[!?]$/.test(said) ? '' : '.'
+  if (learning && /\bstill (waits|pending)\b/i.test(said)) return `${said}${stop}`
+  return `Not applied: ${said}${stop} It still waits.`
 }
 
 /** The batch-approve grouping key: `(provenance, item kind)`.
@@ -64,7 +96,8 @@ export function groupLabel(it: Pick<InboxItem, 'refs'>): string {
 export function canBatchApprove(selected: Array<Pick<InboxItem, 'refs' | 'item_kind'>>): boolean {
   if (selected.length === 0) return false
   const first = groupKey(selected[0])
-  return selected.every((it) => groupKey(it) === first)
+  // A proposal whose Accept can't be done here is never in a batch: its row offers no Approve.
+  return selected.every((it) => groupKey(it) === first && acceptOf(it)?.effect !== 'none')
 }
 
 /** Distinct group count — what the disabled control explains to the user. */

@@ -7,11 +7,13 @@ import { EmptyState } from '../../ui/ListScaffold'
 import { api, type InboxItem, type InboxProposal } from '../../lib/api'
 import {
   APPLY_CASE_LABEL,
+  acceptOf,
   applyCase,
   canBatchApprove,
   groupCount,
   groupLabel,
   proposalOf,
+  refusalText,
 } from './proposalLens'
 import { verifyNote } from './inboxMeta'
 import { MarkdownLine } from '../../ui/MarkdownLine'
@@ -177,6 +179,10 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
           const kase = p ? applyCase(p) : ''
           // A learning row names its kind as Needs you's card does, by its tag, and opens its panel.
           const tag = learningTag(it)
+          // What its Accept does, as its card says; a plan shape's can't be done here, so it says
+          // why and offers no Approve.
+          const said = acceptOf(it)
+          const none = said?.effect === 'none'
           const outcome = outcomes[it.id]
           return (
             <div
@@ -185,11 +191,13 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
               style={{ background: 'var(--color-surface-container)' }}
             >
               <div className="flex items-start gap-s">
-                <Checkbox
-                  checked={selected.has(it.id)}
-                  onChange={() => toggle(it.id)}
-                  ariaLabel={`Select proposal: ${previewLine(p?.title || it.message)}`}
-                />
+                {!none ? (
+                  <Checkbox
+                    checked={selected.has(it.id)}
+                    onChange={() => toggle(it.id)}
+                    ariaLabel={`Select proposal: ${previewLine(p?.title || it.message)}`}
+                  />
+                ) : null}
                 <div className="min-w-0 flex-1">
                   <div data-type="label-m" className="line-clamp-2 break-words text-on-surface" style={fvs(500)}>
                     <MarkdownLine text={p?.title || it.message} tooltip={false} />
@@ -199,16 +207,20 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                     {tag ? (
                       <>
                         <span>· {tag}</span>
+                        {said && !none ? <span>· {said.sentence}</span> : null}
                         <TextLink href={`#/mission-control?open=${encodeURIComponent(`note:${it.id}`)}`} ink="emphasis" size="sm">Review it in Needs you</TextLink>
                       </>
-                    ) : kase ? (
-                      <span>· {APPLY_CASE_LABEL[kase]}</span>
-                    ) : (
+                    ) : kase && !none ? (
+                      <span>· {said?.sentence ?? APPLY_CASE_LABEL[kase]}</span>
+                    ) : kase ? null : (
                       <span className="inline-flex items-center gap-1 text-warn">
                         <AlertTriangle size={11} /> no runnable action
                       </span>
                     )}
                   </div>
+                  {none && (
+                    <p data-type="body-s" className="mt-0.5 text-on-surface">{said?.sentence}</p>
+                  )}
                   {verifyNote(it) && (
                     <div data-type="caption" className="mt-0.5 text-on-surface-low">{verifyNote(it)}</div>
                   )}
@@ -240,7 +252,7 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                       ? `mt-s ${outcome.ok ? 'text-ok' : 'text-danger'}`
                       : 'sr-only'}
                   >
-                    {outcome ? (outcome.ok ? 'Applied.' : `Not applied — ${outcome.error}. Still pending.`) : ''}
+                    {outcome ? (outcome.ok ? 'Applied.' : refusalText(outcome.error, kase === 'skill_promotion')) : ''}
                   </div>
                   {editing === it.id && p && (
                     <div className="mt-s flex flex-col gap-s">
@@ -268,7 +280,7 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                     </div>
                   )}
                 </div>
-                {editing !== it.id && (
+                {editing !== it.id && !none && (
                   <div className="flex shrink-0 items-center gap-s">
                     {p?.editable && (
                       <Button size="sm" variant="secondary" onClick={() => startEdit(it, p)}>

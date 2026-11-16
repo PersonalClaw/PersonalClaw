@@ -8,7 +8,7 @@ import type { InboxItem } from '../../lib/api'
 // ── The Proposals lens's two feedback channels must reach assistive tech ─────────────────────────
 //
 // Applying a proposal is a write with exactly one visible result: a line under the row saying
-// "Applied." or "Not applied — <error>. Still pending." Two things stopped that reaching a screen
+// "Applied." or "Not applied: <error>. It still waits." Two things stopped that reaching a screen
 // reader, and both had a documented in-repo answer:
 //
 // 1. The outcome's `role="status"` lived on a CONDITIONALLY MOUNTED div (`{outcome && …}`), so the
@@ -77,7 +77,7 @@ describe('proposal apply feedback is announced', () => {
     const approve = await waitFor(() => screen.getByRole('button', { name: /^Approve$/ }))
     await act(async () => { approve.click() })
     await waitFor(() => expect(outcomeNodes(container)[0].textContent)
-      .toBe('Not applied — dispatcher refused. Still pending.'))
+      .toBe('Not applied: dispatcher refused. It still waits.'))
   })
 
   it('the region is not conditionally mounted — the shape that could not announce', () => {
