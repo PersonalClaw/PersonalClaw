@@ -17,8 +17,9 @@ import { SAVED_LINES } from './ProjectAbout'
  *
  *  The folder's tree (`?open=folder`) and what a new chat here is told (`?open=told`). A waiting
  *  item's detail is Home's (`NeedDetail`), a task's is the Tasks page's (`TaskDetail`), and the new
- *  task form is the create page's body (`TaskCreateForm`). The library's preview and forms are the
- *  library's (commit 2). */
+ *  task form is the create page's body (`TaskCreateForm`). A result's or knowledge item's preview
+ *  is the library's (`LibraryPreview`), and so are the note, link and recorder forms
+ *  (`LibraryAddForm`), filing into the project. */
 
 /** Why a folder read failed, in words: a 404 says the folder is gone, anything else that it
  *  could not be read. */

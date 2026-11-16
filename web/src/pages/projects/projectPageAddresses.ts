@@ -2,9 +2,9 @@
  *
  *  `#/projects/<id>?open=<what>` opens one detail beside the work (pushed, so Back closes it):
  *  `need:<key>` the waiting item's detail, `task:<id>` a task and `task:new` the task form starting
- *  in this project, `folder` the folder's tree, `told` what a new chat here reads. The library's
- *  `artifact:<slug>` and `knowledge:<id>`, and its `note:new`, `link:new` and `audio:new` forms,
- *  are the library's parts (commit 2).
+ *  in this project, `folder` the folder's tree, `told` what a new chat here reads, `artifact:<slug>`
+ *  and `knowledge:<id>` the library's preview of a result or a knowledge item, and `note:new`,
+ *  `link:new` and `audio:new` the library's add forms, filing into this project.
  *
  *  Retired values are mapped by the page as it opens, before its project read answers, each
  *  replacing its history entry (`information-architecture.md:89-91`):

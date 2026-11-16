@@ -1424,6 +1424,12 @@ const UNBOUND_ERROR_BUDGET: Record<string, number> = {
   // is decoration beside the tab's own panel, whose reads say when they fail; unread, a tab says nothing
   // rather than a 0 (`aTabFactNeverSaysZero`).
   'pages/library/PowerUserTabs.tsx': 3,
+  // KEEPS, each a part's extra beside a read that says when it fails. The projects list gives the
+  // title at once while the project read is out (that read draws the page and its errors) and names
+  // the library preview's quick "Move to <the project you were last in>": failed, that row is left
+  // out and Add to project… stays, whose picker reads the list itself and says when it can't. The
+  // instruction proposals read adds "N changes proposed" to About › Instructions, and the config read
+  // its "Update them" line: failed, each line is left out and the part still draws and edits.
   'pages/projects/ProjectPage.tsx': 3,
   // `PromptDetail`, `SnippetDetail` and `AppsPanel` are GONE from this map, not zeroed. All three
   // were the pure eternal-spinner shape with nothing else wrong: the fetcher propagated correctly,

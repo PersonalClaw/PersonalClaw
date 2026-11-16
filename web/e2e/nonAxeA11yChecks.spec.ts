@@ -112,7 +112,93 @@ test('the non-axe detectors still recognise the defects they exist for', async (
     'an inset ring is the prescribed fix and must NOT be reported',
   ).not.toContain('probe-clipped')
 
-  await page.evaluate(`(() => { document.getElementById('non-axe-probe')?.remove() })()`)
+  // The fold, measured: a button flush against the bottom of a scroller that fills an overflow-hidden
+  // box. The detector focuses it for real and reads its ring again, so what is a finding is what
+  // Chromium leaves cut. Each button clips its own text (under the app's font it would wrap, and its
+  // overflow would give the scroller room past its end), so it clips its own overflow too, and focus
+  // then stops at its padding box: its border counts against the scroll padding.
+  //   a: no scroll padding: focus leaves it where it is, cut by its ring: a finding.
+  //   b: a 2 px border and a scroll padding equal to the ring: focus scrolls it 2 px, still cut: a finding.
+  //   c: the same at a scroll padding of 8: focus scrolls it 6 px, clear of its ring: not a finding.
+  //   d: the same with nothing below it to scroll to: focus cannot move it: a finding.
+  //   e: borderless at a scroll padding equal to the ring: focus scrolls it 4 px, clear: not a finding.
+  //   h: a borderless link at the same edge (a project page's Open in Library): clear, not a finding.
+  //   i: a borderless button at a scroll padding of 8 in a scroller a stylesheet makes scroll smoothly:
+  //      the detector reads the end of the scroll, not its first frame: clear, not a finding.
+  // And the cut it counts, with no scroller: a ring cut by 1 px is a finding (f), one that just fits is
+  // not (g).
+  await page.evaluate(`(() => {
+    const host = document.getElementById('non-axe-probe')
+    const row = (name, border, pad, below) => {
+      const frame = document.createElement('div')
+      frame.style.cssText = 'overflow:hidden;width:140px;height:64px;margin:8px 0'
+      const scroller = document.createElement('div')
+      scroller.style.cssText = 'overflow:auto;width:140px;height:64px;scroll-padding-block:' + pad + 'px'
+      const above = document.createElement('div')
+      above.style.cssText = 'height:32px'
+      const button = document.createElement('button')
+      button.style.cssText = 'display:block;box-sizing:border-box;margin:0 10px;width:80px;height:32px;overflow:hidden;white-space:nowrap;'
+        + 'border:' + border + 'px solid #888;outline:2px solid red;outline-offset:2px'
+      button.textContent = name
+      const rest = document.createElement('div')
+      rest.style.cssText = 'height:' + below + 'px'
+      scroller.append(above, button, rest)
+      frame.appendChild(scroller)
+      host.appendChild(frame)
+    }
+    row('probe-fold-a-unpadded', 2, 0, 40)
+    row('probe-fold-b-border', 2, 4, 40)
+    row('probe-fold-c-clear', 2, 8, 40)
+    row('probe-fold-d-end', 2, 8, 0)
+    row('probe-fold-e-borderless', 0, 4, 40)
+    const smooth = document.createElement('style')
+    smooth.id = 'non-axe-probe-smooth'
+    smooth.textContent = '#non-axe-probe .probe-smooth { scroll-behavior: smooth }'
+    document.head.appendChild(smooth)
+    row('probe-fold-i-smooth', 0, 8, 40)
+    host.lastElementChild.firstElementChild.classList.add('probe-smooth')
+    const link = document.createElement('a')
+    link.href = '#non-axe-probe'
+    link.textContent = 'probe-fold-h-link'
+    link.style.cssText = 'display:inline-block;margin:0 10px;height:32px;line-height:32px;overflow:visible;white-space:nowrap;outline:2px solid red;outline-offset:2px'
+    const lframe = document.createElement('div')
+    lframe.style.cssText = 'overflow:hidden;width:200px;height:64px;margin:8px 0'
+    const lscroller = document.createElement('div')
+    lscroller.style.cssText = 'overflow:auto;width:200px;height:64px;scroll-padding-block:4px'
+    const labove = document.createElement('div')
+    labove.style.cssText = 'height:32px'
+    const lbelow = document.createElement('div')
+    lbelow.style.cssText = 'height:40px'
+    lscroller.append(labove, link, lbelow)
+    lframe.appendChild(lscroller)
+    host.appendChild(lframe)
+    const cut = (name, top) => {
+      const frame = document.createElement('div')
+      frame.style.cssText = 'overflow:hidden;width:140px;height:64px;margin:8px 0'
+      const button = document.createElement('button')
+      button.style.cssText = 'display:block;box-sizing:border-box;margin:' + top + 'px 10px 0;width:80px;height:32px;overflow:hidden;white-space:nowrap;'
+        + 'border:0;outline:2px solid red;outline-offset:2px'
+      button.textContent = name
+      frame.appendChild(button)
+      host.appendChild(frame)
+    }
+    cut('probe-cut-f-by1', 29)
+    cut('probe-cut-g-fits', 28)
+  })()`)
+  const fold = (await page.evaluate<string[]>(`(${CLIPPED_RING})()`)).join('\n')
+  expect(fold, "a ring at a scroller's edge with no scroll padding stays cut when focused, so it is a finding").toContain('probe-fold-a-unpadded')
+  expect(fold, "a scroll padding no wider than the ring leaves a bordered control that clips its overflow cut, so it is a finding").toContain('probe-fold-b-border')
+  expect(fold, "a ring at a scroller's edge that a real focus scrolls clear is the fold, not a finding").not.toContain('probe-fold-c-clear')
+  expect(fold, 'a scroll padding does not help a ring at an edge the scroller cannot scroll past, so it is a finding').toContain('probe-fold-d-end')
+  expect(fold, "a borderless control's focus clears the full scroll padding, so its ring shows: not a finding").not.toContain('probe-fold-e-borderless')
+  expect(fold, "a borderless link at a padded edge comes in clear of its ring when focused: not a finding").not.toContain('probe-fold-h-link')
+  expect(fold, 'a scroller that scrolls smoothly is read at the end of the scroll: not a finding').not.toContain('probe-fold-i-smooth')
+  expect(fold, 'a ring cut by 1 px is a finding').toContain('probe-cut-f-by1')
+  expect(fold, 'a ring that just fits its box is not a finding').not.toContain('probe-cut-g-fits')
+  const restored = await page.evaluate(() => [...document.querySelectorAll('#non-axe-probe div')].every((d) => d.scrollTop === 0))
+  expect(restored, 'the detector puts every scroll position back after its real focus').toBe(true)
+
+  await page.evaluate(`(() => { document.getElementById('non-axe-probe')?.remove(); document.getElementById('non-axe-probe-smooth')?.remove() })()`)
 })
 
 // ── The other half of anti-vacuity: a scanned route must actually RENDER something ────────────────

@@ -10,9 +10,7 @@
         "button \"Close folder\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand folder\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "390": [
@@ -24,9 +22,7 @@
         "button \"Close folder\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand folder\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "412": [
@@ -38,9 +34,7 @@
         "button \"Close folder\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand folder\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "768": [
@@ -53,9 +47,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Expand folder\"",
         "button \"Move folder\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\"",
         "div[role=separator] \"Resize folder — arrow keys to resize\""
       ]
@@ -84,9 +76,7 @@
         "button \"Close folder\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand folder\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "390": [
@@ -98,9 +88,7 @@
         "button \"Close folder\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand folder\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "412": [
@@ -112,9 +100,7 @@
         "button \"Close folder\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand folder\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "768": [
@@ -127,9 +113,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Expand folder\"",
         "button \"Move folder\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\"",
         "div[role=separator] \"Resize folder — arrow keys to resize\""
       ]

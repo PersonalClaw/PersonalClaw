@@ -25,8 +25,9 @@ import { SignedImg } from './SignedMedia'
  *  both as a sheet with `phoneSheet`. On a desktop the menu is the row's right click or Shift+F10,
  *  and the preview's More.
  *
- *  **Compact** (the Projects page's About › Knowledge): the icon, the title and "From <project>" or
- *  "Added by <name>" alone, in a box of at least 44 px from 320 to 768 px. */
+ *  **Compact** (the Projects page's About › Knowledge): the icon, the title and "Added by <name>",
+ *  or "From <project>" for an item shared from another project, alone (an item of the page's own
+ *  project says neither), in a box of at least 44 px from 320 to 768 px. */
 export function LibraryRow({ item, ctx, group = '', selected = false, onOpen, onFilterProject, menu = [], checked, onCheck, compact = false, phoneSheet = false, now }: {
   /** The row, as `GET /api/library` answers it. */
   item: LibraryItem
@@ -58,7 +59,7 @@ export function LibraryRow({ item, ctx, group = '', selected = false, onOpen, on
   const phone = useIsMobile()
   const title = titleOf(item)
   const parts: MetaPart[] = compact
-    ? compactParts(item)
+    ? compactParts(item, ctx)
     : phone ? phoneMetaParts(item, ctx, group, now) : metaParts(item, ctx, now)
   const name = [rowName(item, parts), item.pinned && !compact ? 'Pinned' : ''].filter(Boolean).join(', ')
   const mark = compact ? null: stateMarkOf(item, ctx)
@@ -158,10 +159,12 @@ function Tile({ item, Icon, small }: { item: LibraryItem; Icon: ReturnType<typeo
   )
 }
 
-/** The compact form's one line: who it is from, as the Projects page names it. */
-function compactParts(item: LibraryItem): MetaPart[] {
+/** The compact form's one line: who it is from, as the Projects page names it. A teammate's says
+ *  who added it, an item shared from another project names that project, and the page's own
+ *  project's (`ctx.project`) says nothing. */
+function compactParts(item: LibraryItem, ctx?: LibraryContext): MetaPart[] {
   if (item.contributor) return [{ part: 'maker', text: `Added by ${item.contributor}` }]
-  if (item.project) return [{ part: 'maker', text: `From ${item.project.name}` }]
+  if (item.project && item.project.id !== ctx?.project) return [{ part: 'maker', text: `From ${item.project.name}` }]
   return []
 }
 

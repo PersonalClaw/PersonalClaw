@@ -21,7 +21,8 @@ import { TERMINAL } from '../tasks/taskMeta'
  *     lists, by the rule `/work` follows: a task in a list whose `loop_id` names one of those loops,
  *     and a task one of those loops links (`linked_task_ids`). The loop's own row stands for its
  *     steps. While the thread read has failed, the page lists no loop, so no step is left out.
- *  5. **Results** are the library's (commit 2).
+ *  5. **Results**: the project's artifacts, from its one library read (`useProjectLibrary`), as
+ *     the library's cards; its knowledge items are About › Knowledge's.
  *  6. **Recent**: everything else of the project that is not live: its chats, goal loops and code
  *     sessions from the thread read, and its finished runs from the board. Pinned first, then the
  *     latest activity, ties by key.

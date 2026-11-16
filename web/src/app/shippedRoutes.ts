@@ -219,6 +219,13 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: `projects/${S.project}?open=task%3Anew`, from: ['documented'] },
   { route: `projects/${S.project}?open=folder`, from: ['documented'] },
   { route: `projects/${S.project}?open=told`, from: ['documented'] },
+  // The library's parts beside a project's work (PROJ PR 4, its second PR): an item's preview, and the
+  // library's note, link and recorder forms filing into the project.
+  { route: `projects/${S.project}?open=artifact%3A${S.artifact}`, from: ['documented'] },
+  { route: `projects/${S.project}?open=knowledge%3A${S.knowledge}`, from: ['documented'] },
+  { route: `projects/${S.project}?open=note%3Anew`, from: ['documented'] },
+  { route: `projects/${S.project}?open=link%3Anew`, from: ['documented'] },
+  { route: `projects/${S.project}?open=audio%3Anew`, from: ['documented'] },
   // The old page's side panels, retired: the page maps each as it opens, before its project read
   // answers, replacing the entry.
   // The Tasks view keeps `list` for a list it holds; on an empty home there is none, so it settles on the view.

@@ -10,9 +10,7 @@
         "button \"Close detail\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand detail\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "390": [
@@ -24,9 +22,7 @@
         "button \"Close detail\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand detail\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "412": [
@@ -38,9 +34,7 @@
         "button \"Close detail\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand detail\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "768": [
@@ -53,9 +47,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Expand detail\"",
         "button \"Move detail\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\"",
         "div[role=separator] \"Resize detail — arrow keys to resize\""
       ]
@@ -78,9 +70,7 @@
         "button \"Close detail\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand detail\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "390": [
@@ -92,9 +82,7 @@
         "button \"Close detail\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand detail\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "412": [
@@ -106,9 +94,7 @@
         "button \"Close detail\"",
         "button \"Execution boundary: Normal\"",
         "button \"Expand detail\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\""
       ],
       "768": [
@@ -121,9 +107,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Expand detail\"",
         "button \"Move detail\"",
-        "button \"New\"",
         "button \"Send message\"",
-        "button \"Start work in Garden\"",
         "button \"Task mode: Agent\"",
         "div[role=separator] \"Resize detail — arrow keys to resize\""
       ]

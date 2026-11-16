@@ -136,8 +136,8 @@ export const CLIPPED_RING = `() => {
   const restore = document.activeElement
   const out = []
   for (const el of els) {
-    const r = el.getBoundingClientRect()
-    if (r.width < 8 || r.height < 8) continue
+    const r0 = el.getBoundingClientRect()
+    if (r0.width < 8 || r0.height < 8) continue
     try { el.focus({ preventScroll: true }) } catch (e) { continue }
     const cs = getComputedStyle(el)
     const w = parseFloat(cs.outlineWidth) || 0
@@ -158,7 +158,28 @@ export const CLIPPED_RING = `() => {
     const clipStyle = getComputedStyle(cl)
     const hidesX = ['hidden','clip'].includes(clipStyle.overflowX)
     const hidesY = ['hidden','clip'].includes(clipStyle.overflowY)
-    const box = cl.getBoundingClientRect()
+    // MEASURED, NOT MODELLED (coordinator 11-15; CORE review of the ring delta). The ring is read
+    // where a keyboard user sees it: after a real focus, which scrolls the control in as Tab does
+    // (by a scroller's scroll padding, its offset stopping at the control's padding box when the
+    // control clips its own overflow, on whole pixels). Every ancestor's scroll position is saved
+    // first and put back after, with smooth scrolling made instant while it is read, and the control
+    // is blurred first: focusing an element that has focus does nothing, so it would never scroll.
+    const saved = []
+    for (let p = el.parentElement; p; p = p.parentElement) saved.push([p, p.scrollTop, p.scrollLeft, p.style.scrollBehavior])
+    const se = document.scrollingElement
+    if (se && !saved.some(([p]) => p === se)) saved.push([se, se.scrollTop, se.scrollLeft, se.style.scrollBehavior])
+    for (const [p] of saved) p.style.scrollBehavior = 'auto'
+    let r = r0
+    let box = null
+    try {
+      el.blur()
+      el.focus()
+      r = el.getBoundingClientRect()
+      box = cl.getBoundingClientRect()
+    } finally {
+      for (const [p, t, l, b] of saved) { p.scrollTop = t; p.scrollLeft = l; p.style.scrollBehavior = b }
+      try { el.focus({ preventScroll: true }) } catch (e) { /* ignore */ }
+    }
     // A clipper that clips on both axes paints out to its clip margin (a rendered body's room for a
     // ring), so its edge is that far out. A browser that reads no clip margin reports none.
     const clipsBoth = clipStyle.overflowX === 'clip' && clipStyle.overflowY === 'clip'

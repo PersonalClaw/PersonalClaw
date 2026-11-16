@@ -5,7 +5,7 @@ import { useGatewayConnection } from '../../app/gatewayConnection'
 import { reportingWrite } from '../../app/reportingWrite'
 import { notify } from '../../app/appSdk'
 import { useProjectPageActions } from '../../app/projectPageActions'
-import { api, ApiError, type LoopKind, type ProjectItem, type WorkRow } from '../../lib/api'
+import { api, ApiError, type LibraryItem, type LoopKind, type ProjectItem, type WorkRow } from '../../lib/api'
 import { invalidateKeys, useQuery } from '../../lib/data'
 import { DEFAULT_PROJECT_KEY, useDefaultProject, useProjectPins } from '../../lib/defaultProject'
 import { downloadFrom } from '../../lib/download'
@@ -36,10 +36,18 @@ import { NeedDetail, needName, rowKey } from '../dashboard/NeedCards'
 import { TaskList } from '../tasks/TasksSection'
 import { TaskCreateForm } from '../tasks/TaskCreatePage'
 import { TaskDetail } from '../tasks/TaskDetail'
-import { BriefPart, FolderPart, InstructionsPart, ProjectAbout, SecretsPart, ToldPart } from './ProjectAbout'
+import { BriefPart, FolderPart, InstructionsPart, KnowledgePart, ProjectAbout, SecretsPart, ToldPart } from './ProjectAbout'
 import { FolderTree as FolderTreeDetail, ToldDetail } from './ProjectDetails'
 import { ProjectNeedsYou, ProjectRunning } from './ProjectLive'
-import { RecentGroup, TasksGroup, UpNextGroup } from './ProjectWork'
+import { RecentGroup, ResultsGroup, TasksGroup, UpNextGroup } from './ProjectWork'
+import { useProjectLibrary } from './useProjectLibrary'
+import { chatLaunchPath } from '../../app/linkState'
+import { LibraryAddForm, type AddForm } from '../../ui/LibraryAddMenu'
+import { LibraryPreview } from '../../ui/LibraryPreview'
+import { ProjectPickerDialog } from '../../ui/ProjectPicker'
+import { ChatPicker } from '../chat/ChatPicker'
+import { chipRefOf, fileInto, LAST_PROJECT_KEY, readLast, type ActionInputs } from '../library/libraryActions'
+import { useWriteUps } from '../library/useLibrary'
 import { ProjectStartBox } from './ProjectStartBox'
 import { ProjectTitle } from './ProjectTitle'
 import { confirmArchiveProject, confirmDeleteProject, confirmForceDeleteProject } from './projectConfirms'
@@ -55,6 +63,11 @@ import { openValue, projectDetail, retiredPanelPatch, type ProjectDetail } from 
  *  below that. One detail at a time opens beside the work (`?open=`, pushed, so Back closes it, and
  *  Esc closes it with focus back where it came from, `PaneHost`); while one is open it takes
  *  About's column and gives it back on close.
+ *
+ *  What its work made (Results) and what its agents know (About › Knowledge) are the library's,
+ *  from one read (`useProjectLibrary`): its cards and compact rows, its preview beside the work,
+ *  and its Add and add forms, filing into the project. From 320 to 768 px the header's New and
+ *  "…", Add and the preview's menus open as phone sheets, the library's form for a menu there.
  *
  *  Its address (`projectPageAddresses`): `?q=` searches the page's rows, `?open=` the detail,
  *  `?rename=1` opens the title in edit mode (read once, dropped with a replace whether or not the
@@ -132,7 +145,7 @@ export function ProjectPage({ id, navigate, query, setQuery, navEpoch }: { id: s
     return <ProjectTasksView id={id} project={project ?? cached ?? null} navigate={navigate} query={query} setQuery={setQuery} navEpoch={navEpoch}
       renameAsked={renameAsked} onRenameTaken={() => setRenameAsked(false)} />
   }
-  return <ProjectOverview id={id} project={project ?? null} cached={cached ?? null} navigate={navigate} query={query} setQuery={setQuery}
+  return <ProjectOverview id={id} project={project ?? null} cached={cached ?? null} projects={cachedList} navigate={navigate} query={query} setQuery={setQuery}
     renameAsked={renameAsked} onRenameTaken={() => setRenameAsked(false)} refresh={refresh} />
 }
 
@@ -204,10 +217,14 @@ function ProjectTasksView({ id, project, navigate, query, setQuery, navEpoch, re
   )
 }
 
-function ProjectOverview({ id, project, cached, navigate, query, setQuery, renameAsked, onRenameTaken, refresh }: {
+function ProjectOverview({ id, project, cached, projects, navigate, query, setQuery, renameAsked, onRenameTaken, refresh }: {
   id: string
   project: ProjectItem | null
   cached: ProjectItem | null
+  /** The page's projects read (`PROJECT_LIST_KEY`): the library preview's quick "Move to <the
+   *  project you were last in>" row names one from it. Unread or failed, the row is left out and
+   *  Add to project… stays, whose picker reads the list itself and says when it can't. */
+  projects: ProjectItem[] | undefined
   renameAsked: boolean
   onRenameTaken: () => void
   refresh: () => void
@@ -234,6 +251,11 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
   const { data: told, error: toldError, refresh: refreshTold } = useQuery(`projects:told:${id}`, () => api.alwaysOn(id))
   const { data: proposals } = useQuery('learning:proposals:project_instruction', () => api.learningProposals({ kind: 'project_instruction' }))
   const { data: pcfg } = useQuery('config:personalclaw', () => api.personalclawConfig())
+  // What its work made and what its agents know: one library read, split by store.
+  const library = useProjectLibrary(id)
+  const writeUps = useWriteUps()
+  const [pickingChat, setPickingChat] = useState<LibraryItem | null>(null)
+  const [pickingProject, setPickingProject] = useState<LibraryItem | null>(null)
   const adaptersEnabled = Boolean((pcfg as { legibility?: { context_adapters?: boolean } } | undefined)?.legibility?.context_adapters)
   const folderState = useWorkspaceState(project?.workspace_dir, { recheck: project })
   const { defaultProjectId, setDefaultProject, pending: defaultPending } = useDefaultProject()
@@ -268,6 +290,14 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
   const detail: ProjectDetail | null = projectDetail(query.open)
   const openDetail = (d: ProjectDetail) => setQuery({ open: openValue(d) })
   const closeDetail = () => setQuery({ open: null })
+  /** Open a library item's preview beside the work, by its ref (`artifact:<slug>`, `knowledge:<id>`). */
+  const openItem = (item: Pick<LibraryItem, 'ref'>) => {
+    const at = item.ref.indexOf(':')
+    const kind = item.ref.slice(0, at), rest = item.ref.slice(at + 1)
+    if (kind === 'artifact') openDetail({ kind: 'artifact', slug: rest })
+    else if (kind === 'knowledge') openDetail({ kind: 'knowledge', id: rest })
+  }
+  const openAdd = (form: AddForm) => openDetail({ kind: form === 'note' ? 'new-note' : form === 'link' ? 'new-link' : 'new-audio' })
   const waitingItems = useMemo(() => needs.rows.flatMap((r) => (r.origin === 'waiting' ? [r.item] : [])), [needs.rows])
   const now = useStaleAt(waitingItems)
   const { outcomes, actions } = useNeedActions(needs.refresh)
@@ -348,6 +378,19 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
   const firstRun = !!project && needsAll && !liveFailed && live.needsYou.length === 0 && live.running.length === 0 && upNext.length === 0
     && !!tasks && !tasks.any && recent.length === 0 && !threadsFailed && !runsFailed
 
+  // What the library's preview does here: its New chat with this opens the chat in this project,
+  // and its Open adds `back=project:<id>` (`libraryActions`).
+  const libActions: ActionInputs = {
+    navigate: (path) => navigate(path),
+    writeUps,
+    project: id,
+    projects: (projects ?? []).map((p) => ({ id: p.id, name: p.name })),
+    chatTitle: (key) => threads.find((t) => t.id === key || t.key === key)?.title ?? '',
+    pickChat: setPickingChat,
+    pickProject: setPickingProject,
+    offReason,
+  }
+
   const pane: PaneContent | null = !project || !detail ? null : (() => {
     switch (detail.kind) {
       case 'need': {
@@ -379,6 +422,24 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
       case 'told':
         return { id: 'told', title: `What a new chat in ${name} is told`, label: 'detail', onClose: closeDetail,
           body: <ToldDetail projectId={id} projectName={name} read={told} failed={!told && !!toldError} onRetry={refreshTold} /> }
+      case 'artifact':
+      case 'knowledge': {
+        const ref = detail.kind === 'artifact' ? `artifact:${detail.slug}` : `knowledge:${detail.id}`
+        const item = [...library.results.rows, ...library.knowledge.rows].find((i) => i.ref === ref)
+        // The pane names the group it came from: the preview's own heading is the item's title.
+        return { id: ref, title: detail.kind === 'artifact' ? 'Result' : 'Knowledge item', label: 'item', onClose: closeDetail,
+          body: item ? <LibraryPreview key={item.ref} item={item} actions={libActions} phoneSheet />
+            : library.loading ? <p data-type="body-s" className="px-m py-s text-on-surface-low">Loading…</p>
+              : <Gone text="Nothing in your library has this address." onClose={closeDetail} /> }
+      }
+      case 'new-note':
+      case 'new-link':
+      case 'new-audio': {
+        const form: AddForm = detail.kind === 'new-note' ? 'note' : detail.kind === 'new-link' ? 'link' : 'audio'
+        return { id: openValue(detail), title: form === 'note' ? 'New note' : form === 'link' ? 'Add a link' : 'Record audio', label: 'form', onClose: closeDetail,
+          body: <LibraryAddForm key={form} form={form} project={{ id, name }} onClose={closeDetail}
+            onAdded={(ref) => { library.refresh(); if (ref) openItem({ ref }); else closeDetail() }} /> }
+      }
       default:
         return null
     }
@@ -402,7 +463,7 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
     </div>
   )
   const right = (
-    <HeaderActions overflowClassName={TOUCH_TARGET}>
+    <HeaderActions overflowClassName={TOUCH_TARGET} overflowPhoneSheet>
       <HeaderSearch value={q} onChange={(v) => setQuery({ q: v || null }, { replace: true })} placeholder={`Search ${name || 'this project'}`} />
       <HeaderControl icon={Pin} label={pinned ? 'Unpin' : 'Pin to the top'} onClick={togglePin} inOverflow disabled={!!pinOff} disabledReason={pinOff} />
       <HeaderControl icon={Star} label={isDefault ? 'Default project' : 'Make default project'} inOverflow
@@ -418,7 +479,7 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
       <HeaderControl icon={Trash2} label="Delete project…" inOverflow danger onClick={() => void del()}
         disabled={builtIn || offline} disabledReason={offReason ?? (builtIn ? `${name} is built in. It can't be deleted.` : undefined)} />
       <HeaderMenu icon={Plus} label="New" variant="primary" priority="primary" title={`Start work in ${name}`} items={menuItems}
-        disabled={!!startReason} />
+        disabled={!!startReason} className={TOUCH_TARGET} phoneSheet />
     </HeaderActions>
   )
   const madeFor = project?.made_for
@@ -445,7 +506,8 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
   const shownUpNext = upNext.filter((r) => matches(r.title))
   const shownTasks = tasks ? { ...tasks, open: tasks.open.filter((t) => matches(t.title)) } : null
   const shownRecent = recent.filter((r) => matches(r.kind === 'thread' ? r.thread.title : r.row.title))
-  const shownCount = shownNeeds.length + shownRunning.length + shownUpNext.length + (shownTasks?.open.length ?? 0) + shownRecent.length
+  const shownResults = { ...library.results, rows: library.results.rows.filter((i) => matches(i.title)) }
+  const shownCount = shownNeeds.length + shownRunning.length + shownUpNext.length + (shownTasks?.open.length ?? 0) + shownResults.rows.length + shownRecent.length
   const nothingMatches = !!needle && shownCount === 0
   const work = (
     <div className="flex min-w-0 flex-col gap-l">
@@ -490,6 +552,8 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
         openTask={detail?.kind === 'task' ? detail.id : undefined}
         onOpenTask={(tid) => openDetail({ kind: 'task', id: tid })} onNewTask={() => openDetail({ kind: 'new-task' })}
         onSeeAll={() => setQuery({ tab: 'tasks', open: null, q: null }, { replace: true })} offReason={startReason} />
+      <ResultsGroup projectId={id} part={shownResults} open={detail?.kind === 'artifact' ? `artifact:${detail.slug}` : undefined}
+        onOpen={openItem} onRetry={library.refresh} />
       <RecentGroup rows={shownRecent}
         threadsFailed={threadsFailed} runsFailed={runsFailed} onRetry={() => { threadsRead.refresh(); refreshBoard() }} onOpen={navigate} />
       {/* What the search leaves, said to a screen reader as the rows narrow (`ListControls`). */}
@@ -510,6 +574,8 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
       <FolderPart project={project} state={folderState} offReason={offReason} onOpen={() => openDetail({ kind: 'folder' })}
         onChange={() => setPickFolder(true)} onRemove={() => void patch({ workspace_dir: '' })}
         onTrustChanged={() => { invalidateKeys(`projects:detail:${id}`); refresh() }} />
+      <KnowledgePart project={project} part={library.knowledge} open={detail?.kind === 'knowledge' ? `knowledge:${detail.id}` : undefined}
+        onOpen={openItem} onAdd={openAdd} onRetry={library.refresh} offReason={offReason} />
       <ToldPart read={told} failed={!told && !!toldError} onSee={() => openDetail({ kind: 'told' })} onRetry={refreshTold} />
       <SecretsPart project={project} />
     </ProjectAbout>
@@ -526,10 +592,12 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* The detail scrolls in its own scroller: PaneHost's body slot gives it the pane's height and no
             overflow, and none of the details here (a need, a task, the new task form, the folder, what
-            a new chat is told) scrolls itself. */}
+            a new chat is told) scrolls itself. Each scroller's scroll padding keeps a focused control's
+            ring clear of its fold: focus scrolls the control in by it, and `s` is more than the 4 px ring
+            in every density (`--space-scale`). */}
         <PaneHost surface="project" size={{ def: 336, min: 320, max: 640 }}
-          pane={pane && { ...pane, body: <div className="h-full overflow-y-auto">{pane.body}</div> }}>
-          <div className="h-full overflow-y-auto">
+          pane={pane && { ...pane, body: <div className="h-full scroll-py-s overflow-y-auto">{pane.body}</div> }}>
+          <div className="h-full scroll-py-s overflow-y-auto">
             <div className="mx-auto grid w-full min-w-0 grid-cols-1 gap-l px-l py-l @[60rem]/page:grid-cols-[minmax(0,1fr)_336px]">
               <div className="min-w-0">{work}</div>
               {pane ? null : <div className="min-w-0">{about}</div>}
@@ -537,6 +605,16 @@ function ProjectOverview({ id, project, cached, navigate, query, setQuery, renam
           </div>
         </PaneHost>
       </div>
+      {/* The library preview's pickers: a chat to attach the item to, and a project to file it into. */}
+      {pickingChat ? (
+        <ChatPicker onClose={() => setPickingChat(null)}
+          onPick={(key) => { const chip = chipRefOf(pickingChat, writeUps); if (chip) navigate(chatLaunchPath({ session: key, attach: [chip] })) }} />
+      ) : null}
+      {pickingProject ? (
+        <ProjectPickerDialog itemTitle={pickingProject.title} current={pickingProject.project} lastOpened={readLast(LAST_PROJECT_KEY)}
+          defaultProject={defaultProjectId} phoneSheet onClose={() => setPickingProject(null)}
+          onPick={(to) => void fileInto(pickingProject, to, libActions)} />
+      ) : null}
       {pickFolder ? (
         <WorkspacePicker mode="brownfield" allowCreate onClose={() => setPickFolder(false)}
           onPick={(dir) => { setPickFolder(false); void patch({ workspace_dir: dir }) }} />

@@ -1,9 +1,11 @@
 import { useId, useState, type ReactNode } from 'react'
 import { Code2, Repeat, Workflow } from 'lucide-react'
-import type { TaskItem, WorkRow } from '../../lib/api'
+import type { LibraryItem, TaskItem, WorkRow } from '../../lib/api'
 import { previewLine } from '../../lib/previewText'
 import { Button } from '../../ui/Button'
+import { LibraryCard } from '../../ui/LibraryCard'
 import { MarkdownLine } from '../../ui/MarkdownLine'
+import { TextLink } from '../../ui/TextLink'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { TOUCH_TARGET } from '../../ui/Toggle'
 import { WINDOWING_THRESHOLD, WindowedList } from '../../ui/WindowedList'
@@ -13,6 +15,7 @@ import { runLook } from '../workflows/workflowMeta'
 import { ageWords, WORK_OUTCOME_LOOK, workRoute } from './ProjectWorkRow'
 import { ProjectThreadRow } from './ProjectThreadRow'
 import { upNextWords, type ProjectTasks, type RecentRow } from './projectPageModel'
+import type { ProjectLibraryPart } from './useProjectLibrary'
 
 /** ── A project's page: its work groups ────────────────────────────────────────────────────────
  *
@@ -232,3 +235,53 @@ function RunRow({ row, onOpen }: { row: WorkRow; onOpen: (route: string) => void
   )
 }
 
+
+/** The tiles Results draws: four across a wide page, two by two on a phone. */
+export const RESULTS_SHOWN = 4
+
+/** The library's address for one of the project's stores. */
+export const libraryOf = (projectId: string, store: 'artifacts' | 'knowledge') =>
+  `#/library?project=${encodeURIComponent(projectId)}&store=${store}`
+
+/** Results: the latest things the project's work made, each the library's card in its project form
+ *  ("From Plan the spring beds · yesterday"), opening the library's preview beside the work. "See
+ *  all 12 in Library" counts the store, as the read's facet says; a store that failed draws its line
+ *  and no count. Not drawn while there is nothing, or while the read has not answered. */
+export function ResultsGroup({ projectId, part, open, onOpen, onRetry }: {
+  projectId: string
+  part: ProjectLibraryPart
+  /** The item whose preview is open beside the work, by its ref. */
+  open?: string
+  onOpen: (item: LibraryItem) => void
+  onRetry: () => void
+}) {
+  const id = useId()
+  if (part.failed) {
+    return (
+      <section aria-labelledby={id} className="flex min-w-0 flex-col gap-xs">
+        <GroupHeader id={id} title="Results">
+          <TextLink href={libraryOf(projectId, 'artifacts')} size="sm" className={TOUCH_TARGET}>See all in Library</TextLink>
+        </GroupHeader>
+        <SourceFailed text="Couldn't load what its work made." onRetry={onRetry} />
+      </section>
+    )
+  }
+  if (part.rows.length === 0) return null
+  const shown = part.rows.slice(0, RESULTS_SHOWN)
+  return (
+    <section aria-labelledby={id} className="flex min-w-0 flex-col gap-xs">
+      <GroupHeader id={id} title="Results">
+        <TextLink href={libraryOf(projectId, 'artifacts')} size="sm" className={TOUCH_TARGET}>
+          {part.count !== null ? `See all ${part.count} in Library` : 'See all in Library'}
+        </TextLink>
+      </GroupHeader>
+      <ul className="grid min-w-0 grid-cols-2 gap-s @[40rem]/page:grid-cols-4">
+        {shown.map((item) => (
+          <li key={item.ref} className="min-w-0">
+            <LibraryCard item={item} form="project" selected={open === item.ref} onOpen={() => onOpen(item)} />
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
