@@ -101,7 +101,8 @@ describe('a confirmed delete reports its failure', () => {
     // These were PINNED as still-swallowing by the first slice. Now they must all be fixed — the same
     // list, flipped from a worklist into a ratchet.
     const slice: Array<[string, string]> = [
-      [join('knowledge', 'KnowledgeListPage.tsx'), 'deleteKnowledgeCollection'],
+      // The shelf delete is the library's Delete collection now (#6101).
+      [join('library', 'libraryCollections.ts'), 'deleteKnowledgeCollection'],
       [join('loops', 'DesignCockpitPage.tsx'), 'deleteULoop'],
       [join('loops', 'LoopCockpitPage.tsx'), 'deleteULoop'],
       [join('loops', 'LoopsListPage.tsx'), 'deleteULoop'],
@@ -112,7 +113,10 @@ describe('a confirmed delete reports its failure', () => {
       const at = src.indexOf(`api.${call}(`)
       expect(at, `${rel} must still perform the delete`).toBeGreaterThan(-1)
       if (/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src.slice(at, at + 160))) swallowing.push(`${rel}:${call}`)
-      if (rel === join('loops', 'LoopsListPage.tsx')) {
+      if (rel === join('library', 'libraryCollections.ts')) {
+        expect(src, `${rel} must report through the shared reporter`)
+          .toMatch(/reportingWrite\(`delete the collection “\$\{c\.name\}”`, \(\) => api\.deleteKnowledgeCollection\(c\.id\)\)/)
+      } else if (rel === join('loops', 'LoopsListPage.tsx')) {
         // This one delete moved onto its file's own reportingWrite convention (every
         // other write there already rode it). The shared reporter IS the report — it owns the
         // same "Couldn't …" toast — so the pin follows the write to the funnel that carries it.
@@ -240,8 +244,8 @@ describe('a confirmed delete reports its failure', () => {
     // Pins defect 3. These were reachable by no ratchet before: the app-wide sweep only knew the dialog
     // idiom, and the slice list above names only the three in `loops/`.
     const arm = confirmGatedCalls().filter((g) => g.idiom === 'arm')
+    // The old list's two-step intent delete left with it (#6101): the library's set-up asks in a dialog.
     for (const [rel, call] of [
-      [join('knowledge', 'KnowledgeListPage.tsx'), 'deleteKnowledgeIntent'],
       [join('loops', 'LoopsListPage.tsx'), 'deleteULoop'],
       [join('loops', 'DesignCockpitPage.tsx'), 'deleteULoop'],
       [join('loops', 'LoopCockpitPage.tsx'), 'deleteULoop'],

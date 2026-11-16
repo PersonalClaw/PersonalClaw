@@ -312,8 +312,14 @@ function downloadUrlOf(item: LibraryItem): string {
 async function textOf(item: LibraryItem, writeUps: WriteUps): Promise<string> {
   const kind = refKind(item.ref)
   if (kind === 'findings') {
-    const { outcomes } = await api.knowledgeIntentOutcomes(refId(item.ref))
-    return outcomes.map((o) => `- ${o.takeaway}`).join('\n')
+    const lines: string[] = []
+    let before = ''
+    do {
+      const page = await api.knowledgeIntentOutcomesPage(refId(item.ref), 200, before)
+      lines.push(...page.outcomes.map((o) => `- ${o.takeaway}`))
+      before = page.before
+    } while (before)
+    return lines.join('\n')
   }
   const id = kind === 'report' ? writeUps.get(refId(item.ref)) : refId(item.ref)
   if (!id) return ''

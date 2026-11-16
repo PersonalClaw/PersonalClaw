@@ -47,6 +47,8 @@ const docs: UiDoc[] = [
       { name: 'className', description: 'Extra classes (tokens only).' },
       { name: 'inOverflow', description: 'Always a row of the … menu, at every tier, never a button on the row: an action kept one click away without spending a slot (a thread\'s Save as starter). Its presence keeps the … on the row.' },
       { name: 'group', description: "Its row's group in the …: a hairline is drawn between two rows whose group differs, never at the menu's top or foot, drawn only (the … is role-less). Unset on every control, the … has no break." },
+      { name: 'keep', description: '`row`: never shed into the …, at any tier. It keeps its place, draws icon-only at the ICON and OVERFLOW tiers, and counts in the cluster\'s floor, as a `HeaderFilter` does. Unset, the control sheds by its `priority`, as before.' },
+      { name: 'asSwitch', description: 'A control that turns a setting on and off (the library\'s "Power user view"): from 769 px it draws a decorative `Toggle` from `active` inside its pill (icon, label and switch; icon and switch at the ICON tier); at 768 px and below its icon alone in a 44 px box, filled while on. It always announces `aria-pressed` and keeps its name, and under forced colours its on state is outlined. As an `inOverflow` row it is one toggle row: `aria-pressed` and the switch at its end. Off by default.' },
     ],
     bestPractices: [
       { guidance: true, description: 'Always pass an icon if the control should survive the ICON tier — a label-only control can only reach TEXT before overflowing.' },

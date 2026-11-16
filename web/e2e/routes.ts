@@ -107,8 +107,8 @@ export const VIEW_ROUTES: RouteEntry[] = [
   { route: 'library?layout=grid', id: 'library-grid', label: 'Library › Grid', needsData: true },
   { route: 'triggers', id: 'triggers', label: 'Automations, at #/triggers', needsData: true },
   { route: 'workflows', id: 'workflows', label: 'Automations › Workflows', needsData: true },
-  // Today's graph, drawn inside the library until the power-user view gives it a tab (#6101).
-  { route: 'library?view=graph', id: 'knowledge-graph', label: 'Library › Graph', needsData: true },
+  // The Power user view's first tab, the graph (#6101): a link to it shows it for the visit.
+  { route: 'library?view=graph', id: 'library-graph', label: 'Library › Graph', needsData: true },
   // The reading experience, reached at `#/knowledge/item/<id>?read=1` — the sharable
   // reader URL `KnowledgeSection` navigates to (its `onOpenReader`). It belongs in VIEW_ROUTES,
   // not the other two tiers, and the reason is `routeManifestParity.test.ts`: ROUTES must mirror
@@ -163,12 +163,14 @@ export const SUBSTATE_ROUTES: RouteEntry[] = [
   { route: 'memory?tab=audit', id: 'memory-audit', label: 'Library › Memory › audit', needsData: true },
   { route: 'memory?tab=settings', id: 'memory-settings', label: 'Library › Memory › settings', needsData: true },
   // The old Knowledge views' rows, each replaced (#6101): a search and the New intent form in their
-  // place, and the three views the library still draws in place.
+  // place, and the Power user view's tabs a link opens for the visit.
   { route: 'library?q=backup', id: 'library-search', label: 'Library › search', needsData: true },
   { route: 'library?setup=intent:new', id: 'library-intent-new', label: 'Library › New intent', needsData: true },
-  { route: 'library?view=tags', id: 'knowledge-tags', label: 'Library › tags', needsData: true },
-  { route: 'library?view=conflicts', id: 'knowledge-conflicts', label: 'Library › conflicts', needsData: true },
-  { route: 'library?view=decisions', id: 'knowledge-decisions', label: 'Library › decisions', needsData: true },
+  { route: 'library?view=tags', id: 'library-tags', label: 'Library › Tags', needsData: true },
+  { route: 'library?view=conflicts', id: 'library-conflicts', label: 'Library › Conflicts', needsData: true },
+  { route: 'library?view=decisions', id: 'library-decisions', label: 'Library › Decisions', needsData: true },
+  // Library settings, the Power user view's last tab, on the empty e2e home: its empty state.
+  { route: 'library?view=settings', id: 'library-settings', label: 'Library › Library settings', needsData: true },
   { route: 'workflows?tab=defs', id: 'workflows-defs', label: 'Automations › Workflows › definitions', needsData: true },
   { route: 'prompts?tab=system', id: 'prompts-system', label: 'Prompts › system', needsData: true },
   { route: 'prompts?tab=bundled', id: 'prompts-bundled', label: 'Prompts › bundled', needsData: true },

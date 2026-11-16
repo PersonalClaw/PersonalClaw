@@ -7,7 +7,7 @@ import { ContextDisclosure } from '../ui/composer/ContextDisclosure'
 import { AgentsListPage } from './agents/AgentsListPage'
 import { ChatHistoryPage } from './chat/history/ChatHistoryPage'
 import { ChatHistorySidePanelBody } from './chat/history/ChatHistorySidePanel'
-import { KnowledgeListPage } from './knowledge/KnowledgeListPage'
+import { LibrarySettingsPanel } from './library/LibrarySettingsPanel'
 import { ContrastView, TokensView } from './loops/DesignCockpitPage'
 import { AgentDefaultsPanel } from './settings/AgentDefaultsPanel'
 import { AmbientPanel } from './settings/AmbientPanel'
@@ -140,60 +140,45 @@ describe('the feedback panel claims "stopped surfacing" only where something sto
 //
 // `knowledgeStats()` used to end `.catch(() => ({ items: 0, entities: 0, relations: 0, embeddings:
 // { enabled: false } }))`, turning a failed GET into four confident statements. Three were wrong
-// counts. The fourth was worse: the embedding chip rendered "semantic search off", titled "No
-// embedding model active — … Set one in Settings › AI & Models", so an unreachable gateway sent the
-// user to reconfigure a setting that may already have been right. And the fabricated zero emptied
-// a populated library: `empty` is `stats && stats.items === 0`, and it gates both the "Knowledge
-// base is empty" card and the Home shelves.
-//
-// 🪤 `empty` STAYS ON `stats.items`. `items` is filtered by search and shelf, so a no-match search
-// keyed on it would claim the library was empty (`libraryHomeReachable.test.tsx` caught that).
+// counts. The fourth was worse: the embedding chip rendered "semantic search off", with advice to set
+// a model, so an unreachable gateway sent the user to reconfigure a setting that may already have
+// been right, and the fabricated zero emptied a populated library. The chip's place is Library
+// settings now, the Power user view's last tab: its Search by meaning row says Off only when the
+// read says so, and its empty state only when the read counted no items.
 
-describe('the knowledge stats strip never states a capability it could not read', () => {
+describe("Library settings never states a capability it could not read", () => {
   const okStats = { items: 3, entities: 9, relations: 4, embeddings: { enabled: true, embedded_items: 3, model: 'm' } }
+  const reindex = { job: null, start: () => {}, starting: false }
   const mount = (over: Answers = {}) => {
     answer({
       knowledgeStats: () => Promise.resolve(okStats),
-      embeddingReindexJobs: () => Promise.resolve({ jobs: [], active: null }),
-      knowledgeItems: () => Promise.resolve({ items: [] }),
-      knowledgeCollections: () => Promise.resolve([]),
-      knowledgeIntents: () => Promise.resolve([]),
+      library: () => Promise.resolve({ items: [], total: 3, complete: true, failed: [], facets: { kind: { notes: 3 } }, sort: 'activity' }),
+      knowledgeConflicts: () => Promise.resolve({ conflicts: [] }),
       ...over,
     })
-    render(
-      <KnowledgeListPage query={{}} setQuery={() => {}} onCreate={() => {}} onOpenItem={() => {}}
-        onOpenSources={() => {}} onOpenReports={() => {}} onOpenChat={() => {}} />,
-    )
+    render(<LibrarySettingsPanel navigate={() => {}} openTab={() => {}} filterItems={() => {}} processAll={() => {}} reindex={reindex} />)
   }
 
-  it('a failed stats read renders no "semantic search off" claim and no advice', async () => {
+  it('a failed stats read says so, with no "Off" claim and no advice', async () => {
     mount({ knowledgeStats: boom })
     // 🪤 WAIT ON A POSITIVE SIGNAL FIRST, NEVER ON THE ABSENCE ITSELF: a `waitFor` on the absence
-    // succeeds on its first check, before the read could ever have produced the text. The title is
-    // there whichever way either read goes.
-    await waitFor(() => expect(screen.getByText('Knowledge')).toBeInTheDocument())
-    await waitFor(() => expect(api.knowledgeStats).toHaveBeenCalled())
-    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
-    expect(screen.queryByText(/semantic search off/i), 'a failed read must not claim the capability is off').toBeNull()
-    expect(screen.queryByText(/No embedding model active/i), 'and the advice must not appear either').toBeNull()
-    expect(screen.queryByText(/Set one in Settings/i)).toBeNull()
+    // succeeds on its first check, before the read could ever have produced the text.
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(screen.queryByText(/Search matches words only/i), 'a failed read must not claim the capability is off').toBeNull()
+    expect(screen.queryByRole('button', { name: 'Set up' }), 'and the advice must not appear either').toBeNull()
+    expect(screen.queryByText('Nothing in your library yet.'), 'a stats outage must not empty a populated library').toBeNull()
   })
 
-  it('a SUCCESSFUL read still renders the strip, or the case above proves nothing', async () => {
+  it('a SUCCESSFUL read still says what is on, or the case above proves nothing', async () => {
     mount()
-    await waitFor(() => expect(screen.getByText('entities')).toBeInTheDocument())
-    expect(screen.getByText('relations')).toBeInTheDocument()
-  })
-
-  it('a populated library is NOT called empty when the stats read fails', async () => {
-    mount({ knowledgeStats: boom, knowledgeItems: () => Promise.resolve({ items: [{ id: 'a', title: 'Real note', type: 'note' }] }) })
-    await waitFor(() => expect(screen.getByText('Real note')).toBeInTheDocument())
-    expect(screen.queryByText('Knowledge base is empty'), 'a stats outage must not empty a populated library').toBeNull()
+    await waitFor(() => expect(screen.getByText(/On · 3 of 3 ready/)).toBeInTheDocument())
+    expect(screen.getByText(/9 people, places and ideas, with 4 links between them/)).toBeInTheDocument()
   })
 
   it('and a genuinely DISABLED embedding model still says so: the claim is real then', async () => {
     mount({ knowledgeStats: () => Promise.resolve({ ...okStats, embeddings: { enabled: false } }) })
-    await waitFor(() => expect(screen.getByText(/semantic search off/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Off. Search matches words only.')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Set up' })).toBeInTheDocument()
   })
 })
 

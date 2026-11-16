@@ -97,10 +97,10 @@ describe('the ChipInput remove button names the chip it removes', () => {
 })
 
 describe('the two singleton icon buttons', () => {
-  it('the intent editor close button is named', () => {
-    // It is a `SquareIconButton` now, whose required `label` is its `aria-label`.
-    expect(strip(readSource(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'))))
-      .toMatch(/<SquareIconButton icon=\{X\}[^>]*\blabel="Close the intent editor"/)
+  it('the intent form\'s way back is named', () => {
+    // The intent editor is the library's intent form now (#6101); its back control is named for where it goes.
+    expect(strip(readSource(join(SRC, 'pages/library/setup/IntentForm.tsx'))))
+      .toMatch(/<IconButton icon=\{ArrowLeft\} label="Back to Feeds, intents and reports"/)
   })
 
   it('the task comment send button is named', () => {

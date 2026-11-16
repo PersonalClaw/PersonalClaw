@@ -7,7 +7,7 @@ import { ChipInput, Field, Select, TextInput } from '../../../ui/forms'
 import { ChoiceList } from '../../../ui/ChoiceList'
 import { FormFooter } from '../../../ui/FormFooter'
 import { TOUCH_TARGET } from '../../../ui/Toggle'
-import { changed } from '../../knowledge/ReportsPage'
+import { changed } from './reportDraft'
 import { BUSY_REASON } from '../../../ui/unavailable'
 
 // ── The report form, in the pane ────────────────────────────────────────────────

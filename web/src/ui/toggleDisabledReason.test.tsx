@@ -116,18 +116,13 @@ describe('the triage, pinned per site', () => {
   })
 
   it('an in-flight toggle keeps the native attribute', () => {
-    // Six sites gate on `busy`. Re-clicking an in-flight switch is the failure this prevents, so a
+    // Four sites gate on `busy` (the watched source's and the report's pause switches left with their
+    // pages: the library's set-up rows switch them, never disabled). Re-clicking an in-flight switch is the failure this prevents, so a
     // reason here would be a regression, not an improvement.
     for (const rel of [
       'pages/schedule/ScheduleDetail.tsx',
       'pages/tools/ToolGroupsTile.tsx',
       'pages/triggers/StoreTriggerDetail.tsx',
-      // The pause switch on a watched source: the only reason it is ever unavailable is an
-      // in-flight PATCH, so it belongs in this class rather than the precondition one.
-      'pages/knowledge/SourcesPage.tsx',
-      // The pause switch on a scheduled report: same shape as the watched-source one
-      // above — the only thing that ever disables it is its own in-flight PUT.
-      'pages/knowledge/ReportsPage.tsx',
       // #3725's allow switch on an agent-registered callback: disabled only while its own toggle
       // POST is in flight.
       'pages/triggers/CallbackDetail.tsx',
@@ -139,7 +134,7 @@ describe('the triage, pinned per site', () => {
     }
   })
 
-  it('the census is reproducible — 31 disabled Toggle sites, not vacuously zero', () => {
+  it('the census is reproducible — 29 disabled Toggle sites, not vacuously zero', () => {
     // If this count drops, a site was converted or deleted; if it climbs, a new one arrived
     // un-triaged. Either way it should be a deliberate line in a PR, not a silent drift.
     const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
@@ -204,7 +199,10 @@ describe('the triage, pinned per site', () => {
     // own write is in flight and until its first read answers, the same shape as Incident mode
     // beside it (`disabled={busy || !state}`), which stays native: a reason would only say "loading"
     // for the instant before the read lands. Reasoned count holds at 12.
-    expect(sites.length).toBe(31)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'twelve carry a reason; nineteen stay native').toBe(12)
+    // 🔻 31 → 29: the watched source's and the scheduled report's pause switches left with the Sources
+    // and Reports pages (both in-flight, native). The library's set-up rows switch them, never
+    // disabled. Reasoned count holds at 12.
+    expect(sites.length).toBe(29)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'twelve carry a reason; seventeen stay native').toBe(12)
   })
 })

@@ -1,0 +1,54 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Regenerate intelligence\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
+      ],
+      "390": [
+        "button \"Regenerate intelligence\""
+      ],
+      "412": [
+        "button \"Regenerate intelligence\""
+      ],
+      "768": [
+        "button \"Regenerate intelligence\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<button> \"Keep it on\" clips at #%: #x# in #x#",
+        "<div> \"LibraryPower user viewAddPower user view\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Regenerate intelligence\"",
+        "button[role=radio] \"Files\"",
+        "button[role=radio] \"Library\"",
+        "button[role=radio] \"Memory\""
+      ],
+      "390": [
+        "button \"Regenerate intelligence\""
+      ],
+      "412": [
+        "button \"Regenerate intelligence\""
+      ],
+      "768": [
+        "button \"Regenerate intelligence\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<button> \"Keep it on\" clips at #%: #x# in #x#",
+        "<div> \"LibraryPower user viewAddPower user view\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

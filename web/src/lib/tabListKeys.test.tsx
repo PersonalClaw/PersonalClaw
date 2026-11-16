@@ -213,14 +213,17 @@ describe('every tab strip in the tree is a real tablist', () => {
     expect(sites().map((f) => f.file), 'Segmented left the tab census').not.toContain('ui/Segmented.tsx')
   })
 
-  it('and the only tab strips left are the four that reveal something', () => {
+  it('and the only tab strips left are the five that reveal something', () => {
     // The vacuity floor for the assertion above: it is also satisfied by a tree with no tab strips at
     // all. These four are hand-rolled view switchers, untouched by #3472, and each one swaps a pane.
     // (Memory's strip is its page header's view switch now, a radiogroup like every page's.)
     // (`ChatActivityPanel`, the strip this handler came from, is the chat's session inspector now: a
     // column of disclosures that open side by side, not tabs that swap one pane, #3820.)
+    // The fifth, the library's Power user view, is a vertical tablist whose arrows move and Enter
+    // opens (manual activation, since a tab's panel reads its own data), so it keeps its own handler.
     expect(sites().map((f) => f.file).sort()).toEqual([
       'pages/files/FilesSection.tsx',
+      'pages/library/PowerUserTabs.tsx',
       'pages/loops/LoopCockpitPage.tsx',
       'pages/terminal/TerminalDrawer.tsx',
       'pages/terminal/TerminalPage.tsx',

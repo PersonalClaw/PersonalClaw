@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { StaleNotice } from './StaleNotice'
 import { TextLink } from './TextLink'
 import { TOUCH_TARGET } from './Toggle'
@@ -47,15 +48,19 @@ export function ListStatus({ results, stale, line, lead, actions }: {
     <>
       {drawn && (
         <p data-type="caption" data-list-line className="text-on-surface-low">
+          {/* The separator is the line's own text, between two parts: white space at the end of an
+              inline-block collapses, so inside a part it drew as "2 matches ·Clear". */}
           {parts.map((p, i) => (
-            <span key={p.key} data-line-part={p.key.startsWith('action:') ? 'action' : p.key}
-              className={`inline-block${p.key === 'lead' ? ' text-on-surface-var' : ''}`}
-              style={p.key === 'lead' ? { fontWeight: 540 } : undefined}>
-              {p.action
-                ? <TextLink onClick={p.action.onSelect} size="sm" className={`inline-flex items-center ${TOUCH_TARGET}`}>{p.action.label}</TextLink>
-                : p.text}
+            <Fragment key={p.key}>
+              <span data-line-part={p.key.startsWith('action:') ? 'action' : p.key}
+                className={`inline-block${p.key === 'lead' ? ' text-on-surface-var' : ''}`}
+                style={p.key === 'lead' ? { fontWeight: 540 } : undefined}>
+                {p.action
+                  ? <TextLink onClick={p.action.onSelect} size="sm" className={`inline-flex items-center ${TOUCH_TARGET}`}>{p.action.label}</TextLink>
+                  : p.text}
+              </span>
               {after(i)}
-            </span>
+            </Fragment>
           ))}
         </p>
       )}

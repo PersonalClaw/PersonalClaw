@@ -269,7 +269,8 @@ describe('§4 the stale-paint label is adopted and its adoption only grows', () 
   it('and the named list surfaces label theirs BY NAME', () => {
     const named = [
       'pages/inbox/InboxPage.tsx',
-      'pages/knowledge/KnowledgeListPage.tsx',
+      // The knowledge list's count line is the library's now (#6101).
+      'pages/library/LibraryPage.tsx',
       'pages/workflows/WorkflowsListPage.tsx',
       'pages/settings/settingsWidgets.tsx',
     ]

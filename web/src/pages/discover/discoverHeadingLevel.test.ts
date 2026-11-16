@@ -123,11 +123,14 @@ describe("Discover's area headings sit one rung under the page title", () => {
     //   · `projects/ProjectAbout` JOINED it (PROJ PR 4): a project's page heads its About this project
     //     section with an h2, and each of its parts (Brief, Instructions, Folder, What a new chat is
     //     told, Secrets) with an h3 under it (`H1 > H2 > H3`). Panel-level, correctly nested.
+    //   · `library/PowerTabPanel` JOINED it: the Graph tab's panel is titled by an h2, and a name picked
+    //     in it heads its own part with an h3 (its Linked to and Where it is mentioned are h4s). Panel-level.
     expect(withH3.sort(), 'files still using h3').toEqual([
       'pages/chat/beside/LoopBeside.tsx',
       'pages/chat/transcript/SourcesRow.tsx',
       // The cockpit's task title, which moved with the task detail out of `CodeCockpitPage`.
       'pages/code/cockpit/tasks/TaskDetailView.tsx',
+      'pages/library/PowerTabPanel.tsx',
       'pages/library/setup/SetupPanel.tsx',
       'pages/projects/ProjectAbout.tsx',
       'pages/settings/VoicePanel.tsx',

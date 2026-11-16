@@ -164,19 +164,13 @@ describe('the graph empty state names the cause from the enrichment tally', () =
   })
 })
 
-describe('the parent reaches the shared empty state from every view', () => {
-  const src = SRC('KnowledgeListPage.tsx')
+describe("the library's Graph tab hands the graph its action", () => {
+  // The Knowledge list that drew the graph is the library's Power user view now (#6101): its Graph
+  // tab is the graph's parent, and its empty state carries the same Read missed items it does.
+  const src = readFileSync(join(process.cwd(), 'src/pages/library/PowerTabPanel.tsx'), 'utf8')
 
-  it('the empty-state block is no longer excluded from the graph view', () => {
-    // Vacuity floor for this assertion: the gate must still exist at all, in the shape we changed.
-    expect(src, "the graph view's own render is still gated on !empty").toMatch(/view === 'graph' && !empty/)
-    expect(src, 'and the shared empty block now admits it').toMatch(/\(view !== 'graph' \|\| empty\) &&/)
-  })
-
-  it('hands the enrichment action down, since the header control is library-only', () => {
-    expect(src).toMatch(/onRegenerate=\{regenerate\}/)
-    expect(src).toMatch(/regenerating=\{regenning\}/)
-    // The reason the hand-down is needed — if this ever stops being library-only, revisit.
-    expect(src, 'header control is still library-only').toMatch(/\{view === 'library' && \([\s\S]{0,600}?label="Regenerate intelligence"/)
+  it('hands the enrichment action down to the empty state, and its progress', () => {
+    expect(src).toMatch(/onRegenerate=\{\(\) => void readMissed\(\)\}/)
+    expect(src).toMatch(/regenerating=\{reading\}/)
   })
 })

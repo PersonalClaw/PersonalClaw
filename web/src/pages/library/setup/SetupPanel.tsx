@@ -15,8 +15,11 @@ import { Toggle, TOUCH_TARGET } from '../../../ui/Toggle'
 import { TextLink } from '../../../ui/TextLink'
 import { ListSkeleton, LoadError } from '../../../ui/ListScaffold'
 import { confirmDestructive } from '../../../ui/dialog'
-import { Remediation } from '../../knowledge/SourcesPage'
-import { eventDrivenMetaLine } from '../../knowledge/sourceMeta'
+import { Remediation } from './Remediation'
+import { RAW_ENRICHMENT, cadenceNote, eventDrivenMetaLine, firstScanLine, fmtInterval, healthMeta, linksOutsideLine } from '../../knowledge/sourceMeta'
+import { usePowerUserView } from '../powerUserView'
+import { relFuture } from '../../schedule/scheduleMeta'
+import { INTENT_KINDS } from './intentKinds'
 import { ageWords } from '../libraryMeta'
 import { n } from '../libraryWords'
 import { rowSubject } from '../../../lib/rowSubject'
@@ -43,13 +46,17 @@ export interface SetupNav {
   item: (ref: string) => void
 }
 
-export function SetupPanel({ focus, nav, onClose }: {
+export function SetupPanel({ focus, nav, onClose, detail }: {
   /** The group the address names, scrolled to the top of the pane; focus stays where it was. */
   focus?: SetupGroup
   nav: SetupNav
   onClose: () => void
+  /** The Power user view's detail lines on each row; the stored setting when not given. */
+  detail?: boolean
 }) {
   const phone = useIsMobile()
+  const power = usePowerUserView()
+  const more = detail ?? power.stored
   const intents = useQuery('knowledge:intents', () => api.knowledgeIntents())
   const reports = useQuery('knowledge:reports', () => api.researchReports())
   const sources = useQuery('knowledge:sources', () => api.knowledgeSources())
@@ -64,10 +71,15 @@ export function SetupPanel({ focus, nav, onClose }: {
 
   const intentList = intents.data?.intents ?? []
   const reportList = reports.data?.reports ?? []
-  const sourceList = sources.data?.sources ?? []
+  // The artifacts' own mirror is a row only in the Power user view: it is set in Settings.
+  const sourceList = (sources.data?.sources ?? []).filter((s) => more || !s.event_driven)
+  const kindName = (provider: string) => sources.data?.kinds?.find((k) => k.provider === provider)?.display_name ?? ''
   // An intent's report is the one that reads its findings.
   const reportOf = (id: string) => reportList.find((r) => r.source?.intent === id) ?? null
-  const nothing = loaded && !intentList.length && !reportList.length && !sourceList.length
+  // The mirror is no row in the regular view, but while it is on it adds on its own, so the panel
+  // never says nothing does.
+  const mirrorOn = (sources.data?.sources ?? []).some((s) => s.event_driven && s.enabled)
+  const nothing = loaded && !intentList.length && !reportList.length && !sourceList.length && !mirrorOn
   return (
     <section aria-labelledby="lib-setup-title" className="flex min-h-0 flex-col gap-l p-l">
       <header className="flex items-start gap-s">
@@ -84,21 +96,21 @@ export function SetupPanel({ focus, nav, onClose }: {
         foot={intentList.length ? 'Each intent uses your model once for every item you add.' : undefined}>
         {intents.loading && !intents.data ? <ListSkeleton rows={2} what="intents" />
           : intents.error && !intents.data ? <LoadError what="intents" error={intents.error} onRetry={intents.refresh} />
-          : intentList.map((it) => <IntentRow key={it.id} intent={it} report={reportOf(it.id)} phone={phone} nav={nav} />)}
+          : intentList.map((it) => <IntentRow key={it.id} intent={it} report={reportOf(it.id)} phone={phone} nav={nav} detail={more} />)}
       </Group>
 
       <Group at={reportsAt} title="Reports" line="questions answered on a schedule"
         newLabel={phone ? 'Schedule' : 'Schedule a report'} newName="Schedule a report" onNew={() => nav.form('report:new')}>
         {reports.loading && !reports.data ? <ListSkeleton rows={2} what="reports" />
           : reports.error && !reports.data ? <LoadError what="reports" error={reports.error} onRetry={reports.refresh} />
-          : reportList.map((r) => <ReportRow key={r.id} report={r} phone={phone} nav={nav} />)}
+          : reportList.map((r) => <ReportRow key={r.id} report={r} phone={phone} nav={nav} detail={more} />)}
       </Group>
 
       <Group at={feedsAt} title="Feeds, folders and apps" line="they bring new things in"
         newLabel={phone ? 'Follow' : 'Follow a feed or folder'} newName="Follow a feed or folder" onNew={() => nav.form('source:new')}>
         {sources.loading && !sources.data ? <ListSkeleton rows={2} what="sources" />
           : sources.error && !sources.data ? <LoadError what="sources" error={sources.error} onRetry={sources.refresh} />
-          : sourceList.map((s) => <SourceRow key={s.id} source={s} phone={phone} nav={nav} />)}
+          : sourceList.map((s) => <SourceRow key={s.id} source={s} phone={phone} nav={nav} detail={more ? kindName(s.provider) || s.provider : ''} />)}
       </Group>
     </section>
   )
@@ -130,9 +142,11 @@ function Group({ at, title, line, newLabel, newName, onNew, foot, children }: {
  *  ⋯. On a phone the sub line starts with the switch's words, so each switch has a visible label, and
  *  the inline links move to the top of the ⋯. A row with no switch (a source fed by a listener, which
  *  pausing would not stop) has none. */
-function SetupRow({ name, parts, links = [], warn, toggle, onEdit, actions, phone, below }: {
+function SetupRow({ name, parts, details = [], links = [], warn, toggle, onEdit, actions, phone, below }: {
   name: string
   parts: string[]
+  /** The Power user view's lines under the row's own. */
+  details?: string[]
   links?: RowLink[]
   warn?: string
   toggle?: { words: string; on: boolean; onChange: (on: boolean) => void }
@@ -158,6 +172,7 @@ function SetupRow({ name, parts, links = [], warn, toggle, onEdit, actions, phon
               <span key={l.label}>{lead.length || i ? ' · ' : ''}<TextLink size="xs" onClick={l.run}>{l.label}</TextLink></span>
             ))}
           </p>
+          {details.filter(Boolean).map((d) => <p key={d} data-type="caption" className="text-on-surface-low">{d}</p>)}
           {warn && <p data-type="caption" className="text-warn">{warn}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-s">
@@ -258,7 +273,7 @@ export async function runOnSaved(intent: KnowledgeIntent): Promise<void> {
   }
 }
 
-function IntentRow({ intent, report, phone, nav }: { intent: KnowledgeIntent; report: ResearchReport | null; phone: boolean; nav: SetupNav }) {
+function IntentRow({ intent, report, phone, nav, detail }: { intent: KnowledgeIntent; report: ResearchReport | null; phone: boolean; nav: SetupNav; detail: boolean }) {
   const goal = intent.goal || 'An intent with no goal'
   const paused = intent.enabled === false
   const found = intent.outcome_count ?? 0
@@ -288,7 +303,7 @@ function IntentRow({ intent, report, phone, nav }: { intent: KnowledgeIntent; re
     { label: 'Delete intent…', icon: <Trash2 size={15} />, danger: true, onSelect: () => void deleteIntent(intent, report) },
   ]
   return (
-    <SetupRow name={goal} parts={shown} links={links}
+    <SetupRow name={goal} parts={shown} links={links} details={detail ? [intentUse(intent)] : []}
       toggle={{ words: 'Checking new items', on: !paused, onChange: flip }} onEdit={() => nav.form(`intent:${intent.id}`)}
       actions={actions} phone={phone}
       below={<>
@@ -324,8 +339,9 @@ export async function deleteIntent(intent: KnowledgeIntent, report?: ResearchRep
     : `${what} You can't undo this.`
   // A goal is a sentence; the title takes it whole up to a line's length.
   if (!(await confirmDestructive(`Delete “${rowSubject([goal], 60)}”?`, body, { confirmLabel: 'Delete intent' }))) return false
-  try { await api.deleteKnowledgeIntent(intent.id); invalidateKeys('knowledge', true); return true }
-  catch { notify(`Couldn't delete “${goal}”.`, 'error'); return false }
+  if (!(await reportingWrite(`delete “${goal}”`, () => api.deleteKnowledgeIntent(intent.id)))) return false
+  invalidateKeys('knowledge', true)
+  return true
 }
 
 /** Run a report now, saying why when it can't. */
@@ -340,7 +356,7 @@ export async function runReport(report: ResearchReport): Promise<void> {
   else notify(`${report.name}: ${r.result || 'the run finished'}`, r.outcome === 'wrote' ? 'success' : 'info')
 }
 
-function ReportRow({ report, phone, nav }: { report: ResearchReport; phone: boolean; nav: SetupNav }) {
+function ReportRow({ report, phone, nav, detail }: { report: ResearchReport; phone: boolean; nav: SetupNav; detail: boolean }) {
   const failed = report.last_status === 'error'
   const last = report.last_run_ts ? ageWords(report.last_run_ts) : ''
   const missing = report.missing_tags ?? []
@@ -370,6 +386,7 @@ function ReportRow({ report, phone, nav }: { report: ResearchReport; phone: bool
   ]
   return (
     <SetupRow name={report.name} parts={parts} links={failed && !report.running ? [again] : []} warn={warn}
+      details={detail ? [report.sources_shown, report.citation_policy === 'cite-source-only' ? 'Cites only what is new since its last run' : 'May also cite what it was given to read'] : []}
       toggle={{ words: 'On schedule', on: report.enabled, onChange: flip }} onEdit={() => nav.form(`report:${report.id}`)}
       actions={actions} phone={phone} />
   )
@@ -378,19 +395,14 @@ function ReportRow({ report, phone, nav }: { report: ResearchReport; phone: bool
 /** Why the artifacts' mirror has no Remove. */
 const MIRROR_REMOVE = 'This one is set in Settings › Automations › Sources.'
 
-function SourceRow({ source, phone, nav }: { source: WatchedSource; phone: boolean; nav: SetupNav }) {
-  // A watched folder's spec names its path (the create form's `dir` form).
-  const path = typeof source.spec?.path === 'string' ? source.spec.path: ''
-  const folder = !!path
-  const files = source.first_scan?.found
-  const parts = source.event_driven
-    ? [eventDrivenMetaLine()]
-    : [
-      folder ? 'Folder' : 'Feed', ...(path ? [path] : []),
-      source.last_poll_at ? `checked ${ageWords(source.last_poll_at)}` : 'not checked yet',
-      ...(folder && files ? [`${n(files)} files`] : source.last_new_count ? [`${n(source.last_new_count)} new`] : []),
-    ]
+function SourceRow({ source, phone, nav, detail }: { source: WatchedSource; phone: boolean; nav: SetupNav
+  /** The kind's name for the Power user view's detail line; '' in the regular view. */
+  detail: string }) {
+  const parts = sourceParts(source)
   const refresh = () => { invalidateKeys('knowledge:sources'); invalidateKeys('knowledge:library', true) }
+  // Nothing registered to check its kind: it will never bring anything in, whatever the view.
+  const warn = !source.event_driven && !source.enrolled ? 'Nothing is set up to check this kind, so it brings nothing in.' : undefined
+  const details = detail ? sourceDetails(source, detail) : []
   const flip = async (on: boolean) => {
     try { await api.updateKnowledgeSource(source.id, { enabled: on }); refresh() }
     catch { notify(`Couldn't ${on ? 'resume' : 'pause'} “${source.name}”.`, 'error') }
@@ -415,9 +427,51 @@ function SourceRow({ source, phone, nav }: { source: WatchedSource; phone: boole
     },
   ]
   return (
-    <SetupRow name={source.name} parts={parts}
+    <SetupRow name={source.name} parts={parts} details={details} warn={warn}
       // A source fed by a listener has no switch: pausing its row would stop nothing.
       toggle={source.event_driven ? undefined: { words: 'Watching', on: source.enabled, onChange: flip }}
-      actions={actions} phone={phone} below={<Remediation source={source} onChanged={refresh} />} />
+      actions={actions} phone={phone} below={<>
+        {[firstScanLine(source.first_scan), linksOutsideLine(source.links_outside)].filter(Boolean).map((l) => (
+          <p key={l} data-type="caption" className="text-on-surface-low">{l}</p>
+        ))}
+        <Remediation source={source} onChanged={refresh} />
+      </>} />
   )
+}
+
+/** A feed's own line: a folder's path, when it was last checked, and what that brought in. */
+export function sourceParts(source: WatchedSource, now = Date.now()): string[] {
+  if (source.event_driven) return [eventDrivenMetaLine()]
+  // A watched folder's spec names its path (the create form's `dir` form).
+  const path = typeof source.spec?.path === 'string' ? source.spec.path: ''
+  const files = source.first_scan?.found
+  return [
+    path ? 'Folder' : 'Feed', ...(path ? [path] : []),
+    source.last_poll_at ? `checked ${ageWords(source.last_poll_at, now)}` : 'not checked yet',
+    ...(path && files ? [`${n(files)} files`] : source.last_new_count ? [`${n(source.last_new_count)} new`] : []),
+  ]
+}
+
+/** A feed's Power user view lines: its kind, how often it is really checked, how its last check
+ *  went, that its items never reach a model, and the costlier ways its last check had to read. */
+export function sourceDetails(source: WatchedSource, kind: string): string[] {
+  // A mirror's own line already says how it is fed; it has no kind, cadence or health of its own.
+  if (source.event_driven) return []
+  const health = healthMeta(source.health_status)
+  const next = source.enabled && source.next_poll_at ? ` · next ${relFuture(source.next_poll_at)}` : ''
+  return [
+    [kind, `checked every ${fmtInterval(source.poll_every_secs)}${next}`, source.last_poll_at ? health.label : 'not checked yet'].join(' · '),
+    // What a health that is not Healthy means; one the source has not earned (never checked) says nothing.
+    source.last_poll_at && health.tone !== 'ok' ? `${health.label}: ${health.hint}` : '',
+    cadenceNote(source),
+    source.enrichment === RAW_ENRICHMENT ? 'No AI: its items are indexed on this computer and never reach a model' : '',
+    (source.last_escalations ?? []).join(' · '),
+  ]
+}
+
+/** What an intent asks of your model, for the Power user view. */
+function intentUse(intent: KnowledgeIntent): string {
+  const kinds = INTENT_KINDS.filter((k) => k.types.some((t) => (intent.enabled_for ?? []).includes(t))).map((k) => k.label.toLowerCase())
+  const what = kinds.length && kinds.length < INTENT_KINDS.length ? kinds.join(', ').replace(/, ([^,]*)$/, ' and $1') : 'item you add'
+  return `Uses your model once for each new ${what === 'item you add' ? what : `${what} item`}`
 }

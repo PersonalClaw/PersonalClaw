@@ -85,7 +85,7 @@ describe('header right slots use the responsive cluster', () => {
 
   it('scans a real tree (guards against a silently-empty sweep)', () => {
     expect(files.length).toBeGreaterThan(40)
-    expect(files.some((f) => f.includes('KnowledgeListPage'))).toBe(true)
+    expect(files.some((f) => f.includes('LibraryPage'))).toBe(true)
   })
 
   it('every exemption is still real (a stale waiver silently widens the rail)', () => {

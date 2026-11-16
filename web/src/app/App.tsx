@@ -60,6 +60,7 @@ import { CapabilitiesSection } from '../pages/capabilities/CapabilitiesSection'
 import { isCapabilityRoute } from '../pages/capabilities/capabilityTabs'
 import { LibrarySection } from '../pages/library/LibrarySection'
 import { isLibraryRoute } from '../pages/library/libraryTabs'
+import { powerUserCommands } from '../pages/library/powerUserCommands'
 import { AutomationsSection } from '../pages/automations/AutomationsSection'
 import { isAutomationsRoute } from '../pages/automations/automationTabs'
 
@@ -884,6 +885,8 @@ function AppInner() {
     { id: 'act:new-intent', label: 'New intent', hint: 'Action', icon: Target, keywords: 'Library look out for topic findings', run: () => navigate('library?setup=intent:new') },
     { id: 'act:follow-feed', label: 'Follow a feed or folder', hint: 'Action', icon: Rss, keywords: 'Library source watch rss blog folder', run: () => navigate('library?setup=source:new') },
     { id: 'act:schedule-report', label: 'Schedule a report', hint: 'Action', icon: CalendarClock, keywords: 'Library research digest weekly', run: () => navigate('library?setup=report:new') },
+    // The Power user view: its switch, as the header's does, and each of its tabs.
+    ...powerUserCommands(navigate),
     { id: 'go:memory', label: 'Memory', hint: 'Go to', icon: Database, keywords: 'Library facts episodes lessons recall audit remember', run: () => navigate('memory') },
     { id: 'go:files', label: 'Files', hint: 'Go to', icon: Files, keywords: 'Library workspace home outbox explorer', run: () => navigate('files') },
     // Automations' Workflows tab, a row of its own: it left the sidebar for the one Automations row.

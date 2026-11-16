@@ -235,8 +235,9 @@ describe('the shared settings mutation reports as well as reconciles', () => {
   it('the two writes this sweep found outside settings now report', () => {
     // Named explicitly so a later refactor cannot quietly revert them to a bare catch and re-add an
     // allowance entry instead.
-    const shelf = codeOf('pages/knowledge/KnowledgeListPage.tsx')
-    expect(shelf, 'the create-shelf call reports').toMatch(
+    // The shelf became the library's collection (#6101): New collection is `newCollection`.
+    const shelf = codeOf('pages/library/libraryCollections.ts')
+    expect(shelf, 'the create-collection call reports').toMatch(
       /createKnowledgeCollection\([\s\S]{0,140}?reportActionFailure\(/)
     expect(shelf, 'and its follow-ups are gated on the result').toMatch(/if \(!res\) return/)
 

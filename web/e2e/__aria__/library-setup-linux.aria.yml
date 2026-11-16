@@ -29,6 +29,7 @@
     - radio "Memory"
     - radio "Files"
   - heading "Library" [level=#]
+  - button "Power user view"
   - button "More actions"
   - button "Add"
   - region "Library items":
@@ -40,6 +41,12 @@
     - button "Add a link"
     - button "Write a note"
     - paragraph: Or drop files anywhere on this page.
+    - complementary "A tip from Discover":
+      - paragraph: Start a conversation
+      - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.
+      - link "Open Chat":
+        - /url: "#/chat/new"
+      - button "Dismiss this tip"
   - region "Feeds, intents and reports":
     - heading "Feeds, intents and reports" [level=#]
     - paragraph: These add to your library on their own. Pausing one keeps everything it added.
@@ -53,8 +60,5 @@
     - region "Feeds, folders and apps":
       - heading "Feeds, folders and apps · they bring new things in" [level=#]
       - button "Follow a feed or folder"
-      - paragraph: Artifacts
-      - paragraph: Indexed as artifacts change · turn off in Settings → Automations → Watched sources
-      - button "More for Artifacts"
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

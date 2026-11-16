@@ -38,7 +38,10 @@ describe('a project\'s library is the library filtered', () => {
   ])('🔑 %o reads that set, and its count line says the link\'s number', async (query, line, store) => {
     answers.library = answer([row('knowledge:k1', 'Router manual', { project: HOME })], { total: 34 })
     mount(query as Record<string, string>)
-    expect(await screen.findByText(line)).toBeTruthy()
+    // The count line's own part, not the announcement that says the same words.
+    expect(await screen.findByText(line, { selector: '[data-list-line] [data-line-part]' })).toBeTruthy()
+    // And the narrowed list's announcement says it too: the line's part and the live region.
+    expect(await screen.findAllByText(line)).toHaveLength(2)
     expect(calls.library.at(-1)?.[0]).toEqual({ project: 'p-home', ...store })
   })
 

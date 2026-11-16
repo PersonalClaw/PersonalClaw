@@ -53,7 +53,7 @@ describe("a list's count line", () => {
     const lead = container.querySelector('[data-list-line] [data-line-part="lead"]') as HTMLElement
     expect(lead.className).toContain('text-on-surface-var')
     expect(lead.style.fontWeight, 'weight 540').toBe('540')
-    expect(parts(container)).toEqual(['23 matches · ', 'Matching words only.'])
+    expect(parts(container)).toEqual(['23 matches', 'Matching words only.'])
   })
 
   it('may be its lead alone', () => {
@@ -80,6 +80,17 @@ describe("a list's count line", () => {
     const els = [...container.querySelectorAll('[data-list-line] [data-line-part]')] as HTMLElement[]
     expect(els.length).toBe(3)
     for (const el of els) expect(el.className, `${el.textContent} is one unit`).toContain('inline-block')
+  })
+
+  it('🔴 a separator sits between two parts, never inside one, so it keeps its spaces', () => {
+    // White space at the end of an inline-block collapses: a " · " inside a part drew as "2 matches ·Clear",
+    // with no room between the parts. Each separator is text of the line itself, between the parts.
+    const { container } = render(<ListStatus results={{ count: 2, noun: 'items', active: true }} lead="2 matches" line="Matching words only." actions={[{ label: 'Set up search by meaning', onSelect: () => {} }]} />)
+    const line = container.querySelector('[data-list-line]') as HTMLElement
+    for (const el of line.querySelectorAll('[data-line-part]')) expect(el.textContent, 'a part ends in its own words').toMatch(/[^\s·]$/)
+    const between = [...line.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent)
+    expect(between).toEqual([' · ', ' '])
+    expect(line.textContent, 'what it says is unchanged').toBe('2 matches · Matching words only. Set up search by meaning')
   })
 
   it("draws each action as a 44 px box at 320 to 768 px, and acts on press", () => {

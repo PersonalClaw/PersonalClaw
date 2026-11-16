@@ -8,6 +8,7 @@ import { ageWords, dayWords, formatWord, refId, refKind, sizeWords, titleOf } fr
 import { moreRows, openPathOf, pinRow, useInChatGroups, type ActionGroup, type ActionInputs } from '../pages/library/libraryActions'
 import { ContentSurface } from './content/ContentSurface'
 import { PdfPreview } from '../pages/files/browse/FilePreviews'
+import { usePowerUserView } from '../pages/library/powerUserView'
 import { resolveContentType } from './content/contentTypes'
 import { epochSeconds } from '../lib/epoch'
 import { Button } from './Button'
@@ -21,7 +22,7 @@ import { notify } from '../app/appSdk'
 import { StaleWriteNotice } from './StaleWriteNotice'
 import { n } from '../pages/library/libraryWords'
 import { PAUSED_RUN, runOnSaved, runReport, useIntentRun, useIntentSwitch } from '../pages/library/setup/SetupPanel'
-import { nextRun } from '../pages/knowledge/ReportsPage'
+import { nextRun } from '../pages/library/setup/reportDraft'
 
 /** One thing in the library, beside its list: its heading (an `h2`), its meta line,
  *  then **Use in chat ▾, Open, Pin, More**, the notice line for each problem it has with its fix,
@@ -34,7 +35,7 @@ import { nextRun } from '../pages/knowledge/ReportsPage'
  *  `back=project:<id>`, and for an item in that project About's Project row is the name alone and
  *  More has no Open project row. Ask about this stays an unbound investigate chat in both places.
  *  `phoneSheet` opens its Use in chat and More menus as phone sheets from 320 to 768 px. */
-export function LibraryPreview({ item, actions, phoneSheet = false, foot = false }: {
+export function LibraryPreview({ item, actions, phoneSheet = false, foot = false, detail }: {
   /** The thing, as `GET /api/library` answers it. */
   item: LibraryItem
   /** What its menus do, and where they go (`libraryActions.ActionInputs`): the host's navigation,
@@ -45,7 +46,12 @@ export function LibraryPreview({ item, actions, phoneSheet = false, foot = false
   /** A phone's full-screen form: Use in chat, Open and Pin at its foot, 44 px each, and More the ⋯
    *  at its top. */
   foot?: boolean
+  /** The Power user view's detail rows in About. Unset, the preview reads the library's own setting,
+   *  so a project's page shows them while the view is on, as the library does. */
+  detail?: boolean
 }) {
+  const power = usePowerUserView()
+  const details = detail ?? power.stored
   const phone = useIsMobile()
   const title = titleOf(item)
   const back = actions.project ? `project:${actions.project}` : ''
@@ -81,6 +87,7 @@ export function LibraryPreview({ item, actions, phoneSheet = false, foot = false
         <Body item={item} actions={actions} />
       </div>
       <About item={item} actions={actions} />
+      {details && <DetailRows item={item} navigate={actions.navigate} />}
       {foot && phone && <div className="sticky bottom-0 -mx-l border-t border-outline-variant/40 bg-surface px-l py-s">{bar}</div>}
     </section>
   )
@@ -281,6 +288,55 @@ function FindingsBody({ intentId, navigate }: { intentId: string; navigate: (pat
 
 /** How many findings a findings log shows at a time. */
 const FINDINGS_PAGE = 20
+
+/** The Power user view's rows, after About's: what was read from the thing (the people, places and
+ *  ideas it mentions), whether search can find it by meaning, and the way to its own graph. A row
+ *  with nothing to say is left out. */
+function DetailRows({ item, navigate }: { item: LibraryItem; navigate: (path: string) => void }) {
+  const id = refKind(item.ref) === 'knowledge' ? refId(item.ref) : ''
+  const read = useQuery(`knowledge:item:${id}`, () => (id ? api.knowledgeItem(id) : Promise.resolve(null)))
+  const dupes = useQuery(`knowledge:duplicates:${id}`, () => (id ? api.knowledgeDuplicates(id) : Promise.resolve(null)))
+  if (!id) return null
+  // A failed read says so in one line; the About above is the item's own either way.
+  if (read.error && !read.data) return <p data-type="caption" className="text-on-surface-low">Couldn't read what was found in it.</p>
+  const data = read.data
+  if (!data) return null
+  const names = (data.entities ?? []).map((e) => e.name).filter(Boolean).slice(0, 12)
+  const alike = dupes.data?.duplicates ?? []
+  return (
+    <div className="flex flex-col gap-s">
+      <dl className="grid grid-cols-[8rem_1fr] gap-x-m gap-y-xs max-md:grid-cols-1">
+        {names.length > 0 && (
+          <div className="contents">
+            <dt data-type="body-s" className="text-on-surface-low">What was read from it</dt>
+            <dd className="flex flex-wrap gap-xs">
+              {names.map((nm) => <span key={nm} data-type="caption" className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">{nm}</span>)}
+            </dd>
+          </div>
+        )}
+        <div className="contents">
+          <dt data-type="body-s" className="text-on-surface-low">Search by meaning</dt>
+          <dd data-type="body-s" className="text-on-surface">{data.has_embedding ? 'Searchable by meaning' : 'Found by its words for now'}</dd>
+        </div>
+        {(alike.length > 0 || (!!dupes.error && !dupes.data)) && (
+          <div className="contents">
+            <dt data-type="body-s" className="text-on-surface-low">Possible duplicates</dt>
+            <dd data-type="body-s" className="flex flex-col gap-xs">
+              {dupes.error && !dupes.data ? <span className="text-on-surface-low">Couldn't check for copies.</span>
+                : alike.slice(0, 3).map((d) => (
+                  <TextLink key={d.id} onClick={() => navigate(`library?item=${encodeURIComponent(`knowledge:${d.id}`)}`)} className={TOUCH_TARGET}>{d.title || 'Untitled'}</TextLink>
+                ))}
+            </dd>
+          </div>
+        )}
+        <div className="contents">
+          <dt data-type="body-s" className="text-on-surface-low">Its graph</dt>
+          <dd data-type="body-s"><TextLink onClick={() => navigate(`knowledge/item/${encodeURIComponent(id)}`)} className={TOUCH_TARGET}>See what it connects to</TextLink></dd>
+        </div>
+      </dl>
+    </div>
+  )
+}
 
 /** About this item: Made in, Project, Collections, Tags, Added, Size. */
 function About({ item, actions }: { item: LibraryItem; actions: ActionInputs }) {

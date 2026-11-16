@@ -265,11 +265,12 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   { route: 'library?manage=tags', from: ['documented'] },
   { route: 'library?q=backup', from: ['documented'] },
   { route: 'library?layout=grid', from: ['documented'] },
-  // The old views, drawn in place until the power-user view gives them tabs.
+  // The Power user view's tabs, each at its own address (a link shows its tab whatever the setting).
   { route: 'library?view=graph', from: ['documented'] },
   { route: 'library?view=tags', from: ['documented'] },
   { route: 'library?view=conflicts', from: ['documented'] },
   { route: 'library?view=decisions', from: ['documented'] },
+  { route: 'library?view=settings', from: ['documented'] },
   { route: 'library?view=home', from: ['documented'] },
   { route: 'library?view=library', from: ['documented'] },
   { route: 'library?view=intents', from: ['documented'] },

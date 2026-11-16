@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { api, type DiscoverResponse } from '../../lib/api'
 import { resetDataStore } from '../../lib/data/store'
-import { KnowledgeListPage } from '../knowledge/KnowledgeListPage'
+import { LibraryPage } from '../library/LibraryPage'
 import { TriggersSection } from '../triggers/TriggersSection'
 import { SkillsPage } from '../skills/SkillsPage'
 
@@ -33,7 +33,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', () => new Promise(() => {}))
   vi.spyOn(api, 'discover').mockResolvedValue(DISCOVER)
   vi.spyOn(api, 'knowledgeStats').mockResolvedValue({ items: 0, entities: 0, relations: 0, embeddings: { enabled: false } } as never)
-  vi.spyOn(api, 'knowledgeItems').mockResolvedValue({ items: [], total: 0, page: 1, limit: 100 } as never)
+  vi.spyOn(api, 'library').mockResolvedValue({ items: [], total: 0, complete: true, failed: [], facets: {}, sort: 'activity' } as never)
   vi.spyOn(api, 'knowledgeCollections').mockResolvedValue([])
   vi.spyOn(api, 'automations').mockResolvedValue({ jobs: [], hooks: [], stores: [], callbacks: [], server_tz: 'UTC', unreadable: [] })
   vi.spyOn(api, 'triggerReview').mockResolvedValue([] as never)
@@ -47,8 +47,8 @@ afterEach(() => {
 })
 
 const PAGES = [
-  ['Library: an empty knowledge base', 'Knowledge base is empty', 'knowledge',
-    () => <KnowledgeListPage onCreate={() => {}} onOpenItem={() => {}} onOpenSources={() => {}} onOpenReports={() => {}} onOpenChat={() => {}} query={{}} setQuery={() => {}} />],
+  ['Library: an empty library', 'Your library is empty', 'library',
+    () => <LibraryPage sub="" navigate={() => {}} navEpoch={0} query={{}} setQuery={() => {}} />],
   ['Automations: no triggers', 'No triggers', 'triggers',
     () => <TriggersSection sub="" navigate={() => {}} navEpoch={0} query={{}} setQuery={() => {}} />],
   ['Capabilities: no skills installed', 'No skills installed', 'skills',
@@ -63,6 +63,7 @@ describe('an empty page offers one Discover tip under its own empty state', () =
     const link = within(aside).getByRole('link')
     expect(link.getAttribute('href'), 'a tip for another page').not.toBe(`#/${here}`)
     expect(link.getAttribute('href')).toMatch(/^#\/(knowledge|triggers|skills)$/)
+    if (here === 'library') expect(link.getAttribute('href'), 'the old Knowledge address opens the library').not.toBe('#/knowledge')
     expect(screen.getAllByRole('complementary', { name: 'A tip from Discover' }), 'one tip').toHaveLength(1)
   })
 

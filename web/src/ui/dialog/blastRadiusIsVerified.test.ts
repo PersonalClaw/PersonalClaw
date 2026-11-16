@@ -515,10 +515,9 @@ describe('four more bodies, all already true — pinned so they stay that way', 
       .toMatch(/Children are re-parented to root rather than deleted/)
   })
 
-  it('the shelf delete leaves the items alone', () => {
-    expect(web('pages/knowledge/KnowledgeListPage.tsx')).toContain(
-      'The shelf goes away. The items on it stay in your library.',
-    )
+  it('the collection delete leaves the items alone', () => {
+    // The shelf is the library's collection now (#6101): Delete collection says its items stay.
+    expect(web('pages/library/libraryCollections.ts')).toMatch(/Its \$\{n\(count\)\} items stay in your library\./)
     const del = pyMethod(py('knowledge/store.py'), '    def delete_collection')
     expect(del, 'membership rows and the collection row go').toMatch(/DELETE FROM collection_items/)
     expect(del, 'and the items table is never touched').not.toMatch(/DELETE FROM items/)
@@ -675,10 +674,12 @@ describe('the conflict-resolve body, per choice', () => {
 
 describe('the last three bodies, and what this sweep does NOT claim', () => {
   it('the intent delete really takes what it gathered', () => {
-    const ui = web('pages/knowledge/KnowledgeListPage.tsx')
-    expect(ui).toContain('Everything it gathered goes with it')
-    expect(ui, 'and the no-outcomes branch says only the intent goes').toContain(
-      'It has gathered nothing yet, so only the intent itself goes.',
+    // The library's Delete intent… (#6101): it counts the findings it kept, and one that found
+    // nothing says it loses only itself.
+    const ui = web('pages/library/setup/SetupPanel.tsx')
+    expect(ui).toContain('This deletes the intent and the ${n(count)} ${count === 1 ? \'finding\' : \'findings\'} it kept.')
+    expect(ui, 'and the no-findings branch says only the intent goes').toContain(
+      "This deletes the intent. It hasn't found anything yet.",
     )
     // The handler drops the outcomes BEFORE the intent, which is what makes the sentence true.
     const h = py('dashboard/handlers/knowledge.py')

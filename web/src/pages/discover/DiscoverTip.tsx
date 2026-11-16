@@ -20,8 +20,14 @@ function tryItPath(t: DiscoverTryIt): string {
  *  dismissed and the areas already used) that points somewhere other than *here*, the route the
  *  empty state sits on, which already says how to fill itself. */
 export function tipFor(tips: readonly Tip[], here: string): Tip | undefined {
-  const page = here.split(/[/?]/)[0]
-  return tips.find((t) => t.try_it.route.split(/[/?]/)[0] !== page)
+  const page = pageOf(here)
+  return tips.find((t) => pageOf(t.try_it.route) !== page)
+}
+
+/** The page an address opens: the old Knowledge and Artifacts addresses open the library. */
+function pageOf(route: string): string {
+  const page = route.split(/[/?]/)[0]
+  return page === 'knowledge' || page === 'artifacts' ? 'library' : page
 }
 
 /** One Discover tip, in an empty Library, Automations or Capabilities page and at the end of first

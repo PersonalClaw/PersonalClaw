@@ -122,9 +122,21 @@ describe('a header control that renders primary also declares primary priority',
       const src = strip(readSource(abs))
       const rel = abs.slice(abs.indexOf('/pages/') + 7)
       for (const [i, bar] of topBars(src).entries()) {
-        const labels = [...bar.matchAll(/<HeaderControl\b[\s\S]{0,400}?\/>/g)]
-          .map((m) => labelOf(m[0]))
+        const tags = [...bar.matchAll(/<HeaderControl\b[\s\S]{0,400}?\/>/g)].map((m) => m[0])
+        // The one pair a header may hold under one label: a switch kept in the row, whose phone form
+        // is its icon alone, and the same switch named in the "…" with its words, both firing the same
+        // handler (the library's Power user view). One control, drawn twice, so nothing to predict.
+        const onClickOf = (tag: string) => tag.match(/onClick=\{([^}]*\})?[^}]*\}/)?.[0] ?? ''
+        const pairOf = (l: string) => {
+          const same = tags.filter((tag) => labelOf(tag) === l)
+          return same.length === 2 && same.every((tag) => /\basSwitch\b/.test(tag))
+            && same.some((tag) => /\bkeep="row"/.test(tag)) && same.some((tag) => /\binOverflow\b/.test(tag))
+            && onClickOf(same[0]) === onClickOf(same[1])
+        }
+        const labels = tags
+          .map((tag) => labelOf(tag))
           .filter((l): l is string => !!l)
+          .filter((l, i, all) => all.indexOf(l) === i || !pairOf(l))
         // A `Segmented` option must carry a `key`; an `EmptyState` action or a menu row must not — so
         // anchoring on `key:` immediately before `label:` is what separates them. An earlier draft
         // matched any `label: '…'` and produced ELEVEN false positives.

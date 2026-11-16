@@ -62,9 +62,10 @@ describe('windowing adoption ratchet (the window may only spread, never retreat)
   })
 
   it('the five surfaces the change names are the five that adopted it', () => {
-    // knowledge items, sessions, runs, inbox, logs — the five long-list surfaces.
+    // library items, sessions, runs, inbox, logs — the five long-list surfaces. (The knowledge items'
+    // list is the library's now, #6101.)
     for (const [surface, file] of [
-      ['knowledge items', 'pages/knowledge/KnowledgeListPage.tsx'],
+      ['library items', 'pages/library/LibraryList.tsx'],
       ['sessions', 'pages/chat/history/ChatHistoryPage.tsx'],
       ['runs', 'pages/workflows/WorkflowsListPage.tsx'],
       ['inbox', 'pages/inbox/InboxPage.tsx'],
