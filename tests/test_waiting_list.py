@@ -108,6 +108,7 @@ async def _everything(tmp_path):
                 "shell",
                 tool_input={"command": "rm -rf build"},
                 risk_level="destructive",
+                cwd=str(tmp_path / "site"),
             )
         )
     )
@@ -278,6 +279,10 @@ async def test_every_source_appears_once_with_its_brief_and_answer_route(tmp_pat
     assert bg["consequence"] == "destructive" and bg["risk"] == "destructive"
     assert bg["answer"]["path"] == "/api/approvals/bg-1/{answer}"
     assert bg["answer"]["takes"] == ["approve", "reject"]
+    # Where the call runs, its run's step and whether it asks for a secret file, so its panel can
+    # say "Deletes files in …" and who asked from which step.
+    assert bg["brief"]["cwd"] == str(tmp_path / "site")
+    assert bg["brief"]["step"] == "" and bg["brief"]["secret_file"] == ""
 
     helper = items["approval:spawn:researcher"]
     assert helper["work"] == "subagent:researcher" and helper["session"] == CHAT

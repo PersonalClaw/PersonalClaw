@@ -1023,10 +1023,13 @@ async def api_skill_proposals_list(request: web.Request) -> web.Response:
     """
     from personalclaw.skills import proposals
 
+    # One existence probe for every row: each card says, as of this read, whether its skill is
+    # installed.
+    resolves = proposals._live_resolver()
     return web.json_response(
         {
             "proposals": [
-                p.summary()
+                p.summary(resolves=resolves)
                 for p in proposals.list_pending()
                 if _reads_proposal(request, p.session_key)
             ],
@@ -1055,8 +1058,12 @@ async def api_skill_proposal_detail(request: web.Request) -> web.Response:
     prop = proposals.get(request.match_info.get("id", ""))
     # Another chat's proposal is no proposal to an app: the answer an id never filed gets.
     if prop is None or not _reads_proposal(request, prop.session_key):
-        return web.json_response({"error": "not found"}, status=404)
+        return json_error("skill_proposal_gone", status=404)
     payload = prop.shown()
+    # Where its Accept lands, as of this read: the skill it refines, or "" when accepting adds a
+    # new one (its skill removed since).
+    payload["accept_target"] = proposals.accept_target(prop)
+    payload["target_resolves"] = bool(payload["accept_target"])
     if prop.kind == "refine" and prop.refine_target:
         from personalclaw.skills import overlays
 

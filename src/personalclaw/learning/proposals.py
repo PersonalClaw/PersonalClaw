@@ -757,7 +757,11 @@ def enqueue(
     if verdict is Verdict.REINFORCE and match is not None:
         match.reinforcements += 1
         match.updated_at = now
-        match.tags = sorted(set(match.tags) | set(candidate.tags))
+        from personalclaw.learning.template_install import keep_single_valued
+
+        # A single-valued tag (a template's name, the workflow a path was mined from) keeps the
+        # value it was filed with.
+        match.tags = keep_single_valued(match.tags, candidate.tags)
         # Human provenance wins on merge: a pattern later confirmed by the user is
         # human-originated from then on, and outranks inferred rows accordingly.
         if provenance == "human":
@@ -840,6 +844,10 @@ def _expire_oldest(existing: list[Proposal]) -> None:
         logger.info("proposal queue full; expired oldest %s", victim.id)
     except OSError:
         logger.debug("proposal expiry failed", exc_info=True)
+        return
+    # Its Inbox row and its notification go with it: a row whose proposal is gone would wait on
+    # an answer nothing can take.
+    _resolve_inbox_item(victim.id, "dismissed")
 
 
 # ── Inbox surfacing ──
@@ -866,6 +874,27 @@ if _unlabelled:  # pragma: no cover - import-time guard
     raise RuntimeError(f"proposal kinds without an inbox label: {sorted(_unlabelled)}")
 
 
+#: How much of a proposal's body its Inbox row carries as the preview: the row is copied into the
+#: log and the digest, and the whole body is the proposal's own read.
+PREVIEW_CHARS = 2000
+
+
+def _preview(text: str) -> str:
+    """*text* up to :data:`PREVIEW_CHARS`, cut at the last paragraph break before it (else a line
+    break), never inside a mask."""
+    from personalclaw.textfmt import cut_outside_masks
+
+    if len(text) <= PREVIEW_CHARS:
+        return text
+    head = text[:PREVIEW_CHARS]
+    for brk in ("\n\n", "\n"):
+        at = head.rfind(brk)
+        if at >= PREVIEW_CHARS // 2:
+            head = head[:at]
+            break
+    return head[: cut_outside_masks(text, len(head))].rstrip() + "\n\n…"
+
+
 def _surface_in_inbox(prop: Proposal) -> None:
     """Raise the proposal as a durable inbox item.
 
@@ -884,21 +913,27 @@ def _surface_in_inbox(prop: Proposal) -> None:
         except Exception:
             logger.debug("proposal inbox surface: no dashboard state", exc_info=True)
 
-        title = _KIND_LABELS.get(prop.kind, "Proposal")
         # The row carries the proposals-contract payload, so approving it dispatches through the
         # ONE proposals contract (`apply.skill_promotion` → this module's `accept`) instead
         # of the inbox handler hard-wiring this queue by name. `refs["learning_proposal"]`
         # stays for the existing readers — the contract is additive, not a replacement.
+        from personalclaw.learning.cards import card_for
         from personalclaw.proposals_contract import REFS_KEY, Proposal
         from personalclaw.security import redact_for_display
 
-        # The row's copies of the proposal's words are masked as its own read is (`shown`): the
-        # row's text is copied into its notification, the log and the digest, and accepting goes
-        # through the stored proposal, never this copy (`editable=False`).
-        shown_title = redact_for_display(prop.title or "")
+        # The row leads with what the proposal asks (`learning.cards`): its headline is the
+        # row's title and the bell's, and its kind's label is the tag, which a notification's body
+        # opens with ("New template proposed · 5 steps: …"). Every copy is masked as the
+        # proposal's own read is: the row's text is copied into its notification, the log and the
+        # digest, and accepting goes through the stored proposal, never this copy
+        # (`editable=False`).
+        card = card_for(prop)
+        label = card["label"]
+        headline = card["headline"] or redact_for_display(prop.title or "") or label
+        line = " · ".join(part for part in (label, card["detail"]) if part)
         payload = Proposal(
-            title=shown_title or title,
-            preview=redact_for_display(prop.body or prop.title or ""),
+            title=headline,
+            preview=_preview(redact_for_display(prop.body or prop.title or "")),
             preview_kind="text",
             provenance="learning",
             editable=False,
@@ -909,11 +944,12 @@ def _surface_in_inbox(prop: Proposal) -> None:
             source="learning",
             kind="proposal",
             item_kind=ItemKind.PROPOSAL.value,
-            title=title,
-            body=shown_title,
+            title=headline,
+            body=line,
             refs={
                 "learning_proposal": prop.id,
                 "session": prop.session_key,
+                "card": card,
                 REFS_KEY: payload.to_dict(),
             },
             dedup_key=f"learning_proposal:{prop.id}",
@@ -1151,43 +1187,71 @@ WITHDRAWN_NOTE = "Withdrawn: a chat it was learned from was deleted."
 
 
 def withdrawn_words(rows: Iterable[Any]) -> dict[str, tuple[str, str]]:
-    """Give each withdrawn proposal's Inbox row in *rows* :data:`WITHDRAWN_NOTE` as its body, its
-    title (the kind's label) kept, and return each row's new words for its notifications
-    (``DashboardState.retext_item_notifications``)."""
+    """Give each withdrawn proposal's Inbox row in *rows* the kind's label as its title and
+    :data:`WITHDRAWN_NOTE` as its body, its card blanked to that label, and return each row's new
+    words for its notifications (``DashboardState.retext_item_notifications``).
+
+    The label, never the row's own title: a row leads with the proposal's headline
+    (``learning.cards``), which quotes what it was learned from. A row filed before the card
+    led with the label, which its first paragraph still is."""
     from personalclaw.security import redact_for_display
 
     out: dict[str, tuple[str, str]] = {}
     for row in rows:
-        title = redact_for_display(str(row.message or "").partition("\n\n")[0])
+        card = row.refs.get("card") if isinstance(row.refs, dict) else None
+        if isinstance(card, dict):
+            title = str(card.get("label") or "")
+            row.refs["card"] = {"label": title} if title else {}
+        else:
+            title = redact_for_display(str(row.message or "").partition("\n\n")[0])
         row.message = f"{title}\n\n{WITHDRAWN_NOTE}" if title else WITHDRAWN_NOTE
         out[row.id] = (title, WITHDRAWN_NOTE)
     return out
 
 
 def _withdraw_inbox_item(pid: str) -> None:
-    """Dismiss the withdrawn proposal's Inbox row, its copy of the proposal's body cleared, and
-    give the row's notifications :data:`WITHDRAWN_NOTE` in place of the words they copied."""
+    """Dismiss the withdrawn proposal's Inbox row, its copy of the proposal's title and body
+    cleared, and give the row's notifications, in the log and waiting for the digest,
+    :data:`WITHDRAWN_NOTE` in place of the words they copied."""
     try:
         from personalclaw.inbox import set_item_status
+        from personalclaw.notification_rules import retext_digest_queue
         from personalclaw.proposals_contract import REFS_KEY
 
         state, store, rows = _inbox_rows(pid)
+        words = withdrawn_words(rows)
         for row in rows:
+            # The proposal's own copy on the row (the Inbox's proposals view reads its title)
+            # keeps none of its words either: its title is the label the row now has.
             payload = row.refs.get(REFS_KEY)
             if isinstance(payload, dict):
                 payload["preview"] = ""
-        words = withdrawn_words(rows)
+                payload["title"] = words.get(row.id, ("", ""))[0]
         if rows and not set_item_status(state, store, rows, "dismissed"):
-            store.save()  # already dismissed: the cleared preview is still written
+            store.save()  # already dismissed: the cleared copy is still written
         retext = getattr(state, "retext_item_notifications", None)
         if words and callable(retext):
             retext(words)
+        # A note waiting for the digest copied the row's words too.
+        retext_digest_queue(words)
     except Exception:
         logger.warning("could not withdraw learning proposal %s from the Inbox", pid, exc_info=True)
 
 
 class AcceptError(Exception):
     """Raised when a proposal cannot be accepted."""
+
+
+class NotInstalledError(AcceptError):
+    """The install ran and failed: a taken name, a store that refused the write. Nothing changed,
+    no decision is recorded, and the row stays pending. Its message is the installer's sentence,
+    which the route answers as 409 ``learning_proposal_not_installed``."""
+
+
+class NotAppliedError(NotInstalledError):
+    """A template change that could not be applied: its definition gone, an op that no longer
+    fits, a step it would let do more. Nothing changed and the row stays pending; the route
+    answers 409 ``learning_proposal_not_applied``."""
 
 
 class NoProposalInstallerError(AcceptError):
@@ -1256,9 +1320,19 @@ def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
         _audit("learning_proposal_accept", prop, "unsupported")
         logger.warning("Cannot install a %s proposal (%s); accept refused", prop.kind, pid)
         raise
+    except NotInstalledError:
+        # Already said in the installer's words (a template change that was not applied).
+        _audit("learning_proposal_accept", prop, "failed")
+        raise
+    except AcceptError as exc:
+        # An installer's own refusal is its sentence: a taken name, a store that refused the write.
+        _audit("learning_proposal_accept", prop, "failed")
+        raise NotInstalledError(str(exc)) from exc
     except Exception as exc:
         _audit("learning_proposal_accept", prop, "failed")
-        raise AcceptError(f"install failed for {pid!r}: {exc}") from exc
+        raise NotInstalledError(
+            f"It could not be installed ({exc}), so nothing changed and the proposal still waits."
+        ) from exc
 
     prop.status = Status.ACCEPTED.value
     prop.updated_at = _now()

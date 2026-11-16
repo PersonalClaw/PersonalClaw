@@ -137,6 +137,41 @@ def refinement_description(trigger: str) -> str:
     return _DESCRIPTION.get(trigger, "")
 
 
+#: What drove a stumble refine, as its card's detail says it after the version.
+_TRIGGER_WORDS = {
+    "correction": "you corrected it",
+    "failure_retry": "a step failed and was retried",
+    "rejection": "you declined an action",
+}
+
+_DETAIL_RE = re.compile(r"`([^`]+)`")
+
+
+def refinement_gist(prop) -> str:
+    """What a refine proposal *prop* changes, in the words its refinement block uses, for its
+    card's headline: your correction quoted ("“Always link the metrics dashboard”"), "keep the
+    form of “fetch” that worked", "ask before “deploy”"; a model refine's own description. Never
+    the reviewer's slug."""
+    trigger = str(getattr(prop, "trigger", "") or "")
+    procedure = str(getattr(prop, "procedure_md", "") or "")
+    if trigger == "correction":
+        quoted = " ".join(
+            line[1:].strip() for line in procedure.splitlines() if line.startswith(">")
+        ).strip()
+        return f"“{quoted}”" if quoted else str(getattr(prop, "description", "") or "")
+    found = _DETAIL_RE.search(procedure)
+    if trigger == "failure_retry" and found:
+        return f"keep the form of “{found.group(1)}” that worked"
+    if trigger == "rejection" and found:
+        return f"ask before “{found.group(1)}”"
+    return str(getattr(prop, "description", "") or "")
+
+
+def refinement_trigger_words(trigger: str) -> str:
+    """What drove a stumble refine, as its card says it, or ``""`` for a model refine."""
+    return _TRIGGER_WORDS.get(str(trigger or ""), "")
+
+
 def refinement_body(trigger: str, *, detail: str = "", quote: str = "", now: datetime) -> str:
     """The refinement body accept will append, or ``""`` for an unmapped trigger.
 
@@ -238,7 +273,11 @@ def _unified(old: str, new: str, path: str) -> str:
     old_lines = (old if old.endswith("\n") else old + "\n").splitlines(keepends=True)
     new_lines = (new if new.endswith("\n") else new + "\n").splitlines(keepends=True)
     udiff = difflib.unified_diff(old_lines, new_lines, fromfile=path, tofile=path, n=3)
-    return "".join(udiff).rstrip()[:_DIFF_MAX]
+    text = "".join(udiff).rstrip()
+    if len(text) <= _DIFF_MAX:
+        return text
+    # Cut on a line boundary: a diff line cut in half reads as a change nobody proposed.
+    return text[: text.rfind("\n", 0, _DIFF_MAX)].rstrip()
 
 
 def propose_refinement(

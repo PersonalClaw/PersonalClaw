@@ -155,12 +155,19 @@ class SkillProposal:
     def to_dict(self) -> dict:
         return asdict(self)
 
-    def summary(self) -> dict:
+    def summary(self, *, resolves=None) -> dict:
         """The compact view for the inbox list (no full procedure body), its words masked for
-        display as :meth:`shown`'s are."""
+        display as :meth:`shown`'s are, with its card (:func:`card_of`) and whether the skill it
+        names is installed, worked out now. *resolves* is one :func:`_live_resolver` a list read
+        shares across its rows."""
         from personalclaw.security import redact_for_display
 
+        probe = resolves or _live_resolver()
+        target = accept_target(self, resolves=probe)
         return {
+            "card": card_of(self, resolves=probe),
+            "accept_target": target,
+            "target_resolves": bool(target),
             "id": self.id,
             "slug": self.slug,
             "description": redact_for_display(self.description),
@@ -457,6 +464,69 @@ def enqueue(
     return prop
 
 
+#: A skill proposal's kind label, the tag its Inbox row and its notification carry.
+LABELS = {"refine": "Refine a skill", "new": "New skill proposed"}
+
+
+def card_of(prop: SkillProposal, *, resolves=None) -> dict:
+    """A skill proposal's card: ``{headline, detail, name, accept: {verb, sentence}, label}``.
+
+    A refinement leads with what it changes (``refine.refinement_gist``), its skill in the name
+    slot, and its detail is "Refinement v<N> · <what drove it>". A new skill leads with what it
+    does, its slug in the slot, and its detail is the words it fires on, else its procedure's
+    first line. Accept says where it lands, worked out now: a refinement whose skill was removed
+    since installs it as a new skill, and a new skill that joins an existing one says so. Masked,
+    then cut on a word with the masks kept whole."""
+    from personalclaw.security import redact_for_display
+    from personalclaw.skills import overlays, refine
+    from personalclaw.textfmt import clip_words
+
+    probe = resolves or _live_resolver()
+    target = accept_target(prop, resolves=probe)
+    triggers = ", ".join(t.strip() for t in str(prop.triggers or "").split(",") if t.strip())
+    if prop.kind == "refine":
+        skill = prop.refine_target or prop.slug
+        headline = refine.refinement_gist(prop)
+        drove = refine.refinement_trigger_words(prop.trigger)
+        version = overlays.next_version(skill) if target else 1
+        tail = drove or (f"fires on: {triggers}" if triggers else "")
+        detail = " · ".join(part for part in (f"Refinement v{version}", tail) if part)
+        name = skill
+        if target:
+            accept = {
+                "verb": "Add refinement",
+                "sentence": (
+                    f"Adds refinement v{version} to {skill}. Its own files stay as they are."
+                ),
+            }
+        else:
+            accept = {
+                "verb": "Install skill",
+                "sentence": f"{skill} is no longer installed, so accepting adds it as a new skill",
+            }
+    else:
+        headline = prop.description or prop.slug
+        first = next(
+            (ln.strip() for ln in str(prop.procedure_md or "").splitlines() if ln.strip()), ""
+        )
+        detail = f"Fires on: {triggers}" if triggers else first
+        name = prop.slug
+        from personalclaw.skills.loader import AUTO_SKILL_NAMESPACE
+
+        if target:
+            accept = {"verb": "Install skill", "sentence": f"Adds this to the existing {target}"}
+        else:
+            own = _own_slug(prop) or prop.slug
+            accept = {"verb": "Install skill", "sentence": f"Installs {AUTO_SKILL_NAMESPACE}/{own}"}
+    return {
+        "headline": clip_words(redact_for_display(headline), 120),
+        "detail": clip_words(redact_for_display(detail), 160),
+        "name": clip_words(redact_for_display(name), 120),
+        "accept": {k: redact_for_display(v) for k, v in accept.items()},
+        "label": LABELS.get(prop.kind, LABELS["new"]),
+    }
+
+
 def _surface_in_inbox(prop: SkillProposal) -> None:
     """Raise the proposal as a durable inbox item.
 
@@ -480,19 +550,18 @@ def _surface_in_inbox(prop: SkillProposal) -> None:
         except Exception:
             logger.debug("proposal inbox surface: no dashboard state", exc_info=True)
 
-        from personalclaw.security import redact_for_display
-
-        label = "Refine a skill" if prop.kind == "refine" else "New skill proposed"
+        # The row leads with what it asks (`card_of`), its kind's label the tag its body opens
+        # with. Masked as the proposal's own read is (`SkillProposal.shown`): the row's words
+        # are copied into its notification, the notification log and the digest.
+        card = card_of(prop)
         emit_attention_item(
             state,
             source="skills",
             kind="proposal",
             item_kind=ItemKind.PROPOSAL.value,
-            title=label,
-            # Masked as the proposal's own read is (`SkillProposal.shown`): the row's words are
-            # copied into its notification, the notification log and the digest.
-            body=redact_for_display(f"{prop.slug} — {prop.description}"),
-            refs={"skill_proposal": prop.id, "session": prop.session_key},
+            title=card["headline"] or card["label"],
+            body=" · ".join(part for part in (card["label"], card["detail"]) if part),
+            refs={"skill_proposal": prop.id, "session": prop.session_key, "card": card},
             dedup_key=f"skill_proposal:{prop.id}",
         )
     except Exception:

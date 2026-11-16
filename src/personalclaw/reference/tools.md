@@ -1229,6 +1229,7 @@ Propose saving the multi-step procedure just carried out in this session as a re
 - `description` (string, optional) — One line on what the procedure accomplishes.
 - `name` (string, required) — Proposed template name: lowercase, digits, hyphens.
 - `steps` (array, required) — The procedure, one step per entry, in order. Use {{placeholders}} for values that change between runs.
+- `why` (string, optional) — Optional: one line on why it is worth a template. The user reads it as yours when they decide.
 
 **Example — Propose the session's procedure as a reusable template (draft only):**
 

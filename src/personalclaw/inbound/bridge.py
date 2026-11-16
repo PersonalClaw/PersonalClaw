@@ -460,20 +460,46 @@ def _mint_confirmation(action: Action, params: dict, *, asked_by: str) -> str:
     return token
 
 
+#: How much of a confirmation's parameters its card shows (its Inbox row's sentence cuts at 300).
+PARAMS_SHOWN = 4000
+
+
+def _shown_params(params: dict) -> tuple[str, bool, int]:
+    """A confirmation's parameters as its card shows them: ``(text, cut, chars)``.
+
+    The redacted JSON in the producer's sorted key order, up to :data:`PARAMS_SHOWN` characters.
+    The cut never splits a mask. ``cut`` and ``chars`` say whether anything was left out and how
+    long the whole was, so the card can say so."""
+    from personalclaw.security import redact_field
+    from personalclaw.textfmt import cut_outside_masks
+
+    if not params:
+        return "", False, 0
+    whole = redact_field(json.dumps(params, sort_keys=True, default=str))
+    if len(whole) <= PARAMS_SHOWN:
+        return whole, False, len(whole)
+    return whole[: cut_outside_masks(whole, PARAMS_SHOWN)], True, len(whole)
+
+
 def pending_confirmations() -> list[dict[str, Any]]:
     """Every confirmation waiting on you, as the waiting list reads it (``waiting``): its token,
-    the action, what its Inbox row asks you, who asked, and when it was asked and expires on the
-    wall clock. ``created`` is held on the monotonic clock, so a wall-clock jump never ages one."""
+    the action, what its Inbox row asks you, its parameters (:func:`_shown_params`), who asked, and
+    when it was asked and expires on the wall clock. ``created`` is held on the monotonic clock, so
+    a wall-clock jump never ages one."""
     _reap()
     mono, wall = time.monotonic(), time.time()
     out = []
     for token, row in list(_pending.items()):
         asked_at = wall - (mono - float(row["created"]))
+        shown, cut, chars = _shown_params(row["params"])
         out.append(
             {
                 "token": token,
                 "action": row["action"],
                 "body": _confirmation_body(row["action"], row["params"]),
+                "params": shown,
+                "params_cut": cut,
+                "params_chars": chars,
                 "asked_by": row["asked_by"],
                 "asked_at": asked_at,
                 "expires_at": asked_at + CONFIRM_TTL_SECS,

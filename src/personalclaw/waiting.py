@@ -155,6 +155,9 @@ APPROVAL_BRIEF = (
     "confirms",
     "asked_by",
     "trigger_name",
+    "secret_file",
+    "step",
+    "cwd",
 )
 
 
@@ -851,7 +854,10 @@ def _bridge_confirmations(pending: list[dict[str, Any]], now: float) -> list[dic
                 ident=_confirmation_ref(token),
                 work="",
                 session="",
-                brief={k: row.get(k) for k in ("action", "body", "asked_by")},
+                brief={
+                    k: row.get(k)
+                    for k in ("action", "body", "params", "params_cut", "params_chars", "asked_by")
+                },
                 consequence="changes",
                 answer=_answer(
                     "POST",

@@ -158,6 +158,40 @@ def _api_base() -> str:
     return gateway_base.resolve_api_base()
 
 
+def _save_template_schema() -> dict[str, Any]:
+    """The save tool's arguments (``save_template_from_session``), a fresh copy per list: its own
+    function, so the tool list stays a list of tools."""
+    return {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Proposed template name: lowercase, digits, hyphens.",
+            },
+            "steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "The procedure, one step per entry, in order. Use {{placeholders}} "
+                    "for values that change between runs."
+                ),
+            },
+            "description": {
+                "type": "string",
+                "description": "One line on what the procedure accomplishes.",
+            },
+            "why": {
+                "type": "string",
+                "description": (
+                    "Optional: one line on why it is worth a template. The user reads it "
+                    "as yours when they decide."
+                ),
+            },
+        },
+        "required": ["name", "steps"],
+    }
+
+
 def _list_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -313,28 +347,7 @@ def _list_tools() -> list[dict[str, Any]]:
                 "would differ on the next run — steps with nothing parameterizable are a "
                 "recording of one run, not a template, and get declined."
             ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Proposed template name: lowercase, digits, hyphens.",
-                    },
-                    "steps": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "The procedure, one step per entry, in order. Use {{placeholders}} "
-                            "for values that change between runs."
-                        ),
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "One line on what the procedure accomplishes.",
-                    },
-                },
-                "required": ["name", "steps"],
-            },
+            "inputSchema": _save_template_schema(),
         },
         {
             "name": "project_context_review",
@@ -2037,7 +2050,9 @@ def _save_template_from_session(args: dict[str, Any]) -> str:
 
     Files, never installs: the gate's accepted branch enqueues a PENDING proposal the user accepts
     or rejects, so this tool cannot add a definition to the workflow library. That is what makes it
-    safe to expose at all — the worst outcome of an over-eager call is one reviewable row.
+    safe to expose at all — the worst outcome of an over-eager call is one reviewable row. Her
+    Accept saves the steps as a workflow under *name*, filed as the proposal's ``name:`` tag
+    (``learning.template_install``), unless a workflow already has that name.
 
     A DECLINE is reported with its typed reason rather than swallowed. The model that proposed the
     steps is the one that can fix them (add a placeholder, list the real steps), and a silent no
@@ -2069,6 +2084,8 @@ def _save_template_from_session(args: dict[str, Any]) -> str:
         session_key=_resolve_session_key(),
         title=description or f"Template: {slug}",
         body="\n".join(f"- {s}" for s in steps),
+        name=slug,
+        why=str(args.get("why") or "").strip(),
     )
     if outcome.filed:
         return (

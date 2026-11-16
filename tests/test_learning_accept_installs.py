@@ -44,7 +44,8 @@ from personalclaw.skills.loader import skills_dir
 _PROCEDURE = "1. Run make web-build.\n2. Restart the gateway.\n3. Reload the dashboard."
 
 #: The kinds with a live producer and no installer anywhere in the tree. Each one is a proposal a
-#: user can see in the inbox today and click Accept on.
+#: user can see in the inbox today and click Accept on. A ``template`` installs once it names what
+#: it saves (``learning.template_install``); the one filed here names nothing, so it still doesn't.
 UNINSTALLABLE_KINDS = ("retirement", "tier_migration", "template", "knowledge_draft")
 
 
@@ -262,7 +263,7 @@ class TestAFailedInstall:
             rationale="A second attempt at the same skill name entirely",
         )
 
-        with pytest.raises(P.AcceptError, match="install failed"):
+        with pytest.raises(P.NotInstalledError, match="could not be installed"):
             P.accept(second.id, actor="user")
 
         assert second.fingerprint not in P.load_decisions()
@@ -278,8 +279,9 @@ class TestAFailedInstall:
 
         status, body = _route(second.id)
 
-        assert status != 200 and "ok" not in body
-        assert "install failed" in body["error"]
+        assert status == 409 and "ok" not in body
+        assert body["error"]["code"] == "learning_proposal_not_installed"
+        assert "could not be installed" in body["error"]["message"]
 
     def test_a_failed_install_is_distinguishable_from_an_unsupported_kind(self, home) -> None:
         """Both leave the row pending, but only one is worth retrying unchanged.
@@ -362,6 +364,8 @@ class TestVacuityFloor:
         every other unmatched kind refuses. A regression that widened it would turn four honest
         409s back into four silent 200s.
         """
-        assert installers.NOTHING_TO_INSTALL == frozenset({"lesson_batch", "template_diff"})
+        assert installers.NOTHING_TO_INSTALL == frozenset({"lesson_batch"})
+        # A template change has its own branch now, applied before its decision is recorded.
+        assert installers.branch_for({"kind": "template_diff"}) == installers.TEMPLATE_DIFF
         for kind in UNINSTALLABLE_KINDS:
             assert installers.branch_for({"kind": kind}) == ""

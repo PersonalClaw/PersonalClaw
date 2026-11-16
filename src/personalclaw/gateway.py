@@ -465,6 +465,16 @@ def _auto_sized(max_subagents: int, per_agent_gb: float) -> int:
     return resolve_max_subagents(max_subagents, per_agent_gb=per_agent_gb)
 
 
+def _held_action_refs(trigger: Any, provider: str) -> dict[str, str]:
+    """The refs of the Inbox row a held trigger action raises: the trigger, by id and by name, and
+    the provider, so its card reads "<provider> on <trigger> didn't run"."""
+    return {
+        "trigger": str(getattr(trigger, "id", "") or ""),
+        "trigger_name": str(getattr(trigger, "name", "") or ""),
+        "provider": provider,
+    }
+
+
 class GatewayOrchestrator:
     """Manages the lifecycle of all gateway services.
 
@@ -1747,7 +1757,7 @@ class GatewayOrchestrator:
                     f"The {provider_name!r} action on trigger {trigger.id} did not run: "
                     f"{route.reason}."
                 ),
-                refs={"trigger": str(getattr(trigger, "id", "") or ""), "provider": provider_name},
+                refs=_held_action_refs(trigger, provider_name),
                 dedup_key=f"autonomy_hold:{route.key}:trigger:{getattr(trigger, 'id', '')}",
             )
             from personalclaw.triggers.models import Outcome as _Outcome

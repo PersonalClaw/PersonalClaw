@@ -255,9 +255,13 @@ class TestGeneratorLabelsARefine:
             P._surface_in_inbox(new)
         store = InboxStore()
         store.load()
-        said = {i.refs.get("skill_proposal"): i.message for i in store.items.values()}
-        assert said[refine.id].startswith("Refine a skill")
-        assert said[new.id].startswith("New skill proposed")
+        # The row leads with what it asks, and the label is its tag: the card's, and the opening
+        # of the line under the headline, which a notification's body is.
+        rows = {i.refs.get("skill_proposal"): i for i in store.items.values()}
+        assert rows[refine.id].refs["card"]["label"] == "Refine a skill"
+        assert rows[refine.id].message.split("\n\n")[1].startswith("Refine a skill")
+        assert rows[new.id].refs["card"]["label"] == "New skill proposed"
+        assert rows[new.id].message.split("\n\n")[1].startswith("New skill proposed")
 
 
 # ── #302: the accepted skill must be visible ──────────────────────────────────

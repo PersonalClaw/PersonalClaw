@@ -36,6 +36,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A Code loop whose workspace has no branch checked out (a detached HEAD) merges nothing and starts no task until you check one out, and says so. Its merge review, merge records and conflict question named `main` whatever the repository's branches were called, and an Unattended loop merged its tasks onto the detached HEAD and deleted their branches, which left the work on no branch once a branch was checked out. They now name a detached HEAD as one, with its commit.**
 - **The gateway keeps answering while a code loop's stage gate reads what the stage changed: git reads it off the gateway's event loop, and a loop stopped, paused or deleted meanwhile is not judged.**
 - **A code loop paused while its stage gate runs the stage's check, asks its judge or scores the stage's quality is no longer advanced over the Pause: the gate reads the loop again after each, so the stage stays where it was, and the stage worker's nudge and the loop's owner are left as the Pause left them.**
+- **Accepting a proposed template saves it to Workflows, as the agent's save tool says.**
 
 ### Security
 

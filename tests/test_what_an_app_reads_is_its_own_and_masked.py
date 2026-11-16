@@ -654,6 +654,49 @@ def test_deleting_a_chat_withdraws_the_proposals_learned_from_it(
     for note in state._notification_log:
         if note.get("inbox_item") in (row.id, skill_row.id):
             assert "Withdrawn" in note["body"], note
+            # Its title is the kind's label, not the proposal's own words, which quote the chat.
+            assert "out of the log" not in note["title"], note
+            assert "Sends the report" not in note["title"], note
+    # The withdrawn rows keep none of the proposal's words: their title is the label, and their
+    # card is blanked to it.
+    for withdrawn, words in ((row, "out of the log"), (skill_row, "Sends the report")):
+        assert words not in withdrawn.message, withdrawn.message
+        card = withdrawn.refs.get("card") or {}
+        assert set(card) <= {"label"}, card
+    # Nor does the proposal's own copy on the row, which the Inbox's proposals view reads.
+    assert "out of the log" not in row.refs[REFS_KEY]["title"], row.refs[REFS_KEY]
+    assert row.refs[REFS_KEY]["title"] == (row.refs.get("card") or {}).get("label", "")
+
+
+def test_a_withdrawn_proposal_leaves_the_digest_without_its_words(
+    tmp_path, learning, skills, monkeypatch
+):
+    from personalclaw import notification_rules
+    from personalclaw.dashboard.chat_forget import purge_chat
+    from personalclaw.inbox_providers import native_source
+
+    # A learning proposal's note waits for the digest, so it is queued there, not in the log.
+    notification_rules.save_rules({"rules": {"learning/proposal": {"mode": "digest"}}})
+    state = _state(tmp_path)
+    monkeypatch.setattr(native_source, "get_dashboard_state", lambda: state)
+    gone = _learned(learning, "gone", f"dashboard:{YOUR_CHAT}")
+    kept = _learned(learning, "kept", "dashboard:another-chat")
+    learning._surface_in_inbox(gone)
+    learning._surface_in_inbox(kept)
+    [row] = _rows_with("learning_proposal", "gone")
+    [still] = _rows_with("learning_proposal", "kept")
+    queued = {
+        str(n.get("inbox_item")): n
+        for n in map(json.loads, notification_rules.digest_queue_path().read_text().splitlines())
+    }
+    assert "out of the log" in queued[row.id]["title"], "the probe: the digest held its words"
+
+    purge_chat(state, f"dashboard:{YOUR_CHAT}", keys={YOUR_CHAT, f"dashboard:{YOUR_CHAT}"})
+
+    drained = {str(n.get("inbox_item")): n for n in notification_rules.drain_digest_queue()}
+    assert "out of the log" not in drained[row.id]["title"], drained[row.id]
+    assert "Withdrawn" in drained[row.id]["body"], drained[row.id]
+    assert drained[still.id]["title"] == queued[still.id]["title"], "another chat's stays as it was"
 
 
 # ── the second-opinion check ────────────────────────────────────────────────────────────────
@@ -702,3 +745,37 @@ def test_a_claim_the_screen_refuses_is_not_handed_to_the_model(monkeypatch):
         == SKIPPED
     )
     assert seen == []
+
+
+# ── every copy of a proposal's words an Inbox read serves is masked ─────────────────────────────
+
+
+def test_an_inbox_read_masks_a_rows_card_and_a_fixed_proposals_words():
+    from personalclaw.inbox import redact_item
+
+    item = {
+        "message": "m",
+        "refs": {
+            "card": {
+                "headline": f"Rotate {SECRET}",
+                "detail": f"It is {SECRET}",
+                "name": "n",
+                "label": "Lessons to review",
+                "accept": {"effect": "records", "verb": "Accept", "sentence": f"Uses {SECRET}"},
+            },
+            "proposal": {"title": f"Move {SECRET}", "preview": f"Body {SECRET}", "editable": False},
+        },
+    }
+    shown = json.dumps(redact_item(item))
+    assert SECRET not in shown
+    assert "Lessons to review" in shown
+
+
+def test_an_editable_proposals_words_stay_as_its_editor_is_seeded():
+    from personalclaw.inbox import redact_item
+
+    item = {
+        "message": "m",
+        "refs": {"proposal": {"title": "Move it", "preview": f"Body {SECRET}", "editable": True}},
+    }
+    assert redact_item(item)["refs"]["proposal"]["preview"] == f"Body {SECRET}"

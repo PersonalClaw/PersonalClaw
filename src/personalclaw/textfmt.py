@@ -48,11 +48,52 @@ _THINKING_TAG_RE = re.compile(
 )
 
 
+#: How a mask marker opens. A marker (``security._MASK_RE``) is this, then anything but ``]`` or a
+#: line break, then ``]``.
+_MASK_OPEN = "[REDACTED:"
+
+
+def cut_outside_masks(text: str, end: int) -> int:
+    """Where to cut *text* at or before *end* so that every ``[REDACTED: …]`` marker stays whole:
+    *end* itself, or the start of the marker *end* falls inside.
+
+    Any cut of masked text a person reads goes through here. A half marker reads as a value, and no
+    restore (``security.keep_masked_spans``) recognises it. The markers are the ones
+    ``security._MASK_RE`` finds, read in one pass: each opening's ``]`` and line break are looked
+    for once, from where the last look ended, and a line that ends before its first ``]`` is passed
+    whole, so a text of openings that never close costs what any text its length costs. (A pattern
+    search tried from each opening reads the rest of the text again each time.)"""
+    pos = 0
+    close: int | None = None
+    newline: int | None = None
+    while True:
+        # An opening that starts before *end*, even one *end* falls inside.
+        start = text.find(_MASK_OPEN, pos, end + len(_MASK_OPEN) - 1)
+        if start < 0:
+            return end
+        body = start + len(_MASK_OPEN)
+        if close is None or 0 <= close < body:
+            close = text.find("]", body)
+        if close < 0:
+            return end  # no ``]`` after here, so no marker holds *end*
+        if newline is None or 0 <= newline < body:
+            newline = text.find("\n", body)
+        if 0 <= newline < close:
+            # This line ends before its first ``]``, so no opening on it is a marker: go on from
+            # the next line.
+            pos = newline + 1
+            continue
+        if end <= close:
+            return start
+        pos = close + 1
+
+
 def clip_words(text: str, limit: int) -> str:
     """``text`` on one line, and at most ``limit`` characters: cut at a word boundary with an
     ellipsis when it is longer, so a sentence a person reads never stops mid-word ("Task: Draft a
     s"). Only a single run of text with no boundary in its second half (a long link, a path) is cut
-    inside itself: dropping it whole would leave nothing to read.
+    inside itself: dropping it whole would leave nothing to read. A ``[REDACTED: …]`` marker is
+    never cut: the line ends before it (:func:`cut_outside_masks`).
     """
     line = " ".join(str(text or "").split())
     if len(line) <= limit:
@@ -61,6 +102,7 @@ def clip_words(text: str, limit: int) -> str:
     cut = head.rfind(" ")
     if cut >= len(head) // 2:
         head = head[:cut]
+    head = head[: cut_outside_masks(line, len(head))]
     return head.rstrip(" ,;:") + "…"
 
 

@@ -135,10 +135,22 @@ def _file_template(
     session_key: str,
     title: str,
     body: str,
+    name: str = "",
+    why: str = "",
 ) -> str:
-    """File the accepted candidate as a PENDING template proposal. Returns its id or ``""``."""
-    from personalclaw.learning.proposals import Kind, enqueue
+    """File the accepted candidate as a PENDING template proposal. Returns its id or ``""``.
 
+    *name* is the name its Accept saves the workflow under, filed as its single-valued ``name:``
+    tag (``learning.template_install``). *why* is the proposer's reason, filed as the body's
+    closing ``Why: <line>``, masked, which the step parser skips; its panel says it as the
+    agent's."""
+    from personalclaw.learning.proposals import Kind, enqueue
+    from personalclaw.learning.template_install import NAME_TAG
+    from personalclaw.security import redact_for_display
+
+    reason = " ".join(redact_for_display(why).split()) if why else ""
+    if reason:
+        body = f"{body.rstrip()}\n\nWhy: {reason}"
     try:
         _verdict, prop = enqueue(
             kind=Kind.TEMPLATE.value,
@@ -149,7 +161,7 @@ def _file_template(
             run_id=candidate.run_id,
             source_excerpt=candidate.text[:2000],
             confidence=round(decision.score.total, 4),
-            tags=["ad_hoc_to_template", decision.action],
+            tags=["ad_hoc_to_template", decision.action] + ([NAME_TAG + name] if name else []),
         )
     except Exception:
         logger.debug("template gate: enqueue failed for %s", candidate.run_id, exc_info=True)
@@ -166,13 +178,16 @@ def evaluate(
     title: str = "",
     body: str = "",
     file_proposal: bool = True,
+    name: str = "",
+    why: str = "",
 ) -> GateOutcome:
     """Run the chain on a real candidate, record any refusal, and file an accepted one.
 
     ``CONSULT`` files nothing here. A model is paid for only in the ambiguous middle band, and
     this call site has no model to pay with — reporting the band honestly is better than promoting
     the candidate on a score the design said was inconclusive, and better than recording it as a
-    skip it was not.
+    skip it was not. *name* is the template's name, which its Accept saves it under, and *why*
+    the proposer's reason for it, said on its panel as the agent's.
 
     Refused first, for the work of an Incognito or Temporary chat (``lasting_work.Refused``): what
     it records and what it files would keep the chat's procedure after the chat.
@@ -190,5 +205,7 @@ def evaluate(
             session_key=session_key,
             title=title or f"Template from run {candidate.run_id or 'ad-hoc'}",
             body=body or candidate.text,
+            name=name,
+            why=why,
         )
     return outcome

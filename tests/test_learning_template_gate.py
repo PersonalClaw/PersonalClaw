@@ -495,3 +495,81 @@ def test_the_tool_has_manifest_meta():
     tool = next(t for t in mcp_core._list_tools() if t["name"] == "template_save_from_session")
     real = set(tool["inputSchema"]["properties"])
     assert set(meta["examples"][0]["args"]) <= real
+
+
+# ── why it was proposed, filed as the body's closing line ───────────────────────────────────────
+
+_STEPS = [
+    "fetch {{source_url}} and validate the payload",
+    "transform the result into {{format}}",
+    "deploy it to {{target}} and verify the output",
+]
+
+
+def test_the_why_is_the_bodys_closing_line_masked_and_no_step(store, no_filing):
+    """The panel says why a template was proposed in the agent's words. The gate files that reason
+    as the body's closing ``Why:`` line, masked like the rest of the body, which the step parser
+    skips. The tags carry the name the Accept saves under."""
+    from personalclaw.learning.template_install import template_steps
+
+    evaluate(
+        Candidate(run_id="nightly-report", steps=_STEPS),
+        session_key="sess-1",
+        body="\n".join(f"- {s}" for s in _STEPS),
+        name="nightly-report",
+        why="You publish it every night, and the key sk-ant-api03-" + "C" * 95 + " is the same",
+    )
+    call = no_filing[0]
+    last = call["body"].splitlines()[-1]
+    assert last.startswith("Why: You publish it every night")
+    assert "sk-ant-api03" not in call["body"]
+    assert template_steps(call["body"]) == _STEPS
+    assert "name:nightly-report" in call["tags"]
+
+
+def test_no_why_files_no_why_line(store, no_filing):
+    evaluate(
+        Candidate(run_id="nightly-report", steps=_STEPS),
+        session_key="sess-1",
+        body="\n".join(f"- {s}" for s in _STEPS),
+    )
+    assert "Why:" not in no_filing[0]["body"]
+
+
+def test_the_reviewers_template_files_its_rationale_as_the_why(store, no_filing, monkeypatch):
+    raw = (
+        '{"action": "template", "slug": "nightly-report", '
+        '"description": "build and publish the nightly report", '
+        '"rationale": "You built and published it the same way three nights running", '
+        '"steps": ["fetch {{source_url}} and validate the payload", '
+        '"transform the result into {{format}}", '
+        '"deploy it to {{target}} and verify the output"]}'
+    )
+    _ladder(raw, monkeypatch)
+    assert no_filing[0]["body"].splitlines()[-1] == (
+        "Why: You built and published it the same way three nights running"
+    )
+    assert "name:nightly-report" in no_filing[0]["tags"]
+
+
+def test_the_save_tool_passes_its_why_and_its_name(monkeypatch):
+    from personalclaw import mcp_core
+    from personalclaw.learning import template_gate
+
+    seen: dict = {}
+
+    def _evaluate(candidate, **kwargs):
+        seen.update(kwargs)
+        return template_gate.GateOutcome(
+            decision=detectors.GateDecision(action="auto_file"), proposal_id="p1"
+        )
+
+    monkeypatch.setattr(template_gate, "evaluate", _evaluate)
+    monkeypatch.setattr(mcp_core, "_workflow_names", lambda: set())
+    monkeypatch.setattr(mcp_core, "_resolve_session_key", lambda: "dashboard:c1")
+    mcp_core._save_template_from_session(
+        {"name": "nightly-report", "steps": _STEPS, "why": "You do this every night"}
+    )
+    assert seen["name"] == "nightly-report" and seen["why"] == "You do this every night"
+    [tool] = [t for t in mcp_core._list_tools() if t["name"] == "template_save_from_session"]
+    assert "why" in tool["inputSchema"]["properties"]

@@ -134,7 +134,7 @@ def _proposal(fields: dict) -> SimpleNamespace:
 
 @pytest.mark.asyncio
 async def test_an_accepted_diff_that_lets_a_step_act_alone_is_not_applied(stored):
-    from personalclaw.dashboard.handlers.learning import _apply_accepted_template_diff
+    from personalclaw.learning.template_diff import apply_accepted as _apply_accepted_template_diff
 
     applied = await _apply_accepted_template_diff(_proposal({"approval_mode": "auto"}))
 
@@ -147,7 +147,7 @@ async def test_an_accepted_diff_that_lets_a_step_act_alone_is_not_applied(stored
 
 @pytest.mark.asyncio
 async def test_an_accepted_diff_that_does_no_more_is_applied(stored):
-    from personalclaw.dashboard.handlers.learning import _apply_accepted_template_diff
+    from personalclaw.learning.template_diff import apply_accepted as _apply_accepted_template_diff
 
     applied = await _apply_accepted_template_diff(_proposal({"prompt": "Fix every lint error."}))
 

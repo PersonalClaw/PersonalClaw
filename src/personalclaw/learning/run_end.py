@@ -319,6 +319,46 @@ def _file_similarity_draft(run: Any, found: Any, verdict: Any) -> bool:
     return prop is not None
 
 
+#: What a failed run's lesson says, one phrasing per failure mode (``detectors.FailureMode``), as
+#: ``skills.refine`` keeps one per trigger. ``{step}`` is the step that failed. The lesson's body
+#: opens with it, and its panel shows it as the lesson.
+LESSON_LINES: dict[str, str] = {
+    "schema_violation": (
+        "When `{step}` returns a result in the wrong shape, stop and say so. Don't pass it on."
+    ),
+    "constraint_violation": (
+        "When `{step}` breaks one of its rules, stop and say which. Don't work around it."
+    ),
+    "spec_mismatch": (
+        "When `{step}`'s result doesn't match what was asked, say so before going on."
+    ),
+    "timeout": "When `{step}` runs out of time, say so and stop. Don't report the run as done.",
+    "environment": (
+        "When `{step}` fails on the machine it runs on, say what was missing. Don't retry blindly."
+    ),
+    "code": (
+        "When `{step}` fails in its own code, stop and report the error. Don't build the rest of "
+        "the run on it."
+    ),
+    "config": "When `{step}` fails on a setting, say which setting. Don't guess a value.",
+    "data": (
+        "When `{step}` gets an empty or malformed result, stop and say so. Don't build the rest "
+        "of the run on it."
+    ),
+    "infra": "When `{step}` fails on a service it depends on, say which one and stop.",
+    "dependency": "When `{step}` fails on a package or tool it needs, say which one and stop.",
+    "process": "When `{step}` runs out of order or is skipped, say so before going on.",
+}
+#: The sentence a lesson of a mode with no line keeps, as every lesson said before.
+UNMAPPED_LESSON = "A future run of this template should account for this failure mode."
+
+
+def lesson_line(mode: str, step: str) -> str:
+    """The plain-words lesson for a failure of *mode* at *step*, or ``""`` for an unmapped mode."""
+    line = LESSON_LINES.get(str(mode or ""))
+    return line.format(step=step) if line else ""
+
+
 def capture(run: Any, service: Any, *, journal: Any = None) -> dict[str, int]:
     """Mine a terminal run's ledger into lesson proposals + procedural priors. Returns a report.
 
@@ -430,9 +470,13 @@ def capture(run: Any, service: Any, *, journal: Any = None) -> dict[str, int]:
             ],
             evidence=[text[:_EVIDENCE_CLIP]][:_MAX_EVIDENCE],
         )
+        lesson = lesson_line(mode, node)
         body = (
-            f"Step `{node}` of template `{template}` failed ({mode}). A future run of this "
-            f"template should account for this failure mode.\n\n{capsule.render()}"
+            f"{lesson}\n\nStep `{node}` of template `{template}` failed ({mode}).\n\n"
+            f"{capsule.render()}"
+            if lesson
+            else f"Step `{node}` of template `{template}` failed ({mode}). {UNMAPPED_LESSON}"
+            f"\n\n{capsule.render()}"
         )
         _verdict, proposal = proposals.enqueue(
             kind=proposals.Kind.LESSON_BATCH.value,

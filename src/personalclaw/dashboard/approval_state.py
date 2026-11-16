@@ -420,6 +420,9 @@ class DashboardApprovalState:
         # a string the shell will never see is how a verdict stops describing the actual call.
         reading = read_call(risk_level, tool, tool_kind, tool_input)
 
+        # The folder the call runs in: the caller's, else the session's. Its reach, its second
+        # confirmation and the row's `cwd` are all read against this one folder.
+        folder = session_folder(session) if cwd is None else cwd
         entry = self._approval_entry(
             approval_id,
             request_id=approval_id,
@@ -447,7 +450,7 @@ class DashboardApprovalState:
                 tool_kind,
                 tool_input,
                 session,
-                cwd=session_folder(session) if cwd is None else cwd,
+                cwd=folder,
             ),
             asked_for=asked_for,
             # The second confirmation it asks (`approval_confirms`): the caller's, or worked out
@@ -461,12 +464,13 @@ class DashboardApprovalState:
                     tool,
                     tool_kind,
                     tool_input,
-                    cwd=session_folder(session) if cwd is None else cwd,
+                    cwd=folder,
                     consequences=consequences,
                     own=own,
                     tells_owner=tells_owner,
                 )
             ),
+            cwd=folder,
         )
         if answered_alone:
             self.__dict__.setdefault("_answered_alone", set()).add(approval_id)
@@ -615,6 +619,7 @@ class DashboardApprovalState:
         asked_for: str = "",
         confirms: Sequence[str] | None = None,
         secret_file: str = "",
+        cwd: str = "",
     ) -> dict[str, Any]:
         """The ONE shape a pending approval has, whatever raised it.
 
@@ -644,7 +649,9 @@ class DashboardApprovalState:
         "" for her own work. Its card answers this call alone. ``secret_file`` is what an ask for a
         project secret file asks to do with it, ``"read"`` or ``"write"`` (``secret_file_grants``),
         ``""`` for any other call: its card offers Allow for this session and Deny, and nothing
-        else answers it.
+        else answers it. ``cwd`` is the folder the call runs in, the one its ``reach`` and
+        ``confirms`` were read against, kept so a panel can say where it acts ("Deletes files in
+        ~/code/site"); ``""`` when nobody said.
         """
         from personalclaw.approval_place import place_of
         from personalclaw.approval_source import approval_source_label, live_chat_name, whose_work
@@ -680,6 +687,7 @@ class DashboardApprovalState:
             # surface asks for the same calls. Fails closed: a row nobody worked it out for asks.
             "confirms": [UNDECLARED] if confirms is None else list(confirms),
             "secret_file": secret_file,
+            "cwd": redact_field(cwd),
             "trigger": trigger,
             "trigger_name": named,
             "whose_work": whose,

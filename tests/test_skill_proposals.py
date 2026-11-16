@@ -179,3 +179,110 @@ def test_history_consolidation_enqueues_not_writes(home, monkeypatch):
     assert any(p.slug == "from-consolidation" for p in pend)
     # NOT written live.
     assert loader.load_skill("auto/from-consolidation") is None
+
+
+# ── a skill proposal's card leads with what it asks, and says where its Accept lands ────────────
+
+
+def test_a_correction_refines_card_quotes_your_words_and_names_the_skill(home):
+    _seed_skill(
+        home, "incident-writeup", "---\nname: incident-writeup\ndescription: d\n---\nbody\n"
+    )
+    prop = _enqueue(
+        slug="incident-writeup",
+        kind="refine",
+        refine_target="incident-writeup",
+        description="Refined after you corrected this turn",
+        procedure_md=(
+            "When this skill applies, honor the correction the user gave on 2026-11-11:\n\n"
+            "> Always link the metrics dashboard in the summary"
+        ),
+    )
+    proposals_mod = proposals
+    prop.trigger = "correction"
+    card = proposals_mod.card_of(prop)
+    assert card["headline"] == "“Always link the metrics dashboard in the summary”"
+    assert card["name"] == "incident-writeup"
+    assert card["detail"] == "Refinement v1 · you corrected it"
+    assert card["accept"] == {
+        "verb": "Add refinement",
+        "sentence": "Adds refinement v1 to incident-writeup. Its own files stay as they are.",
+    }
+    assert card["label"] == "Refine a skill"
+    summary = prop.summary()
+    assert summary["accept_target"] == "incident-writeup" and summary["target_resolves"] is True
+
+
+def test_a_refinement_whose_skill_was_removed_installs_it_as_new(home):
+    prop = _enqueue(
+        slug="gone-skill", kind="refine", refine_target="gone-skill", description="Use the flag"
+    )
+    card = proposals.card_of(prop)
+    assert card["accept"] == {
+        "verb": "Install skill",
+        "sentence": "gone-skill is no longer installed, so accepting adds it as a new skill",
+    }
+    assert prop.summary()["target_resolves"] is False
+
+
+def test_a_new_skills_card_says_what_it_fires_on_and_where_it_installs(home):
+    prop = _enqueue(
+        slug="csv-dedupe",
+        description="Remove duplicate rows from a CSV by a chosen key",
+        triggers="dedupe, duplicate rows, csv",
+    )
+    card = proposals.card_of(prop)
+    assert card["headline"] == "Remove duplicate rows from a CSV by a chosen key"
+    assert card["detail"] == "Fires on: dedupe, duplicate rows, csv"
+    assert card["name"] == "csv-dedupe"
+    assert card["accept"] == {"verb": "Install skill", "sentence": "Installs auto/csv-dedupe"}
+    assert card["label"] == "New skill proposed"
+
+
+def test_the_inbox_row_leads_with_the_cards_headline(home, monkeypatch):
+    raised: list[dict] = []
+    import personalclaw.inbox as inbox_mod
+
+    monkeypatch.setattr(inbox_mod, "emit_attention_item", lambda _state, **kw: raised.append(kw))
+    _enqueue(slug="csv-dedupe", description="Remove duplicate rows", triggers="dedupe")
+    [row] = raised
+    assert row["title"] == "Remove duplicate rows"
+    assert row["body"] == "New skill proposed · Fires on: dedupe"
+    assert row["refs"]["card"]["headline"] == "Remove duplicate rows"
+
+
+def test_a_long_diff_is_cut_on_a_line():
+    from personalclaw.skills import refine
+
+    old = "line\n" * 10
+    new = "".join(f"new line {i} " + "x" * 40 + "\n" for i in range(400))
+    diff = refine._unified(old, new, "s/SKILL.md")
+    assert len(diff) <= refine._DIFF_MAX
+    assert diff.splitlines()[-1].startswith("+new line ") and diff.splitlines()[-1].endswith(
+        "x" * 40
+    )
+
+
+def test_the_detail_says_where_accept_lands_and_a_gone_one_is_coded(home):
+    import asyncio
+    import json
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import skills as S
+
+    prop = _enqueue(slug="csv-dedupe", description="Remove duplicate rows")
+
+    def _get(pid):
+        request = make_mocked_request(
+            "GET", f"/api/skills/proposals/{pid}", match_info={"id": pid}, app=web.Application()
+        )
+        request["user"] = "me"
+        resp = asyncio.run(S.api_skill_proposal_detail(request))
+        return resp.status, json.loads(resp.body.decode())
+
+    status, body = _get(prop.id)
+    assert status == 200 and body["accept_target"] == "" and body["target_resolves"] is False
+    status, body = _get("sp-never")
+    assert status == 404 and body["error"]["code"] == "skill_proposal_gone"

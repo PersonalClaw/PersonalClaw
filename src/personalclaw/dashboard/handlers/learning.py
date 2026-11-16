@@ -28,6 +28,7 @@ would make the gate decorative.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiohttp import web
@@ -62,6 +63,21 @@ def _enabled() -> bool:
         # a hidden queue looks like an empty one and proposals then accumulate unseen.
         logger.debug("learning config unreadable; treating the surface as enabled", exc_info=True)
         return True
+
+
+#: What a proposal's card and panel say while learning is off: nothing here can decide it.
+LEARNING_OFF = "Learning is off, so this can't be decided here."
+
+
+def _disabled() -> web.Response:
+    """The 404 a proposal's detail, review, accept and reject answer while learning is off."""
+    return json_error("learning_disabled", message=LEARNING_OFF, status=404)
+
+
+def _gone() -> web.Response:
+    """The 404 for a proposal that is no longer waiting, or one this caller doesn't read: the
+    same answer either way, so the refusal confirms nothing."""
+    return json_error("learning_proposal_gone", status=404)
 
 
 def _actor(request: web.Request) -> str:
@@ -110,69 +126,25 @@ def _installer_for(request: web.Request):
     return installers.installer_for(service=svc)
 
 
-async def _apply_accepted_template_diff(prop) -> dict:
-    """Apply an accepted ``template_diff`` to its target and save it as a NEW version.
-
-    The refiner FILES typed ops and never applies them; accepting is the human installing, so
-    THIS is where the diff lands, as a new template VERSION. The ops ride the change
-    manifest's ``targeted_fix`` (the same field the inbox reads to stamp a risk tier); they are
-    applied to a deep copy via ``mutations.apply_batch`` and, only if the batch is clean, saved
-    as a new version (``service.save_accepted_diff``), which refuses a diff that would let a step
-    do more than before: accepting a model's proposal is no yes to that. Best-effort: the
-    proposal is already accepted, so a failed apply is reported, never a 500 that would strand it.
-    """
-    manifest = getattr(prop, "change_manifest", None)
-    ops_raw = manifest.get("targeted_fix") if isinstance(manifest, dict) else None
-    name = str(getattr(prop, "target", "") or "")
-    if not name or not isinstance(ops_raw, list) or not ops_raw:
-        return {"applied": False, "reason": "no typed ops on the proposal"}
-
-    from personalclaw.workflows import defs as defs_mod
-    from personalclaw.workflows import mutations, service
-
-    spec = None
-    for pname in defs_mod.list_providers():
-        provider = defs_mod.get_provider(pname)
-        if provider is None:
-            continue
-        try:
-            found = await provider.get_def(name)
-        except Exception:
-            continue
-        if found is not None:
-            spec = found if isinstance(found, dict) else getattr(found, "to_dict", lambda: None)()
-            break
-    if not isinstance(spec, dict):
-        return {"applied": False, "reason": f"no definition named {name!r}"}
-
-    try:
-        ops = [mutations.Op.from_dict(o) for o in ops_raw if isinstance(o, dict)]
-    except ValueError as exc:
-        return {"applied": False, "reason": f"unparseable op: {exc}"}
-    candidate, issues = mutations.apply_batch(ops, spec, {})
-    if issues:
-        return {"applied": False, "reason": "; ".join(i.code for i in issues)}
-
-    saved = await service.save_accepted_diff(candidate, ops=ops_raw)
-    if not saved.get("ok"):
-        return {"applied": False, "reason": str(saved.get("message") or "it was not saved")}
-    return {"applied": True, "version": int(saved.get("version") or 0)}
-
-
 def _tier_for(prop) -> str:
     """The risk tier for one proposal, or `""`.
 
     Only a `template_diff` carries typed ops to derive a tier from, so anything else is left
-    unscored
-    rather than stamped with a meaningless one — the inbox defaults those to `review`, and a
-    fabricated `low` would hand a lesson bulk-accept eligibility nobody computed.
+    unscored rather than stamped with a meaningless one: the inbox defaults those to `review`, and a
+    fabricated `low` would hand a lesson bulk-accept eligibility nobody computed. Read by
+    membership: the tier the refiner filed among its tags, else the riskiest of its ops. Never by
+    a tag's position, and never as an attribute of the manifest, which is a dict (it read none).
     """
-    from personalclaw.learning.refiner import risk_tier
+    from personalclaw.learning.refiner import RiskTier, risk_tier
 
     if str(getattr(prop, "kind", "")) != "template_diff":
         return ""
+    tiers = {t.value for t in RiskTier}
+    for tag in getattr(prop, "tags", None) or []:
+        if str(tag) in tiers:
+            return str(tag)
     manifest = getattr(prop, "change_manifest", None)
-    ops = getattr(manifest, "targeted_fix", None) if manifest is not None else None
+    ops = manifest.get("targeted_fix") if isinstance(manifest, dict) else None
     if isinstance(ops, list):
         return risk_tier([o for o in ops if isinstance(o, dict)])
     return ""
@@ -276,7 +248,7 @@ async def api_learning_proposal(request: web.Request) -> web.Response:
     actually reads before accepting. An app reads only a proposal from a conversation it started.
     """
     if not _enabled():
-        return web.json_response({"error": "learning is disabled"}, status=404)
+        return _disabled()
 
     from personalclaw.learning import proposals as store
 
@@ -284,8 +256,37 @@ async def api_learning_proposal(request: web.Request) -> web.Response:
     # Another chat's proposal is no proposal to an app: the same answer as an id never filed, so
     # the refusal confirms nothing.
     if prop is None or not _reads(request, prop.session_key):
-        return web.json_response({"error": "not found"}, status=404)
+        return _gone()
     return web.json_response(store.shown(prop))
+
+
+async def api_learning_proposal_review(request: web.Request) -> web.Response:
+    """GET /api/learning/proposals/{id}/review — what a proposal's panel reads.
+
+    Its card's lines, why it was proposed (only what its producer wrote), the thing itself by
+    type, where it came from, and what Accept and Reject do, worked out at this read
+    (``learning.review.review_for``). ``?capture=<uid>`` serves that one capture of a captures
+    batch whole. Read-only: no write, no model call, no listener. Only you read it: an app's token
+    is refused (403 ``learning_review_owner_only``), since only you decide a proposal.
+    """
+    if not _enabled():
+        return _disabled()
+    if request.get("app"):
+        return json_error("learning_review_owner_only", status=403)
+
+    from personalclaw.learning import proposals as store
+    from personalclaw.learning import review
+
+    prop = store.get(request.match_info.get("id", ""))
+    if prop is None or not _reads(request, prop.session_key):
+        return _gone()
+    capture = str(request.query.get("capture", "") or "")
+    try:
+        body = await asyncio.to_thread(review.review_for, prop, capture=capture)
+    except Exception:
+        logger.warning("learning review of %s could not be built", prop.id, exc_info=True)
+        return json_error("learning_proposal_unreadable", status=500)
+    return web.json_response(body)
 
 
 async def api_learning_proposal_accept(request: web.Request) -> web.Response:
@@ -306,7 +307,7 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
     accepted". A 200 for a change that did not happen is the one answer this route must never give.
     """
     if not _enabled():
-        return web.json_response({"error": "learning is disabled"}, status=404)
+        return _disabled()
 
     from personalclaw.learning import proposals as store
 
@@ -314,26 +315,29 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
     actor = _actor(request)
     try:
         prop = store.accept(pid, actor=actor, installer=_installer_for(request))
+    except store.NotAppliedError as exc:
+        # A template change that could not be applied (its definition gone, an op that no longer
+        # fits, a step it would let do more): nothing changed and it still waits.
+        _audit(request, "learning.proposal_accept", "rejected", f"{pid}:{exc}")
+        return json_error("learning_proposal_not_applied", message=str(exc), status=409)
+    except store.NotInstalledError as exc:
+        # The install ran and was refused (a taken name, a store that refused the write): nothing
+        # changed and it still waits. Its sentence is the installer's, said on the card as it is.
+        _audit(request, "learning.proposal_accept", "rejected", f"{pid}:{exc}")
+        return json_error("learning_proposal_not_installed", message=str(exc), status=409)
     except store.AcceptError as exc:
         message = str(exc)
         # A missing row is a 404; a refused actor is a 403; a kind with no installer is a 409.
         # Collapsing them would report a permission decision as a typo, or an unbuilt installer as
         # a permission wall someone would go hunting for the setting to open.
-        if isinstance(exc, store.NoProposalInstallerError):
-            status = 409
-        elif message.startswith("no proposal"):
-            status = 404
-        else:
-            status = 403
         _audit(request, "learning.proposal_accept", "rejected", f"{pid}:{message}")
+        if message.startswith("no proposal"):
+            return _gone()
+        status = 409 if isinstance(exc, store.NoProposalInstallerError) else 403
         return web.json_response({"error": message}, status=status)
-    applied: dict | None = None
-    if str(getattr(prop, "kind", "")) == "template_diff":
-        try:
-            applied = await _apply_accepted_template_diff(prop)
-        except Exception:
-            logger.warning("template_diff %s accepted but not applied", pid, exc_info=True)
-            applied = {"applied": False, "reason": "apply failed"}
+    # A template change was applied before its decision was recorded (`learning.template_diff`),
+    # so an accept that answers 200 is one that landed.
+    applied = {"applied": True} if str(getattr(prop, "kind", "")) == "template_diff" else None
     _audit(request, "learning.proposal_accept", "ok", f"{pid}:{prop.kind}")
     return web.json_response({"ok": True, "proposal": prop.to_dict(), "applied": applied})
 
@@ -348,14 +352,14 @@ async def api_learning_proposal_reject(request: web.Request) -> web.Response:
     stop accumulating.
     """
     if not _enabled():
-        return web.json_response({"error": "learning is disabled"}, status=404)
+        return _disabled()
 
     from personalclaw.learning import proposals as store
 
     pid = request.match_info.get("id", "")
     actor = _actor(request)
     if store.get(pid) is None:
-        return web.json_response({"error": "not found"}, status=404)
+        return _gone()
     ok = store.reject(pid, actor=actor)
     _audit(request, "learning.proposal_reject", "ok" if ok else "rejected", pid)
     if not ok:
@@ -756,5 +760,6 @@ def register_learning_routes(app: web.Application) -> None:
     app.router.add_post("/api/learning/identity-report", api_learning_identity_report_deliver)
     app.router.add_get("/api/learning/proposals", api_learning_proposals)
     app.router.add_get("/api/learning/proposals/{id}", api_learning_proposal)
+    app.router.add_get("/api/learning/proposals/{id}/review", api_learning_proposal_review)
     app.router.add_post("/api/learning/proposals/{id}/accept", api_learning_proposal_accept)
     app.router.add_delete("/api/learning/proposals/{id}", api_learning_proposal_reject)

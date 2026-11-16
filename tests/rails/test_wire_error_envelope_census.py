@@ -540,7 +540,10 @@ def test_the_evals_surface_emits_no_flat_envelope():
 #: 14 → **10**: the four "learning is disabled" 404s on the reads the Learning page loads to
 #: render (the proposal list, the staging week, health, the summary) now answer the decided
 #: ``_off()`` 200, which carries no error envelope at all. A shrink, so the pin moves down with it.
-_LEARNING_FLAT_BASELINE = 10
+#: 10 → **5**: a proposal's detail, accept and reject say whether learning is off or the proposal
+#: is gone, and an accept whose install or apply failed answers 409 with its code, each through
+#: ``json_error`` (``_disabled``, ``_gone``). A shrink again.
+_LEARNING_FLAT_BASELINE = 5
 
 
 def test_the_learning_surface_adds_no_flat_envelope():
