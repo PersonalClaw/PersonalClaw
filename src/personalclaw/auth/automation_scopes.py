@@ -1,6 +1,6 @@
 """The scope vocabulary of an automation client's session: what a scoped pairing may name.
 
-Core, so the pairing-code store (:mod:`personalclaw.auth.pairing`) can check a code's scope
+Core, so the pairing-code store (``auth/pairing.py``) can check a code's scope
 without importing the HTTP surface. What each scope lets a session reach, and the refusal for
 everything else, are ``personalclaw.dashboard.device_scopes``'s.
 """

@@ -154,13 +154,17 @@ def _template(request: web.Request) -> str:
 
 
 async def _body(request: web.Request) -> Any:
-    """The JSON body, for the consent rule; ``None`` when there is none or it isn't JSON (the
-    handler answers that). aiohttp keeps the bytes, so the handler reads the same body after."""
+    """The JSON object body, for the consent rule, read by the one reader every handler uses
+    (``json_object_body``); ``None`` when there is none or it isn't an object. The handler refuses
+    a body that isn't, through the same reader, so it carries no consent the handler would take.
+    aiohttp keeps the bytes, so the handler reads the same body after."""
+    from personalclaw.request_validation import RequestValidationError, json_object_body
+
     if not request.body_exists:
         return None
     try:
-        return await request.json()
-    except Exception:  # noqa: BLE001 — not JSON: nothing for the consent rule to read
+        return await json_object_body(request)
+    except RequestValidationError:
         return None
 
 

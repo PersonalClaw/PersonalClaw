@@ -193,7 +193,9 @@ class DashboardWebSocketState:
     _sessions: dict[str, Any]
     _update_progress: dict[str, str] | None
     _ws_app: dict[web.WebSocketResponse, str]
+    #: An automation client's socket's scope (``device_scopes``): it hears only its scope's frames.
     _ws_scope: dict[web.WebSocketResponse, tuple[str, ...]]
+    #: The release of a scoped socket's hold on its session (``scoped_sessions.hold_open``).
     _ws_release: dict[web.WebSocketResponse, Any]
     _ws_clients: list[web.WebSocketResponse]
     _ws_log_subscribers: set[web.WebSocketResponse]

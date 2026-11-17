@@ -164,6 +164,24 @@ _MISMATCH_LOCK = threading.Lock()
 _MISMATCH_TRACKED = 64
 
 
+def end_refused(nonce: str, reason: str) -> str:
+    """End the session *nonce* names when validation refused it as idle or for a mismatch, and
+    say why the request is refused: ``"signed out"`` for the idle end, the mismatch's reason for a
+    mismatch, ``""`` for any other refusal (nothing is ended). Before any route runs, through the
+    one way a session ends (``token_auth.sign_out``), so it is remembered and in the SEL; a
+    mismatch fails closed."""
+    end, _said = ended(reason)
+    if not end:
+        return ""
+    from personalclaw.dashboard.session_store import END_IDLE
+    from personalclaw.dashboard.token_auth import sign_out
+
+    if reason == REASON_SCOPE_MISMATCH:
+        audit_mismatch(nonce)
+    sign_out([nonce], end, actor=ACTOR)
+    return "signed out" if end == END_IDLE else reason
+
+
 def audit_mismatch(nonce: str) -> None:
     """One SEL row, a minute at most per session, for a token whose scope claim its session
     doesn't hold. Named by the session's public handle, never the nonce. Never raises."""

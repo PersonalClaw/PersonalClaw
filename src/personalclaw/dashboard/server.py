@@ -623,6 +623,30 @@ def _start_card_answer_move(state: DashboardState) -> None:
     )
 
 
+def _allow_dashboard_url(
+    app: web.Application, dashboard_url: str, port: int, local_only: bool, configured_host: str
+) -> None:
+    """Add *dashboard_url* to the CSRF origins, which holds only while token auth is active: a
+    remote URL in the origin set with no token check would admit anyone who can reach it, so the
+    start is refused instead. A security invariant, checked on the middlewares as installed."""
+    _has_token_auth = any(getattr(mw, "_is_token_auth", False) for mw in app.middlewares)
+    if _has_token_auth:
+        app["allowed_origins"] = build_allowed_origins(
+            port, local_only, configured_host, dashboard_url
+        )
+        logger.info(
+            "dashboard_url=%s: added to CSRF allowed origins (token auth verified)",
+            dashboard_url,
+        )
+        return
+    logger.error(
+        "dashboard_url=%s requires token auth — refusing to start without it. "
+        "Connect a channel or remove dashboard.url from config.",
+        dashboard_url,
+    )
+    raise RuntimeError("dashboard_url requires token auth middleware")
+
+
 async def start_dashboard(
     sessions: "SessionManager",
     port: int = _DEFAULT_PORT,
@@ -987,25 +1011,8 @@ async def start_dashboard(
         spa_fallback if web_app else api_fallback,
     ]
 
-    # Verify security invariant: if dashboard_url expands the CSRF origin
-    # set for a remote URL, token auth middleware MUST be active.
     if dashboard_url:
-        _has_token_auth = any(getattr(mw, "_is_token_auth", False) for mw in app.middlewares)
-        if _has_token_auth:
-            app["allowed_origins"] = build_allowed_origins(
-                port, local_only, configured_host, dashboard_url
-            )
-            logger.info(
-                "dashboard_url=%s: added to CSRF allowed origins (token auth verified)",
-                dashboard_url,
-            )
-        else:
-            logger.error(
-                "dashboard_url=%s requires token auth — refusing to start without it. "
-                "Connect a channel or remove dashboard.url from config.",
-                dashboard_url,
-            )
-            raise RuntimeError("dashboard_url requires token auth middleware")
+        _allow_dashboard_url(app, dashboard_url, port, local_only, configured_host)
 
     runner = web.AppRunner(app, shutdown_timeout=OPEN_REQUEST_GRACE_SECS, access_log=None)
     await runner.setup()

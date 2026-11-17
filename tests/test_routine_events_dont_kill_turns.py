@@ -89,6 +89,8 @@ class TestWsSendGuarded:
         state = DashboardState.__new__(DashboardState)
         state._ws_clients = []
         state._ws_app = {}
+        state._ws_scope = {}
+        state._ws_release = {}
         state._ws_log_subscribers = set()
         state._ws_subagent_subscribers = set()
         state._ws_loop = None

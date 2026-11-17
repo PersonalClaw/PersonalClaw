@@ -51,6 +51,8 @@ def state(monkeypatch, tmp_path):
     st = DashboardState.__new__(DashboardState)
     st._ws_clients = []
     st._ws_app = {}
+    st._ws_scope = {}
+    st._ws_release = {}
     st._notification_log = []
     # What `session_creating_app` reads: a frame about a conversation reaches an app's socket only
     # when the app started it (#3632), so the gate asks who started it. Nothing resident, nothing
