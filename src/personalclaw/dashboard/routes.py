@@ -213,7 +213,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     # Status / system
     app.router.add_get("/api/healthz", handlers.api_healthz)
     app.router.add_get("/api/status", handlers.api_status)
-    app.router.add_get("/api/system", handlers.api_system)
+    handlers.register_system_metrics(app)
     app.router.add_get("/api/auth-status", handlers.api_auth_status)
     app.router.add_get("/api/onboarding", handlers.api_onboarding)
     # Onboarding progress is ENTITY state (entity_settings/onboarding.json), so it gets its

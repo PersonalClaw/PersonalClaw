@@ -756,22 +756,37 @@ def _collect_system_metrics() -> dict[str, object]:
     return data
 
 
-# Cached system metrics (avoid subprocess spawning on every poll)
+# The system metrics a request answers: the newest sample. A request that finds it aging starts the
+# next collection in the background and answers this one at once, so no request waits for the
+# subprocess probes a collection spawns, and collections follow the asks (at most one at a time).
 _metrics_cache: dict[str, object] = {}
+#: When the newest sample ARRIVED (monotonic): stamped at its start, a collection slower than the
+#: refresh age (a loaded host) would be aging the moment it was stored.
 _metrics_cache_ts: float = 0.0
-_METRICS_CACHE_TTL = 2.0  # seconds, counted from when a collection FINISHED
-#: The collection in flight, which every request arriving while it runs waits on.
+#: A sample younger than this is answered with no collection started: the poll rate's floor.
+_METRICS_FRESH_FOR = 5.0
+#: A sample older than this is not answered: the request waits for a new one, as on a gateway
+#: nobody has asked in a while.
+_METRICS_STALE_AFTER = 60.0
+#: How long the gateway's stop waits for a collection in flight to finish its probes.
+_METRICS_STOP_GRACE = 10.0
+#: The collection in flight, which every request arriving while it runs waits on or leaves to
+#: finish, the background refresh's included.
 _metrics_inflight: asyncio.Task[dict[str, object]] | None = None
 
 
+def _running_here(task: asyncio.Task[dict[str, object]] | None) -> bool:
+    """*task* is unfinished and on the running loop. A task from a loop that has since closed (a
+    test's, a restarted server's) is never shared."""
+    return task is not None and not task.done() and task.get_loop() is asyncio.get_running_loop()
+
+
 async def _refresh_metrics() -> dict[str, object]:
-    """Run one collection, cache it, and stop being the collection in flight."""
+    """Run one collection, off the loop, cache it, and stop being the collection in flight."""
     global _metrics_cache, _metrics_cache_ts, _metrics_inflight
     try:
         data = await asyncio.get_running_loop().run_in_executor(None, _collect_system_metrics)
         _metrics_cache = data
-        # Stamped on arrival: stamped at the start, a collection slower than the TTL (a loaded
-        # host) was stale the moment it was stored, so every request started another.
         _metrics_cache_ts = time.monotonic()
         return data
     finally:
@@ -779,26 +794,69 @@ async def _refresh_metrics() -> dict[str, object]:
             _metrics_inflight = None
 
 
+def _the_collection() -> asyncio.Task[dict[str, object]]:
+    """The collection in flight, or a new one: one at a time, whoever asks."""
+    global _metrics_inflight
+    task = _metrics_inflight
+    if not _running_here(task):
+        task = asyncio.ensure_future(_refresh_metrics())
+        _metrics_inflight = task
+    return task  # type: ignore[return-value]
+
+
+def _unawaited(task: asyncio.Task[dict[str, object]]) -> None:
+    """A background refresh nobody waits on: its failure is logged, and the next request that
+    finds no sample it may answer waits for its own collection, which reports it."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.debug("system metrics: a background collection failed", exc_info=exc)
+
+
 async def api_system(request: web.Request) -> web.Response:
     """System information endpoint with live CPU, memory, network metrics.
 
-    Caches results for 2 seconds to avoid spawning subprocesses on every
-    poll when multiple dashboard tabs are open, and runs ONE collection at a
-    time: requests that arrive while it runs share its answer, so concurrent
-    pollers never multiply the subprocess probes on a host that is already slow.
+    Answers the newest sample at once when it is under ``_METRICS_STALE_AFTER`` seconds old, and
+    when it is also over ``_METRICS_FRESH_FOR`` starts the next collection in the background. A
+    collection spawns ``ps``, ``netstat``, ``pgrep`` and ``sysctl``, which take seconds on a loaded
+    host (5 s at a load of 46), and a request that waited for them held one of a browser's six
+    connections to the gateway while the page's other reads queued behind it. With no sample, or
+    only an older one, the request waits for a collection. Either way one runs at a time: requests
+    that arrive while it runs share it, so concurrent pollers never multiply the probes.
     """
-    global _metrics_inflight
-    if _metrics_cache and time.monotonic() - _metrics_cache_ts < _METRICS_CACHE_TTL:
+    age = time.monotonic() - _metrics_cache_ts
+    if _metrics_cache and age < _METRICS_STALE_AFTER:
+        if age >= _METRICS_FRESH_FOR and not _running_here(_metrics_inflight):
+            _the_collection().add_done_callback(_unawaited)
         return web.json_response(_metrics_cache)
-    task = _metrics_inflight
-    # A task from a loop that has since closed (a test's, a restarted server's) is not shared.
-    if task is None or task.done() or task.get_loop() is not asyncio.get_running_loop():
-        task = asyncio.ensure_future(_refresh_metrics())
-        _metrics_inflight = task
     # Shielded: one waiter's request being cancelled (its client went away) must not cancel
     # the collection everyone else is waiting on.
-    data = await asyncio.shield(task)
+    data = await asyncio.shield(_the_collection())
     return web.json_response(data)
+
+
+async def stop_metrics_collection(app: web.Application) -> None:
+    """Wait, up to ``_METRICS_STOP_GRACE`` seconds, for a collection in flight to finish when the
+    gateway stops (an ``on_cleanup`` hook: :func:`register_system_metrics`). It is not cancelled:
+    its probes run in a worker thread, which a cancel would not stop, only leave unwatched."""
+    task = _metrics_inflight
+    if not _running_here(task):
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(task), _METRICS_STOP_GRACE)  # type: ignore[arg-type]
+    except asyncio.TimeoutError:
+        logger.warning(
+            "system metrics: a collection still running after %ss at stop", _METRICS_STOP_GRACE
+        )
+    except Exception:
+        logger.debug("system metrics: the collection in flight failed at stop", exc_info=True)
+
+
+def register_system_metrics(app: web.Application) -> None:
+    """``GET /api/system``, and the wait for its collection in flight when the gateway stops."""
+    app.router.add_get("/api/system", api_system)
+    app.on_cleanup.append(stop_metrics_collection)
 
 
 async def api_onboarding(request: web.Request) -> web.Response:
