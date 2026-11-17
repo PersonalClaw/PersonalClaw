@@ -33,12 +33,9 @@ def test_the_workflow_runs_it_weekly_and_on_pin_changes_read_only() -> None:
         (REPO / ".github" / "workflows" / "action-pins.yml").read_text(encoding="utf-8")
     )
     triggers = workflow.get("on", workflow.get(True))
-    # merge_group too, once the change that runs every gate on every queue commit lands; this row
-    # allows both so that change can pass main's contract (ci.md: the row first), and that change
-    # narrows it to its own set again.
-    assert set(triggers) - {"merge_group"} == {"schedule", "pull_request", "workflow_dispatch"}
-    if "merge_group" in triggers:
-        assert triggers["merge_group"] == {"types": ["checks_requested"]}
+    assert set(triggers) == {"schedule", "pull_request", "merge_group", "workflow_dispatch"}
+    # Every gate runs on every queue commit, whose verdict reads its run.
+    assert triggers["merge_group"] == {"types": ["checks_requested"]}
     assert set(triggers["pull_request"]["paths"]) == {
         ".github/workflows/**",
         ".github/actions/**",
@@ -49,13 +46,9 @@ def test_the_workflow_runs_it_weekly_and_on_pin_changes_read_only() -> None:
     assert job["permissions"] == {"contents": "read"}
     runs = [s for s in job["steps"] if "action_pins.py" in str(s.get("run", ""))]
     assert len(runs) == 1 and set(runs[0]["env"]) == {"GH_TOKEN", "EVENT"}
-    # On a pull request (and a queue commit, with merge_group) an unresolved answer warns;
-    # everywhere else it fails.
+    # On a pull request or a queue commit an unresolved answer warns; everywhere else it fails.
     run = str(runs[0]["run"])
-    warns = 'if [ "$EVENT" = pull_request ]; then'
-    if "merge_group" in triggers:
-        warns = 'if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then'
-    assert warns in run
+    assert 'if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then' in run
     assert run.count("--unresolved-warns") == 1
 
 

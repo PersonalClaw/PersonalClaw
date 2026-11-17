@@ -41,14 +41,21 @@ GATE = {g.file: g for g in workflows.GATES}
 
 
 def gate_yml(
-    file: str, paths: list[str] | None = None, minutes: object = None, **pull_request: Any
+    file: str,
+    paths: list[str] | None = None,
+    minutes: object = None,
+    queued: bool = True,
+    **pull_request: Any,
 ) -> str:
-    """A gate's workflow: its name, its pull_request filter and each job's bound, nothing it
-    runs."""
+    """A gate's workflow: its name, its pull_request filter, its merge_group trigger (unless not
+    *queued*) and each job's bound, nothing it runs."""
     spec = {"paths": GATE_FILTERS[file] if paths is None else paths, **pull_request}
     bound = GATE_BOUNDS[file] if minutes is None else minutes
     jobs = {job: {"timeout-minutes": bound} for job in GATE[file].jobs}
-    return json.dumps({"name": GATE[file].name, "on": {"pull_request": spec}, "jobs": jobs}) + "\n"
+    on: dict[str, Any] = {"pull_request": spec}
+    if queued:
+        on["merge_group"] = {"types": ["checks_requested"]}
+    return json.dumps({"name": GATE[file].name, "on": on, "jobs": jobs}) + "\n"
 
 
 GATE_FILES = {GATE[file].path: gate_yml(file) for file in GATE_FILTERS}
@@ -88,7 +95,9 @@ class FakeApi:
         for file in GATE_FILTERS:
             self.gate(file)
 
-    def gate(self, file: str, *runs: Mapping[str, Any], head: str = HEAD) -> None:
+    def gate(
+        self, file: str, *runs: Mapping[str, Any], head: str = HEAD, event: str = "pull_request"
+    ) -> None:
         """The head's runs of a gate's workflow, oldest first, each under the gate's name. Each run
         may name its ``status``, ``conclusion``, ``event``, ``path``, ``head_sha`` and
         ``run_attempt``, and its ``attempts``: each attempt a list of its jobs, ``(name,
@@ -98,14 +107,16 @@ class FakeApi:
         gate = GATE[file]
         listed = []
         for n, run in enumerate(runs):
-            run_id = 5000 + 100 * list(GATE_FILTERS).index(file) + n
+            run_id = (
+                5000 + 100 * list(GATE_FILTERS).index(file) + n + 50 * (event != "pull_request")
+            )
             attempts = run.get("attempts", [[(job, "success", "") for job in gate.jobs]])
             listed.append(
                 {
                     "id": run.get("id", run_id),
                     "name": gate.name,
                     "path": run.get("path", gate.path),
-                    "event": run.get("event", "pull_request"),
+                    "event": run.get("event", event),
                     "head_sha": run.get("head_sha", head),
                     "status": run.get("status", "completed"),
                     "conclusion": run.get("conclusion", "success"),
@@ -135,7 +146,7 @@ class FakeApi:
                     "total_count": len(found),
                     "jobs": found,
                 }
-        query = f"head_sha={head}&event=pull_request&per_page=100&page=1"
+        query = f"head_sha={head}&event={event}&per_page=100&page=1"
         self.answers[f"/repos/{REPO}/actions/workflows/{file}/runs?{query}"] = {
             "total_count": len(listed),
             "workflow_runs": listed,
@@ -3262,6 +3273,8 @@ def _queued(built_on: str = MAIN, number: int = 12) -> tuple[FakeApi, FakeQueue]
     api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
     _verdicts(api, QUEUE)
     _verdicts(api, HEAD, {"conclusion": "success"})
+    for file in GATE_FILTERS:
+        api.gate(file, {}, head=QUEUE, event="merge_group")
     return api, FakeQueue(_entry(QUEUE, built_on, number))
 
 
@@ -3550,6 +3563,171 @@ EARLIER = "8" * 40
 OTHER_HEAD = "7" * 40
 SHARD = "python-suite (1/3)"
 RESULTS_RED = "attempt 1's `results` is 'failure'"
+
+
+# ── A queue commit's gates ───────────────────────────────────────────────────────────────────
+#
+# The head's gate runs built the head's merge with main as it was then; the queue commit is the
+# same change on a main that may have moved since. Every gate runs on every queue commit
+# (`merge_group` takes no filter), and the queue commit's verdict reads those runs as a head's
+# verdict reads the head's. The class this closes: a queue commit that merges with no gate read.
+
+QUEUE_GATE_RUN = 5900
+
+
+def _queue_gate(file: str, *runs: Mapping[str, Any]) -> tuple[FakeApi, FakeQueue]:
+    api, queue = _queued()
+    api.gate(file, *runs, head=QUEUE, event="merge_group")
+    return api, queue
+
+
+def test_a_green_queue_commit_names_each_gate_run_on_it() -> None:
+    api, queue = _queued()
+    found = _judge_queue(api, queue)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    receipt = merge_verdict.read_receipt(mc.check_body(found.body()))
+    for n, gate in enumerate(workflows.GATES):
+        url = f"https://github.com/{REPO}/actions/runs/{5050 + 100 * n}"
+        assert (
+            f"- its {gate.what} ({gate.file}) passed on every attempt: run {url}, on the tree"
+            " main would reach"
+        ) in found.output["summary"]
+        assert receipt.toolchain[gate.file] == url
+        listing = (
+            f"/repos/{REPO}/actions/workflows/{gate.file}/runs?head_sha={QUEUE}&event=merge_group"
+        )
+        assert sum(c.startswith(listing) for c in api.calls) == 1, gate.file
+
+
+@pytest.mark.parametrize("gate", workflows.GATES, ids=lambda g: g.file)
+def test_a_queue_commit_whose_gate_run_is_red_is_red(gate: workflows.Gate) -> None:
+    job, *others = gate.jobs
+    jobs = [(job, "failure", "Build it"), *((other, "success", "") for other in others)]
+    api, queue = _queue_gate(gate.file, {"conclusion": "failure", "attempts": [jobs]})
+    found = _queue_red(api, queue)
+    assert found.output["title"].startswith(
+        f"Red: the queue commit's {gate.what} ({gate.file}) is red: attempt 1's `{job}` is"
+        " 'failure' at `Build it`"
+    ), found.output["title"]
+    # A queue commit's red excuses nothing: no gate red there is flake-class.
+    assert "flake-class)" not in found.output["title"].split(":")[0]
+
+
+def test_a_queue_commit_s_gate_red_on_its_first_attempt_stays_red_after_a_green_rerun() -> None:
+    attempts = [[("flake", "failure", "Build it")], [("flake", "success", "")]]
+    api, queue = _queue_gate("nix.yml", {"attempts": attempts})
+    found = _queue_red(api, queue)
+    assert "attempt 1's `flake` is 'failure'" in found.output["title"]
+
+
+def test_a_queue_commit_s_gate_run_that_ran_no_job_is_red() -> None:
+    api, queue = _queue_gate("nix.yml", {"conclusion": "startup_failure", "attempts": [[]]})
+    found = _queue_red(api, queue)
+    assert "attempt 1 ran no job, and the run is 'startup_failure'" in found.output["title"]
+
+
+def test_a_queue_commit_with_no_gate_run_listed_yet_waits_for_it() -> None:
+    api, queue = _queue_gate("nix.yml")
+    found = _queue_red(api, queue)
+    assert found.output["title"] == (
+        "Red: waiting: the queue commit's Nix build (nix.yml) has no merge_group run listed yet"
+    )
+    assert found.output["text"] == f"```{mc.WAITING_FENCE}\nnix.yml\n```\n"
+
+
+def test_a_queue_commit_s_gate_run_still_going_waits_for_it() -> None:
+    api, queue = _queue_gate(
+        "nix.yml",
+        {"status": "in_progress", "conclusion": None, "attempts": [[("flake", None, "")]]},
+    )
+    found = _queue_red(api, queue)
+    assert found.output["title"].startswith(
+        "Red: waiting: the queue commit's Nix build (nix.yml) is 'in_progress', not finished"
+    )
+    assert found.output["text"] == f"```{mc.WAITING_FENCE}\nnix.yml\n```\n"
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        {"event": "pull_request"},
+        {"head_sha": HEAD},
+        {"path": GATE["nix.yml"].path.replace("nix.yml", "my-nix.yml")},
+    ],
+    ids=["a pull request's run", "a run on the pull request's head", "another workflow's run"],
+)
+def test_no_other_run_stands_in_for_a_queue_commit_s_gate_run(run: dict[str, Any]) -> None:
+    api, queue = _queue_gate("nix.yml", run)
+    found = _queue_red(api, queue)
+    assert "the queue commit's Nix build (nix.yml) has no merge_group run listed yet" in (
+        found.output["title"]
+    )
+
+
+def test_a_queue_commit_whose_own_gate_starts_no_queue_run_is_red_and_waits_for_nothing() -> None:
+    api, queue = _queue_gate("nix.yml")
+    api.tree(
+        QUEUE,
+        {
+            MERGE_PATH: MERGE_YML,
+            "README.md": "changed\n",
+            GATE["nix.yml"].path: gate_yml("nix.yml", queued=False),
+        },
+        parents=(MAIN,),
+    )
+    files = [
+        {"filename": "README.md", "status": "modified", "patch": README_PATCH, "sha": "1" * 40},
+        {"filename": GATE["nix.yml"].path, "status": "modified", "patch": "@@ -1 +1 @@\n-a\n+b",
+         "sha": "2" * 40},
+    ]  # fmt: skip
+    api.answers[f"/repos/{REPO}/compare/{MAIN}...{QUEUE}"] = {"files": files}
+    api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
+    # It changes a definition, so main's contract runs over it: none listed yet.
+    api.answers[
+        f"/repos/{REPO}/actions/workflows/contract.yml/runs?branch=contract-run%2F{QUEUE}"
+        "&event=workflow_dispatch&per_page=100"
+    ] = {"total_count": 0, "workflow_runs": []}
+    found = _queue_red(api, queue)
+    assert (
+        "the queue commit's own nix.yml starts no run on merge_group, so its Nix build never runs"
+        " on the tree main would reach"
+    ) in found.output["summary"]
+    assert "text" not in found.output or "nix.yml" not in found.output["text"]
+
+
+def test_main_whose_gate_starts_no_queue_run_holds_every_queue_commit_red() -> None:
+    api, queue = _queued()
+    api.tree(MAIN, {MERGE_PATH: MERGE_YML, "README.md": "hi\n",
+                    GATE["nix.yml"].path: gate_yml("nix.yml", queued=False)})  # fmt: skip
+    found = _queue_red(api, queue)
+    assert (
+        "unread: main's nix.yml starts no run on merge_group, so no queue commit is held to its"
+        " Nix build"
+    ) in found.output["summary"]
+
+
+def test_a_completed_gate_run_on_a_queue_commit_judges_it_again_from_its_own_queue_run() -> None:
+    api, queue = _queue_gate(
+        "nix.yml", {"conclusion": "failure", "attempts": [[("flake", "failure", "Build it")]]}
+    )
+    _merge_runs(api, f"head_sha={QUEUE}&event=pull_request&status=completed&per_page=100", [])
+    _merge_runs(api, f"head_sha={QUEUE}&event=merge_group&status=completed&per_page=100", [RUN])
+    api.answers[f"/repos/{REPO}/actions/runs/{QUEUE_GATE_RUN}"] = {
+        "repository": {"full_name": REPO},
+        "path": GATE["nix.yml"].path,
+        "event": "merge_group",
+        "status": "completed",
+        "head_sha": QUEUE,
+    }
+    outcome = mc.judge(api, REPO, QUEUE_GATE_RUN, CONTROLLER, mc.Queue(queue, APP, True))
+    assert outcome.posting is not None and outcome.posting.head_sha == QUEUE
+    assert "the queue commit's Nix build (nix.yml) is red" in outcome.posting.output["title"]
+
+
+def test_each_queue_gate_s_wait_has_its_own_fence_word() -> None:
+    for gate in workflows.GATES:
+        reason = f"{mc.WAITING_QUEUE_GATE}{gate.what} ({gate.file}) has no merge_group run yet"
+        assert mc._fence_word(reason) == gate.file
 
 
 class FakeRetry:
@@ -4295,9 +4473,9 @@ def test_a_completed_gate_run_judges_its_head_again_from_its_own_merge_run(file:
     assert outcome.posting is not None and outcome.posting.head_sha == HEAD
     assert "the head's Nix build (nix.yml) is red" in outcome.posting.output["title"]
     for other, why in (
-        ({"event": "workflow_dispatch"}, "not a completed pull request run of a gate"),
-        ({"event": "push"}, "not a completed pull request run of a gate"),
-        ({"status": "in_progress"}, "not a completed pull request run of a gate"),
+        ({"event": "workflow_dispatch"}, "not a completed pull request or queue commit run"),
+        ({"event": "push"}, "not a completed pull request or queue commit run"),
+        ({"status": "in_progress"}, "not a completed pull request or queue commit run"),
         ({"repository": {"full_name": "someone/fork"}}, "is of 'someone/fork'"),
     ):
         api.answers[f"/repos/{REPO}/actions/runs/{GATE_RUN}"] = {**run, **other}

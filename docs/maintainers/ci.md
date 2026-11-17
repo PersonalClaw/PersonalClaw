@@ -325,6 +325,14 @@ verdict says all it must fix:
     file with the same `+/-` lines;
   - **its pull request's head** has a green verdict, which holds that head's dependency review,
     sign-off check and CodeQL, each of the pull request's own change;
+  - **its gates:** the head's gates (below) ran on the head's merge with main as it was then,
+    and the queue commit is that change on a main that may have moved since, a tree no gate ran
+    on. Each gate's workflow also starts on `merge_group`, which takes no filter, so every gate
+    runs on every queue commit (each takes a few minutes), and each gate's `merge_group` runs on
+    the queue commit are read as a head's are: there must be one, and every one passes on every
+    attempt. Main's copy of a gate that starts no run on `merge_group` is unread, so red. With no
+    run listed, a queue commit whose own copy starts none is red, and one whose copy does waits;
+    the run's completion wakes the poster. No gate red on a queue commit is flake-class;
   - **its definitions** are compared with main's tip, so a definition an entry ahead changed
     counts, and main's contract runs over the queue commit itself;
   - **once:** a queue commit's verdict that waits on nothing is never posted again, so no later
@@ -498,9 +506,11 @@ verdict says all it must fix:
   that changes the gate's workflow or a local action, since its run takes those steps from the head;
   and a timeout is the change's own. A gate job and its steps hold no `if:` and no
   `continue-on-error` (`tests/rails/test_workflow_path_filters_tree.py`), which the head's copy
-  could use to read a red as green. Never dispatch `nix.yml` or `release-image-tooling.yml` on a
-  pull request's branch: each shares its pull request run's concurrency group and cancels the run
-  the verdict reads. Never re-run an older gate run on a head while a newer one runs, either: it
+  could use to read a red as green. Each gate's concurrency group keys on the pull request's
+  number, and any other run's (a queue commit's, a push's, a dispatch's) on its commit, so two pull
+  requests never share one: not even two from one branch into two bases, whose runs on the one head
+  the verdict reads together, so a red in either is red. A dispatch on a pull request's branch
+  cancels nothing. Never re-run an older gate run on a pull request while a newer one runs: it
   joins the same group and cancels the newer run. A row of the CI contract holds every workflow a
   pull request's events start to one the verdict reads itself (`READ`), a gate, or `NOT_GATING` with
   why it gates nothing; one whose `pull_request` runs by `paths` or `paths-ignore` is a gate.
@@ -631,9 +641,11 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
   once its workflow exists.
 - Every concurrency group a candidate's run joins, the workflow's and each job's (once per literal
   matrix leg, a tier workflow's planned matrix read as its tier's entries), keys on its pull
-  request or its head. The row evaluates each group against the runs of several unrelated
-  candidates, each event as GitHub fills it in: two pull requests, two
-  forks with the same branch name, pushes to two feature branches, and the same pull requests
+  request or its head: a pull request's run on its pull request, since two pull requests from one
+  branch share a head, and any other run on its commit. The row evaluates each group against the
+  runs of several unrelated candidates, each event as GitHub fills it in: two pull requests, two
+  forks with the same branch name, two pull requests from one branch into two bases, pushes to two
+  feature branches, and the same pull requests
   under `pull_request_target`, whose `github.ref` and `github.sha` are main's for every pull
   request. It refuses a group two candidates share, in one workflow or across two, and one that
   two runs for one head do not share: a second run, or a re-run (the same run id and commit, a
@@ -1804,8 +1816,8 @@ runs from other workflows"), so the job cancels that workflow's run.
 Its keys are written for the close, not copied: when a pull request closes because it merged,
 `github.ref` is the branch it merged into and `github.sha` its merge commit (GitHub's "Events
 that trigger workflows", `pull_request`), so a key read from either would name the merge's
-`main` run. `pr.yml`'s and `merge.yml`'s key on the pull request's number, which the close
-carries too. A workflow added later that runs on
+`main` run. `pr.yml`'s, `merge.yml`'s and the gates' (`nix.yml`, `action-pins.yml`,
+`release-image-tooling.yml`) key on the pull request's number, which the close carries too. A workflow added later that runs on
 `pull_request` needs a job here; the contract row below fails until it has one.
 
 A closed Dependabot pull request's tier runs are not cancelled. They wait in the group every

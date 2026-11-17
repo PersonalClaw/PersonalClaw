@@ -7255,7 +7255,7 @@ CLOSED_PR_RUNS_ARE_CANCELLED = _toolchain_row(
             expect="action-pins.yml: no",
         ),
         _plant_line(
-            "a group without the head repository, so a fork's run is missed",
+            "a group keyed on the repository and branch, which the pull request's runs do not join",
             _CANCELLER_PATH,
             _CANCEL_NIX_GROUP,
             "      group: nix-${{ github.repository }}-${{ github.head_ref }}\n",
@@ -12084,8 +12084,8 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
 # way GitHub would, and holds two relations:
 #
 # 1. no two runs for different candidates (two pull requests from this repository, two forks with
-#    the same branch name, pushes to two feature branches) evaluate to one group, in one workflow
-#    or across two;
+#    the same branch name, two pull requests from one branch into two bases, pushes to two feature
+#    branches) evaluate to one group, in one workflow or across two;
 # 2. every run for one candidate at one head evaluates to one group: a second run of the
 #    workflow (a new run id) and a GitHub re-run (the same run id and commit, a later
 #    `run_attempt`). So a group keys on the pull request or on its head, and on nothing that
@@ -12142,24 +12142,25 @@ def _candidate_pr(
     attempt: int = 1,
     kind: str = "pull_request",
     author: str = "a-contributor",
+    base: str = "main",
 ) -> _CandidateRun:
     target = kind == "pull_request_target"
     pull_request = {
         "number": number,
         "user": {"login": author},
         "head": {"ref": branch, "sha": head, "repo": {"full_name": head_repo}},
-        "base": {"ref": "main", "sha": _MAIN_SHA},
+        "base": {"ref": base, "sha": _MAIN_SHA},
     }
     github = {
         "repository": _REPO_SLUG,
         "event_name": kind,
         # `pull_request` runs the test merge; `pull_request_target` runs the base branch.
-        "ref": "refs/heads/main" if target else f"refs/pull/{number}/merge",
-        "ref_name": "main" if target else f"{number}/merge",
+        "ref": f"refs/heads/{base}" if target else f"refs/pull/{number}/merge",
+        "ref_name": base if target else f"{number}/merge",
         # The test-merge commit differs for every run, so a group keyed on it keys on no head.
         "sha": _MAIN_SHA if target else f"merge{number}{run}",
         "head_ref": branch,
-        "base_ref": "main",
+        "base_ref": base,
         "run_id": str(9000 + run),
         "run_number": str(run),
         "run_attempt": str(attempt),
@@ -12262,6 +12263,7 @@ _PR44 = "pull request #44 from another fork (feature-a)"
 _PR45 = f"Dependabot's pull request #45 ({_DEPENDABOT_A})"
 _PR46 = f"Dependabot's pull request #46 ({_DEPENDABOT_B})"
 _PR47 = f"pull request #47 from a fork ({_DEPENDABOT_A})"
+_PR48 = "pull request #48 (feature-a, into another base)"
 
 
 def _pr_runs(kind: str) -> tuple[_CandidateRun, ...]:
@@ -12284,6 +12286,10 @@ def _pr_runs(kind: str) -> tuple[_CandidateRun, ...]:
                       author=_DEPENDABOT_LOGIN),
         # A fork's branch named as Dependabot names its own, by another author.
         _candidate_pr(f"{_PR47}{at}", "pr47", 47, _FORK, _DEPENDABOT_A, "g1", 12, kind=kind),
+        # #41's branch and head again, into another base: a run of one never stands in for the
+        # other's, which the merge verdict reads on the head they share.
+        _candidate_pr(f"{_PR48}{at}", "pr48", 48, _REPO_SLUG, a, "a1", 13, kind=kind,
+                      base="release"),
     )  # fmt: skip
 
 
@@ -12433,7 +12439,9 @@ def _candidate_kinds(workflows: list[tuple[str, dict]]) -> dict[str, set[str]]:
 
 
 def concurrency_keying_violations(tree: Tree) -> list[str]:
-    """Every concurrency group a candidate's run joins keys on its pull request or its head."""
+    """Every concurrency group a candidate's run joins keys on its pull request or its head: a
+    pull request's run on its pull request, since two from one branch share a head, and any other
+    run (a push, a queue commit) on its commit."""
     workflows = [(name, wf if isinstance(wf, dict) else {}) for name, wf in _workflows(tree)]
     kinds = _candidate_kinds(workflows)
     bad: list[str] = []
@@ -12521,6 +12529,28 @@ def concurrency_keying_violations(tree: Tree) -> list[str]:
     return list(dict.fromkeys(bad))
 
 
+@pytest.mark.parametrize("gate", ci_workflows.GATES, ids=lambda g: g.file)
+def test_each_queue_commit_runs_each_gate_in_a_group_of_its_own(gate: ci_workflows.Gate) -> None:
+    """A gate runs on every queue commit, and each queue commit's run is in a group of its own:
+    another entry's queue commit, the same entry's queue commit rebuilt, and a pull request's run
+    each join another group, so none cancels a queue commit's gate run. Only two runs of one queue
+    commit (run again, re-run) share one. ``github.ref`` would not do as the key: a queue commit's
+    branch names its pull request and the commit it was built on, which a rebuild keeps."""
+    doc = yaml.safe_load((REPO / ".github" / "workflows" / gate.file).read_text(encoding="utf-8"))
+    group = _concurrency_group(doc.get("concurrency"))
+    assert group is not None, gate.file
+    by_candidate: dict[str, set[str]] = {}
+    for run in _QUEUE_RUNS:
+        by_candidate.setdefault(run.candidate, set()).add(_rendered(group, run.context))
+    assert all(len(groups) == 1 for groups in by_candidate.values()), by_candidate
+    queued = [next(iter(groups)) for groups in by_candidate.values()]
+    assert len(set(queued)) == len(queued) == 3, by_candidate
+    pulls = {_rendered(group, run.context) for run in _pr_runs("pull_request")}
+    assert not pulls & set(queued), (pulls, queued)
+    by_ref = {run.candidate: _rendered("${{ github.ref }}", run.context) for run in _QUEUE_RUNS}
+    assert by_ref["q41"] == by_ref["q41b"], "a rebuild on the same commit keeps the queue branch"
+
+
 def _waits_its_turn(value: object, context: dict[str, Any]) -> bool:
     """Whether a run that joins a ``concurrency:`` *value* waits in its group whatever joins
     after it: never cancelled in flight (no cancel-in-progress) and never replaced while it waits
@@ -12575,6 +12605,10 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                     "group: nix-${{ github.base_ref }}", expect="pull request #42 (feature-b)"),
         _plant_line("a group keyed on the branch alone, which two forks share", _NIX, _NIX_GROUP,
                     "group: nix-${{ github.head_ref }}", expect="#43 from a fork"),
+        _plant_line("a group keyed on the head repository and branch, which two pull requests from"
+                    " one branch share", _NIX, _NIX_GROUP,
+                    "group: nix-${{ github.event.pull_request.head.repo.full_name || github"
+                    ".repository }}-${{ github.head_ref || github.ref_name }}", expect=_PR48),
         _plant_line("a group keyed on the run", _NIX, _NIX_GROUP, "group: nix-${{ github.run_id }}",
                     expect="keys on neither"),
         _plant_line("a group keyed on the test-merge commit", _NIX, _NIX_GROUP,
@@ -12599,10 +12633,13 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                                  "concurrency:\n"
                                  "  group: new-${{ github.event.pull_request.number }}\n"
                                  "  cancel-in-progress: true\n"), fails=False),
-        Control("a group keyed on the candidate's head",
+        # Two pull requests from one branch, into two bases, share a head: a pull request's run
+        # keyed on it can cancel or replace the other's, made against the other base.
+        Control("a pull request's group keyed on its head, which two pull requests share",
                 _new_pr_workflow("new-check.yml",
                                  "concurrency:\n  group: new-${{ github.event.pull_request.head.sha"
-                                 " || github.sha }}\n  cancel-in-progress: false\n"), fails=False),
+                                 " || github.sha }}\n  cancel-in-progress: false\n"),
+                expect=_PR48),
         Control("main's suite in one shared group, which is not a candidate's",
                 _new_workflow(f"{_WORKFLOWS}/main-suite.yml",
                               "name: Main suite\non:\n  push:\n    branches: [main]\n"

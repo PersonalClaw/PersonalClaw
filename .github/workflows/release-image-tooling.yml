@@ -7,8 +7,9 @@
 # every digest kept (#3911). That runs only on a tag or the weekly rehearsal, after a pull
 # request has merged, so a bad pin or a broken layout step would first show there. This runs
 # both on a pull request that changes them, with nothing to log in to and nothing to push, and
-# the merge verdict holds that pull request to it (tools/ci/workflows.py's GATES). Never dispatch
-# it on a pull request's branch: it joins that run's concurrency group and cancels it.
+# the merge verdict holds that pull request to it (tools/ci/workflows.py's GATES). Under main's
+# merge queue it runs on every queue commit too (`merge_group` takes no filter), and the queue
+# commit's verdict reads that run the same way.
 # - `pin-smoke`, the three pins, which tests/rails/test_ci_supply_chain_contract.py holds equal
 #   to the release build's;
 # - `layout-smoke`, the layout path: a two-platform image built to a layout with the release's
@@ -31,13 +32,16 @@ on:
       - .github/workflows/release-artifacts.yml
       - .github/workflows/release-image-tooling.yml
       - tools/ci/oci_layout.py
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
-# Keyed on the head repository and branch rather than on `github.ref` or the head SHA, so a new
-# push to a pull request cancels its older run and a fork's branch of the same name is a group of
-# its own.
+# Keyed on the pull request's number, so a new push to a pull request cancels its older run and
+# two pull requests never share a group: not even two from one branch into two bases, whose runs
+# on the one head the verdict reads together. Any other run (a queue commit, a dispatch) is keyed
+# on its commit, so it cancels no pull request's run.
 concurrency:
-  group: release-image-tooling-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: release-image-tooling-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 permissions: {}

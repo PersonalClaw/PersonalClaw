@@ -9,7 +9,9 @@ names the deleted workflow in code.
 
 A workflow of its own that a pull request's paths start is a gate of the merge verdict
 (:data:`GATES`): the verdict reads its runs on the head, by path, event and head, and main's copy
-of its filter decides when a head needs one. Every other workflow a pull request's events start
+of its filter decides when a head needs one. Each gate also runs on every queue commit of main's
+merge queue (``merge_group``, which takes no filter), whose verdict reads those runs the same way.
+Every other workflow a pull request's events start
 is read by the verdict itself (:data:`READ`) or gates nothing, for the reason
 :data:`NOT_GATING` gives, and a row of the CI contract holds every such workflow to one of the
 three.

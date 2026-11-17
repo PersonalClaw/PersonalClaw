@@ -11,8 +11,10 @@
 # Weekly, for a tag that moves upstream; and on every pull request that changes a workflow, a
 # local action or this check, so a pin whose comment names another release fails before it
 # merges: the merge verdict holds that pull request to this run (tools/ci/workflows.py's GATES).
-# On a pull request an answer the API could not give is a warning, so an API blip cannot turn
-# it red; a mismatch fails there too. One API call per release, about thirty.
+# Under main's merge queue it runs on every queue commit too (`merge_group` takes no filter), and
+# the queue commit's verdict reads that run the same way. On a pull request or a queue commit an
+# answer the API could not give is a warning, so an API blip cannot turn it red; a mismatch fails
+# there too. One API call per release, about thirty.
 # See docs/maintainers/ci.md, "Supply chain".
 name: Action pins
 
@@ -25,10 +27,15 @@ on:
       - .github/workflows/**
       - .github/actions/**
       - tools/ci/action_pins.py
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
+# Keyed on the pull request's number, so a new push to a pull request cancels its older run and
+# two pull requests never share a group. Any other run (a queue commit, the schedule, a dispatch)
+# is keyed on its commit, so it cancels no pull request's run.
 concurrency:
-  group: action-pins-${{ github.ref }}
+  group: action-pins-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 permissions:
@@ -53,7 +60,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
         run: |
-          if [ "$EVENT" = pull_request ]; then
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then
             python3 tools/ci/action_pins.py --unresolved-warns .
           else
             python3 tools/ci/action_pins.py .

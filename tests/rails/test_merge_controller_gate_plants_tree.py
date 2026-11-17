@@ -1,7 +1,7 @@
 """The merge controller's tests plant each gate as main holds it.
 
 ``tests/test_ci_merge_controller.py`` plants each gate of the merge verdict (rule 5b) in main's
-tree with its ``pull_request`` filter and its jobs' bounds, from
+tree with its ``pull_request`` filter, its ``merge_group`` trigger and its jobs' bounds, from
 ``tests/ci_merge_controller_shared.py``, so its rows judge the gates main has. This rail holds the
 two equal. It sits outside the CI contract's rails on purpose: main's contract lays its own copy of
 the shared module over every head, so a head that changes a gate's paths or a bound would be red
@@ -28,6 +28,8 @@ def _doc(gate: workflows.Gate) -> Any:
 def test_the_merge_controller_tests_plant_each_gate_as_main_holds_it(gate: workflows.Gate) -> None:
     doc = _doc(gate)
     assert workflows.pull_request_paths(doc) == GATE_FILTERS[gate.file]
+    # Every gate runs on every queue commit, which the queue commit's verdict reads.
+    assert workflows.triggers(doc)["merge_group"] == {"types": ["checks_requested"]}
     for job in gate.jobs:
         assert doc["jobs"][job]["timeout-minutes"] == GATE_BOUNDS[gate.file], job
 
