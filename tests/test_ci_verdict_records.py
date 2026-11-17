@@ -588,9 +588,11 @@ def test_a_job_no_runner_took_whose_rerun_failed_stays_red(tmp_path, capsys) -> 
     assert f"`{_LEFT}`: failure (attempt 2)" in capsys.readouterr().out
 
 
-def test_a_job_no_runner_took_is_filled_by_attempt_2_alone(tmp_path, capsys) -> None:
-    # Attempt 2's runner took the job and died with no record; a green attempt 3 does not stand
-    # for it: only attempt 2's record fills what attempt 1 never ran.
+def test_a_job_no_runner_took_is_filled_by_attempt_2_alone_without_its_listing(
+    tmp_path, capsys
+) -> None:
+    # Nothing shows what attempt 2 did with the job (no --later-jobs): its runner may have taken
+    # it and died with no record, so a green attempt 3 does not stand for it.
     records = _named(_record("static"), _record("suite (1/2)"), _record(_LEFT, attempt=3))
     args = [*_setup(tmp_path, records), "--attempt", "3", *_first_jobs(tmp_path, _NEVER_ACQUIRED)]
     assert _run(args) == 1
@@ -845,6 +847,201 @@ def test_a_rerun_that_still_lacks_the_job_writes_no_notice(tmp_path, capsys) -> 
     args = [*_setup(tmp_path, records), "--attempt", "2", *_first_jobs(tmp_path, _NEVER_ACQUIRED)]
     assert _run(args) == 1
     assert verdict.NOT_ACQUIRED_NOTICE not in capsys.readouterr().out
+
+
+# ── a job no runner took on several attempts (#5848; #6209's macOS shards, 11-16) ─────────────
+
+
+def _later_jobs(tmp_path: Path, lefts: dict[int, dict[str, object]]) -> list[str]:
+    """Each attempt after 1's jobs, each green but the one left as *lefts* gives it for that
+    attempt, as a JSON object of each attempt's number to its ``gh api --paginate --slurp``
+    listing, given as --later-jobs."""
+    listing: dict[str, object] = {}
+    for attempt, left in lefts.items():
+        jobs = [_api_job(k, run_attempt=attempt) for k in KEYS if k != _LEFT]
+        jobs.append(_api_job(_LEFT, run_attempt=attempt, **left))  # type: ignore[arg-type]
+        listing[str(attempt)] = [{"total_count": len(jobs), "jobs": jobs}]
+    path = tmp_path / "later-jobs.json"
+    path.write_text(json.dumps(listing))
+    return ["--later-jobs", str(path)]
+
+
+#: A later attempt's job a runner took and ran to green: its record is that attempt's.
+_RAN: dict[str, object] = {}
+
+
+def test_a_job_no_runner_took_on_three_attempts_is_filled_by_attempt_4s_green_record(
+    tmp_path, capsys
+) -> None:
+    """🔴 Red before: only attempt 2's record could fill a job no runner took on attempt 1, so
+    #6209's shards, untaken on attempts 1 to 3 and green on attempt 4, read `missing on attempt
+    2`."""
+    records = _named(_record("static"), _record("suite (1/2)"), _record(_LEFT, attempt=4))
+    later = _later_jobs(tmp_path, {2: _NEVER_ACQUIRED, 3: _NEVER_ACQUIRED, 4: _RAN})
+    args = [*_setup(tmp_path, records), "--attempt", "4", *_first_jobs(tmp_path, _NEVER_ACQUIRED)]
+    assert _run([*args, *later]) == 0, capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "taken",
+    [
+        pytest.param({"conclusion": "failure", "steps": 5}, id="ran and failed"),
+        pytest.param({"conclusion": "cancelled", "steps": 2}, id="cancelled with steps"),
+        pytest.param({**_NEVER_ACQUIRED, "runner": "GitHub Actions 9"}, id="a runner named"),
+    ],
+)
+def test_an_attempt_whose_runner_took_the_job_and_left_no_record_stays_missing(
+    tmp_path, capsys, taken
+) -> None:
+    """A later record fills only past attempts no runner took the job on: attempt 2's runner
+    took it, so attempt 3's green record does not stand for what attempt 2 did."""
+    records = _named(_record("static"), _record("suite (1/2)"), _record(_LEFT, attempt=3))
+    later = _later_jobs(tmp_path, {2: taken, 3: _RAN})
+    args = [*_setup(tmp_path, records), "--attempt", "3", *_first_jobs(tmp_path, _NEVER_ACQUIRED)]
+    assert _run([*args, *later]) == 1
+    assert f"`{_LEFT}`: missing on attempt 2" in capsys.readouterr().out
+
+
+def test_a_red_record_after_attempts_no_runner_took_stays_red_beside_a_later_green(
+    tmp_path, capsys
+) -> None:
+    records = _named(
+        _record("static"),
+        _record("suite (1/2)"),
+        _record(_LEFT, result="failure", attempt=3),
+        _record(_LEFT, attempt=4),
+    )
+    later = _later_jobs(tmp_path, {2: _NEVER_ACQUIRED, 3: {"conclusion": "failure"}, 4: _RAN})
+    args = [*_setup(tmp_path, records), "--attempt", "4", *_first_jobs(tmp_path, _NEVER_ACQUIRED)]
+    assert _run([*args, *later]) == 1
+    assert f"`{_LEFT}`: red on an earlier attempt" in capsys.readouterr().out
+
+
+def test_a_rerun_no_runner_took_the_job_on_either_reads_not_acquired_and_names_it(
+    tmp_path, capsys
+) -> None:
+    """🔴 Red before: on a rerun a job no runner took read `missing`, with no notice, so the merge
+    controller could not tell a run red only for runners from one red for its tests."""
+    records = _named(_record("static"), _record("suite (1/2)"))
+    later = _later_jobs(tmp_path, {2: _NEVER_ACQUIRED})
+    args = [*_setup(tmp_path, records), "--attempt", "2", *_first_jobs(tmp_path, _NEVER_ACQUIRED)]
+    assert _run([*args, *later]) == 1
+    out = capsys.readouterr().out
+    assert f"`{_LEFT}`: not acquired (no runner took its job on attempts 1 to 2" in out, out
+    assert f"::notice title={verdict.NOT_ACQUIRED_NOTICE}::{_LEFT}\n" in out, out
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        pytest.param({"conclusion": "failure", "steps": 5}, _NEVER_ACQUIRED, id="ran on attempt 1"),
+        pytest.param(_NEVER_ACQUIRED, {"conclusion": "cancelled", "steps": 2}, id="taken on 2"),
+    ],
+)
+def test_a_rerun_lacking_a_job_a_runner_took_writes_no_notice(
+    tmp_path, capsys, first, second
+) -> None:
+    records = _named(_record("static"), _record("suite (1/2)"))
+    later = _later_jobs(tmp_path, {2: second})
+    args = [*_setup(tmp_path, records), "--attempt", "2", *_first_jobs(tmp_path, first)]
+    assert _run([*args, *later]) == 1
+    out = capsys.readouterr().out
+    assert verdict.NOT_ACQUIRED_NOTICE not in out
+    assert "not acquired" not in out
+
+
+def test_a_rerun_red_for_more_than_jobs_no_runner_took_writes_no_notice(tmp_path, capsys) -> None:
+    records = _named(_record("static", result="failure", attempt=2), _record("suite (1/2)"))
+    later = _later_jobs(tmp_path, {2: _NEVER_ACQUIRED})
+    args = [*_setup(tmp_path, records), "--attempt", "2", *_first_jobs(tmp_path, _NEVER_ACQUIRED)]
+    assert _run([*args, *later]) == 1
+    assert verdict.NOT_ACQUIRED_NOTICE not in capsys.readouterr().out
+
+
+def test_a_rerun_whose_own_listing_shows_another_job_red_writes_no_notice(tmp_path, capsys) -> None:
+    """The notice reads the rerun's own listing, not attempt 1's: attempt 2's shows `static` red,
+    though its attempt-1 record is green, so the run is not red only for the job no runner took."""
+    records = _named(_record("static"), _record("suite (1/2)"))
+    jobs = [_api_job("static", conclusion="failure", steps=5, run_attempt=2)]
+    jobs.append(_api_job("suite (1/2)", run_attempt=2))
+    jobs.append(_api_job(_LEFT, run_attempt=2, **_NEVER_ACQUIRED))  # type: ignore[arg-type]
+    path = tmp_path / "later-jobs.json"
+    path.write_text(json.dumps({"2": [{"total_count": len(jobs), "jobs": jobs}]}))
+    args = [*_setup(tmp_path, records), "--attempt", "2", *_first_jobs(tmp_path, _NEVER_ACQUIRED)]
+    assert _run([*args, "--later-jobs", str(path)]) == 1
+    out = capsys.readouterr().out
+    assert f"`{_LEFT}`: not acquired" in out, out
+    assert verdict.NOT_ACQUIRED_NOTICE not in out, out
+
+
+@pytest.mark.parametrize(
+    ("attempt", "listing", "why"),
+    [
+        pytest.param("1", {}, "no attempt after 1", id="on attempt 1"),
+        pytest.param("3", {"2": None}, "attempts 2 to 3", id="an attempt left out"),
+        pytest.param(
+            "2", {"2": None, "3": None}, "attempts 2 to 2", id="an attempt after the run's"
+        ),
+        pytest.param("2", {"2": "attempt 3"}, "attempt 3", id="a job of another attempt"),
+        pytest.param("2", {"two": None}, "attempt number", id="a key that is no number"),
+    ],
+)
+def test_later_jobs_that_do_not_list_each_later_attempt_are_refused(
+    tmp_path, capsys, attempt, listing, why
+) -> None:
+    records = _named(_record("static"), _record("suite (1/2)"))
+    pages: dict[str, object] = {}
+    for key, kind in listing.items():
+        on = 3 if kind == "attempt 3" else (int(key) if key.isdigit() else 2)
+        jobs = [_api_job(k, run_attempt=on) for k in KEYS]
+        pages[key] = [{"total_count": len(jobs), "jobs": jobs}]
+    path = tmp_path / "later-jobs.json"
+    path.write_text(json.dumps(pages))
+    args = [*_setup(tmp_path, records), "--attempt", attempt]
+    args += [*_first_jobs(tmp_path, _NEVER_ACQUIRED), "--later-jobs", str(path)]
+    assert _run(args) == 2
+    assert why in capsys.readouterr().err
+
+
+def test_later_jobs_are_read_only_with_attempt_1s(tmp_path, capsys) -> None:
+    records = _named(_record("static"), _record("suite (1/2)"))
+    later = _later_jobs(tmp_path, {2: _NEVER_ACQUIRED})
+    assert _run([*_setup(tmp_path, records), "--attempt", "2", *later]) == 2
+    assert "--later-jobs is read only with --first-jobs" in capsys.readouterr().err
+
+
+def test_decide_reads_a_later_attempt_s_jobs_by_the_attempt_it_lists() -> None:
+    """Through decide: each later attempt's jobs are held to the run and to the attempt they
+    are listed under, and an untaken job on every attempt so far reads not acquired."""
+    identity = verdict.Identity(HEAD, {"apps-partner": PARTNER})
+    taken = verdict.JobRun(
+        "k", "completed", "success", (), 3, "r", 7, True, run_id=RUN, run_attempt=1
+    )
+    untaken = verdict.JobRun(
+        "k", "completed", "cancelled", (), 0, "", None, True, run_id=RUN, run_attempt=1
+    )
+    found = verdict.decide(
+        ["k"],
+        [],
+        identity,
+        run_id=RUN,
+        first_jobs=[untaken],
+        later_jobs={2: [replace(untaken, run_attempt=2)]},
+        attempt=2,
+    )
+    assert [r.kind for r in found.reasons] == [verdict.NOT_ACQUIRED] and found.not_acquired == (
+        "k",
+    )
+    with pytest.raises(verdict.Refused, match="attempt 2"):
+        verdict.decide(
+            ["k"],
+            [],
+            identity,
+            run_id=RUN,
+            first_jobs=[untaken],
+            later_jobs={2: [replace(taken, run_attempt=3)]},
+            attempt=2,
+        )
 
 
 def test_never_acquired_never_reads_a_field_the_listing_did_not_give_as_none() -> None:
