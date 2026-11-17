@@ -1440,13 +1440,25 @@ async def api_loop_stream(request: web.Request) -> web.StreamResponse:
     hub = registry.hub(key)
     from personalclaw.dashboard.device_scopes import scope_of
 
-    # An automation client's stream ends when its session does (F9).
+    # An automation client's stream ends when its session does (F9): signed out, ended idle or for
+    # a mismatch, or at its own end. A sign-out may close it from another thread, so the cancel is
+    # handed to this stream's event loop.
     release = None
     if scope_of(request) and request.get("session_nonce"):
         from personalclaw.dashboard.scoped_sessions import hold_open
 
         task = asyncio.current_task()
-        release = hold_open(str(request["session_nonce"]), task.cancel if task else lambda: None)
+        loop = asyncio.get_running_loop()
+
+        def close() -> None:
+            if task is not None:
+                loop.call_soon_threadsafe(task.cancel)
+
+        release = hold_open(
+            str(request["session_nonce"]),
+            close,
+            ends=float(request.get("session_expires_at") or 0.0),
+        )
     try:
         return await stream_response(
             request, hub, on_connect=[("snapshot", view)], registry_evict=(registry, key)

@@ -206,6 +206,56 @@ async def test_a_loops_stream_served_to_a_client_ends_when_its_session_does(stat
         await asyncio.wait_for(drained(), 5)
 
 
+@pytest.mark.asyncio
+async def test_a_loops_stream_served_to_a_client_ends_when_its_session_runs_out(state) -> None:
+    """Its own end closes an open stream, as a sign-out does: a client paired for N days hears
+    nothing of the loop once the N days are over, however long it held the connection."""
+    from aiohttp import DummyCookieJar, web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.device_scopes import device_scope_middleware
+    from personalclaw.dashboard.handlers import loop_routes
+
+    lid = _loop_row()
+    minted = _scoped(ttl=2)
+    app = web.Application(
+        middlewares=[token_auth.token_auth_middleware(port=10000), device_scope_middleware]
+    )
+    app["port"] = 10000
+    app["allowed_origins"] = {"http://localhost:10000"}
+    app["state"] = state
+    app.router.add_get("/api/loops/{id}/stream", loop_routes.api_loop_stream)
+    headers = {"Cookie": f"pc_token_10000={minted.token}", "X-PersonalClaw-Pair": minted.pair}
+    async with TestClient(TestServer(app), cookie_jar=DummyCookieJar()) as client:
+        resp = await client.get(f"/api/loops/{lid}/stream", headers=headers)
+        assert resp.status == 200
+        assert await asyncio.wait_for(resp.content.readline(), 5), "the snapshot arrives"
+
+        async def drained() -> None:
+            try:
+                while await resp.content.readline():
+                    pass
+            except Exception:  # noqa: BLE001 — a cut connection ends the stream too
+                pass
+
+        await asyncio.wait_for(drained(), 8)
+        assert time.time() >= minted.expires_at - 0.5, "it ended at the session's end, not before"
+
+
+def test_a_holder_that_closes_by_itself_leaves_no_timer_waiting() -> None:
+    """A socket that disconnects cancels its session-end timer: one left waiting would keep the
+    socket for as long as the pairing lasts (up to 90 days), one more for every reconnect."""
+    from personalclaw.dashboard import scoped_sessions
+
+    handle = MagicMock()
+    loop = MagicMock(call_later=MagicMock(return_value=handle))
+    release = scoped_sessions.hold_open("n-1", lambda: None, ends=time.time() + 30 * DAY, loop=loop)
+    assert loop.call_later.call_args.args[1:] == (scoped_sessions._ran_out, "n-1")
+    handle.cancel.assert_not_called()
+    release()
+    handle.cancel.assert_called_once()
+
+
 # ── An open socket is use (R3-6) ────────────────────────────────────────
 
 

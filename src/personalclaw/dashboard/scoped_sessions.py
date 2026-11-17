@@ -219,14 +219,27 @@ _OPEN: dict[str, dict[int, Any]] = {}
 _OPEN_LOCK = threading.Lock()
 
 
-def hold_open(nonce: str, close: Any) -> Any:
+def hold_open(nonce: str, close: Any, *, ends: float = 0.0, loop: Any = None) -> Any:
     """Register *close* (a no-argument callable) to run when the session *nonce* names ends.
-    Returns the release, which the holder calls when it closes by itself."""
+    Returns the release, which the holder calls when it closes by itself.
+
+    With *ends* (the session's own end, in epoch seconds), the session's end closes it too, on
+    *loop* (the running event loop unless one is given), unless it was released first. The
+    release cancels that timer, so a holder that closed by itself leaves nothing waiting."""
     token = id(close)
     with _OPEN_LOCK:
         _OPEN.setdefault(nonce, {})[token] = close
+    timer = None
+    if ends:
+        import asyncio
+
+        timer = (loop or asyncio.get_running_loop()).call_later(
+            max(0.0, ends - time.time()), _ran_out, nonce
+        )
 
     def release() -> None:
+        if timer is not None:
+            timer.cancel()
         with _OPEN_LOCK:
             held = _OPEN.get(nonce)
             if held is not None:
@@ -235,6 +248,13 @@ def hold_open(nonce: str, close: Any) -> Any:
                     _OPEN.pop(nonce, None)
 
     return release
+
+
+def _ran_out(nonce: str) -> None:
+    """The session *nonce* reached its own end: close everything it holds open through
+    :func:`close_for`, the path every sign-out closes through. The row's end is the store's to
+    record (``END_EXPIRED`` is never passed in), so nothing else is written here."""
+    close_for([nonce])
 
 
 def close_for(nonces: Any) -> None:

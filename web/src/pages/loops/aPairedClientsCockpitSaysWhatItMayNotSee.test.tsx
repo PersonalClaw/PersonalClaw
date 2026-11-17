@@ -12,10 +12,12 @@ import { ApiError, type Loop } from '../../lib/api'
 // one plain line, no load error, no toast, and the refused reads are never asked again.
 
 const { STORE, calls } = vi.hoisted(() => ({
-  STORE: { loop: null as Loop | null, report: '' },
+  STORE: { loop: null as Loop | null, report: '', artifactsRefusal: 'device_scope_refused' },
   calls: { artifacts: 0, task: 0, chat: 0 },
 }))
 const refused = () => new ApiError('This automation client can use only what its scope allows: loops.', 403, 'device_scope_refused')
+// Another 403, from another door: a failed read, which stays one.
+const otherRefusal = () => new ApiError('Request blocked: the origin is not allowed.', 403, 'origin_rejected')
 
 vi.mock('../../lib/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -24,7 +26,7 @@ vi.mock('../../lib/api', async (orig) => ({
     uLoop: () => (STORE.loop ? Promise.resolve(STORE.loop) : Promise.reject(new Error('no such loop'))),
     uLoopAction: vi.fn(() => Promise.resolve(null)),
     uLoopReport: () => Promise.resolve({ report: STORE.report, log: '' }),
-    artifacts: () => { calls.artifacts += 1; return Promise.reject(refused()) },
+    artifacts: () => { calls.artifacts += 1; return Promise.reject(STORE.artifactsRefusal === 'device_scope_refused' ? refused() : otherRefusal()) },
     task: () => { calls.task += 1; return Promise.reject(refused()) },
     chatSessionDetail: () => { calls.chat += 1; return Promise.reject(refused()) },
     projects: () => Promise.reject(refused()),
@@ -66,6 +68,7 @@ beforeEach(() => {
   invalidateKeys('loop:', true)
   STORE.loop = goal()
   STORE.report = ''
+  STORE.artifactsRefusal = 'device_scope_refused'
   calls.artifacts = 0; calls.task = 0; calls.chat = 0
   notified.length = 0
 })
@@ -88,6 +91,14 @@ describe('a paired client’s cockpit', () => {
     await mount()
     expect(await screen.findByRole('tab', { name: /Deliverable/ })).toBeTruthy()
     expect(await screen.findByText(LINE)).toBeTruthy()
+  })
+
+  it('reads any other 403 as the failed read it is: a load error, and no line', async () => {
+    STORE.artifactsRefusal = 'origin_rejected'
+    STORE.loop = goal({ linked_task_ids: [] })
+    await mount()
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.queryByText(/not available to this pairing/)).toBeNull()
   })
 
   it('never asks a refused read again on its poll', async () => {

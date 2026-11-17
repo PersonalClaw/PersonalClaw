@@ -250,10 +250,12 @@ async def test_a_404_a_405_and_a_refused_route_give_the_same_bytes() -> None:
     assert ran == []
 
 
-#: The loop cockpit's reads, each as ``(an id this loop holds, an id nothing holds)``: its task, its
-#: worker's chat, its artifacts by tag, an artifact, its project, the projects and the agents.
-#: Every one is OUTSIDE in this release, and moves to its scope row, with its target rule, when
-#: the approvals cut lands.
+#: The loop cockpit's reads, each as ``(an id named after a live loop row, an id nothing names)``:
+#: a task, its worker's chat, its artifacts by tag, an artifact, a project, the projects and the
+#: agents. Only the loops row is real (no task, artifact or project is made): the gate decides from
+#: the route alone, before any handler or store read, so what the id names can't change the answer.
+#: Every one is OUTSIDE in this release, and moves to its scope row, with its target rule, when the
+#: approvals cut lands.
 COCKPIT_READS: list[tuple[str, str]] = [
     ("/api/tasks/{lid}", "/api/tasks/no-such-task"),
     ("/api/chat/sessions/loop-{lid}", "/api/chat/sessions/loop-no-such-loop"),
@@ -271,7 +273,7 @@ async def test_a_cockpit_read_is_the_one_refusal_whether_its_target_exists_or_no
     held, unheld
 ) -> None:
     """A scoped client meeting a cockpit read gets the bytes every OUTSIDE route gives, for an id
-    its loop holds and for one nothing holds, and no handler runs: the gate decides from the
+    named after its loop and for one nothing names, and no handler runs: the gate decides from the
     route alone, so the answer can't say whether the target is there."""
     ran: list[str] = []
     app = _gated_app(ran)

@@ -701,11 +701,9 @@ class DashboardWebSocketState:
         def close() -> None:
             self._schedule_ws_send(ws.close(), ws)
 
-        self._ws_release[ws] = hold_open(nonce, close) if nonce else None
-        if ends and self._ws_loop is not None:
-            import time
-
-            self._ws_loop.call_later(max(0.0, ends - time.time()), close)
+        self._ws_release[ws] = (
+            hold_open(nonce, close, ends=ends, loop=self._ws_loop) if nonce else None
+        )
 
     def unregister_ws(self, ws: web.WebSocketResponse) -> None:
         """Remove a WebSocket client on disconnect."""
