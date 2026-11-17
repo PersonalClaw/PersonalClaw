@@ -8054,6 +8054,87 @@ PROVENANCE_RUNS_ON_EVERY_MAIN_PUSH = _toolchain_row(
 ROWS = (*ROWS, PROVENANCE_RUNS_ON_EVERY_MAIN_PUSH)
 
 
+# ── verified-tree.yml holds every main push to the tree its verdict verified (#3908, rule 4) ──
+_VERIFIED_TREE = ".github/workflows/verified-tree.yml"
+#: What its token reads: the commits and main's rules, the verdict's check runs, the pull
+#: requests, and a queue commit's own merge_group runs of merge.yml (0.4.0 A1).
+_VERIFIED_TREE_READS = {
+    "contents": "read",
+    "checks": "read",
+    "pull-requests": "read",
+    "actions": "read",
+}
+#: The one command the job runs, from the judging commit's archived tools/ci, and its range.
+_VERIFIED_TREE_RUN = (
+    '(cd "$judge" && python3 -m tools.ci verify-landed',
+    '--range "${BEFORE}..${GITHUB_SHA}"',
+)
+
+
+def verified_tree_violations(tree: Tree) -> list[str]:
+    """``verified-tree.yml`` runs on every push to main and nothing else, one group per commit
+    and never cancelled, reads with contents, checks, pull requests and actions alone, and runs
+    ``verify-landed`` from the previous main commit's ``tools/ci``, archived into a folder of its
+    own, over ``before..sha``."""
+    workflow = _workflow(tree, "verified-tree.yml")
+    if workflow is None:
+        return [f"{_VERIFIED_TREE} is missing"]
+    bad: list[str] = []
+    if _triggers(workflow) != {"push": {"branches": ["main"]}}:
+        bad.append(f"{_VERIFIED_TREE} runs on {_triggers(workflow)}, not every push to main alone")
+    concurrency = workflow.get("concurrency") or {}
+    if concurrency.get("group") != "verified-tree-${{ github.sha }}":
+        bad.append(
+            f"{_VERIFIED_TREE}'s group is not its commit's own: {concurrency.get('group')!r}"
+        )
+    if concurrency.get("cancel-in-progress") is not False:
+        bad.append(f"{_VERIFIED_TREE} can cancel a run")
+    if workflow.get("permissions") != _VERIFIED_TREE_READS:
+        bad.append(f"{_VERIFIED_TREE} grants {workflow.get('permissions')!r}, not reads alone")
+    for job_id, job in (workflow.get("jobs") or {}).items():
+        where = f"verified-tree.yml:{job_id}"
+        if job.get("permissions") != _VERIFIED_TREE_READS:
+            bad.append(f"{where} holds {job.get('permissions')!r}, not reads alone")
+        if "concurrency" in job or "if" in job or "needs" in job:
+            bad.append(f"{where} can be skipped, replaced or cancelled on its own")
+        run = _runs(job)
+        if not all(part in run for part in _VERIFIED_TREE_RUN):
+            bad.append(f"{where} does not run the archived verify-landed over `before..sha`")
+        if 'source="$BEFORE"' not in run or 'git archive "$source" tools/ci' not in run:
+            bad.append(f"{where} does not archive tools/ci from the previous main commit")
+    return bad
+
+
+VERIFIED_TREE_RUNS_ON_EVERY_MAIN_PUSH = _toolchain_row(
+    "verified-tree-holds-every-main-push-with-mains-previous-rule",
+    verified_tree_violations,
+    (
+        _plant("a group shared across commits", _VERIFIED_TREE,
+               "group: verified-tree-${{ github.sha }}", "group: verified-tree-${{ github.ref }}",
+               expect="is not its commit's own"),
+        _plant("a run that can be cancelled", _VERIFIED_TREE, "cancel-in-progress: false",
+               "cancel-in-progress: true", expect="can cancel a run"),
+        _plant("a branch filter that admits more than main", _VERIFIED_TREE,
+               "    branches: [main]\n", '    branches: ["**"]\n', expect="not every push"),
+        _plant("a write permission", _VERIFIED_TREE, "permissions:\n  contents: read\n",
+               "permissions:\n  contents: write\n", expect="not reads alone"),
+        _plant("the pushed tools/ci judging its own push", _VERIFIED_TREE,
+               '            source="$BEFORE"\n', '            source="$GITHUB_SHA"\n',
+               expect="does not archive tools/ci from the previous main commit"),
+        _plant("the checkout's own tools/ci run", _VERIFIED_TREE,
+               '(cd "$judge" && python3 -m tools.ci verify-landed',
+               '(python3 -m tools.ci verify-landed', expect="does not run the archived"),
+        _plant("a job that a condition can skip", _VERIFIED_TREE,
+               "    timeout-minutes: 5\n",
+               "    timeout-minutes: 5\n    if: ${{ github.event.before != '' }}\n",
+               expect="can be skipped"),
+        Control("the tree's verified-tree.yml passes", _nothing, fails=False),
+    ),
+)  # fmt: skip
+
+ROWS = (*ROWS, VERIFIED_TREE_RUNS_ON_EVERY_MAIN_PUSH)
+
+
 # ── dco.yml checks a pull request with the base branch's check, and nothing of the candidate ──
 # It runs on `pull_request_target` and holds `pull-requests: write`, so each property here is a
 # trust property: what runs is the base branch's, the token reaches only the step that calls the

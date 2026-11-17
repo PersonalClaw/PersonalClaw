@@ -1741,13 +1741,31 @@ places:
   cannot be dropped by `tree-check`'s answer or by another job's outcome, and at a few seconds on
   one runner, grouped by commit and never cancelled, it stays so whatever a tested push lets
   `merge.yml` skip.
+- **`verified-tree.yml`, on every push to `main`,** rule 4 (`python -m tools.ci verify-landed`,
+  `tools/ci/landed.py`), over `before..sha`: each commit is the merge commit of exactly one
+  merged pull request, a merge verdict that counts by `verify-check-run`'s rules (see "The merge
+  verdict's record") stands behind it, and the commit's own tree is the receipt's `tree_oid`.
+  Which verdict: a **queue commit**'s own, and any other commit's pull request's head's. A commit
+  is a queue commit when a `merge_group` run of `merge.yml` ran on it in this repository; every
+  such run must be its pull request's queue entry (`gh-readonly-queue/main/pr-<n>-<base>`) and the
+  newest must have passed, or the commit fails. A branch so named alone never makes one: a push
+  to it is a `push` run. Main's rules never choose between the two, so a rerun after the queue
+  goes live judges an earlier landing as it was judged when it landed. Each commit that passes is
+  recorded, with the pull request, its head, the commit whose verdict was read and its queue run,
+  the verified tree and the `main` commit, in the job summary and the run's `verified-tree-<sha>`
+  artifact, kept 90 days. It is a workflow of its own for provenance's reasons, and because it
+  reads the API: its token holds `checks: read`, `pull-requests: read` and `actions: read` beside
+  `contents: read`, and provenance's stays `contents: read` alone.
 
 `dco.yml` also runs when a pull request's title is edited, since rule 5 reads the title. Its job
 token reaches one step, which only fetches the commits with `gh api`; the check that parses them
 runs in the next step with no token. Each violation is also printed as an `::error::` annotation,
 so a red run's summary names the commit.
 
-The main push runs the **previous** main commit's copy of the script and of `MAINTAINERS`, read
+Both main-push checks run the **previous** main commit's copy. `verified-tree.yml` archives
+`BEFORE`'s `tools/ci` into a folder of its own and runs `verify-landed` from it, as `merge.yml` runs
+main's planner, with the same rule for the push that adds it (`tools/ci/landed.py` never in
+`BEFORE`'s history) and the same refusals. `provenance.yml` runs that commit's copy of the script and of `MAINTAINERS`, read
 with `git show "$BEFORE:…"` and run as `python3 -I` from the runner's temporary folder, as
 `tree-check` runs the previous copy of its check. A push cannot edit the check, add its own
 committer to `MAINTAINERS` or drop a module beside the script to pass itself; a change to either
@@ -1765,11 +1783,10 @@ commit author's email equal to the email in its `Signed-off-by`: rule 1 reads th
 records, so a contributor whose GitHub commit email differs from their sign-off fails on `main`
 (two of the four contributor squashes in history do).
 
-**What it does not cover.** Rule 4, the pushed tree against the tree the merge controller
-recorded for its pull request, is not checked: #3908 keeps it open until that record is posted.
-It lives in the merge controller's check run (see "The merge verdict's record"). Until then
-`GitHub <noreply@github.com>` commits a squash merge, a web-editor commit and a revert made from
-a pull request's page alike, and rule 2 passes all three. A push to `main` that starts no run at
+**What it does not cover.** `GitHub <noreply@github.com>` commits a squash merge, a web-editor
+commit and a revert made from a pull request's page alike, and rule 2 passes all three; rule 4 is
+what tells them apart, since only the squash is a merged pull request's merge commit with a
+verdict behind it. A push to `main` that starts no run at
 all (one made with a workflow's own token, say) is never checked either, because the next run
 starts at its own `before`; rule 5 closes only the skip-marker case.
 
