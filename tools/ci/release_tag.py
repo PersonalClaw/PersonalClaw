@@ -13,7 +13,10 @@ it with a tag and a commit. It refuses, naming why, unless:
   ``merge.yml`` (``workflows.MAIN_PUSH``).
 - the merge controller judged the commit's tree green (#3911, :func:`controller_green`): the
   one pull request that landed the commit on ``main`` has, on its head, a ``merge-verdict`` that
-  ``merge_verdict.verify`` accepts, whose receipt names the commit's own tree;
+  ``merge_verdict.verify`` accepts, whose receipt names the commit's own tree. A commit main's
+  merge queue landed (0.4.0 A1) is its queue commit, which the controller judged itself, so the
+  verdict read is the one on the commit; once main's merges are queued, a commit with no
+  ``merge_group`` run of its own is refused;
 - the commit's breadth is green (#3911, :func:`breadth_green`), for a release tag: the newest
   ``breadth.yml`` run of the commit off ``main`` is a rehearsal tag's push, with a
   digest-verified record of every attempt in which every gating leg ran and is green and every
@@ -61,6 +64,7 @@ from pathlib import Path
 from typing import Any
 
 from . import breadth_evidence, merge_verdict, trust, workflows
+from .merge_controller import QUEUE_BRANCH
 
 API = "https://api.github.com"
 MAIN = "origin/main"
@@ -600,6 +604,54 @@ def _landed_by(repository: str, commit: str, get: Get) -> dict[str, Any]:
     return landed[0]
 
 
+def _queue_runs(repository: str, commit: str, get: Get) -> list[dict[str, Any]]:
+    """The ``merge_group`` runs of the merge workflow on *commit*: none unless it is a queue
+    commit of main's merge queue (``tree_tested``'s rule)."""
+    workflow = workflows.MERGE
+    query = urllib.parse.urlencode({"head_sha": commit, "event": "merge_group", "per_page": 100})
+    path = f"/repos/{repository}/actions/workflows/{workflow}/runs?{query}"
+    try:
+        page = get(path)
+    except (OSError, ValueError) as error:
+        raise trust.Refused(
+            f"cannot read {workflow}'s merge_group runs on {commit}: {error}"
+        ) from None
+    runs = page.get("workflow_runs") if isinstance(page, dict) else None
+    if not isinstance(runs, list):
+        raise trust.Refused(f"cannot read {workflow}'s merge_group runs on {commit}: {page!r}")
+    total = page.get("total_count")
+    if isinstance(total, int) and total > len(runs):
+        raise trust.Refused(
+            f"cannot read {workflow}'s merge_group runs on {commit}: {total} do not fit one page"
+        )
+    return [
+        run
+        for run in runs
+        if isinstance(run, dict)
+        and run.get("event") == "merge_group"
+        and run.get("head_sha") == commit
+    ]
+
+
+def _merges_queued(repository: str, get: Get) -> bool:
+    """Whether main's rules queue its merges: a ``merge_queue`` rule among the rules for main."""
+    path = f"/repos/{repository}/rules/branches/main?per_page=100"
+    try:
+        rules = get(path)
+    except (OSError, ValueError) as error:
+        raise trust.Refused(f"cannot read main's rules: {error}") from None
+    if not isinstance(rules, list):
+        raise trust.Refused(f"cannot read main's rules: {rules!r}")
+    return any(isinstance(rule, dict) and rule.get("type") == "merge_queue" for rule in rules)
+
+
+def _is_entry_of(branch: str, number: object) -> bool:
+    """Whether *branch* is pull request *number*'s queue entry, as the controller reads a queue
+    commit's branch (``merge_controller.QUEUE_BRANCH``, whole)."""
+    match = QUEUE_BRANCH.fullmatch(branch)
+    return match is not None and match.group("number") == str(number)
+
+
 def controller_green(repository: str, commit: str, get: Get, *, repo: Path) -> str:
     """Which pull request's green ``merge-verdict`` holds *commit*'s tree; else
     ``trust.Refused``, naming why.
@@ -609,17 +661,43 @@ def controller_green(repository: str, commit: str, get: Get, *, repo: Path) -> s
     verdict on its head is read by ``merge_verdict.verify`` (main's rule names the App believed,
     and its newest run decides), and the receipt's tree must be the commit's own, read from the
     checkout: a pull request that landed another tree than the one judged proves nothing. An
-    answer it cannot read refuses, never passes."""
+    answer it cannot read refuses, never passes.
+
+    Under main's merge queue (0.4.0 A1) what lands is not the head: it is the queue commit, the
+    pull request squashed on main's tip or on the queue commit of the entry ahead, which the
+    controller judged by its queue commit rules. So a commit a ``merge_group`` run ran on is read
+    by the verdict on itself, when every such run's branch names the pull request that landed it
+    as its queue entry; and once main's merges are queued, a commit with no such run is refused:
+    every landing is then a queue commit, and the head's verdict judged another tree whenever the
+    head was behind main."""
     pull = _landed_by(repository, commit, get)
     number = pull.get("number")
     head = str((pull.get("head") or {}).get("sha") or "")
-    result = merge_verdict.verify(get, repo=repository, sha=head, git_dir=repo, main=MAIN)
+    queue_runs = _queue_runs(repository, commit, get)
+    if queue_runs:
+        # GitHub names a queue commit's branch for its entry: gh-readonly-queue/main/pr-<n>-<base>.
+        branches = sorted({str(run.get("head_branch") or "") for run in queue_runs})
+        others = [branch for branch in branches if not _is_entry_of(branch, number)]
+        if others:
+            raise trust.Refused(
+                f"a merge_group run on {commit} is on {', '.join(others)}, not #{number}'s queue "
+                f"entry (gh-readonly-queue/main/pr-{number}-<commit>): the queue commit is not "
+                f"the one #{number} landed"
+            )
+        sha, whose = commit, f"#{number}'s queue commit {commit}"
+    elif _merges_queued(repository, get):
+        raise trust.Refused(
+            f"main's merges are queued, and no {workflows.MERGE} merge_group run ran on {commit}: "
+            f"#{number} landed it, but the controller judged no queue commit of it"
+        )
+    else:
+        sha, whose = head, f"#{number}'s head {head}"
+    result = merge_verdict.verify(get, repo=repository, sha=sha, git_dir=repo, main=MAIN)
     if isinstance(result, merge_verdict.Unreadable):
-        raise trust.Refused(f"cannot read the verdict on #{number}'s head {head}: {result.reason}")
+        raise trust.Refused(f"cannot read the verdict on {whose}: {result.reason}")
     if isinstance(result, merge_verdict.Refused):
         raise trust.Refused(
-            f"the merge controller's verdict on #{number}'s head {head} does not count: "
-            f"{result.reason}"
+            f"the merge controller's verdict on {whose} does not count: {result.reason}"
         )
     done = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "--verify", f"{commit}^{{tree}}"],
@@ -634,7 +712,7 @@ def controller_green(repository: str, commit: str, get: Get, *, repo: Path) -> s
             f"#{number}'s verdict judged tree {result.receipt.tree_oid}, but {commit} holds tree "
             f"{tree}: what landed is not what the controller judged"
         )
-    return f"#{number}'s head {head}, check run {result.check_run_id}"
+    return f"{whose}, check run {result.check_run_id}"
 
 
 def github_get(token: str) -> Get:
