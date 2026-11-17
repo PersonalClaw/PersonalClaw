@@ -22,6 +22,7 @@ APP = 5444147
 NOW = datetime.datetime(2026, 11, 2, 12, 0, tzinfo=datetime.UTC)
 QUEUE_SHA = "a" * 40
 BUILT_ON = "b" * 40
+# main-protect's id: the live read names it, "no bypass actor on 25732182 (main-protect)".
 RULESET = 25732182
 
 
