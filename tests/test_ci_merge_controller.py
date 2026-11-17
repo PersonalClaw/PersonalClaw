@@ -4614,6 +4614,151 @@ def test_a_date_only_retry_of_a_nix_flake_counts_as_retry_1() -> None:
     assert found.output["title"].startswith("Red (retry 1 of 2, flake-class): the head's Nix build")
 
 
+# An errored CodeQL analysis. Code scanning lists an analysis whose upload GitHub could not process
+# with its `error` set, and that is final: a default-setup CodeQL run cannot be re-run, so no
+# other analysis of the head comes. The class this closes: a head whose verdict waited for ever,
+# "still processing", on an analysis that had already failed.
+
+#: Code scanning's answer for a pull request's head whose python analysis errored, as recorded on
+#: 2026-11-17 (its CodeQL run and every `Analyze` job green), with only its commit made the head's.
+RECORDED_ERRORED_ANALYSES = [
+    {
+        "analysis_key": "dynamic/github-code-scanning/codeql:analyze",
+        "category": "/language:python",
+        "commit_sha": "ca146000e325d447daa05bb547ea301980a6f101",
+        "created_at": "2026-11-17T11:59:25Z",
+        "error": "Unknown Error",
+        "ref": "refs/pull/6232/head",
+        "results_count": 0,
+        "rules_count": 0,
+        "tool": {"guid": None, "name": "CodeQL", "version": "2.27.4"},
+        "warning": "",
+    },
+    {
+        "analysis_key": "dynamic/github-code-scanning/codeql:analyze",
+        "category": "/language:javascript-typescript",
+        "commit_sha": "ca146000e325d447daa05bb547ea301980a6f101",
+        "created_at": "2026-11-17T11:57:51Z",
+        "error": "",
+        "ref": "refs/pull/6232/head",
+        "results_count": 0,
+        "rules_count": 87,
+        "tool": {"guid": None, "name": "CodeQL", "version": "2.27.4"},
+        "warning": "",
+    },
+    {
+        "analysis_key": "dynamic/github-code-scanning/codeql:analyze",
+        "category": "/language:actions",
+        "commit_sha": "ca146000e325d447daa05bb547ea301980a6f101",
+        "created_at": "2026-11-17T11:56:31Z",
+        "error": "",
+        "ref": "refs/pull/6232/head",
+        "results_count": 0,
+        "rules_count": 17,
+        "tool": {"guid": None, "name": "CodeQL", "version": "2.27.4"},
+        "warning": "",
+    },
+]
+ANALYSES = f"/repos/{REPO}/code-scanning/analyses?ref=refs/pull/12/head&per_page=100"
+ERRORED = (
+    "CodeQL's python analysis of the head errored ('Unknown Error'), and its run cannot be re-run:"
+    " a new head is a new analysis"
+)
+
+
+def _errored(*keep: str) -> FakeApi:
+    """A pull request's head whose CodeQL analyses are the recorded answer, its commit the head's;
+    *keep* names the languages kept (all three by default)."""
+    api = FakeApi()
+    api.codeql(HEAD)
+    api.answers[ANALYSES] = [
+        {**a, "commit_sha": HEAD}
+        for a in RECORDED_ERRORED_ANALYSES
+        if not keep or a["category"].removeprefix("/language:") in keep
+    ]
+    api.run(event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}}])
+    files = [{"filename": "README.md", "status": "modified", "patch": README_PATCH}]
+    api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
+    return api
+
+
+def test_an_errored_analysis_is_a_red_that_waits_on_nothing() -> None:
+    found = _red(_errored())
+    assert ERRORED in found.output["summary"]
+    assert "still processing" not in found.output["summary"]
+    assert mc.WAITING_FENCE not in found.output.get("text", ""), "an errored analysis is final"
+
+
+def test_an_errored_analysis_alone_is_flake_class_so_a_new_head_retries_it() -> None:
+    found = _note(_errored())
+    assert found.output["title"] == f"Red (retry 0 of 2, flake-class): {ERRORED}"
+    assert (
+        "- flake-class: CodeQL's python analysis errored on GitHub's side ('Unknown Error'): a new"
+        " head runs it again"
+    ) in found.output["summary"]
+
+
+def test_a_date_only_retry_of_an_errored_analysis_counts_as_retry_1() -> None:
+    api = _errored()
+    tree = _earlier(api, EARLIER)
+    found = _note(api, FakeRetry(((EARLIER, tree),)))
+    assert found.output["title"] == f"Red (retry 1 of 2, flake-class): {ERRORED}"
+
+
+def test_an_errored_analysis_beside_a_red_of_the_change_s_own_is_not_flake_class() -> None:
+    api = _errored()
+    api.review(HEAD, ("completed", "failure"))
+    found = _note(api)
+    assert found.output["title"].startswith("Red (retry 0 of 2): "), found.output["title"]
+    assert ERRORED in found.output["summary"]
+    assert "- not flake-class: its red is not its tests' alone: " in found.output["summary"]
+
+
+def test_a_language_still_processing_keeps_the_head_waiting_beside_an_errored_one() -> None:
+    """While another language has no analysis yet, the head's CodeQL waits, as before: the
+    errored one is named once nothing else of it waits."""
+    found = _red(_errored("python", "actions"))
+    assert found.output["title"] == (
+        "Red: waiting: CodeQL's javascript-typescript results are still processing"
+    )
+    assert ERRORED not in found.output["summary"]
+    assert found.output["text"] == f"```{mc.WAITING_FENCE}\ncodeql\n```\n"
+
+
+def test_a_language_with_no_analysis_yet_still_processes_and_waits() -> None:
+    api = _errored()
+    api.answers[ANALYSES] = [a for a in api.answers[ANALYSES] if a["error"] == ""]
+    found = _red(api)
+    assert found.output["title"] == "Red: waiting: CodeQL's python results are still processing"
+    assert found.output["text"] == f"```{mc.WAITING_FENCE}\ncodeql\n```\n"
+
+
+def test_an_errored_analysis_beside_a_clean_one_of_its_language_reads_the_clean_one() -> None:
+    api = _errored()
+    clean = {**api.answers[ANALYSES][0], "error": "", "created_at": "2026-11-17T12:59:25Z"}
+    api.answers[ANALYSES] = [clean, *api.answers[ANALYSES]]
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+
+
+def test_an_errored_analysis_of_another_commit_is_no_analysis_of_the_head() -> None:
+    api = _errored()
+    api.answers[ANALYSES][0]["commit_sha"] = "9" * 40
+    found = _red(api)
+    assert found.output["title"] == "Red: waiting: CodeQL's python results are still processing"
+
+
+def test_an_errored_analysis_of_a_language_codeql_does_not_run_here_is_no_reason() -> None:
+    """Only the configured languages are read, errored or clean: an errored analysis of another
+    category beside a clean one of each configured language is green."""
+    api = _errored()
+    clean = [{**a, "error": ""} for a in api.answers[ANALYSES]]
+    go = {**clean[0], "category": "/language:go", "error": "Unknown Error"}
+    api.answers[ANALYSES] = [*clean, go]
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+
+
 # The matcher, as GitHub reads a filter.
 
 
