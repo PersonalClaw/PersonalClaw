@@ -72,7 +72,16 @@ from tools.ci import audit, catalogue
 from tools.ci import plan as planner
 
 _CAT = catalogue.read(REPO)
-_JOBS = ("client", "package", "audit", "web-unit", "desktop-unit", "mobile-unit", "web-build")
+_JOBS = (
+    "client",
+    "documents",
+    "package",
+    "audit",
+    "web-unit",
+    "desktop-unit",
+    "mobile-unit",
+    "web-build",
+)
 
 #: What each toolchain word reads at the root: uv its settings, for every command it runs there,
 #: and the setup action Node's version (``node-version-file``).
@@ -126,6 +135,52 @@ def client_reads(root: Path, job: catalogue.Job) -> dict[str, str]:
                 if not path.startswith(folder + "/"):
                     found[path] = f"named by {rel}"
     return found | _toolchain_reads(root, job)
+
+
+def _imported(path: Path) -> set[str]:
+    """Each module ``path`` imports by an absolute name, wherever in the file."""
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            names |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module)
+    return names
+
+
+def documents_reads(root: Path, job: catalogue.Job) -> dict[str, str]:
+    """What :func:`client_reads` finds, plus what the step's ``PYTHONPATH=src`` and its
+    ``uv run --locked`` add. For each ``personalclaw`` module a file of the folder imports: every
+    tracked file of the deepest package on its name (a package loads its own modules by name too,
+    as ``documents/registry.py`` loads its writers) and each ``__init__.py`` above it. And the
+    lock the step installs its group from."""
+    found = client_reads(root, job)
+    found["uv.lock"] = "`uv run --locked` installs its group from it"
+    tracked = tracked_paths(root)
+    dirs = tracked_dirs(root)
+    for folder in sorted(p for p in _step_paths(job, root) if p in dirs):
+        for rel in sorted(p for p in tracked if p.startswith(folder + "/") and p.endswith(".py")):
+            for name in sorted(_imported(root / rel)):
+                parts = name.split(".")
+                if parts[0] != "personalclaw":
+                    continue
+                for i in range(1, len(parts) + 1):
+                    init = "src/" + "/".join(parts[:i]) + "/__init__.py"
+                    if init in tracked:
+                        found.setdefault(init, f"importing {name} runs it ({rel})")
+                package = next(
+                    (
+                        "src/" + "/".join(parts[:i])
+                        for i in range(len(parts), 0, -1)
+                        if "src/" + "/".join(parts[:i]) in dirs
+                    ),
+                    None,
+                )
+                if package is None:
+                    continue
+                for path in sorted(p for p in tracked if p.startswith(package + "/")):
+                    found.setdefault(path, f"in {package}, which {rel} imports from")
+    return found
 
 
 def _climbs(root: Path, rel: str, depth: int) -> list[str]:
@@ -451,6 +506,7 @@ def web_reads(root: Path, job: catalogue.Job) -> dict[str, str]:
 
 _CENSUS = {
     "client": client_reads,
+    "documents": documents_reads,
     "package": package_reads,
     "audit": audit_reads,
     "web-unit": web_reads,
@@ -522,6 +578,14 @@ def test_the_census_is_not_vacuous() -> None:
     reads = audit_reads(REPO, _CAT.job("audit"))
     assert "package-lock.json" in reads and "deploy/docker/agent-clis/package-lock.json" in reads
     assert "packages/personalclaw-client-py" in client_reads(REPO, _CAT.job("client"))
+    documents = documents_reads(REPO, _CAT.job("documents"))
+    for path in (
+        "tests/documents",
+        "src/personalclaw/__init__.py",
+        "src/personalclaw/documents/writers/pdf_writer.py",
+        "uv.lock",
+    ):
+        assert path in documents, path
 
 
 def test_the_wheel_check_loads_the_manifest_script_by_its_path() -> None:
@@ -566,6 +630,14 @@ def _without(job_id: str, dropped: str) -> tuple[str, ...]:
     [
         ("client", "packages/personalclaw-client-py/", "packages/personalclaw-client-py"),
         ("client", ".python-version", ".python-version"),
+        ("documents", "tests/documents/", "tests/documents"),
+        (
+            "documents",
+            "src/personalclaw/documents/",
+            "src/personalclaw/documents/writers/pdf_writer.py",
+        ),
+        ("documents", "src/personalclaw/__init__.py", "src/personalclaw/__init__.py"),
+        ("documents", "uv.lock", "uv.lock"),
         ("package", "src/", "src"),
         ("package", "web/", "web"),
         ("package", "package-lock.json", "package-lock.json"),

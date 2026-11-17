@@ -50,7 +50,7 @@ cap = 50
 reason = "the dev tool run as a program against a real gateway on a scratch home; 21 s on CI at worst (breadth's coverage leg, 2026-10-24)"
 
 [[mark]]
-site = "tests/test_document_parser_limits.py::TestBlockCap.test_the_issue_repro_is_bounded_at_the_real_cap"
+site = "tests/documents/test_document_parser_limits.py::TestBlockCap.test_the_issue_repro_is_bounded_at_the_real_cap"
 cap = 50
 reason = "walks the shipped 20,000-block cap itself, which is the point of the test; 21 s on CI at worst (a merge leg, 2026-10-24)"
 
@@ -430,7 +430,7 @@ cap = 40
 reason = "the locked PyAV decoding real audio through faster-whisper; 17 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
-site = "tests/test_document_parser_limits.py::TestKnownCleanCorpus.test_an_ordinary_large_spreadsheet_is_not_refused"
+site = "tests/documents/test_document_parser_limits.py::TestKnownCleanCorpus.test_an_ordinary_large_spreadsheet_is_not_refused"
 cap = 40
 reason = "the parsers over the issue's real-size documents at the real caps; 16 s on CI at worst (breadth's coverage leg, 2026-10-24)"
 

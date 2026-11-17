@@ -1689,6 +1689,17 @@ tts = [
     { name = "piper-tts" },
 ]
 
+[package.dev-dependencies]
+documents = [
+    { name = "html2text" },
+    { name = "openpyxl" },
+    { name = "pytest" },
+    { name = "pytest-timeout" },
+    { name = "python-docx" },
+    { name = "python-pptx" },
+    { name = "reportlab" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9,<4" },
@@ -1762,6 +1773,17 @@ requires-dist = [
     { name = "zstandard", specifier = ">=0.23,<1" },
 ]
 provides-extras = ["anthropic", "openai", "bedrock", "httpx", "slack", "stt", "tts", "eval", "embeddings", "js-render", "keychain", "models", "dev", "test"]
+
+[package.metadata.requires-dev]
+documents = [
+    { name = "html2text", specifier = ">=2020.1.16" },
+    { name = "openpyxl", specifier = ">=3.1,<4" },
+    { name = "pytest", specifier = ">=7" },
+    { name = "pytest-timeout", specifier = ">=2" },
+    { name = "python-docx", specifier = ">=1.1,<2" },
+    { name = "python-pptx", specifier = ">=0.6.21,<2" },
+    { name = "reportlab", specifier = ">=4,<6" },
+]
 
 [[package]]
 name = "pillow"

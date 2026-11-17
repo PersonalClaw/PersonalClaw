@@ -1,6 +1,6 @@
 """A fixture that **Word** authored, reporting its losses honestly.
 
-`tests/fixtures/word_authored.docx` was written by Microsoft Word (Word for Mac 16.111)
+`tests/documents/fixtures/word_authored.docx` was written by Microsoft Word (Word for Mac 16.111)
 driven over AppleScript. It was not written by python-docx and its constructs were not
 hand-injected as raw OOXML. That distinction is the entire point of the fixture: a synthetic
 fixture can only contain what its author remembered to inject, while a file Word saved

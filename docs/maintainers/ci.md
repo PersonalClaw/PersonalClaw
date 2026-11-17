@@ -1151,10 +1151,10 @@ run is red. `pr.yml` shares the step and plans the change tier without asking.
 `run --changed` plans the same way, from `git diff --name-only --no-renames -z` against the
 base, so a move names both the path it left and the path it reached.
 
-`desktop-smoke`, `apps-contract`, `python-suite`, `image`, `client`, `package`, `audit`,
+`desktop-smoke`, `apps-contract`, `python-suite`, `image`, `client`, `documents`, `package`, `audit`,
 `web-unit`, `desktop-unit`, `mobile-unit` and `web-build` name their inputs; every other job declares the whole tree today, the
 browser run's less what cannot reach it. `client`'s are its folder and uv's settings at the root
-(`pyproject.toml`, `.python-version`). `package`'s are what setuptools reads (its config, `src/`,
+(`pyproject.toml`, `.python-version`). `documents`' are the documents package and each `__init__.py` above it, its own `tests/documents/`, the lock its `uv run --locked --only-group=documents` installs from, and uv's settings. `package`'s are what setuptools reads (its config, `src/`,
 the README, the licence) with the web workspace and the root's npm manifests `web/dist` is built
 from, and what `verify_wheel.py` names, followed into each script it names. `audit`'s are what it
 audits: `uv.lock` and `pyproject.toml`, every npm manifest and lock, and its own code and waivers.

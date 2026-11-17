@@ -20,7 +20,7 @@ def test_the_asset_census_is_not_vacuous():
     for expected in (
         "desktop/icon.png",
         "src/personalclaw/tests_fixtures/empty/fixture.yaml",
-        "tests/fixtures/word_authored.docx",
+        "tests/documents/fixtures/word_authored.docx",
         "web/public/claw.svg",
         "web/public/fonts/dm-sans.woff2",
     ):
