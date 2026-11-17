@@ -5,6 +5,7 @@ import type { WorkPhase } from '../../lib/workPhase'
 import type { AskBeforeSwitch } from './dearerSwitch'
 import type { ContextAction, ContextCost } from './ContextDisclosure'
 import type { ContextPart } from '../../lib/api'
+import type { KeptEditor } from './MarkdownInput'
 
 /** Which controls a composer instance surfaces. Chat enables most; the goal
  *  composer enables only the shared core (send + optimize) and supplies its own
@@ -49,6 +50,9 @@ export interface ComposerData {
 export interface ComposerProps {
   value: string
   onChange: (v: string) => void
+  /** Where the editor leaves its caret and focus when the page moves the composer, for the one
+   *  built in its place (MarkdownInput's `keep`). A host that outlives the move owns it. */
+  editorKeep?: { current: KeptEditor | null }
   onSend: () => void
   streaming?: boolean
   /** The running turn's phase (`lib/workPhase.ts`), `null` until the gateway has said one. The Stop

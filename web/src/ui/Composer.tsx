@@ -45,7 +45,7 @@ const FOCUS_RING = { outlineWidth: '2px', outlineStyle: 'solid', outlineColor: '
  *  agent/model/mode options. Pill cluster: [+] agent-and-model · (approval where
  *  enabled) · the host's pills … [mic] [send]. Textarea auto-grows to a user-resizable max. */
 export function Composer({
-  value, onChange, onSend, streaming, phase, ending = null, processing, onStop, placeholder = 'Ask anything',
+  value, onChange, editorKeep, onSend, streaming, phase, ending = null, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, contextParts, contextActions, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
@@ -539,7 +539,7 @@ export function Composer({
             value={value} onChange={onChange} onSend={fireSend} canSend={canSend}
             placeholder={placeholder ?? 'Ask anything'}
             minHeight={restH} maxHeight={MAX_MAX_H}
-            onFocusChange={setFocus}
+            onFocusChange={setFocus} keep={editorKeep}
             onOptimize={onOptimize} history={history} onRecall={onRecall}
             onMentionFile={onMentionFile} onMentionKnowledge={onMentionKnowledge} mentionProject={mentionProject}
             slashCommands={!!controls.slash}
