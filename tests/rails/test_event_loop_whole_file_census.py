@@ -127,9 +127,6 @@ STILL_ON_THE_LOOP: dict[tuple[str, str, str], str] = {
     ("dashboard/handlers/apps.py", "api_app_get", "ui_revision"): (
         "hashes the entry files of an app's interface, for its revision"
     ),
-    ("dashboard/handlers/apps.py", "api_apps_list", "ui_revision"): (
-        "hashes the entry files of each app's interface, for its revision"
-    ),
     ("dashboard/handlers/packs.py", "api_pack_bundled_install", "import_pack"): _PACK_FILES,
     ("dashboard/handlers/packs.py", "api_pack_one_link", "import_onelink"): _PACK_FILES,
     ("dashboard/handlers/packs.py", "api_pack_update", "apply_update"): _PACK_FILES,
@@ -393,9 +390,10 @@ def test_the_census_sees_the_large_file_paths_hand_their_work_off():
     on_loop, handing = _package_census().sites()
 
     assert HANDED_OFF <= handing, f"not seen handing off: {sorted(HANDED_OFF - handing)}"
-    # The floor is the count the tree has: rewind's folder record moved off the loop, so 29 remain.
+    # The floor is the count the tree has: rewind's folder record and the apps list's interface
+    # revisions moved off the loop, so 28 remain.
     # Moving another site off the loop lowers it again, on purpose, in the change that moves it.
-    assert len(on_loop) >= 29, f"the census found only {len(on_loop)} sites on the loop"
+    assert len(on_loop) >= 28, f"the census found only {len(on_loop)} sites on the loop"
 
 
 _SHAPES = textwrap.dedent("""

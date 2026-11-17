@@ -271,45 +271,50 @@ def _quality_wire(raw: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def api_apps_list(request: web.Request) -> web.Response:
-    """GET /api/apps — installed apps with manifest summary + runtime state.
+def _read_rows(
+    state: Any, extensions: list[Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Everything ``GET /api/apps`` reads from disk, in one worker thread: which apps have a newer
+    version (and their one notification each, ``surface_app_updates``), the installed apps, each
+    provider app's account health and capability rows (#3842), each installed app's row, and the
+    bundled extensions' rows. The update check and the health rows are best-effort: a failure of
+    either never breaks the list. Returns the installed rows (the caller adds their runtime
+    status) and the bundled ones."""
+    from personalclaw.apps.catalog import surface_app_updates
+    from personalclaw.apps.manager import list_apps
 
-    On this existing read path (no polling loop) we also compute which installed
-    apps have a newer version available from their source — a local source, or the Store
-    source the app was installed from, as the Store's own discovery last read it — tag each
-    such app ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
-    notification per newly-available version (deduped by ``name + latest_version`` in
-    ``surface_app_updates`` so re-viewing never re-nags). ``updateSource`` is where an Update
-    of the app starts when none was found: the source it was installed from."""
+    updates_by_name: dict[str, dict[str, Any]] = {}
+    try:
+        updates_by_name = {u["name"]: u for u in surface_app_updates(state)}
+    except Exception:
+        logger.debug("apps list: update surfacing skipped", exc_info=True)
+    apps = list_apps()
+    health: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    try:
+        providers = [a.get("name", "") for a in apps if _first_provider_raw(a.get("manifest", {}))]
+        health = _health_rows(providers)
+    except Exception:
+        logger.debug("apps list: health rows skipped", exc_info=True)
+    installed = _installed_rows(apps, updates_by_name, health)
+    return installed, _bundled_rows(extensions, {r["name"] for r in installed})
+
+
+def _installed_rows(
+    apps: list[dict[str, Any]],
+    updates_by_name: dict[str, dict[str, Any]],
+    health: dict[str, dict[str, list[dict[str, Any]]]],
+) -> list[dict[str, Any]]:
+    """Each installed app's row for ``GET /api/apps``, from its folder: its manifest's fields, its
+    hero image, its disclosure, its interface's revision (a hash of its entry files) and whether
+    this core runs it. Called in a worker thread (:func:`api_apps_list`): a long list of apps
+    held the event loop for every read and hash. The runtime status is added on the loop."""
     from personalclaw.apps.app_manager import enable_refusal, installed_disclosure, is_native
     from personalclaw.apps.catalog import (
         resolve_hero_url,
         source_kind_for_origin,
-        surface_app_updates,
         update_source_for,
     )
-    from personalclaw.apps.disclosure import describe
-    from personalclaw.apps.manager import app_dir, list_apps, ui_revision
-
-    # Compute available updates + emit the (deduped) notifications, on this read path.
-    # Best-effort: an update-check failure must never break the apps list.
-    updates_by_name: dict[str, dict[str, Any]] = {}
-    try:
-        state = request.app.get("state")
-        updates = await asyncio.to_thread(surface_app_updates, state)
-        updates_by_name = {u["name"]: u for u in updates}
-    except Exception:
-        logger.debug("apps list: update surfacing skipped", exc_info=True)
-
-    apps = list_apps()
-    # Each provider app's account health and capability rows (#3842), all read in one go off the
-    # loop: they read records, settings and the credential store. Best-effort, as above.
-    health: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    try:
-        providers = [a.get("name", "") for a in apps if _first_provider_raw(a.get("manifest", {}))]
-        health = await asyncio.to_thread(_health_rows, providers)
-    except Exception:
-        logger.debug("apps list: health rows skipped", exc_info=True)
+    from personalclaw.apps.manager import app_dir, ui_revision
 
     out: list[dict[str, Any]] = []
     for app in apps:
@@ -430,64 +435,66 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 # Each account's connection health, apart from its settings, and each
                 # capability's last good report and the account fields it waits for (#3842).
                 **(health.get(name) or {"accounts": [], "capabilities": []}),
-                **_app_status(name),
             }
         )
+    return out
 
-    # The bundled PROVIDER extensions (native tool/knowledge/memory/… providers
-    # + the mcp/openai adapters) register via the extension loader, not the app
-    # manager's installed-apps dir, so list_apps() above never sees them — yet they
-    # ARE app-platform-registered providers the user expects in the Library. Append
-    # them here (deduped by name) so Settings>Providers and Store>Library show the
-    # SAME provider universe. They're platform-managed (always-on, not user-
-    # uninstallable) → flagged platform:true so the Library renders them as such.
-    try:
-        from personalclaw.providers.registry import get_provider_registry
 
-        have = {a["name"] for a in out}
-        # The always-on platform tool provider (filesystem+shell) isn't a registered
-        # extension (per-session in the runtime), so synthesize it here too — same
-        # entry Settings>Providers shows — so both surfaces list the identical
-        # provider universe.
-        if "personalclaw-filesystem" not in have:
-            out.append(
-                {
-                    "name": "personalclaw-filesystem",
-                    "displayName": "Filesystem & Shell Tools",
-                    "version": "1.0.0",
-                    "description": "Always-on platform tools — read/write/edit/list/glob/grep/repo_map, "  # noqa: E501
-                    "bash, full-result retrieval. Required by the agent.",
-                    "enabled": True,
-                    "origin": "bundled",
-                    # Synthesized rows are shipped-with-the-product by construction.
-                    "sourceKind": "native",
-                    "icon": "FolderCog",
-                    "heroUrl": "",
-                    "hasBackend": False,
-                    "hasUI": False,
-                    "uiPages": [],
-                    "isProvider": True,
-                    "providerType": "tool",
-                    "hasConfig": False,
-                    "configuredPerInstance": False,
-                    # Core's own tools, not an app: there is no manifest to disclose.
-                    "disclosure": None,
-                    "permissions": {},
-                    "tags": [],
-                    "installedAt": "",
-                    "updatedAt": "",
-                    # Always-on, non-uninstallable ⇒ a NATIVE app (the one tier flag).
-                    # No separate `platform` flag — the app category is `native`; whether
-                    # it has settings is `hasConfig` (False here → UI shows "manage elsewhere").
-                    "native": True,
-                    "status": "running",
-                }
-            )
-            have.add("personalclaw-filesystem")
-        for ext in get_provider_registry().list_extensions():
-            if ext.name in have:
-                continue
-            out.append(
+def _bundled_rows(extensions: list[Any], have: set[str]) -> list[dict[str, Any]]:
+    """The bundled provider extensions' rows for ``GET /api/apps`` that no installed app's row
+    already names (*have*), read in a worker thread with the installed rows: each reads its hero
+    image from its folder."""
+    from personalclaw.apps.catalog import resolve_hero_url
+    from personalclaw.apps.disclosure import describe
+    from personalclaw.apps.manager import app_dir
+
+    have = set(have)
+    rows: list[dict[str, Any]] = []
+    # The always-on platform tool provider (filesystem+shell) isn't a registered
+    # extension (per-session in the runtime), so synthesize it here too — same
+    # entry Settings>Providers shows — so both surfaces list the identical
+    # provider universe.
+    if "personalclaw-filesystem" not in have:
+        rows.append(
+            {
+                "name": "personalclaw-filesystem",
+                "displayName": "Filesystem & Shell Tools",
+                "version": "1.0.0",
+                "description": "Always-on platform tools — read/write/edit/list/glob/grep/repo_map, "  # noqa: E501
+                "bash, full-result retrieval. Required by the agent.",
+                "enabled": True,
+                "origin": "bundled",
+                # Synthesized rows are shipped-with-the-product by construction.
+                "sourceKind": "native",
+                "icon": "FolderCog",
+                "heroUrl": "",
+                "hasBackend": False,
+                "hasUI": False,
+                "uiPages": [],
+                "isProvider": True,
+                "providerType": "tool",
+                "hasConfig": False,
+                "configuredPerInstance": False,
+                # Core's own tools, not an app: there is no manifest to disclose.
+                "disclosure": None,
+                "permissions": {},
+                "tags": [],
+                "installedAt": "",
+                "updatedAt": "",
+                # Always-on, non-uninstallable ⇒ a NATIVE app (the one tier flag).
+                # No separate `platform` flag — the app category is `native`; whether
+                # it has settings is `hasConfig` (False here → UI shows "manage elsewhere").
+                "native": True,
+                "status": "running",
+            }
+        )
+        have.add("personalclaw-filesystem")
+    for ext in extensions:
+        if ext.name in have:
+            continue
+        # One extension whose row cannot be read is left out, and the rest are listed.
+        try:
+            rows.append(
                 {
                     "name": ext.name,
                     "displayName": ext.manifest.displayName or ext.name,
@@ -521,10 +528,45 @@ async def api_apps_list(request: web.Request) -> web.Response:
                     "status": "running" if ext.enabled else "stopped",
                 }
             )
-    except Exception:
-        logger.debug("apps list: bundled provider extensions append skipped", exc_info=True)
+        except Exception:
+            logger.debug("apps list: extension %s skipped", ext.name, exc_info=True)
+    return rows
 
-    return web.json_response({"apps": out})
+
+async def api_apps_list(request: web.Request) -> web.Response:
+    """GET /api/apps — installed apps with manifest summary + runtime state.
+
+    On this existing read path (no polling loop) we also compute which installed
+    apps have a newer version available from their source — a local source, or the Store
+    source the app was installed from, as the Store's own discovery last read it — tag each
+    such app ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
+    notification per newly-available version (deduped by ``name + latest_version`` in
+    ``surface_app_updates`` so re-viewing never re-nags). ``updateSource`` is where an Update
+    of the app starts when none was found: the source it was installed from."""
+    # The bundled PROVIDER extensions (native tool/knowledge/memory/… providers
+    # + the mcp/openai adapters) register via the extension loader, not the app
+    # manager's installed-apps dir, so list_apps() never sees them — yet they
+    # ARE app-platform-registered providers the user expects in the Library. Appended
+    # (deduped by name) so Settings>Providers and Store>Library show the
+    # SAME provider universe. They're platform-managed (always-on, not user-
+    # uninstallable) → flagged platform:true so the Library renders them as such. The registry is
+    # the gateway's own, so it is read here; their rows are read with the rest.
+    extensions: list[Any] = []
+    try:
+        from personalclaw.providers.registry import get_provider_registry
+
+        extensions = list(get_provider_registry().list_extensions())
+    except Exception:
+        logger.debug("apps list: bundled provider extensions skipped", exc_info=True)
+
+    # Every row is read from the apps' folders (manifests, hero images, disclosures, and a hash
+    # of each interface's entry files) in ONE worker thread: on the loop, a long list held every
+    # other request for as long, and each hand-off waits for a worker when the pool is full. The
+    # runtime status is the gateway's own state, read here on the loop.
+    installed, bundled = await asyncio.to_thread(_read_rows, request.app.get("state"), extensions)
+    for row in installed:
+        row.update(_app_status(row["name"]))
+    return web.json_response({"apps": installed + bundled})
 
 
 async def api_app_catalog(request: web.Request) -> web.Response:
