@@ -32,7 +32,7 @@ Each test maps to an acceptance criterion of an implementation task.
   in CI on Linux baselines.
 - Every surface (peek, compact, expanded with each alert kind, floating with a bubble, the tray's
   still orbs, the phone's two views) in light and dark, and in high contrast.
-- At 18 px, each family's still is told apart from the other three by the orb's density and its
+- At 18 px, each family's still is told apart from the other three by the orb's dots or its
   badge alone, and so is each tray still as a one-colour template image: the census of the drawn
   poses and its 18 px scan in `tests/rails/test_buddy_design_matrix.py`
   ([`character.md`](character.md#the-drawn-poses)). The contact sheets stay for the maintainer to
@@ -43,9 +43,9 @@ Each test maps to an acceptance criterion of an implementation task.
   on both; a planted low-contrast still fails it (`desktop/test/buddyStillsContrast.test.js`,
   [#3896]). macOS draws template images for Increase Contrast itself.
 - Side by side with other products' status indicators and assistant orbs, from public material,
-  nothing the buddy adds to the agent orb (its outline, badge, wash, poses, gestures and presence),
-  nor the whole orb, shows a drawn form or choreography a viewer would recognise as another
-  product's. The claw ring and its states are the agent orb's, the project's own form
+  nothing the buddy adds to the agent orb (its outline, badge, poses, gestures and presence), nor
+  the whole orb, shows a drawn form or choreography a viewer would recognise as another product's.
+  The halftone and its states are the agent orb's, the project's own drawing
   ([`agent-orb.md`](../agent-orb.md#the-component)), shared on purpose, so they are not judged on
   their own. The result is recorded beside [the choice](character.md#the-choice), naming none of
   them, and the originality record cites it ([#4570]).

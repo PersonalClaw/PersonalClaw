@@ -150,7 +150,7 @@ pointer on it unfolds the state's words, which stay at least `badgeDwell`, and s
 10. Every situation has a reduced-motion rendering, and under reduced motion no spatial animation
     runs.
 11. When the connection is lost, the buddy never shows work as running past `offlineGrace`.
-12. The badge and the wash show the truth within one frame of a truth change, in every situation,
+12. The orb and its badge show the truth within one frame of a truth change, in every situation,
     play reactions included: no reaction hides them.
 13. An error outranks done: they never mask each other, and whichever is higher in priority shows.
 14. A truth change that arrives during any entrance, hold or exit is shown within one `beat`; none
@@ -251,7 +251,7 @@ then the truth, then play, then idle and sleep.
   holds the lean, the gaze does not follow; control passes back to the gaze by fading over
   `gazeHandback`, never in a jump.
 - **Drag:** the orb dangles behind the pointer on a spring and settles on release.
-- **File:** a file held over it opens the drop target (the orb's strokes open wide); leaving closes
+- **File:** a file held over it opens the drop target (the orb's dots open wide); leaving closes
   it; a drop plays the swallow and opens the choice. The choice is the only play outcome that shows
   controls, and every choice still needs a click.
 - **Glance:** when a review opens in the app, it glances toward the app's window for one beat;
@@ -269,7 +269,7 @@ then the truth, then play, then idle and sleep.
 
 Settled for their return on 2026-10-14: the hit chain ends at annoyed, with no dizzy, and after
 annoyed further hits only blink for `playCooldown`; and the drop is a catch that holds the file up
-while the choice opens, never a swallow ([#4570]), which for the orb means its opened strokes close
+while the choice opens, never a swallow ([#4570]), which for the orb means its opened dots close
 around the file. [#3894] and [#3895] rewrite these rules when they resume.
 
 ### Play timing names

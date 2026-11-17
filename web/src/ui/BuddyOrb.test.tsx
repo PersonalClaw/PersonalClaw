@@ -4,16 +4,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { act, render } from '@testing-library/react'
 import { BuddyOrb } from './BuddyOrb'
 import { FAMILIES, FAMILY_STATES, wordsOf } from '../buddyRig/poseSet'
-import { POSE_KEYS } from './buddy/useOrbPose'
-import { transitionOf, type BuddyState } from './buddy/orbPoses'
+import type { BuddyState } from './buddy/orbPoses'
+import { buddySceneOf } from './buddy/buddyHalftone'
 import { WORK_PHASES } from '../lib/workPhase'
 
 // ── The buddy orb (#3891) ───────────────────────────────────────────────────────────────────────
 //
 // Every family's pose, and the focused card's, carries its exact line beside the art, so the art
-// never carries the state alone. Its strokes and its badge are tokens, so a scheme change recolours
-// it in the paint that change causes. Reduced motion swaps the moving pose for its still in place:
-// the same orb, the same state and line, nothing started again.
+// never carries the state alone. It is the agent orb's halftone state for what it shows, its dots
+// and its plate's mark in tokens, so a scheme change recolours it in the paint that change causes.
+// Reduced motion swaps the moving state for its still in place: the same orb, the same state and
+// line, nothing started again.
 
 const STATES: readonly BuddyState[] = [...WORK_PHASES, 'restarting', 'offline']
 
@@ -23,7 +24,7 @@ const getContext = HTMLCanvasElement.prototype.getContext
 const ctx = new Proxy({} as Record<string, unknown>, {
   get: (target, key: string) => (key in target ? target[key] : () => {}),
   set: (target, key: string, value) => {
-    // The strokes are painted in their stroke colour, a solid badge in its fill.
+    // A dot is painted in its fill, a short line and the plate's mark in their stroke.
     if (key === 'fillStyle' || key === 'strokeStyle') fills.push(String(value))
     target[key] = value
     return true
@@ -125,7 +126,7 @@ describe('its colour is the orb tokens', () => {
     }
   })
 
-  it('under more contrast the strokes take the words’ ink, and under forced colours the system’s', () => {
+  it('under more contrast the dots take the words’ ink, and under forced colours the system’s', () => {
     setMedia('prefers-contrast: more', true)
     const { container, unmount } = render(<BuddyOrb state="tool" line="Working" />)
     expect(orbOf(container).dataset.buddyInkToken).toBe('--color-on-surface')
@@ -143,6 +144,7 @@ describe('its colour is the orb tokens', () => {
   })
 
   it('a scheme change recolours a still orb in the paint the change causes', async () => {
+    document.documentElement.style.setProperty('--color-orb-alive', '#cc3300')
     document.documentElement.style.setProperty('--color-orb-rest', '#3366cc')
     const { container } = render(<BuddyOrb state="idle" line="Nothing running" />)
     expect(orbOf(container).dataset.buddyMoving).toBe('false')
@@ -172,14 +174,14 @@ function isRampOf(tint: { r: number; g: number; b: number }): (fill: string) => 
 }
 
 describe('reduced motion', () => {
-  it('turns every transition into its instant answer: no spring, nothing over 50 ms', () => {
+  it('a change of state is an instant swap: no morph, nothing moving', () => {
     setMedia('prefers-reduced-motion', true)
+    const { container, rerender } = render(<BuddyOrb state="tool" line="Working" />)
     for (const state of STATES) {
-      for (const key of POSE_KEYS) {
-        const t = transitionOf(state, key) as { type?: string; duration?: number }
-        expect(t.type, `${state}.${key}`).not.toBe('spring')
-        expect((t.duration ?? 0) * 1000, `${state}.${key}`).toBeLessThanOrEqual(50)
-      }
+      rerender(<BuddyOrb state={state} line={wordsOf(state)} />)
+      expect(orbOf(container).dataset.buddyChange, state).toBe('none')
+      expect(orbOf(container).dataset.buddyMoving, state).toBe('false')
+      expect(orbOf(container).dataset.buddyScene, state).toBe(buddySceneOf(state))
     }
   })
 
@@ -193,7 +195,7 @@ describe('reduced motion', () => {
     expect(orbOf(container).dataset.buddyOrb).toBe('still')
     expect(container.querySelector('canvas'), 'the orb was drawn again from scratch').toBe(canvas)
     expect(orbOf(container).dataset.buddyState).toBe('approval')
-    expect(orbOf(container).dataset.buddyBadge).toBe('approval')
+    expect(orbOf(container).dataset.buddyScene).toBe('approval')
     expect(lineBesideArt(container)).toBe(line)
     expect(orbOf(container).dataset.buddyMoving, 'the switch started a move').toBe('false')
 

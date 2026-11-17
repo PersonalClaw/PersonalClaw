@@ -359,12 +359,14 @@ export interface FrameOpts {
   y?: number
   /** Whether done plays its swirl and bump on arrival: a turn stopped or declined settles without. */
   bloom?: boolean
+  /** The whole frame's opacity, 1 in full: the buddy's dozing and waking dims. */
+  alpha?: number
 }
 
 /** Draws one frame of the orb into `ctx` (already scaled to CSS pixels): the dots, then the plate
  *  and its mark. The caller clears. */
 export function drawFrame(ctx: CanvasRenderingContext2D, w: Weights, clock: Clock, C: Inks, scenes: Partial<Record<OrbScene, Scene>>, opts: FrameOpts): void {
-  const S = opts.size, ox = opts.x ?? 0, oy = opts.y ?? 0
+  const S = opts.size, ox = opts.x ?? 0, oy = opts.y ?? 0, A = opts.alpha ?? 1
   const small = S < 30
   // A done that may not bloom is drawn as its settled self from its first frame.
   const swirlClock = opts.bloom === false ? { ...clock, since: 1e6 } : clock
@@ -377,7 +379,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, w: Weights, clock: Cloc
     if (a < 0.03 || q[2] <= 0) continue
     const rp = small ? Math.max(q[2] * S * 1.4, 0.55) : Math.max(q[2] * S, 0.45)
     const x = ox + c + q[0] * sc, y = oy + c + q[1] * sc + dy
-    const col = `rgba(${q[6] | 0},${q[7] | 0},${q[8] | 0},${Math.min(1, a)})`
+    const col = `rgba(${q[6] | 0},${q[7] | 0},${q[8] | 0},${Math.min(1, a) * A})`
     if (Math.abs(q[4]) + Math.abs(q[5]) < 0.003) {
       ctx.fillStyle = col
       ctx.beginPath(); ctx.arc(x, y, rp, 0, TAU); ctx.fill()
@@ -404,17 +406,17 @@ export function drawFrame(ctx: CanvasRenderingContext2D, w: Weights, clock: Cloc
     let alive = 0
     for (const [s, wt] of Object.entries(w) as [OrbScene, number][]) if (!NOT_ALIVE.has(s)) alive += wt
     const ink = mixRgb(C.rest, C.alive, clamp(alive))
-    ctx.globalAlpha = clamp(plateW)
+    ctx.globalAlpha = clamp(plateW) * A
     ctx.fillStyle = css(ink)
     ctx.beginPath(); ctx.arc(ox + S * 0.2, oy + S * 0.2 + dy, Math.max(S * 0.11, 1.6), 0, TAU); ctx.fill()
     ctx.restore()
-    drawMark(ctx, mark, ox + S * 0.56, oy + S * 0.56 + dy, S * 0.52, Math.max(S * 0.085, 1.4), tone, clamp(plateW))
+    drawMark(ctx, mark, ox + S * 0.56, oy + S * 0.56 + dy, S * 0.52, Math.max(S * 0.085, 1.4), tone, clamp(plateW) * A)
     return
   }
   const tx = ox + S * 0.73, ty = oy + S * 0.72 + dy, pr = S * 0.25
   if (C.plate) {
     // The plate: the surface, a hairline, and a soft drop shadow that lifts it off the orb.
-    ctx.globalAlpha = clamp(plateW)
+    ctx.globalAlpha = clamp(plateW) * A
     ctx.shadowColor = C.dark ? 'rgba(0,0,0,0.5)' : 'rgba(20,30,40,0.18)'
     ctx.shadowBlur = S * 0.06
     ctx.shadowOffsetY = S * 0.015
@@ -426,5 +428,5 @@ export function drawFrame(ctx: CanvasRenderingContext2D, w: Weights, clock: Cloc
     ctx.stroke()
   }
   ctx.restore()
-  drawMark(ctx, mark, tx, ty, pr * 0.92, Math.max(S * 0.04, 1.2), tone, clamp(plateW))
+  drawMark(ctx, mark, tx, ty, pr * 0.92, Math.max(S * 0.04, 1.2), tone, clamp(plateW) * A)
 }

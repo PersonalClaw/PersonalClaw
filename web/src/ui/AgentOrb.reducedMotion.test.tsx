@@ -170,14 +170,10 @@ describe(`while it works, it asks for at most ${CAP} frames a second, and none b
     const read = (path: string) => readFileSync(join(process.cwd(), 'src', path), 'utf8')
     for (const orb of ['ui/AgentOrb.tsx', 'ui/BuddyOrb.tsx']) {
       expect(read(orb), `${orb} does not draw through the shared loop`).toMatch(/\brunDots\(/)
+      expect(read(orb), `${orb} does not change state through the shared morph`).toMatch(/\buseSceneMorph\(/)
     }
-    // Each orb's morph moves on the same capped clock, not on every frame the display draws: the
-    // halftone's (the chat's orb) and the claw ring's (the buddy's, until it takes the halftone).
-    expect(read('ui/AgentOrb.tsx'), 'the chat\u2019s orb does not change state through the halftone\u2019s morph').toMatch(/\buseSceneMorph\(/)
-    expect(read('ui/BuddyOrb.tsx'), 'the buddy does not change state through the shared morph').toMatch(/\buseMorph\(/)
-    for (const morph of ['ui/orb/useSceneMorph.ts', 'ui/orb/useMorph.ts']) {
-      expect(read(morph), `${morph} does not run off the capped clock`).toMatch(/\bcappedDriver\(\)/)
-    }
+    // The morph and done's swirl move on the same capped clock, not on every frame the display draws.
+    expect(read('ui/orb/useSceneMorph.ts'), 'the morph runs off the capped clock').toMatch(/\bcappedDriver\(\)/)
   })
 })
 

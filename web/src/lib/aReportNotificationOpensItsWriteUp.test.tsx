@@ -22,7 +22,7 @@ vi.mock('./api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   api: { waiting: () => Promise.resolve({ waiting: [], unreadable: [] }) },
 }))
-vi.mock('../ui/buddy/paintOrb', () => ({ stillOrbPng: () => 'data:image/png;base64,' }))
+vi.mock('../ui/buddy/stillOrbPng', () => ({ stillOrbPng: () => 'data:image/png;base64,' }))
 
 function fakeBridge() {
   const shown: Array<{ title: string; body: string; route: string }> = []

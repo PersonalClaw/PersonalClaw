@@ -1,21 +1,19 @@
 /** The pose set (`poseSet.ts`) drawn as layered SVG sources, and the contact sheets beside them
- *  (#3830). Each source is one whole orb, its pivot at its centre, holding three parts a renderer
- *  can move: the strokes (the agent orb's claw ring for the pose's state, as its pose moves it, in
- *  the one geometry the canvas paints, `ui/orb/paintRing.ts`'s `ringStrokes`), the wash and the
- *  badge. Every colour is a token, set in a style, so one source is the pose in light and in dark and
- *  in every scheme. A template still is drawn in black, which the menu bar recolours, and has no
- *  wash. The whole orb only moves or scales by one factor.
+ *  (#3830). Each source is one whole orb, its pivot at its centre, holding the parts a renderer can
+ *  move: the agent orb's halftone drawing for the pose's state, its dots and short lines, the very
+ *  particles the canvas paints (`ui/buddy/buddyHalftone.ts`), and the mark on its plate where the
+ *  state has one. Every colour is a token, set in a style, so one source is the pose in light and in
+ *  dark and in every scheme. A template still is drawn in black, which the menu bar recolours. The
+ *  whole orb only moves, dims or scales by one factor.
  *
  *  `poseSources.test.ts` writes them to `docs/design/buddy/poses/` and holds the committed files to
  *  what this draws. */
 
-import type { PhaseTone } from '../lib/workPhase'
 import { tokenValue, type Mode } from '../design/tokenSheet'
-import { ringStrokes } from '../ui/orb/paintRing'
-import { PAD, RING_FROM, SINK_DROP, SOLID_MARKS, badgeAt, formOfFrame, markStrokes, ringWidth, strokeOutline, strokePoints, washArcs } from '../ui/buddy/buddyRing'
+import { PAD, svgOrb } from '../ui/buddy/buddyHalftone'
+import { PLATE_SCENES } from '../ui/orb/halftone'
+import type { OrbScene } from '../lib/orbState'
 import { FAMILIES, FAMILY_STATES, TRAY_SIZES, TRAY_STATES, familyOf, poseSet, stillOf, wordsOf, type Frame, type PoseSpec, type TrayStill } from './poseSet'
-
-export { RING_FROM }
 
 /** The sizes the contact sheet draws every pose at, and the size it draws motion frames at. */
 export const SHEET_SIZES = [18, 24, 48, 96] as const
@@ -26,83 +24,36 @@ const TEMPLATE_INK = 'black'
 const num = (n: number): string => String(Math.round(n * 100) / 100)
 const attr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 
-const inkToken = (frame: Frame): string => (frame.ink === 'alive' ? '--color-orb-alive' : '--color-orb-rest')
-const toneToken = (tone: PhaseTone): string => (tone === 'neutral' ? '--color-orb-rest' : `--color-${tone}`)
-const colour = (token: string, template: boolean): string => (template ? TEMPLATE_INK : `var(${token})`)
-/** A part drawn in strokes: no fill, round caps, in its ink. */
-const stroked = (token: string, template: boolean): string => `fill: none; stroke: ${colour(token, template)}`
-const filled = (token: string, template: boolean): string => `fill: ${colour(token, template)}`
-
-/** A stroke through `pts`: a line, a curve through its control point, or a point a hair long. */
-function pathOf(pts: [number, number][]): string {
-  const [x0, y0] = pts[0]
-  if (pts.length === 1) return `M${num(x0)} ${num(y0)}h0.01`
-  if (pts.length === 2) return `M${num(x0)} ${num(y0)}L${num(pts[1][0])} ${num(pts[1][1])}`
-  return `M${num(x0)} ${num(y0)}Q${num(pts[1][0])} ${num(pts[1][1])} ${num(pts[2][0])} ${num(pts[2][1])}`
-}
-const disc = (x: number, y: number, r: number) => `M${num(x - r)} ${num(y)}a${num(r)} ${num(r)} 0 1 0 ${num(r * 2)} 0a${num(r)} ${num(r)} 0 1 0 ${num(-r * 2)} 0Z`
-const polygon = (pts: [number, number][]) => `M${pts.map(([x, y]) => `${num(x)} ${num(y)}`).join('L')}Z`
-
 interface Orb {
-  /** The clip paths the strokes are knocked out of under the badge, and a solid badge's mark cut
-   *  out of it, for the document's defs. */
+  /** Nothing the orb needs in the document's defs: kept for the sheets, which gather them. */
   defs: string
   /** The whole orb's group, in the orb's own frame (its box is 0 to `size`). */
   body: string
 }
 
-/** One frame of an orb at `size`: the whole orb with its parts. `id` names its clip paths, which a
- *  sheet holding many orbs keeps apart. */
-export function drawOrb(frame: Frame, size: number, { id, template = false }: { id: string; template?: boolean }): Orb {
-  // An error's strokes settle low in their own place; the badge and the wash stay.
-  const settle = SINK_DROP * frame.sink * size
-  const strokes = ringStrokes(formOfFrame(frame), size, 1)
-    .map((s) => `<path d="M${num(s.x0)} ${num(s.y0 + settle)}Q${num(s.cx)} ${num(s.cy + settle)} ${num(s.x1)} ${num(s.y1 + settle)}" stroke-width="${num(s.width)}"/>`)
+/** The plate state a frame's mark is, the heaviest of its weights that has one, or `null`. */
+export function markOfFrame(frame: Frame): OrbScene | null {
+  const w = frame.weights ?? { [frame.scene]: 1 }
+  const plates = PLATE_SCENES.filter((s) => (w[s] ?? 0) > 0.02)
+  return plates.length ? plates.reduce((a, b) => ((w[b] ?? 0) > (w[a] ?? 0) ? b : a)) : null
+}
+
+/** One frame of an orb at `size`: the whole orb with its parts. */
+export function drawOrb(frame: Frame, size: number, { template = false, plate = false }: { id?: string; template?: boolean; plate?: boolean } = {}): Orb {
+  const drawn = svgOrb(frame.weights ?? { [frame.scene]: 1 }, size, { template, plate })
   const c = size / 2
-  const pad = size * PAD
   const parts: string[] = []
-  let defs = ''
-  let clip = ''
-  if (frame.mark && frame.badge > 0) {
-    const ring = size >= RING_FROM
-    const solid = !ring && SOLID_MARKS.has(frame.mark)
-    const { cx, cy, radius } = badgeAt(size, 0)
-    const hole = radius * 1.15 * frame.badge
-    const box = `M${num(-pad)} ${num(-pad)}H${num(size + pad)}V${num(size + pad)}H${num(-pad)}Z`
-    defs = `<clipPath id="${id}-knockout"><path clip-rule="evenodd" d="${box}${disc(cx, cy, hole)}"/></clipPath>`
-    clip = ` clip-path="url(#${id}-knockout)"`
-    const fold = frame.badge === 1 ? '' : ` transform="translate(${num(cx)} ${num(cy)}) scale(${num(frame.badge)}) translate(${num(-cx)} ${num(-cy)})" opacity="${num(frame.badge)}"`
-    const marks = markStrokes(size, frame.mark, 0, ring)
-    let drawn: string
-    if (solid) {
-      // The mark is cut out of the one disc, as holes of the strokes' outlines: a template keeps
-      // it, being one colour with holes.
-      const holes = marks.map((m) => polygon(strokeOutline(strokePoints(m.pts), m.width / 2))).join('')
-      defs += `<clipPath id="${id}-mark"><path clip-rule="evenodd" d="${disc(cx, cy, radius)}${holes}"/></clipPath>`
-      drawn = `<circle cx="${num(cx)}" cy="${num(cy)}" r="${num(radius)}" clip-path="url(#${id}-mark)" style="${filled(toneToken(frame.tone), template)}"/>`
-    } else {
-      const ringPart = ring ? `<circle cx="${num(cx)}" cy="${num(cy)}" r="${num(radius * 0.92)}" stroke-width="${num(ringWidth(radius))}"/>` : ''
-      drawn = `<g style="${stroked(toneToken(frame.tone), template)}" stroke-linecap="round">${ringPart}${marks.map((m) => `<path d="${pathOf(m.pts)}" stroke-width="${num(m.width)}"/>`).join('')}</g>`
-    }
-    parts.push(`<g data-part="badge" data-mark="${frame.mark}"${solid ? ' data-solid="true"' : ''}${fold}>${drawn}</g>`)
-  }
-  if (frame.wash > 0.01 && !template) {
-    const arcs = washArcs(size, frame.wash).map(([r, from, to, alpha, width]) => {
-      const [x0, y0] = [c + r * Math.cos(from), c + r * Math.sin(from)]
-      const [x1, y1] = [c + r * Math.cos(to), c + r * Math.sin(to)]
-      return `<path d="M${num(x0)} ${num(y0)}A${num(r)} ${num(r)} 0 0 1 ${num(x1)} ${num(y1)}" stroke-width="${num(width)}" opacity="${num(alpha)}"/>`
-    })
-    parts.unshift(`<g data-part="wash" style="${stroked(toneToken(frame.tone), template)}" stroke-linecap="round">${arcs.join('')}</g>`)
-  }
+  if (drawn.plate) parts.push(`<g data-part="plate">${drawn.plate}</g>`)
   const dim = frame.dim === 1 ? '' : ` opacity="${num(frame.dim)}"`
-  const strokesPart = `<g data-part="strokes"${clip} style="${stroked(inkToken(frame), template)}" stroke-linecap="round"${dim}>${strokes.join('')}</g>`
+  parts.push(`<g data-part="dots"${dim}>${drawn.dots}</g>`)
+  const mark = markOfFrame(frame)
+  if (drawn.mark && mark) parts.push(`<g data-part="mark" data-mark="${mark}"${dim}>${drawn.mark}</g>`)
   const dx = frame.sway * size
   const dy = frame.lift * size
   const transform = frame.swell === 1
     ? `translate(${num(dx)} ${num(dy)})`
     : `translate(${num(c + dx)} ${num(c + dy)}) scale(${num(frame.swell)}) translate(${num(-c)} ${num(-c)})`
-  const body = `<g data-part="orb" data-pivot="${num(c)} ${num(c)}" data-orb="${num(size)}" transform="${transform}">${strokesPart}${parts.join('')}</g>`
-  return { defs, body }
+  return { defs: '', body: `<g data-part="orb" data-pivot="${num(c)} ${num(c)}" data-orb="${num(size)}" data-scene="${frame.scene}" transform="${transform}">${parts.join('')}</g>` }
 }
 
 const SVG = 'xmlns="http://www.w3.org/2000/svg"'
@@ -126,16 +77,14 @@ export function poseSvg(pose: PoseSpec, which: 'still' | 'motion'): string {
     width: num(box), height: num(box), viewBox: `${num(-pad)} ${num(-pad)} ${num(box)} ${num(box)}`,
     role: 'img', 'aria-label': pose.words, 'data-pose': pose.id, 'data-frame': which,
     'data-moves': String(Boolean(pose.key)), 'data-group': (FAMILIES as readonly string[]).includes(family) ? 'family' : family,
-    'data-form': frame.form, 'data-badge': frame.badge > 0 ? frame.mark : null, 'data-room': size,
+    'data-scene': frame.scene, 'data-mark': markOfFrame(frame), 'data-room': size,
   })
   return `<svg ${SVG} ${head}><title>${attr(pose.id)}: ${attr(pose.words)}</title><desc>${attr(`${which === 'motion' ? 'Its motion' : 'Its still for reduced motion'}. Moves: ${pose.motion}.`)}</desc>${orb.defs ? `<defs>${orb.defs}</defs>` : ''}${orb.body}</svg>\n`
 }
 
-/** Where a tray still's orb sits in its square: as large as it can be with its badge inside. */
+/** Where a tray still's orb sits in its square: the whole square, its plate state's mark inside. */
 export function trayLayout(size: number): { orb: number; dy: number } {
-  const radius = 4
-  const orb = (size - radius) / 0.86
-  return { orb, dy: radius - orb * 0.14 }
+  return { orb: size, dy: 0 }
 }
 
 /** A tray or dock still: its family's still at `size`, in colour or as a template. */
@@ -144,12 +93,12 @@ export function traySvg(still: TrayStill, size: number, template: boolean): stri
   const frame = stillOf(state)
   const stem = `tray-${still}-${size}${template ? '-template' : ''}`
   const { orb, dy } = trayLayout(size)
-  const drawn = drawOrb({ ...frame, wash: template ? 0 : frame.wash }, orb, { id: stem, template })
+  const drawn = drawOrb(frame, orb, { id: stem, template })
   const head = rootAttrs({
     width: size, height: size, viewBox: `0 0 ${size} ${size}`, role: 'img', 'aria-label': wordsOf(state),
     'data-pose': stem, 'data-frame': 'still', 'data-moves': 'false', 'data-group': 'tray',
-    'data-family': familyOf(state), 'data-template': String(template), 'data-form': frame.form,
-    'data-badge': frame.mark, 'data-room': size,
+    'data-family': familyOf(state), 'data-template': String(template), 'data-scene': frame.scene,
+    'data-mark': markOfFrame(frame), 'data-room': size,
   })
   return `<svg ${SVG} ${head}><title>${attr(stem)}: ${attr(wordsOf(state))}</title>${drawn.defs ? `<defs>${drawn.defs}</defs>` : ''}<g transform="translate(0 ${num(dy)})">${drawn.body}</g></svg>\n`
 }
@@ -173,7 +122,7 @@ export function poseSources(): Record<string, string> {
  *  resolves them in the default scheme. */
 const SHEET_TOKENS = [
   '--color-orb-alive', '--color-orb-rest', '--color-primary', '--color-warn', '--color-info', '--color-danger',
-  '--color-ok', '--color-surface', '--color-on-surface', '--color-on-surface-var',
+  '--color-ok', '--color-surface', '--color-on-surface', '--color-on-surface-var', '--color-outline-variant',
 ] as const
 const MODES: readonly Mode[] = ['light', 'dark']
 
@@ -266,8 +215,7 @@ function traySheet(): string {
       for (const size of TRAY_SIZES) {
         const stem = `tray-${still}-${size}${template ? '-template' : ''}`
         const { orb, dy } = trayLayout(size)
-        const frame = { ...stillOf(state), wash: template ? 0 : stillOf(state).wash }
-        const drawn = drawOrb(frame, orb, { id: stem, template })
+        const drawn = drawOrb(stillOf(state), orb, { id: stem, template })
         const body = template ? drawn.body.replaceAll(`: ${TEMPLATE_INK}`, ': var(--sheet-template)') : drawn.body
         symbols.push(`<symbol id="${stem}" viewBox="0 0 ${size} ${size}"><g transform="translate(0 ${num(dy)})">${body}</g></symbol>`)
         defs.push(drawn.defs)

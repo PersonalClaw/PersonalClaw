@@ -710,7 +710,7 @@
     },
     {
       "id": "buddy-poses",
-      "source": "Project-authored drawings of the desktop buddy's v0.3.0 poses, described in docs/design/buddy/character.md (\"The drawn poses\"): each pose's still and motion frame, the tray's and the dock's stills with their template versions, and the contact sheets in sheets/. web/src/buddyRig/poseSources.ts draws them from the pose table in web/src/buddyRig/poseSet.ts on the agent orb's claw ring, the project's own drawing (web/src/ui/orb/clawRing.ts, painted as web/src/ui/orb/paintRing.ts draws it), and web/src/buddyRig/poseSources.test.ts holds them to a fresh drawing. The tray's and the dock's rasters in desktop/buddy/ are rendered from those stills by docs/design/buddy/render_stills.mjs, which records them in docs/design/buddy/stills.json, and desktop/test/buddyStills.test.js holds them to that record.",
+      "source": "Project-authored drawings of the desktop buddy's v0.3.0 poses, described in docs/design/buddy/character.md (\"The drawn poses\"): each pose's still and motion frame, the tray's and the dock's stills with their template versions, and the contact sheets in sheets/. web/src/buddyRig/poseSources.ts draws them from the pose table in web/src/buddyRig/poseSet.ts on the agent orb's halftone, the project's own drawing (web/src/ui/orb/halftone.ts and its pictures in web/src/ui/orb/scenes.ts, as web/src/ui/buddy/buddyHalftone.ts draws them), and web/src/buddyRig/poseSources.test.ts holds them to a fresh drawing. The tray's and the dock's rasters in desktop/buddy/ are rendered from those stills by docs/design/buddy/render_stills.mjs, which records them in docs/design/buddy/stills.json, and desktop/test/buddyStills.test.js holds them to that record.",
       "version": "repository-revision",
       "license": "MIT",
       "ownership": "project-owned",
@@ -756,6 +756,7 @@
         "desktop/buddy/tray-workingTemplate@2x.png",
         "docs/design/buddy/poses/active-delegating.motion.svg",
         "docs/design/buddy/poses/active-delegating.svg",
+        "docs/design/buddy/poses/active-listening.motion.svg",
         "docs/design/buddy/poses/active-listening.svg",
         "docs/design/buddy/poses/active-planning.motion.svg",
         "docs/design/buddy/poses/active-planning.svg",

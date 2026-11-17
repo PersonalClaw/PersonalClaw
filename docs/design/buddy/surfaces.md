@@ -33,7 +33,7 @@ the area, so the orb is the same size at every zoom ([#5216]).
 
 | Surface | Size | Shows | Drops |
 |---|---|---|---|
-| **The orb** | 48, in a 56 by 56 target, where the owner put it (until the first move, centred just below the menu bar or the notch) | its state in its strokes, its badge and its wash, the same size and place in every state | words, counts: they are on its card |
+| **The orb** | 48, in a 56 by 56 target, where the owner put it (until the first move, centred just below the menu bar or the notch) | its state in its dots and its badge, on its disc, the same size and place in every state | words, counts: they are on its card |
 | **The line card** | one line, up to 360 wide, beside the orb | while work runs, the focused work's one line and `+N` for other live work; on an alert away from the top edge, the alert's one line | steps, controls |
 | **The card** | 420 wide, as tall as its content up to 560, beside the orb; less where the display has less, scrolling inside past that | the focused work's name and its state, its run as one step flow, the alert's brief and its answer controls, then every other live piece of work as an orb (20) and one line | history, settings |
 | **Tray or menu-bar icon** | 18 (template image on macOS) | a still orb per state: idle, working, needs you, error, listening, offline; the exact state in words in its tooltip and as the menu's first line | animation, a count standing alone |
@@ -43,8 +43,8 @@ the area, so the orb is the same size at every zoom ([#5216]).
 | **Phone companion** | the phone screen | two views: everything at once (every piece of work as an orb and one line, alerts first), or one piece of work owning the screen (its orb large, its step flow, its alert and answer controls, Open in PersonalClaw) | play reactions |
 
 - **The tray's six still orbs are variants inside the four families:** idle is quiet; working and
-  listening are active; needs you is waiting; error and offline are blocked. Listening and offline
-  keep their own badge inside their family's pose, and an announced restart shows the working orb
+  listening are active; needs you is waiting; error and offline are blocked. Listening is the
+  recording dot and offline keeps its own badge, and an announced restart shows the working orb
   with the restarting line. A count may sit beside the words, never stand in for them, and the
   stills stay apart in high contrast and with animation off ([#3896]).
 - **A notification** carries one exact state change, follows the gateway's delivery posture and
@@ -61,7 +61,7 @@ focus, else the earliest live one) gets the room for its state and its current s
 piece of live work collapses to a small orb and the one line it is working on, so its state stays
 readable while it is small. The line card shows only a count of them.
 
-Small orbs are told apart by their state (the orb's density and its badge) and by a small glyph for
+Small orbs are told apart by their state (the orb's dots and its badge) and by a small glyph for
 their kind (a chat, a loop, a workflow run, a helper), with the work's name beside them. They are
 not given a colour each: coral stays the one colour that means "an agent is alive", and the alert
 colours keep their meanings.
@@ -147,8 +147,8 @@ shape, and never joined to the notch, the menu bar or the screen's edge as one s
 
 ## How a state change travels
 
-A state change moves through every surface at once, each in its own room: the orb's strokes, badge
-and wash change where it stands and its card's line follows, the tray icon swaps its still orb, the
+A state change moves through every surface at once, each in its own room: the orb's dots and badge
+change where it stands and its card's line follows, the tray icon swaps its still orb, the
 dock icon changes only while something needs the owner, and a notification is sent only for an
 alert (and only when the interruption rules allow it). The phone companion follows the same change.
 

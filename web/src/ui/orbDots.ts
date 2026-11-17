@@ -1,9 +1,8 @@
 /** How the agent orb is painted, in chat and in the buddy: into a canvas of its own, at most
- *  `ORB_FPS` times a second while it moves, and at once when the scheme moves the ink. The file is
- *  named for the dots the orb was first drawn in; it is the capped clock both orbs paint the claw
- *  ring on (`AgentOrb.tsx`, `BuddyOrb.tsx`). What moves with the strokes (a morph, the buddy's
- *  pose) moves on the same clock, through `cappedDriver`, so nothing about the orb asks for a frame
- *  between two of its paints. */
+ *  `ORB_FPS` times a second while it moves, and at once when the scheme moves the ink. It is the
+ *  capped clock both orbs paint the halftone on (`AgentOrb.tsx`, `BuddyOrb.tsx`). What moves with
+ *  the dots (a change of state's morph) moves on the same clock, through `cappedDriver`, so nothing
+ *  about the orb asks for a frame between two of its paints. */
 
 import { useEffect, useState, type RefObject } from 'react'
 import type { ValueTransition } from 'framer-motion'

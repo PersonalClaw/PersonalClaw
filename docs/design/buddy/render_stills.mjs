@@ -75,7 +75,7 @@ const TOKENS = Object.fromEntries(MODES.map((mode) => {
 }));
 
 /** A template drawing painted in the mode's own ink, in place of the black the system recolours. */
-// A template's strokes and its solid badge are both drawn in black: each takes the mode's ink.
+// A template's dots and its mark are both drawn in black: each takes the mode's ink.
 const inked = (markup) => markup.replaceAll(': black', ': var(--sheet-template)');
 
 function html(markup, size, mode) {

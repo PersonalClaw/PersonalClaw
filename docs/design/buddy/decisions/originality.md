@@ -21,8 +21,9 @@ task its row names before that feature ships. No row that ships in v0.3.0 reads 
 `tests/rails/test_buddy_originality_record.py` reads the elements from the design files themselves
 (the character's aspects, each surface of [the room budget](../surfaces.md#the-room-budget), both
 docking shapes, the four families, each row of [the transitions](../motion.md#transitions), the
-notification treatment, and the later play and drop rows, the sound event map, the export and the
-bridges), so an element added to the design without a row here fails it.
+notification treatment, the halftone orb's states and forms, and the later play and drop rows, the
+sound event map, the export and the bridges), so an element added to the design without a row here
+fails it.
 
 ## Ships in v0.3.0
 
@@ -105,6 +106,39 @@ and in which order.
 | `notification.line` | the one line of what changed | distinct | one exact state change in words | 2026-10-22 |
 | `notification.tap` | a tap opens the buddy on that alert, or the app with Buddy status off | distinct | no answer buttons, because an answer needs its brief | 2026-10-22 |
 
+## Ships with the halftone orb
+
+Compared on the round-6 visuals (the stills and the 26 s story, light and dark) on 2026-11-17, after
+the maintainer approved them on 2026-11-16. The rule is unchanged: a shared mechanism is fine; a
+drawn form or choreography a viewer would recognise as another product's is not. The halftone and its
+states are new, so they are judged here on their own: one row for each state of
+[the agent orb's twenty](../../agent-orb.md#the-twenty-states), with needs your OK, asks you, error
+and offline judged with the plate they share, and one each for the plate, the small forms, the
+morph and the desktop buddy's disc.
+
+| Element | In product terms | Verdict | What changed and why | Date |
+|---|---|---|---|---|
+| `halftone.ready` | the orb at 64 and 20 px: a tilted sphere of 272 small separate dots whose size follows their depth, neutral at rest, in the scheme's primary while alive | distinct | the shading is in the size of round dots, never in bands, stripes, a gradient, a glow or a liquid surface; many small dots in one colour, never a few large dots or a colour per dot; never a ring | 2026-11-17 |
+| `halftone.small-forms` | at 20 px the dots enlarge so the sphere holds; at 12 px the plate states are a small dot for the orb and the state's bold mark | distinct | the app's own marks; the dot is the orb itself, never a presence dot on a picture | 2026-11-17 |
+| `halftone.plate` | done, needs your OK, asks you, error and offline: the orb steps up and left at three quarters of its size, and the state's mark (the check, "!", "?", "×", the broken link) sits on a small disc at its lower right | distinct | was a still badge on the orb's upper edge; now the mark sits on its own disc at the lower right, which is a shared mechanism (a mark on an edge) with the app's own marks | 2026-11-17 |
+| `halftone.desktop-disc` | the desktop buddy: the orb on a plain disc of the app's surface, with a hairline and a soft shadow, where the owner put it | distinct | a shared mechanism (a raised round surface the owner can move); the disc has no colour, glow or ring of its own | 2026-11-17 |
+| `halftone.morph` | a change of state: the dots fly out of the sphere in a short, gentle burst and form the next scene, then fly back | distinct | the app's own motion; nothing spins and nothing flashes | 2026-11-17 |
+| `halftone.thinking` | a ripple out from the centre in the dots' size, in the alive colour | distinct | a ripple through the dots, never one pulsing dot, a shimmering mark or a flowing colour | 2026-11-17 |
+| `halftone.done` | the orb swirls once and the whole bumps; the green check on the plate | distinct | one swirl that ends, as in v0.3.0 | 2026-11-17 |
+| `halftone.queued` | it waits, dimmed, behind a small grey orb whose turn it is; three small dots light in turn between them | distinct | the dots light in place and never bounce, and sit between two orbs, never in a bubble, so it is not a typing indicator | 2026-11-17 |
+| `halftone.planning` | the orb grows into a faint globe that turns a little and charts a route on its surface, waypoint by waypoint, then a pulse runs it | distinct | the globe is the orb's own uniform dots, never a map of land, and the route stays on its surface, never arcs leaving it | 2026-11-17 |
+| `halftone.searching` | a scan line sweeps the globe; what it finds pings once and stays ringed | distinct | as for planning: the orb's own dots, a scan line and rings on the surface | 2026-11-17 |
+| `halftone.reading` | a document with a folded corner; a highlight grows along the line being read, and its words stream into the orb | distinct | shared mechanisms (a file, a highlight), with the orb taking the words in | 2026-11-17 |
+| `halftone.editing` | a diff in place: a line marked red with "-" drops out, and its replacement is typed in green with "+" from the orb's dots | distinct | the shared diff convention in red and green, with the orb doing the typing | 2026-11-17 |
+| `halftone.running-a-command` | the orb's dots go through a ">" and come out as output lines | distinct | a shared mechanism (a prompt and its output) | 2026-11-17 |
+| `halftone.delegating` | the orb feeds two smaller orbs over dotted links; each pulses as work reaches it | distinct | the app's own orbs | 2026-11-17 |
+| `halftone.answering` | a speech bubble that points at the orb fills word by word | distinct | a shared mechanism (a bubble) | 2026-11-17 |
+| `halftone.retrying` | a small orb circles the orb on a dotted track, lighting it, then backs up a step and goes on | distinct | it backs up and starts again, so it is never a plain spinning arc, and it shows only while it retries | 2026-11-17 |
+| `halftone.listening` | thin bars in one colour whose waves travel into the orb | distinct | many thin bars in one colour beside the orb, never a few coloured dots turning into bars | 2026-11-17 |
+| `halftone.recording` | the orb becomes a small, dense dot in the danger tone, pulsing with the level, in a ring of level ticks; no second dot | distinct | a shared mechanism (a red dot for recording) | 2026-11-17 |
+| `halftone.transcribing` | sound goes in one side of the orb and words come out the other | distinct | the app's own orb in the middle | 2026-11-17 |
+| `halftone.speaking` | dotted arcs go out from the orb, as loud as it speaks | distinct | a shared mechanism (sound waves) | 2026-11-17 |
+
 ## Later work
 
 Each row is compared and resolved with the task it names, which adds its own dated sign-off before
@@ -154,6 +188,11 @@ Signed off by the maintainer on 2026-10-22, for the v0.3.0 rows. Each later row 
 task. The presence, layout and transition rows changed on 2026-10-22 record the maintainer's ruling
 on [#3829] after playing the playground: one orb of one size that stays where the owner put it,
 with its card beside it ([#5216]).
+
+The rows of [the halftone orb's part](#ships-with-the-halftone-orb) were checked on 2026-11-17 by a
+side-by-side comparison with other products' public pages, made on the round-6 visuals, and signed
+off on 2026-11-17 under the maintainer's delegation of these calls ("Decide yourself."). They are
+not the maintainer's own sign-off.
 
 [#3807]: https://github.com/PersonalClaw/PersonalClaw/issues/3807
 [#3829]: https://github.com/PersonalClaw/PersonalClaw/issues/3829

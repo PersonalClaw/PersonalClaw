@@ -10,20 +10,19 @@ and blocked) and the focused status card opening.
 
 ## Candidates
 
-What the buddy adds to the agent orb's drawing: the buddy's sizes; the badge's marks beyond the
-agent orb's three (the working mark, the check, the microphone and the offline mark) and its
-unfolding into words; the wash; the neutral it takes where nothing is alive; the system states
-(idle, restarting and offline); its own still frames for the quiet, waiting and blocked families;
-the presence poses; the answers' nod and shake; the gesture vocabulary; and the still frames the
-tray and the dock show. The poses and gestures move the strokes as well as the whole orb: quiet's
-are thin, an approval's draw in tight, an error's sag and settle low, and done's open ring turns
-once ([`character.md`](character.md#the-poses)). Each candidate is a way to add all of it:
+What the buddy adds to the agent orb's drawing: the buddy's sizes; its listening drawn as the
+recording dot; the badge, the plate's mark, unfolding into words; the disc it sits on on the
+desktop; the system states (idle, restarting and offline); the presence poses; the answers' nod and
+shake; the gesture vocabulary; and the still frames the tray and the dock show. Its pictures and
+its marks are the agent orb's own, and the poses and gestures move the whole orb: it lifts, sinks,
+swells, sways and dims ([`character.md`](character.md#the-poses)). Each candidate is a way to add
+all of it:
 
 1. **The drawing extended in place:** the buddy's poses, sizes and moves join the agent orb's own
-   states inside the drawing, and the badge and the wash are drawn with the strokes.
+   states inside the drawing, and the badge is drawn with the dots.
 2. **The drawing inside a code-drawn layer:** the agent orb's drawing gains only parameters for its
-   strokes' weight and arrangement, which the motion presets drive, and the badge, the wash and the
-   whole-orb moves sit in an SVG layer around it, moved by the same presets.
+   dots' weight and arrangement, which the motion presets drive, and the badge and the whole-orb
+   moves sit in an SVG layer around it, moved by the same presets.
 
 ## What is measured
 

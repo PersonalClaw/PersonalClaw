@@ -6,10 +6,9 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 
 // ── No package draws either orb (#6117) ─────────────────────────────────────────────────────────
 //
-// The chat's orb and the buddy's once drew the `thinking-orbs` package's dots. The chat's orb now
-// draws the halftone orb (`ui/orb/halftone.ts`) and the buddy's the claw ring
-// (`ui/orb/clawRing.ts`), both the project's own forms, so the package is gone from the web app's
-// dependencies and nothing in its source imports it.
+// The chat's orb and the buddy's once drew the `thinking-orbs` package's dots. Both now draw the
+// halftone orb (`ui/orb/halftone.ts`), the project's own drawing, so the package is gone from the
+// web app's dependencies and nothing in its source imports it.
 
 describe('no package draws the orb', () => {
   it('the web app does not depend on the dot package', () => {

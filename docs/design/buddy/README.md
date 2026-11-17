@@ -1,6 +1,6 @@
 # Desktop buddy
 
-One orb, drawn as the chat's agent orb is (the claw ring's strokes), living at the top edge of the
+One orb, drawn as the chat's agent orb is (its halftone of dots), living at the top edge of the
 screen or floating where the owner puts it. It shows what the agents are doing while the owner
 works in other apps, and asks only when something needs the owner. It is a new view of signals
 PersonalClaw already has, not a second app, and it adds no authority: it never approves, sends or
