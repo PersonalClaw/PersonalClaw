@@ -80,6 +80,17 @@ def _check_ws_origin(request: web.Request) -> None:
     raise web.HTTPForbidden(text="WebSocket origin not allowed")
 
 
+async def _stamp_while_open(nonce: str, scope: tuple[str, ...]) -> None:
+    """An open scoped socket counts as use: stamp its session once a throttle period while it is
+    open, so the client's idle end counts from when it last listened (R3-6)."""
+    from personalclaw.dashboard.scoped_sessions import still_open
+    from personalclaw.dashboard.session_store import LAST_SEEN_THROTTLE_SECS
+
+    while True:
+        await asyncio.sleep(LAST_SEEN_THROTTLE_SECS)
+        still_open(nonce, scope)
+
+
 async def api_ws(request: web.Request) -> web.WebSocketResponse:
     """GET /api/ws — single multiplexed WebSocket for all real-time events."""
     _check_ws_origin(request)
@@ -95,7 +106,20 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
     # request["app"] is set by the token middleware when the handshake carried an
     # app-scoped token (?app_token=…). Scope this connection so every send path filters
     # its events to the app's declared permissions.events (the untrusted-app sandbox).
-    state.register_ws(ws, app=request.get("app", ""))
+    from personalclaw.dashboard.device_scopes import scope_of
+
+    # An automation client's socket: it hears its scope's frames only, closes when its session
+    # ends, and while it's open it counts as use (device_scopes, scoped_sessions).
+    scope = scope_of(request)
+    nonce = str(request.get("session_nonce") or "")
+    state.register_ws(
+        ws,
+        app=request.get("app", ""),
+        scope=scope,
+        nonce=nonce,
+        ends=float(request.get("session_expires_at") or 0.0),
+    )
+    keep_alive = asyncio.ensure_future(_stamp_while_open(nonce, scope)) if scope else None
 
     # Push current sessions immediately so sidebar populates without waiting.
     # Through `send_ws_event`, NOT `ws.send_json`: this frame carries the session keys
@@ -195,6 +219,8 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
     except (asyncio.CancelledError, Exception):
         pass
     finally:
+        if keep_alive is not None:
+            keep_alive.cancel()
         state.unsubscribe_logs(ws)
         state.unsubscribe_subagents(ws)
         state.unregister_ws(ws)

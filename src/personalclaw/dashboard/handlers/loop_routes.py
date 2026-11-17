@@ -1438,9 +1438,22 @@ async def api_loop_stream(request: web.Request) -> web.StreamResponse:
     registry = request.app["state"].loop_sse()
     key = registry_key(cid)
     hub = registry.hub(key)
-    return await stream_response(
-        request, hub, on_connect=[("snapshot", view)], registry_evict=(registry, key)
-    )
+    from personalclaw.dashboard.device_scopes import scope_of
+
+    # An automation client's stream ends when its session does (F9).
+    release = None
+    if scope_of(request) and request.get("session_nonce"):
+        from personalclaw.dashboard.scoped_sessions import hold_open
+
+        task = asyncio.current_task()
+        release = hold_open(str(request["session_nonce"]), task.cancel if task else lambda: None)
+    try:
+        return await stream_response(
+            request, hub, on_connect=[("snapshot", view)], registry_evict=(registry, key)
+        )
+    finally:
+        if release is not None:
+            release()
 
 
 # ── queue / autopilot (execution drive) ──

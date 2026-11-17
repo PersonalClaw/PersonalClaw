@@ -9,8 +9,8 @@ rule, or is :data:`OUTSIDE`. A route with no row is refused like an ``OUTSIDE`` 
 
 This release admits the shell, ``status`` and the ``loops`` reads. Every steer, answer, approval,
 create and land is ``OUTSIDE`` until the client's own principal exists in the approval and loop
-doors. The socket (``/api/ws``) and a loop's stream are ``OUTSIDE`` until their frames are filtered
-and they close when the session ends.
+doors. The socket (``/api/ws``) is the shell's, and hears only the frames
+``device_scopes.FRAME_SCOPES`` admits; it and a loop's stream close when the session ends.
 """
 
 from __future__ import annotations
@@ -82,6 +82,8 @@ DEVICE_SCOPE_ROUTES: dict[tuple[str, str], Row] = {
     ("GET", "/api/loops/{id}/plan-session"): Row("loops", target=TARGET_LOOP),
     ("GET", "/api/loops/{id}/design/tokens"): Row("loops", target=TARGET_LOOP),
     ("GET", "/api/design/tokens/default"): Row("loops"),
+    ("GET", "/api/loops/{id}/stream"): Row("loops", target=TARGET_LOOP),  # closes when it ends
+    ("GET", "/api/ws"): Row(SHELL),  # its frames are filtered (device_scopes.FRAME_SCOPES)
     # ── outside every scope in this release ──
     ("GET", "/api/agents"): OUTSIDE,
     ("POST", "/api/agents"): OUTSIDE,
@@ -155,7 +157,6 @@ DEVICE_SCOPE_ROUTES: dict[tuple[str, str], Row] = {
     ("POST", "/api/loops/{id}/plan/retry"): OUTSIDE,
     ("POST", "/api/loops/{id}/plan/start"): OUTSIDE,
     ("POST", "/api/loops/{id}/queue"): OUTSIDE,
-    ("GET", "/api/loops/{id}/stream"): OUTSIDE,
     ("GET", "/api/projects"): OUTSIDE,
     ("POST", "/api/projects"): OUTSIDE,
     ("POST", "/api/projects/import"): OUTSIDE,
@@ -184,6 +185,5 @@ DEVICE_SCOPE_ROUTES: dict[tuple[str, str], Row] = {
     ("POST", "/api/tasks/{task_id}/comments"): OUTSIDE,
     ("DELETE", "/api/tasks/{task_id}/comments/{comment_id}"): OUTSIDE,
     ("GET", "/api/waiting"): OUTSIDE,
-    ("GET", "/api/ws"): OUTSIDE,
     ("GET", "/api/ws/terminal/{session_id}"): OUTSIDE,
 }

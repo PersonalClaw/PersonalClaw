@@ -210,3 +210,48 @@ def presented_scope(request: Any) -> tuple[str, ...]:
         if scope:
             return scope
     return ()
+
+
+# ── What a scoped session holds open (F9) ───────────────────────────────
+
+#: nonce → the closers of what its session holds open: its sockets and its loops' streams.
+_OPEN: dict[str, dict[int, Any]] = {}
+_OPEN_LOCK = threading.Lock()
+
+
+def hold_open(nonce: str, close: Any) -> Any:
+    """Register *close* (a no-argument callable) to run when the session *nonce* names ends.
+    Returns the release, which the holder calls when it closes by itself."""
+    token = id(close)
+    with _OPEN_LOCK:
+        _OPEN.setdefault(nonce, {})[token] = close
+
+    def release() -> None:
+        with _OPEN_LOCK:
+            held = _OPEN.get(nonce)
+            if held is not None:
+                held.pop(token, None)
+                if not held:
+                    _OPEN.pop(nonce, None)
+
+    return release
+
+
+def close_for(nonces: Any) -> None:
+    """Close everything the sessions *nonces* name hold open: they were signed out, ended idle or
+    for a mismatch. Called by every ending (``token_auth._signed_out``). Never raises."""
+    for nonce in nonces:
+        with _OPEN_LOCK:
+            closers = list((_OPEN.pop(nonce, None) or {}).values())
+        for close in closers:
+            try:
+                close()
+            except Exception:  # noqa: BLE001 — one closer that fails must not keep the others
+                logger.warning("could not close what a signed-out session held open", exc_info=True)
+
+
+def still_open(nonce: str, scope: tuple[str, ...]) -> None:
+    """An open scoped socket counts as use: stamp its session as used now (R3-6)."""
+    from personalclaw.dashboard import token_auth
+
+    token_auth._state._admitted(nonce, tuple(scope), time.time())

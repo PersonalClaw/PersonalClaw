@@ -1777,6 +1777,7 @@ def _signed_out(ended: Any, reason: str, *, actor: str) -> int:
             kind=record.device.kind,
             extra={"reason": reason},
         )
+    scoped_sessions.close_for([nonce for nonce, _record in ended])
     try:
         from personalclaw import push
 

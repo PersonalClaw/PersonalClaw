@@ -17,6 +17,7 @@ import logging
 import threading
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from aiohttp import web
@@ -251,3 +252,48 @@ def _write_refusal_row(
         )
     except Exception:  # noqa: BLE001 — the refusal stands; say the row could not be written
         logger.warning("could not write the scope-refusal row to the SEL", exc_info=True)
+
+
+# ── The socket (F11) ────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class FrameRow:
+    """What a scoped socket may hear of one frame type: the scope that admits it, and whether a
+    frame of it is heard whatever it is about (``subject_free``), or only about a loops-table row.
+    """
+
+    scope: str
+    subject_free: bool = False
+
+
+#: Every frame type a scoped socket hears; any other is unheard by construction. A loop's work
+#: phase reaches a ``loops`` socket only when its work is a loops-table row's (``loop:<id>``);
+#: the build the gateway serves is the shell's.
+FRAME_SCOPES: dict[str, FrameRow] = {
+    "work_phase": FrameRow("loops"),
+    "spa_build": FrameRow(SHELL, subject_free=True),
+}
+
+#: The frames of a family a scope touches that no scope hears in this release (the census holds
+#: each such frame to a verdict, here or in :data:`FRAME_SCOPES`).
+FRAMES_UNHEARD: frozenset[str] = frozenset({"approval", "approval_resolved"})
+
+
+def socket_hears(scope: Iterable[str], event_type: str, subject: Any) -> bool:
+    """Whether a socket of a session holding *scope* may hear a frame of *event_type* about
+    *subject* (``ws_state.frame_subject``)."""
+    row = FRAME_SCOPES.get(event_type)
+    if row is None or not (row.scope in (SHELL, PUBLIC) or row.scope in set(scope)):
+        return False
+    if row.subject_free:
+        return True
+    kind, key = subject if isinstance(subject, tuple) and len(subject) == 2 else ("", "")
+    if kind != "work" or not isinstance(key, str) or not key.startswith("loop:"):
+        return False
+    from personalclaw.loop import store
+
+    try:
+        return store.get(key.removeprefix("loop:")) is not None
+    except Exception:  # noqa: BLE001 — a store that can't say: the frame is unheard
+        return False
