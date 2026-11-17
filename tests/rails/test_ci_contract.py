@@ -7255,7 +7255,7 @@ CLOSED_PR_RUNS_ARE_CANCELLED = _toolchain_row(
             expect="action-pins.yml: no",
         ),
         _plant_line(
-            "a group without the head repository, so a fork's run is missed",
+            "a group keyed on the repository and branch, which the pull request's runs do not join",
             _CANCELLER_PATH,
             _CANCEL_NIX_GROUP,
             "      group: nix-${{ github.repository }}-${{ github.head_ref }}\n",
@@ -8052,6 +8052,87 @@ PROVENANCE_RUNS_ON_EVERY_MAIN_PUSH = _toolchain_row(
 )
 
 ROWS = (*ROWS, PROVENANCE_RUNS_ON_EVERY_MAIN_PUSH)
+
+
+# ── verified-tree.yml holds every main push to the tree its verdict verified (#3908, rule 4) ──
+_VERIFIED_TREE = ".github/workflows/verified-tree.yml"
+#: What its token reads: the commits and main's rules, the verdict's check runs, the pull
+#: requests, and a queue commit's own merge_group runs of merge.yml (0.4.0 A1).
+_VERIFIED_TREE_READS = {
+    "contents": "read",
+    "checks": "read",
+    "pull-requests": "read",
+    "actions": "read",
+}
+#: The one command the job runs, from the judging commit's archived tools/ci, and its range.
+_VERIFIED_TREE_RUN = (
+    '(cd "$judge" && python3 -m tools.ci verify-landed',
+    '--range "${BEFORE}..${GITHUB_SHA}"',
+)
+
+
+def verified_tree_violations(tree: Tree) -> list[str]:
+    """``verified-tree.yml`` runs on every push to main and nothing else, one group per commit
+    and never cancelled, reads with contents, checks, pull requests and actions alone, and runs
+    ``verify-landed`` from the previous main commit's ``tools/ci``, archived into a folder of its
+    own, over ``before..sha``."""
+    workflow = _workflow(tree, "verified-tree.yml")
+    if workflow is None:
+        return [f"{_VERIFIED_TREE} is missing"]
+    bad: list[str] = []
+    if _triggers(workflow) != {"push": {"branches": ["main"]}}:
+        bad.append(f"{_VERIFIED_TREE} runs on {_triggers(workflow)}, not every push to main alone")
+    concurrency = workflow.get("concurrency") or {}
+    if concurrency.get("group") != "verified-tree-${{ github.sha }}":
+        bad.append(
+            f"{_VERIFIED_TREE}'s group is not its commit's own: {concurrency.get('group')!r}"
+        )
+    if concurrency.get("cancel-in-progress") is not False:
+        bad.append(f"{_VERIFIED_TREE} can cancel a run")
+    if workflow.get("permissions") != _VERIFIED_TREE_READS:
+        bad.append(f"{_VERIFIED_TREE} grants {workflow.get('permissions')!r}, not reads alone")
+    for job_id, job in (workflow.get("jobs") or {}).items():
+        where = f"verified-tree.yml:{job_id}"
+        if job.get("permissions") != _VERIFIED_TREE_READS:
+            bad.append(f"{where} holds {job.get('permissions')!r}, not reads alone")
+        if "concurrency" in job or "if" in job or "needs" in job:
+            bad.append(f"{where} can be skipped, replaced or cancelled on its own")
+        run = _runs(job)
+        if not all(part in run for part in _VERIFIED_TREE_RUN):
+            bad.append(f"{where} does not run the archived verify-landed over `before..sha`")
+        if 'source="$BEFORE"' not in run or 'git archive "$source" tools/ci' not in run:
+            bad.append(f"{where} does not archive tools/ci from the previous main commit")
+    return bad
+
+
+VERIFIED_TREE_RUNS_ON_EVERY_MAIN_PUSH = _toolchain_row(
+    "verified-tree-holds-every-main-push-with-mains-previous-rule",
+    verified_tree_violations,
+    (
+        _plant("a group shared across commits", _VERIFIED_TREE,
+               "group: verified-tree-${{ github.sha }}", "group: verified-tree-${{ github.ref }}",
+               expect="is not its commit's own"),
+        _plant("a run that can be cancelled", _VERIFIED_TREE, "cancel-in-progress: false",
+               "cancel-in-progress: true", expect="can cancel a run"),
+        _plant("a branch filter that admits more than main", _VERIFIED_TREE,
+               "    branches: [main]\n", '    branches: ["**"]\n', expect="not every push"),
+        _plant("a write permission", _VERIFIED_TREE, "permissions:\n  contents: read\n",
+               "permissions:\n  contents: write\n", expect="not reads alone"),
+        _plant("the pushed tools/ci judging its own push", _VERIFIED_TREE,
+               '            source="$BEFORE"\n', '            source="$GITHUB_SHA"\n',
+               expect="does not archive tools/ci from the previous main commit"),
+        _plant("the checkout's own tools/ci run", _VERIFIED_TREE,
+               '(cd "$judge" && python3 -m tools.ci verify-landed',
+               '(python3 -m tools.ci verify-landed', expect="does not run the archived"),
+        _plant("a job that a condition can skip", _VERIFIED_TREE,
+               "    timeout-minutes: 5\n",
+               "    timeout-minutes: 5\n    if: ${{ github.event.before != '' }}\n",
+               expect="can be skipped"),
+        Control("the tree's verified-tree.yml passes", _nothing, fails=False),
+    ),
+)  # fmt: skip
+
+ROWS = (*ROWS, VERIFIED_TREE_RUNS_ON_EVERY_MAIN_PUSH)
 
 
 # ── dco.yml checks a pull request with the base branch's check, and nothing of the candidate ──
@@ -12003,8 +12084,8 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
 # way GitHub would, and holds two relations:
 #
 # 1. no two runs for different candidates (two pull requests from this repository, two forks with
-#    the same branch name, pushes to two feature branches) evaluate to one group, in one workflow
-#    or across two;
+#    the same branch name, two pull requests from one branch into two bases, pushes to two feature
+#    branches) evaluate to one group, in one workflow or across two;
 # 2. every run for one candidate at one head evaluates to one group: a second run of the
 #    workflow (a new run id) and a GitHub re-run (the same run id and commit, a later
 #    `run_attempt`). So a group keys on the pull request or on its head, and on nothing that
@@ -12061,24 +12142,25 @@ def _candidate_pr(
     attempt: int = 1,
     kind: str = "pull_request",
     author: str = "a-contributor",
+    base: str = "main",
 ) -> _CandidateRun:
     target = kind == "pull_request_target"
     pull_request = {
         "number": number,
         "user": {"login": author},
         "head": {"ref": branch, "sha": head, "repo": {"full_name": head_repo}},
-        "base": {"ref": "main", "sha": _MAIN_SHA},
+        "base": {"ref": base, "sha": _MAIN_SHA},
     }
     github = {
         "repository": _REPO_SLUG,
         "event_name": kind,
         # `pull_request` runs the test merge; `pull_request_target` runs the base branch.
-        "ref": "refs/heads/main" if target else f"refs/pull/{number}/merge",
-        "ref_name": "main" if target else f"{number}/merge",
+        "ref": f"refs/heads/{base}" if target else f"refs/pull/{number}/merge",
+        "ref_name": base if target else f"{number}/merge",
         # The test-merge commit differs for every run, so a group keyed on it keys on no head.
         "sha": _MAIN_SHA if target else f"merge{number}{run}",
         "head_ref": branch,
-        "base_ref": "main",
+        "base_ref": base,
         "run_id": str(9000 + run),
         "run_number": str(run),
         "run_attempt": str(attempt),
@@ -12181,6 +12263,7 @@ _PR44 = "pull request #44 from another fork (feature-a)"
 _PR45 = f"Dependabot's pull request #45 ({_DEPENDABOT_A})"
 _PR46 = f"Dependabot's pull request #46 ({_DEPENDABOT_B})"
 _PR47 = f"pull request #47 from a fork ({_DEPENDABOT_A})"
+_PR48 = "pull request #48 (feature-a, into another base)"
 
 
 def _pr_runs(kind: str) -> tuple[_CandidateRun, ...]:
@@ -12203,6 +12286,10 @@ def _pr_runs(kind: str) -> tuple[_CandidateRun, ...]:
                       author=_DEPENDABOT_LOGIN),
         # A fork's branch named as Dependabot names its own, by another author.
         _candidate_pr(f"{_PR47}{at}", "pr47", 47, _FORK, _DEPENDABOT_A, "g1", 12, kind=kind),
+        # #41's branch and head again, into another base: a run of one never stands in for the
+        # other's, which the merge verdict reads on the head they share.
+        _candidate_pr(f"{_PR48}{at}", "pr48", 48, _REPO_SLUG, a, "a1", 13, kind=kind,
+                      base="release"),
     )  # fmt: skip
 
 
@@ -12352,7 +12439,9 @@ def _candidate_kinds(workflows: list[tuple[str, dict]]) -> dict[str, set[str]]:
 
 
 def concurrency_keying_violations(tree: Tree) -> list[str]:
-    """Every concurrency group a candidate's run joins keys on its pull request or its head."""
+    """Every concurrency group a candidate's run joins keys on its pull request or its head: a
+    pull request's run on its pull request, since two from one branch share a head, and any other
+    run (a push, a queue commit) on its commit."""
     workflows = [(name, wf if isinstance(wf, dict) else {}) for name, wf in _workflows(tree)]
     kinds = _candidate_kinds(workflows)
     bad: list[str] = []
@@ -12440,6 +12529,28 @@ def concurrency_keying_violations(tree: Tree) -> list[str]:
     return list(dict.fromkeys(bad))
 
 
+@pytest.mark.parametrize("gate", ci_workflows.GATES, ids=lambda g: g.file)
+def test_each_queue_commit_runs_each_gate_in_a_group_of_its_own(gate: ci_workflows.Gate) -> None:
+    """A gate runs on every queue commit, and each queue commit's run is in a group of its own:
+    another entry's queue commit, the same entry's queue commit rebuilt, and a pull request's run
+    each join another group, so none cancels a queue commit's gate run. Only two runs of one queue
+    commit (run again, re-run) share one. ``github.ref`` would not do as the key: a queue commit's
+    branch names its pull request and the commit it was built on, which a rebuild keeps."""
+    doc = yaml.safe_load((REPO / ".github" / "workflows" / gate.file).read_text(encoding="utf-8"))
+    group = _concurrency_group(doc.get("concurrency"))
+    assert group is not None, gate.file
+    by_candidate: dict[str, set[str]] = {}
+    for run in _QUEUE_RUNS:
+        by_candidate.setdefault(run.candidate, set()).add(_rendered(group, run.context))
+    assert all(len(groups) == 1 for groups in by_candidate.values()), by_candidate
+    queued = [next(iter(groups)) for groups in by_candidate.values()]
+    assert len(set(queued)) == len(queued) == 3, by_candidate
+    pulls = {_rendered(group, run.context) for run in _pr_runs("pull_request")}
+    assert not pulls & set(queued), (pulls, queued)
+    by_ref = {run.candidate: _rendered("${{ github.ref }}", run.context) for run in _QUEUE_RUNS}
+    assert by_ref["q41"] == by_ref["q41b"], "a rebuild on the same commit keeps the queue branch"
+
+
 def _waits_its_turn(value: object, context: dict[str, Any]) -> bool:
     """Whether a run that joins a ``concurrency:`` *value* waits in its group whatever joins
     after it: never cancelled in flight (no cancel-in-progress) and never replaced while it waits
@@ -12494,6 +12605,10 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                     "group: nix-${{ github.base_ref }}", expect="pull request #42 (feature-b)"),
         _plant_line("a group keyed on the branch alone, which two forks share", _NIX, _NIX_GROUP,
                     "group: nix-${{ github.head_ref }}", expect="#43 from a fork"),
+        _plant_line("a group keyed on the head repository and branch, which two pull requests from"
+                    " one branch share", _NIX, _NIX_GROUP,
+                    "group: nix-${{ github.event.pull_request.head.repo.full_name || github"
+                    ".repository }}-${{ github.head_ref || github.ref_name }}", expect=_PR48),
         _plant_line("a group keyed on the run", _NIX, _NIX_GROUP, "group: nix-${{ github.run_id }}",
                     expect="keys on neither"),
         _plant_line("a group keyed on the test-merge commit", _NIX, _NIX_GROUP,
@@ -12518,10 +12633,13 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                                  "concurrency:\n"
                                  "  group: new-${{ github.event.pull_request.number }}\n"
                                  "  cancel-in-progress: true\n"), fails=False),
-        Control("a group keyed on the candidate's head",
+        # Two pull requests from one branch, into two bases, share a head: a pull request's run
+        # keyed on it can cancel or replace the other's, made against the other base.
+        Control("a pull request's group keyed on its head, which two pull requests share",
                 _new_pr_workflow("new-check.yml",
                                  "concurrency:\n  group: new-${{ github.event.pull_request.head.sha"
-                                 " || github.sha }}\n  cancel-in-progress: false\n"), fails=False),
+                                 " || github.sha }}\n  cancel-in-progress: false\n"),
+                expect=_PR48),
         Control("main's suite in one shared group, which is not a candidate's",
                 _new_workflow(f"{_WORKFLOWS}/main-suite.yml",
                               "name: Main suite\non:\n  push:\n    branches: [main]\n"

@@ -3,8 +3,8 @@
 # scripts/check_commit_provenance.py in `main` mode over `before..sha`: a sign-off matching the
 # author (rule 1), a committer MAINTAINERS lists (rule 2), no co-author or tool marks on a
 # maintainer's commit (rule 3), and no marker that would start no run (rule 5). Rule 4, the
-# pushed tree against the tree the merge verdict recorded, is not checked here: #3908 keeps it
-# open until that record exists.
+# pushed tree against the tree the merge verdict recorded, is verified-tree.yml's: it reads the
+# API, and this workflow's token reads contents alone.
 #
 # WHY ITS OWN WORKFLOW, not a job in merge.yml. Each push checks only its own range, so a run that
 # never finishes leaves its commits unchecked for good: the next push starts from its own

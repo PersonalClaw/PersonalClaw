@@ -78,6 +78,13 @@ def _replay_shadow(argv: list[str]) -> int:
     return main_replay.shadow_main(argv)
 
 
+def _verify_landed(argv: list[str]) -> int:
+    # Imported when called, as verify-check-run is: it loads the verifier.
+    from . import landed
+
+    return landed.main(argv)
+
+
 def _verify_check_run(argv: list[str]) -> int:
     # Imported when called: the other commands, which every CI run starts, load neither the
     # verifier nor tools/ci/trust.py.
@@ -121,6 +128,7 @@ COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "variation-census": variation_census.main,
     "verdict": verdict.main,
     "verify-check-run": _verify_check_run,
+    "verify-landed": _verify_landed,
 }
 
 

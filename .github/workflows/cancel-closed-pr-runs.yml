@@ -18,7 +18,8 @@
 # `refs/pull/N/merge` (GitHub's "Events that trigger workflows", `pull_request`), and
 # `github.sha` is the merge commit, so a key read from either would name main's run of that
 # commit. Each key here is what that workflow's key evaluated to on the pull request's own runs:
-# pr.yml's and merge.yml's key on the pull request's number.
+# Each keys on the pull request's number: pr.yml, merge.yml and the merge verdict's gates (Nix,
+# Action pins, Release image tooling).
 # tests/rails/test_ci_contract.py evaluates both, for every workflow that runs on `pull_request`, and
 # holds them equal, merged or not, from this repository or a fork.
 #
@@ -66,7 +67,7 @@ jobs:
     permissions: {}
     timeout-minutes: 5
     concurrency:
-      group: nix-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref }}
+      group: nix-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
       - name: Runner identity
@@ -78,7 +79,7 @@ jobs:
     permissions: {}
     timeout-minutes: 5
     concurrency:
-      group: release-image-tooling-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref }}
+      group: release-image-tooling-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
       - name: Runner identity
@@ -90,9 +91,7 @@ jobs:
     permissions: {}
     timeout-minutes: 5
     concurrency:
-      # action-pins.yml keys on `github.ref`, which is `refs/pull/N/merge` on a pull request's run
-      # and the base branch on a merged one's close, so the pull request's ref is spelled out.
-      group: action-pins-refs/pull/${{ github.event.pull_request.number }}/merge
+      group: action-pins-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
       - name: Runner identity

@@ -1,0 +1,116 @@
+# Verified tree — every commit a push to main lands is the tree its pull request's merge verdict
+# verified (#3908, rule 4).
+#
+# `python -m tools.ci verify-landed` (tools/ci/landed.py) over `before..sha`: each commit is the
+# merge commit of exactly one merged pull request, a merge verdict that counts stands behind it
+# (merge_verdict.verify: the App main's rule names, its newest run green, one receipt for that
+# commit and its tree, a controller revision on main), and the commit's own tree is the receipt's
+# tree. Which verdict: a queue commit's own (a merge_group run of merge.yml ran on it, as its pull
+# request's queue entry), and any other commit's pull request's head's. Each commit that passes is
+# recorded: the pull request, its head, the commit whose verdict was read and its queue run, the
+# verified tree and the main commit, in the job summary and in the run's `verified-tree-<sha>`
+# artifact. provenance.yml checks the same push's commits against rules 1, 2, 3 and 5.
+#
+# WHY ITS OWN WORKFLOW, not a job in provenance.yml. It reads the API, so its token holds
+# `checks: read`, `pull-requests: read` and `actions: read` beside `contents: read`, and
+# provenance's stays the read of contents alone that its row holds. Like provenance, one job with
+# no `needs:`, so no other job's outcome can drop it, and a group per commit, never cancelled:
+# each push checks only its own range, so a run that never finished would leave its commits
+# unchecked for good.
+#
+# WHY THE PREVIOUS COMMIT'S COPY. The pushed commit is what is being judged, so its tools/ci is the
+# judged side: a push that edited the rule would pass itself. The job archives tools/ci from
+# `github.event.before` into a folder of its own and runs that copy, as merge.yml runs main's
+# planner. The one push with no previous copy is the one that adds the rule to main: it is
+# recognised by tools/ci/landed.py never having existed in BEFORE's history, and only then does
+# the job run the pushed copy, saying so in the summary. A BEFORE that once had it and has lost
+# it is refused, and so is a BEFORE the checkout cannot resolve, or whose history of the rule git
+# cannot read: a git failure is never read as "never had the rule".
+name: Verified tree
+
+on:
+  push:
+    branches: [main]
+
+# One group per commit, never cancelled: GitHub keeps one pending run per group and replaces it
+# with the next, so a group shared across commits could drop a run before it started.
+concurrency:
+  group: verified-tree-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+  actions: read
+
+jobs:
+  verified-tree:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read      # the commits, and main's rules
+      checks: read        # the merge-verdict check runs on the queue commit or the head
+      pull-requests: read # the pull request each commit is the merge commit of
+      actions: read       # a queue commit's own merge_group runs of merge.yml (0.4.0 A1)
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, so `BEFORE..sha` resolves however many commits the push brings,
+          # BEFORE's tools/ci can be archived, and a controller revision shows it is on main.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: each commit the push lands is the tree its verdict verified, by the previous commit's rule
+        env:
+          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+        # The runner image's own python3, over a tools/ci archived from the judging commit and
+        # standard library only. Exit 1 is a violation and exit 2 a check that could not run.
+        run: |
+          set -euo pipefail
+          judge="$RUNNER_TEMP/judge"
+          if ! git rev-parse --verify --quiet "$BEFORE^{commit}" > /dev/null; then
+            echo "::error::the previous main commit ($BEFORE) does not resolve in this checkout," \
+              "so there is no copy of the rule to judge this push with"
+            exit 2
+          fi
+          # Read before the test below, and stopped on: inside it, a git log that failed would
+          # read as an empty history, and the push would be judged by its own copy.
+          if ! rule_history="$(git log --format=%H "$BEFORE" -- tools/ci/landed.py)"; then
+            echo "::error::the previous main commit's ($BEFORE) history of the rule could not be" \
+              "read, so this push cannot be told from the one that adds the rule"
+            exit 2
+          fi
+          if git cat-file -e "$BEFORE:tools/ci/landed.py" 2>/dev/null; then
+            source="$BEFORE"
+            echo "checked with the previous main commit's ($BEFORE) tools/ci" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          elif [ -z "$rule_history" ]; then
+            source="$GITHUB_SHA"
+            echo "the previous main commit ($BEFORE) never had the rule, so this push, which" \
+              "adds it, is checked with its own copy" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::the previous main commit ($BEFORE) once had the rule and has lost it;" \
+              "restore it before this push can be judged"
+            exit 2
+          fi
+          mkdir -p "$judge"
+          git archive "$source" tools/ci | tar -x -C "$judge"
+          record="$RUNNER_TEMP/verified-tree.json"
+          (cd "$judge" && python3 -m tools.ci verify-landed --repo "$GITHUB_REPOSITORY" \
+            --range "${BEFORE}..${GITHUB_SHA}" --git-dir "$GITHUB_WORKSPACE" --record "$record")
+          {
+            echo '```json'
+            cat "$record"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: the record
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verified-tree-${{ github.sha }}
+          path: ${{ runner.temp }}/verified-tree.json
+          if-no-files-found: error
+          retention-days: 90

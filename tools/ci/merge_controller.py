@@ -141,6 +141,14 @@ failing closed, all read through the API:
 - **Its pull request's head.** The App's newest verdict on the pull request's head is green. That
   verdict holds the head's dependency review, its sign-off check and CodeQL, each of the pull
   request's own change, which the queue commit's change is.
+- **Its gates.** The head's gates (rule 5b) ran on the head's merge with main as it was then, and
+  the queue commit is that change on a main that may have moved since, a tree no gate has run on.
+  Each gate's workflow also starts on ``merge_group``, with no filter, so every gate runs on every
+  queue commit, and each gate's ``merge_group`` runs on the queue commit are read as a head's are:
+  there must be one, and every one must pass on every attempt (:func:`queue_gate_reading`). Main's
+  copy of a gate that starts no run on ``merge_group`` is unread. With no run listed, a queue
+  commit whose own copy starts none is red, and one whose copy does waits; the run's completion
+  judges the queue commit again. No gate red on a queue commit is flake-class.
 - **Its definitions** are compared with main's tip, so a definition an entry ahead changed counts,
   and main's CI contract runs over the queue commit itself whenever they differ.
 - **Once.** A queue commit's verdict that waits on nothing is final: it is never posted again, so
@@ -246,6 +254,8 @@ WAITING_FENCE = "merge-verdict-waiting"
 GATED: dict[str, workflows.Gate] = {g.path: g for g in workflows.GATES}
 #: The waiting reason of a head whose gate run has not finished: then the gate's what and file.
 WAITING_GATE = f"{WAITING}the head's "
+#: The same, for a queue commit's gate run (the module's "A queue commit" rules, "Its gates").
+WAITING_QUEUE_GATE = f"{WAITING}the queue commit's "
 #: A trusted-run branch the old path left, older than this, is swept away.
 SWEEP_AFTER = datetime.timedelta(days=1)
 #: merge.yml's job that judges the run with main's verdict.py.
@@ -699,8 +709,9 @@ def _fence_word(reason: str) -> str:
     if reason.startswith(WAITING_CONTRACT):
         return "contract"
     for gate in workflows.GATES:
-        if reason.startswith(f"{WAITING_GATE}{gate.what} ({gate.file}) "):
-            return gate.file
+        for prefix in (WAITING_GATE, WAITING_QUEUE_GATE):
+            if reason.startswith(f"{prefix}{gate.what} ({gate.file}) "):
+                return gate.file
     return "codeql"
 
 
@@ -874,19 +885,20 @@ def gate_filter(tree: trust.Tree, gate: workflows.Gate) -> tuple[list[str], dict
     return patterns, bounds
 
 
-def gate_runs(get: Get, repo: str, head: str, gate: workflows.Gate) -> list[Mapping[str, Any]]:
-    """Every ``pull_request`` run of the gate's workflow on *head*, oldest first: read by its path,
-    its event and the head, so no other run stands in for one, and held to the listing's count."""
-    query = urllib.parse.urlencode({"head_sha": head, "event": "pull_request"})
+def gate_runs(
+    get: Get, repo: str, head: str, gate: workflows.Gate, event: str = "pull_request"
+) -> list[Mapping[str, Any]]:
+    """Every *event* run (``pull_request``, or a queue commit's ``merge_group``) of the gate's
+    workflow on *head*, oldest first: read by its path, its event and the head, so no other run
+    stands in for one, and held to the listing's count."""
+    query = urllib.parse.urlencode({"head_sha": head, "event": event})
     runs = _pages(get, f"/repos/{repo}/actions/workflows/{gate.file}/runs?{query}", "workflow_runs")
     if any(_int(r.get("id")) is None for r in runs):
         raise Unread(f"a run of {head}'s {gate.file} names no id")
     ours = [
         r
         for r in runs
-        if r.get("path") == gate.path
-        and r.get("event") == "pull_request"
-        and r.get("head_sha") == head
+        if r.get("path") == gate.path and r.get("event") == event and r.get("head_sha") == head
     ]
     return sorted(ours, key=lambda r: int(r["id"]))
 
@@ -957,12 +969,13 @@ def _gate_run(
     bounds: Mapping[str, int],
     own: bool = False,
     superseded: bool = False,
+    queue: bool = False,
 ) -> list[tuple[str, str | None]]:
-    """Why one gate run on the head is not green on every attempt, each with why it is
-    flake-class ("" for the change's own, None for a reason that waits): the gate's jobs, each one
-    ``success`` on every attempt; no other job red; and an attempt that ran no job (a run GitHub
-    could not start, which posts no check run) red. A cancelled job that ran for its whole bound
-    (*bounds*, main's) timed out, the change's own.
+    """Why one gate run on the head (with *queue*, on a queue commit) is not green on every
+    attempt, each with why it is flake-class ("" for the change's own, None for a reason that
+    waits): the gate's jobs, each one ``success`` on every attempt; no other job red; and an
+    attempt that ran no job (a run GitHub could not start, which posts no check run) red. A
+    cancelled job that ran for its whole bound (*bounds*, main's) timed out, the change's own.
 
     A *superseded* run is an older one a newer run on the head cancelled. Only what that cancel
     did is set aside: its last attempt's cancelled jobs, the jobs that attempt never got to and
@@ -972,8 +985,11 @@ def _gate_run(
     it concluded is set aside whatever it was doing, so on that path the newer run on the head is
     what must pass."""
     run_id, url = int(run["id"]), str(run.get("html_url") or run["id"])
+    waiting, whose = (
+        (WAITING_QUEUE_GATE, "the queue commit's") if queue else (WAITING_GATE, "the head's")
+    )
     if run.get("status") != "completed":
-        wait = f"{WAITING_GATE}{gate.what} ({gate.file}) is {run.get('status')!r}, not finished"
+        wait = f"{waiting}{gate.what} ({gate.file}) is {run.get('status')!r}, not finished"
         return [(f"{wait}: run {url}", None)]
     attempts = _int(run.get("run_attempt"))
     if attempts is None or attempts < 1:
@@ -981,7 +997,7 @@ def _gate_run(
     reds: list[tuple[str, str | None]] = []
 
     def red(text: str, why: str = "") -> None:
-        reds.append((f"the head's {gate.what} ({gate.file}) is red: {text} (run {url})", why))
+        reds.append((f"{whose} {gate.what} ({gate.file}) is red: {text} (run {url})", why))
 
     for attempt in range(1, attempts + 1):
         cancelled_here = superseded and attempt == attempts
@@ -1095,6 +1111,88 @@ def gate_reading(
         if all(why for _, why in reds):
             outside += [(reason, str(why)) for reason, why in reds]
     return Gates(reasons, outside, passed, lines)
+
+
+def starts_on_queue(tree: trust.Tree, gate: workflows.Gate, whose: str) -> bool:
+    """Whether *tree*'s copy of the gate's workflow starts a run on ``merge_group``, the queue
+    commit's event: unread when the tree has no such workflow or it is not YAML."""
+    entry = tree.blobs.get(gate.path)
+    if entry is None:
+        raise Unread(f"{whose} has no {gate.path}, which tools/ci's GATES names")
+    import yaml
+
+    try:
+        doc = yaml.safe_load(tree.read(entry))
+    except yaml.YAMLError as exc:
+        raise Unread(f"{whose} {gate.file} is not YAML: {exc}") from exc
+    return QUEUE_EVENT in workflows.triggers(doc)
+
+
+def queue_gate_reading(
+    get: Get,
+    repo: str,
+    sha: str,
+    main_tree: trust.Tree,
+    queue_tree: trust.Tree,
+) -> Gates:
+    """A queue commit's gates (the module's "A queue commit" rules, "Its gates"). A gate's
+    ``merge_group`` trigger takes no filter, so every gate runs on every queue commit: each gate's
+    ``merge_group`` runs on *sha* are read, one listing a gate, and there must be one, every one
+    passing on every attempt as a head's must (:func:`_gate_run`). Main's copy (*main_tree*'s) must
+    start on ``merge_group``, or no queue commit is held to the gate: unread. With no run listed,
+    a queue commit whose own copy starts none is red, and one whose copy does waits for its run.
+    No red here is flake-class, not even one at a step that fetches only outside inputs: a queue
+    commit's red excuses nothing."""
+    reasons: list[str] = []
+    passed: dict[str, str] = {}
+    lines: list[str] = []
+    for gate in workflows.GATES:
+        _, bounds = gate_filter(main_tree, gate)
+        if not starts_on_queue(main_tree, gate, "main"):
+            raise Unread(
+                f"main's {gate.file} starts no run on {QUEUE_EVENT}, so no queue commit is held"
+                f" to its {gate.what}"
+            )
+        runs = gate_runs(get, repo, sha, gate, QUEUE_EVENT)
+        if not runs:
+            if starts_on_queue(queue_tree, gate, "the queue commit"):
+                reasons.append(
+                    f"{WAITING_QUEUE_GATE}{gate.what} ({gate.file}) has no {QUEUE_EVENT} run"
+                    " listed yet"
+                )
+            else:
+                reasons.append(
+                    f"the queue commit's own {gate.file} starts no run on {QUEUE_EVENT}, so its"
+                    f" {gate.what} never runs on the tree main would reach"
+                )
+            continue
+        newest = int(runs[-1]["id"])
+        superseded = {
+            int(r["id"])
+            for r in runs
+            if r.get("conclusion") == "cancelled" and int(r["id"]) != newest
+        }
+        reds = [
+            red
+            for run in runs
+            for red in _gate_run(
+                get,
+                repo,
+                gate,
+                run,
+                bounds=bounds,
+                superseded=int(run["id"]) in superseded,
+                queue=True,
+            )
+        ]
+        if reds:
+            reasons += [reason for reason, _ in reds]
+            continue
+        kept = [r for r in runs if int(r["id"]) not in superseded]
+        urls = ", ".join(str(r.get("html_url") or r["id"]) for r in kept)
+        passed[gate.file] = urls
+        lines.append(f"its {gate.what} ({gate.file}) passed on every attempt: run {urls}")
+    return Gates(reasons, [], passed, lines)
 
 
 def _all_pages(get: Get, path: str) -> list[Mapping[str, Any]]:
@@ -1652,11 +1750,13 @@ def judge(
     if owner == repo and run.get("path") in GATED:
         head = run.get("head_sha")
         if (
-            run.get("event") != "pull_request"
+            run.get("event") not in ("pull_request", QUEUE_EVENT)
             or run.get("status") != "completed"
             or not isinstance(head, str)
         ):
-            return Outcome(why=f"run {run_id} is not a completed pull request run of a gate")
+            return Outcome(
+                why=f"run {run_id} is not a completed pull request or queue commit run of a gate"
+            )
         if not _SHA.fullmatch(head):
             raise Unread(f"run {run_id} of {run.get('path')} names no head")
         return rejudge(get, repo, head, controller_revision, queue)
@@ -2624,6 +2724,8 @@ def decide_queue(
         changed = [] if comparison.trusted else [c.path for c in comparison.changes]
         failing, labels, _, _ = results_reasons(get, repo, run)
         reasons += failing
+        gates = queue_gate_reading(get, repo, sha, base_tree, queue_tree)
+        reasons += gates.reasons
         if changed:
             contract = contract_run(get, repo, sha, base)
             if contract is not None and contract.status == "completed":
@@ -2662,6 +2764,7 @@ def decide_queue(
     toolchain = {
         "runner": ",".join(labels) or "unnamed",
         "definitions": base,
+        **gates.passed,
         "queue_pull_request": str(entry.number),
         "queue_pull_request_head": entry.pr_head,
         "queue_built_on": built_on,
@@ -2693,6 +2796,7 @@ def decide_queue(
             "- its change is its pull request's own, file by file and line by line",
             f"- its pull request's head `{entry.pr_head}` has a green merge verdict, which holds"
             " its dependency review, its sign-off check and CodeQL",
+            *[f"- {line}, on the tree main would reach" for line in gates.lines],
             *ran,
             f"- {len(records)} job records, their digests in the receipt below",
             *(

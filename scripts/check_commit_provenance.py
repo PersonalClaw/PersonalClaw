@@ -20,11 +20,12 @@ The rules:
    own range: those commits would land unchecked. The pull request's check is where the marker
    is stopped; on ``main`` a marker in a commit before the head is refused as well.
 
-Rule 4, which binds a pushed commit to the tree its merge verdict verified, is not here: it needs
-the record the trusted merge controller writes, and that record does not exist yet. Until it
-does, nothing here can tell a squash merge from another commit GitHub writes:
-``GitHub <noreply@github.com>`` is also the committer of a commit made in the web editor and of
-a revert made from a pull request's page, and rule 2 passes all three.
+Rule 4, which binds a pushed commit to the tree its merge verdict verified, is not here: it reads
+the merge controller's check run over the API, which this file never does, so it is
+``python -m tools.ci verify-landed`` (``tools/ci/landed.py``), run by ``verified-tree.yml`` on the
+same pushes. ``GitHub <noreply@github.com>`` is also the committer of a commit made in the web
+editor and of a revert made from a pull request's page, and rule 2 passes all three; rule 4 is
+what tells a squash merge from them.
 
 Two modes, one per place the check runs:
 
