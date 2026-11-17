@@ -21,6 +21,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **A document an agent makes from HTML has its credentials masked in what it holds, not only in the markup it was made from.**
+- **A reload no longer has the gateway read its whole settings file once for every asset and read it answers. The public address every response's security header names is read again only when the settings file changes, so a page's many requests no longer each hold the gateway for a settings read.**
 
 ## [0.3.9] — 2026-11-16
 

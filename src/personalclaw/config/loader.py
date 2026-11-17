@@ -3811,6 +3811,12 @@ def _clear_config_discard() -> None:
     _LAST_CONFIG_DISCARD = None
 
 
+def _read_from(cfg: "AppConfig", path: Path, text: str | None) -> "AppConfig":
+    """Record on *cfg* the file it was read from and the text read there (``None``: no file)."""
+    cfg._read_as = (str(path), text)
+    return cfg
+
+
 @dataclass
 class AppConfig:
     agent: AgentConfig = field(
@@ -4055,6 +4061,11 @@ class AppConfig:
         # what changed since then; `None` — built in memory, or a discarded read — states the
         # whole model. Not a dataclass field: it is how this object was read, not configuration.
         self._as_loaded: str | None = None
+        # The file this config was read from and the text read there (`None`: there was no
+        # file), so a reader that keeps a read can key it on exactly what it was built from
+        # (`dashboard/exposure._cfg`). `None` here, built in memory or a discarded read, is a
+        # read nobody may keep.
+        self._read_as: tuple[str, str | None] | None = None
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -4144,7 +4155,7 @@ class AppConfig:
         path = config_path()
         if not path.exists():
             _clear_config_discard()
-            return cls._loaded(cls._defaults()), False
+            return _read_from(cls._loaded(cls._defaults()), path, None), False
 
         try:
             raw = path.read_text(encoding="utf-8")
@@ -4163,7 +4174,7 @@ class AppConfig:
             # and it is reachable on a FIRST RUN. Resolving it restrictively would make a new
             # install ask permission for every read before the user had expressed a preference.
             _clear_config_discard()
-            return cls._loaded(cls._defaults()), False
+            return _read_from(cls._loaded(cls._defaults()), path, raw), False
 
         try:
             data = json.loads(raw)
@@ -5316,7 +5327,7 @@ class AppConfig:
         #
         # The starting point `save()` diffs against is taken BEFORE migrating, so a save persists
         # the migration as a change like any other rather than treating it as already on disk.
-        cls._loaded(cfg)
+        _read_from(cls._loaded(cfg), path, raw)
         try:
             from personalclaw.config.migrations import apply_config_migrations
 

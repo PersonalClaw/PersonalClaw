@@ -37,10 +37,57 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 
-def _cfg() -> Any:
-    from personalclaw.config.loader import AppConfig
+#: The last read :func:`_cfg` kept: the key it was made under and the config it read.
+_last_read: tuple[tuple[object, ...], Any] | None = None
+#: :func:`_text_of`'s answer for a file that is there and cannot be read. It matches no kept read,
+#: an absent file's included, and a load of such a file is a discarded read, which is never kept.
+_UNREADABLE = object()
 
-    return AppConfig.load()
+
+def _cfg() -> Any:
+    """The config, read again only once ``config.json`` holds something new.
+
+    Every dashboard response's CSP header asks for the public host (``server._ws_csp_sources``),
+    on the event loop, and each origin check asks for the public URL and the trusted proxies. A
+    full ``AppConfig.load()`` parses, migrates and rebuilds the whole config, 0.5 to 0.9 ms a call,
+    so a cold reload's 217 assets and 21 reads ran 238 of them one after another on the loop. The
+    readers here only read fields and never change or save what they get, so they share one read
+    while the file is unchanged.
+
+    A read is kept under the text the load itself was built from (``AppConfig._read_as``), never
+    the text read before it: a write and its undo landing while a load runs (a change rolled back)
+    would otherwise keep the undone config under the restored text. It is matched on the file's
+    text, never its stat: Linux stamps a write's time coarsely, so two writes of the same size
+    inside one tick share a stat. The key holds the resolved path too, since the home is resolved
+    again on every call, and the loader itself, so a test that patches ``AppConfig.load`` is never
+    served a read made before the patch. A config that does not say what it was read from (a
+    discarded read, or one a patched loader built) is answered and never kept.
+    """
+    global _last_read
+    from personalclaw.config.loader import AppConfig, config_path
+
+    path = config_path()
+    loader = AppConfig.__dict__.get("load")
+    text = _text_of(path)
+    last = _last_read
+    if last is not None and last[0] == (str(path), text, loader):
+        return last[1]
+    cfg = AppConfig.load()
+    read_as = getattr(cfg, "_read_as", None)
+    if isinstance(read_as, tuple):
+        _last_read = ((*read_as, loader), cfg)
+    return cfg
+
+
+def _text_of(path: Any) -> object:
+    """``config.json``'s text as a load reads it, ``None`` when there is none, or
+    :data:`_UNREADABLE` when it is there and cannot be read."""
+    try:
+        return str(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError):
+        return _UNREADABLE
 
 
 def public_url(cfg: Any | None = None) -> str:
