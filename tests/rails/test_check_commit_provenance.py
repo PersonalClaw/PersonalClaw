@@ -928,14 +928,18 @@ class Pushes:
         self.git("commit", "-q", "--allow-empty", "-m", message)
         return self.git("rev-parse", "HEAD")
 
-    def push(self, before: str, after: str, tmp: Path) -> subprocess.CompletedProcess[str]:
+    def push(
+        self, before: str, after: str, tmp: Path, bin_dir: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         run, _env = _provenance_run()
         (tmp / "runner").mkdir(exist_ok=True)
+        path = self.env["PATH"] if bin_dir is None else f"{bin_dir}{os.pathsep}{self.env['PATH']}"
         return subprocess.run(
             ["bash", "-c", run],
             cwd=self.root,
             env={
                 **self.env,
+                "PATH": path,
                 "BEFORE": before,
                 "GITHUB_SHA": after,
                 "RUNNER_TEMP": str(tmp / "runner"),
@@ -1022,3 +1026,39 @@ def test_a_previous_commit_that_lost_the_check_refuses_the_push(tmp_path: Path) 
     done = pushes.push(before, after, tmp_path)
     assert done.returncode == 2, done.stdout + done.stderr
     assert "ran:" not in done.stdout
+
+
+def _a_git_whose_log_fails(bin_dir: Path) -> None:
+    """A ``git`` that hands every command but ``log`` to the real one, and fails ``log`` the way
+    a git that cannot read the history does."""
+    real = shutil.which("git")
+    assert real, "no git on PATH"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    shim = bin_dir / "git"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "log" ]; then echo "fatal: a stand-in failure" >&2; exit 128; fi\n'
+        f'exec "{real}" "$@"\n',
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+
+
+@pytest.mark.parametrize("lost", [True, False], ids=["lost-the-check", "never-had-it"])
+def test_a_history_git_cannot_read_refuses_the_push(tmp_path: Path, lost: bool) -> None:
+    """Which copy runs turns on the previous main commit's history of the check. A git that
+    cannot read that history has not found it empty: the job stops with 2, and no copy runs."""
+    pushes = Pushes(tmp_path / "main")
+    if lost:
+        pushes.commit({_CHECK: _stand_in("old", 0), "MAINTAINERS": "m"})
+        before = pushes.commit({_CHECK: None})
+    else:
+        before = pushes.commit({"README": "x"})
+    after = pushes.commit({_CHECK: _stand_in("pushed", 0), "MAINTAINERS": "pushed-list"})
+    _a_git_whose_log_fails(tmp_path / "bin")
+    done = pushes.push(before, after, tmp_path, bin_dir=tmp_path / "bin")
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "ran:" not in done.stdout
+    assert "history of the check could not be read" in done.stdout + done.stderr
+    summary = tmp_path / "summary.md"
+    assert not summary.exists() or "never had" not in summary.read_text(encoding="utf-8")

@@ -24,8 +24,9 @@
 # the script never having existed in BEFORE's history, and only then does the job run the pushed
 # copy, saying so in the summary. A BEFORE that once had the script and has lost it is refused:
 # deleting the check must not open a push that judges itself. A BEFORE the checkout cannot
-# resolve (all zeros, or an old tip a forced update orphaned) is refused first, so a git failure
-# is never read as "never had the check".
+# resolve (all zeros, or an old tip a forced update orphaned) is refused first, and BEFORE's
+# history of the check is read on its own and the job stops if git cannot read it, so a git
+# failure is never read as "never had the check".
 name: Provenance
 
 on:
@@ -71,12 +72,20 @@ jobs:
               "so there is no copy of the check to judge this push with"
             exit 2
           fi
+          # Read before the test below, and stopped on: inside it, a git log that failed would
+          # read as an empty history, and the push would be judged by its own copy.
+          if ! check_history="$(git log --format=%H "$BEFORE" \
+            -- scripts/check_commit_provenance.py)"; then
+            echo "::error::the previous main commit's ($BEFORE) history of the check could not be" \
+              "read, so this push cannot be told from the one that adds the check"
+            exit 2
+          fi
           if git cat-file -e "$BEFORE:scripts/check_commit_provenance.py" 2>/dev/null; then
             git show "$BEFORE:scripts/check_commit_provenance.py" > "$check"
             git show "$BEFORE:MAINTAINERS" > "$maintainers"
             echo "checked with the previous main commit's ($BEFORE) check and MAINTAINERS" \
               | tee -a "$GITHUB_STEP_SUMMARY"
-          elif [ -z "$(git log --format=%H "$BEFORE" -- scripts/check_commit_provenance.py)" ]; then
+          elif [ -z "$check_history" ]; then
             git show "$GITHUB_SHA:scripts/check_commit_provenance.py" > "$check"
             git show "$GITHUB_SHA:MAINTAINERS" > "$maintainers"
             echo "the previous main commit ($BEFORE) never had the check, so this push, which" \
