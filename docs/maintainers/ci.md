@@ -543,8 +543,12 @@ verdict says all it must fix:
   request that planted one `js/code-injection` showed exactly that alert there and not on
   `main`, with all three analyses green. The `CodeQL` summary check is never read for its
   conclusion: GitHub computes it when the first language's analysis uploads, so it reads
-  `neutral` on most pull requests. A red with a reason that waits on CodeQL (not run, still running,
-  still processing), on its contract run or on a gate's run is marked waiting in its output,
+  `neutral` on most pull requests. An analysis code scanning lists with an `error` is final: a
+  default-setup CodeQL run cannot be re-run, so a language whose only analyses of the head errored
+  is a red that waits on nothing, named once no other language still processes, and it is
+  flake-class (a new head is a new analysis), so the lane's tooling retries it by itself. A red
+  with a reason that waits on CodeQL (not run, still running, still processing), on its contract
+  run or on a gate's run is marked waiting in its output,
   whatever its other reasons, and such heads are judged again until nothing waits, so a red never
   says it waits on something that has finished: a head red for another reason gets its final
   reasons, the contract's result among them, and its contract branch is deleted. The mark goes with

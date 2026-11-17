@@ -114,7 +114,11 @@ trusted-run branch the old path left).
    waiting red (on its schedule, and a few heads on every other run), posting only what changed;
    and when GitHub's CodeQL workflow or its summary check completes. The workflow's wake fires
    (proved on main), but at the run's completion, which can come before its last upload is
-   processed, so the sweep stays for that gap.
+   processed, so the sweep stays for that gap. An analysis that errored is final, no processing
+   that ends: a default-setup run cannot be re-run, so a language whose only analyses of the head
+   errored is a red that waits on nothing, named once no other language still processes. A new
+   head is a new analysis, so that red is flake-class (:func:`flake_class`, as a gate's red at a
+   step that fetches only outside inputs is).
 7. A green carries the receipt ``verify-check-run`` reads (``merge_verdict.render_output``):
    this controller's commit on ``main``, the head and its tree, the runner and the definitions
    commit (``main``'s tip, or the head for a head that changes them, with the contract run that
@@ -195,7 +199,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -230,6 +234,8 @@ CODEQL_WORKFLOW = "dynamic/github-code-scanning/codeql"
 CODEQL_ANALYSIS = "dynamic/github-code-scanning/codeql:analyze"
 #: The App that posts the ``CodeQL`` summary check, whose completion wakes the poster.
 CODEQL_APP_ID = 57789
+#: How much of an errored analysis's ``error`` a reason quotes.
+_CODEQL_ERROR_CHARS = 120
 _CODEQL_CHECK = "CodeQL"
 _PULL_HEAD = re.compile(r"refs/pull/(?P<number>[1-9][0-9]*)/head")
 #: main's CI contract over a head's definitions (#4584 step 4): its workflow, by path.
@@ -1239,10 +1245,13 @@ class Moved:
 
 @dataclass(frozen=True)
 class CodeQL:
-    """What CodeQL's analysis of the head says: why it does not pass, and the alerts that moved."""
+    """What CodeQL's analysis of the head says: why it does not pass, and the alerts that moved;
+    of the reasons, each that is flake-class, with why (a language whose only analyses of the
+    head errored on GitHub's side, which a new head analyses again)."""
 
     reasons: list[str]
     moved: list[Moved]
+    outside: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _whole_lines(text: str, start: int, end: int) -> str | None:
@@ -1506,21 +1515,45 @@ def codeql_reading(get: Get, repo: str, head: str, base: str) -> CodeQL:
     processed = _read(get, f"/repos/{repo}/code-scanning/analyses?ref={ref}&per_page=100")
     if not isinstance(processed, list):
         raise Unread(f"the analyses of {ref} are not a list")
-    ready = {
-        str(a.get("category", "")).removeprefix("/language:")
+    ours = [
+        a
         for a in processed
         if isinstance(a, Mapping)
         and a.get("analysis_key") == CODEQL_ANALYSIS
         and a.get("commit_sha") == head
-        and not a.get("error")
+    ]
+    ready = {
+        str(a.get("category", "")).removeprefix("/language:") for a in ours if not a.get("error")
     }
+    # An analysis that errored is final: it is no processing that ends, and a default-setup run
+    # cannot be re-run (the API answers "This workflow run cannot be retried"), so a language
+    # whose only analyses of the head errored is a red that waits on nothing. A new head is a new
+    # analysis, so it is flake-class: the lane's tooling retries it with a new head by itself.
+    errors: dict[str, str] = {}
+    for a in ours:
+        lang = str(a.get("category", "")).removeprefix("/language:")
+        if a.get("error") and lang not in ready:
+            errors.setdefault(lang, str(a.get("error"))[:_CODEQL_ERROR_CHARS])
+    errored = [
+        (
+            f"CodeQL's {lang} analysis of the head errored ({errors[lang]!r}), and its run cannot"
+            " be re-run: a new head is a new analysis",
+            f"CodeQL's {lang} analysis errored on GitHub's side ({errors[lang]!r})",
+        )
+        for lang in languages
+        if lang in errors
+    ]
     waiting = [
         f"{WAITING}CodeQL's {lang} results are still processing"
         for lang in languages
-        if lang not in ready
+        if lang not in ready and lang not in errors
     ]
+    # While another language still processes, the head's CodeQL waits: the errored ones are
+    # named once nothing else of it waits, so that red is one to retry, not a waiting one.
     if waiting:
         return CodeQL(waiting, [])
+    if errored:
+        return CodeQL([reason for reason, _ in errored], [], errored)
     alerts = "/repos/{repo}/code-scanning/alerts?state=open&ref={ref}"
     pull_alerts = _all_pages(get, alerts.format(repo=repo, ref=ref))
     main_alerts = _all_pages(get, alerts.format(repo=repo, ref="refs/heads/main"))
@@ -1996,6 +2029,7 @@ def decide(
     reasons: list[str] = []
     moved: list[Moved] = []
     gates = Gates([], [], {}, [])
+    codeql = CodeQL([], [])
     # The jobs no runner took, when they alone were why the first attempts' results were red,
     # and the last attempt they excused (rule 4).
     untaken: list[str] = []
@@ -2077,7 +2111,8 @@ def decide(
         )
         reasons.append(f"{WAITING_CONTRACT}{running}")
     if reasons:
-        retried = _retry_note(get, repo, run, tree_oid, failing, reasons, queue, gates.outside)
+        outside = [*gates.outside, *codeql.outside]
+        retried = _retry_note(get, repo, run, tree_oid, failing, reasons, queue, outside)
         return Outcome(
             posting=_red(run, reasons, head, moved, retried),
             dispatch=start,
