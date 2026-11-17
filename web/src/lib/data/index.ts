@@ -19,6 +19,8 @@ export { useMutation, type MutationSpec, type MutationResult } from './useMutati
 export {
   invalidateKeys,
   invalidateSpecs,
+  forgetKeys,
+  fetchKey,
   peekQuery,
   peekEntry,
   writeQuery,

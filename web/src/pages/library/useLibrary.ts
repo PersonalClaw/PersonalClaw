@@ -74,13 +74,29 @@ export function isNarrowed(query: Record<string, string>): boolean {
   return !!query.q?.trim() || FILTER_KEYS.some((k) => !!query[k])
 }
 
+/** The Library's side reads, as its page makes them: shared with the boot prefetch
+ *  (`app/routePrefetch.ts`), so a reload's early read under each key is the page's own read. */
+export const readLibraryProjects = () => api.projects()
+export const readLibraryCollections = () => api.knowledgeCollections()
+export const readLibraryStats = () => api.knowledgeStats()
+/** The list's read for *params*, as `useLibrary` makes it. */
+export const readLibrary = (params: LibraryParams) => api.library(params)
+
+/** Where this device keeps the Library's sort. */
+export const LIBRARY_SORT_KEY = 'library:sort'
+
+/** The sort kept on this device, '' for none (or no storage). */
+export function storedLibrarySort(): string {
+  try { return localStorage.getItem(LIBRARY_SORT_KEY) ?? '' } catch { return '' }
+}
+
 /** The cache key a read of `params` is kept under. */
 export const libraryKey = (params: LibraryParams) => `knowledge:library:${JSON.stringify(params)}`
 
 /** The library's read for the address: every row the filter keeps, cache-first. */
 export function useLibrary(params: LibraryParams) {
   const key = libraryKey(params)
-  const fetcher = useCallback(() => api.library(params), [key]) // eslint-disable-line react-hooks/exhaustive-deps
+  const fetcher = useCallback(() => readLibrary(params), [key]) // eslint-disable-line react-hooks/exhaustive-deps
   return useQuery<LibraryResponse>(key, fetcher)
 }
 

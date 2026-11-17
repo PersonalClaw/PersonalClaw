@@ -23,6 +23,7 @@ import { peekOnboardingExit, clearOnboardingExit, setOnboardingExit } from './on
 import { opensDuringSetup } from './onboarding/openDuringSetup'
 import { onSetupRerun } from './onboarding/rerun'
 import { ProductTour } from './onboarding/ProductTour'
+import { forgetRoutePrefetch, startRoutePrefetch } from './routePrefetch'
 import { useHashRoute } from './useHashRoute'
 import { BuddyRoutePage } from '../pages/buddy/buddyRoute'
 import { chatLaunchPath, linkStatePatch, readChatLaunch, showsNewThread, withLinkState } from './linkState'
@@ -304,6 +305,11 @@ function AppInner() {
   // can voice it, not just the notifications page. A no-op where service workers are unavailable.
   useEffect(() => installPushCuePlayback(), [])
   const { onboarded, status: identityStatus, error: identityError, retry: retryIdentity } = useIdentity()
+  // While identity is read, the route's code and first reads start too, so the page joins them
+  // instead of waiting for identity to send them; a failed read of who you are forgets them
+  // (`routePrefetch.ts`). Nothing renders early: the fallback below stays until identity answers.
+  useEffect(() => { if (identityStatus === 'loading') startRoutePrefetch() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (identityStatus === 'failed') forgetRoutePrefetch() }, [identityStatus])
   const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) === '1')
   useEffect(() => { localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? '1' : '0') }, [navCollapsed])
   // Mobile: the rail defaults COLLAPSED and expands as an overlay DRAWER (it must not
