@@ -291,18 +291,26 @@ class HomeGateway:
         *,
         secret_header: str,
         work: str = "",
+        bearer: str = "",
         timeout: float = 5.0,
     ) -> tuple[int, dict[str, Any]]:
         """POST *body* to *path* with this home's local secret in *secret_header*:
         ``X-Local-Secret`` for a route that signs the owner in or out, ``X-Internal-Secret`` for
         one of the internal routes, which also needs the *work* the call does, sent as
-        ``X-Session-Key``.
+        ``X-Session-Key``. With *bearer* (a sign-in from :meth:`sign_in`), a signed-in route
+        that asks for the owner's presence takes the local secret as that presence.
 
         Returns the status and the answer, an error status included. Raises :class:`GatewayError`
         when the gateway could not be asked at all.
         """
         return self._send(
-            "POST", path, secret_header=secret_header, work=work, body=body, timeout=timeout
+            "POST",
+            path,
+            secret_header=secret_header,
+            work=work,
+            bearer=bearer,
+            body=body,
+            timeout=timeout,
         )
 
     def answers(self) -> bool:
@@ -344,11 +352,14 @@ class HomeGateway:
         secret_header: str,
         timeout: float,
         work: str = "",
+        bearer: str = "",
         body: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         headers = {secret_header: self._secret()}
         if work:
             headers["X-Session-Key"] = work
+        if bearer:
+            headers["Authorization"] = f"Bearer {bearer}"
         data = None
         if body is not None:
             data = json.dumps(body).encode("utf-8")

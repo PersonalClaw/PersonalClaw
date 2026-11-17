@@ -373,8 +373,21 @@ def _pair(args: argparse.Namespace) -> None:
     )
 
     provider = (getattr(args, "provider", "") or "").strip().lower()
+    scoped = getattr(args, "scope", None) is not None or getattr(args, "days", None) is not None
+    if provider and (scoped or getattr(args, "label", "") or getattr(args, "as_json", False)):
+        _usage_error(
+            "❌ A channel's code takes no --scope, --days, --label or --json: those are an "
+            "automation client's. Run personalclaw pair <provider>, or personalclaw pair --scope "
+            "<scopes>."
+        )
+    if not provider and getattr(args, "scope", None) is not None:
+        _pair_automation_client(args)
+        return
     if not provider:
-        _usage_error("❌ Usage: personalclaw pair <provider>   (e.g. telegram, discord, email)")
+        _usage_error(
+            "❌ Usage: personalclaw pair <provider>   (e.g. telegram, discord, email), "
+            "or personalclaw pair --scope <scopes> [--days N] for an automation client"
+        )
     code = create_pairing_code(provider)
     minutes = PAIRING_CODE_TTL_SECS // 60
     print(code)
@@ -389,6 +402,51 @@ def _pair(args: argparse.Namespace) -> None:
             "(Settings › Devices & Access › Sender trust).",
             file=sys.stderr,
         )
+
+
+def _pair_automation_client(args: argparse.Namespace) -> None:
+    """Make an automation client's pairing code: ``personalclaw pair --scope … [--days N]``.
+
+    Asked of this home's running gateway (``POST /api/devices/pair/start``), never minted here,
+    because the gateway is what refuses a scope it can't hold. The command signs in with the
+    home's local secret and sends that secret too, which is the owner's presence the route asks
+    for; the gateway is the one ``home_gateway.reach`` proved serves this home, so the secret
+    goes to no other. stdout is the code alone, so ``| pbcopy`` copies it; ``--json`` prints the
+    code, its link and what it holds. A refusal is the gateway's sentence, on stderr, exit 1.
+    """
+    from personalclaw.cli_run import RunError
+
+    scope = [name.strip() for name in str(args.scope or "").split(",") if name.strip()]
+    body: dict[str, Any] = {"scope": scope}
+    if args.days is not None:
+        body["days"] = args.days
+    if args.label:
+        body["label"] = args.label
+    try:
+        gateway = home_gateway.reach(getattr(args, "port", None))
+        token = mint_local_token(gateway, ttl="5m")
+        status, answer = gateway.post(
+            "/api/devices/pair/start", body, secret_header="X-Local-Secret", bearer=token
+        )
+    except (home_gateway.GatewayError, RunError) as exc:
+        _refuse(f"❌ {terminal_text(str(exc))}")
+    if status != 200 or not answer.get("code"):
+        _refuse(f"❌ {terminal_text(home_gateway.error_text(answer, status))}")
+    if args.as_json:
+        print_json({key: answer[key] for key in _PAIR_JSON_KEYS if key in answer})
+        return
+    print(answer["code"])
+    holds = ", ".join(answer.get("scope") or scope)
+    explain(
+        args,
+        f"An automation client's pairing code. Signed in with it, the client reaches only "
+        f"{holds}, for {answer.get('lifetime_days', '?')} days. Enter it on the client within "
+        f"{int(answer.get('expires_in') or 0) // 60} minutes. It works once.",
+    )
+
+
+#: What ``personalclaw pair --scope … --json`` prints of ``pair/start``'s answer.
+_PAIR_JSON_KEYS = ("code", "pairing_url", "expires_at", "expires_in", "scope", "lifetime_days")
 
 
 def _discover(args: argparse.Namespace) -> None:

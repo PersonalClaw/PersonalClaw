@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **An automation client, a script or a runner, can be paired into a sign-in that reaches only what its scope allows: `personalclaw pair --scope status,loops [--days N]` prints its one-time code, and the code redeems for a sign-in that reads the gateway's status and its loops and nothing else, for 1 to 90 days (30 unless given). Its socket hears only its loops' progress. It is signed out when it goes 14 days unused, and when what it sends no longer matches what was granted. It is never the owner, so it approves, answers and changes nothing. A scope is refused on a gateway where authentication is off or the local-network bypass is on, since nothing there would hold the sign-in to it.**
+
 ### Changed
 
 - **The status bar's system reading answers at once from the last one taken, and an aging reading is taken again in the background, so a reload no longer waits seconds for it on a busy machine.**
