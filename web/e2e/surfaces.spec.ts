@@ -360,6 +360,22 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
     // `MB/s` after one. The readings are held by `systemHealthLabels.test.tsx`.
     patch: (live) => ({ ...live, net_rx_kbs: 2048, net_tx_kbs: 512 }),
     why: "the network rate is the machine's traffic, sampled at a time the run does not decide",
+  }, {
+    url: /\/api\/resilience\/loop(\?.*)?$/,
+    // One fixed reading of how long the gateway keeps work waiting. Each figure is the runner's
+    // load, sampled every half second, so Diagnostics read `0 ms` on one visit and `1.2 s` on the
+    // next, a unit flipping with it. The section's figures and states are held by
+    // `src/pages/settings/diagnosticsSaysHowLongWorkWaits.test.tsx`.
+    json: {
+      sampling: true,
+      sampled_every_ms: 500,
+      running_for_s: 600,
+      loop_lag: { last_sample_s_ago: 0.3, now_ms: 1.2, p50_ms: 0.8, p95_ms: 4.5, max_1m_ms: 12, max_10m_ms: 48 },
+      pool_wait: { last_sample_s_ago: 0.3, now_ms: 0.1, p50_ms: 0.1, p95_ms: 0.4, max_1m_ms: 2, max_10m_ms: 9 },
+      pool: { workers: 8, started: 4, queued_now: 0, queued_max_1m: 0, queued_max_10m: 1 },
+      cpu_count: 4,
+    },
+    why: "how long the gateway keeps work waiting is the runner's load, sampled live",
   }],
 }
 

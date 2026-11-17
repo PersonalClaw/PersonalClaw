@@ -650,6 +650,23 @@ export interface DurabilityJobResult {
   duration_secs: number
   extra?: Record<string, unknown>
 }
+/** One measure over the last minute and the last ten, in milliseconds (`GET /api/resilience/loop`). */
+export interface WaitFigures {
+  /** Seconds since this measure's last sample, or `null` before its first. */
+  last_sample_s_ago: number | null
+  now_ms: number; p50_ms: number; p95_ms: number; max_1m_ms: number; max_10m_ms: number
+}
+/** How long the gateway kept work waiting: its event loop's lag and its default worker pool's wait. */
+export interface LoopGauge {
+  /** The gauge is measuring now. When it is not, its figures are an emptied window's zeros. */
+  sampling: boolean
+  sampled_every_ms: number
+  running_for_s: number
+  loop_lag: WaitFigures
+  pool_wait: WaitFigures
+  pool: { workers: number; started: number; queued_now: number; queued_max_1m: number; queued_max_10m: number }
+  cpu_count: number
+}
 export interface DegradedReport {
   surfaces: DegradedSurface[]
   degraded: string[]
@@ -8925,6 +8942,8 @@ export const api = {
     ),
   // ── No-model degraded mode ──
   degraded: () => get<DegradedReport>('/api/resilience/degraded'),
+  /** How long the gateway kept work waiting, the last minute and the last ten (Settings › Diagnostics). */
+  loopGauge: () => get<LoopGauge>('/api/resilience/loop'),
   // ── Scheduled backups ──
   durabilityStatus: () => get<DurabilityStatus>('/api/durability/status'),
   durabilityRun: (job: 'export' | 'snapshot' | 'drill') =>

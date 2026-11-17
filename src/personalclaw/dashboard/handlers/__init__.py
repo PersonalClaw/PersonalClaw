@@ -149,6 +149,7 @@ from personalclaw.dashboard.handlers.doctor import (  # noqa: E402, F401
     api_doctor_remediation_run,
     api_doctor_simulate_automation,
     api_doctor_simulate_surfacing,
+    register_resilience_routes,
 )
 
 # ── Durability: scheduled backups + retention (handlers/durability.py) ──

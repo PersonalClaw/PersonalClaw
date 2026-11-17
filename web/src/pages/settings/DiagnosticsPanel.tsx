@@ -7,6 +7,7 @@ import { WindowedList } from '../../ui/WindowedList'
 import { withWeight } from '../../design/fontWeight'
 import { api } from '../../lib/api'
 import { accentChip } from '../../design/accent'
+import { GatewayWaitSection } from './GatewayWaitSection'
 import { PanelHeader, Section } from './settingsUI'
 import { reportActionFailure } from '../../app/reportingWrite'
 import { openEventStream, type EventStreamLike } from '../../lib/eventStream'
@@ -108,8 +109,11 @@ export function DiagnosticsPanel() {
           one. The PanelHeader-as-h1 change gave every panel that USES it an h1; it could not reach a panel that never rendered one. */}
       <PanelHeader
         title="Diagnostics"
-        hint="A live tail of the gateway's own log, plus the backend log level. Nothing here changes your data — the level is the only setting it writes, and it persists across restarts."
+        hint="How long the gateway keeps work waiting, a live tail of its own log, and the backend log level. Nothing here changes your data — the level is the only setting it writes, and it persists across restarts."
       />
+
+      {/* ── How long the gateway keeps work waiting: why pages are slow to fill ── */}
+      <GatewayWaitSection />
 
       {/* ── Runtime log level ── */}
       {/* `Section` like the other 23 panels: this page and Design were the pair still rendering

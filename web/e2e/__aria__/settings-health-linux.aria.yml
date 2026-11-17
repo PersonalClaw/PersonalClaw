@@ -142,7 +142,31 @@
     - text: Nothing to do — no deficits measured.
   - region "Diagnostics":
     - heading "Diagnostics" [level=#]
-    - paragraph: A live tail of the gateway's own log, plus the backend log level. Nothing here changes your data — the level is the only setting it writes, and it persists across restarts.
+    - paragraph: How long the gateway keeps work waiting, a live tail of its own log, and the backend log level. Nothing here changes your data — the level is the only setting it writes, and it persists across restarts.
+    - heading "How long the gateway keeps work waiting" [level=#]
+    - paragraph: "When pages are slow to fill, this says why: work holding the gateway's loop, or work waiting for one of its worker threads. The last minute and the last ten."
+    - group "The gateway’s loop":
+      - paragraph: The gateway’s loop
+      - paragraph: How late it ran what it was asked to.
+      - term: Now
+      - definition: # ms
+      - term: Usually (#%)
+      - definition: # ms
+      - term: Worst, last minute
+      - definition: # ms
+      - term: Worst, last # minutes
+      - definition: # ms
+    - group "Waiting for a worker":
+      - paragraph: Waiting for a worker
+      - paragraph: # worker threads; # waiting now, # at most in the last minute.
+      - term: Now
+      - definition: # ms
+      - term: Usually (#%)
+      - definition: # ms
+      - term: Worst, last minute
+      - definition: # ms
+      - term: Worst, last # minutes
+      - definition: # ms
     - heading "Backend log level" [level=#]
     - paragraph: Change how verbose the gateway logs are, live. Persists across restarts.
     - 'button "Backend log level: DEBUG"': DEBUG

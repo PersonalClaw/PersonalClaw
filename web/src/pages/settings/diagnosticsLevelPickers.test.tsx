@@ -34,6 +34,8 @@ vi.mock('../../lib/api', () => ({
     logLevel: (...a: unknown[]) => logLevel(...a),
     setLogLevel: (...a: unknown[]) => setLogLevel(...a),
     logsUrl: (...a: unknown[]) => logsUrl(...a),
+    // The panel's wait section reads the gateway's gauge; it waits here, which this test never reads.
+    loopGauge: () => new Promise(() => {}),
   },
 }))
 

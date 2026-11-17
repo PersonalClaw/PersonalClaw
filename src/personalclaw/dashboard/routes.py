@@ -293,8 +293,8 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_get("/api/doctor/crash/{filename}", handlers.api_doctor_crash)
     app.router.add_get("/api/doctor/remediation", handlers.api_doctor_remediation)
     app.router.add_get("/api/doctor/{capability}", handlers.api_doctor_capability)
-    # No-model degraded-mode contract
-    app.router.add_get("/api/resilience/degraded", handlers.api_degraded)
+    # No-model degraded-mode contract, and how long the gateway keeps work waiting (Diagnostics)
+    handlers.register_resilience_routes(app)
     # Feedback Signal — 👍/👎 capture + per-producer accuracy
     from personalclaw.dashboard.handlers.feedback import register_feedback_routes
 
