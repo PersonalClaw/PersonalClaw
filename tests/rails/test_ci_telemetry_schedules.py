@@ -68,8 +68,17 @@ def test_the_collect_job_starts_no_runner_for_a_run_that_does_not_count() -> Non
     assert _normal(written[3:-2]) == _normal(telemetry.collect_condition())
 
 
+#: The branches the collector may follow: main alone, or main and the merge queue's refs for main,
+#: whose queue runs feed the shard planner and the flaky-tests job once the queue gates main. Both
+#: are allowed here so the change that widens the list can pass main's contract (ci.md: a change
+#: that alters a contract row lands in two merges, the row first); that change narrows the row
+#: to its own list again.
+COLLECTOR_BRANCHES = (["main"], ["main", "gh-readonly-queue/main/**"])
+
+
 def test_the_collector_follows_main_only() -> None:
-    assert _collector()[True]["workflow_run"]["branches"] == ["main"]
+    """Main, or main and the queue's refs for main: no other branch's run starts the workflow."""
+    assert _collector()[True]["workflow_run"]["branches"] in COLLECTOR_BRANCHES
 
 
 def _step(job: str, uses: str) -> dict:
