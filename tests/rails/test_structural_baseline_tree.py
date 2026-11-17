@@ -11,8 +11,11 @@ to, and its own tests prove each check works on trees they plant.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 
 import pytest
+from rails_repo import REPO
 
 from scripts import generate_structural_baseline as gen
 
@@ -80,3 +83,28 @@ def test_a_ratchet_that_inspects_zero_files_fires_vacuity_even_when_the_census_i
     # The size ratchet needs no parse, so it is correctly still healthy — the vacuity checks
     # are per-ratchet, not one shared flag.
     assert gen.vacuity_failures(gen.RATCHET_SIZE) == []
+
+
+def _releases(text: str) -> list[dict]:
+    block = json.loads(text).get(gen.RATCHET_IMPORT_CYCLE) or {}
+    return list(block.get("releases") or [])
+
+
+def test_each_release_record_is_kept_as_the_base_has_it():
+    """🔴 Red before this: the committed baseline kept no release record. The records are the
+    size each release had, so a record the base has is never changed or removed here, and only
+    one is added: the record of this tree's own release, by its bump. Each release has one record.
+    With no base (``BASE_SHA``, as the rails job's ``base`` step fetches it), only this tree's own
+    records are read (``gen.release_record_problems``)."""
+    current = _releases(gen.baseline_path().read_text(encoding="utf-8"))
+    base = os.environ.get("BASE_SHA", "")
+    before = None
+    if base:
+        shown = subprocess.run(
+            ["git", "-C", str(REPO), "show", f"{base}:structural-baseline.json"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        before = _releases(shown.stdout) if shown.returncode == 0 else []
+    assert gen.release_record_problems(current, before, gen.release_of()) == []

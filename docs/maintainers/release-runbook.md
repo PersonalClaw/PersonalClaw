@@ -134,13 +134,14 @@ The same test also requires `package-lock.json`'s record of the desktop workspac
 check it. From the repo root, `npm install --package-lock-only --ignore-scripts` moves
 exactly that line.
 
-**Three more files move on every bump, and this gate reads none of them:**
+**Four more files move on every bump, and this gate reads none of them:**
 
 | File | What moves | What fails without it |
 |---|---|---|
 | `uv.lock` | the `personalclaw` package's own `version` | every `uv sync --locked` and `uv export --locked`: all of CI, the gateway image, both desktop jobs and the wheel's SBOM (step 2) |
 | `deploy/website/install.sh` | `PC_MIN_VERSION`, the installer's floor, becomes the **previous** release | `tests/test_website_installer.py` |
 | `deploy/website/install.sh.sha256` | the installer's digest: `cd deploy/website && shasum -a 256 install.sh > install.sh.sha256` | `tests/test_website_installer.py`, then the website's served-installer check once the website pins the release ([the cross-repo obligation](#the-cross-repo-obligation)) |
+| `structural-baseline.json` | the import cycle's record for the release, its size at the bump: `python scripts/generate_structural_baseline.py` | `tests/rails/test_structural_baseline_tree.py`. A release whose biggest import cycle holds more units than the release before is red in the `structural-import-cycle` gate (`scripts/gate_report.py`): cut the cycle's edges before the release, never regenerate to bless it |
 
 `src/personalclaw/sdk/signatures.json` does not move: it records
 `personalclaw.sdk.channel.__version__` as a string, not as a release's value. If

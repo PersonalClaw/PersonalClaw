@@ -789,6 +789,102 @@ def test_a_new_unit_made_inside_the_cycle_stays_green(tmp_path):
     assert gen.stale_high(gen.RATCHET_IMPORT_CYCLE, *inventories) == []
 
 
+def _released(root: Path, version: str, records: list[dict] | None = None) -> None:
+    """*root* is release *version* (its ``pyproject.toml``), with *records* as the committed
+    baseline's cycle release records (no committed baseline when ``None``)."""
+    (root / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n', encoding="utf-8")
+    if records is not None:
+        committed = {gen.RATCHET_IMPORT_CYCLE: {"releases": records}}
+        (root / "structural-baseline.json").write_text(json.dumps(committed), encoding="utf-8")
+
+
+def test_a_release_with_no_record_gets_one_with_its_cycles_size(tmp_path):
+    """🔴 Red before this: the cycle's size was printed and never kept. A render of a release
+    that has no record now adds one, with the size the tree has: the bump that sets the version
+    records it."""
+    _write_tree(tmp_path, _CYCLE_TREE)
+    _released(tmp_path, "0.4.0")
+    block = _cycle(tmp_path)
+    assert block["releases"] == [{"release": "0.4.0", "units": 2, "startup_units": 2}]
+    assert "release 0.4.0 recorded 2" in gen.cycle_information(block)
+
+
+def test_a_release_record_is_carried_as_it_is_while_the_cycle_changes(tmp_path):
+    """Between releases the size moves with ordinary features, and the record holds the size the
+    release had: it is carried as it is, and nothing asks for a regeneration or reds."""
+    src = _write_tree(tmp_path, _CYCLE_TREE)
+    recorded = [{"release": "0.4.0", "units": 2, "startup_units": 2}]
+    _released(tmp_path, "0.4.0", recorded)
+    (src / "feature.py").write_text("from personalclaw import hub_a\n", encoding="utf-8")
+    (src / "hub_b.py").write_text("from personalclaw import hub_a, feature\n", encoding="utf-8")
+    block = _cycle(tmp_path)
+    assert block["_live"]["units"] == 3 and block["releases"] == recorded
+    assert gen.regressions_import_cycle(block, block) == []
+
+
+def test_a_release_whose_cycle_grew_past_the_release_before_reds(tmp_path):
+    """🔴 Red before this: a release could hold a bigger cycle than the last one and nothing said
+    so. The bump's record now holds more units than the release before it, and that is the red,
+    naming both releases and both sizes."""
+    src = _write_tree(tmp_path, _CYCLE_TREE)
+    (src / "feature.py").write_text("from personalclaw import hub_a\n", encoding="utf-8")
+    (src / "hub_b.py").write_text("from personalclaw import hub_a, feature\n", encoding="utf-8")
+    _released(tmp_path, "0.4.1", [{"release": "0.4.0", "units": 2, "startup_units": 2}])
+    block = _cycle(tmp_path)
+    assert block["releases"][-1] == {"release": "0.4.1", "units": 3, "startup_units": 3}
+    (failure,) = gen.regressions_import_cycle(block, block)
+    assert failure.startswith("release 0.4.1: the biggest import cycle holds 3 units"), failure
+    assert "more than 2 at release 0.4.0" in failure, failure
+
+
+@pytest.mark.parametrize("before", [2, 3], ids=["the same size", "a smaller one"])
+def test_a_release_whose_cycle_kept_or_cut_its_size_is_green(tmp_path, before):
+    """A release whose cycle holds no more units than the release before passes."""
+    _write_tree(tmp_path, _CYCLE_TREE)
+    _released(tmp_path, "0.4.1", [{"release": "0.4.0", "units": before, "startup_units": 2}])
+    block = _cycle(tmp_path)
+    assert block["releases"][-1]["units"] == 2
+    assert gen.regressions_import_cycle(block, block) == []
+
+
+_R39 = {"release": "0.3.9", "units": 276, "startup_units": 73}
+_R40 = {"release": "0.4.0", "units": 270, "startup_units": 70}
+_R41 = {"release": "0.4.1", "units": 260, "startup_units": 69}
+
+
+@pytest.mark.parametrize(
+    ("records", "base", "release", "said"),
+    [
+        ([], None, "0.3.9", "holds no release record"),
+        ([_R39, _R39], None, "0.3.9", "a release has two records"),
+        ([_R39], None, "0.4.0", "the newest record is release 0.3.9, and this tree is 0.4.0"),
+        ([{**_R39, "units": 300}, _R40], [_R39], "0.4.0", "was changed or removed"),
+        ([_R40], [_R39], "0.4.0", "was changed or removed"),
+        ([_R39, _R40, _R41], [_R39], "0.4.1", "more than one release record added"),
+    ],
+    ids=[
+        "no record",
+        "two records of one release",
+        "the bump recorded no release",
+        "a base record raised",
+        "a base record removed",
+        "two records added",
+    ],
+)
+def test_a_release_record_list_that_breaks_its_rule_is_said(records, base, release, said):
+    """What the rail reads on the real tree, each way it can fail: the records against the base's,
+    and against the tree's own release."""
+    problems = gen.release_record_problems(records, base, release)
+    assert len(problems) == 1 and said in problems[0], problems
+
+
+def test_a_release_record_list_that_keeps_its_rule_is_clean():
+    """The base's records kept, and the bump's one record added for this tree's own release."""
+    assert gen.release_record_problems([_R39], [_R39], "0.3.9") == []
+    assert gen.release_record_problems([_R39, _R40], [_R39], "0.4.0") == []
+    assert gen.release_record_problems([_R39], None, "0.3.9") == []
+
+
 def test_the_startup_cycle_leaves_out_lazy_and_type_only_imports(tmp_path):
     """The startup figure counts only the imports that run when a module loads. A lazy import in
     a function and one under ``if TYPE_CHECKING`` close the full cycle, and not that one."""
