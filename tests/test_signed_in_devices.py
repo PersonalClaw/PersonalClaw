@@ -769,7 +769,12 @@ async def test_the_list_names_every_signed_in_device_its_kind_first_and_last_see
             assert row["ip"] == "127.0.0.1", row
             assert row["expires_at"] > now, row
         assert [row["name"] for row in rows if row["current"]] == ["Chrome on Mac"]
-        assert payload["limits"] == {"device": LIMIT, "browser": LIMIT, "token": LIMIT}
+        assert payload["limits"] == {
+            "device": LIMIT,
+            "browser": LIMIT,
+            "token": LIMIT,
+            "automation": 4,
+        }
 
 
 @pytest.mark.asyncio

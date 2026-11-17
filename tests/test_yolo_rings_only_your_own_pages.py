@@ -62,6 +62,8 @@ def sockets(monkeypatch, tmp_path):
     st = DashboardState.__new__(DashboardState)
     st._ws_clients = []
     st._ws_app = {}
+    st._ws_scope = {}
+    st._ws_release = {}
     st._notification_log = []
     st._sessions = {}
     st.conversation_log = None

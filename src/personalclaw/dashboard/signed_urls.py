@@ -36,6 +36,8 @@ from urllib.parse import quote
 from aiohttp import web
 from yarl import URL
 
+from personalclaw.dashboard import hmac_domains
+
 #: The query keys a signed URL carries.
 SIGNATURE_KEY = "pc_sig"
 EXPIRY_KEY = "pc_exp"
@@ -94,7 +96,7 @@ def _canonical(method: str, path: str, query: Any) -> str | None:
 
 
 def _signature(secret: bytes, nonce: str, canonical: str, expiry: int) -> str:
-    key = hmac.new(secret, b"url\0" + nonce.encode(), hashlib.sha256).digest()
+    key = hmac.new(secret, hmac_domains.URL + nonce.encode(), hashlib.sha256).digest()
     digest = hmac.new(key, f"{canonical}\n{expiry}".encode(), hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 

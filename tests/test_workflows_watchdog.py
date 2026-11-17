@@ -519,6 +519,8 @@ class TestPublisher:
         state = DashboardState.__new__(DashboardState)
         state._ws_clients = [owner]
         state._ws_app = {}
+        state._ws_scope = {}
+        state._ws_release = {}
         state._notification_log = []
         state._sessions = {}
         state._pending_approvals = {}

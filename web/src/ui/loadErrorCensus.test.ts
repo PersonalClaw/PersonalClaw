@@ -784,14 +784,17 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // can predict the verdict of.
   'pages/loops/DesignCockpitPage.tsx': 2,
   // The artifact tab's swallow is GONE (it printed an empty document for a failed read). What is left
-  // is a per-item `api.task(id).catch(() => null)` behind a `.filter(Boolean)` — partial degradation
-  // of a fan-out, deliberately — and a fire-and-forget `updateULoop` mutation, a different family.
+  // is a fire-and-forget `updateULoop` mutation, a different family. The per-item `api.task(id)`
+  // fan-out still degrades a failed read to a missing row behind a `.filter(Boolean)` — partial
+  // degradation, deliberately — but its catch is a block now (it tells a pairing's refusal apart,
+  // `lib/pairingScope`) that returns `null` and sets no state, which neither form counts: a known
+  // blind edge of form B, not a fix. The budget dropped by one with it.
   // 4th (SCALAR widening) is the RECORDS veto's THIRD blind edge, and the most instructive one: the
   // action handler DOES report — `reportActionFailure(`${a} this loop`)(e)`, the helper the file's own
   // comment introduced for exactly this — but the veto keys off SETTER names (`setSearchErr`), and a
   // report helper is not a setter. Widening it to report helpers would start exempting any handler
   // that toasts and then fabricates, so the veto stays narrow and this sits here with the reason.
-  'pages/loops/LoopCockpitPage.tsx': 4,
+  'pages/loops/LoopCockpitPage.tsx': 3,
   // SCALAR widening: the non-code twin of `pages/code/CodePlanningView.tsx` above — same `isReady`
   // predicate, same fail-closed `false`, same reason.
   'pages/loops/LoopPlanningView.tsx': 1,

@@ -214,3 +214,19 @@ def confirm_granted_query(query: Any, field: str = "confirm") -> bool:
     except (AttributeError, TypeError):
         return False
     return isinstance(raw, str) and raw.strip().lower() == QUERY_CONFIRM_TRUE
+
+
+def names_consent(*carriers: Any) -> bool:
+    """Whether any of *carriers* (a JSON body, a query) names a :data:`CONFIRM_FIELDS` key at all,
+    whatever its value.
+
+    For a caller that may give no consent: an automation client's session (``device_scopes``),
+    whose ``confirm`` must never count as the owner's. It is refused on sight rather than read,
+    so no value of it, true or false, reaches a door that would.
+    """
+    from collections.abc import Mapping
+
+    return any(
+        isinstance(carrier, Mapping) and any(field in carrier for field in CONFIRM_FIELDS)
+        for carrier in carriers
+    )

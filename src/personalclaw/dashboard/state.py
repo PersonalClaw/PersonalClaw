@@ -1051,6 +1051,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # declares (permissions.events), via `_ws_may_receive`. An owner/dashboard
         # connection is absent from this map and receives the full event stream.
         self._ws_app: dict[web.WebSocketResponse, str] = {}
+        self._ws_scope: dict[web.WebSocketResponse, tuple[str, ...]] = {}
+        self._ws_release: dict[web.WebSocketResponse, Any] = {}
         self._ws_log_subscribers: set[web.WebSocketResponse] = set()
         self._ws_subagent_subscribers: set[web.WebSocketResponse] = set()
         # The streamed-chunk stamp (`next_stream_seq`): the resume watermark a session

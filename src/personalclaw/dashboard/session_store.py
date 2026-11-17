@@ -143,6 +143,14 @@ LINK_ISSUERS = frozenset({ISSUER_STARTUP, ISSUER_READY, ISSUER_TOKEN})
 #: by the caller at all, which is stronger than escaping it later.
 DEVICE_KINDS: tuple[str, ...] = ("browser", "mobile", "desktop", "cli", "unknown")
 
+#: The kind of a scoped pairing's device (``device_scopes.AUTOMATION_KIND``). Never in
+#: :data:`DEVICE_KINDS`: only the gateway sets it, from a pairing code's scope, so no client can
+#: declare it. A stored row keeps it (:data:`STORED_DEVICE_KINDS`).
+AUTOMATION_KIND = "automation"
+
+#: Every kind a stored row may carry.
+STORED_DEVICE_KINDS: tuple[str, ...] = (*DEVICE_KINDS, AUTOMATION_KIND)
+
 #: The kinds a person signs in with. A link opened by one of these is a browser sign-in.
 BROWSER_KINDS = frozenset({"browser", "mobile", "desktop"})
 
@@ -156,11 +164,19 @@ MAX_DEVICE_IP = 64
 POOL_DEVICE = "device"  # paired and enrolled devices: phones, tablets, the desktop app
 POOL_BROWSER = "browser"  # browsers signed in with a password or a link
 POOL_TOKEN = "token"  # links and tokens no browser has opened: the CLI, scripts, a harness
+POOL_AUTOMATION = "automation"  # scoped pairings: automation clients (`device_scopes`)
 
 #: How many of each kind may be signed in at once. 20 is several times the most devices one
 #: person uses (the persona runs the desktop app, two browsers, a phone, the CLI and a script),
 #: and still a small, fixed number of live credentials of each kind.
-POOL_CAPS: dict[str, int] = {POOL_DEVICE: 20, POOL_BROWSER: 20, POOL_TOKEN: 20}
+POOL_CAPS: dict[str, int] = {
+    POOL_DEVICE: 20,
+    POOL_BROWSER: 20,
+    POOL_TOKEN: 20,
+    # Few, on purpose: each holds a scoped session for up to 90 days, and its own limit keeps a
+    # client that re-pairs in a loop from ever signing a phone or a browser out.
+    POOL_AUTOMATION: 4,
+}
 
 #: Per app. An app holds one token per signed-in user at a time (`token_auth.app_session_token`
 #: reuses it), so this only bounds a burst that re-mints.
@@ -178,6 +194,8 @@ END_KEY_REPLACED = "key_replaced"  # the owner replaced the key every sign-in is
 END_EXPIRED = "expired"  # it ran its whole lifetime (recorded by the store, never passed in)
 END_LINK_OPENED = "link_opened"  # a startup link a browser opened, which signed that browser in
 END_UPDATED = "updated"  # PersonalClaw was updated to sign browsers in with their pair
+END_IDLE = "idle"  # an automation client nothing used for `device_scopes.IDLE_END_SECS`
+END_SCOPE_MISMATCH = "scope_mismatch"  # its token's scope claim and its row's scope disagreed
 END_REASONS: tuple[str, ...] = (
     END_SIGNED_OUT,
     END_SIGNED_OUT_ELSEWHERE,
@@ -190,6 +208,8 @@ END_REASONS: tuple[str, ...] = (
     END_EXPIRED,
     END_LINK_OPENED,
     END_UPDATED,
+    END_IDLE,
+    END_SCOPE_MISMATCH,
 )
 
 #: How many ended sessions are remembered. Past this, the oldest ending is forgotten and that
@@ -342,6 +362,11 @@ def _derived_device_id(nonce: str) -> str:
 #: reads as an older build's.
 PAIRING_ROW_FIELD = "pairing"
 
+#: The row field :attr:`SessionRecord.scope` is stored as. An older build drops it as it drops
+#: :data:`PAIRING_ROW_FIELD`; the token's own claim then no longer matches the row, and the
+#: session is refused (``token_auth``), never read as a full one.
+SCOPE_ROW_FIELD = "scope"
+
 
 @dataclass
 class SessionRecord:
@@ -358,6 +383,9 @@ class SessionRecord:
     #: every row that build mints, bound or not. A row without it was minted, or last rewritten, by
     #: an older build, and the next start ends it (``sign_in_update``) unless it's spared.
     pairing: bool = False
+    #: A scoped pairing's scope (``device_scopes``), sorted; empty for every other session. The
+    #: token carries the same list as its signed claim, and the two must agree.
+    scope: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"exp": self.expiry, "issuer": self.issuer}
@@ -367,6 +395,8 @@ class SessionRecord:
             out["started_by"] = self.started_by
         if self.pairing:
             out[PAIRING_ROW_FIELD] = 1
+        if self.scope:
+            out[SCOPE_ROW_FIELD] = list(self.scope)
         out["device"] = self.device.to_dict()
         return out
 
@@ -398,9 +428,16 @@ def sanitize_device_name(name: str) -> str:
 
 
 def sanitize_device_kind(kind: str) -> str:
-    """Clamp to :data:`DEVICE_KINDS`. An unrecognized kind becomes ``unknown``, never itself."""
+    """Clamp to :data:`DEVICE_KINDS`. An unrecognized kind becomes ``unknown``, never itself, and
+    so does ``automation``: what a client declares is never the kind only the gateway sets."""
     candidate = str(kind or "").strip().lower()
     return candidate if candidate in DEVICE_KINDS else "unknown"
+
+
+def _stored_device_kind(kind: Any) -> str:
+    """A stored row's kind, clamped to :data:`STORED_DEVICE_KINDS`."""
+    candidate = str(kind or "").strip().lower()
+    return candidate if candidate in STORED_DEVICE_KINDS else "unknown"
 
 
 def _sanitize_ip(ip: str) -> str:
@@ -512,7 +549,7 @@ def _parse_device(raw: Any, nonce: str) -> DeviceInfo:
     return DeviceInfo(
         id=str(raw.get("id")),
         name=sanitize_device_name(raw.get("name", "")),
-        kind=sanitize_device_kind(raw.get("kind", "")),
+        kind=_stored_device_kind(raw.get("kind", "")),
         minted_at=minted_at,
         last_seen=last_seen,
         ip=_sanitize_ip(raw.get("ip", "")),
@@ -547,6 +584,9 @@ def _parse_record(raw: Any, nonce: str) -> SessionRecord | None:
     # session is used.
     expiry = min(expiry, (device.minted_at or time.time()) + MAX_LIFETIME_SECS)
     started_by = str(raw.get("started_by") or "") if issuer == ISSUER_WINDOW else ""
+    scope = _parse_scope(raw, issuer)
+    if scope is None:
+        return None
     return SessionRecord(
         expiry=expiry,
         issuer=issuer,
@@ -554,7 +594,26 @@ def _parse_record(raw: Any, nonce: str) -> SessionRecord | None:
         app=app,
         started_by=started_by[:64],
         pairing=raw.get(PAIRING_ROW_FIELD) == 1,
+        scope=scope,
     )
+
+
+def _parse_scope(raw: dict[str, Any], issuer: str) -> tuple[str, ...] | None:
+    """The row's scope: ``()`` when it has none, *None* when the row is not a session.
+
+    A scope only a pairing mints, from the fixed vocabulary, or the row is refused whole: a row
+    that names a scope it can't hold is no session to admit with less (or more) than it says.
+    """
+    if SCOPE_ROW_FIELD not in raw:
+        return ()
+    from personalclaw.dashboard.device_scopes import normalize_scope
+
+    if issuer != ISSUER_PAIR:
+        return None
+    try:
+        return normalize_scope(raw.get(SCOPE_ROW_FIELD))
+    except ValueError:
+        return None
 
 
 def _parse_ended(raw: Any) -> EndedSession | None:
@@ -570,7 +629,7 @@ def _parse_ended(raw: Any) -> EndedSession | None:
         reason=str(raw["reason"]),
         at=at,
         issuer=issuer if issuer in ISSUERS else ISSUER_UNKNOWN,
-        kind=sanitize_device_kind(raw.get("kind", "")),
+        kind=_stored_device_kind(raw.get("kind", "")),
         expiry=expiry,
     )
 
@@ -734,6 +793,9 @@ def pool_of(record: SessionRecord) -> str:
     """
     if record.issuer == ISSUER_APP:
         return f"app:{record.app}"
+    if record.scope:
+        # Keyed on the scope, never on the kind: nothing decides a session is scoped by its kind.
+        return POOL_AUTOMATION
     if record.issuer in (ISSUER_PAIR, ISSUER_ENROLL):
         return POOL_DEVICE
     if record.issuer in LINK_ISSUERS and record.device.kind not in BROWSER_KINDS:
@@ -786,6 +848,7 @@ def remember_session(
     app: str = "",
     spare: str = "",
     started_by: str = "",
+    scope: tuple[str, ...] = (),
 ) -> Remembered:
     """Record one minted session so it survives a restart, and enforce its kind's limit.
 
@@ -793,6 +856,7 @@ def remember_session(
     that must not hand out a session the registry cannot show (pairing) checks
     ``persisted``. The write itself is best-effort (see :func:`_save_state`). *spare* is the
     session this one replaces, which the caller ends next: it isn't counted against the limit.
+    *scope* is a scoped pairing's (``token_auth.mint_session`` checks it); no other door has one.
     """
     if not nonce:
         return Remembered()
@@ -805,6 +869,7 @@ def remember_session(
         app=app if issuer == ISSUER_APP else "",
         started_by=started_by if issuer == ISSUER_WINDOW else "",
         pairing=True,
+        scope=tuple(scope) if issuer == ISSUER_PAIR else (),
     )
     state.records[nonce] = record
     state.ended.pop(nonce, None)
@@ -939,6 +1004,22 @@ def touch_device_last_seen(nonce: str, *, now: float | None = None) -> bool:
     except Exception:  # noqa: BLE001 — best-effort by contract; see the docstring
         logger.debug("could not stamp device last_seen", exc_info=True)
         return False
+
+
+def idle_sessions(*, now: float | None = None) -> list[str]:
+    """Every live automation client nothing has used for ``device_scopes.IDLE_END_SECS``.
+
+    The caller ends each through ``token_auth.sign_out(..., END_IDLE)``, never by dropping the
+    row, so each ending is remembered, written to the SEL and closes what it holds open.
+    """
+    from personalclaw.dashboard.device_scopes import IDLE_END_SECS
+
+    stamp = time.time() if now is None else float(now)
+    return [
+        nonce
+        for nonce, record in load_session_records().items()
+        if record.scope and _recency(record) and _recency(record) + IDLE_END_SECS <= stamp
+    ]
 
 
 def signed_in_sessions() -> dict[str, SessionRecord]:

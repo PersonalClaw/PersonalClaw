@@ -1451,13 +1451,38 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
 
     # pair — mint an 8-digit pairing code so a new sender on a channel (Telegram,
     # Discord, …) can start talking to the agent. Printed ONCE; single-use; TTL 10 min.
+    # With --scope, the code is an automation client's instead: it signs a script or a runner
+    # in to only that scope, through this home's running gateway.
     pair_parser = sub.add_parser(
         "pair",
-        help="Create a one-time pairing code for a channel sender (8 digits, 10-min TTL)",
+        help="Create a one-time pairing code for a channel sender (8 digits, 10-min TTL), "
+        "or with --scope one for an automation client",
     )
     pair_parser.add_argument(
-        "provider", help="Channel provider key (e.g. telegram, discord, email)"
+        "provider", nargs="?", help="Channel provider key (e.g. telegram, discord, email)"
     )
+    pair_parser.add_argument(
+        "--scope",
+        default=None,
+        help="An automation client's code: what its sign-in may reach, comma-separated "
+        "(status, loops)",
+    )
+    pair_parser.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help="How long the automation client's sign-in lasts, 1 to 90 days (default: 30)",
+    )
+    pair_parser.add_argument(
+        "--label", default="", help="A name for the automation client on Settings' device list"
+    )
+    pair_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="Print the automation client's code, link and what it holds as JSON",
+    )
+    pair_parser.add_argument("--port", type=int, default=None, help=_HOME_GATEWAY_PORT_HELP)
     _add_explain(pair_parser, "who the code is for, how long it works and how it is used")
 
     # discover — the client half of LAN discovery. Read-only: it sends

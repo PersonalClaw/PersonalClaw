@@ -193,6 +193,10 @@ class DashboardWebSocketState:
     _sessions: dict[str, Any]
     _update_progress: dict[str, str] | None
     _ws_app: dict[web.WebSocketResponse, str]
+    #: An automation client's socket's scope (``device_scopes``): it hears only its scope's frames.
+    _ws_scope: dict[web.WebSocketResponse, tuple[str, ...]]
+    #: The release of a scoped socket's hold on its session (``scoped_sessions.hold_open``).
+    _ws_release: dict[web.WebSocketResponse, Any]
     _ws_clients: list[web.WebSocketResponse]
     _ws_log_subscribers: set[web.WebSocketResponse]
     _ws_loop: asyncio.AbstractEventLoop | None
@@ -407,6 +411,12 @@ class DashboardWebSocketState:
         (``apps/permissions.ROUTE_AUTHZ``'s ``owns``) — or an inbox item it raised. The type was
         the whole filter, so an app that declared ``chat_chunk`` read every answer your agent
         streamed you, and one that declared ``inbox_new_item`` read everything that reached you."""
+        scope = self._ws_scope.get(ws)
+        if scope is not None:
+            # An automation client's socket hears only its scope's frames (device_scopes, F11).
+            from personalclaw.dashboard.device_scopes import socket_hears
+
+            return socket_hears(scope, event_type, subject)
         app = self._ws_app.get(ws, "")
         if not app:
             return True
@@ -626,7 +636,13 @@ class DashboardWebSocketState:
             )
             return
         self._dispatch_ws(
-            [ws for ws in self._ws_clients if not self._ws_app.get(ws)], msg_type, envelope
+            [
+                ws
+                for ws in self._ws_clients
+                if not self._ws_app.get(ws) and ws not in self._ws_scope
+            ],
+            msg_type,
+            envelope,
         )
         for ws in [ws for ws in self._ws_clients if self._ws_app.get(ws)]:
             app = self._ws_app[ws]
@@ -648,12 +664,24 @@ class DashboardWebSocketState:
         except Exception:
             return False
 
-    def register_ws(self, ws: web.WebSocketResponse, *, app: str = "") -> None:
+    def register_ws(
+        self,
+        ws: web.WebSocketResponse,
+        *,
+        app: str = "",
+        scope: tuple[str, ...] = (),
+        nonce: str = "",
+        ends: float = 0.0,
+    ) -> None:
         """Register a new WebSocket client.
 
         ``app`` scopes the connection to an installed app (the app sandbox): its events
         are filtered to the app's declared ``permissions.events`` in broadcast_ws.
-        Empty (the owner/dashboard) receives the full stream."""
+        Empty (the owner/dashboard) receives the full stream.
+
+        ``scope`` is an automation client's (``device_scopes``): it hears only its scope's frames,
+        and the socket closes when its session ends (*nonce*, signed out, idle or a mismatch) or
+        runs out (*ends*), F9."""
         # Capture the gateway loop so off-loop broadcast_ws callers (MCP tool
         # subprocess callbacks, subagent/cron threads) can schedule sends onto it.
         if self._ws_loop is None:
@@ -664,6 +692,20 @@ class DashboardWebSocketState:
         self._ws_clients.append(ws)
         if app:
             self._ws_app[ws] = app
+        if scope:
+            self._ws_scope[ws] = tuple(scope)
+            self._hold_scoped_open(ws, nonce, ends)
+
+    def _hold_scoped_open(self, ws: web.WebSocketResponse, nonce: str, ends: float) -> None:
+        """Close a scoped socket when its session ends, and when it runs out."""
+        from personalclaw.dashboard.scoped_sessions import hold_open
+
+        def close() -> None:
+            self._schedule_ws_send(ws.close(), ws)
+
+        self._ws_release[ws] = (
+            hold_open(nonce, close, ends=ends, loop=self._ws_loop) if nonce else None
+        )
 
     def unregister_ws(self, ws: web.WebSocketResponse) -> None:
         """Remove a WebSocket client on disconnect."""
@@ -676,6 +718,10 @@ class DashboardWebSocketState:
         except ValueError:
             pass
         self._ws_app.pop(ws, None)
+        self._ws_scope.pop(ws, None)
+        release = self._ws_release.pop(ws, None)
+        if release is not None:
+            release()
         self._ws_log_subscribers.discard(ws)
         self._ws_subagent_subscribers.discard(ws)
 

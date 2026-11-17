@@ -40,6 +40,8 @@ from personalclaw.auth.lifetimes import (  # noqa: F401 — duration_words is re
     when_words,
 )
 from personalclaw.config.loader import _DEFAULT_PORT
+from personalclaw.dashboard import device_scopes, scoped_sessions
+from personalclaw.dashboard.connect_page import CONNECT_PAGE_HTML as _403_HTML
 from personalclaw.dashboard.origin import is_loopback, is_private_network
 from personalclaw.dashboard.owner_token_url import script_tag as owner_token_script
 from personalclaw.dashboard.refusal_log import flush_refusal_lines, say_refused
@@ -197,20 +199,38 @@ class TokenStateManager:
         # nonce → the (ip, user agent, browser carrier) last noted, so an unchanged client
         # costs a dict lookup rather than a file read; see `note_session_client`.
         self._client_noted: dict[str, tuple[str, str, bool]] = {}
+        # nonce → its session's scope, set at mint and on adoption from the row. No entry is a
+        # cache miss, which reads the row: never "no scope". `_seen`: a scoped one's last use.
+        self._scopes: dict[str, tuple[str, ...]] = {}
+        self._seen: dict[str, float] = {}
 
-    def register_nonce(self, nonce: str, expiry: float) -> None:
-        """Cache a live nonce with its expiry."""
+    def register_nonce(self, nonce: str, expiry: float, scope: tuple[str, ...] = ()) -> None:
+        """Cache a live nonce with its expiry and the scope its session holds."""
         with self._lock:
             self._nonces[nonce] = expiry
             self._nonces.move_to_end(nonce)
+            self._scopes[nonce] = tuple(scope)
+            if scope:
+                self._seen[nonce] = time.time()
             while len(self._nonces) > self._max_nonces:
-                self._nonces.popitem(last=False)
+                oldest, _expiry = self._nonces.popitem(last=False)
+                self._scopes.pop(oldest, None)
+                self._seen.pop(oldest, None)
 
-    def is_nonce_valid(self, nonce: str) -> tuple[bool, str]:
+    def _forget(self, nonce: str) -> bool:
+        """Drop *nonce*'s cache entry, its scope and its use stamp. Called with the lock held."""
+        self._scopes.pop(nonce, None)
+        self._seen.pop(nonce, None)
+        return self._nonces.pop(nonce, None) is not None
+
+    def is_nonce_valid(self, nonce: str, *, claimed: tuple[str, ...] = ()) -> tuple[bool, str]:
         """Check if nonce is valid. Returns (valid, reason).
 
         Deny-by-default: rejects if the nonce is live in neither the in-memory cache nor the
         durable store.
+
+        *claimed* is the token's signed scope claim, ``()`` for none; the session must hold
+        exactly it, both ways (``scoped_sessions.judged``), read from the cache or else the row.
 
         **The durable fallback is what makes a persisted signing key useful**. With the
         key alone, a token minted before a restart would verify its signature and then be
@@ -219,43 +239,66 @@ class TokenStateManager:
         enough to authorize; a session record is the second half of the same fix.
         """
         now = time.time()
+        scope: tuple[str, ...] | None = None
+        seen = 0.0
+        cached = ""
         with self._lock:
             expiry = self._nonces.get(nonce)
             live = expiry is not None and expiry > now
             if live:
                 self._nonces.move_to_end(nonce)
+                scope = self._scopes.get(nonce)
+                seen = self._seen.get(nonce, 0.0)
             elif expiry is not None:
-                self._nonces.pop(nonce, None)
-        if live:
-            # Outside the lock: the stamp takes it again, and it must never gate the verdict.
-            self._touch_last_seen(nonce)
-            return True, ""
+                self._forget(nonce)
+        if live and scope is not None:
+            cached = scoped_sessions.judged(claimed, scope, seen, now)
+            if not cached:
+                self._admitted(nonce, scope, now)
+                return True, ""
+            if cached != scoped_sessions.REASON_IDLE:
+                return False, cached
+            # Idle by this process's clock: another process may have served it since. Read on.
 
-        # Not in memory: consult the durable store before refusing. A hit means this process
-        # restarted (or never saw the mint), NOT that the session is invalid.
+        # Not in memory, or its scope isn't: consult the durable store before refusing. A hit
+        # means this process restarted (or never saw the mint), NOT that the session is invalid.
         try:
-            from personalclaw.dashboard.session_store import ended_session, load_sessions
+            from personalclaw.dashboard.session_store import ended_session, load_session_records
 
-            stored = load_sessions()
+            stored = load_session_records()
             ended = ended_session(nonce) if nonce not in stored else None
         except Exception:  # noqa: BLE001 — an unreadable store means "no session", fail closed
             logger.debug("session store unreadable during nonce check", exc_info=True)
             stored, ended = {}, None
-        expiry = stored.get(nonce)
-        if expiry is None:
+        record = stored.get(nonce)
+        if record is None:
+            if cached:
+                return False, cached
             if ended is not None:
                 return False, "session expired" if ended.reason == END_EXPIRED else "signed out"
             with self._lock:
                 return False, "no active sessions" if not self._nonces else "session not found"
-        if expiry <= now:
+        if record.expiry <= now:
             return False, "session expired"
+        last_used = record.device.last_seen or record.device.minted_at
+        verdict = scoped_sessions.judged(claimed, record.scope, last_used, now)
+        if verdict:
+            return False, verdict
         # Adopt it into memory so subsequent checks are lock-only, and so eviction ordering
         # treats a restored session like any other active one.
         with self._lock:
-            self._nonces[nonce] = expiry
+            self._nonces[nonce] = record.expiry
             self._nonces.move_to_end(nonce)
-        self._touch_last_seen(nonce)
+            self._scopes[nonce] = record.scope
+        self._admitted(nonce, record.scope, now)
         return True, ""
+
+    def _admitted(self, nonce: str, scope: tuple[str, ...], now: float) -> None:
+        """Stamp an admitted request's use. Outside the lock: it must never gate the verdict."""
+        if scope:
+            with self._lock:
+                self._seen[nonce] = now
+        self._touch_last_seen(nonce)
 
     def _touch_last_seen(self, nonce: str, now: float | None = None) -> None:
         """Stamp ``last_seen`` for an authorized device session. NEVER affects the verdict.
@@ -350,7 +393,7 @@ class TokenStateManager:
             # Evict expired nonces
             expired_nonces = [n for n, exp in self._nonces.items() if exp < now]
             for n in expired_nonces:
-                self._nonces.pop(n, None)
+                self._forget(n)
 
     def revoke_nonce(self, nonce: str, token: str = "") -> bool:
         """Drop ONE nonce (single-session logout). Returns whether it was present.
@@ -359,7 +402,7 @@ class TokenStateManager:
         session lingers to be matched against a future token.
         """
         with self._lock:
-            existed = self._nonces.pop(nonce, None) is not None
+            existed = self._forget(nonce)
             self._client_noted.pop(nonce, None)
             if token:
                 self._ip_bindings.pop(token, None)
@@ -387,6 +430,8 @@ class TokenStateManager:
             # timestamp from the previous process.
             self._last_seen_touched.clear()
             self._client_noted.clear()
+            self._scopes.clear()
+            self._seen.clear()
 
 
 def _cache_bound() -> int:
@@ -559,93 +604,6 @@ APP_TOKEN_TTL_SECS = 3600
 SIGNED_OUT_NOTICE_GRACE_SECS = 7 * 86400
 
 
-_403_HTML = (
-    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' "
-    "content='width=device-width,initial-scale=1'><title>Connect — PersonalClaw</title>"
-    "<style>"
-    # Theme token mirror (dark default; .light via prefers-color-scheme).
-    # Standalone gate served before the React bundle, so values are inlined rather
-    # than imported from tokens.css — but the palette/shape/motion match NE exactly.
-    ":root{{--canvas:#0f0f0f;--surface:#1e1f20;--surface-high:#282a2c;"
-    "--ink:#e3e3e3;--ink-low:#9a9b9c;--outline:#444746;"
-    "--primary:#9d8bff;--on-primary:#21134f;--primary-emphasis:#b6bdff;"
-    "--danger:#f55e57;--radius-card:28px;--radius-field:12px;"
-    "--ease:cubic-bezier(0.2,0,0,1);"
-    "--font:'Google Sans Flex','Google Sans',system-ui,-apple-system,sans-serif;"
-    "--mono:'Google Sans Code',ui-monospace,'SF Mono',monospace}}"
-    "*{{margin:0;padding:0;box-sizing:border-box}}"
-    "body{{font-family:var(--font);display:flex;align-items:center;"
-    "justify-content:center;min-height:100vh;background:var(--canvas);"
-    "color:var(--ink);-webkit-font-smoothing:antialiased;overflow:hidden}}"
-    # expressive lavender→pink bloom behind the card (NE signature glow)
-    "body::before{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;"
-    "background:radial-gradient(60% 55% at 50% 38%,"
-    "color-mix(in srgb,var(--primary) 22%,transparent),transparent 70%);"
-    "filter:blur(8px)}}"
-    ".c{{position:relative;z-index:1;text-align:center;width:100%;max-width:420px;"
-    "margin:24px;padding:40px 32px;background:var(--surface);"
-    "border:1px solid var(--outline);border-radius:var(--radius-card);"
-    "box-shadow:0 16px 40px rgb(0 0 0 / 0.42)}}"
-    ".logo{{margin-bottom:20px}}.logo svg{{width:60px;height:60px;display:inline-block}}"
-    "h1{{font-size:26px;line-height:1.15;margin-bottom:10px;"
-    "font-variation-settings:'wght' 360;letter-spacing:-0.01em}}"
-    "p{{color:var(--ink-low);font-size:14px;line-height:1.6;margin-bottom:24px}}"
-    "code{{font-family:var(--mono);background:var(--surface-high);padding:2px 7px;"
-    "border-radius:6px;color:var(--primary-emphasis);font-size:13px}}"
-    "input{{width:100%;padding:13px 15px;border-radius:var(--radius-field);"
-    "border:1px solid var(--outline);background:var(--canvas);color:var(--ink);"
-    "font-family:var(--font);font-size:14px;margin-bottom:12px;outline:none;"
-    "transition:border-color .2s var(--ease),box-shadow .2s var(--ease)}}"
-    "input::placeholder{{color:var(--ink-low)}}"
-    "input:focus{{border-color:var(--primary);"
-    "box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 28%,transparent)}}"
-    "button{{width:100%;padding:13px 24px;border-radius:9999px;border:none;"
-    "cursor:pointer;background:var(--primary);color:var(--on-primary);"
-    "font-family:var(--font);font-size:15px;font-variation-settings:'wght' 600;"
-    "transition:background .2s var(--ease),transform .1s var(--ease),"
-    "box-shadow .2s var(--ease)}}"
-    "button:hover{{background:var(--primary-emphasis);"
-    "box-shadow:0 0 28px -6px color-mix(in srgb,var(--primary) 55%,transparent)}}"
-    "button:active{{transform:scale(0.985)}}"
-    ".err{{color:var(--danger);font-size:13px;margin-top:14px;display:none}}"
-    "@media(prefers-color-scheme:light){{:root{{--canvas:#f0f4f8;--surface:#ffffff;"
-    "--surface-high:#e6eaef;--ink:#1f1f1f;--ink-low:#5f6368;--outline:#e1e3e1;"
-    "--primary:#6a4fd0;--on-primary:#ffffff;--primary-emphasis:#563bbf}}"
-    ".c{{box-shadow:0 16px 40px rgb(96 110 130 / 0.22)}}"
-    "input:focus{{box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)}}}}"
-    "@media(prefers-reduced-motion:reduce){{*{{transition-duration:.001ms!important}}}}"
-    "</style></head><body>"
-    "<div class='c'>"
-    "<div class='logo'><svg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg' aria-label='PersonalClaw'>"  # noqa: E501
-    "<defs><linearGradient id='cg' x1='0' y1='0' x2='512' y2='512' gradientUnits='userSpaceOnUse'>"
-    "<stop stop-color='#8e75b2'/><stop offset='0.45' stop-color='#9d8bff'/>"
-    "<stop offset='0.75' stop-color='#c597ff'/><stop offset='1' stop-color='#d8627e'/>"
-    "</linearGradient></defs>"
-    "<path fill='url(#cg)' d='M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195 135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210 0-90-15-225-165-255z'/></svg></div>"  # noqa: E501
-    "<h1>{heading}</h1>"
-    "<p>{explanation}</p>"
-    "<input id='u' type='text' placeholder='Paste token URL or raw token…' autofocus>"
-    "<button onclick='go()'>Connect</button>"
-    "<div class='err' id='e'>Invalid URL</div>"
-    "</div>"
-    # The owner-token helpers (owner_token_url.js), inlined — this gate renders before any
-    # authenticated asset can load. They scrub a refused token out of the URL, and build the
-    # Connect target: this origin, the pasted token, and the dashboard route this gate was
-    # opened at. It used to be `origin + '?token='`, which dropped the route, so every deep
-    # link landed on the dashboard once the token was accepted.
-    "{owner_token_script}"
-    "<script>"
-    "function go(){{var v=document.getElementById('u').value.trim();if(!v)return;"
-    "var t=PersonalClawOwnerToken.connectUrl(v);"
-    "if(t){{window.location.assign(t)}}"
-    "else{{document.getElementById('e').style.display='block'}}}}"
-    "document.getElementById('u').addEventListener('keydown',"
-    "function(e){{if(e.key==='Enter')go()}});"
-    "</script>"
-    "</body></html>"
-)
-
-
 def _b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -698,6 +656,7 @@ def mint_session(
     bound: bool = False,
     spare: str = "",
     started_by: str = "",
+    scope: tuple[str, ...] = (),
 ) -> MintedSession:
     """Mint a session through the door *issuer* names, and record it.
 
@@ -725,6 +684,10 @@ def mint_session(
     message is the sentence to show whoever asked (``personalclaw.auth.lifetimes.too_long``):
     nothing is minted, and nothing is shortened behind the caller's back.
 
+    *scope* makes it an automation client's (``scoped_sessions``): a signed ``scope`` claim under
+    the scoped key, and the same scope on its row. Only a bound pairing holds one; else
+    ``ValueError``, and nothing is minted.
+
     Recording the session enforces its kind's limit, and every session that limit signs out
     is dropped from memory and written to the SEL as a sign-out, naming the reason. Every
     sign-in but an app token's is written to the SEL too (an app token only narrows a session
@@ -737,6 +700,10 @@ def mint_session(
 
     if int(ttl_seconds) > MAX_SESSION_TTL_SECS:
         raise ValueError(too_long(int(ttl_seconds)))
+    if scope:
+        scope = device_scopes.normalize_scope(scope)
+        if issuer != ISSUER_PAIR or not bound:
+            raise ValueError("only a bound pairing's session holds a scope")
     _evict_expired()
     now = time.time()
     nonce = os.urandom(8).hex()
@@ -747,7 +714,7 @@ def mint_session(
     if not device.minted_at:
         device.minted_at = now
 
-    _state.register_nonce(nonce, expires_at)
+    _state.register_nonce(nonce, expires_at, scope)
     persisted = False
     try:
         remembered = remember_session(
@@ -758,6 +725,7 @@ def mint_session(
             app=app,
             spare=spare,
             started_by=started_by,
+            scope=scope,
         )
         persisted = remembered.persisted
         _signed_out(remembered.evicted, END_LIMIT, actor=user_id)
@@ -775,17 +743,22 @@ def mint_session(
         payload_dict["app"] = app
     if bound:
         payload_dict[BOUND_CLAIM] = 1
+    if scope:
+        payload_dict[device_scopes.SCOPE_CLAIM] = list(scope)
     payload = json.dumps(payload_dict, separators=(",", ":")).encode()
-    token = f"{_b64url_encode(payload)}.{_sign(payload)}"
+    signature = scoped_sessions.sign_scoped(payload, _secret()) if scope else _sign(payload)
+    token = f"{_b64url_encode(payload)}.{signature}"
 
     if issuer != ISSUER_APP:
+        signed_in: dict[str, Any] = {"expires_at": expires_at, "lifetime_secs": session_ttl}
+        signed_in.update({"scope": device_scopes.scope_words(scope)} if scope else {})
         _audit_session(
             "session_signed_in",
             caller=user_id,
             session_id=device.id,
             issuer=issuer,
             kind=device.kind,
-            extra={"expires_at": expires_at, "lifetime_secs": session_ttl},
+            extra=signed_in,
         )
     return MintedSession(
         token=token,
@@ -944,11 +917,11 @@ def validate_token(token: str, *, use_session_exp: bool = False) -> tuple[bool, 
         payload_bytes = _b64url_decode(encoded_payload)
     except Exception:
         return False, "", "invalid encoding"
-    expected = _sign(payload_bytes)
     # A signature is base64url, so a non-ASCII one is simply wrong — and it must be refused as
     # one: `compare_digest` RAISES on a non-ASCII str, which turned a forged credential into a
-    # 500 from the auth middleware instead of a refusal.
-    if not sig.isascii() or not hmac.compare_digest(sig, expected):
+    # 500 from the auth middleware instead of a refusal (`scoped_sessions.signature_kind`).
+    signed = scoped_sessions.signature_kind(payload_bytes, sig, _secret())
+    if not signed:
         return False, "", "invalid signature"
     try:
         data = json.loads(payload_bytes)
@@ -956,6 +929,9 @@ def validate_token(token: str, *, use_session_exp: bool = False) -> tuple[bool, 
         return False, "", "invalid payload"
     if not isinstance(data, dict):
         return False, "", "invalid payload"
+    claimed = scoped_sessions.claimed_scope(data, signed)
+    if claimed is None:
+        return False, "", "invalid signature"
     session_exp = _session_deadline(data)
     # A link (`?token=`) must be opened inside its click window AND inside its session: this
     # checked only the 24-hour window, so a 1-hour token opened as a link after its hour still
@@ -965,9 +941,9 @@ def validate_token(token: str, *, use_session_exp: bool = False) -> tuple[bool, 
         return False, "", "token expired"
     # Validate nonce is still in the valid set (not evicted due to limit)
     token_nonce = data.get("nonce", "")
-    valid, reason = _state.is_nonce_valid(token_nonce)
+    valid, reason = _state.is_nonce_valid(token_nonce, claimed=claimed)
     if not valid:
-        return False, "", reason
+        return False, "", scoped_sessions.end_refused(token_nonce, reason) or reason
     return True, data.get("sub", ""), ""
 
 
@@ -1022,7 +998,12 @@ ERR_SESSION_EXPIRED = "session_expired"
 ERR_SESSION_REQUIRED = "session_required"
 
 #: What each limit counts, as the sentence names it.
-_POOL_NOUNS = {"device": "paired devices", "browser": "browsers", "token": "tokens"}
+_POOL_NOUNS = {
+    "device": "paired devices",
+    "browser": "browsers",
+    "token": "tokens",
+    "automation": "automation clients",
+}
 
 #: The `detail.reason` of the refusals that are not an ending the store recorded.
 REFUSED_NOT_SIGNED_IN = "not_signed_in"
@@ -1107,25 +1088,26 @@ def _verified_claims(token: str) -> dict[str, Any] | None:
         payload_bytes = _b64url_decode(encoded_payload)
         if not sig.isascii():
             return None
-        if not hmac.compare_digest(sig, _sign(payload_bytes)) and not _signed_by_replaced_key(
-            payload_bytes, sig
-        ):
+        signed = scoped_sessions.signature_kind(
+            payload_bytes, sig, _secret()
+        ) or _signed_by_replaced_key(payload_bytes, sig)
+        if not signed:
             return None
         data = json.loads(payload_bytes)
     except Exception:  # noqa: BLE001 — anything unverifiable gets no explanation
         return None
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict) or scoped_sessions.claimed_scope(data, signed) is None:
+        return None
+    return data
 
 
-def _signed_by_replaced_key(payload: bytes, sig: str) -> bool:
-    """Whether *sig* is the signature the key the last rotation replaced gave *payload*."""
+def _signed_by_replaced_key(payload: bytes, sig: str) -> str:
+    """Which key the last rotation replaced, or the scoped key derived from it, signed *payload*
+    as *sig* (``scoped_sessions.SIGNED_*``), or ``""``."""
     from personalclaw.dashboard.session_store import retired_key
 
     key = retired_key()
-    if not key:
-        return False
-    expected = _b64url_encode(hmac.new(key, payload, hashlib.sha256).digest())
-    return hmac.compare_digest(sig, expected)
+    return scoped_sessions.signature_kind(payload, sig, key) if key else ""
 
 
 def not_signed_in_notice() -> SignedOutNotice:
@@ -1184,6 +1166,11 @@ def _ended_notice(claims: dict[str, Any], *, user_agent: str = "") -> SignedOutN
             message=pair_refusals.updated_sentence(
                 via, kind, when_words(ended.at), user_agent=user_agent
             ),
+        )
+    said = scoped_sessions.ended_sentence(ended.reason) if ended is not None else ""
+    if ended is not None and said:
+        return SignedOutNotice(
+            code=ERR_SESSION_SIGNED_OUT, reason=ended.reason, at=ended.at, message=said
         )
     if ended is not None and ended.reason != END_EXPIRED:
         when = when_words(ended.at)
@@ -1695,6 +1682,7 @@ def _signed_out(ended: Any, reason: str, *, actor: str) -> int:
             kind=record.device.kind,
             extra={"reason": reason},
         )
+    scoped_sessions.close_for([nonce for nonce, _record in ended])
     try:
         from personalclaw import push
 
@@ -1765,6 +1753,10 @@ def renew_sign_in(
 
     user = str(request.get("user") or owner)
     record = load_session_records().get(previous_nonce) if previous_nonce else None
+    if record is not None and record.scope:
+        # An automation client is never re-minted: that would sign it in again with no scope.
+        # Owner presence refuses it before this is reached; this is the belt.
+        raise ValueError("an automation client's sign-in is never renewed")
     if record is None:
         previous_nonce = ""
     if record is not None and record.issuer == ISSUER_WINDOW:
@@ -2070,6 +2062,8 @@ def token_auth_middleware(
         request["app"] = credentials.app
         request["session_nonce"] = token_nonce(credentials.token)
         request["session_expires_at"] = _session_end(credentials.token)
+        # An automation client's scope, which validation has held to its row; () for others.
+        request["device_scope"] = scoped_sessions.token_scope(credentials.token)
         note_session_client(
             request["session_nonce"],
             request,

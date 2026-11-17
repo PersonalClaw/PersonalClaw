@@ -653,14 +653,19 @@ async def api_loop_list(request: web.Request) -> web.Response:
     table, a ledger file per loop and the run store, which it opens and closes, are disk reads
     that would hold every other request meanwhile.
     """
+    from personalclaw.dashboard.device_scopes import scope_of
     from personalclaw.workflows import loop_view
 
     project_id = request.query.get("project_id", "").strip()
     kind = request.query.get("kind", "").strip().lower()
+    # An automation client's list holds the loops table's rows only: a run-backed loop is a
+    # workflow run, which no scope reaches (Q2).
+    loops_table_only = bool(scope_of(request))
 
     def off_the_loop() -> list[dict[str, Any]]:
         rows = store.list_redacted(project_id=project_id, kind=kind)
-        rows += loop_view.list_loop_views(project_id=project_id, kind=kind)
+        if not loops_table_only:
+            rows += loop_view.list_loop_views(project_id=project_id, kind=kind)
         rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
         return rows
 
@@ -1433,9 +1438,34 @@ async def api_loop_stream(request: web.Request) -> web.StreamResponse:
     registry = request.app["state"].loop_sse()
     key = registry_key(cid)
     hub = registry.hub(key)
-    return await stream_response(
-        request, hub, on_connect=[("snapshot", view)], registry_evict=(registry, key)
-    )
+    from personalclaw.dashboard.device_scopes import scope_of
+
+    # An automation client's stream ends when its session does (F9): signed out, ended idle or for
+    # a mismatch, or at its own end. A sign-out may close it from another thread, so the cancel is
+    # handed to this stream's event loop.
+    release = None
+    if scope_of(request) and request.get("session_nonce"):
+        from personalclaw.dashboard.scoped_sessions import hold_open
+
+        task = asyncio.current_task()
+        loop = asyncio.get_running_loop()
+
+        def close() -> None:
+            if task is not None:
+                loop.call_soon_threadsafe(task.cancel)
+
+        release = hold_open(
+            str(request["session_nonce"]),
+            close,
+            ends=float(request.get("session_expires_at") or 0.0),
+        )
+    try:
+        return await stream_response(
+            request, hub, on_connect=[("snapshot", view)], registry_evict=(registry, key)
+        )
+    finally:
+        if release is not None:
+            release()
 
 
 # ── queue / autopilot (execution drive) ──
