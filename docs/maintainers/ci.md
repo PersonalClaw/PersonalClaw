@@ -1265,19 +1265,27 @@ and a rerun carries only what attempt 1 recorded. One kind of job is the excepti
 <file>` gives attempt 1's jobs, as `gh api --paginate --slurp` lists them (with `--records` only,
 held to the run and attempt 1). A planned key whose attempt-1 job GitHub completed as cancelled with
 no step, no runner name and no runner id, as "The job was not acquired by Runner" leaves one, may be
-filled by attempt 2's record alone, held as any record is, and reads `missing on attempt 2` without
-one. That job ran nothing, so it left no result for a rerun to hide. A job a runner took, cancelled
-or not, a key the listing names no job of, and a job the listing describes any other way stay
-`missing on attempt 1`. On attempt 1 itself, such a key reads `not acquired`, still red. When that
-is the whole of why the run is red (aside from a stage job whose `needs` result is `abandoned`
-while attempt 1's listing shows nothing else red), `decide` also writes one `::notice` titled "red
-only for jobs no runner took" that names those keys; `decide_main_push` writes none, since nothing
+filled by attempt 2's record, held as any record is, and reads `missing on attempt 2` without one.
+`--later-jobs <file>` (with `--first-jobs` only, on a rerun) gives each later attempt's jobs up to
+`--attempt`, a JSON object of each attempt's number to its listing (#5848). With it, a later
+attempt's record fills such a key so long as every attempt before that one shows no runner took
+the job either, as on #6209, whose macOS shards no runner took on attempts 1 to 3 and that
+attempt 4 filled green. That job ran nothing, so it left no result for a rerun to hide. A job a
+runner took, cancelled or not, a key the listing names no job of, and a job the listing describes
+any other way stay `missing on attempt <n>` for the first such attempt. A key no runner took on
+every attempt so far reads `not acquired`, still red. When that is the whole of why the run is red
+(aside from a stage job whose `needs` result is `abandoned` while the attempt's own listing shows
+nothing else red), `decide` also writes one `::notice` titled "red only for jobs no runner took"
+that names those keys; `decide_main_push` writes none, since nothing
 reads a push run's notice. The flake rule passes nothing on a run a rerun filled this way. The
 rule holds on a push to `main` too, and on any run it fills a job still queued when its run was
 cancelled. Each tier workflow's results step lists attempt 1's jobs on every attempt and passes
 them as `--first-jobs` (on attempt 1 the listing is the run's own, taken once the jobs it judges
 are done). A listing it can't take is passed as none, with a warning, and the verdict then reads
-no job as one no runner took. On a pull request's or a dispatch's run, the merge controller reads
+no job as one no runner took. It passes no `--later-jobs` yet: main's verdict must know the option
+before a results step passes it, so the CI contract lists the results step that does beside
+today's, holds each results job to exactly one of them, and the workflows take it up in a second
+change (#4584 step 4). On a pull request's or a dispatch's run, the merge controller reads
 attempt 1's listing and the notice (rule 4, "The run's verdict" above), so a rerun that fills
 those jobs green counts toward a merge.
 
@@ -1487,8 +1495,11 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   lines of one step the row lists for its job, in their order, each spelled exactly, its
   indentation too (a blank line or a comment aside), so a step that keeps its lines and moves
   one (publishing a plan before the check that refuses it) fails as an extra line does, and a
-  listed step no job of either workflow runs fails too, and so does a results job that runs its
-  verdict step twice or not at all; a stage job runs its runner's identity and the run-job line
+  listed step no job of either workflow runs fails too, unless the row lists it as waiting for
+  the workflows (today the results job's two verdict steps, today's and the one that also gives
+  main's verdict each later attempt's jobs, of which each results job runs exactly one), and so
+  does a results job that runs its verdict step twice or not at all; a stage job runs its runner's
+  identity and the run-job line
   and nothing else, its other steps use only the checkout, the setup action and the artifact
   actions, and every stage job's steps are the same.
 - "a-merge-tier-run-holds-at-most-14-jobs-at-once": a merge-tier run holds at most 14 jobs at

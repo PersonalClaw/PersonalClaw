@@ -45,14 +45,17 @@ so a rerun carries only what attempt 1 recorded and never fills a record attempt
 But for one kind of job: given attempt 1's jobs (``first_jobs``, as the API lists them, each of
 the run and attempt 1), a planned key whose attempt-1 job no runner took (:func:`never_acquired`:
 completed and cancelled, with no step, no runner name and no runner id, as GitHub ends a job no
-runner took) may be filled by attempt 2's record alone, held as any record is, and reads
-``missing on attempt 2`` without one. That job ran nothing, so it left no result for a rerun to
-hide. A job a runner took, or one the listing describes any other way, stays ``missing on
-attempt 1``. On attempt 1 itself, such a key reads ``not acquired``, still red, and a verdict red
-for nothing else (aside from a stage job whose ``needs`` result is ``abandoned`` while attempt 1's
-listing shows nothing else red) names those keys in :data:`NOT_ACQUIRED_NOTICE`'s notice
-(:func:`not_acquired_notices`), for the merge controller to read, so it knows a rerun may fill
-them.
+runner took) may be filled by attempt 2's record, held as any record is, and reads ``missing on
+attempt 2`` without one. Given each later attempt's jobs too (``later_jobs``, #5848), the record
+of a later attempt fills it so long as every attempt before that one shows no runner took the
+job either: #6209's macOS shards, untaken on attempts 1 to 3, were filled by attempt 4's green
+records. Such a job ran nothing, so it left no result for a rerun to hide. A job a runner took,
+or one the listing describes any other way, stays ``missing on attempt <n>`` for the first such
+attempt. A key no runner took on every attempt so far reads ``not acquired``, still red, and a
+verdict red for nothing else (aside from a stage job whose ``needs`` result is ``abandoned``
+while the attempt's own listing shows nothing else red) names those keys in
+:data:`NOT_ACQUIRED_NOTICE`'s notice (:func:`not_acquired_notices`), for the merge controller to
+read, so it knows a rerun may fill them.
 
 Planned keys are opaque strings: a job id from ``needs``, a matrix entry from a per-job verdict
 file, or a job the controller read from the API all mean the same thing here.
@@ -77,7 +80,8 @@ request's run, ``--changed`` (its changed paths, NUL-separated) and ``--jobs`` (
 the attempt, as the API lists them) give the flake rule what it reads; it passes nothing without
 them, and they are refused on a push. ``--first-jobs`` (attempt 1's jobs, as the API lists
 them, with --records only) names the planned jobs no runner took on attempt 1, on attempt 1 and
-on a rerun alike.
+on a rerun alike, and ``--later-jobs`` (with --first-jobs only, on a rerun) each later attempt's
+up to ``--attempt``: a JSON object of each attempt's number to its listing.
 
 :func:`job_record` writes, and :func:`from_job_records` reads, the per-job record a run of a
 catalogue job leaves (``python -m tools.ci run-job``): its key, result, identity, the GitHub run
@@ -297,27 +301,34 @@ def _planned(
     candidate: Identity,
     run_id: int | None = None,
     reads: frozenset[str] | None = None,
-    unpicked: bool = False,
-    first_attempt: bool = False,
+    untaken: frozenset[int] = frozenset(),
+    attempt: int | None = None,
 ) -> tuple[str, str] | None:
     """The fault of one planned key's results, or None when every attempt was green here.
-    ``unpicked`` says attempt 1's listing shows no runner took the key's job, and
-    ``first_attempt`` that the run is on attempt 1."""
+    ``untaken`` holds the attempts whose listing shows no runner took the key's job, and
+    ``attempt`` is the run's own."""
     if not results:
-        if unpicked and first_attempt:
-            return NOT_ACQUIRED, "no runner took its job, so a rerun's attempt-2 record may fill it"
+        if attempt is not None and untaken >= frozenset(range(1, attempt + 1)):
+            return NOT_ACQUIRED, (
+                f"no runner took its job on {_attempts(attempt)}, so a rerun's record may fill it"
+            )
         return MISSING, "no result for a planned job"
     if run_id is not None and all(r.attempt != 1 for r in results):
         # Every planned entry ran on attempt 1, so its record is attempt 1's: a later attempt's
         # result alone is a rerun filling a record attempt 1 never wrote. Unless no runner took
-        # attempt 1's job: then it ran nothing and left no result to hide, and attempt 2's record
-        # stands for it. One a runner took on attempt 2 and that left none stays red.
-        if not unpicked:
+        # attempt 1's job: then it ran nothing and left no result to hide, and the next attempt's
+        # record stands for it, or, when no runner took it on that attempt either, a later one's.
+        # An attempt whose runner took the job and left no record (or one no listing shows) stays
+        # red: only its own record says what it did.
+        if 1 not in untaken:
             return "missing on attempt 1", "a rerun carries only what attempt 1 recorded"
-        if all(r.attempt != 2 for r in results):
-            return "missing on attempt 2", (
-                "no runner took its job on attempt 1, and only attempt 2's record fills it"
-            )
+        first = min(r.attempt for r in results)
+        for gap in range(2, first):
+            if gap not in untaken:
+                return f"missing on attempt {gap}", (
+                    f"no runner took its job on {_attempts(gap - 1)}, and only attempt {gap}'s"
+                    " record fills it"
+                )
     latest = max(r.attempt for r in results)
     for r in results:
         if r.attempt == latest:
@@ -329,6 +340,11 @@ def _planned(
         if fault:
             return "red on an earlier attempt", f"attempt {r.attempt}: {fault[0]}; {fault[1]}"
     return None
+
+
+def _attempts(last: int) -> str:
+    """``attempt 1``, or ``attempts 1 to <last>``."""
+    return "attempt 1" if last == 1 else f"attempts 1 to {last}"
 
 
 def _unplanned(results: Sequence[JobResult]) -> tuple[str, str] | None:
@@ -571,6 +587,45 @@ def _skipped(job: JobRun) -> bool:
     return job.status == "completed" and job.conclusion == SKIPPED
 
 
+def read_later_jobs(
+    text: str, *, run_id: int, attempt: int, planned: frozenset[str] | None = None
+) -> dict[int, list[JobRun]]:
+    """The run's jobs on each attempt after 1 up to ``attempt``: a JSON object of each attempt's
+    number (``"2"``, ``"3"``, ...) to that attempt's listing as :func:`read_jobs` reads it (``gh
+    api --paginate --slurp`` of ``attempts/<n>/jobs``), each held to its own attempt. Refused:
+    anything else, a key that is not an attempt's number, on attempt 1, and an object that does
+    not list each attempt from 2 to ``attempt`` exactly once."""
+    where = "later attempts' jobs (--later-jobs)"
+    try:
+        by_attempt = json.loads(
+            text, object_pairs_hook=_no_repeats_in(where), parse_constant=_no_constant_in(where)
+        )
+    except Refused:
+        raise
+    except RecursionError:
+        raise Refused(f"{where} are nested too deeply to read") from None
+    except ValueError as exc:
+        raise Refused(f"{where} are not JSON: {exc}") from None
+    if not isinstance(by_attempt, dict):
+        raise Refused(f"{where} must be an object of each attempt's number to its listing")
+    if attempt < 2:
+        raise Refused(f"{where}: there is no attempt after 1 to list on attempt {attempt}")
+    out: dict[int, list[JobRun]] = {}
+    for key, pages in by_attempt.items():
+        if not (isinstance(key, str) and key.isascii() and key.isdigit() and key[0] != "0"):
+            raise Refused(f"{where}: {key!r} is no attempt number")
+        out[int(key)] = read_jobs(
+            json.dumps(pages),
+            run_id=run_id,
+            attempt=int(key),
+            where=f"attempt {key}'s jobs (--later-jobs)",
+            planned=planned,
+        )
+    if set(out) != set(range(2, attempt + 1)):
+        raise Refused(f"{where} must list attempts 2 to {attempt}, each once, not {sorted(out)!r}")
+    return out
+
+
 def read_changed(text: str) -> frozenset[str]:
     """The pull request's changed paths, NUL-separated, as ``git diff --name-only -z`` writes
     them. Refused: a path that is empty, absolute, or that names ``.`` or ``..``."""
@@ -792,15 +847,20 @@ def decide(
     change_run: bool = False,
     first_jobs: Sequence[JobRun] | None = None,
     attempt: int | None = None,
+    later_jobs: Mapping[int, Sequence[JobRun]] | None = None,
 ) -> Verdict:
     """The verdict on ``candidate``: green only when every planned job did its work on it.
 
     ``run_id`` is given when ``results`` are one run's own: each planned result must then name
     that run, and each planned key must have a result on attempt 1, but for a key whose job
     ``first_jobs`` (attempt 1's jobs, each of run ``run_id`` and attempt 1, and no planned job
-    twice) shows no runner took (:func:`never_acquired`): attempt 2's record alone stands for it.
-    ``attempt`` is the run's own, and a result of a later attempt is refused: on attempt 1 such a
-    key reads ``not acquired``, and a verdict red for those keys alone, by attempt 1's listing too,
+    twice) shows no runner took (:func:`never_acquired`): attempt 2's record stands for it, or,
+    given ``later_jobs`` (each attempt after 1 up to ``attempt``, each attempt's jobs held to the
+    run and that attempt, and no planned job twice in one), the record of the first attempt whose
+    listing shows a runner took it, so long as each attempt before it shows none did (#5848).
+    ``attempt`` is the run's own, and a result of a later attempt is refused. A key no runner took
+    on every attempt so far reads ``not acquired`` (on attempt 1 by ``first_jobs``, on a rerun by
+    ``later_jobs`` too), and a verdict red for those keys alone, by the attempt's own listing too,
     names them (``Verdict.not_acquired``, :func:`_only_not_acquired`). ``key_partners`` names, for
     every planned key and no other, the partners its own job reads: each record of that key must
     name exactly those, at the candidate's revisions. Without it, a record is held to the
@@ -842,7 +902,7 @@ def decide(
     reasons: list[Reason] = []
     if not plan:
         reasons.append(Reason("", "empty plan", "a plan with no jobs proves nothing"))
-    unpicked = _unpicked(first_jobs, plan, run_id)
+    untaken = _untaken(first_jobs, later_jobs, plan, run_id, attempt)
     filled: list[str] = []
     for key in plan:
         mine = by_key.get(key, [])
@@ -851,12 +911,12 @@ def decide(
             candidate,
             run_id,
             None if reads is None else reads[key],
-            key in unpicked,
-            attempt == 1,
+            untaken.get(key, frozenset()),
+            attempt,
         )
         if fault:
             reasons.append(Reason(key, *fault))
-        elif key in unpicked and mine and all(r.attempt != 1 for r in mine):
+        elif 1 in untaken.get(key, ()) and mine and all(r.attempt != 1 for r in mine):
             filled.append(key)
     for key in sorted(set(by_key) - set(plan)):
         fault = _unplanned(by_key[key])
@@ -889,37 +949,64 @@ def decide(
         green=not reasons,
         reasons=tuple(reasons),
         tests=listed,
-        not_acquired=_only_not_acquired(reasons, by_key, first_jobs),
+        not_acquired=_only_not_acquired(
+            reasons, by_key, first_jobs if attempt in (None, 1) else (later_jobs or {}).get(attempt)
+        ),
     )
 
 
-def _unpicked(
-    first_jobs: Sequence[JobRun] | None, plan: Sequence[str], run_id: int | None
-) -> frozenset[str]:
-    """The planned keys whose attempt-1 job no runner took, by ``first_jobs``. Refused: a listing
-    given without the run's id, a job of another run or of an attempt but 1 (or whose run or
-    attempt is not a whole number), and a planned job named twice."""
+def _untaken(
+    first_jobs: Sequence[JobRun] | None,
+    later_jobs: Mapping[int, Sequence[JobRun]] | None,
+    plan: Sequence[str],
+    run_id: int | None,
+    attempt: int | None,
+) -> dict[str, frozenset[int]]:
+    """Each planned key's attempts whose listing shows no runner took its job: attempt 1 by
+    ``first_jobs``, each later one by ``later_jobs``. Refused: a listing given without the run's
+    id, a job of another run or of an attempt but the one it is listed for (or whose run or attempt
+    is not a whole number), a planned job named twice in one attempt's jobs, and ``later_jobs``
+    without ``first_jobs``, on attempt 1, or not listing each attempt from 2 to ``attempt``."""
     if first_jobs is None:
-        return frozenset()
+        if later_jobs is not None:
+            raise Refused("later attempts' jobs are read only with attempt 1's")
+        return {}
     if run_id is None:
         raise Refused("attempt 1's jobs are read only with the run's own results (its run id)")
-    seen: set[str] = set()
-    for job in first_jobs:
-        if (
-            not _whole(job.run_id)
-            or not _whole(job.run_attempt)
-            or job.run_id != run_id
-            or job.run_attempt != 1
-        ):
+    listings: dict[int, Sequence[JobRun]] = {1: first_jobs}
+    if later_jobs is not None:
+        if attempt is None or attempt < 2:
             raise Refused(
-                f"attempt 1's jobs: {job.name!r} is of run {job.run_id!r} attempt"
-                f" {job.run_attempt!r}, not run {run_id} attempt 1"
+                "later attempts' jobs are read on a rerun only: there is no attempt after 1"
             )
-        if job.name in plan:
-            if job.name in seen:
-                raise Refused(f"attempt 1's jobs name the planned job {job.name!r} twice")
-            seen.add(job.name)
-    return frozenset(j.name for j in first_jobs if j.name in plan and never_acquired(j))
+        if set(later_jobs) != set(range(2, attempt + 1)):
+            raise Refused(
+                f"later attempts' jobs must list attempts 2 to {attempt}, each once, not"
+                f" {sorted(later_jobs, key=str)!r}"
+            )
+        listings.update(later_jobs)
+    out: dict[str, set[int]] = {}
+    for on, jobs in sorted(listings.items()):
+        which = "attempt 1's jobs" if on == 1 else f"attempt {on}'s jobs"
+        seen: set[str] = set()
+        for job in jobs:
+            if (
+                not _whole(job.run_id)
+                or not _whole(job.run_attempt)
+                or job.run_id != run_id
+                or job.run_attempt != on
+            ):
+                raise Refused(
+                    f"{which}: {job.name!r} is of run {job.run_id!r} attempt"
+                    f" {job.run_attempt!r}, not run {run_id} attempt {on}"
+                )
+            if job.name in plan:
+                if job.name in seen:
+                    raise Refused(f"{which} name the planned job {job.name!r} twice")
+                seen.add(job.name)
+                if never_acquired(job):
+                    out.setdefault(job.name, set()).add(on)
+    return {key: frozenset(on) for key, on in out.items()}
 
 
 def _only_not_acquired(
@@ -928,7 +1015,8 @@ def _only_not_acquired(
     first_jobs: Sequence[JobRun] | None,
 ) -> tuple[str, ...]:
     """The keys of the ``not acquired`` reasons, when they are the whole of why the verdict is red;
-    empty otherwise. Attempt 1's listing must show every job but :data:`RESULTS_JOB` completed
+    empty otherwise. The attempt's own listing (``first_jobs``: attempt 1's on attempt 1, the
+    rerun's own on a rerun) must show every job but :data:`RESULTS_JOB` completed
     ``success`` or ``skipped``, or no runner took it and it is one of those keys. One other reason
     is set aside: a stage job the listing names no job of, whose ``needs`` result is
     :data:`ABANDONED` (and otherwise ``success`` or ``skipped``). Any other word, from GitHub or
@@ -978,6 +1066,7 @@ def decide_main_push(
     key_partners: Mapping[str, Iterable[str]] | None = None,
     first_jobs: Sequence[JobRun] | None = None,
     attempt: int | None = None,
+    later_jobs: Mapping[int, Sequence[JobRun]] | None = None,
 ) -> Verdict:
     """The verdict on a push to ``main``: :func:`decide`, with one more name for a red.
 
@@ -996,7 +1085,7 @@ def decide_main_push(
     every reason is superseded by that one commit. A failed or skipped job, and a missing one
     ``proven`` does not name, keeps its own reason. A candidate's reading is :func:`decide`,
     which takes no proof, so a pull request's cancelled job is never superseded. ``run_id``,
-    ``key_partners``, ``first_jobs`` and ``attempt`` are :func:`decide`'s.
+    ``key_partners``, ``first_jobs``, ``later_jobs`` and ``attempt`` are :func:`decide`'s.
     """
     if (event, ref) != MAIN_PUSH:
         raise Refused(
@@ -1023,6 +1112,7 @@ def decide_main_push(
         key_partners=key_partners,
         first_jobs=first_jobs,
         attempt=attempt,
+        later_jobs=later_jobs,
     )
     if base.green:
         return base
@@ -1854,6 +1944,13 @@ def main(argv: list[str] | None = None) -> int:
         " planned job no runner took on attempt 1 may be filled by attempt 2's record",
     )
     parser.add_argument(
+        "--later-jobs",
+        action=_Once,
+        help="each attempt after 1 up to --attempt's jobs, a JSON object of each attempt's"
+        " number to its gh api --paginate --slurp listing (with --first-jobs only): a planned job"
+        " no runner took on attempt 1 or any attempt since may be filled by a later one's record",
+    )
+    parser.add_argument(
         "--superseded",
         action=_Once,
         help="a JSON object of each cancelled key a newer push replaced and that push's commit, as"
@@ -1870,8 +1967,11 @@ def main(argv: list[str] | None = None) -> int:
         changed: frozenset[str] | None = None
         jobs: list[JobRun] | None = None
         first_jobs: list[JobRun] | None = None
+        later_jobs: dict[int, list[JobRun]] | None = None
         if args.first_jobs is not None and args.records is None:
             raise Refused("--first-jobs is read only with --records")
+        if args.later_jobs is not None and args.first_jobs is None:
+            raise Refused("--later-jobs is read only with --first-jobs")
         if (args.changed is None) != (args.jobs is None):
             raise Refused("--changed and --jobs are read together, or neither is")
         if args.changed is not None:
@@ -1925,6 +2025,13 @@ def main(argv: list[str] | None = None) -> int:
                     where="attempt 1's jobs (--first-jobs)",
                     planned=frozenset(planned),
                 )
+            if args.later_jobs is not None:
+                later_jobs = read_later_jobs(
+                    _read(args.later_jobs),
+                    run_id=own,
+                    attempt=attempt,
+                    planned=frozenset(planned),
+                )
         if args.superseded is None:
             verdict = decide(
                 planned,
@@ -1938,6 +2045,7 @@ def main(argv: list[str] | None = None) -> int:
                 change_run=os.environ.get("GITHUB_EVENT_NAME", "") in CHANGE_EVENTS,
                 first_jobs=first_jobs,
                 attempt=attempt,
+                later_jobs=later_jobs,
             )
         else:
             proven = _json_file(args.superseded, "--superseded")
@@ -1954,6 +2062,7 @@ def main(argv: list[str] | None = None) -> int:
                 key_partners=key_partners,
                 first_jobs=first_jobs,
                 attempt=attempt,
+                later_jobs=later_jobs,
             )
     except Refused as exc:
         reason = _printable(str(exc))
