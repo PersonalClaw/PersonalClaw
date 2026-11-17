@@ -205,6 +205,10 @@ def _pinned(ids: set[str]) -> list[str]:
 
 
 _PINNED = _pinned({j.id for j in _CAT.jobs})
+#: The jobs whose row here lands before the job: a new catalogue job lands in two changes, main's
+#: rows first (main's CI contract reads every job's row over each head). A row named here is left
+#: out while the catalogue has no such job, and the change that adds the job takes its name off.
+_LANDS_NEXT = frozenset({"documents"})
 _INPUT_ROWS = {
     "static": ("Makefile", None),
     "rails": ("tests/rails/test_ci_plan_tree.py", None),
@@ -212,6 +216,8 @@ _INPUT_ROWS = {
     "python-suite": ("src/personalclaw/app.py", None),
     "python-suite-macos": ("src/personalclaw/app.py", None),
     "client": ("packages/personalclaw-client-py/src/x.py", "docs/vision.md"),
+    # The documents package's own job plans for the package and its tests, not for the rest of core.
+    "documents": ("src/personalclaw/documents/model.py", "src/personalclaw/app.py"),
     # The web, desktop and mobile tests plan for their own workspace: a desktop change plans no
     # web suite, and a web change no mobile tests.
     "web-unit": ("web/src/App.tsx", "desktop/main.js"),
@@ -231,6 +237,11 @@ _INPUT_ROWS = {
     "apps-contract": ("src/personalclaw/sdk/channel.py", "docs/vision.md"),
     "audit": ("uv.lock", "docs/vision.md"),
     "namespace-sandbox": ("src/personalclaw/sandbox.py", None),
+}
+_INPUT_ROWS = {
+    job: row
+    for job, row in _INPUT_ROWS.items()
+    if job not in _LANDS_NEXT or job in {j.id for j in _CAT.jobs}
 }
 
 
