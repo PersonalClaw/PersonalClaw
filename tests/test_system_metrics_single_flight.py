@@ -8,9 +8,10 @@ host could least afford them. And the 2 s cache was stamped with the time a coll
 STARTED, so a collection slower than 2 s was already stale when it was stored and the next
 request started another.
 
-Now one collection is in flight at a time and everyone waiting shares its answer, and the
-cache's 2 s count from when that answer arrived. A reading a probe could not take is left
-out of the payload, never written as a zero (the page shows its placeholder for it).
+Now one collection is in flight at a time and everyone waiting shares its answer, and a sample's
+age counts from when that answer arrived. What a request answers while the next is taken in the
+background is ``test_system_metrics_answer_from_a_background_sample.py``'s. A reading a probe could
+not take is left out of the payload, never written as a zero (the page shows its placeholder).
 """
 
 from __future__ import annotations
@@ -83,7 +84,7 @@ def test_concurrent_requests_share_one_collection(monkeypatch: pytest.MonkeyPatc
 def test_a_collection_slower_than_the_cache_is_still_cached(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The cache counts from when the answer ARRIVED, so a slow host still gets cache hits."""
+    """A sample's age counts from when it ARRIVED, so a slow host's sample is still answered."""
     calls = 0
 
     def collect() -> dict[str, object]:
@@ -93,7 +94,7 @@ def test_a_collection_slower_than_the_cache_is_still_cached(
         return {"collection": calls}
 
     monkeypatch.setattr(handlers_system, "_collect_system_metrics", collect)
-    monkeypatch.setattr(handlers_system, "_METRICS_CACHE_TTL", 1.0)
+    monkeypatch.setattr(handlers_system, "_METRICS_STALE_AFTER", 1.0)
 
     async def scenario() -> tuple[dict[str, object], dict[str, object]]:
         first = await handlers_system.api_system(_request())

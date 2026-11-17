@@ -22,6 +22,7 @@ from personalclaw.dashboard.handlers_system import (  # noqa: F401
     api_onboarding_state,
     api_status,
     api_system,
+    register_system_metrics,
 )
 from personalclaw.dashboard.origin import is_loopback  # noqa: F401
 from personalclaw.security import (  # noqa: F401

@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **The status bar's system reading answers at once from the last one taken, and an aging reading is taken again in the background, so a reload no longer waits seconds for it on a busy machine.**
+
 ## [0.3.9] — 2026-11-16
 
 A command prints only what it makes now, and a check exits 1 when it finds what it checks for, so read getting-started's Updating before you update a script that reads one. Five parts of the app are redesigned. Needs you is one list of what waits on your answer: each card leads with what it asks and answers it there, and its panel shows the proposal itself. Library is one page of everything you keep, with a preview beside it. The Projects page says what needs you and what is running in each project, and a project's page opens on a box to start a chat there. A plan step is approved only as you read it, and a change to it after you read it is put to you again. The agent orb shows each state in a form of its own, from a still ring when it is ready to the claw mark when a turn is done.
