@@ -301,7 +301,15 @@
       "work_wait",
       "workref"
     ],
-    "rationale": "One import cycle holds most of core: on 2026-10-31, 268 of the 358 units over every import, and 71 counting only the imports that run at startup. A unit in it can't be built, tested or moved without the rest. The size can't be the gated number: a new module the dashboard imports that imports config joins the cycle by construction, and 3 of the 9 units added in the week before this ratchet did, so a count that may only fall would red ordinary features that no change to their own module could fix. What a PR can always do is keep a clean unit clean, so the baseline records the units outside the cycle, and one of them inside it is the red. A unit leaving the cycle, and a new unit made outside it, is recorded by running this generator in that commit. The size and its startup figure are printed in the gate report, ungated, and read at each release cut."
+    "rationale": "One import cycle holds most of core: on 2026-10-31, 268 of the 358 units over every import, and 71 counting only the imports that run at startup. A unit in it can't be built, tested or moved without the rest. The size can't be the gated number: a new module the dashboard imports that imports config joins the cycle by construction, and 3 of the 9 units added in the week before this ratchet did, so a count that may only fall would red ordinary features that no change to their own module could fix. What a PR can always do is keep a clean unit clean, so the baseline records the units outside the cycle, and one of them inside it is the red. A unit leaving the cycle, and a new unit made outside it, is recorded by running this generator in that commit. The size and its startup figure are printed in the gate report, ungated, and read at each release cut.",
+    "releases": [
+      {
+        "release": "0.3.9",
+        "startup_units": 73,
+        "units": 276
+      }
+    ],
+    "releases_rationale": "The biggest import cycle may only shrink, release by release (v0.4.0 B2, #5813). Its size can't be held per pull request (see the rationale above), so each release's size is recorded once, by the bump that sets the release's version: a render of a tree whose version has no record adds one, with the size the tree has, and every record already here is carried as it is. A release whose cycle holds more units than the release before is the red: cut its edges before the release, never regenerate to bless it. A record, once on main, is never changed (the rail compares them with the base's)."
   },
   "structural-import-direction": {
     "entry_points": [

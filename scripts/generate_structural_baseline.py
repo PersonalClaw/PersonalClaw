@@ -19,7 +19,8 @@ shrink-only ratchets:
   * ``structural-duplication`` — a duplicate-implementation counter for the families this
     codebase has repeatedly re-derived (HTTP error envelope, verdict types, durable write).
   * ``structural-import-cycle`` — the units outside the biggest import cycle. One of them
-    inside it is the red; the cycle's size is reported, never gated (``_CYCLE_RATIONALE``).
+    inside it is the red. The cycle's size is held release by release: each release's size is
+    recorded once, by its bump, and may not exceed the release before (``_RELEASES_RATIONALE``).
 
 Each ratchet is its own gate in ``scripts/gate_report.py`` (the aggregate), so four
 independent structural failures report as FOUR failures in one run — one red never hides
@@ -73,10 +74,12 @@ the other three.
     * **Total line count of ``src/``.** A growing project grows; a total-lines ratchet would
       red on every feature and teach the team to regenerate baselines, which is the habit
       that kills every other ratchet in this file.
-    * **The import cycle's SIZE.** The cycle is ratcheted (``structural-import-cycle``): a
-      unit outside it may not join it. Its size is not, because a new module the dashboard
-      imports that imports config joins it by construction, so a count that may only fall would
-      red ordinary features. The size is printed in the gate report and read at each release.
+    * **The import cycle's SIZE, per pull request.** The cycle is ratcheted
+      (``structural-import-cycle``): a unit outside it may not join it. Its size is not held per
+      pull request, because a new module the dashboard imports that imports config joins it by
+      construction, so a count that may only fall would red ordinary features. It is held
+      release by release instead: the release bump records it, and it may not exceed the
+      release before.
 
 # how to update
     Regenerate ONLY when a counter LEGITIMATELY SHRANK (a file was split, an upward import
@@ -114,6 +117,7 @@ import contextlib
 import contextvars
 import json
 import sys
+import tomllib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -1302,14 +1306,61 @@ def _import_cycle_block() -> dict[str, Any]:
     return cycle_block_from(scan(RATCHET_IMPORT_CYCLE))
 
 
+#: Why the cycle's size is held release by release, and how.
+_RELEASES_RATIONALE = (
+    "The biggest import cycle may only shrink, release by release (v0.4.0 B2, #5813). Its size "
+    "can't be held per pull request (see the rationale above), so each release's size is "
+    "recorded once, by the bump that sets the release's version: a render of a tree whose "
+    "version has no record adds one, with the size the tree has, and every record already here "
+    "is carried as it is. A release whose cycle holds more units than the release before is the "
+    "red: cut its edges before the release, never regenerate to bless it. A record, once on main, "
+    "is never changed (the rail compares them with the base's)."
+)
+
+
+def release_of() -> str:
+    """The release the tree is: ``pyproject.toml``'s ``[project] version``; ``""`` when it has
+    none."""
+    path = _repo_root() / "pyproject.toml"
+    try:
+        version = tomllib.loads(path.read_text(encoding="utf-8"))["project"]["version"]
+    except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError):
+        return ""
+    return version if isinstance(version, str) else ""
+
+
+def committed_releases() -> list[dict[str, Any]]:
+    """The cycle's release records the committed baseline holds, in order; none when it has
+    none."""
+    try:
+        committed = json.loads(baseline_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    block = committed.get(RATCHET_IMPORT_CYCLE) if isinstance(committed, dict) else None
+    records = block.get("releases") if isinstance(block, dict) else None
+    return [dict(r) for r in records if isinstance(r, dict)] if isinstance(records, list) else []
+
+
+def release_records(units: int, startup_units: int) -> list[dict[str, Any]]:
+    """The committed records, carried as they are, and one for this tree's release when it has
+    none, with the size the tree has."""
+    records = committed_releases()
+    release = release_of()
+    if release and all(r.get("release") != release for r in records):
+        records.append({"release": release, "units": units, "startup_units": startup_units})
+    return records
+
+
 def cycle_block_from(result: Scan) -> dict[str, Any]:
-    """The cycle ratchet's block. ``outside`` and the rationale are the baseline; ``_live`` holds
-    the figures the render leaves out (``build_baseline``), so a new unit inside the cycle never
-    asks for a regeneration."""
+    """The cycle ratchet's block. ``outside``, the release records and the rationales are the
+    baseline; ``_live`` holds the figures the render leaves out (``build_baseline``), so a new
+    unit inside the cycle never asks for a regeneration."""
     rows = result.rows
     return {
         "outside": list(rows["outside"]),
         "rationale": _CYCLE_RATIONALE,
+        "releases": release_records(len(rows["members"]), int(rows["startup_units"])),
+        "releases_rationale": _RELEASES_RATIONALE,
         "_live": {
             "members": list(rows["members"]),
             "units": len(rows["members"]),
@@ -1320,12 +1371,18 @@ def cycle_block_from(result: Scan) -> dict[str, Any]:
 
 
 def cycle_information(current: dict[str, Any]) -> str:
-    """The gate report's information line for the cycle: its size, never gated."""
+    """The gate report's information line for the cycle: its size, gated only at a release, and
+    the size the last release recorded."""
     live = current["_live"]
-    return (
+    line = (
         f"the biggest import cycle holds {live['units']} units ({live['startup_units']} counting "
         f"only startup imports); {len(current['outside'])} units are outside it"
     )
+    records = current.get("releases") or []
+    if records:
+        last = records[-1]
+        line += f"; release {last['release']} recorded {last['units']}"
+    return line
 
 
 def _ties(unit: str, members: set[str], graph: UnitGraph) -> str:
@@ -1347,7 +1404,50 @@ def regressions_import_cycle(baseline: dict[str, Any], current: dict[str, Any]) 
             f"{unit}: was outside the import cycle and joined it{ties.get(unit, '')} — cut the "
             "import that pulled it in, do not regenerate to bless it"
         )
-    return lines
+    return lines + regressions_release(current.get("releases") or [])
+
+
+def release_record_problems(
+    records: list[dict[str, Any]], base: list[dict[str, Any]] | None, release: str
+) -> list[str]:
+    """What is wrong with the committed release *records*, against the *base*'s records (``None``
+    with no base to read): a record the base has, changed or removed; more than one record added;
+    a release with two records; the newest record not this tree's own *release*."""
+    problems: list[str] = []
+    if not records:
+        return ["the committed baseline holds no release record of the import cycle"]
+    names = [str(record.get("release")) for record in records]
+    if len(names) != len(set(names)):
+        problems.append(f"a release has two records: {names}")
+    if names[-1] != release:
+        problems.append(
+            f"the newest record is release {names[-1]}, and this tree is {release}: the bump "
+            "records its release (python scripts/generate_structural_baseline.py)"
+        )
+    if base is not None:
+        if records[: len(base)] != base:
+            problems.append(
+                f"a release record the base has was changed or removed: {base} on the base, "
+                f"{records[: len(base)]} here"
+            )
+        elif len(records) - len(base) > 1:
+            problems.append(f"more than one release record added: {records[len(base) :]}")
+    return problems
+
+
+def regressions_release(records: list[dict[str, Any]]) -> list[str]:
+    """The newest release whose cycle holds more units than the release before it, if any: the
+    size may only shrink, release by release."""
+    if len(records) < 2:
+        return []
+    last, before = records[-1], records[-2]
+    if int(last["units"]) <= int(before["units"]):
+        return []
+    return [
+        f"release {last['release']}: the biggest import cycle holds {last['units']} units, more "
+        f"than {before['units']} at release {before['release']} — cut its edges before the "
+        "release, do not regenerate to bless it"
+    ]
 
 
 # ── Inventory, vacuity, ratchet dispatch ─────────────────────────────────────
