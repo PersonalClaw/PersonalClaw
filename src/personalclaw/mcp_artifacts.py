@@ -945,6 +945,7 @@ def read_artifact(prov: Any, art: Any) -> ArtifactReading:
     markup its tool writes it from (``documents.to_markup``). An image or a video holds no text: its
     reading is the address its file is served at. Raises :class:`ArtifactTextUnreadable`.
     """
+    from personalclaw.doc_parser import text_of_pdf
     from personalclaw.documents.to_markup import READ_KINDS, document_text
 
     base = base_for(art)
@@ -958,7 +959,7 @@ def read_artifact(prov: Any, art: Any) -> ArtifactReading:
     if raw is None:
         raise ArtifactTextUnreadable(f"its {art.kind} file is missing from the store")
     try:
-        read = document_text(art.kind, raw[0])
+        read = document_text(art.kind, raw[0], pdf_text=text_of_pdf)
     except Exception as exc:  # noqa: BLE001 — a file its parser refuses is said, in its words
         raise ArtifactTextUnreadable(f"its {art.kind} file could not be read ({exc})") from exc
     return ArtifactReading(read.text, read.form, read.leaves_out, base)
@@ -2412,8 +2413,9 @@ def _document_create(
     """
     from personalclaw.artifacts.models import MAX_BINARY_CONTENT_BYTES, MAX_CONTENT_BYTES
     from personalclaw.documents import available_formats, get_writer
-    from personalclaw.documents.from_markup import document_from_html, document_from_markdown
+    from personalclaw.documents.from_markup import document_from_markdown
     from personalclaw.documents.model import SheetModel
+    from personalclaw.html_documents import document_from_html
     from personalclaw.stale_write import refusal_outcome
     from personalclaw.web.extract import SanitizerUnavailable
 

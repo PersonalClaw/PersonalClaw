@@ -16,6 +16,7 @@ comes out in the tool's own style.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from personalclaw.documents.model import Block, DeckModel, DocumentModel, Run, SheetModel
@@ -157,24 +158,17 @@ def _losses(summary: str, lossless: bool) -> tuple[str, ...]:
     return (f"The file also holds what this reading cannot show ({summary}).",)
 
 
-def _pdf_text(data: bytes) -> str:
-    """The text of a PDF's pages, read by the reader ``read_file`` uses (``doc_parser``)."""
-    import tempfile
-    from pathlib import Path
-
-    from personalclaw.doc_parser import extract_text
-
-    with tempfile.TemporaryDirectory() as tmp:
-        scratch = Path(tmp) / "document.pdf"
-        scratch.write_bytes(data)
-        return extract_text(str(scratch))
-
-
-def document_text(kind: str, data: bytes) -> DocumentText:
+def document_text(
+    kind: str, data: bytes, *, pdf_text: Callable[[bytes], str] | None = None
+) -> DocumentText:
     """The text of a document of *kind* (one of :data:`READ_KINDS`) whose bytes are *data*.
 
+    A PDF is read by *pdf_text*, the caller's reader of a PDF's pages (``read_artifact`` passes
+    the one ``read_file`` uses), so this package imports nothing of core.
+
     Raises what its parser raises on a file it cannot read (``DocumentTooLarge`` over the archive
-    caps, a ``zipfile`` or XML error on a damaged one), and ``ValueError`` for another kind.
+    caps, a ``zipfile`` or XML error on a damaged one), and ``ValueError`` for another kind, or a
+    PDF with no reader given.
     """
     if kind == "docx":
         from personalclaw.documents.docx_parser import parse_docx
@@ -219,8 +213,10 @@ def document_text(kind: str, data: bytes) -> DocumentText:
             ),
         )
     if kind == "pdf":
+        if pdf_text is None:
+            raise ValueError("no reader given for a PDF's text")
         return DocumentText(
-            text=_pdf_text(data),
+            text=pdf_text(data),
             form="the text of the PDF's pages",
             leaves_out=("Its layout, images and styling are not in this text.",),
         )

@@ -629,6 +629,20 @@ DIRECTION_RULES: tuple[DirectionRule, ...] = (
         ),
     ),
     DirectionRule(
+        name="documents-imports-only-documents",
+        lower=("documents",),
+        upper=("*",),
+        rationale=(
+            "The documents package is the first leaf pilot (v0.4.0 B4, #5815): its writers are "
+            "pure, and it builds and tests alone, in a clean environment that holds only its own "
+            "libraries. An import of any other unit, the foundation's included (security, config "
+            "and the rest import into the biggest cycle), would bring the core with it. Its "
+            "three such imports were cut on 2026-11-17: the HTML path's sanitizer and credential "
+            "mask moved above it (personalclaw.html_documents), and a PDF's text is read by the "
+            "caller's reader. Measured at 0 edges, and this rule keeps it there."
+        ),
+    ),
+    DirectionRule(
         name="core-must-not-import-the-http-surface",
         lower=("*",),
         upper=("dashboard",),

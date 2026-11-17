@@ -16,11 +16,14 @@ import pytest
 from personalclaw.documents import available_formats, get_writer
 from personalclaw.documents.from_markup import (
     deck_from_markdown,
-    document_from_html,
     document_from_markdown,
 )
 from personalclaw.documents.model import Block, DeckModel, DocumentModel, SheetModel
+from personalclaw.html_documents import document_from_html
 from personalclaw.knowledge.readers import FileReader
+
+# The HTML path's rows hold its sanitizer and credential mask.
+pytestmark = pytest.mark.security
 
 
 def _base(reply: str) -> str:
@@ -163,12 +166,86 @@ def test_html_is_sanitized_and_credentials_redacted():
     EXISTING sanitizer + credential redactor, never a second implementation."""
     model = document_from_html(
         "<h1>Doc</h1><script>steal()</script><p>key AKIAIOSFODNN7EXAMPLE here</p>"
+        '<p><a href="javascript:steal()">open</a></p>'
     )
     body = " ".join(b.text for b in model.blocks) + model.title
+    links = [r.link for b in model.blocks for r in b.runs]
 
     assert "steal()" not in body
     assert "<script" not in body
+    assert not [link for link in links if "javascript:" in link], links
     assert "AKIAIOSFODNN7EXAMPLE" not in body, "a credential must not survive into a file"
+
+
+HOSTILE_HTML = '<h1>Doc</h1><p><a href="javascript:steal()">open</a> key AKIAIOSFODNN7EXAMPLE</p>'
+
+
+def _record_the_html_steps(monkeypatch) -> list[tuple[str, str]]:
+    """Record, in order, each sanitize, credential redaction and safe conversion made from here on,
+    with the markup each was handed. The safe entry is recorded where it is defined and where the
+    sanitizing module holds it, so a caller that reaches it any other way is recorded too."""
+    from personalclaw import html_documents, security
+    from personalclaw.documents import from_markup
+    from personalclaw.web import extract
+
+    steps: list[tuple[str, str]] = []
+
+    def recorded(step, real):
+        def run(text, *args, **kwargs):
+            steps.append((step, text))
+            return real(text, *args, **kwargs)
+
+        return run
+
+    monkeypatch.setattr(extract, "sanitize_html", recorded("sanitize", extract.sanitize_html))
+    monkeypatch.setattr(
+        security, "redact_credentials", recorded("redact", security.redact_credentials)
+    )
+    convert = recorded("convert", from_markup.document_from_safe_html)
+    monkeypatch.setattr(from_markup, "document_from_safe_html", convert)
+    monkeypatch.setattr(html_documents, "document_from_safe_html", convert)
+    return steps
+
+
+def _assert_sanitized_then_redacted_then_converted(steps: list[tuple[str, str]]) -> None:
+    names = [step for step, _ in steps]
+    assert "convert" in names, f"the HTML never reached the safe entry it is guarded for: {names}"
+    upto = names.index("convert") + 1
+    assert names[:upto] == ["sanitize", "redact", "convert"], names
+    handed = steps[upto - 1][1]
+    assert "javascript:" not in handed and "AKIAIOSFODNN7EXAMPLE" not in handed, handed
+
+
+def test_the_document_tool_sanitizes_and_redacts_html_before_it_converts(tmp_path, monkeypatch):
+    """🔴 Red before this: the safe entry did not exist. Proves the document tool's HTML is
+    sanitized, then its credentials masked, before the conversion sees it."""
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    from personalclaw.artifacts.native import NativeArtifactProvider
+    from personalclaw.mcp_artifacts import _document_create
+    from personalclaw.tool_providers.base import ToolFailure
+
+    steps = _record_the_html_steps(monkeypatch)
+    prov = NativeArtifactProvider(root=tmp_path / "artifacts")
+
+    reply = _document_create(
+        prov, "document_create", {"name": "Notes", "html": HOSTILE_HTML}, "s1", lambda *a, **k: None
+    )
+
+    assert not isinstance(reply, ToolFailure), reply
+    _assert_sanitized_then_redacted_then_converted(steps)
+
+
+def test_the_sdks_document_from_html_sanitizes_and_redacts_before_it_converts(monkeypatch):
+    """🔴 Red before this: the safe entry did not exist. Proves the HTML entry an app gets from
+    ``personalclaw.sdk.documents`` sanitizes, then masks credentials, before converting."""
+    from personalclaw.sdk import documents as sdk_documents
+
+    steps = _record_the_html_steps(monkeypatch)
+
+    model = sdk_documents.document_from_html(HOSTILE_HTML)
+
+    assert model.title == "Doc"
+    _assert_sanitized_then_redacted_then_converted(steps)
 
 
 def test_a_document_from_html_nothing_can_sanitize_is_a_failed_call(tmp_path, monkeypatch):
@@ -1388,3 +1465,22 @@ class TestUpdateBinaryContract:
         for chunk in src.split("update_binary(")[1:]:
             call = chunk.split(")", 1)[0]
             assert "snapshot" not in call, f"update_binary call passes snapshot: {call!r}"
+
+
+def test_a_pdf_artifact_is_read_by_doc_parsers_reader_through_the_leaf():
+    """The documents package reads a PDF only with the reader its caller hands it, so it imports
+    nothing of core: ``read_artifact`` hands it ``doc_parser.text_of_pdf``, and with no reader the
+    leaf says so rather than reaching for one."""
+    from types import SimpleNamespace
+
+    from personalclaw.documents.to_markup import document_text
+    from personalclaw.mcp_artifacts import read_artifact
+
+    pdf = get_writer("pdf")(document_from_markdown("# Quarterly\n\nRevenue grew in the north."))
+    art = SimpleNamespace(kind="pdf", slug="q", version=1, content="/a/q/1")
+    prov = SimpleNamespace(raw_bytes=lambda slug, version: (pdf,))
+
+    reading = read_artifact(prov, art)
+    assert "Revenue grew in the north" in reading.text, reading
+    with pytest.raises(ValueError, match="no reader given"):
+        document_text("pdf", pdf)

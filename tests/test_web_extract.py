@@ -105,7 +105,7 @@ def test_without_nh3_the_sanitizer_refuses_and_says_why(monkeypatch):
 def test_without_nh3_no_way_into_the_sanitizer_hands_the_markup_on(monkeypatch, entry):
     """Proves none of the sanitizer's callers has a fallback of its own: with nh3 missing, each
     raises the refusal instead of returning the markup, or text made from it."""
-    from personalclaw.documents.from_markup import document_from_html
+    from personalclaw.html_documents import document_from_html
     from personalclaw.knowledge.reports import _text as report_text
     from personalclaw.knowledge_providers.web_source import sanitize_markup
 

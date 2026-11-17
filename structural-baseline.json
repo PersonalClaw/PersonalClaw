@@ -233,6 +233,7 @@
       "context_segmentation",
       "credential_locations",
       "cron_clock",
+      "documents",
       "embedding_arrivals",
       "env",
       "errors",
@@ -694,6 +695,17 @@
         ]
       },
       {
+        "beside": [],
+        "lower": [
+          "documents"
+        ],
+        "name": "documents-imports-only-documents",
+        "rationale": "The documents package is the first leaf pilot (v0.4.0 B4, #5815): its writers are pure, and it builds and tests alone, in a clean environment that holds only its own libraries. An import of any other unit, the foundation's included (security, config and the rest import into the biggest cycle), would bring the core with it. Its three such imports were cut on 2026-11-17: the HTML path's sanitizer and credential mask moved above it (personalclaw.html_documents), and a PDF's text is read by the caller's reader. Measured at 0 edges, and this rule keeps it there.",
+        "upper": [
+          "*"
+        ]
+      },
+      {
         "beside": [
           "__main__",
           "app_cli",
@@ -796,6 +808,7 @@
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 5,
         "core-must-not-import-the-http-surface": 27,
+        "documents-imports-only-documents": 0,
         "foundation-imports-only-foundation": 71,
         "ledger-is-a-leaf": 0,
         "nothing-below-the-entry-points-imports-them": 2
