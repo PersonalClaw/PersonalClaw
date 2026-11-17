@@ -15,9 +15,10 @@ makes. Every run and artifact it skips, and why, is in the status's refusals.
 
 **Every history shown from the run it came from.** A history archive is kept only when it holds
 one member, ``history-<run>-<attempt>.jsonl``, named after the archive, whose run line is that run
-and attempt in the one schema and a counted run (a push to main of ``merge.yml``, or a scheduled
-or dispatched Breadth run on main), and that run is one its own workflow's listing
-shows, in this repository, with that attempt. A history whose run cannot be shown is refused,
+and attempt in the one schema and a counted run (a push to main of ``merge.yml``, its run on a
+merge queue commit for main, on the queue's ref read whole, or a scheduled or dispatched Breadth
+run on main), and that run is one its own workflow's listing shows, in this repository, with that
+attempt. A history whose run cannot be shown is refused,
 fetched or carried.
 
 **Archives are data.** Nothing is unpacked to disk and nothing in an archive is run. A downloaded
@@ -255,14 +256,19 @@ def collector_runs(
 
 def source_runs(text: Text, repo: str, since: datetime.datetime) -> dict[int, int]:
     """Each counted run a history may come from, by id, with its newest attempt: each counted
-    workflow's own runs on main, of its counted events, in this repository."""
+    workflow's own runs on main, of its counted events, in this repository, and its queue runs on
+    the merge queue's refs for main (listed by their event, since no branch filter names them)."""
     shown: dict[int, int] = {}
     for name, (path, events) in SOURCES.items():
-        base = f"repos/{repo}/actions/workflows/{name}/runs?branch=main&created={_created(since)}"
-        for run in _runs(text, base, f"{name}'s runs"):
-            attempt = run.get("run_attempt")
-            if telemetry.own_run(run, repo, path, events) and isinstance(attempt, int):
-                shown[run["id"]] = attempt
+        filters = ["branch=main"]
+        if telemetry.QUEUE_EVENT in events:
+            filters.append(f"event={telemetry.QUEUE_EVENT}")
+        for where in filters:
+            base = f"repos/{repo}/actions/workflows/{name}/runs?{where}&created={_created(since)}"
+            for run in _runs(text, base, f"{name}'s runs"):
+                attempt = run.get("run_attempt")
+                if telemetry.own_run(run, repo, path, events) and isinstance(attempt, int):
+                    shown[run["id"]] = attempt
     return shown
 
 
@@ -346,7 +352,9 @@ def history_refusal(archive: IO[bytes], name: str, shown: Mapping[int, int]) -> 
     if head.get("run_id") != run or head.get("attempt") != attempt:
         return f"{name} describes run {head.get('run_id')} attempt {head.get('attempt')}"
     workflow, event, branch = head.get("workflow"), head.get("event"), head.get("branch")
-    if event not in telemetry.COUNTED.get(str(workflow), ()) or branch != "main":
+    if event not in telemetry.COUNTED.get(str(workflow), ()) or not telemetry.counted_branch(
+        event, branch
+    ):
         return f"{name}: run {run} ({workflow}, {event}, {branch}) is not a counted run"
     return _shown_refusal(name, run, attempt, shown)
 

@@ -16,10 +16,21 @@ Every line is within ``MAX_LINE_BYTES``, its line break included, the bound each
 weekly report and its fetch, the shard planner, the parity check) holds a history line to and
 refuses a whole history past: a line that would pass it fails the collection and writes nothing.
 
-**Which runs count.** A push to ``main``, of ``merge.yml`` (``workflows.MAIN_PUSH``), and a
-scheduled or dispatched Breadth run on ``main``, all from this repository. That is decided from
-the run itself, before any artifact is listed or downloaded, so a pull request's run is never
-collected. Its artifacts are read only as a tested push's suite, below.
+**Which runs count.** A push to ``main``, of ``merge.yml`` (``workflows.MAIN_PUSH``), a run of
+``merge.yml`` on a merge queue commit for ``main`` (``merge_group``, whose branch is the queue's
+ref, :data:`QUEUE_REF`, read whole), and a scheduled or dispatched Breadth run on ``main``, all
+from this repository. That is decided from the run itself, before any artifact is listed or
+downloaded, so a pull request's run is never collected. Its artifacts are read only as a tested
+push's suite, below.
+
+**A queue run** (version 7). The merge queue runs the merge tier on a commit of ``main``, the
+entries ahead and one pull request, all of them enqueued, and that commit reaches ``main`` only
+when its group is not torn down. So its run line's ``queue`` names the pull request: its number
+from the ref (the run lists none) and its head, read from the API at collection (null when it
+cannot be read). Every other run's ``queue`` is null. A reader that needs a history of ``main``'s
+own code reads a queue history only once its commit is on ``main``: the flaky-tests job's close
+rule (``tools/ci/flaky_issues.py``). Version 7 adds ``queue`` and changes nothing else, so every
+reader takes a version 1 to 6 history as one of no queue run.
 
 **Where the reports are.** An artifact named ``junit-*`` is one report, named as the artifact.
 merge.yml uploads each entry's reports folder as ``reports-<slug>-<attempt>``: each
@@ -131,12 +142,13 @@ from typing import Any
 from . import tree_tested, verdict, workflows
 
 SCHEMA = "personalclaw-ci-telemetry"
-VERSION = 6
-#: The versions a reader takes: this one; version 5, which holds no ``tested_record`` line;
+VERSION = 7
+#: The versions a reader takes: this one; version 6, whose run line lacks ``queue``; version 5,
+#: which holds no ``tested_record`` line too;
 #: version 4, whose run line lacks ``tested_by`` too; version 3, which lacks ``records`` too;
 #: version 2, which lacks ``cpus`` too; and version 1, whose test lines also lack
 #: ``environment_failure``.
-READS = frozenset({1, 2, 3, 4, 5, VERSION})
+READS = frozenset({1, 2, 3, 4, 5, 6, VERSION})
 
 #: The run line's fields, after ``kind``, ``schema`` and ``version``.
 RUN_FIELDS = (
@@ -161,6 +173,7 @@ RUN_FIELDS = (
     "jobs",
     "cpus",
     "tested_by",
+    "queue",
 )
 
 #: A record line's fields, exactly: one line per job record the attempt uploaded (version 4).
@@ -171,6 +184,8 @@ TESTED_RECORD = "tested_record"
 TESTED_RECORD_FIELDS = ("kind", "run_id", "attempt", "key", "result", "rerun", "quarantined")
 #: The first schema version that holds :data:`TESTED_RECORD` lines.
 TESTED_RECORDS_SINCE = 6
+#: The first schema version whose run line says whether it is a queue run (``queue``).
+QUEUE_SINCE = 7
 
 #: A test line's fields, exactly.
 TEST_FIELDS = (
@@ -207,10 +222,21 @@ BREADTH_PATH = f"{WORKFLOWS}/breadth.yml"
 #: The collector's own workflow: the run that uploads each history, which a reader checks.
 COLLECTOR_PATH = f"{WORKFLOWS}/ci-telemetry.yml"
 
+#: The merge queue's event, and the branch a queue run is on: the queue's own ref for a commit
+#: of main, the pull request's number and the queue commit's parent, read whole. A run of this
+#: event on any other branch (another base, a short sha, a ref that only starts so) is not one.
+QUEUE_EVENT = "merge_group"
+QUEUE_REF = re.compile(r"gh-readonly-queue/main/pr-([1-9][0-9]*)-[0-9a-f]{40}")
+#: What :func:`collect_condition` holds a queue run's branch to: an expression has no pattern,
+#: so the job starts for this prefix and :func:`counts` reads the ref whole.
+QUEUE_REF_PREFIX = "gh-readonly-queue/main/pr-"
+
 #: The workflows whose runs are collected, and the events that count for each: each workflow a
-#: push to main runs in (:data:`workflows.MAIN_PUSH`), on its push, and breadth's nights.
+#: push to main runs in (:data:`workflows.MAIN_PUSH`), on its push, merge.yml on the merge
+#: queue's commits too, and breadth's nights.
 COUNTED = {
-    **{name: frozenset({"push"}) for name in workflows.MAIN_PUSH},
+    **{name: frozenset({"push"}) for name in workflows.MAIN_PUSH if name != workflows.MERGE},
+    workflows.MERGE: frozenset({"push", QUEUE_EVENT}),
     "breadth.yml": frozenset({"schedule", "workflow_dispatch"}),
 }
 
@@ -310,16 +336,31 @@ def _listed(text: Callable[..., str], path: str, key: str, what: str) -> list[An
 # says a run on main of this repository's own code made it, and that run is the collector's.
 
 
+def counted_branch(event: object, branch: object) -> bool:
+    """Whether ``branch`` is the one a run of ``event`` counts on: a queue run's is the queue's
+    ref for a commit of main (:data:`QUEUE_REF`, whole), every other run's is main."""
+    if event == QUEUE_EVENT:
+        return isinstance(branch, str) and QUEUE_REF.fullmatch(branch) is not None
+    return branch == "main"
+
+
+def queued_pull(branch: object) -> int | None:
+    """The pull request a queue run's branch names, or None when it is no queue ref."""
+    found = QUEUE_REF.fullmatch(branch) if isinstance(branch, str) else None
+    return int(found.group(1)) if found else None
+
+
 def own_run(run: object, repo: str, path: str, events: frozenset[str]) -> bool:
     """Whether ``run``, a run as the Actions API describes it, is a run of the workflow at
-    ``path``, triggered by one of ``events``, on main, in ``repo``: main's own code."""
+    ``path``, triggered by one of ``events``, in ``repo``, on main or, for a queue run, the
+    queue's ref for main (:func:`counted_branch`): main's own code, or what is enqueued for it."""
     if not isinstance(run, Mapping):
         return False
     head = run.get("head_repository")
     return (
         run.get("path") == path
         and run.get("event") in events
-        and run.get("head_branch") == "main"
+        and counted_branch(run.get("event"), run.get("head_branch"))
         and isinstance(head, Mapping)
         and head.get("full_name") == repo
     )
@@ -374,14 +415,22 @@ def collect_condition() -> str:
     """The ``if:`` of ``ci-telemetry.yml``'s collect job: :func:`counts`'s rule, written from
     :data:`COUNTED`, so the workflow and the code cannot drift apart (the rail compares them)."""
     run = "github.event.workflow_run"
+
+    def on(event: str) -> str:
+        if event == QUEUE_EVENT:
+            return (
+                f"({run}.event == '{event}' && startsWith({run}.head_branch, '{QUEUE_REF_PREFIX}'))"
+            )
+        return f"({run}.event == '{event}' && {run}.head_branch == 'main')"
+
     per_workflow = " || ".join(
         f"({run}.path == '{WORKFLOWS}/{workflow}' && ("
-        + " || ".join(f"{run}.event == '{event}'" for event in sorted(events))
+        + " || ".join(on(event) for event in sorted(events))
         + "))"
         for workflow, events in sorted(COUNTED.items())
     )
     return (
-        f"github.event_name == 'workflow_run' && {run}.head_branch == 'main'"
+        f"github.event_name == 'workflow_run'"
         f" && {run}.head_repository.full_name == github.repository && ({per_workflow})"
     )
 
@@ -394,8 +443,9 @@ def counts(run: Mapping[str, Any], repo: str) -> str | None:
     head = run.get("head_repository") or {}
     if not isinstance(head, Mapping) or head.get("full_name") != repo:
         return "its head is another repository's"
-    if run.get("head_branch") != "main":
-        return f"it ran on {run.get('head_branch')!r}, not main"
+    if not counted_branch(run.get("event"), run.get("head_branch")):
+        where = "the merge queue's ref for main" if run.get("event") == QUEUE_EVENT else "main"
+        return f"it ran on {run.get('head_branch')!r}, not {where}"
     if run.get("event") not in COUNTED[workflow]:
         return f"a {run.get('event')} run of {workflow} is not collected"
     return None
@@ -830,6 +880,28 @@ def _api(text: Callable[..., str]) -> tree_tested.Get:
     return get
 
 
+#: A full commit id, as a queue run's pull request head is read.
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+
+
+def _queue(text: Callable[..., str], repo: str, run: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A queue run's ``queue``: the pull request its ref names, and that pull request's head as
+    the API gives it now (null when it cannot be read). None for every other run."""
+    number = queued_pull(run.get("head_branch")) if run.get("event") == QUEUE_EVENT else None
+    if number is None:
+        return None
+    head: str | None = None
+    try:
+        pull = _api(text)(f"/repos/{repo}/pulls/{number}")
+    except tree_tested.Unanswered as exc:
+        print(f"the queue run's pull request #{number} could not be read: {exc}")
+    else:
+        found = pull.get("head") if isinstance(pull, Mapping) else None
+        sha = found.get("sha") if isinstance(found, Mapping) else None
+        head = sha if isinstance(sha, str) and _COMMIT.fullmatch(sha) else None
+    return {"pull_request": number, "head_sha": head}
+
+
 def _tested_run(
     text: Callable[..., str], repo: str, run: Mapping[str, Any]
 ) -> tuple[Mapping[str, Any], tree_tested.Verdict] | str:
@@ -987,6 +1059,7 @@ def collect(
         "jobs": [_job_entry(j) for j in jobs],
         "cpus": cpus,
         "tested_by": tested_by,
+        "queue": _queue(text, repo, run),
     }
     return [head, *sorted(records, key=lambda r: str(r["key"])), *tested, *tests]
 
