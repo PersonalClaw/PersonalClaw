@@ -60,6 +60,7 @@ import { LoopRunsOn } from '../loop/LoopRuntimePill'
 import { runtimeFields, type LoopRuntime } from '../loop/loopRuntime'
 import { MarkdownLine } from '../../ui/MarkdownLine'
 import { previewLine } from '../../lib/previewText'
+import { isScopeRefusal, notAvailableToThisPairing } from '../../lib/pairingScope'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
 /** A cycle's detail reads as a column of prose and checks, so its pane starts narrower than a plan's. */
@@ -211,6 +212,16 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // saw, on the one panel a user opens to get the result.
   const [outputsError, setOutputsError] = useState<unknown>(null)
   const [tasks, setTasks] = useState<TaskItem[]>([])
+  // What this sign-in may not read (an automation client's pairing reaches the loop's own rows,
+  // not its artifacts or tasks): refused once, said once, and never asked again on the poll —
+  // a refusal is not a failed read to retry, and no load error is shown for it.
+  const withheldRef = useRef({ artifacts: false, tasks: false, chat: false })
+  const [withheld, setWithheld] = useState<readonly string[]>([])
+  const withhold = useCallback((what: 'artifacts' | 'tasks' | 'chat') => {
+    if (withheldRef.current[what]) return
+    withheldRef.current[what] = true
+    setWithheld((['artifacts', 'tasks'] as const).filter((k) => withheldRef.current[k]))
+  }, [])
   // Right rail + its drill-down are URL-backed (?details=1, ?sel=log|roi|cycle-N)
   // so a refresh / shared link reopens the same Details view.
   const railOpen = q.details === '1'
@@ -287,11 +298,13 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     const loadOutputs = () => {
       // Outcomes: the deliverable + log, and every artifact tagged for this loop. Settled together
       // so the empty state can tell "nothing yet" from "could not look".
-      void Promise.allSettled([api.uLoopReport(id), api.artifacts({ tag: `loop:${id}` })]).then(([rep, arts]) => {
+      const tagged = withheldRef.current.artifacts ? Promise.resolve([] as Artifact[]) : api.artifacts({ tag: `loop:${id}` })
+      void Promise.allSettled([api.uLoopReport(id), tagged]).then(([rep, arts]) => {
         if (!alive) return
         if (rep.status === 'fulfilled' && rep.value) { setReport(rep.value.report || ''); setLog(rep.value.log || '') }
         if (arts.status === 'fulfilled') setArtifacts(arts.value)
-        const failed = [rep, arts].find((r): r is PromiseRejectedResult => r.status === 'rejected')
+        else if (isScopeRefusal(arts.reason)) { withhold('artifacts'); setArtifacts([]) }
+        const failed = [rep, arts].find((r): r is PromiseRejectedResult => r.status === 'rejected' && !isScopeRefusal(r.reason))
         setOutputsError(failed ? (failed.reason ?? new Error('read failed')) : null)
       })
     }
@@ -299,9 +312,10 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     // project), NOT under project=<loop id> — so fetch them by the authoritative
     // linked_task_ids the loop stores, not a project filter (which returned none).
     const loadTasks = (ids: string[]) => {
-      if (!ids.length) { setTasks([]); return }
-      Promise.all(ids.map((tid) => api.task(tid).catch(() => null)))
-        .then((ts) => { if (alive) setTasks(ts.filter(Boolean) as TaskItem[]) }).catch(() => {})
+      if (!ids.length || withheldRef.current.tasks) { setTasks([]); return }
+      let refused = false
+      Promise.all(ids.map((tid) => api.task(tid).catch((e) => { if (isScopeRefusal(e)) refused = true; return null })))
+        .then((ts) => { if (!alive) return; if (refused) withhold('tasks'); setTasks(ts.filter(Boolean) as TaskItem[]) }).catch(() => {})
     }
     let t = 0
     const TERMINAL = ['complete', 'stopped', 'failed']
@@ -344,7 +358,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     load()
     t = window.setInterval(load, 30_000)  // fallback only; SSE drives live
     return () => { alive = false; if (t) clearInterval(t) }
-  }, [id])
+  }, [id, withhold])
 
   // 🔑 THE READER `runFlags.deleted` NEVER HAD. `foldReducer` has set it on the `deleted`
   // lifecycle event since it was written, and no component ever looked — so a loop deleted in
@@ -431,7 +445,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   const workerKey = c?.session_key ?? ''
   const cyclesSeen = c?.total_cycles ?? 0
   useEffect(() => {
-    if (!workerKey) { setSkillsUsed([]); return }
+    if (!workerKey || withheldRef.current.chat) { setSkillsUsed([]); return }
     let alive = true
     api.chatSessionDetail(workerKey).then((d) => {
       if (!alive) return
@@ -444,9 +458,9 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
         if (s) last = s
       }
       setSkillsUsed(last)
-    }).catch(() => { if (alive) setSkillsUsed([]) })
+    }).catch((e) => { if (isScopeRefusal(e)) withhold('chat'); if (alive) setSkillsUsed([]) })
     return () => { alive = false }
-  }, [workerKey, cyclesSeen])
+  }, [workerKey, cyclesSeen, withhold])
 
   const onWs = useCallback((m: WsMessage) => {
     // The incident switch moved (the gateway watches it, the CLI's flips included): re-read the
@@ -915,7 +929,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               summary) + the linked Tasks + the raw log. Fills remaining height;
               its inner content scrolls. */}
           <OutputsPanel
-            loop={c} artifacts={artifacts} tasks={tasks} report={report} active={active} outputsError={outputsError}
+            loop={c} artifacts={artifacts} tasks={tasks} report={report} active={active} outputsError={outputsError} withheld={withheld}
             tab={outputTab} onTab={setOutputTab}
             onOpenArtifact={onOpenArtifact}
             onOpenTask={onOpenTask}
@@ -1111,9 +1125,12 @@ export function pendingNudgeLabel(status: string): string {
   return 'nudge not applied — the loop ended before its next cycle'
 }
 
-function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, tab, onTab, onOpenArtifact, onOpenTask, onExpandReport, onDownloadReport }: {
+function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, withheld = [], tab, onTab, onOpenArtifact, onOpenTask, onExpandReport, onDownloadReport }: {
   loop: GoalLoop; artifacts: Artifact[]; tasks: TaskItem[]; report: string; active: boolean
   outputsError: unknown
+  /** What this sign-in may not read (`artifacts`, `tasks`): said in one plain line, and no claim
+   *  that there are none. */
+  withheld?: readonly string[]
   /** The tab the address names (`?tab=`), and the way to pick another. */
   tab: string; onTab: (id: string) => void
   onOpenArtifact?: (slug: string) => void
@@ -1190,9 +1207,12 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, ta
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-l py-l">
+        {withheld.length > 0 && (
+          <p data-type="body-s" className="text-on-surface-low">{notAvailableToThisPairing(`This loop's ${withheld.join(' and ')}`)}</p>
+        )}
         {!current && outputsError ? (
           <InlineLoadError what="this loop's outputs" error={outputsError} />
-        ) : !current ? (
+        ) : !current && withheld.length > 0 ? null : !current ? (
           <div className="flex flex-col gap-s">
             <p data-type="body-s" className="text-on-surface-low">
               {active

@@ -115,6 +115,13 @@ SERVED: list[tuple[str, str]] = [
     # outside every family, so no row admits it.
     ("POST", "/api/apps/{name}/token"),
     ("POST", "/api/auth/enroll/start"),
+    # The cockpit's reads (design §2, Q4), OUTSIDE until the approvals cut lands with them.
+    ("GET", "/api/tasks/{task_id}"),
+    ("GET", "/api/artifacts"),
+    ("GET", "/api/artifacts/{slug}"),
+    ("GET", "/api/projects"),
+    ("GET", "/api/projects/{project_id}"),
+    ("GET", "/api/agents"),
 ]
 
 
@@ -240,6 +247,43 @@ async def test_a_404_a_405_and_a_refused_route_give_the_same_bytes() -> None:
         assert status == 403, (method, path)
         bodies.add((body, headers.get("Content-Type")))
     assert len(bodies) == 1, bodies
+    assert ran == []
+
+
+#: The loop cockpit's reads, each as ``(an id this loop holds, an id nothing holds)``: its task, its
+#: worker's chat, its artifacts by tag, an artifact, its project, the projects and the agents.
+#: Every one is OUTSIDE in this release, and moves to its scope row, with its target rule, when
+#: the approvals cut lands.
+COCKPIT_READS: list[tuple[str, str]] = [
+    ("/api/tasks/{lid}", "/api/tasks/no-such-task"),
+    ("/api/chat/sessions/loop-{lid}", "/api/chat/sessions/loop-no-such-loop"),
+    ("/api/artifacts?tag=loop:{lid}", "/api/artifacts?tag=loop:no-such-loop"),
+    ("/api/artifacts/{lid}", "/api/artifacts/no-such-artifact"),
+    ("/api/projects/{lid}", "/api/projects/no-such-project"),
+    ("/api/projects", "/api/projects?q=no-such-project"),
+    ("/api/agents", "/api/agents?q=no-such-agent"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("held", "unheld"), COCKPIT_READS)
+async def test_a_cockpit_read_is_the_one_refusal_whether_its_target_exists_or_not(
+    held, unheld
+) -> None:
+    """A scoped client meeting a cockpit read gets the bytes every OUTSIDE route gives, for an id
+    its loop holds and for one nothing holds, and no handler runs: the gate decides from the
+    route alone, so the answer can't say whether the target is there."""
+    ran: list[str] = []
+    app = _gated_app(ran)
+    lid = _loop_row()
+    minted = _scoped(_scopes().GRANTABLE)
+    _s, _h, reference = await _call(app, "GET", "/api/no-such-route", minted)
+    answers = set()
+    for path in (held.format(lid=lid), unheld):
+        status, headers, body = await _call(app, "GET", path, minted)
+        assert status == 403, (path, body)
+        answers.add((body, headers.get("Content-Type")))
+    assert len(answers) == 1 and next(iter(answers))[0] == reference, answers
     assert ran == []
 
 
