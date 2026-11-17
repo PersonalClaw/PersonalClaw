@@ -242,6 +242,24 @@ async def test_a_loops_stream_served_to_a_client_ends_when_its_session_runs_out(
         assert time.time() >= minted.expires_at - 0.5, "it ended at the session's end, not before"
 
 
+def test_a_scoped_socket_that_disconnects_releases_its_hold(state) -> None:
+    """A disconnect releases the socket's hold on its session: its end timer is cancelled and the
+    session holds nothing of it, so a reconnecting client leaves nothing behind for its pairing's
+    remaining days."""
+    from personalclaw.dashboard import scoped_sessions
+
+    handle = MagicMock()
+    state._ws_loop = MagicMock(call_later=MagicMock(return_value=handle))
+    minted = _scoped()
+    client = _sock()
+    _register(state, client, minted)
+    assert scoped_sessions._OPEN.get(minted.nonce), "the socket holds its session open"
+    handle.cancel.assert_not_called()
+    state.unregister_ws(client)
+    handle.cancel.assert_called_once()
+    assert minted.nonce not in scoped_sessions._OPEN
+
+
 def test_a_holder_that_closes_by_itself_leaves_no_timer_waiting() -> None:
     """A socket that disconnects cancels its session-end timer: one left waiting would keep the
     socket for as long as the pairing lasts (up to 90 days), one more for every reconnect."""

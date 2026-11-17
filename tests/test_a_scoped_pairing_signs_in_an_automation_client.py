@@ -323,6 +323,16 @@ def test_a_client_unused_for_fourteen_days_is_signed_out_on_its_next_request(sel
     assert rows and rows[-1]["metadata"]["reason"] == ss.END_IDLE
 
 
+def test_the_request_that_ends_an_idle_client_is_refused_as_signed_out() -> None:
+    """The first refusal after the idle end gives a sign-out's reason, as every later one does:
+    the auth middleware and its log read it like any other sign-out, not as the idle check's own
+    word."""
+    minted = _scoped()
+    _age(minted.nonce, 15 * DAY)
+    assert _valid(minted.token) == (False, "", "signed out")
+    assert _valid(minted.token)[0] is False
+
+
 def test_the_idle_end_reads_the_cache_too(monkeypatch) -> None:
     minted = _scoped()
     later = time.time() + 15 * DAY
