@@ -182,6 +182,31 @@ def _edit(rel: str, *edits: tuple[str, str]) -> Callable[[Path], None]:
     return plant
 
 
+def _security_edit(
+    tiers: str | None, after: str = "", unlisted: bool = False
+) -> Callable[[Path], None]:
+    """Plant by rewriting the catalogue's security entry's tiers line to *tiers* (None keeps it),
+    with *after* after it, and with *unlisted*, taking security out of every tier list that names
+    it. It reads the line and the lists rather than naming them, so it plants the same with or
+    without the entry tier (0.4.0 A4; ci.md: a change that alters a contract row lands in two
+    merges, the row first)."""
+
+    def plant(root: Path) -> None:
+        path = root / catalogue.CATALOGUE
+        text = path.read_text(encoding="utf-8")
+        found = re.search(r'^id = "security"\ntiers = \[[^\]\n]*\]\n', text, re.M)
+        assert found, "the plant found no security entry with a tiers line"
+        line = found[0] if tiers is None else f'id = "security"\ntiers = {tiers}\n'
+        text = f"{text[: found.start()]}{line}{after}{text[found.end():]}"
+        if unlisted:
+            listed = '  "browse-live",\n  "security",\n'
+            assert listed in text, "the plant found security in no tier list"
+            text = text.replace(listed, '  "browse-live",\n')
+        path.write_text(text, encoding="utf-8")
+
+    return plant
+
+
 def _in_job(rel: str, job_id: str, old: str, new: str) -> Callable[[Path], None]:
     """Plant by editing the first *old* inside job *job_id*'s block of *rel*, and nowhere else."""
 
@@ -271,14 +296,7 @@ CONTROLS = (
     ),
     Control(
         "security dropped from the merge tier",
-        _edit(
-            catalogue.CATALOGUE,
-            ('  "browse-live",\n  "security",\n', '  "browse-live",\n'),
-            (
-                'id = "security"\ntiers = ["change", "merge", "breadth"]',
-                'id = "security"\ntiers = ["breadth"]',
-            ),
-        ),
+        _security_edit('["breadth"]', unlisted=True),
         "the merge tier lacks security",
     ),
     Control(
@@ -316,13 +334,7 @@ CONTROLS = (
     ),
     Control(
         "the catalogue's security moved to macOS",
-        _edit(
-            catalogue.CATALOGUE,
-            (
-                'id = "security"\ntiers = ["change", "merge", "breadth"]',
-                'id = "security"\ntiers = ["change", "merge", "breadth"]\nplatform = "macos-26"',
-            ),
-        ),
+        _security_edit(None, after='platform = "macos-26"\n'),
         # The loader refuses it first: the merge tier's security evidence is a ubuntu-* run.
         "security: platform is macos-26",
     ),
