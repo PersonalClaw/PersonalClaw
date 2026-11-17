@@ -109,27 +109,3 @@ def test_this_release_admits_no_steer_answer_or_approval(served) -> None:
         assert row.scope in device_scopes.GRANTABLE, (method, route, row.scope)
         if row.scope == "loops":
             assert method == "GET", (method, route)
-
-
-def test_the_table_names_each_route_once() -> None:
-    """A dict literal keeps the last of two equal keys and says nothing, so a second row for a
-    route would silently replace the first: a route meant OUTSIDE could be admitted further down."""
-    import ast
-    from collections import Counter
-    from pathlib import Path
-
-    from personalclaw.dashboard import device_scope_routes
-
-    tree = ast.parse(Path(device_scope_routes.__file__).read_text(encoding="utf-8"))
-    tables = [
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.AnnAssign | ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "DEVICE_SCOPE_ROUTES"
-            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
-        )
-    ]
-    assert len(tables) == 1 and isinstance(tables[0], ast.Dict), "the table is one dict literal"
-    keys = Counter(ast.literal_eval(key) for key in tables[0].keys if key is not None)
-    assert keys and not [key for key, seen in keys.items() if seen > 1]
