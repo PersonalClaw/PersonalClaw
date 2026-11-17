@@ -613,6 +613,35 @@ def _plant(
     return Control(name, plant, fails, expect)
 
 
+def _plant_line(
+    name: str,
+    rel: str,
+    start: str,
+    new: str | Callable[[str], str],
+    fails: bool = True,
+    expect: str = "",
+) -> Control:
+    """A violation planted by rewriting the first line of one file that starts, past its indent,
+    with *start*: to *new* (stripped, at the line's indent), or to what *new* makes of the line.
+    It reads the line rather than naming its text, so it plants the same violation whatever the
+    line holds now: a row must pass both before and after a change to the value it plants over
+    (ci.md: a change that alters a contract row lands in two merges, the row first)."""
+
+    def plant(root: Path) -> None:
+        lines = (root / rel).read_text(encoding="utf-8").splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            body = line.lstrip(" ")
+            if body.startswith(start):
+                made = new(body.rstrip("\n")) if callable(new) else new.strip()
+                lines[i] = f"{line[: len(line) - len(body)]}{made}\n"
+                break
+        else:
+            raise AssertionError(f"the plant {name!r} found no line starting {start!r} in {rel}")
+        _write(root, rel, "".join(lines))
+
+    return Control(name, plant, fails, expect)
+
+
 def _plants(
     name: str, rel: str, edits: tuple[tuple[str, str], ...], expect: str = "", fails: bool = True
 ) -> Control:
@@ -7135,13 +7164,10 @@ _TWO_DEPENDABOT_PRS = (
     {"number": 46, "branch": _DEPENDABOT_B},
 )
 _CANCEL_MERGE_GROUP = "      group: merge-${{ github.event.pull_request.number }}\n"
-_CANCEL_NIX_GROUP = (
-    "      group: nix-${{ github.event.pull_request.head.repo.full_name"
-    " || github.repository }}-${{ github.head_ref }}\n"
-)
-_CANCEL_PINS_GROUP = (
-    "      group: action-pins-refs/pull/${{ github.event.pull_request.number }}/merge\n"
-)
+#: The start of the canceller's Nix and Action pins jobs' group lines: :func:`_plant_line` reads
+#: each line whatever key it holds.
+_CANCEL_NIX_GROUP = "group: nix-"
+_CANCEL_PINS_GROUP = "group: action-pins-"
 _NEW_PR_WORKFLOW = (
     "name: A new check\non:\n  pull_request:\n"
     "concurrency:\n  group: new-check-${{ github.head_ref }}\n  cancel-in-progress: true\n"
@@ -7221,21 +7247,21 @@ CLOSED_PR_RUNS_ARE_CANCELLED = _toolchain_row(
             "      cancel-in-progress: false\n",
             expect="closed unmerged",
         ),
-        _plant(
+        _plant_line(
             "a group keyed on github.ref, which a merge moves to the base branch",
             _CANCELLER_PATH,
             _CANCEL_PINS_GROUP,
             "      group: action-pins-${{ github.ref }}\n",
             expect="action-pins.yml: no",
         ),
-        _plant(
+        _plant_line(
             "a group without the head repository, so a fork's run is missed",
             _CANCELLER_PATH,
             _CANCEL_NIX_GROUP,
             "      group: nix-${{ github.repository }}-${{ github.head_ref }}\n",
             expect="from a fork",
         ),
-        _plant(
+        _plant_line(
             "a group that joins the merge's push to main",
             _CANCELLER_PATH,
             _CANCEL_PINS_GROUP,
@@ -12431,10 +12457,24 @@ def _waits_its_turn(value: object, context: dict[str, Any]) -> bool:
 
 _DCO_GROUP = "group: dco-${{ github.event.pull_request.number }}"
 _NIX = f"{_WORKFLOWS}/nix.yml"
-_NIX_GROUP = (
-    "group: nix-${{ github.event.pull_request.head.repo.full_name || github.repository }}"
-    "-${{ github.head_ref || github.ref_name }}"
-)
+#: The start of nix.yml's group line: :func:`_plant_line` reads the line whatever key it holds.
+_NIX_GROUP = "group: nix-"
+
+
+def _keyed_on_the_attempt(line: str) -> str:
+    """nix.yml's group line keyed on the run attempt as well, whatever its key."""
+    return line.replace("group: nix-", "group: nix-${{ github.run_attempt }}-", 1)
+
+
+def _lands_on_nix_s_group_for_pr42(root: Path) -> None:
+    """A new pull request workflow whose one group, for every pull request, is the group nix.yml's
+    run of #42 joins, read from the tree's nix.yml whatever its key."""
+    doc = yaml.safe_load((root / _NIX).read_text(encoding="utf-8"))
+    group = _concurrency_group(doc.get("concurrency"))
+    assert group is not None, "nix.yml names no group"
+    pr42 = next(run for run in _pr_runs("pull_request") if run.label == _PR42)
+    concurrency = f"concurrency:\n  group: {_rendered(group, pr42.context)}\n"
+    _new_pr_workflow("new-check.yml", concurrency)(root)
 
 
 def _new_pr_workflow(rel: str, concurrency: str) -> Callable[[Path], None]:
@@ -12448,18 +12488,18 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
     "every concurrency group a candidate joins keys on its pull request or its head",
     concurrency_keying_violations,
     (
-        _plant("one group for every pull request", _NIX, _NIX_GROUP, "group: nix-lane",
-               expect="is shared by"),
-        _plant("a group keyed on the base branch", _NIX, _NIX_GROUP,
-               "group: nix-${{ github.base_ref }}", expect="pull request #42 (feature-b)"),
-        _plant("a group keyed on the branch alone, which two forks share", _NIX, _NIX_GROUP,
-               "group: nix-${{ github.head_ref }}", expect="#43 from a fork"),
-        _plant("a group keyed on the run", _NIX, _NIX_GROUP, "group: nix-${{ github.run_id }}",
-               expect="keys on neither"),
-        _plant("a group keyed on the test-merge commit", _NIX, _NIX_GROUP,
-               "group: nix-${{ github.sha }}", expect="keys on neither"),
-        _plant("an expression the row cannot evaluate", _NIX, _NIX_GROUP,
-               "group: nix-${{ format('{0}', github.head_ref) }}", expect="cannot evaluate"),
+        _plant_line("one group for every pull request", _NIX, _NIX_GROUP, "group: nix-lane",
+                    expect="is shared by"),
+        _plant_line("a group keyed on the base branch", _NIX, _NIX_GROUP,
+                    "group: nix-${{ github.base_ref }}", expect="pull request #42 (feature-b)"),
+        _plant_line("a group keyed on the branch alone, which two forks share", _NIX, _NIX_GROUP,
+                    "group: nix-${{ github.head_ref }}", expect="#43 from a fork"),
+        _plant_line("a group keyed on the run", _NIX, _NIX_GROUP, "group: nix-${{ github.run_id }}",
+                    expect="keys on neither"),
+        _plant_line("a group keyed on the test-merge commit", _NIX, _NIX_GROUP,
+                    "group: nix-${{ github.sha }}", expect="keys on neither"),
+        _plant_line("an expression the row cannot evaluate", _NIX, _NIX_GROUP,
+                    "group: nix-${{ format('{0}', github.head_ref) }}", expect="cannot evaluate"),
         Control("a group written as a bare string",
                 _new_pr_workflow("new-check.yml", "concurrency: one-lane\n"),
                 expect="new-check.yml"),
@@ -12467,9 +12507,7 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
             "  lane:\n    runs-on: ubuntu-24.04\n    concurrency:\n      group: lane\n"
             "      cancel-in-progress: true\n    steps: []\n"), expect="pr.yml:lane"),
         Control("a group that lands on another workflow's group for another pull request",
-                _new_pr_workflow("new-check.yml",
-                                 "concurrency:\n  group: nix-${{ github.repository }}-feature-b\n"),
-                expect="new-check.yml, nix.yml"),
+                _lands_on_nix_s_group_for_pr42, expect="new-check.yml, nix.yml"),
         Control("a feature-branch push workflow with one group for every branch",
                 _new_workflow(f"{_WORKFLOWS}/branch-check.yml",
                               "name: Branch check\non:\n  push:\n    branches-ignore: [main]\n"
@@ -12534,23 +12572,23 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                               "  cancel-in-progress: false\npermissions: {}\njobs: {}\n"),
                 fails=False),
         # A GitHub re-run keeps its run id and commit and raises run_attempt.
-        _plant("a group keyed on the run attempt", _NIX, _NIX_GROUP,
-               _NIX_GROUP.replace("group: nix-", "group: nix-${{ github.run_attempt }}-"),
-               expect="re-run as attempt 2"),
+        _plant_line("a group keyed on the run attempt", _NIX, _NIX_GROUP,
+                    _keyed_on_the_attempt,
+                    expect="re-run as attempt 2"),
         Control("a feature-branch push group keyed on the run",
                 _new_workflow(f"{_WORKFLOWS}/branch-check.yml",
                               "name: Branch check\non:\n  push:\n    branches-ignore: [main]\n"
                               "concurrency:\n  group: b-${{ github.ref }}-${{ github.run_id }}\n"
                               "permissions: {}\njobs: {}\n"),
                 expect="a push to feature-a and a push to feature-a, run again"),
-        _plant("a group that tells this repository from every fork as one", _NIX, _NIX_GROUP,
-               "group: nix-${{ github.event.pull_request.head.repo.full_name"
-               " == 'PersonalClaw/PersonalClaw' }}-${{ github.head_ref }}",
-               expect=f"{_PR43} and {_PR44}"),
+        _plant_line("a group that tells this repository from every fork as one", _NIX, _NIX_GROUP,
+                    "group: nix-${{ github.event.pull_request.head.repo.full_name"
+                    " == 'PersonalClaw/PersonalClaw' }}-${{ github.head_ref }}",
+                    expect=f"{_PR43} and {_PR44}"),
         # A context the row does not model is refused, never read as empty.
-        _plant("a group that reads vars", _NIX, _NIX_GROUP,
-               "group: nix-${{ vars.LANE || github.event.pull_request.number }}",
-               expect="it reads `vars`"),
+        _plant_line("a group that reads vars", _NIX, _NIX_GROUP,
+                    "group: nix-${{ vars.LANE || github.event.pull_request.number }}",
+                    expect="it reads `vars`"),
         # The one exception: every Dependabot head's runs, both tiers', wait in one group.
         Control("every Dependabot head's runs in one group, waiting their turn", _nothing,
                 fails=False),
