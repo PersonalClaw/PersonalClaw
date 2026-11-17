@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **975 registrations** over **790 distinct paths** — 968 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **976 registrations** over **791 distinct paths** — 969 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -97,6 +97,7 @@ The 135 families the surface divides into, largest first.
 | `/api/guardrails` | 2 | 1 |
 | `/api/heartbeat` | 2 | 2 |
 | `/api/listening` | 2 | 1 |
+| `/api/resilience` | 2 | 2 |
 | `/api/running` | 2 | 2 |
 | `/api/session` | 2 | 2 |
 | `/api/stt` | 2 | 2 |
@@ -143,7 +144,6 @@ The 135 families the surface divides into, largest first.
 | `/api/model-provider-types` | 1 | 1 |
 | `/api/optimizer` | 1 | 1 |
 | `/api/recent-projects` | 1 | 1 |
-| `/api/resilience` | 1 | 1 |
 | `/api/reveal` | 1 | 1 |
 | `/api/sandbox` | 1 | 1 |
 | `/api/screenshot` | 1 | 1 |
@@ -162,7 +162,7 @@ The 135 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 968 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 969 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -905,6 +905,7 @@ The 968 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/push/unsubscribe` | drop one device's push subscription. |
 | `GET` | `/api/recent-projects` | list recently used project directories. |
 | `GET` | `/api/resilience/degraded` | per-surface no-model floor + availability. |
+| `GET` | `/api/resilience/loop` | How long the gateway kept work waiting, the last minute and the last ten. |
 | `POST` | `/api/reveal` | reveal a file/folder in Finder or open with default app. |
 | `GET` | `/api/rooms` | every room, newest first. ``?archived=1`` includes archived ones. |
 | `POST` | `/api/rooms` | {title} — create a room. |

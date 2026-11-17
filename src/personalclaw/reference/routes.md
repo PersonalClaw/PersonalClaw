@@ -745,6 +745,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/push/unsubscribe` — drop one device's push subscription.
 - `GET /api/recent-projects` — list recently used project directories.
 - `GET /api/resilience/degraded` — per-surface no-model floor + availability.
+- `GET /api/resilience/loop` — How long the gateway kept work waiting, the last minute and the last ten.
 - `POST /api/reveal` — reveal a file/folder in Finder or open with default app.
 - `GET /api/rooms` — every room, newest first. ``?archived=1`` includes archived ones.
 - `POST /api/rooms` — {title} — create a room.

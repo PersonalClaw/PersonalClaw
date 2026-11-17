@@ -629,3 +629,13 @@ async def api_doctor_crash(request: web.Request) -> web.Response:
     if data is None:
         return json_error("not_found", message="No such crash artifact.", status=404)
     return web.json_response(data)
+
+
+def register_resilience_routes(app: web.Application) -> None:
+    """The no-model degraded-mode contract (``GET /api/resilience/degraded``), and the gauge of how
+    long the gateway keeps work waiting (``GET /api/resilience/loop``, started and stopped with
+    the gateway: :mod:`personalclaw.dashboard.loop_gauge`)."""
+    from personalclaw.dashboard.loop_gauge import register_loop_gauge
+
+    app.router.add_get("/api/resilience/degraded", api_degraded)
+    register_loop_gauge(app)
