@@ -107,6 +107,7 @@ COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "merge-controller": _merge_controller,
     "parity": parity.main,
     "plan": plan.main,
+    "plan-tier": plan.tier_main,
     "quarantine": quarantine.main,
     "quarantine-rerun": quarantine_rerun.main,
     "queue-readback": _queue_readback,
