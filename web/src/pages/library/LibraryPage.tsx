@@ -35,7 +35,7 @@ import type { ContextMenuItem } from '../../ui/motion'
 import { LibraryList, LibraryGrid } from './LibraryList'
 import { librarySections } from './libraryFilter'
 import { countLine, failedStoreNotice, n, noRows, partialWords, type LineAction } from './libraryWords'
-import { isNarrowed, itemRefOf, libraryParamsOf, mappedQuery, useLibrary, useLibraryContext, useWriteUps } from './useLibrary'
+import { isNarrowed, itemRefOf, LIBRARY_SORT_KEY, libraryParamsOf, mappedQuery, readLibraryCollections, readLibraryProjects, readLibraryStats, useLibrary, useLibraryContext, useWriteUps } from './useLibrary'
 import { fileInto, moreRows, LAST_PROJECT_KEY, readLast, useInChatGroups, type ActionInputs } from './libraryActions'
 import { LibraryPreview } from '../../ui/LibraryPreview'
 import { ProjectPickerDialog } from '../../ui/ProjectPicker'
@@ -49,7 +49,7 @@ import { refKind, titleOf } from './libraryMeta'
 
 /** The device's own choices for the page: List or Grid, and Sort by. */
 const LAYOUT_KEY = 'library:layout'
-const SORT_KEY = 'library:sort'
+const SORT_KEY = LIBRARY_SORT_KEY
 const stored = (key: string) => { try { return localStorage.getItem(key) ?? '' } catch { return '' } }
 const keep = (key: string, value: string) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key) } catch { /* private mode */ } }
 
@@ -92,9 +92,9 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
   const read = useLibrary(params)
   const { data, loading, error, refresh, stale } = read
   const ctx = useLibraryContext(query.project && query.project !== 'none' ? query.project: undefined)
-  const { data: projects } = useQuery('projects:list', () => api.projects())
-  const { data: collections, error: collectionsErr } = useQuery('knowledge:collections', () => api.knowledgeCollections())
-  const { data: stats } = useQuery('knowledge:stats', () => api.knowledgeStats())
+  const { data: projects } = useQuery('projects:list', readLibraryProjects)
+  const { data: collections, error: collectionsErr } = useQuery('knowledge:collections', readLibraryCollections)
+  const { data: stats } = useQuery('knowledge:stats', readLibraryStats)
   // The one re-index: Library settings' Re-index and the "…" row's, each the same job.
   const reindex = useEmbeddingReindex({ onSettled: () => invalidateKeys('knowledge:stats') })
   const reindexing = reindex.job?.status === 'running'

@@ -56,8 +56,9 @@ function settleHash(): void {
   if (moved !== null) history.replaceState(null, '', `#/${moved}`)
 }
 
-function parseHash(fallback: string): { route: string; sub: string; query: Record<string, string> } {
-  const h = rawHash()
+/** The route, sub-path and query of *hash* (the bar's own by default), as the router reads them. */
+export function parseHash(fallback: string, hash?: string): { route: string; sub: string; query: Record<string, string> } {
+  const h = hash === undefined ? rawHash() : hash.replace(/^#\/?/, '')
   const qIdx = h.indexOf('?')
   const path = qIdx >= 0 ? h.slice(0, qIdx) : h
   const qs = qIdx >= 0 ? h.slice(qIdx + 1) : ''

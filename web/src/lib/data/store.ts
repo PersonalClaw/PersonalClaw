@@ -44,6 +44,9 @@ export type CacheKeySpec = string | { prefix: string }
 const _entries = new Map<string, CacheEntry>()
 const _inflight = new Map<string, Promise<unknown>>()
 const _subs = new Map<string, Set<() => void>>()
+/** How many times each key was forgotten (`forgetKeys`): a request started before the last one
+ *  lands without writing, so what was forgotten never comes back from the wire. */
+const _forgets = new Map<string, number>()
 /** Keys whose value should survive a FULL page reload, mirrored into sessionStorage. */
 const _persisted = new Set<string>()
 
@@ -156,6 +159,21 @@ export function invalidateKeys(keyOrPrefix: string, prefix = false): void {
   for (const k of keys) if (k.startsWith(keyOrPrefix)) hit(k)
 }
 
+/** Forget *keys* outright: their entries, their session copies and any request on the wire for
+ *  them, so a reader starts from nothing. Not an invalidation, which keeps the value to paint as
+ *  stale: this is for what was read before the app knew it may keep it (``app/routePrefetch.ts``,
+ *  whose reads a device that turns out not to be signed in must not keep). A request already on
+ *  the wire for one of them lands without writing. */
+export function forgetKeys(keys: readonly string[]): void {
+  for (const k of keys) {
+    _forgets.set(k, (_forgets.get(k) ?? 0) + 1)
+    _entries.delete(k)
+    _dropSession(k)
+    _inflight.delete(k)
+    _notify(k)
+  }
+}
+
 /** Apply a mutation's declared invalidation map. */
 export function invalidateSpecs(specs: readonly CacheKeySpec[]): void {
   for (const s of specs) {
@@ -230,8 +248,9 @@ function _withDeadline<T>(key: string, p: Promise<T>): Promise<T> {
 export function fetchKey<T>(key: string, fetcher: () => Promise<T>, persist = false): Promise<T> {
   const joined = _inflight.get(key) as Promise<T> | undefined
   if (joined) return _withDeadline(key, joined)
+  const forgets = _forgets.get(key) ?? 0
   const p = fetcher()
-    .then((res) => { writeQuery(key, res, persist); return res })
+    .then((res) => { if ((_forgets.get(key) ?? 0) === forgets) writeQuery(key, res, persist); return res })
     .finally(() => { if (_inflight.get(key) === p) _inflight.delete(key) })
   _inflight.set(key, p as Promise<unknown>)
   return _withDeadline(key, p)
@@ -262,6 +281,7 @@ export function resetDataStore(): void {
   _entries.clear()
   _inflight.clear()
   _subs.clear()
+  _forgets.clear()
   _persisted.clear()
   // Sweep EVERY persisted key, not just the ones this module instance wrote. A test that calls
   // `vi.resetModules()` and re-imports the component under test gets a fresh copy of this

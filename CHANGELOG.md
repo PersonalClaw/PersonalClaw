@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 
 - **The status bar's system reading answers at once from the last one taken, and an aging reading is taken again in the background, so a reload no longer waits seconds for it on a busy machine.**
+- **A reload of Needs you or the Library starts the page's reads while the app learns who you are, so the page paints as soon as you're known instead of asking only then.**
 
 ## [0.3.9] — 2026-11-16
 
