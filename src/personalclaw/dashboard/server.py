@@ -937,6 +937,7 @@ async def start_dashboard(
     # everything outside /api/) is enumerated with reasons in api_version_gate.py.
     from personalclaw.dashboard.api_version_gate import api_version_middleware
     from personalclaw.dashboard.consent_ask import consent_ask_middleware
+    from personalclaw.dashboard.device_scopes import device_scope_middleware
     from personalclaw.dashboard.invalid_id_gate import invalid_id_middleware
     from personalclaw.dashboard.memory_write_gate import memory_write_middleware
     from personalclaw.dashboard.refusal_log import refusal_line_middleware
@@ -964,6 +965,9 @@ async def start_dashboard(
         # refusal, a file route's refused path. See refusal_log.py.
         refusal_line_middleware,
         app_permission_middleware,
+        # An automation client's session reaches only its scope's routes (device_scopes): after
+        # the app gate, before consent and the audit, so even an unmatched request meets it.
+        device_scope_middleware,
         # The owner's consent question as an answer to a client that asks one, and as the 400
         # refusal to any other. OUTSIDE the security log's audit, which records the refusal as the
         # handler made it. See consent_ask.py.

@@ -191,3 +191,22 @@ def audit_mismatch(nonce: str) -> None:
         )
     except Exception:  # noqa: BLE001 — the refusal stands; say the row could not be written
         logger.warning("could not write the scope-mismatch row to the SEL", exc_info=True)
+
+
+def presented_scope(request: Any) -> tuple[str, ...]:
+    """The scope a token *request* presents claims, when this gateway signed that token, whatever
+    its session's state now; ``()`` for none.
+
+    For the modes that admit a request without checking its session (``device_scopes.scope_of``):
+    the cookie and the Bearer are read, and a claim counts only when its signature verifies
+    (``token_auth._verified_claims``, which binds the claim to the scoped key)."""
+    from personalclaw.dashboard import token_auth
+
+    port = int(request.app.get("port") or 0) if hasattr(request, "app") else 0
+    _presented, bearer = token_auth._bearer_credential(request)
+    for token in (request.cookies.get(token_auth.session_cookie_name(request, port), ""), bearer):
+        claims = token_auth._verified_claims(token) if token else None
+        scope = tuple(claims.get(device_scopes.SCOPE_CLAIM) or ()) if claims else ()
+        if scope:
+            return scope
+    return ()

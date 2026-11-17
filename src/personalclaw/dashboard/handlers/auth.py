@@ -427,6 +427,18 @@ async def api_auth_session(request: web.Request) -> web.Response:
     two modes that skip the sign-in admit a request without one, so a 200 alone doesn't mean
     this browser is signed in: the ``/pair`` page reads this to decide whether to send itself home.
     """
+    from personalclaw.dashboard.device_scopes import scope_of
+
+    scope = scope_of(request)
+    if scope:
+        # An automation client's own sign-in, never the account: no username, 2FA or lockout.
+        return web.json_response(
+            {
+                "signed_in": bool(request.get("session_nonce")),
+                "scope": list(scope),
+                "expires_at": float(request.get("session_expires_at") or 0.0),
+            }
+        )
     cfg = _auth_cfg()
     st = creds.status()
     return web.json_response(

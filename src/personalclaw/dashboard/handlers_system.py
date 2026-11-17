@@ -290,6 +290,21 @@ def _safe_surfaces_flag() -> bool:
 async def api_status(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     uptime = time.time() - state.start_time
+    from personalclaw.dashboard.device_scopes import scope_of
+
+    if scope_of(request):
+        # An automation client's status (the `status` scope): whether this gateway answers and
+        # which build it is. No YOLO, no owner hash, no counts and no stats.
+        from personalclaw.dashboard.handlers import updates as _updates
+
+        return web.json_response(
+            {
+                "version": personalclaw.__version__,
+                "uptime_secs": int(uptime),
+                "healthy": True,
+                "update_available": bool(_updates._update_info.get("available")),
+            }
+        )
     # The update check's schedule: an automatic check starts in the background once one is due
     # (`updates.check_interval_hours` since the last), and never while automatic checks are off.
     from personalclaw.dashboard.handlers import updates as _updates_mod

@@ -653,14 +653,19 @@ async def api_loop_list(request: web.Request) -> web.Response:
     table, a ledger file per loop and the run store, which it opens and closes, are disk reads
     that would hold every other request meanwhile.
     """
+    from personalclaw.dashboard.device_scopes import scope_of
     from personalclaw.workflows import loop_view
 
     project_id = request.query.get("project_id", "").strip()
     kind = request.query.get("kind", "").strip().lower()
+    # An automation client's list holds the loops table's rows only: a run-backed loop is a
+    # workflow run, which no scope reaches (Q2).
+    loops_table_only = bool(scope_of(request))
 
     def off_the_loop() -> list[dict[str, Any]]:
         rows = store.list_redacted(project_id=project_id, kind=kind)
-        rows += loop_view.list_loop_views(project_id=project_id, kind=kind)
+        if not loops_table_only:
+            rows += loop_view.list_loop_views(project_id=project_id, kind=kind)
         rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
         return rows
 

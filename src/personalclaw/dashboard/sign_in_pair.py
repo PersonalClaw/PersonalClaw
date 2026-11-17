@@ -77,6 +77,12 @@ _EXEMPT_PREFIXES = ("/icons/",)
 #: ``/apps/{name}/api/``, isn't on the list.
 _APP_UI = re.compile(r"/apps/[^/]+/ui/.*")
 
+
+def an_apps_page_file(path: str) -> bool:
+    """Whether *path* is an installed app's static page file (:data:`_APP_UI`)."""
+    return _APP_UI.fullmatch(path) is not None
+
+
 #: The prefixes a family of routes owns, where no path is ever the shell, matched or not: the API
 #: (the sockets under it), an app's backend, the static build files, and the surfaces that sign
 #: their own callers in. An unmatched path under one of them is refused like any other request
