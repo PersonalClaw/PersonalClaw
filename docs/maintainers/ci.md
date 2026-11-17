@@ -1744,8 +1744,9 @@ committer to `MAINTAINERS` or drop a module beside the script to pass itself; a 
 file judges the pushes after the one that lands it. The one push with no previous copy is the one
 that adds the check: `BEFORE`'s history never held the script, so that push runs its own copy and
 says so in the summary. A `BEFORE` that once had the script and has lost it is refused, and so
-is a `BEFORE` the checkout cannot resolve (all zeros, or an old tip a forced update orphaned):
-a git failure is never read as "never had the check".
+is a `BEFORE` the checkout cannot resolve (all zeros, or an old tip a forced update orphaned),
+and so is a `BEFORE` whose history of the check git cannot read: a git failure is never read as
+"never had the check".
 
 **What a squash merge must carry.** On `main` nothing can be amended, so the squash commit itself
 has to pass. In GitHub's squash dialog, delete the `Co-authored-by` lines GitHub adds for the
