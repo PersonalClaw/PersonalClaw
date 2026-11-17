@@ -304,10 +304,12 @@ def _no_plan(ran: Ran) -> None:
 # ── the wiring the harness relies on ─────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("workflow", sorted(_TIERS))
-def test_the_plan_step_reads_only_the_env_the_harness_gives_it(workflow: str) -> None:
+def _plan_envs(workflow: str) -> tuple[dict[str, str], ...]:
+    """The env a tier workflow's plan step may read: the harness's, and for merge.yml, with the
+    repository's MERGE_QUEUE_LIVE as well, for main's plan-tier (0.4.0 A4a), until that change
+    lands and holds it to its own env (ci.md: a change that alters a contract row lands in two
+    merges, the row first)."""
     tier, jobs = _TIERS[workflow]
-    step = _step(workflow, "changes", "plan")
     push_plan = (
         "${{ github.event_name == 'push' && (needs.tree-check.outputs.tested == 'true'"
         " && 'tested' || 'full') || '' }}"
@@ -320,13 +322,38 @@ def test_the_plan_step_reads_only_the_env_the_harness_gives_it(workflow: str) ->
         # pr.yml carries no push stage: its plan step is the same text, given no push plan.
         "PUSH_PLAN": push_plan if workflow == "merge.yml" else "",
         "JUDGE": _JUDGE if workflow == "merge.yml" else "",
+        # What the changed paths are compared with (0.4.0 A1): main, but for merge.yml's queue
+        # commit, the commit the queue built it on.
+        "COMPARED": _COMPARED if workflow == "merge.yml" else "main",
     }
-    # What the changed paths are compared with (0.4.0 A1): main, but for merge.yml's queue
-    # commit, the commit the queue built it on.
-    compared = _COMPARED if workflow == "merge.yml" else "main"
-    assert step.get("env") == {**want, "COMPARED": compared}
+    if workflow != "merge.yml":
+        return (want,)
+    return want, {**want, "QUEUE_LIVE": "${{ vars.MERGE_QUEUE_LIVE }}"}
+
+
+@pytest.mark.parametrize("workflow", sorted(_TIERS))
+def test_the_plan_step_reads_only_the_env_the_harness_gives_it(workflow: str) -> None:
+    step = _step(workflow, "changes", "plan")
+    assert step.get("env") in _plan_envs(workflow)
     assert step.get("shell") is None and _workflow(workflow).get("defaults") is None
     assert "${{" not in step["run"], "an expression pasted into the shell"
+
+
+@pytest.mark.parametrize(
+    ("workflow", "extra"),
+    [
+        ("merge.yml", {"QUEUE_LIVE": "${{ vars.OTHER }}"}),
+        ("merge.yml", {"QUEUE_LIVE": "true"}),
+        ("merge.yml", {"QUEUE_VAR": "${{ vars.MERGE_QUEUE_LIVE }}"}),
+        ("pr.yml", {"QUEUE_LIVE": "${{ vars.MERGE_QUEUE_LIVE }}"}),
+    ],
+    ids=["another-variable", "a-literal", "another-name", "on-pr-yml"],
+)
+def test_no_other_queue_env_passes(workflow: str, extra: dict[str, str]) -> None:
+    """Planted: the queue variable under another name or value, or on pr.yml, is no env the
+    plan step may read."""
+    step = _step(workflow, "changes", "plan")
+    assert {**step["env"], **extra} not in _plan_envs(workflow)
 
 
 def test_the_flake_rules_changed_paths_step_reads_only_the_two_commits_it_checks() -> None:

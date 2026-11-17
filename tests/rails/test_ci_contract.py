@@ -642,6 +642,88 @@ def _plant_line(
     return Control(name, plant, fails, expect)
 
 
+#: A catalogue entry's id line and the tiers line after it.
+_TIERS_LINE = r'^id = "{job}"\ntiers = \[(?P<tiers>[^\]\n]*)\]\n'
+
+
+def _retier(
+    job: str, make: Callable[[list[str]], list[str]], after: str = ""
+) -> Callable[[str], str]:
+    """A catalogue edit: *job*'s tiers to what *make* gives of them, and *after* (more lines)
+    after its tiers line. It reads the tiers rather than naming them, so it edits the same with
+    or without the entry tier (0.4.0 A4): a row must pass both before and after the change that
+    adds it (ci.md: a change that alters a contract row lands in two merges, the row first)."""
+
+    def edit(text: str) -> str:
+        found = re.search(_TIERS_LINE.format(job=re.escape(job)), text, re.M)
+        assert found, f"the catalogue has no {job!r} entry with a tiers line"
+        tiers = [t.strip().strip('"') for t in found["tiers"].split(",") if t.strip()]
+        line = ", ".join(f'"{t}"' for t in make(tiers))
+        return f'{text[: found.start()]}id = "{job}"\ntiers = [{line}]\n{after}{text[found.end():]}'
+
+    return edit
+
+
+def _same(tiers: list[str]) -> list[str]:
+    return tiers
+
+
+def _without(tier: str) -> Callable[[list[str]], list[str]]:
+    """The tiers less *tier*."""
+    return lambda tiers: [t for t in tiers if t != tier]
+
+
+def _unlist(job: str) -> Callable[[str], str]:
+    """A catalogue edit: *job* out of every tier list that names it, [tier.merge]'s and, with the
+    entry tier, [tier.entry]'s."""
+    line = f'  "{job}",\n'
+
+    def edit(text: str) -> str:
+        assert line in text, f"no tier list names {job!r}"
+        return text.replace(line, "")
+
+    return edit
+
+
+def _with_entry_tier(*jobs: str) -> Callable[[str], str]:
+    """A catalogue edit: an entry tier (0.4.0 A4) of the jobs it must hold
+    (``catalogue.ENTRY_NEEDS_JOBS``) and *jobs*, each given the entry tier beside its others and
+    named in a [tier.entry] list, as the change that adds the tier writes it. A catalogue with an
+    entry tier already gains only the jobs it does not hold, so the edit reads the same before and
+    after that change."""
+    names = list(dict.fromkeys([*catalogue.ENTRY_NEEDS_JOBS, *jobs]))
+    start = "[tier.entry]\njobs = [\n"
+
+    def entered(tiers: list[str]) -> list[str]:
+        return sorted({*tiers, catalogue.ENTRY_TIER}, key=catalogue.TIERS.index)
+
+    def edit(text: str) -> str:
+        for job in names:
+            text = _retier(job, entered)(text)
+        if start not in text:
+            text = text.replace("[tier.merge]\n", f"{start}]\n\n[tier.merge]\n", 1)
+        at = text.index(start) + len(start)
+        listed = text[at : text.index("]\n", at)]
+        more = "".join(f'  "{job}",\n' for job in names if f'  "{job}",\n' not in listed)
+        return text[:at] + more + text[at:]
+
+    return edit
+
+
+def _catalogue_plant(
+    name: str, *edits: Callable[[str], str], fails: bool = True, expect: str = ""
+) -> Control:
+    """A violation planted by edits of the catalogue, each reading what it edits."""
+
+    def plant(root: Path) -> None:
+        text = (root / catalogue.CATALOGUE).read_text(encoding="utf-8")
+        for edit in edits:
+            text = edit(text)
+        _write(root, catalogue.CATALOGUE, text)
+
+    return Control(name, plant, fails, expect)
+
+
 def _plants(
     name: str, rel: str, edits: tuple[tuple[str, str], ...], expect: str = "", fails: bool = True
 ) -> Control:
@@ -2668,10 +2750,12 @@ def _suite_step(job: catalogue.Job, word: str) -> catalogue.Step | None:
 
 
 def macos_leg_violations(tree: Tree) -> list[str]:
-    """``python-suite-macos`` runs ``python-suite``'s split suite, in the same tiers and whenever
-    it runs: on a pull request's merge run and on a push to main no green pull-request run tested
-    (the merge tier's push stage plans it beside every other merge job). That it runs on macOS,
-    and in the merge tier, the catalogue's loader holds: it is security evidence."""
+    """``python-suite-macos`` runs ``python-suite``'s split suite, in the same tiers but the entry
+    tier (0.4.0 A4: a pull request's run once the queue gates main, which the queue's run and
+    breadth's night hold the macOS suite to), and whenever it runs: on a pull request's merge run
+    and on a push to main no green pull-request run tested (the merge tier's push stage plans it
+    beside every other merge job). That it runs on macOS, and in the merge tier, the catalogue's
+    loader holds: it is security evidence."""
     try:
         cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
     except catalogue.CatalogueError as exc:
@@ -2681,8 +2765,11 @@ def macos_leg_violations(tree: Tree) -> list[str]:
     except KeyError:
         return [f"the catalogue has no {_SUITE_MACOS} beside {_SUITE}"]
     bad: list[str] = []
-    if macos.tiers != ubuntu.tiers:
-        bad.append(f"{_SUITE_MACOS} runs in {macos.tiers}, {_SUITE} in {ubuntu.tiers}")
+    if macos.tiers != tuple(t for t in ubuntu.tiers if t != catalogue.ENTRY_TIER):
+        bad.append(
+            f"{_SUITE_MACOS} runs in {macos.tiers}, {_SUITE} in {ubuntu.tiers}: the same tiers"
+            f" but {catalogue.ENTRY_TIER}"
+        )
     pushed = [j in (cat.every_push or ()) for j in (_SUITE_MACOS, _SUITE)]
     if pushed[0] != pushed[1]:
         bad.append(f"{_SUITE_MACOS} and {_SUITE} differ in whether every push to main runs them")
@@ -5075,6 +5162,17 @@ ROWS: tuple[Row, ...] = (
             ),
             # Each leg lists its own shard of its own plan, so the two may split differently:
             # the shard plan holds every file in exactly one shard of each.
+            # The entry tier beside merge passes, the macOS suite out of it, and in it is a fault.
+            _catalogue_plant(
+                "the entry tier beside merge, the macOS suite out of it",
+                _with_entry_tier(_SUITE),
+                fails=False,
+            ),
+            _catalogue_plant(
+                "the macOS suite in the entry tier beside the suite",
+                _with_entry_tier(_SUITE, _SUITE_MACOS),
+                expect="python-suite-macos runs in ('entry', 'merge'), python-suite in",
+            ),
             _plants(
                 "the macOS suite in fewer shards than the suite passes",
                 catalogue.CATALOGUE,
@@ -5557,20 +5655,11 @@ ROWS: tuple[Row, ...] = (
                 expect=f"the merge tier's run holds {_MACOS_RUNNERS + 1} macOS runners, more than"
                 f" the {_MACOS_RUNNERS} the account runs",
             ),
-            _plants(
+            _catalogue_plant(
                 "two more macOS entries in the merge tier, the browser legs' two shards and the"
                 " rails' three",
-                catalogue.CATALOGUE,
-                (
-                    (
-                        'id = "e2e-shard"\ntiers = ["merge"]\n',
-                        'id = "e2e-shard"\ntiers = ["merge"]\nplatform = "macos-26"\n',
-                    ),
-                    (
-                        'id = "rails"\ntiers = ["change", "merge"]\n',
-                        'id = "rails"\ntiers = ["change", "merge"]\nplatform = "macos-26"\n',
-                    ),
-                ),
+                _retier("e2e-shard", _same, after='platform = "macos-26"\n'),
+                _retier("rails", _same, after='platform = "macos-26"\n'),
                 expect=f"the merge tier's run holds {_MACOS_SHARDS + 5} macOS runners, more than"
                 f" the {_MACOS_RUNNERS} the account runs",
             ),
@@ -9392,7 +9481,10 @@ def _posture(job: catalogue.Job, marked: frozenset[str], bad: list[str]) -> None
             f"{job.id}: security is {job.security}, but its steps run security-marked modules:"
             f" {', '.join(runs[:3])}{more}"
         )
-    if job.tiers != want.tiers:
+    # The entry tier (0.4.0 A4) holds merge-tier jobs: a job may name it beside merge until the
+    # change that adds it narrows this table to each job's own tiers (ci.md: the row first).
+    but_entry = tuple(t for t in job.tiers if t != catalogue.ENTRY_TIER)
+    if but_entry != want.tiers or (catalogue.ENTRY_TIER in job.tiers and "merge" not in want.tiers):
         bad.append(
             f"{job.id}: tiers are {', '.join(job.tiers)}, and this row says {', '.join(want.tiers)}"
         )
@@ -9542,14 +9634,19 @@ def _catalogue_scaffold(root: Path) -> None:
 
 def _without_merge_list(root: Path) -> None:
     """The tree's catalogue with its [tier.merge] table, the header, its list and its every_push
-    line, removed."""
+    line, removed, and the [tier.entry] table, a list of merge-tier jobs, with it where there is
+    one (0.4.0 A4)."""
     path = root / catalogue.CATALOGUE
     text = path.read_text(encoding="utf-8")
-    start = text.index("[tier.merge]\n")
-    end = text.index("]\n", text.index("jobs = [", start)) + 2
-    if text.startswith("every_push = ", end):
-        end = text.index("\n", end) + 1
-    _write(root, catalogue.CATALOGUE, text[:start] + text[end:])
+    for table in ("[tier.merge]\n", "[tier.entry]\n"):
+        if table not in text and table == "[tier.entry]\n":
+            continue
+        start = text.index(table)
+        end = text.index("]\n", text.index("jobs = [", start)) + 2
+        if text.startswith("every_push = ", end):
+            end = text.index("\n", end) + 1
+        text = text[:start] + text[end:]
+    _write(root, catalogue.CATALOGUE, text)
 
 
 def _pinned_named(name: str, new: str, fails: bool = True, expect: str = "") -> Control:
@@ -9835,11 +9932,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             _ubuntu_suite_step_env,
             fails=False,
         ),
-        _plant(
+        _catalogue_plant(
             "a merge tier without the rails job",
-            catalogue.CATALOGUE,
-            'id = "rails"\ntiers = ["change", "merge"]',
-            'id = "rails"\ntiers = ["change"]',
+            _retier("rails", lambda tiers: ["change"]),
             expect="the merge tier lacks the rails job",
         ),
         Control("the catalogue removed", _remove(catalogue.CATALOGUE), expect="is missing"),
@@ -9896,14 +9991,23 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             # The loader refuses it first: security is one of the merge tier's security jobs.
             expect="security: security is ordinary, but its run is the merge tier's security",
         ),
-        # The posture and tiers this row holds each entry to.
-        _plants(
+        # The posture and tiers this row holds each entry to. The entry tier beside merge passes;
+        # a job in it whose other tiers are not its row's is a fault.
+        _catalogue_plant(
+            "the entry tier beside merge, as the change that adds it writes it",
+            _with_entry_tier("client"),
+            fails=False,
+        ),
+        _catalogue_plant(
+            "a job in the entry tier whose other tiers are not its row's",
+            _with_entry_tier("client"),
+            _retier("client", _without("change")),
+            expect="client: tiers are entry, merge, and this row says change, merge",
+        ),
+        _catalogue_plant(
             "an entry out of the merge tier, and out of its list",
-            catalogue.CATALOGUE,
-            (
-                ('  "audit",\n]', "]"),
-                ('id = "audit"\ntiers = ["merge"]', 'id = "audit"\ntiers = ["breadth"]'),
-            ),
+            _unlist("audit"),
+            _retier("audit", lambda tiers: ["breadth"]),
             expect="audit: tiers are breadth, and this row says merge",
         ),
         _plant(
@@ -9945,11 +10049,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             "",
             expect="package: its tiers claim merge, and [tier.merge] does not list it",
         ),
-        _plant(
+        _catalogue_plant(
             "the merge tier's list naming a job that does not claim merge",
-            catalogue.CATALOGUE,
-            'id = "audit"\ntiers = ["merge"]',
-            'id = "audit"\ntiers = ["breadth"]',
+            _retier("audit", lambda tiers: ["breadth"]),
             expect="audit: [tier.merge] lists it, and it is no job whose tiers claim merge",
         ),
         Control(
@@ -11790,10 +11892,20 @@ _MERGE_STAGE_GROUP = (
     " github.run_attempt == '1' && matrix.id == 'python-suite-macos' && 'suite' ||"
     " github.event.pull_request.number || github.sha }}-${{ matrix.key }}\n"
 )
-_CATALOGUE_JOB_NAMED_MERGE_VERDICT = _both(
-    _plant("", catalogue.CATALOGUE, 'id = "client"\n', 'id = "merge-verdict"\n').plant,
-    _plant("", catalogue.CATALOGUE, '  "client",\n', '  "merge-verdict",\n').plant,
-)
+
+
+def _client_listed_as_merge_verdict(text: str) -> str:
+    """client renamed merge-verdict in every tier list that names it, [tier.merge]'s and, with
+    the entry tier (0.4.0 A4), [tier.entry]'s."""
+    assert '  "client",\n' in text, "no tier list names client"
+    return text.replace('  "client",\n', '  "merge-verdict",\n')
+
+
+_CATALOGUE_JOB_NAMED_MERGE_VERDICT = _catalogue_plant(
+    "",
+    lambda text: text.replace('id = "client"\n', 'id = "merge-verdict"\n', 1),
+    _client_listed_as_merge_verdict,
+).plant
 
 NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
     "no workflow that runs candidate code posts the merge-verdict check",
@@ -14464,14 +14576,6 @@ def owning_job_violations(root: Path) -> list[str]:
     return bad
 
 
-_STATIC = 'id = "static"\ntiers = ["change", "merge"]'
-#: static's entry down to its lint_feedback flag, which only a change-tier job may set.
-_STATIC_ENTRY = (
-    f"{_STATIC}\n"
-    'inputs = [":(glob)**"]\nexternal_inputs = []\ntoolchain = ["uv-sync", "shellcheck", "dash"]\n'
-    'cache = ["uv"]\nsecurity = "ordinary"\nlint_feedback = true\n'
-)
-_RAILS_CHECKS = 'id = "rails-checks"\ntiers = ["change", "merge"]'
 _VALIDATE_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "validate", "--strict"] },\n'
 _SCAN_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },\n'
 _RAILS_MACOS_PYTEST = (
@@ -14573,23 +14677,19 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             _VALIDATE_STEP.replace(', "--strict"', ""),
             expect="harness validate --strict runs in no job of the change tier",
         ),
-        _plant(
+        _catalogue_plant(
             # Its lint remediation goes with it: the loader holds that job to the change tier.
             "static held to the merge tier only",
-            catalogue.CATALOGUE,
-            _STATIC_ENTRY,
-            _STATIC_ENTRY.replace('"change", ', "").replace("lint_feedback = true\n", ""),
+            _retier("static", _without("change")),
+            lambda text: text.replace("lint_feedback = true\n", "", 1),
             expect="the whole-tree harness scan runs in no job of the change tier",
         ),
         # ci.yml's scan step under a pull-request `if:` left the merge tier with no scan; the
         # merge tier's scan is static's, so its plant takes static out of that tier.
-        _plants(
+        _catalogue_plant(
             "static held to the change tier only, so merge scans no tree",
-            catalogue.CATALOGUE,
-            (
-                (_STATIC_ENTRY, _STATIC_ENTRY.replace('"change", "merge"', '"change"')),
-                ('[tier.merge]\njobs = [\n  "static",\n', "[tier.merge]\njobs = [\n"),
-            ),
+            _retier("static", lambda tiers: ["change"]),
+            _unlist("static"),
             expect="the whole-tree harness scan runs in no job of the merge tier",
         ),
         _plant(
@@ -14734,11 +14834,9 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             " continue-on-error, in its run-job step, and its leg's entry does not carry that"
             " step's red",
         ),
-        _plant(
+        _catalogue_plant(
             "rails-checks held to the merge tier only",
-            catalogue.CATALOGUE,
-            _RAILS_CHECKS,
-            'id = "rails-checks"\ntiers = ["merge"]',
+            _retier("rails-checks", _without("change")),
             expect="the gate aggregate runs in no job of the change tier",
         ),
         _plant(
@@ -14748,26 +14846,15 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             _VALIDATE_STEP + _GATES_STEP,
             expect="the gate aggregate runs in 2 jobs of the merge tier",
         ),
-        _plants(
+        _catalogue_plant(
             "the security corpus moved out of breadth, both legs",
-            catalogue.CATALOGUE,
-            (
-                (
-                    'id = "security"\ntiers = ["change", "merge", "breadth"]',
-                    'id = "security"\ntiers = ["change", "merge"]',
-                ),
-                (
-                    'id = "security-macos"\ntiers = ["breadth"]',
-                    'id = "security-macos"\ntiers = ["weekly"]',
-                ),
-            ),
+            _retier("security", _without("breadth")),
+            _retier("security-macos", lambda tiers: ["weekly"]),
             expect="the security corpus runs in no job of the breadth tier",
         ),
-        _plant(
+        _catalogue_plant(
             "the security corpus held out of the change tier",
-            catalogue.CATALOGUE,
-            'id = "security"\ntiers = ["change", "merge", "breadth"]',
-            'id = "security"\ntiers = ["merge", "breadth"]',
+            _retier("security", _without("change")),
             expect="the security corpus runs in no job of the change tier",
         ),
         _on_rails_macos(
@@ -15061,6 +15148,23 @@ if ! { rm -rf "$judge" && mkdir -p "$judge" \
   exit 1
 fi
 """,  # noqa: E501
+        # The entry tier's plan step (0.4.0 A4a): merge.yml asks main's plan-tier which tier this
+        # run plans, and plans it. Listed beside the plan step it replaces until that change lands
+        # (ci.md: a change that alters a contract row lands in two merges, the row first).
+        "the tier main's plan-tier names for merge.yml's run, or no plan": r"""
+tier="$TIER"
+if [ "$TIER" = merge ]; then
+  tier=$(cd "$judge" && python3 -m tools.ci plan-tier --event "${GITHUB_EVENT_NAME:-}" \
+           --queue-var "${QUEUE_LIVE:-}" --repo "$GITHUB_REPOSITORY") || tier=""
+  case "$tier" in
+    entry|merge) echo "this run plans the $tier tier" ;;
+    *)
+      echo "::error title=no plan::main's planner named no tier for this run, so nothing is planned and the verdict is red."
+      exit 1
+      ;;
+  esac
+fi
+""",  # noqa: E501
         "a push's plan, by the tree check's answer, or no plan": r"""
 case "$PUSH_PLAN" in
   "") mode="" ;;
@@ -15075,6 +15179,18 @@ esac
         "main's planner, over this checkout's catalogue, as a matrix": r"""
 : > "$RUNNER_TEMP/plan.err"
 answer=$(cd "$judge" && python3 -m tools.ci plan "$TIER" \
+           --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
+           --trusted-areas "$judge/tools/ci/areas.toml" \
+           --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
+           --repo "$GITHUB_REPOSITORY" --outputs --matrix ${mode:+"$mode"} \
+           2> "$RUNNER_TEMP/plan.err") || answer=""
+cat "$RUNNER_TEMP/plan.err" >> "$GITHUB_STEP_SUMMARY"
+sed -n '/^::warning[ :]/p' "$RUNNER_TEMP/plan.err"
+printf '%s\n' "$answer" > "$RUNNER_TEMP/answer.txt"
+""",
+        "main's planner, over this checkout's catalogue, as a matrix, for the tier named": r"""
+: > "$RUNNER_TEMP/plan.err"
+answer=$(cd "$judge" && python3 -m tools.ci plan "$tier" \
            --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
            --trusted-areas "$judge/tools/ci/areas.toml" \
            --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
@@ -15316,6 +15432,17 @@ _PLAN_STEP_TAIL = (
     "the keys and the stage jobs' matrices, read back before they are published",
 )
 _PLAN_COMPARED = ("the changed paths, against what the run compares with", *_PLAN_STEP_TAIL)
+#: The plan step as the entry tier's change (0.4.0 A4a) writes it in both workflows: the tier
+#: main's plan-tier names, planned. Either plan step passes here until that change lands, which
+#: lists only its own (ci.md: the row first).
+_PLAN_TIERED = (
+    "the changed paths, against what the run compares with",
+    "main's tools/ci, archived beside the checkout, or no plan",
+    "the tier main's plan-tier names for merge.yml's run, or no plan",
+    "a push's plan, by the tree check's answer, or no plan",
+    "main's planner, over this checkout's catalogue, as a matrix, for the tier named",
+    "the keys and the stage jobs' matrices, read back before they are published",
+)
 _QUEUE_CHANGED = ("a pull request's or a queue commit's changed paths, for the flake rule",)
 _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
     _PLAN_JOB: (
@@ -15323,6 +15450,7 @@ _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("the apps repository's head, read once for the run, or no partner",),
         _QUEUE_CHANGED,
         _PLAN_COMPARED,
+        _PLAN_TIERED,
         ("the push's replay, in shadow, beside the tree check (merge.yml's)",),
         ("main's check of this run's catalogue (merge.yml's)",),
     ),
@@ -15368,12 +15496,16 @@ _TIER_STEP_LINES: dict[str, dict[tuple[str, ...], tuple[str, ...]]] = {
 }
 #: The listed steps a tier workflow may run or leave out, by job: each is held to its listed lines
 #: when it runs. A step a row names lands in two merges (#4584 step 4): these rows first, with
-#: the step here, then the workflow, which takes it out of here. None waits today.
-_TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {}
+#: the step here, then the workflow, which takes it out of here. The plan step's two shapes wait.
+_TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {
+    # Each tier workflow's plan job runs one of these, as _TIER_ONE_OF holds: the plan step as it
+    # is, or as the entry tier's change writes it.
+    _PLAN_JOB: frozenset({_PLAN_COMPARED, _PLAN_TIERED}),
+}
 #: Listed steps of which each tier workflow's job runs exactly one: its plan step, and its results
 #: job's verdict.
 _TIER_ONE_OF: dict[str, frozenset[tuple[str, ...]]] = {
-    _PLAN_JOB: frozenset({_PLAN_COMPARED}),
+    _PLAN_JOB: frozenset({_PLAN_COMPARED, _PLAN_TIERED}),
     _RESULTS_JOB: frozenset({_QUEUE_FLAKE_VERDICT}),
 }
 _STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
@@ -15679,11 +15811,56 @@ def _twice(text: str) -> str:
     return text.replace(name, second + name, 1)
 
 
+#: The entry tier's plan-tier block (0.4.0 A4a) as a tier workflow's plan step writes it.
+_PLAN_TIER_BLOCK = """\
+          tier="$TIER"
+          if [ "$TIER" = merge ]; then
+            tier=$(cd "$judge" && python3 -m tools.ci plan-tier --event "${GITHUB_EVENT_NAME:-}" \\
+                     --queue-var "${QUEUE_LIVE:-}" --repo "$GITHUB_REPOSITORY") || tier=""
+            case "$tier" in
+              entry|merge) echo "this run plans the $tier tier" ;;
+              *)
+                echo "::error title=no plan::main's planner named no tier for this run, so nothing is planned and the verdict is red."
+                exit 1
+                ;;
+            esac
+          fi
+"""  # noqa: E501
+_PUSH_PLAN_CASE = '          case "$PUSH_PLAN" in\n'
+_PLANNER_ON_TIER = '          answer=$(cd "$judge" && python3 -m tools.ci plan "$TIER" \\\n'
+
+
+def _tiered_plan(*rels: str, planner: bool = True) -> Callable[[Path], None]:
+    """Each workflow's plan step with the entry tier's plan-tier block before the push's plan, as
+    that change writes it, and its planner on the tier the block names (with *planner*) or on the
+    workflow's own tier: whichever the workflow holds now, the step after reads the same."""
+    named = _PLANNER_ON_TIER.replace('"$TIER"', '"$tier"')
+
+    def plant(root: Path) -> None:
+        for rel in rels:
+            text = (root / rel).read_text(encoding="utf-8")
+            assert _PUSH_PLAN_CASE in text, rel
+            if _PLAN_TIER_BLOCK not in text:
+                text = text.replace(_PUSH_PLAN_CASE, _PLAN_TIER_BLOCK + _PUSH_PLAN_CASE, 1)
+            old, new = (_PLANNER_ON_TIER, named) if planner else (named, _PLANNER_ON_TIER)
+            assert old in text or new in text, rel
+            _write(root, rel, text.replace(old, new, 1))
+
+    return plant
+
+
 THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
     name="the-tier-workflows-run-only-their-closed-lists-of-lines",
     check=tier_lines_violations,
     scaffold=_tier_scaffold,
     controls=(
+        # The plan step as the entry tier's change writes it passes in both workflows; the
+        # plan-tier block with the planner still on $TIER is a step in neither listed shape.
+        Control("the plan step as the entry tier's change writes it, in both workflows",
+                _tiered_plan(_PR_YML, _MERGE_YML), fails=False),
+        Control("the plan-tier block with the planner still on the workflow's own tier",
+                _tiered_plan(_MERGE_YML, planner=False),
+                expect="merge.yml job changes step"),
         _plant("an extra line in the plan step", _PR_YML, _PLAN_TAIL,
                _PLAN_TAIL + "          echo planned\n",
                expect="pr.yml job changes runs 'echo planned'"),
@@ -16394,10 +16571,9 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
                "    name: merge-verdict\n", expect="pr.yml job test: name is 'merge-verdict'"),
         _plant("results renamed merge-verdict", _MERGE_YML, "\n  results:\n",
                "\n  merge-verdict:\n", expect="runs under the check name merge-verdict"),
-        _plant("the suite's shards in the change tier too", catalogue.CATALOGUE,
-               'id = "python-suite"\ntiers = ["merge"]\n',
-               'id = "python-suite"\ntiers = ["change", "merge"]\n',
-               expect="python-suite is planned in both pr.yml's tier and merge.yml's"),
+        _catalogue_plant("the suite's shards in the change tier too",
+                         _retier("python-suite", lambda tiers: ["change", *tiers]),
+                         expect="python-suite is planned in both pr.yml's tier and merge.yml's"),
         Control("a catalogue job named merge-verdict, which a stage job's name would read",
                 _CATALOGUE_JOB_NAMED_MERGE_VERDICT,
                 expect="pr.yml job test runs under the check name merge-verdict"),
