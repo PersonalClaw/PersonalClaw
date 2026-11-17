@@ -248,6 +248,82 @@ def test_the_sdks_document_from_html_sanitizes_and_redacts_before_it_converts(mo
     _assert_sanitized_then_redacted_then_converted(steps)
 
 
+KEY = "AKIAIOSFODNN7EXAMPLE"
+
+
+def _strings(value) -> list[str]:
+    """Every string a model holds, its runs' texts and links included."""
+    from dataclasses import fields, is_dataclass
+
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [s for item in value for s in _strings(item)]
+    if is_dataclass(value):
+        return [s for f in fields(value) for s in _strings(getattr(value, f.name))]
+    return []
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        pytest.param(f"<p>key {KEY[:4]}<span>{KEY[4:]}</span> here</p>", id="an-inline-tag"),
+        pytest.param(f"<p>key {KEY[:4]}<b>{KEY[4:]}</b> here</p>", id="emphasis"),
+        pytest.param(f"<h1>{KEY[:4]}<b>{KEY[4:]}</b></h1><p>body</p>", id="the-title"),
+    ],
+)
+def test_html_credentials_are_masked_in_what_the_document_holds(tmp_path, html):
+    """🔴 Red before this: only the markup was masked. A credential is masked in the text the
+    document holds and in the file written from it, not only in the HTML it was made from."""
+    model = document_from_html(html)
+    path, _ = _write(tmp_path, "docx", model)
+    text, _ = FileReader().read(str(path))
+
+    held = [s for s in _strings(model) if KEY in s]
+    assert held == [], held
+    assert KEY not in text, text
+    assert "[REDACTED: credential]" in " ".join(_strings(model))
+
+
+def test_the_document_mask_reads_every_part_of_a_model_not_only_its_paragraphs():
+    """A table cell's runs are read joined, like a paragraph's, and a table's plain rows are
+    read too, a list inside a list included."""
+    from personalclaw.documents.model import Cell, Run
+    from personalclaw.html_documents import masked
+
+    cell = Cell(runs=[Run(text=KEY[:4]), Run(text=KEY[4:], bold=True)])
+    model = DocumentModel(
+        blocks=[
+            Block(kind="table", cells=[[Cell(text="head")], [cell]]),
+            Block(kind="table", rows=[["name", "value"], ["key", KEY]]),
+        ]
+    )
+
+    out = masked(model)
+
+    held_cell = out.blocks[0].cells[1][0]
+    assert "".join(run.text for run in held_cell.runs) == "[REDACTED: credential]"
+    assert out.blocks[1].rows[1] == ["key", "[REDACTED: credential]"]
+    assert [s for s in _strings(out) if KEY in s] == []
+
+
+def test_the_document_mask_keeps_the_formatting_of_text_that_holds_no_credential():
+    """Runs with no credential in them keep their emphasis and links; only a run sequence that
+    holds one becomes plain masked text."""
+    model = document_from_html(
+        '<p>plain <b>bold</b> <a href="https://e.example/">link</a></p>'
+        f"<p>{KEY[:4]}<b>{KEY[4:]}</b></p>"
+    )
+    kept, masked_block = model.blocks
+    assert [(r.text, r.bold, r.link) for r in kept.runs] == [
+        ("plain ", False, ""),
+        ("bold", True, ""),
+        (" ", False, ""),
+        ("link", False, "https://e.example/"),
+    ]
+    assert [(r.text, r.bold) for r in masked_block.runs] == [("[REDACTED: credential]", False)]
+
+
 def test_a_document_from_html_nothing_can_sanitize_is_a_failed_call(tmp_path, monkeypatch):
     """Proves the document tool reports a missing sanitizer as a failed tool call in the
     refusal's words, audits it and stores nothing, instead of letting the refusal escape."""
