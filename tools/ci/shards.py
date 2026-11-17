@@ -464,13 +464,29 @@ class TelemetryRecord:
         return grouped if grouped.seconds else None
 
     def _listed(self, workflow: str) -> list[str]:
-        return self.text(
-            "api",
-            f"repos/{self.repo}/actions/workflows/{workflow}/runs"
-            f"?branch=main&status=completed&per_page={self.limit}",
-            "--jq",
-            '.workflow_runs[] | "\\(.id) \\(.conclusion) \\(.head_repository.full_name)"',
-        ).splitlines()
+        """The workflow's completed runs on main, newest first, as ``<id> <conclusion> <owner>``
+        lines; a workflow the merge queue runs adds its queue runs (``telemetry.QUEUE_EVENT``,
+        each on the queue's ref for main), which no branch filter names, by when each was made."""
+        filters = ["branch=main"]
+        if telemetry.QUEUE_EVENT in telemetry.COUNTED.get(workflow, ()):
+            filters.append(f"event={telemetry.QUEUE_EVENT}")
+        made: list[tuple[str, str]] = []
+        for where in filters:
+            for line in self.text(
+                "api",
+                f"repos/{self.repo}/actions/workflows/{workflow}/runs"
+                f"?{where}&status=completed&per_page={self.limit}",
+                "--jq",
+                ".workflow_runs[] | [.id, .conclusion, .head_repository.full_name, .event,"
+                " .head_branch, .created_at] | @json",
+            ).splitlines():
+                try:
+                    ident, conclusion, owner, event, branch, created = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if telemetry.counted_branch(event, branch):
+                    made.append((str(created), f"{ident} {conclusion} {owner}"))
+        return [line for _, line in sorted(dict.fromkeys(made), reverse=True)]
 
     def durations(self, leg: Leg, files: Sequence[str]) -> tuple[dict[str, float], str]:
         """The leg's runs are read workflow by workflow (:attr:`Leg.workflows`), each one's

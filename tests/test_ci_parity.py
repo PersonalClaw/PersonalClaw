@@ -105,11 +105,12 @@ def test_equal_sets_pass(tmp_path, capsys):
 
 def test_a_version_6_history_with_record_lines_reads_only_its_test_lines(tmp_path, capsys):
     """Version 6 adds the tested run's record lines: a check of test lines reads past them, as
-    it reads past the push's own record lines."""
+    it reads past the push's own record lines. A newer history holds them too."""
     path = _history(
         tmp_path, {"junit-test-shard-1": _junit(A, B), "junit-test-macos-1": _junit(B, A)}
     )
-    assert json.loads(path.read_text().splitlines()[0])["version"] == 6
+    version = json.loads(path.read_text().splitlines()[0])["version"]
+    assert version == telemetry.VERSION >= telemetry.TESTED_RECORDS_SINCE == 6
     record = {"key": "e2e", "result": "failure", "rerun": [], "quarantined": []}
     with path.open("a", encoding="utf-8") as out:
         out.write(json.dumps(dict(record, kind="record")) + "\n")
