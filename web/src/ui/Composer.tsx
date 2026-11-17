@@ -3,10 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Square, CornerDownLeft, ListPlus, Sparkles, Mic, AudioLines, Loader2, Paperclip, Check, MonitorUp } from 'lucide-react'
 import { IconButton } from './IconButton'
 import { duration, spring, physics, expr, sweep } from '../design/motion'
-import { ORB_STATE_OF } from '../lib/orbState'
+import { ORB_SCENE_OF, SCENE_MOVES } from '../lib/orbState'
 import { AgentOrb } from './AgentOrb'
-import { MOVES } from './orb/clawRing'
-import { voiceOrbPhase } from './composer/voiceOrb'
+import { voiceOrbPhase, voiceOrbStage } from './composer/voiceOrb'
 import { bloomsFor, useHeldEnding } from './turnEnding'
 import { AgentModelPill, ApprovalPill, PlusMenu } from './composer/controls'
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
@@ -283,12 +282,12 @@ export function Composer({
   // While a turn runs the button is the Stop control: a stop square with a thin arc turning round
   // it (`docs/design/agent-orb.md`). The lap is `design/motion`'s `sweep()`, which is null under
   // reduced motion, and then no arc is drawn: a loop has no shorter version. The arc reads the
-  // turn's phase as the agent orb does (`MOVES[ORB_STATE_OF[phase].state]`): it turns while the turn works and
+  // turn's phase as the agent orb does (`SCENE_MOVES[ORB_SCENE_OF[phase]]`): it turns while the turn works and
   // holds still while it waits on the owner (an approval or a question), so the card that needs her
   // holds her attention. A turn the gateway has not described yet is waiting to start, which moves.
   const stopSweep = sendKind === 'stop' && sweep() !== null
   const stopTitle = `Stop this turn (${bindingLabel('stop-turn')})`
-  const turning = !phase || MOVES[ORB_STATE_OF[phase].state]
+  const turning = !phase || SCENE_MOVES[ORB_SCENE_OF[phase]]
   const actions = (
     <div className="flex items-center gap-xs">
       {/* The reason rides `disabledReason`, NOT the label. Folding it into the label mutates the
@@ -515,11 +514,12 @@ export function Composer({
 
           {/* Voice mode (#4963): the 64 px orb, above the draft its dictation fills. `listening`
               while it hears the owner, which is the whole mode, the turn's own phase while it is
-              muted for a reply read aloud, and how the turn ended while that is held; under reduced
-              motion the orb is one still frame. Its name is the phase's words. */}
+              muted for a reply read aloud (`speaking` while the reply is read), `transcribing` while
+              the last piece is turned into text, and how the turn ended while that is held; under
+              reduced motion the orb is one still frame. Its name is the phase's or stage's words. */}
           {listening && (
             <div data-voice-orb="" className="flex justify-center pt-s">
-              <AgentOrb phase={voiceOrbPhase({ heard, phase, ending: voiceEnding.held })} size={64} onSettled={voiceEnding.onSettled} bloom={bloomsFor(voiceEnding.held)} />
+              <AgentOrb phase={voiceOrbPhase({ heard, phase, ending: voiceEnding.held })} stage={voiceOrbStage({ heard, transcribing: mic.state === 'transcribing', speaking: !!handsFree?.speaking })} size={64} onSettled={voiceEnding.onSettled} bloom={bloomsFor(voiceEnding.held)} />
             </div>
           )}
           {/* How it works, where a phone can read it too: it has no hover for the tooltip. The status

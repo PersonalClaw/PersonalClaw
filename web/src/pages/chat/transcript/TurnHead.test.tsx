@@ -77,14 +77,13 @@ describe('the settled rows', () => {
     expect(orb().dataset.agentOrb).toBe('animated')
   })
 
-  it('input is a still frame with an info-tone "?" badge, in the waiting family, beside her question', () => {
+  it('input is a still frame with its "?" mark, in the waiting family, beside her question', () => {
     render(<TurnHead {...running('input', 'Asks: Which branch?')} />)
     pass(SHOW_DELAY_MS)
     expect(orb().dataset.agentOrb).toBe('still')
     expect(orb().dataset.orbFamily).toBe('waiting')
-    const badge = document.querySelector('[data-orb-badge]') as HTMLElement
-    expect(badge.textContent).toBe('?')
-    expect(badge.style.color).toBe('var(--color-info)')
+    expect(orb().dataset.orbScene).toBe('question')
+    expect(orb().dataset.orbGlyph).toBe('?')
     expect(lineOf().textContent).toBe('Asks: Which branch?')
   })
 
@@ -107,7 +106,7 @@ describe('the settled rows', () => {
     expect(orb().dataset.orbPhase).toBe(phase)
     expect(orb().dataset.orbFamily).toBe(family)
     expect(orb().dataset.agentOrb).toBe('still')
-    expect(document.querySelector('[data-orb-badge]')?.textContent ?? null).toBe(glyph)
+    expect(orb().dataset.orbGlyph ?? null).toBe(glyph)
   })
 })
 

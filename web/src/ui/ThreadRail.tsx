@@ -386,9 +386,10 @@ export const MARK_TONE: Record<PhaseFamily, string> = {
   blocked: '--color-state-blocked',
 }
 
-/** A row's state as the claw ring's 12 px still mark (`ui/orb/OrbMark.tsx`): its pip's state
- *  (`ORB_STATE_OF_PIP`) in the row's colour (MARK_TONE), a running row's two rings, a waiting row's
- *  clasp, and done's mark for an unread or a failed one, the failure with its ×. It never moves, so
+/** A row's state as the halftone orb's 12 px still mark (`ui/orb/OrbMark.tsx`): its pip's state
+ *  (`ORB_STATE_OF_PIP`) in the row's colour (MARK_TONE), a running row the thinking sphere, a waiting
+ *  row needs your OK with its "!", an unread row done with its check and a failed one the error mark
+ *  with its ×. It never moves, so
  *  nothing in the rail animates and reduced motion has nothing to stop. The words are in the row's
  *  tooltip and its name, so neither the colour nor the shape is the only cue; the row itself
  *  spends no width on them. */

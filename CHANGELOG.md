@@ -17,6 +17,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The status bar's system reading answers at once from the last one taken, and an aging reading is taken again in the background, so a reload no longer waits seconds for it on a busy machine.**
 - **A reload of Needs you or the Library starts the page's reads while the app learns who you are, so the page paints as soon as you're known instead of asking only then.**
+- **The chat's agent orb is a halftone sphere of dots that becomes a picture of what the agent is doing: it ripples while it thinks, charts a route on a globe while it plans, sends its dots through a command's output, fills a reply's bubble, and for done, a wait on your OK or your answer, an error or offline it steps aside with its mark on a small plate. Each of its twenty states is named in Settings › Design's gallery.**
 
 ### Fixed
 

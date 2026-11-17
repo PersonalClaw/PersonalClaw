@@ -1,46 +1,36 @@
 /**
- * The orb's change of state when the page around it changes (#6117): a tab hidden mid-morph, reduced
- * motion turned on mid-morph, an orb scrolled out of view, a bloom cut short, and a phase that
- * changes inside one state. Each change settles on its target's form at scale 1, and once settled
- * the orb asks for no frame; a change nobody can see is an instant swap, painted at once, so the
- * orb shows the new state when it is seen. A morph into working keeps each stroke's way round.
+ * The orb's change of state when the page around it changes (#6117, `docs/design/agent-orb.md`): a
+ * tab hidden mid-morph, reduced motion turned on mid-morph, an orb scrolled out of view, done's swirl
+ * cut short, and a phase that changes inside one state. Each change settles on its target's still,
+ * and once settled the orb asks for no frame; a change nobody can see is an instant swap, painted at
+ * once, so the orb shows the new state when it is seen. A change that starts mid-change starts from
+ * what was last painted, and a scene starts from its beginning each time its state is entered.
  *
  * The timers and the page's clock are faked, the display is a loop that runs the frames asked for
  * at each refresh, and every paint is recorded, so the last one is compared with the painter's own
- * paint of the form the orb should show. The tab's visibility, the reduced-motion query and the
+ * paint of the frame the orb should show, and every frame's weights and clock are kept. The tab's visibility, the reduced-motion query and the
  * orb's place on screen (an IntersectionObserver) are each a switch the test flips, with the event
  * the browser sends.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render } from '@testing-library/react'
 import { AgentOrb } from './AgentOrb'
-import { restForm } from './orb/clawRing'
-import { paintRing } from './orb/paintRing'
+import type { OrbScene } from '../lib/orbState'
+import type { Clock, Weights } from './orb/halftone'
+import { STILL_CLOCK, orbPaint, paintsIn, recorder, twoInks, type Entry } from '../test/orbPaint'
 
-/** The scale of every paint the orb makes, in order: the painter, passed through. */
-const scales = vi.hoisted(() => [] as number[])
-vi.mock('./orb/paintRing', async (orig) => {
-  const real = await orig<typeof import('./orb/paintRing')>()
+/** Every frame the orb draws, in order: its weights, its clock and whether done may swirl. */
+const frameLog = vi.hoisted(() => [] as { w: Weights; clock: Clock; bloom: boolean }[])
+vi.mock('./orb/halftone', async (orig) => {
+  const real = await orig<typeof import('./orb/halftone')>()
   return {
     ...real,
-    paintRing: (...args: Parameters<typeof real.paintRing>) => { scales.push(args[2].scale); real.paintRing(...args) },
+    drawFrame: (...args: Parameters<typeof real.drawFrame>) => {
+      frameLog.push({ w: { ...args[1] }, clock: { ...args[2] }, bloom: !!args[5].bloom })
+      real.drawFrame(...args)
+    },
   }
 })
-
-type Entry = (string | number | boolean | undefined)[]
-
-/** A 2D context that keeps everything it is told, in order. */
-function recorder(log: Entry[]): CanvasRenderingContext2D {
-  const state: Record<string, unknown> = { fillStyle: '', strokeStyle: '', lineWidth: 1, lineCap: 'butt', lineJoin: 'miter', globalAlpha: 1 }
-  return new Proxy(state, {
-    get(target, key: string) {
-      if (key in target) return target[key]
-      if (key === 'getImageData') return () => ({ data: [0, 0, 0, 0] })
-      return (...args: (string | number | boolean)[]) => { log.push([key, ...args]) }
-    },
-    set(target, key: string, value) { target[key] = value; log.push(['=', key, value]); return true },
-  }) as unknown as CanvasRenderingContext2D
-}
 
 let log: Entry[] = []
 let frames: FrameRequestCallback[] = []
@@ -66,7 +56,7 @@ beforeEach(() => {
   reduced = false
   mediaListeners.clear()
   observers = []
-  scales.length = 0
+  frameLog.length = 0
   HTMLCanvasElement.prototype.getContext = (() => recorder(log)) as never
   Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, writable: true, value: (cb: FrameRequestCallback) => { asked += 1; return frames.push(cb) } })
   Object.defineProperty(window, 'cancelAnimationFrame', { configurable: true, writable: true, value: () => {} })
@@ -128,42 +118,23 @@ const onScreen = (on: boolean) => act(() => {
   for (const o of [...observers]) o.cb([{ isIntersecting: on, target: o.el } as IntersectionObserverEntry], {} as IntersectionObserver)
 })
 
-/** The paints since a mark in the log, each from its reset of the transform. */
-function paints(from = 0): Entry[][] {
-  const out: Entry[][] = []
-  for (let i = from; i < log.length; i++) {
-    const e = log[i]
-    if (e[0] === 'setTransform' && e[5] === 0 && e[6] === 0) out.push([])
-    if (out.length) out[out.length - 1].push(e)
-  }
-  return out
-}
+/** The paints since a mark in the log. */
+const paints = (from = 0) => paintsIn(log, from)
 const lastPaint = () => paints().at(-1) ?? []
-/** The painter's own paint of `state`'s rest form at 20 px, in the ink its token resolves to. */
-function restPaint(state: Parameters<typeof restForm>[0], ink = { r: 0x33, g: 0x66, b: 0xcc }): Entry[] {
-  const want: Entry[] = []
-  paintRing(recorder(want), restForm(state), { size: 20, dpr: 1, ink, scale: 1 })
-  return want
-}
+const INKS = twoInks({ r: 0x33, g: 0x66, b: 0xcc }, { r: 0x8a, g: 0x8f, b: 0x98 })
+/** The painter's own paint of `scene`'s still at 20 px. */
+const stillPaint = (scene: OrbScene): Entry[] => orbPaint({ [scene]: 1 }, { size: 20, dpr: 1, clock: STILL_CLOCK, inks: INKS })
 const orbOf = (c: HTMLElement) => c.querySelector('[data-agent-orb]') as HTMLElement
-/** Each paint's stroke starts, the points a step between two paints is measured by. */
-const startsOf = (p: Entry[]) => p.filter((e) => e[0] === 'moveTo').map((e) => [Number(e[1]), Number(e[2])] as const)
-/** How far any stroke's start moved between two paints. */
-function stepBetween(p: Entry[], q: Entry[]): number {
-  const a = startsOf(p)
-  const b = startsOf(q)
-  let most = 0
-  a.forEach(([x, y], j) => { if (b[j]) most = Math.max(most, Math.hypot(b[j][0] - x, b[j][1] - y)) })
-  return most
+/** How far the weights moved between two frames: the sum of each state's change. */
+function weightStep(a: Weights, b: Weights): number {
+  let d = 0
+  for (const s of new Set([...Object.keys(a), ...Object.keys(b)]) as Set<OrbScene>) d += Math.abs((a[s] ?? 0) - (b[s] ?? 0))
+  return d
 }
-function largestStep(list: Entry[][]): number {
-  let most = 0
-  for (let i = 1; i < list.length; i++) most = Math.max(most, stepBetween(list[i - 1], list[i]))
-  return most
-}
+const largestWeightStep = (list: Weights[]) => Math.max(0, ...list.slice(1).map((w, i) => weightStep(list[i], w)))
 
 describe('a change cut short settles on its target', () => {
-  it('a tab hidden mid-morph settles on the clasp once it is shown, and then asks for nothing', async () => {
+  it('a tab hidden mid-morph settles on needs your OK once it is shown, and then asks for nothing', async () => {
     const { container, rerender } = render(<AgentOrb phase="tool" />)
     displayFor(200)
     rerender(<AgentOrb phase="approval" />)
@@ -174,11 +145,11 @@ describe('a change cut short settles on its target', () => {
     hide(false)
     await settle()
     expect(orbOf(container).dataset.orbChange).toBe('none')
-    expect(lastPaint(), 'the clasp is not what was painted last').toEqual(restPaint('waiting'))
-    expect(displayFor(1000), 'a settled clasp asked for a frame').toBe(0)
+    expect(lastPaint(), 'needs your OK is not what was painted last').toEqual(stillPaint('approval'))
+    expect(displayFor(1000), 'a settled wait asked for a frame').toBe(0)
   })
 
-  it('reduced motion turned on mid-morph settles at once on the clasp', async () => {
+  it('reduced motion turned on mid-morph settles at once on needs your OK', async () => {
     const { container, rerender } = render(<AgentOrb phase="tool" />)
     displayFor(200)
     rerender(<AgentOrb phase="approval" />)
@@ -186,11 +157,11 @@ describe('a change cut short settles on its target', () => {
     reduce(true)
     await settle()
     expect(orbOf(container).dataset.orbChange).toBe('none')
-    expect(lastPaint()).toEqual(restPaint('waiting'))
+    expect(lastPaint()).toEqual(stillPaint('approval'))
     expect(displayFor(1000)).toBe(0)
   })
 
-  it('done’s bloom cut by a hidden tab settles on the mark at scale 1', async () => {
+  it('done’s swirl cut by a hidden tab settles on done', async () => {
     const { container, rerender } = render(<AgentOrb phase="streaming" />)
     displayFor(200)
     rerender(<AgentOrb phase="done" />)
@@ -201,7 +172,7 @@ describe('a change cut short settles on its target', () => {
     hide(false)
     await settle()
     expect(orbOf(container).dataset.orbChange).toBe('none')
-    expect(lastPaint()).toEqual(restPaint('done', { r: 0x8a, g: 0x8f, b: 0x98 }))
+    expect(lastPaint()).toEqual(stillPaint('done'))
     expect(displayFor(1000)).toBe(0)
   })
 
@@ -224,13 +195,13 @@ describe('a change nobody can see is a swap, painted at once, so the orb shows i
     rerender(<AgentOrb phase="approval" />)
     expect(displayFor(1000), 'a change off screen asked for frames').toBe(0)
     expect(orbOf(container).dataset.orbChange).toBe('none')
-    expect(paints(mark).at(-1), 'the new state was not painted').toEqual(restPaint('waiting'))
+    expect(paints(mark).at(-1), 'the new state was not painted').toEqual(stillPaint('approval'))
     onScreen(true)
     displayFor(200)
-    expect(lastPaint()).toEqual(restPaint('waiting'))
+    expect(lastPaint()).toEqual(stillPaint('approval'))
   })
 
-  it('an orb scrolled out 80 ms into thinking → idle shows ready’s form when it comes back', async () => {
+  it('an orb scrolled out 80 ms into thinking → idle shows ready when it comes back', async () => {
     const { container, rerender } = render(<AgentOrb phase="thinking" />)
     displayFor(200)
     rerender(<AgentOrb phase="idle" />)
@@ -241,159 +212,125 @@ describe('a change nobody can see is a swap, painted at once, so the orb shows i
     onScreen(true)
     await settle()
     expect(orbOf(container).dataset.orbChange).toBe('none')
-    expect(lastPaint()).toEqual(restPaint('ready', { r: 0x8a, g: 0x8f, b: 0x98 }))
+    expect(lastPaint()).toEqual(stillPaint('ready'))
   })
 })
 
-describe('the bloom’s scale comes home with the next change', () => {
-  it('done, then approval 65 ms later, brings the bloom’s scale home in steps no larger than the bloom’s own, and settles on the clasp at scale 1', async () => {
-    // The reference: a plain bloom, and a plain morph from done to the clasp.
-    const bloom = render(<AgentOrb phase="tool" />)
+describe('a change that starts mid-change starts from what was last painted', () => {
+  it('done, then approval 65 ms later, moves on from the frame it was at, in steps no larger than a plain morph’s', async () => {
+    // The reference: a plain morph from running to needs your OK.
+    const plain = render(<AgentOrb phase="tool" />)
     displayFor(200)
-    let mark = log.length
-    let at = scales.length
-    bloom.rerender(<AgentOrb phase="done" />)
+    let at = frameLog.length
+    plain.rerender(<AgentOrb phase="approval" />)
     await settle()
-    const bloomStep = largestStep(paints(mark))
-    const bloomScales = scales.slice(at)
-    const bloomScaleStep = Math.max(...bloomScales.slice(1).map((v, i) => Math.abs(v - bloomScales[i])))
-    expect(Math.max(...bloomScales), 'the control: the bloom swelled').toBeGreaterThan(1.05)
-    mark = log.length
-    bloom.rerender(<AgentOrb phase="approval" />)
-    await settle()
-    const morphStep = largestStep(paints(mark))
-    bloom.unmount()
-    log = []
+    const morphStep = largestWeightStep(frameLog.slice(at).map((f) => f.w))
+    expect(morphStep, 'the control: the plain morph moved the weights').toBeGreaterThan(0.05)
+    plain.unmount()
 
     const { container, rerender } = render(<AgentOrb phase="tool" />)
     displayFor(200)
-    mark = log.length
     rerender(<AgentOrb phase="done" />)
     displayFor(65)
-    at = scales.length
+    at = frameLog.length
     rerender(<AgentOrb phase="approval" />)
     await settle()
-    // The scale itself: home from about 1.075 in steps no larger than the bloom's own, through
-    // values on the way, never set to 1 in one paint.
-    const home = scales.slice(at - 1)
-    const homeStep = Math.max(...home.slice(1).map((v, i) => Math.abs(v - home[i])))
-    expect(homeStep, 'the scale jumped home').toBeLessThanOrEqual(bloomScaleStep * 1.05 + 1e-6)
-    expect(home.filter((v) => v > 1.0001 && v < 1.0749).length, 'the scale did not pass through on its way home').toBeGreaterThanOrEqual(3)
-    expect(home.at(-1)).toBe(1)
+    const frames = frameLog.slice(at - 1).map((f) => f.w)
+    expect(frames.length, 'the control: the second change was painted').toBeGreaterThan(3)
+    expect(largestWeightStep(frames), 'the weights jumped at the change').toBeLessThanOrEqual(morphStep * 1.05 + 1e-6)
     expect(orbOf(container).dataset.orbChange).toBe('none')
-    expect(lastPaint(), 'the clasp is not at scale 1').toEqual(restPaint('waiting'))
-    const steps = paints(mark)
-    expect(largestStep(steps), 'a stroke jumped').toBeLessThanOrEqual(Math.max(bloomStep, morphStep) * 1.05 + 0.01)
-    // Springs come to rest: the change's last step is as small as a settled spring's, never the
-    // scale snapping home at its end.
-    expect(stepBetween(steps.at(-2)!, steps.at(-1)!), 'the scale snapped home at the end').toBeLessThan(0.05)
+    expect(lastPaint()).toEqual(stillPaint('approval'))
   })
 })
 
 describe('a phase that changes inside one state is no change of state', () => {
-  it('tool → searching keeps turning steadily, with no morph', () => {
-    const { container, rerender } = render(<AgentOrb phase="tool" />)
+  it('queued → waiting_model keeps moving on the same clock, with no morph and no fresh start', () => {
+    const { container, rerender } = render(<AgentOrb phase="queued" />)
     displayFor(300)
-    const mark = log.length
-    rerender(<AgentOrb phase="searching" />)
+    const at = frameLog.length
+    rerender(<AgentOrb phase="waiting_model" />)
     expect(orbOf(container).dataset.orbChange).toBe('none')
     displayFor(400)
-    // Steady: each paint is the working form at its own instant, with no blend from the last.
-    for (const p of paints(mark)) {
-      const starts = startsOf(p)
-      expect(starts.length).toBe(6)
-    }
-    const angles = paints(mark).map((p) => Math.atan2(startsOf(p)[0][0] - 10, 10 - startsOf(p)[0][1]))
-    const steps = angles.slice(1).map((a, i) => { const d = (a - angles[i] + 3 * Math.PI) % (2 * Math.PI) - Math.PI; return d })
-    const median = [...steps].sort((a, b) => a - b)[Math.floor(steps.length / 2)]
-    expect(paints(mark).length, 'the control: the ring was painted').toBeGreaterThan(5)
-    expect(Math.abs(median), 'the control: the ring turned').toBeGreaterThan(0.01)
-    for (const d of steps) expect(Math.abs(d - median), 'the ring stalled or raced').toBeLessThan(Math.abs(median) * 0.35 + 0.002)
+    const after = frameLog.slice(at)
+    expect(after.length, 'the control: it kept painting').toBeGreaterThan(5)
+    for (const f of after) expect(f.w).toEqual({ queued: 1 })
+    const since = after.map((f) => f.clock.since)
+    for (let i = 1; i < since.length; i++) expect(since[i], 'the scene started over').toBeGreaterThan(since[i - 1])
+    expect(since[0], 'the scene started over at the change').toBeGreaterThan(0.25)
   })
 
   it('a phase that changes inside one state mid-morph keeps the morph going, with no snap', () => {
     const { container, rerender } = render(<AgentOrb phase="approval" />)
     displayFor(200)
-    const start = log.length
-    rerender(<AgentOrb phase="tool" />)
+    const start = frameLog.length
+    rerender(<AgentOrb phase="queued" />)
     displayFor(100)
-    const mark = log.length
-    rerender(<AgentOrb phase="searching" />)
+    const mark = frameLog.length
+    rerender(<AgentOrb phase="waiting_model" />)
     expect(orbOf(container).dataset.orbChange, 'the morph stopped').toBe('morph')
     displayFor(100)
-    const after = paints(mark)
-    const all = paints(start)
-    const before = all.slice(0, all.length - after.length)
+    const before = frameLog.slice(start, mark).map((f) => f.w)
+    const after = frameLog.slice(mark).map((f) => f.w)
     expect(before.length, 'the control: the morph painted before the change').toBeGreaterThan(1)
     expect(after.length, 'the control: it painted after the change').toBeGreaterThan(0)
-    expect(stepBetween(before.at(-1)!, after[0]), 'the form snapped at the change').toBeLessThanOrEqual(largestStep(before) * 1.05 + 0.01)
-  })
-
-  it('approval → input paints once, for its new badge, and asks for no frame', () => {
-    const { container, rerender } = render(<AgentOrb phase="approval" />)
-    displayFor(200)
-    const mark = log.length
-    rerender(<AgentOrb phase="input" />)
-    expect(orbOf(container).dataset.orbChange).toBe('none')
-    expect(displayFor(1000), 'a change inside the clasp asked for frames').toBe(0)
-    expect(paints(mark).length, 'the clasp was painted more than once').toBe(1)
+    expect(weightStep(before.at(-1)!, after[0]), 'the weights snapped at the change').toBeLessThanOrEqual(largestWeightStep(before) * 1.05 + 1e-6)
   })
 })
 
-describe('a morph into working keeps each stroke’s way round', () => {
-  it('from a dozen start times, no stroke turns more than a quarter turn between two paints', () => {
-    /** Each stroke start's angle about the centre of the 20 px box. */
-    const anglesOf = (p: Entry[]) => startsOf(p).map(([x, y]) => Math.atan2(x - 10, 10 - y))
-    let checked = 0
-    for (const offset of [0, 37, 83, 129, 171, 233, 289, 347, 401, 463, 521, 587]) {
-      log = []
-      const { rerender, unmount } = render(<AgentOrb phase="approval" />)
-      displayFor(200 + offset)
-      const mark = log.length
-      rerender(<AgentOrb phase="tool" />)
-      displayFor(700)
-      const list = paints(mark).map(anglesOf)
-      for (let i = 1; i < list.length; i++) {
-        list[i].forEach((a, j) => {
-          const d = Math.abs(((a - list[i - 1][j] + 3 * Math.PI) % (2 * Math.PI)) - Math.PI)
-          expect(d, `start ${offset} ms, paint ${i}, stroke ${j} flipped`).toBeLessThan(Math.PI / 2)
-          checked += 1
-        })
-      }
-      unmount()
-    }
-    expect(checked, 'the control: the morphs were painted').toBeGreaterThan(12 * 6 * 5)
+describe('a scene starts from its beginning each time its state is entered', () => {
+  it('running, then needs your OK, then running again: the second running starts at its first instant', async () => {
+    const { rerender } = render(<AgentOrb phase="tool" />)
+    displayFor(1500)
+    expect(frameLog.at(-1)!.clock.since, 'the control: running had run a while').toBeGreaterThan(1.2)
+    rerender(<AgentOrb phase="approval" />)
+    await settle()
+    const at = frameLog.length
+    rerender(<AgentOrb phase="tool" />)
+    displayFor(100)
+    expect(frameLog[at].clock.since, 'running did not start over').toBeLessThan(0.1)
   })
 })
 
-describe('done blooms only for the turn whose ending lets it, through the shared morph', () => {
+describe('done swirls only for the turn whose ending lets it', () => {
   // `bloom` is the caller's word on the turn's ending (`ui/turnEnding.ts`'s `bloomsFor`): a turn that
-  // completed blooms, and a stopped or declined one closes to done's form with no bloom. The orb
-  // passes it to the morph both orbs change state through (`orb/useMorph.ts`).
-  it('a completed turn’s done blooms, swelling above scale 1, and settles on the mark: the control', async () => {
+  // completed swirls and bumps, and a stopped or declined one settles into done without.
+  it('a completed turn’s done swirls, and settles on done: the control', async () => {
     const { container, rerender } = render(<AgentOrb phase="tool" />)
     displayFor(200)
-    const at = scales.length
+    const at = frameLog.length
     rerender(<AgentOrb phase="done" bloom />)
     displayFor(100)
     expect(orbOf(container).dataset.orbChange).toBe('bloom')
     await settle()
-    expect(Math.max(...scales.slice(at)), 'the bloom swelled').toBeGreaterThan(1.05)
+    expect(frameLog.slice(at).some((f) => f.bloom && !f.clock.still), 'done never swirled').toBe(true)
     expect(orbOf(container).dataset.orbChange).toBe('none')
-    expect(lastPaint()).toEqual(restPaint('done', { r: 0x8a, g: 0x8f, b: 0x98 }))
+    expect(lastPaint()).toEqual(stillPaint('done'))
   })
 
-  it.each(['stopped', 'declined'])('a %s turn’s done morphs to the mark with no bloom, never above scale 1', async () => {
+  it.each(['stopped', 'declined'])('a %s turn’s done morphs into done with no swirl', async () => {
     const { container, rerender } = render(<AgentOrb phase="tool" />)
     displayFor(200)
-    const at = scales.length
+    const at = frameLog.length
     rerender(<AgentOrb phase="done" bloom={false} />)
     displayFor(100)
     expect(orbOf(container).dataset.orbChange).toBe('morph')
     await settle()
-    expect(Math.max(...scales.slice(at)), 'a held-back bloom swelled').toBeLessThanOrEqual(1)
+    expect(frameLog.slice(at).every((f) => !f.bloom), 'a held-back done swirled').toBe(true)
     expect(orbOf(container).dataset.orbChange).toBe('none')
-    expect(lastPaint()).toEqual(restPaint('done', { r: 0x8a, g: 0x8f, b: 0x98 }))
+    expect(lastPaint()).toEqual(stillPaint('done'))
     expect(displayFor(1000)).toBe(0)
+  })
+})
+
+describe('two waits on the owner are two states', () => {
+  it('approval → input morphs the mark from "!" to "?", then asks for nothing', async () => {
+    const { container, rerender } = render(<AgentOrb phase="approval" />)
+    displayFor(200)
+    rerender(<AgentOrb phase="input" />)
+    expect(orbOf(container).dataset.orbChange).toBe('morph')
+    await settle()
+    expect(orbOf(container).dataset.orbGlyph).toBe('?')
+    expect(lastPaint()).toEqual(stillPaint('question'))
+    expect(displayFor(1000), 'a settled question asked for frames').toBe(0)
   })
 })

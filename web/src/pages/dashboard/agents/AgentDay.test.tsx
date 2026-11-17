@@ -1,8 +1,7 @@
-import { ORB_STATE_OF_AGENT_ROW } from '../../../lib/orbState'
+import { ORB_STATE_OF_AGENT_ROW, markSceneOf } from '../../../lib/orbState'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen, within } from '@testing-library/react'
-import { restForm } from '../../../ui/orb/clawRing'
-import { paintRing } from '../../../ui/orb/paintRing'
+import { STILL_CLOCK, lastPaint, orbPaint, recorder, type Entry } from '../../../test/orbPaint'
 import userEvent from '@testing-library/user-event'
 import { needsYou } from '../../../lib/needsYou'
 import type { AgentActivityEntity } from '../../../lib/useAgentActivity'
@@ -61,19 +60,6 @@ const headText = () => document.querySelector('p[data-type="label-m"]')?.textCon
 const failing = { helpers: [{ id: 'h1', task: 'cut the release', done: true, agent: 'Release helper',
   started: at(16, 10) / 1000, ended: at(16, 12) / 1000, error: 'Couldn’t reach api.github.com' } as never] }
 
-type Entry = (string | number | boolean | undefined)[]
-/** A 2D context that keeps everything it is told, in order. */
-function recorder(log: Entry[]): CanvasRenderingContext2D {
-  const state: Record<string, unknown> = { fillStyle: '', strokeStyle: '', lineWidth: 1, lineCap: 'butt', lineJoin: 'miter', globalAlpha: 1 }
-  return new Proxy(state, {
-    get(target, key: string) {
-      if (key in target) return target[key]
-      if (key === 'getImageData') return () => ({ data: [0, 0, 0, 0] })
-      return (...args: (string | number | boolean)[]) => { log.push([key, ...args]) }
-    },
-    set(target, key: string, value) { target[key] = value; log.push(['=', key, value]); return true },
-  }) as unknown as CanvasRenderingContext2D
-}
 const TONES: Record<string, string> = {
   '--color-state-active': '#3366cc', '--color-state-waiting': '#e08a1e', '--color-state-quiet': '#8a8f98', '--color-state-blocked': '#d0453a',
 }
@@ -111,12 +97,11 @@ describe('a row’s state is the orb’s still mark', () => {
         const token = `--color-state-${FAMILY[r.state]}`
         expect(mark!.dataset.orbMark, r.name).toBe(look.state)
         expect(mark!.dataset.orbInkToken, r.name).toBe(token)
-        const log = logs.get(mark!.querySelector('canvas')!) ?? []
-        const at = log.flatMap((e, j) => (e[0] === 'setTransform' ? [j] : [])).at(-1)
-        const want: Entry[] = []
-        paintRing(recorder(want), restForm(look.state), { size: 12, dpr: 1, ink: rgb(TONES[token]), scale: 1 })
-        expect(at === undefined ? [] : log.slice(at), `${r.name}: its mark is not its state's form in its tone`).toEqual(want)
-        expect(mark!.querySelector('[data-orb-badge]')?.textContent ?? null, `${r.name}'s badge`).toBe(r.state === 'failed' ? '×' : null)
+        const c = rgb(TONES[token])
+        const inks = { alive: c, rest: c, ok: c, warn: c, info: c, danger: c, plate: undefined, hair: c, dark: true }
+        const want = orbPaint({ [markSceneOf(look)]: 1 }, { size: 12, dpr: 1, clock: STILL_CLOCK, inks })
+        expect(lastPaint(logs.get(mark!.querySelector('canvas')!) ?? []), `${r.name}: its mark is not its state's form in its tone`).toEqual(want)
+        expect(mark!.dataset.orbBadge ?? null, `${r.name}'s badge`).toBe(r.state === 'failed' ? 'error' : null)
         expect(li.querySelector('[data-state-family] > span.size-2'), 'the old dot is drawn').toBeNull()
         marked += 1
       })

@@ -234,6 +234,7 @@ A hybrid model: tonal layering does the everyday work (the surface ramp IS eleva
 - **Sheet** (`0 16px 40px rgb(0 0 0 / 0.42)`): modals and large sheets.
 - **Lift** (deep ambient + coral-tinted glow at 50%): a card rising under the pointer or a drag.
 - **Composer focus** (`--shadow-composer-focus`: contact shadow + tight coral rim): Claw Arcade's focused and drag-over composer (§7). In the default look a focused composer keeps its Rest shadow. Sized to the 16px page gutter the composer sits in — docked above the page bottom, and beside the rail at the default `full` width — because the page box clips anything past it, and a shadow that outruns its gutter is cut into a hard line.
+- **The agent orb's plate** (a soft drop shadow on the orb's own canvas, at 64 px): the mark of done, a wait on the owner or a stop sits on a small plate beside the orb, lifted by a shadow. It is the one approved exception to elevation by tone (owner, 11-16, round 6; [`docs/design/agent-orb.md`](../docs/design/agent-orb.md#the-form)).
 
 ### Named Rules
 **The Glow-Is-Alive Rule.** Coral-tinted glow (`--glow`) appears only when the agent is active or, in Claw Arcade (§7), the user is focused into an input — never as static decoration.

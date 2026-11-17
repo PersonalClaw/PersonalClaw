@@ -4,10 +4,11 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { filesUnder, readSource } from '../../test/sourceTree'
 
-// ── Both orbs draw the claw ring, and no package draws either (#6117) ─────────────────────────────
+// ── No package draws either orb (#6117) ─────────────────────────────────────────────────────────
 //
-// The chat's orb and the buddy's drew the `thinking-orbs` package's dots. Both now draw the claw
-// ring, the project's own form (`ui/orb/clawRing.ts`), so the package is gone from the web app's
+// The chat's orb and the buddy's once drew the `thinking-orbs` package's dots. The chat's orb now
+// draws the halftone orb (`ui/orb/halftone.ts`) and the buddy's the claw ring
+// (`ui/orb/clawRing.ts`), both the project's own forms, so the package is gone from the web app's
 // dependencies and nothing in its source imports it.
 
 describe('no package draws the orb', () => {

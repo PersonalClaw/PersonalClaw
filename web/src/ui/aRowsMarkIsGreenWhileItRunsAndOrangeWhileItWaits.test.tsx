@@ -8,11 +8,12 @@ import { ORB_STATE_OF_PIP } from '../lib/orbState'
 //
 // The owner's colours for the sidebar's states: a running chat is green; a chat that asks, or
 // stopped for your input, is orange; an unread chat (it finished, and nothing waits on you) is grey;
-// a failed one is red. Each is drawn as the orb's 12 px still mark of its state (#6117): a running
-// row is working's two rings, a waiting row the clasp, an unread row done's mark, and a failed row
-// done's mark with its ×. The mark never moves, at any setting, so the shape and the words tell the
-// states apart without the glow the dots had. Only the rail's marks take these colours: the orb,
-// the buddy and the project page keep the state tokens.
+// a failed one is red. Each is drawn as the orb's 12 px still mark of its state (#6117,
+// `docs/design/agent-orb.md`): a running row is the thinking sphere, a waiting row needs your OK
+// with its "!", an unread row done with its check, and a failed row the error mark with its ×. The
+// mark never moves, at any setting, so the shape and the words tell the states apart without a
+// glow. Only the rail's marks take these colours: the orb, the buddy and the project page keep the
+// state tokens.
 
 const t = (key: string, pip: ThreadPip | null): Thread => ({
   key, kind: 'chat', id: key, title: `Chat ${key}`, projectId: '', route: `chat/${key}`,
@@ -21,7 +22,7 @@ const t = (key: string, pip: ThreadPip | null): Thread => ({
 /** pip, the word in its name, its colour token, its state's form and its badge. */
 const RULES: Array<[ThreadPip, string, string, string, string | null]> = [
   ['running', 'running', '--color-ok', 'working', null],
-  ['waiting', 'waiting on you', '--color-state-waiting', 'waiting', null],
+  ['waiting', 'waiting on you', '--color-state-waiting', 'waiting', '!'],
   ['unread', 'unread', '--color-state-quiet', 'done', null],
   ['failed', 'failed', '--color-state-blocked', 'done', '×'],
 ]
@@ -61,7 +62,7 @@ describe("a sidebar row's mark", () => {
     expect(markOf(screen.getByRole('button', { name: 'Chat calm' })), 'a calm row has no mark').toBeNull()
   })
 
-  it('is the orb\'s still mark of its state: the rings, the clasp, or done\'s mark, the failure with its ×', () => {
+  it('is the orb\'s still mark of its state: thinking, needs your OK, done, or the error mark with its ×', () => {
     rail()
     for (const [pip, word, tone, form, glyph] of RULES) {
       expect(ORB_STATE_OF_PIP[pip].state, pip).toBe(form)
@@ -69,9 +70,9 @@ describe("a sidebar row's mark", () => {
       expect(mark.dataset.orbMark, pip).toBe(form)
       expect(mark.querySelector('canvas')?.getAttribute('aria-hidden'), `${pip}: the mark is decoration`).toBe('true')
       expect(mark.style.width, pip).toBe('12px')
-      const badge = mark.querySelector<HTMLElement>('[data-orb-badge]')
-      expect(badge?.textContent ?? null, pip).toBe(glyph)
-      if (badge) expect(badge.style.borderColor, `${pip}: a border survives forced colours`).toBe(`var(${tone})`)
+      // The glyph is drawn on the mark's plate, in the list's colour for the state.
+      expect(mark.dataset.orbGlyph ?? null, pip).toBe(glyph)
+      expect(mark.dataset.orbInkToken, pip).toBe(tone)
     }
   })
 
@@ -92,7 +93,7 @@ describe("a sidebar row's mark", () => {
     const forms = RULES.map(([pip, word]) => {
       const mark = markOf(row(pip, word))!
       expect(mark.dataset.orbInkToken, pip).toBe('CanvasText')
-      return `${mark.dataset.orbMark}${mark.querySelector('[data-orb-badge]')?.textContent ?? ''}`
+      return `${mark.dataset.orbScene}${mark.dataset.orbGlyph ?? ''}`
     })
     expect(new Set(forms).size, 'two states drew the same mark').toBe(RULES.length)
   })
