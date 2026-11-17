@@ -11,6 +11,7 @@ const doc: UiDoc = {
   props: [
     { name: 'value', description: 'The current draft text (controlled).' },
     { name: 'onChange', description: 'Fires with the new draft on every edit.' },
+    { name: 'editorKeep', description: 'A ref the host keeps across a remount of the composer: the editor leaves its draft, caret and focus in it when it goes, and the editor built in its place takes them, so a page that moves the composer (the chat\'s loading, hero and thread layouts) never loses keys typed mid-move. A value the host changed meanwhile takes the caret to its end. Leave it unset where the composer never moves.' },
     { name: 'onReplace', description: 'Puts words in the draft that are the owner\'s alone (hands-free dictation\'s buffer and submit): the host replaces the draft with them, so they carry nothing of a widget\'s. Defaults to onChange.' },
     { name: 'onHandsFreeStart', description: 'Called as hands-free turns on, after the desktop app\'s grant check: the host clears what its notice said when the mode last stopped (a blocked microphone, speech-to-text not set up). The chat clears its voice-input notice.' },
     { name: 'draftHoldsWidgetMessage', description: 'True while the draft holds a widget\'s message. Hands-free keeps the owner\'s own draft in front of what they say and sends it with their words; a widget\'s message it replaces, so a spoken turn never carries a widget\'s words as the owner\'s. The chat passes it from its widget draft.' },

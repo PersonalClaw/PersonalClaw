@@ -9,6 +9,7 @@ import { useScreenShare } from '../../../ui/composer/useScreenShare'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../../../ui/composer/displayCapture'
 import { optimizeFailure, optimizeOutcome } from '../../../ui/composer/optimizeOutcome'
 import { TranscriptionRefused } from '../../../ui/composer/useMicRecorder'
+import type { KeptEditor } from '../../../ui/composer/MarkdownInput'
 import type { ComposerValue } from '../../../ui/composer/types'
 import { coolWidgetHost, declineWidgetHost, useWidgetActionBridge, takePendingWidgetAction } from '../../../ui/widget/useWidgetActionBridge'
 import { takeNewChat } from '../../../lib/newChatHandoff'
@@ -245,6 +246,10 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   const [openReasoningSignal, setOpenReasoningSignal] = useState(0)
   const [openProjectSignal, setOpenProjectSignal] = useState(0)
   const composerRef = useRef<HTMLDivElement>(null)
+  // The page renders this composer under the loading skeleton, in the empty chat's hero and under the
+  // thread, and moving between them rebuilds its editor: what the editor leaves (its caret, its focus)
+  // is kept here, which outlives the move, for the editor built in its place (MarkdownInput's `keep`).
+  const editorKeep = useRef<KeptEditor | null>(null)
 
   // Agent routing suggestion: a non-blocking chip proposing a
   // better-fit specialist for this default-agent chat. Cleared on send / agent switch;
@@ -1593,6 +1598,6 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
 
   return {
     widgetDraft: draft.widget, draftIsAWidgets, sendWithPrompt, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft,
-    setRoutingSuggestion, acpFor, activatePlanMode, startGoalLoop, adoptDetail, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, draftUnderWay, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
+    setRoutingSuggestion, acpFor, editorKeep, activatePlanMode, startGoalLoop, adoptDetail, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, draftUnderWay, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
   }
 }

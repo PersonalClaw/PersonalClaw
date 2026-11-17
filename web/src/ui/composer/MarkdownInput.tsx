@@ -1,5 +1,5 @@
-import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from 'react'
-import { EditorState, Compartment } from '@codemirror/state'
+import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
+import { EditorSelection, EditorState, Compartment } from '@codemirror/state'
 import { EditorView, highlightSpecialChars, keymap, placeholder as cmPlaceholder } from '@codemirror/view'
 import { markdown } from '@codemirror/lang-markdown'
 import { liveMarkdown, liveMarkdownTheme } from './liveMarkdown'
@@ -10,6 +10,10 @@ import { spacedInsertion } from './spokenText'
 import { HIDDEN_CHAR_CLASS } from '../widget/actionTurn'
 
 /** Detect an active `@query` at the caret (word-boundary @, query has no space). */
+/** What an editor leaves where it was built when it goes, for the one built in its place (`keep`):
+ *  its text, its caret and whether it had focus. */
+export type KeptEditor = { doc: string; selection: EditorSelection; focused: boolean }
+
 function activeMention(value: string, caret: number): { query: string; at: number } | null {
   const upto = value.slice(0, caret)
   const m = upto.match(/(?:^|\s)@([^\s@]*)$/)
@@ -56,6 +60,11 @@ interface Props {
   maxHeight: number
   minHeight: number
   onFocusChange?: (focused: boolean) => void
+  /** A host whose page moves this editor between places (the chat's loading, empty and thread
+   *  layouts remount it) keeps what the editor leaves here, and the editor built in its place takes
+   *  it: the same caret, and focus when it had it, so typing goes on where it was. Its value is the
+   *  host's own: when that changed meanwhile, the caret goes to its end. */
+  keep?: { current: KeptEditor | null }
   onOptimize?: () => void
   history?: string[]
   /** the text to show for `history[index]` as ↑/↓ brings it back (see `ComposerProps.onRecall`). */
@@ -87,7 +96,7 @@ interface Props {
  *  file picker, large-paste interception, and pasted images as attachments. */
 export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function MarkdownInput({
   value, onChange, onSend, canSend, placeholder, maxHeight, minHeight,
-  onFocusChange, onOptimize, history, onRecall, onMentionFile, onMentionKnowledge, mentionProject, slashCommands, onLargePaste, onPasteFiles, mobile,
+  onFocusChange, keep, onOptimize, history, onRecall, onMentionFile, onMentionKnowledge, mentionProject, slashCommands, onLargePaste, onPasteFiles, mobile,
   sendOnEnter,
 }, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -173,8 +182,15 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
     setSlash(s)
   }
 
+  // Whether the editor has focus, as its last update said: a host's keep reads it as the editor goes.
+  const focusedRef = useRef(false)
+
   // ── build the editor once ──
-  useEffect(() => {
+  // In a layout effect, so an editor built in place of one that just went is there, with its focus,
+  // before the browser hands the next key to the page: in a passive effect the key would land on <body>.
+  useLayoutEffect(() => {
+    const kept = keep?.current ?? null
+    if (keep) keep.current = null
     const updateListener = EditorView.updateListener.of((u) => {
       if (u.docChanged) {
         const text = u.state.doc.toString()
@@ -185,7 +201,7 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
         }
       }
       if (u.docChanged || u.selectionSet) { syncMention(u.view); syncSlash(u.view) }
-      if (u.focusChanged) onFocusChange?.(u.view.hasFocus)
+      if (u.focusChanged) { focusedRef.current = u.view.hasFocus; onFocusChange?.(u.view.hasFocus) }
     })
 
     const sendKeys = keymap.of([
@@ -218,6 +234,9 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
     const view = new EditorView({
       state: EditorState.create({
         doc: value,
+        // The caret the editor before this one had, on the same text; at the end of a text the host
+        // changed meanwhile; and where CodeMirror puts it when nothing was kept.
+        selection: kept ? (kept.doc === value ? kept.selection : EditorSelection.cursor(value.length)) : undefined,
         extensions: [
           markdown(),
           liveMarkdown,
@@ -259,7 +278,11 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
       parent: hostRef.current!,
     })
     viewRef.current = view
-    return () => { view.destroy(); viewRef.current = null }
+    if (kept?.focused) view.focus()
+    return () => {
+      if (keep) keep.current = { doc: view.state.doc.toString(), selection: view.state.selection, focused: focusedRef.current || view.hasFocus }
+      view.destroy(); viewRef.current = null
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
