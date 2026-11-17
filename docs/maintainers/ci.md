@@ -1282,12 +1282,14 @@ rule holds on a push to `main` too, and on any run it fills a job still queued w
 cancelled. Each tier workflow's results step lists attempt 1's jobs on every attempt and passes
 them as `--first-jobs` (on attempt 1 the listing is the run's own, taken once the jobs it judges
 are done). A listing it can't take is passed as none, with a warning, and the verdict then reads
-no job as one no runner took. It passes no `--later-jobs` yet: main's verdict must know the option
-before a results step passes it, so the CI contract lists the results step that does beside
-today's, holds each results job to exactly one of them, and the workflows take it up in a second
-change (#4584 step 4). On a pull request's or a dispatch's run, the merge controller reads
-attempt 1's listing and the notice (rule 4, "The run's verdict" above), so a rerun that fills
-those jobs green counts toward a merge.
+no job as one no runner took. On a rerun it also lists each later attempt's jobs and passes them
+as `--later-jobs`, but only once the judge it read from main names that option, so the change
+that added it ran as before on its own pull request. A later listing it can't take passes none,
+with a warning, and then only attempt 2's record fills a job no runner took on attempt 1. On a
+pull request's or a dispatch's run, the merge controller reads each red attempt's listing and
+notice (rule 4, "The run's verdict" above): attempts 1 to n may each be red only for jobs no
+runner took, every one before it excused the same way, so a later attempt that fills those jobs
+green counts toward a merge.
 
 **The failed tests the records name.** A record read with `from_job_records` carries its failed
 tests: on a failure, each test `run-job`'s diagnostic rerun classified `flake` or `repeated
@@ -1495,11 +1497,8 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   lines of one step the row lists for its job, in their order, each spelled exactly, its
   indentation too (a blank line or a comment aside), so a step that keeps its lines and moves
   one (publishing a plan before the check that refuses it) fails as an extra line does, and a
-  listed step no job of either workflow runs fails too, unless the row lists it as waiting for
-  the workflows (today the results job's two verdict steps, today's and the one that also gives
-  main's verdict each later attempt's jobs, of which each results job runs exactly one), and so
-  does a results job that runs its verdict step twice or not at all; a stage job runs its runner's
-  identity and the run-job line
+  listed step no job of either workflow runs fails too, and so does a results job that runs its
+  verdict step twice or not at all; a stage job runs its runner's identity and the run-job line
   and nothing else, its other steps use only the checkout, the setup action and the artifact
   actions, and every stage job's steps are the same.
 - "a-merge-tier-run-holds-at-most-14-jobs-at-once": a merge-tier run holds at most 14 jobs at

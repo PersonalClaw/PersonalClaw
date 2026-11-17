@@ -393,6 +393,31 @@ jobs:
           else
             echo "::warning title=no attempt 1 jobs::attempt 1's jobs could not be listed, so the verdict reads no job as one no runner took"
           fi
+          # Each later attempt's jobs, on a rerun, once main's verdict reads them (#5848): a planned
+          # job no runner took on attempt 1 and on each attempt since may be filled by a later
+          # attempt's record, not only attempt 2's.
+          later=()
+          if [ "$GITHUB_RUN_ATTEMPT" -gt 1 ] && [ -n "${first[*]-}" ] \
+             && grep -q -e '"--later-jobs"' "$judge"; then
+            files=()
+            for n in $(seq 2 "$GITHUB_RUN_ATTEMPT"); do
+              if gh api --paginate --slurp \
+                   "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${n}/jobs?per_page=100" \
+                   > "$RUNNER_TEMP/attempt-${n}-jobs.json"; then
+                files+=("$RUNNER_TEMP/attempt-${n}-jobs.json")
+              else
+                files=()
+                break
+              fi
+            done
+            if [ "${#files[@]}" -eq "$((GITHUB_RUN_ATTEMPT - 1))" ] \
+               && jq -n '[inputs] | to_entries | map({key: (.key + 2 | tostring), value}) | from_entries' \
+                    "${files[@]}" > "$RUNNER_TEMP/later-jobs.json"; then
+              later=(--later-jobs "$RUNNER_TEMP/later-jobs.json")
+            else
+              echo "::warning title=no later attempts' jobs::a later attempt's jobs could not be listed, so only attempt 2's record may fill a job no runner took on attempt 1"
+            fi
+          fi
           python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
             --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \
             --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
@@ -400,4 +425,5 @@ jobs:
             ${proof:+--superseded "$proof"} \
             ${flakes[@]+"${flakes[@]}"} \
             ${first[@]+"${first[@]}"} \
+            ${later[@]+"${later[@]}"} \
             --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"

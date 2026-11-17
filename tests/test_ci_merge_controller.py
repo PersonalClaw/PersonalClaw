@@ -653,7 +653,7 @@ def test_a_job_that_failed_with_no_runner_and_no_step_is_no_job_no_runner_took()
     assert "attempt 1's `results` is 'failure'" in _red(api).output["title"]
 
 
-def test_only_attempt_1_s_red_for_jobs_no_runner_took_is_excused() -> None:
+def test_a_red_for_jobs_no_runner_took_after_a_green_attempt_is_not_excused() -> None:
     api = FakeApi()
     api.run(run_attempt=3)
     api.jobs(1, ("results", "completed", "success"))
@@ -693,6 +693,78 @@ def test_a_red_middle_attempt_after_jobs_no_runner_took_is_red() -> None:
     api = FakeApi()
     _excusable(api, "failure", "success")
     assert "attempt 2's `results` is 'failure'" in _red(api).output["title"]
+
+
+def _untaken_attempt(api: FakeApi, n: int, *, notice: bool = True) -> None:
+    """Attempt *n*'s listing as :func:`_attempt_1` writes attempt 1's: results failed, the rest
+    green but the jobs of :data:`UNTAKEN`, which no runner took; and main's verdict's notice."""
+    api.listing(
+        n,
+        _api_job(n, "results", "failure", n=0),
+        _api_job(n, "static", n=1),
+        _api_job(n, "python-suite-macos (1/4)", n=2),
+        *(_untaken_job(n, name, 4 + k) for k, name in enumerate(UNTAKEN)),
+    )
+    api.answers.setdefault(api.notes_path(n), [])
+    if notice:
+        _untaken(api, n, NOTICE)
+
+
+def test_attempts_1_to_3_red_only_for_jobs_no_runner_took_are_green_on_a_green_attempt_4() -> None:
+    """🔴 Red before: only attempt 1's red was excused, so #6209, whose macOS shards no runner took
+    on attempts 1 to 3 and that was green on attempt 4, read `attempt 2's results is 'failure'`."""
+    api = FakeApi()
+    api.run(run_attempt=4)
+    for n in (1, 2, 3):
+        _untaken_attempt(api, n)
+    api.jobs(4, ("results", "completed", "success"))
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    first = found.output["summary"].splitlines()[0]
+    assert first == (
+        f"Judged by its own Merge run: attempts 1 to 3 of Merge run https://github.com/{REPO}"
+        f"/actions/runs/{RUN} were red only for jobs no runner took (`{UNTAKEN[0]}`,"
+        f" `{UNTAKEN[1]}`), and every later attempt was green."
+    ), first
+
+
+def test_a_red_for_a_job_that_ran_ends_the_attempts_no_runner_took() -> None:
+    """Attempt 2 failed a job that ran: it is red, and so is attempt 3 after it, though no runner
+    took attempt 3's jobs: only the first attempts may each be red for runners alone."""
+    api = FakeApi()
+    api.run(run_attempt=4)
+    _untaken_attempt(api, 1)
+    api.listing(
+        2,
+        _api_job(2, "results", "failure", n=0),
+        _api_job(2, "static", "failure", n=1),
+    )
+    api.answers[api.notes_path(2)] = []
+    _untaken_attempt(api, 3)
+    api.jobs(4, ("results", "completed", "success"))
+    summary = _red(api).output["summary"]
+    assert "- attempt 2's `results` is 'failure'" in summary, summary
+    assert "- attempt 3's `results` is 'failure'" in summary, summary
+    assert "attempt 1's" not in summary, summary
+
+
+def test_the_last_attempt_red_only_for_jobs_no_runner_took_is_red() -> None:
+    api = FakeApi()
+    api.run(run_attempt=2)
+    _untaken_attempt(api, 1)
+    _untaken_attempt(api, 2)
+    title = _red(api).output["title"]
+    assert "attempt 2's `results` is 'failure'" in title and "attempt 1's" not in title, title
+
+
+def test_a_later_attempt_red_for_untaken_jobs_without_its_notice_is_red() -> None:
+    api = FakeApi()
+    api.run(run_attempt=3)
+    _untaken_attempt(api, 1)
+    _untaken_attempt(api, 2, notice=False)
+    api.jobs(3, ("results", "completed", "success"))
+    title = _red(api).output["title"]
+    assert "attempt 2's `results` is 'failure'" in title and "attempt 1's" not in title, title
 
 
 def test_attempt_1_red_for_jobs_no_runner_took_is_red_on_attempt_1() -> None:
@@ -908,6 +980,102 @@ def test_a_real_listing_read_by_main_s_verdict_and_the_controller_excuses_attemp
     found = _decide(api)
     assert isinstance(found, mc.Posting) and found.conclusion == "success", found
     assert f"only for jobs no runner took (`{left}`)" in found.output["summary"]
+
+
+def test_real_listings_read_by_main_s_verdict_and_the_controller_excuse_attempts_1_and_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#5848 end to end: a macOS shard no runner took on attempts 1 and 2. Main's verdict names
+    it on each attempt, by that attempt's listing; attempt 3's green record fills it; and the
+    controller excuses attempts 1 and 2, each by its listing and its notice."""
+    from tools.ci import __main__ as ci
+
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    planned = sorted({n for n, c, _ in _REAL if n not in (*_REAL_STAGES, "matrix.key", "results")})
+    left = "python-suite-macos (3/5)"
+    identity = verdict.Identity(HEAD, {"apps": "c" * 40})
+    records = tmp_path / "records"
+
+    def record(key: str, attempt: int) -> None:
+        text = verdict.job_record(
+            key=key, result="success", identity=identity, steps=[(["true"], 0, 0.5)],
+            attempt=attempt, run_id=RUN,
+        )  # fmt: skip
+        folder = records / verdict.record_artifact(key, run_id=RUN, attempt=attempt)
+        folder.mkdir(parents=True)
+        (folder / "record.json").write_text(text)
+
+    for key in planned:
+        if key != left:
+            record(key, 1)
+    needs = {s: {"result": "success", "outputs": {}} for s in _REAL_STAGES}
+    needs.update(
+        build={"result": "success", "outputs": {}}, test={"result": "abandoned", "outputs": {}}
+    )
+    (tmp_path / "plan.json").write_text(json.dumps(planned))
+    (tmp_path / "needs.json").write_text(json.dumps(needs))
+
+    def pages(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [{"total_count": len(jobs), "jobs": jobs}]
+
+    def ran(attempt: int) -> list[dict[str, Any]]:
+        """The attempt's listing with the left shard taken by a runner and green."""
+        return [
+            (_api_job(attempt, left, "success", steps=18, n=k) if job["name"] == left else job)
+            for k, job in enumerate(_real_listing(attempt, results=None))
+        ]
+
+    def judge(attempt: int, later: dict[int, list[dict[str, Any]]]) -> tuple[int, str]:
+        (tmp_path / "first.json").write_text(json.dumps(pages(_real_listing(1))))
+        args = [
+            "verdict", "--plan", str(tmp_path / "plan.json"),
+            "--needs", str(tmp_path / "needs.json"),
+            "--records", str(records), "--run-id", str(RUN), "--attempt", str(attempt),
+            "--head", HEAD, "--partner", f"apps={'c' * 40}",
+            "--run-head", HEAD, "--run-partner", f"apps={'c' * 40}",
+            "--first-jobs", str(tmp_path / "first.json"),
+        ]  # fmt: skip
+        if later:
+            (tmp_path / "later.json").write_text(
+                json.dumps({str(n): pages(jobs) for n, jobs in later.items()})
+            )
+            args += ["--later-jobs", str(tmp_path / "later.json")]
+        code = ci.main(args)
+        return code, capsys.readouterr().out
+
+    # Attempt 2: no runner took the shard again, and its own listing shows nothing else red.
+    second = _real_listing(2, results=None)
+    second[-1] = {**second[-1], "status": "in_progress"}
+    code, out = judge(2, {2: second})
+    assert code == 1, out
+    [line] = [
+        x
+        for x in out.splitlines()
+        if x.startswith(f"::notice title={verdict.NOT_ACQUIRED_NOTICE}::")
+    ]
+    message = line.split("::", 2)[2]
+    assert message == left
+    # Attempt 3: a runner took it, its green record fills it, and its stage passed.
+    record(left, 3)
+    needs.update(test={"result": "success", "outputs": {}})
+    (tmp_path / "needs.json").write_text(json.dumps(needs))
+    code, out = judge(3, {2: _real_listing(2), 3: ran(3)})
+    assert code == 0, out
+    # The controller reads attempts 1 and 2 as each red only for that shard.
+    api = FakeApi()
+    api.run(run_attempt=3)
+    for n in (1, 2):
+        api.listing(n, *_real_listing(n))
+        api.answers[api.notes_path(n)] = [
+            {"annotation_level": "notice", "title": verdict.NOT_ACQUIRED_NOTICE, "message": left}
+        ]
+    api.jobs(3, ("results", "completed", "success"))
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert (
+        f"attempts 1 to 2 of Merge run https://github.com/{REPO}/actions/runs/{RUN} were red"
+        in (found.output["summary"])
+    )
 
 
 CONTRACT_BRANCH = mc.CONTRACT_PREFIX + HEAD
