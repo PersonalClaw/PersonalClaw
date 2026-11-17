@@ -215,7 +215,10 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           # A queue commit plans what its entry changed, against the commit ahead of it.
           COMPARED: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || 'main' }}
+          # The tier this workflow runs; a pull request's run narrows it to the entry tier once the
+          # merge queue gates main (the step asks main's `plan-tier`, with this variable).
           TIER: merge
+          QUEUE_LIVE: ${{ vars.MERGE_QUEUE_LIVE }}
           STAGE_JOBS: build test test-2 test-3
           PUSH_PLAN: ${{ github.event_name == 'push' && (needs.tree-check.outputs.tested == 'true' && 'tested' || 'full') || '' }}
           JUDGE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before || '' }}
@@ -236,6 +239,22 @@ jobs:
             echo "::error title=no plan::main's tools/ci could not be fetched, so nothing is planned and the verdict is red. Re-run the job."
             exit 1
           fi
+          # merge.yml's tier is main's planner's answer for this run (`plan-tier`): the entry tier for
+          # a pull request's once the merge queue gates main (QUEUE_LIVE, and main's rules hold a
+          # merge_queue rule), the merge tier for every other run. An answer that is neither plans
+          # nothing. pr.yml's tier is its own.
+          tier="$TIER"
+          if [ "$TIER" = merge ]; then
+            tier=$(cd "$judge" && python3 -m tools.ci plan-tier --event "${GITHUB_EVENT_NAME:-}" \
+                     --queue-var "${QUEUE_LIVE:-}" --repo "$GITHUB_REPOSITORY") || tier=""
+            case "$tier" in
+              entry|merge) echo "this run plans the $tier tier" ;;
+              *)
+                echo "::error title=no plan::main's planner named no tier for this run, so nothing is planned and the verdict is red."
+                exit 1
+                ;;
+            esac
+          fi
           # A push to main plans by the tree check's answer, read in PUSH_PLAN: the jobs every push
           # runs when a pull request's run tested the tree, the whole tier when none did. Any other
           # run plans what it changed.
@@ -249,7 +268,7 @@ jobs:
               ;;
           esac
           : > "$RUNNER_TEMP/plan.err"
-          answer=$(cd "$judge" && python3 -m tools.ci plan "$TIER" \
+          answer=$(cd "$judge" && python3 -m tools.ci plan "$tier" \
                      --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
                      --trusted-areas "$judge/tools/ci/areas.toml" \
                      --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
