@@ -38,8 +38,9 @@ every name outside tmux, shellcheck, dash, ffmpeg and docker before it installs 
 installs each one PATH lacks, docker aside, which it only checks for, from apt-get on Linux or brew
 on macOS, nothing elsewhere. apt-get retries each fetch and is cut off at 180 s; once a job, one
 that times out or fails moves the apt sources off the runner's mirror (to archive.ubuntu.com, or
-ports.ubuntu.com on arm) with a warning and tries again under 300 s, and an install that still
-fails is an `infrastructure` failure of the step.
+ports.ubuntu.com on arm), and the security pocket off security.ubuntu.com, with a warning naming
+every host it left and tries again under 300 s, and an install that still fails is an
+`infrastructure` failure of the step.
 """
 
 from __future__ import annotations
@@ -1782,6 +1783,62 @@ def test_an_arm_runner_s_mirror_is_left_for_ports_ubuntu_com(tmp_path: Path) -> 
     assert _warnings(log) == [
         "::warning title=infrastructure::the runner's package mirror (azure.ports.ubuntu.com)"
         " did not answer: installing from ports.ubuntu.com"
+    ], log
+
+
+#: GitHub's x64 image as its runs read it (11-17, "the runner's package mirror (security.ubuntu.com)
+#: did not answer"): the security stanza names security.ubuntu.com itself, not apt-mirrors.txt.
+_SECURITY_SOURCES = {
+    "sources.list.d/ubuntu.sources": (
+        "Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt\n"
+        "Suites: noble noble-updates noble-backports\nComponents: main universe\n\n"
+        "Types: deb\nURIs: http://security.ubuntu.com/ubuntu\n"
+        "Suites: noble-security\nComponents: main universe\n"
+    ),
+    "sources.list": "# Ubuntu sources have moved to /etc/apt/sources.list.d/ubuntu.sources\n",
+    "apt-mirrors.txt": (
+        "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+        "http://archive.ubuntu.com/ubuntu/\tpriority:2\n"
+    ),
+}
+
+#: An older image's sources.list, the security pocket on its own host.
+_SECURITY_LIST = {
+    "sources.list": (
+        "deb http://azure.archive.ubuntu.com/ubuntu/ noble main universe\n"
+        "deb http://security.ubuntu.com/ubuntu noble-security main universe\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("sources", "left"),
+    [
+        (_SECURITY_SOURCES, "security.ubuntu.com, azure.archive.ubuntu.com"),
+        (_SECURITY_LIST, "azure.archive.ubuntu.com, security.ubuntu.com"),
+    ],
+    ids=["github-s-x64-image", "an-older-sources-list"],
+)
+def test_the_security_host_is_left_with_the_runner_s_mirror(
+    tmp_path: Path, sources: dict[str, str], left: str
+) -> None:
+    """The security pocket's own host is a mirror too: left in the sources, a security.ubuntu.com
+    that does not answer fails the retry the move was for (11-17: shard after shard). The move
+    reads the pocket from archive.ubuntu.com, which carries it, and the warning names every host
+    it left."""
+    rc, installs, log = _run_programs(tmp_path, "ffmpeg", hang_at=(1,), sources=sources)
+    assert rc == 0, log
+    assert installs[-1] == f"{_APT} install -y --no-install-recommends ffmpeg", installs
+    for rel, text in sources.items():
+        now = (tmp_path / "etc" / "apt" / rel).read_text()
+        assert "security.ubuntu.com" not in now, (rel, now)
+        moved = text.replace("azure.archive.ubuntu.com", "archive.ubuntu.com").replace(
+            "security.ubuntu.com", "archive.ubuntu.com"
+        )
+        assert now == moved, rel
+    assert _warnings(log) == [
+        f"::warning title=infrastructure::the runner's package mirror ({left})"
+        " did not answer: installing from archive.ubuntu.com"
     ], log
 
 
