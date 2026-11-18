@@ -382,11 +382,14 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
         kind = device_scopes.AUTOMATION_KIND
     elif kind == "unknown":
         kind = derived_kind
+    label = sanitize_device_name(outcome.label)
     device = DeviceInfo(
         id=secrets.token_hex(8),
-        # The device's own name wins, then the owner's label from `pair/start`, then a derived
-        # one. None of the three is trusted text — all went through `sanitize_device_name`.
-        name=name or sanitize_device_name(outcome.label) or derived_name,
+        # A phone's own name wins, then the owner's label from `pair/start`, then a derived one.
+        # An automation client's is the owner's label first: its name is who she reads it as, in
+        # the Devices list and in its sign-in's records, so a client never names itself after
+        # another. None of the three is trusted text: all went through `sanitize_device_name`.
+        name=((label or name) if scope else (name or label)) or derived_name,
         kind=kind,
         minted_at=time.time(),
         ip=ip[:64],

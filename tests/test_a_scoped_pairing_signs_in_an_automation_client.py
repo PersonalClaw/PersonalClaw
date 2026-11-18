@@ -741,6 +741,36 @@ async def test_pair_complete_mints_the_code_s_scope_lifetime_and_kind(sel_events
     assert "kind=automation" in row["resources"] and "scope=loops" in row["resources"]
 
 
+@pytest.mark.parametrize(
+    "scope, label, declared, named",
+    [
+        (["loops"], "Runner", "Nightly runner", "Runner"),
+        (["loops"], "", "Nightly runner", "Nightly runner"),
+        ([], "phone", "Pixel", "Pixel"),
+    ],
+    ids=["a-client-is-the-owners-label", "a-client-with-none-is-its-own", "a-phone-names-itself"],
+)
+@pytest.mark.asyncio
+async def test_an_automation_client_is_named_by_the_owners_label(
+    scope, label, declared, named
+) -> None:
+    """A client's name is who the owner reads as acting, so the label she gave its code beats the
+    name it declares: client B can't redeem as A's "Nightly runner". A phone names itself."""
+    async with TestClient(TestServer(_owner_app()), cookie_jar=DummyCookieJar()) as client:
+        resp = await _start(
+            client, {**({"scope": scope, "days": 7} if scope else {}), "label": label}
+        )
+        code = (await resp.json())["code"]
+        resp = await client.post(
+            "/api/devices/pair/complete",
+            json={"code": code, "device_name": declared},
+            headers={"Origin": ORIGIN},
+        )
+        assert resp.status == 200
+        token = resp.cookies[COOKIE].value
+    assert ss.load_session_records()[token_auth.token_nonce(token)].device.name == named
+
+
 @pytest.mark.asyncio
 async def test_an_unscoped_redemption_can_t_call_itself_an_automation_client() -> None:
     async with TestClient(TestServer(_owner_app()), cookie_jar=DummyCookieJar()) as client:
