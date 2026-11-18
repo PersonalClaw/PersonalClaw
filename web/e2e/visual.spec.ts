@@ -218,8 +218,9 @@ for (const { key, theme, reducedMotion } of ORB_STATE_SHOTS) {
       await page.clock.pauseAt(ORB_CLOCK_PAUSE)
       await page.getByRole('button', { name: 'Show its states' }).click()
       const gallery = page.locator('[data-orb-gallery]')
-      // Each phase of the contract and each stage, at three sizes.
-      await expect(gallery.locator('[data-agent-orb]')).toHaveCount(57)
+      // Each phase of the contract, the two tool steps that draw a state of their own (a call that reads,
+      // one that edits) and each stage, at three sizes.
+      await expect(gallery.locator('[data-agent-orb]')).toHaveCount(63)
       await expect(gallery).toHaveScreenshot(`${key}.png`, { animations: 'disabled', maxDiffPixels: 0 })
     })
   })

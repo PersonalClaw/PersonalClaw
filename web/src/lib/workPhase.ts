@@ -1,4 +1,4 @@
-import type { RunState } from './api'
+import type { RunAct, RunState } from './api'
 import type { AgentActivityState } from './useAgentActivity'
 
 // ── ONE phase vocabulary ────────────────────────────────────────────────────────────────────────
@@ -75,6 +75,17 @@ const KNOWN: ReadonlySet<string> = new Set(WORK_PHASES)
 /** A wire value read as a phase, or `null` for one that is not: never a guess at a nearby one. */
 export function workPhaseOf(value: unknown): WorkPhase | null {
   return typeof value === 'string' && KNOWN.has(value) ? (value as WorkPhase) : null
+}
+
+/** What a tool call does, as the gateway says it (`work_phase.Act`, a frame's `act` while its turn
+ *  is in `tool`): it reads, it edits, or it runs. Total by its type, so a word the contract adds is
+ *  a type error here until it is placed. */
+const ACTS: Readonly<Record<RunAct, true>> = { read: true, edit: true, run: true }
+export const RUN_ACTS = Object.keys(ACTS) as readonly RunAct[]
+
+/** A wire value read as what a call does, or `null` for one that is not one of its words. */
+export function runActOf(value: unknown): RunAct | null {
+  return typeof value === 'string' && Object.hasOwn(ACTS, value) ? (value as RunAct) : null
 }
 
 export const phaseFamily = (phase: WorkPhase): PhaseFamily => WORK_PHASE_LOOKS[phase].family

@@ -9,8 +9,8 @@ import { TurnHead } from '../transcript/TurnHead'
 import { turnOutcomeOf } from '../turnOutcome'
 import type { TurnEnding } from '../../../ui/turnEnding'
 import { notify } from '../../../app/appSdk'
-import { api, type ChatHistoryMsg, type RunState } from '../../../lib/api'
-import { isAChatsPhase, livePhaseOf, workPhaseOf, type WorkPhase } from '../../../lib/workPhase'
+import { api, type ChatHistoryMsg, type RunAct, type RunState } from '../../../lib/api'
+import { isAChatsPhase, livePhaseOf, runActOf, workPhaseOf, type WorkPhase } from '../../../lib/workPhase'
 import { useChatSocket } from '../../../lib/useChatSocket'
 
 /** Body of the history page's session PEEK panel: a LIVE mini-chat — the latest
@@ -26,8 +26,9 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
   const [busy, setBusy] = useState(false)
   // The in-flight streamed reply (grows chunk by chunk; folds into `detail` on done).
   const [streamText, setStreamText] = useState<string | null>(null)
-  // What the chat's turn is doing while it runs, and how it ended once its last frame says so.
-  const [live, setLive] = useState<{ phase: WorkPhase; line: string } | null>(null)
+  // What the chat's turn is doing while it runs (with what its call does, in a tool step), and how
+  // it ended once its last frame says so.
+  const [live, setLive] = useState<{ phase: WorkPhase; line: string; act: RunAct | null } | null>(null)
   const [ending, setEnding] = useState<TurnEnding | null>(null)
   const runSeqRef = useRef(-1)
   const endRef = useRef<HTMLDivElement | null>(null)
@@ -38,7 +39,8 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
   const takeRunState = (rs: RunState | null | undefined, from: 'frame' | 'snapshot') => {
     if (!rs || typeof rs.seq !== 'number' || (from === 'frame' && rs.seq <= runSeqRef.current)) return
     runSeqRef.current = rs.seq
-    setLive(livePhaseOf(rs))
+    const now = livePhaseOf(rs)
+    setLive(now && { ...now, act: runActOf(rs.act) })
     if (from === 'frame') {
       const ended = rs.turn ? null : workPhaseOf(rs.phase)
       setEnding(ended === 'done' || ended === 'error' ? { phase: ended, line: String(rs.line ?? ''), outcome: turnOutcomeOf(rs.last_outcome) } : null)
@@ -133,7 +135,7 @@ export function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; on
         {/* The head of the running turn's reply, one element for the whole turn: above the
             streaming reply, so the reply appearing under it restarts neither its timing nor its
             drawing. A message sent from here is waiting to start until the gateway says more. */}
-        <TurnHead running={busy || live !== null} phase={live?.phase ?? null} line={live?.line ?? ''} ending={ending}
+        <TurnHead running={busy || live !== null} phase={live?.phase ?? null} act={live?.act ?? null} line={live?.line ?? ''} ending={ending}
           onShown={() => endRef.current?.scrollIntoView({ block: 'end' })} className="mr-2" />
         {/* the streaming reply, growing live */}
         {streamText && (

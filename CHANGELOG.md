@@ -22,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The desktop buddy, its tray icon and its dock icon draw the chat's halftone orb: the buddy shows the agent orb's own picture for each state, on a disc of its own over the desktop, and the tray's working icon is a command running, which reads apart from idle in the menu bar's one colour.**
 - **The plan panel offers Cancel plan mode while a plan drafts and while it waits for a turn to end, not only once a draft is ready for review.**
 - **The desktop app runs on Electron 45, packed by electron-builder 26.18.**
+- **The chat's agent orb draws a tool step as what its call does: reading for a call that reads, editing for one that edits, and running a command for one that runs or doesn't say. Each step's drawing holds at least 1.2 s, so a read or an edit over in milliseconds is still seen. Settings › Design's gallery shows the two new ones.**
 
 ### Fixed
 

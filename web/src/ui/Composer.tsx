@@ -44,7 +44,7 @@ const FOCUS_RING = { outlineWidth: '2px', outlineStyle: 'solid', outlineColor: '
  *  agent/model/mode options. Pill cluster: [+] agent-and-model · (approval where
  *  enabled) · the host's pills … [mic] [send]. Textarea auto-grows to a user-resizable max. */
 export function Composer({
-  value, onChange, editorKeep, onSend, streaming, phase, ending = null, processing, onStop, placeholder = 'Ask anything',
+  value, onChange, editorKeep, onSend, streaming, phase, act = null, ending = null, processing, onStop, placeholder = 'Ask anything',
   controls = DEFAULT_CONTROLS, data, selection, onSelect, onAttach, onOpenPrompts, plusMenuExtra, onFocusChange,
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, contextParts, contextActions, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
@@ -519,7 +519,7 @@ export function Composer({
               reduced motion the orb is one still frame. Its name is the phase's or stage's words. */}
           {listening && (
             <div data-voice-orb="" className="flex justify-center pt-s">
-              <AgentOrb phase={voiceOrbPhase({ heard, phase, ending: voiceEnding.held })} stage={voiceOrbStage({ heard, transcribing: mic.state === 'transcribing', speaking: !!handsFree?.speaking })} size={64} onSettled={voiceEnding.onSettled} bloom={bloomsFor(voiceEnding.held)} />
+              <AgentOrb phase={voiceOrbPhase({ heard, phase, ending: voiceEnding.held })} act={heard ? null : act} stage={voiceOrbStage({ heard, transcribing: mic.state === 'transcribing', speaking: !!handsFree?.speaking })} size={64} onSettled={voiceEnding.onSettled} bloom={bloomsFor(voiceEnding.held)} />
             </div>
           )}
           {/* How it works, where a phone can read it too: it has no hover for the tooltip. The status

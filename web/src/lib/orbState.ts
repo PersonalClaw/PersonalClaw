@@ -1,3 +1,4 @@
+import type { RunAct } from './api'
 import { workPhaseOf, type WorkPhase } from './workPhase'
 import type { ThreadPip } from './useThreads'
 
@@ -67,8 +68,8 @@ export type OrbStage = (typeof ORB_STAGES)[number]
 
 /** Every phase of the contract to the state the halftone orb draws it as, total by its type. A
  *  queued turn and one held behind other calls on a local model both wait behind another's turn;
- *  any tool runs, as a command does, until the gateway says what a call does; and a reply streaming
- *  in is the orb answering. */
+ *  a tool call is drawn as running a command unless the gateway says what it does
+ *  (`TOOL_SCENE_OF_ACT`); and a reply streaming in is the orb answering. */
 export const ORB_SCENE_OF: Readonly<Record<WorkPhase, OrbScene>> = Object.freeze({
   idle: 'ready',
   listening: 'listening',
@@ -92,10 +93,20 @@ export const ORB_STAGE_LABELS: Readonly<Record<OrbStage, string>> = Object.freez
   recording: 'Recording', transcribing: 'Turning that into text', speaking: 'Reading the reply aloud', offline: 'Offline',
 })
 
+/** A tool call's state, by what the gateway says the call does (`work_phase`'s `act`): one that
+ *  reads is reading, one that edits is editing, and one that runs is running a command, as a call
+ *  that says nothing is drawn too. */
+export const TOOL_SCENE_OF_ACT: Readonly<Record<RunAct, OrbScene>> = Object.freeze({
+  read: 'reading', edit: 'editing', run: 'running',
+})
+
 /** The orb's state for what drives it: a stage wins over the phase, since a page names one only
- *  while it holds. */
-export function orbSceneOf(phase: WorkPhase, stage?: OrbStage | null): OrbScene {
-  return stage ?? ORB_SCENE_OF[phase]
+ *  while it holds, and in a tool step what the call does says which work it is. An act outside a
+ *  tool step draws nothing. */
+export function orbSceneOf(phase: WorkPhase, stage?: OrbStage | null, act?: RunAct | null): OrbScene {
+  if (stage) return stage
+  if (phase === 'tool' && act) return TOOL_SCENE_OF_ACT[act]
+  return ORB_SCENE_OF[phase]
 }
 
 /** The states whose drawing moves: every state but rest, the five with a plate (done moves once,

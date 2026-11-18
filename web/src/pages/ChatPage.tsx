@@ -292,7 +292,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 liveLine={
                   // A turn whose last frame said how it ended is over, though its stream has not closed:
                   // the line shows that ending, then goes.
-                  <TurnStatusRow running={stream.streaming && !stream.turnEnding} phase={stream.turnPhase} line={stream.turnLine}
+                  <TurnStatusRow running={stream.streaming && !stream.turnEnding} phase={stream.turnPhase} act={stream.turnAct} line={stream.turnLine}
                     ending={stream.turnEnding}
                     startedAt={stream.turnStart ? Date.parse(stream.turnStart) || null : null} usage={stream.turnUsage}
                     lastStepAt={stream.turnLastStep ? Date.parse(stream.turnLastStep) || null : null}
