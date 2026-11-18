@@ -1769,17 +1769,22 @@ def pull_request_number(host: Host) -> str | None:
     return str(number)
 
 
-def write_feedback(folder: Path, argv: Sequence[str], kept: Path, number: str) -> None:
+def write_feedback(
+    folder: Path, argv: Sequence[str], kept: Path, number: str, *, append: bool = False
+) -> None:
     """Leave a failed step's kept output as the remediation ``pr-feedback.yml`` posts:
     ``violations.md``, the step's command and its output, and ``pr.txt``, the pull request's
-    number. The output is data the relay fences; nothing here
-    reads it as anything else."""
+    number. With *append*, the step's section follows the ones an earlier red step of the same
+    run left, so the remediation names every red tool. The output is data the relay fences;
+    nothing here reads it as anything else."""
     words = list(argv[2:] if list(argv[:2]) == ["uv", "run"] else argv)
     text = kept.read_bytes().decode("utf-8", errors="replace").rstrip()
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "violations.md").write_text(
-        f"**{' '.join(words)}**\n```\n{text}\n```\n", encoding="utf-8"
-    )
+    section = f"**{' '.join(words)}**\n```\n{text}\n```\n"
+    violations = folder / "violations.md"
+    if append and violations.is_file():
+        section = violations.read_text(encoding="utf-8") + "\n" + section
+    violations.write_text(section, encoding="utf-8")
     (folder / "pr.txt").write_text(number, encoding="utf-8")
 
 
@@ -1996,6 +2001,10 @@ def run_one(
     code = run.OK
     interrupted = False
     rerun: dict[str, object] | None = None
+    # A lint_feedback job's step went red and the others ran on; each red one's remediation is
+    # left after the one before it.
+    lint_red = False
+    fed_back = False
     peaks: list[int] = []
     # The planned steps begun: the record says how many never were (job-record/4), and the flake
     # rule passes a failing job only when every one began.
@@ -2074,13 +2083,20 @@ def run_one(
             number = pull_request_number(host)
             exited = result.violations == (f"the job exited {result.returncode}",)
             if kept is not None and kept.is_file() and exited and number is not None:
-                write_feedback(work / FEEDBACK, argv, kept, number)
+                write_feedback(work / FEEDBACK, argv, kept, number, append=fed_back)
+                fed_back = True
             code = result.code
             interrupted = result.interrupted
             # Only the job's first red step is diagnosed: the record holds one rerun, and a job
             # with two red steps is never a flake (verdict._pass_flakes), so a later one stops it.
             if rerun is not None:
                 break
+            # A lint job's later red step is not diagnosed either: the job is red in two steps,
+            # and only what the tool says is wanted, in the remediation.
+            if lint_red:
+                if interrupted:
+                    break
+                continue
             # A pytest step whose tests ran and some failed (exit 1), and nothing else went wrong:
             # a timeout, a signal or the credential tripwire each adds a violation of its own, so
             # the exit is the only one. Its failed tests are rerun once, alone, to classify them.
@@ -2134,6 +2150,17 @@ def run_one(
             if rerun is not None and not interrupted:
                 print(
                     f"[{key}] step {n}: its failed tests make the job red; its other steps run on",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
+            # A lint job's tools each read the tracked tree alone, so a red one stops none of the
+            # others, and the job stays red: a pull request with a black diff and a flake8 error
+            # hears of both in one push (#5847). An install before them still stops the job.
+            if job.lint_feedback and n >= first_command and not interrupted:
+                lint_red = True
+                print(
+                    f"[{key}] step {n} is red; the job's other lint steps still run",
                     file=sys.stderr,
                     flush=True,
                 )
