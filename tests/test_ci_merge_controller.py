@@ -267,10 +267,11 @@ class FakeApi:
         """The attempt's jobs, as the API lists them, whole."""
         path = f"/repos/{REPO}/actions/runs/{RUN}/attempts/{attempt}/jobs?per_page=100&page=1"
         self.answers[path] = {"total_count": len(listed), "jobs": list(listed)}
-        # The results job's annotations: none, unless a case plants the flakes it passed.
+        # Each job's annotations: none, unless a case plants them (the flakes the results job
+        # passed, or a job's infrastructure error). GitHub answers every job's with a list.
         for job in listed:
-            if job["name"] == "results":
-                self.answers.setdefault(self.notes_path(attempt), [])
+            notes = f"/repos/{REPO}/check-runs/{job['id']}/annotations?per_page=100&page=1"
+            self.answers.setdefault(notes, [])
 
     def notes_path(self, attempt: int) -> str:
         path = f"/repos/{REPO}/actions/runs/{RUN}/attempts/{attempt}/jobs?per_page=100&page=1"
@@ -4176,6 +4177,201 @@ def test_a_cancelled_or_timed_out_shard_with_no_failed_test_is_flake_class() -> 
     assert "- flake-class: 1 test job(s) cancelled or timed out" in found.output["summary"]
 
 
+# ── An infrastructure red (#5848): a job red on CI's own ``infrastructure`` error, from any step,
+# as #6243's and #6244's runs recorded the setup action's, and the audit's when its advisory
+# service does not answer.
+
+APT = "apt-get could not install ffmpeg after its retries"
+MIRROR = (
+    "the runner's package mirror (security.ubuntu.com) did not answer: installing from"
+    " security.ubuntu.com"
+)
+AUDIT = "the dependency audit could not reach its advisory service (pip-audit on gateway-image)"
+SETUP = "Set up the toolchain"
+RUN_JOB = "the entry's catalogue job, through run-job"
+
+
+def _set_up(
+    name: str,
+    step: str | None = SETUP,
+    conclusion: str = "failure",
+    levels: dict[str, str] | None = None,
+) -> tuple[str, str | None, str, dict[str, str]]:
+    """A red job: the step it failed at (None lists no step), and its ``infrastructure``
+    annotations, each level to its message (by default the setup action's error with its mirror
+    warning, as recorded)."""
+    return name, step, conclusion, {"failure": APT, "warning": MIRROR} if levels is None else levels
+
+
+def _infra_run(
+    *jobs: tuple[str, str | None, str, dict[str, str]], notes: tuple[str, ...] = _counted()
+) -> FakeApi:
+    """A red pull request run whose *jobs* each failed at a step, with the annotations GitHub
+    keeps on that job: its exit, and each planted level's message under the title
+    ``infrastructure``."""
+    api = _retried(notes=notes)
+    listed = []
+    for i, (name, step, conclusion, levels) in enumerate(jobs):
+        job_id = 300 + i
+        listed.append(
+            {
+                "id": job_id,
+                "name": name,
+                "status": "completed",
+                "conclusion": conclusion,
+                "steps": (
+                    []
+                    if step is None
+                    else [
+                        {"name": "Set up job", "conclusion": "success"},
+                        {"name": step, "conclusion": "failure"},
+                        {"name": "Upload the job's record", "conclusion": "success"},
+                    ]
+                ),
+            }
+        )
+        exit_1 = "Process completed with exit code 1."
+        found = [{"annotation_level": "failure", "title": "", "message": exit_1}] + [
+            {"annotation_level": level, "title": mc.INFRA_TITLE, "message": message}
+            for level, message in levels.items()
+        ]  # fmt: skip
+        api.answers[f"/repos/{REPO}/check-runs/{job_id}/annotations?per_page=100&page=1"] = found
+    results = {"id": 399, "name": "results", "status": "completed", "conclusion": "failure"}
+    api.listing(1, *listed, results)
+    api.flakes(1, *notes, title="failed test")
+    return api
+
+
+def test_a_shard_red_only_on_an_infrastructure_error_with_no_failed_test_is_flake_class() -> None:
+    found = _note(_infra_run(_set_up("python-suite (3/3)")))
+    assert found.output["title"] == f"Red (retry 0 of 2, flake-class): {RESULTS_RED}"
+    assert (
+        f"- flake-class: `python-suite (3/3)` failed at `{SETUP}` on an infrastructure error"
+        f" ({APT}), no test failed\n"
+    ) in found.output["summary"]
+
+
+def test_a_job_of_any_kind_red_at_its_setup_on_an_infrastructure_error_is_flake_class() -> None:
+    found = _note(_infra_run(_set_up("rails (2/3)"), _set_up("audit")))
+    summary = found.output["summary"]
+    assert found.output["title"].startswith("Red (retry 0 of 2, flake-class): ")
+    assert f"- flake-class: `audit` failed at `{SETUP}` on an infrastructure error" in summary
+    assert f"; `rails (2/3)` failed at `{SETUP}` on an infrastructure error" in summary
+
+
+def test_an_infrastructure_red_beside_a_flake_class_failed_test_is_flake_class() -> None:
+    """#6243's first run, less its audit: two shards red at their setup, the third on a flaky
+    test with an open issue."""
+    api = _infra_run(
+        _set_up("python-suite (1/3)"),
+        _set_up("python-suite (2/3)", RUN_JOB, levels={}),
+        _set_up("python-suite (3/3)"),
+        notes=_counted(_failed(key="python-suite (2/3)")),
+    )
+    summary = _note(api).output["summary"]
+    assert (
+        "- flake-class: 1 failed test(s), each with an open flaky-test issue and reading no file"
+        " the pull request changes; `python-suite (1/3)` failed at"
+    ) in summary
+    assert "; `python-suite (3/3)` failed at" in summary
+
+
+def test_an_infrastructure_red_spends_the_same_retry_budget() -> None:
+    api = _infra_run(_set_up("python-suite (3/3)"))
+    tree = _earlier(api, EARLIER)
+    _earlier(api, OTHER_HEAD)
+    same = [{"filename": "README.md", "status": "modified", "patch": README_PATCH}]
+    api.answers[f"/repos/{REPO}/compare/main...{OTHER_HEAD}"] = {"files": same}
+    found = _note(api, FakeRetry(((OTHER_HEAD, "6" * 40), (EARLIER, tree))))
+    assert found.output["title"].startswith("Red (retry budget spent, flake-class): ")
+
+
+OWNS = "the head changes what the setup step runs or reads"
+
+
+@pytest.mark.parametrize(
+    "jobs, notes, changes, says",
+    [
+        pytest.param(
+            (_set_up(SHARD, levels={}),), _counted(), "README.md",
+            "`python-suite (1/3)` failed with no failed test named", id="an-unannotated-shard",
+        ),
+        pytest.param(
+            (_set_up("rails (1/3)", RUN_JOB, levels={}),), _counted(), "README.md",
+            "only a test job's red is flake-class", id="an-unannotated-rail",
+        ),
+        pytest.param(
+            (_set_up(SHARD, levels={"warning": MIRROR}),), _counted(), "README.md",
+            "`python-suite (1/3)` failed with no failed test named", id="only-the-mirror-warning",
+        ),
+        pytest.param(
+            (_set_up("rails (1/3)", conclusion="cancelled"),), _counted(), "README.md",
+            "`rails (1/3)` is 'cancelled', and only a test job's red is flake-class",
+            id="a-cancelled-rail",
+        ),
+        *(
+            pytest.param((_set_up(SHARD),), _counted(), path, OWNS, id=f"the-head-changes-{name}")
+            for name, path in (
+                ("the-action", mc.LOCAL_ACTIONS + "setup/action.yml"),
+                ("the-audit", "tools/ci/audit.py"),
+                ("merge-yml", mc.MERGE_WORKFLOW),
+                ("pr-yml", mc.PR_WORKFLOW),
+                *((path, path) for path in mc.SETUP_INPUTS),
+            )
+        ),
+        pytest.param(
+            (_set_up(SHARD), _set_up("rails (1/3)", RUN_JOB, levels={})), _counted(), "README.md",
+            "only a test job's red is flake-class", id="beside-an-unannotated-rail-red",
+        ),
+        pytest.param(
+            (_set_up(SHARD),), _counted(_failed()), "README.md",
+            "`python-suite (1/3)` failed on an infrastructure error with a failed test in it",
+            id="a-failed-test-in-the-same-job",
+        ),
+        # CORE F1: a test step can print the annotation, so the error at any step but the
+        # setup's is read as no error at all: the audit's own step runs the head's tools/ci.
+        pytest.param(
+            (_set_up(SHARD, RUN_JOB),), _counted(), "README.md",
+            "`python-suite (1/3)` failed with no failed test named",
+            id="a-test-step-printing-the-error",
+        ),
+        pytest.param(
+            (_set_up("rails (1/3)", RUN_JOB),), _counted(), "README.md",
+            "only a test job's red is flake-class", id="a-rail-step-printing-the-error",
+        ),
+        pytest.param(
+            (_set_up("audit", RUN_JOB, levels={"failure": AUDIT}),), _counted(), "README.md",
+            "`audit` is 'failure', and only a test job's red is flake-class",
+            id="an-infrastructure-red-at-the-audit-s-own-step",
+        ),
+        # The setup step is known by its name alone, and a job that lists no step names none.
+        pytest.param(
+            (_set_up(SHARD, f"{SETUP} again"),), _counted(), "README.md",
+            "`python-suite (1/3)` failed with no failed test named",
+            id="a-step-named-past-the-setup-s-name",
+        ),
+        pytest.param(
+            (_set_up(SHARD, None),), _counted(), "README.md",
+            "`python-suite (1/3)` failed with no failed test named", id="a-job-listing-no-step",
+        ),
+        pytest.param(
+            (_set_up("python-suite (3/3)"),), _counted(_failed(standing="not classified")),
+            "README.md", "is not classified", id="beside-a-test-red",
+        ),
+    ],
+)  # fmt: skip
+def test_a_red_that_is_not_the_runner_s_alone_is_not_flake_class(
+    jobs: tuple, notes: tuple[str, ...], changes: str, says: str
+) -> None:
+    api = _infra_run(*jobs, notes=notes)
+    files = [{"filename": changes, "status": "modified", "patch": "@@ -1 +1 @@\n-a\n+b"}]
+    api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
+    found = _note(api)
+    assert found.output["title"].startswith("Red (retry 0 of 2): "), found.output["title"]
+    assert "- not flake-class: " in found.output["summary"]
+    assert says in found.output["summary"], found.output["summary"]
+
+
 @pytest.mark.parametrize(
     "jobs, notes, flaky, says",
     [
@@ -4360,6 +4556,53 @@ def test_a_queue_commit_s_failed_test_that_reads_its_change_is_not_flake_class()
     found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
     assert found is not None and found.output["title"].startswith("Red (retry 0 of 2): ")
     assert "reads `tests/test_timing.py`, which the pull request changes" in found.output["summary"]
+
+
+def _queue_infra_run(*changed: str) -> tuple[FakeApi, mc.Queue]:
+    """#12's queue commit, red only in one suite shard at its setup on the setup action's
+    infrastructure error (#5848), naming no failed test; its change against its parent, and its
+    pull request's, also change each of *changed*."""
+    api, queue = _queue_red_run(notes=_counted())
+    steps = [
+        {"name": "Set up job", "conclusion": "success"},
+        {"name": "Set up the toolchain", "conclusion": "failure"},
+    ]
+    shard = {"id": 100, "name": SHARD, "status": "completed", "conclusion": "failure"}
+    results = {"id": 101, "name": "results", "status": "completed", "conclusion": "failure"}
+    api.listing(1, {**shard, "steps": steps}, results)
+    api.flakes(1, *_counted(), title="failed test")
+    notes = [{"annotation_level": "failure", "title": mc.INFRA_TITLE, "message": APT}]
+    api.answers[f"/repos/{REPO}/check-runs/100/annotations?per_page=100&page=1"] = notes
+    files = [
+        {"filename": "README.md", "status": "modified", "patch": README_PATCH, "sha": "1" * 40},
+        *({"filename": path, "status": "modified", "patch": "@@ -1 +1 @@\n+x"} for path in changed),
+    ]
+    api.answers[f"/repos/{REPO}/compare/{MAIN}...{QUEUE}"] = {"files": files}
+    api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
+    return api, queue
+
+
+def test_a_queue_commit_red_only_on_an_infrastructure_error_is_flake_class() -> None:
+    api, queue = _queue_infra_run()
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure" and found.head_sha == QUEUE
+    assert found.output["title"].startswith("Red (retry 0 of 2, flake-class): ")
+    assert (
+        f"- flake-class: `{SHARD}` failed at `Set up the toolchain` on an infrastructure error"
+        f" ({APT}), no test failed\n"
+    ) in found.output["summary"]
+
+
+def test_a_queue_commit_whose_change_touches_a_local_action_owns_its_infrastructure_error() -> None:
+    """Read against the queue commit's own change: one that changes what writes the error owns
+    it."""
+    api, queue = _queue_infra_run(mc.LOCAL_ACTIONS + "setup/action.yml")
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure" and found.head_sha == QUEUE
+    assert found.output["title"].startswith("Red (retry 0 of 2): "), found.output["title"]
+    assert (
+        f"- not flake-class: `{SHARD}` failed on an infrastructure error, and {OWNS}"
+    ) in found.output["summary"]
 
 
 def test_a_queue_commit_s_note_it_cannot_read_leaves_its_red_as_it_is() -> None:

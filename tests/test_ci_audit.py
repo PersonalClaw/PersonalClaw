@@ -42,6 +42,20 @@ CLEAN_NPM = {
     "vulnerabilities": {},
     "metadata": {"vulnerabilities": {"moderate": 0, "high": 0, "critical": 0, "total": 0}},
 }
+#: pip-audit's stderr when PyPI did not answer, as the audit job recorded it on 2026-11-18.
+PYPI_TIMEOUT = (
+    "Traceback (most recent call last):\n"
+    '  File "requests/adapters.py", line 713, in send\n'
+    "requests.exceptions.ReadTimeout: HTTPSConnectionPool(host='pypi.org', port=443): Read timed"
+    " out. (read timeout=15)\n"
+)
+#: npm audit's report when the registry's audit endpoint did not answer.
+NPM_TIMEOUT = {
+    "error": {
+        "code": "ETIMEDOUT",
+        "summary": "request to https://registry.npmjs.org/-/npm/v1/security/advisories/bulk failed",
+    }
+}
 
 
 def _npm(*advisories: tuple[str, str, str]) -> dict:
@@ -79,12 +93,17 @@ class FakeTools:
         npm_exit: int | None = None,
         image_npm_exit: int | None = None,
         export_exit: int = 0,
+        pip_down: int = 0,
+        npm_down: int = 0,
+        pip_down_with: str = PYPI_TIMEOUT,
     ) -> None:
         self.pip = CLEAN_PIP if pip is None else pip
         self.npm = CLEAN_NPM if npm is None else npm
         self.image_npm = CLEAN_NPM if image_npm is None else image_npm
         self.pip_exit, self.npm_exit, self.export_exit = pip_exit, npm_exit, export_exit
         self.image_npm_exit = image_npm_exit
+        # How many of the next pip-audit and npm audit runs cannot reach their service.
+        self.pip_down, self.npm_down, self.pip_down_with = pip_down, npm_down, pip_down_with
         self.calls: list[list[str]] = []
 
     def __call__(self, argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -95,6 +114,12 @@ class FakeTools:
             if self.export_exit == 0:
                 out.write_text("idna==3.6\n", encoding="utf-8")
             return subprocess.CompletedProcess(argv, self.export_exit, "", "lock is stale")
+        if "pip_audit" in argv and self.pip_down:
+            self.pip_down -= 1
+            return subprocess.CompletedProcess(argv, 1, "", self.pip_down_with)
+        if argv[:2] == ["npm", "audit"] and self.npm_down:
+            self.npm_down -= 1
+            return subprocess.CompletedProcess(argv, 1, json.dumps(NPM_TIMEOUT), "")
         if "pip_audit" in argv:
             report = Path(argv[argv.index("-o") + 1])
             if self.pip is not False:
@@ -136,11 +161,18 @@ def _waiver(
     return "\n".join(lines) + "\n"
 
 
-def _run(tmp_path: Path, tools: FakeTools, baseline: str = "", monkeypatch=None):
+def _never_waits(seconds: float) -> None:
+    raise AssertionError(f"the audit waited {seconds} s to try a tool again")
+
+
+def _run(tmp_path: Path, tools: FakeTools, baseline: str = "", monkeypatch=None, sleep=None):
+    """The audit's run; by default it must never wait to try a tool again."""
     path = tmp_path / "audit-baseline.toml"
     path.write_text(baseline, encoding="utf-8")
     argv = ["run", "--pip-audit", "py", "--work", str(tmp_path / "work"), "--baseline", str(path)]
-    return audit.main(argv, run=tools, today=TODAY, root=tmp_path / "tree")
+    return audit.main(
+        argv, run=tools, today=TODAY, root=tmp_path / "tree", sleep=sleep or _never_waits
+    )
 
 
 #: An image's own npm lock, in the planted tree the audit reads: what that image installs.
@@ -285,6 +317,13 @@ def test_a_waiver_that_matches_no_finding_is_refused_so_the_list_cannot_rot(tmp_
         pytest.param(FakeTools(export_exit=2), id="the locked export fails"),
         pytest.param(FakeTools(pip=False, pip_exit=1), id="pip-audit writes no report"),
         pytest.param(FakeTools(pip_exit=2), id="pip-audit crashes"),
+        pytest.param(
+            FakeTools(pip_down=1, pip_down_with="KeyError: 'info'\n"),
+            id="pip-audit fails on no network error",
+        ),
+        pytest.param(
+            FakeTools(npm={"error": {"code": "E404"}}, npm_exit=1), id="npm errors on no network"
+        ),
         pytest.param(FakeTools(pip="not json"), id="pip-audit writes garbage"),
         pytest.param(FakeTools(pip={"dependencies": []}), id="pip-audit audits nothing"),
         pytest.param(FakeTools(npm="", npm_exit=1), id="npm audit prints nothing"),
@@ -298,6 +337,58 @@ def test_a_tool_that_fails_to_run_fails_the_job(
 ) -> None:
     assert _run(tmp_path, tools) == 2
     assert "The audit did not run" in _no_summary.read_text(encoding="utf-8")
+
+
+# ── an advisory service that does not answer (#5848) ───────────────────────────────────────────
+
+
+def _waits() -> tuple[list[float], object]:
+    waited: list[float] = []
+    return waited, waited.append
+
+
+@pytest.mark.parametrize(
+    "tools, where",
+    [
+        pytest.param(FakeTools(pip_down=99), "pip-audit on wheel", id="pypi"),
+        pytest.param(FakeTools(npm_down=99), "npm audit on package-lock.json", id="npm"),
+    ],
+)
+def test_an_advisory_service_that_never_answers_fails_the_job_as_infrastructure(
+    tmp_path: Path, tools: FakeTools, where: str, capsys, _no_summary
+) -> None:
+    waited, sleep = _waits()
+    assert _run(tmp_path, tools, sleep=sleep) == 2, "still red: an audit that did not run"
+    assert waited == list(audit.FETCH_WAITS)
+    out = capsys.readouterr().out
+    assert (
+        "::error title=infrastructure::the dependency audit could not reach its advisory service"
+        f" ({where})\n"
+    ) in out
+    assert "did not run" not in out
+    summary = _no_summary.read_text(encoding="utf-8")
+    assert "**The audit could not reach its advisory service**, after 3 more tries" in summary
+    tool = "pip_audit" if "pip" in where else "npm"
+    assert sum(tool in call for call in tools.calls) == 1 + len(audit.FETCH_WAITS)
+
+
+@pytest.mark.parametrize("pip", [CLEAN_PIP, VULN_PIP], ids=["clean", "a-finding"])
+def test_an_advisory_service_that_answers_on_a_later_try_is_audited_as_usual(
+    tmp_path: Path, pip: dict, capsys
+) -> None:
+    waited, sleep = _waits()
+    found = _run(tmp_path, FakeTools(pip=pip, pip_down=2, npm_down=1), sleep=sleep)
+    assert found == (1 if pip is VULN_PIP else 0)
+    assert waited == list(audit.FETCH_WAITS)
+    assert "infrastructure" not in capsys.readouterr().out
+
+
+def test_the_tries_are_the_whole_run_s_not_each_tool_s(tmp_path: Path, capsys) -> None:
+    """Three more tries in all, however many graphs the outage reaches: the job's bound holds."""
+    waited, sleep = _waits()
+    assert _run(tmp_path, FakeTools(pip_down=3, npm_down=1), sleep=sleep) == 2
+    assert waited == list(audit.FETCH_WAITS)
+    assert "advisory service (npm audit on package-lock.json)" in capsys.readouterr().out
 
 
 def test_an_unreadable_baseline_fails_the_job(tmp_path: Path) -> None:
