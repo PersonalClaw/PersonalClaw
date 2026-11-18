@@ -73,7 +73,6 @@ NON_REUSABLE = frozenset(
         "ubuntu-24.04-3.13",
         "macos-26-3.12",
         "ubuntu-24.04-arm-3.13",
-        "coverage",
         "security",
         "security-macos",
         "canary",
@@ -85,7 +84,6 @@ NON_REUSABLE = frozenset(
         "planned-ids-ubuntu",
         "planned-ids-macos",
         "planned-ids-arm",
-        "planned-ids-coverage-shard",
         "planned-ids-canary",
         "planned-ids-random-order",
         "shard-union",
@@ -102,7 +100,6 @@ SHARDS: Mapping[str, int] = {
     "rails-macos-26-3.12": 1,
     "collection-parses": 1,
     "ubuntu-24.04-arm-3.13": 4,
-    "coverage": 6,
     "security": 1,
     "security-macos": 1,
     "canary": 4,
@@ -110,11 +107,10 @@ SHARDS: Mapping[str, int] = {
     "install-smoke": 1,
     "audit": 1,
     # #3923: each suite leg's planned suite, collected on its own runner, and the union checks:
-    # the five gating legs' and the advisory canary's.
+    # the four gating legs' and the advisory canary's.
     "planned-ids-ubuntu": 1,
     "planned-ids-macos": 1,
     "planned-ids-arm": 1,
-    "planned-ids-coverage-shard": 1,
     "planned-ids-canary": 1,
     "planned-ids-random-order": 1,
     "shard-union": 1,

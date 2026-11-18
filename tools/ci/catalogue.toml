@@ -454,47 +454,6 @@ command = [
   { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}2", "--basetemp", "/var/tmp/pytest-random-order-{run_number}2", "--junitxml=reports/junit-random-order-2.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },
 ]
 
-# The suite under the coverage tracer, retiring (#5846): its reds are the tracer's, timing bounds a
-# traced run misses on tests every untraced leg passes, and nothing gates on the number. A
-# security job leaves in two merges: this mark first, then the entry, coverage and
-# planned-ids-coverage-shard go together.
-[[job]]
-id = "coverage-shard"
-tiers = ["breadth"]
-inputs = [":(glob)**"]
-external_inputs = ["shard-history"]
-toolchain = ["uv-sync"]
-cache = ["uv"]
-security = "security"
-retiring = "#5846"
-platform = "ubuntu-24.04"
-python = "3.12.15"
-timeout_min = 60
-workers = "auto"
-shards = 6
-env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1", COVERAGE_FILE = ".coverage.shard{shard}" }
-junit = ["reports/junit-coverage-shard.xml"]
-command = [
-  { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "coverage-shard", "--shard", "{shard}/6", "--out", "{runner_temp}/shard.txt"] },
-  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "--cov=personalclaw", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-coverage-shard.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-coverage-shard-{shard}.txt"] },
-]
-
-# The coverage shards' data combined into one report: all six shards' data or none.
-[[job]]
-id = "coverage"
-tiers = ["breadth"]
-inputs = [":(glob)**"]
-external_inputs = []
-toolchain = ["uv-sync"]
-cache = ["uv"]
-security = "ordinary"
-python = "3.12.15"
-timeout_min = 15
-after = ["coverage-shard"]
-command = [
-  { argv = ["sh", "tools/ci/coverage_combine.sh"] },
-]
-
 # The rails on macOS, and breadth's one whole-tree harness scan: breadth runs no static. No rail
 # is security-marked, so this leg alone may carry an earlier result on identical inputs.
 [[job]]
@@ -621,25 +580,6 @@ command = [
 ]
 
 [[job]]
-id = "planned-ids-coverage-shard"
-tiers = ["breadth"]
-inputs = [":(glob)**"]
-external_inputs = []
-toolchain = ["uv-sync"]
-cache = ["uv"]
-security = "ordinary"
-platform = "ubuntu-24.04"
-python = "3.12.15"
-timeout_min = 20
-workers = 0
-env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
-junit = ["reports/junit-planned-coverage-shard.xml"]
-command = [
-  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out", "{runner_temp}/universe.txt"] },
-  { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-coverage-shard.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-coverage-shard.txt"] },
-]
-
-[[job]]
 id = "planned-ids-canary"
 tiers = ["breadth"]
 inputs = [":(glob)**"]
@@ -677,7 +617,7 @@ command = [
   { argv = ["uv", "run", "pytest", "--collect-only", "-qq", "-n0", "tests", "--shard-list", "{runner_temp}/universe.txt", "--junitxml=reports/junit-planned-random-order.xml", "--shard-ids", "{runner_temp}/ids/planned-ids-random-order.txt"] },
 ]
 
-# The union of the five legs whose red is the run's. The canary's is its own job, advisory as
+# The union of the four legs whose red is the run's. The canary's is its own job, advisory as
 # the canary is, so the next image's red never reds this one.
 [[job]]
 id = "shard-union"
@@ -689,9 +629,9 @@ cache = ["uv"]
 security = "ordinary"
 python = "3.13.16"
 timeout_min = 10
-after = ["suite-ubuntu", "suite-macos", "suite-arm", "coverage-shard", "planned-ids-ubuntu", "planned-ids-macos", "planned-ids-arm", "planned-ids-coverage-shard", "random-order", "planned-ids-random-order"]
+after = ["suite-ubuntu", "suite-macos", "suite-arm", "planned-ids-ubuntu", "planned-ids-macos", "planned-ids-arm", "random-order", "planned-ids-random-order"]
 command = [
-  { argv = ["{python}", "-m", "tools.ci", "shards", "union", "--dir", "{runner_temp}/ids", "--leg", "ubuntu:4", "--leg", "macos:6", "--leg", "arm:4", "--leg", "coverage-shard:6", "--leg", "random-order:4"] },
+  { argv = ["{python}", "-m", "tools.ci", "shards", "union", "--dir", "{runner_temp}/ids", "--leg", "ubuntu:4", "--leg", "macos:6", "--leg", "arm:4", "--leg", "random-order:4"] },
 ]
 
 [[job]]

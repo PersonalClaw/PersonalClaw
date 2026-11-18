@@ -759,9 +759,11 @@ def test_a_failed_run_is_judged_by_its_records(planted: dict[str, object]) -> No
     its records say which legs were red, and a gating red refuses."""
     advisory = BreadthApi(planted)
     advisory.run(
-        70, _record(70, advisory.tree, **{"coverage/5": _red("coverage/5")}), conclusion="failure"
+        70,
+        _record(70, advisory.tree, **{"shard-union-canary/1": _red("shard-union-canary/1")}),
+        conclusion="failure",
     )
-    advisory.issue("coverage", 4769)
+    advisory.issue("shard-union-canary", 4769)
     assert "#4769" in _breadth(planted, advisory)
     gating = BreadthApi(planted)
     key = "ubuntu-24.04-3.13/2"
@@ -951,18 +953,36 @@ def test_main_reads_breadth_before_it_creates_a_release_tag_and_a_rehearsal_read
 
 
 def test_the_advisory_legs_are_breadths_own() -> None:
-    assert release_tag.ADVISORY_LEGS <= set(breadth_evidence.SHARDS)
-    assert {"canary", "coverage"} <= release_tag.ADVISORY_LEGS
+    """Each advisory leg is one breadth runs, or one it retired, which it no longer runs."""
+    assert release_tag.ADVISORY_LEGS - release_tag.RETIRED_LEGS <= set(breadth_evidence.SHARDS)
+    assert release_tag.RETIRED_LEGS.isdisjoint(breadth_evidence.SHARDS)
+    assert {"canary", "planned-ids-canary", "shard-union-canary"} <= release_tag.ADVISORY_LEGS
+    assert "coverage" in release_tag.RETIRED_LEGS
     for gating in ("ubuntu-24.04-3.13", "macos-26-3.12", "ubuntu-24.04-arm-3.13", "random-order"):
         assert gating not in release_tag.ADVISORY_LEGS
+
+
+def test_a_record_from_before_the_coverage_leg_retired_reads_its_red_as_advisory(
+    planted: dict[str, object],
+) -> None:
+    """A record breadth wrote while it ran the coverage leg (#5846) holds its shards: one red is
+    owned by its open issue, as it was, and refuses nothing."""
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree, **{"coverage/5": _red("coverage/5")}))
+    api.issue("coverage", 4769)
+    said = _breadth(planted, api)
+    assert "/actions/runs/70" in said and "#4769" in said, said
 
 
 def test_an_advisory_red_with_its_open_issue_passes_and_is_listed(
     planted: dict[str, object],
 ) -> None:
     api = BreadthApi(planted)
-    api.run(70, _record(70, api.tree, **{"canary/1": _red("canary/1"), "coverage/5": _red("c")}))
-    api.issue("canary", 4768).issue("coverage", 4769)
+    api.run(
+        70,
+        _record(70, api.tree, **{"canary/1": _red("canary/1"), "shard-union-canary/1": _red("c")}),
+    )
+    api.issue("canary", 4768).issue("shard-union-canary", 4769)
     said = _breadth(planted, api)
     assert "/actions/runs/70" in said and "#4768" in said and "#4769" in said, said
 
@@ -972,7 +992,7 @@ def test_an_advisory_red_with_no_open_issue_refuses_naming_the_title(
 ) -> None:
     api = BreadthApi(planted)
     api.run(70, _record(70, api.tree, **{"canary/1": _red("canary/1")}))
-    api.issue("coverage", 4769)
+    api.issue("shard-union-canary", 4769)
     said = _breadth_refusal(planted, api)
     assert "breadth: canary is red" in said, said
 
@@ -1008,9 +1028,9 @@ def test_a_gating_red_refuses_whatever_issue_it_has(planted: dict[str, object]) 
 
 def test_an_earlier_attempts_red_counts_as_its_leg_does(planted: dict[str, object]) -> None:
     advisory = BreadthApi(planted)
-    first = _record(70, advisory.tree, **{"coverage/2": _red("coverage/2")})
+    first = _record(70, advisory.tree, **{"shard-union-canary/1": _red("shard-union-canary/1")})
     advisory.run(70, first, _record(70, advisory.tree, attempt=2), attempt=2)
-    advisory.issue("coverage", 4769)
+    advisory.issue("shard-union-canary", 4769)
     assert _breadth(planted, advisory).startswith(
         "https://github.com/owner/project/actions/runs/70"
     )

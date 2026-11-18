@@ -37,7 +37,7 @@ _BREADTH = _ROOT / ".github" / "workflows" / "breadth.yml"
 LONG_STANDING_PR_JOBS = frozenset({"changes", "test", "results"})
 
 
-LONG_STANDING_BREADTH_JOBS = frozenset({"install-smoke", "audit", "security", "coverage"})
+LONG_STANDING_BREADTH_JOBS = frozenset({"install-smoke", "audit", "security", "ubuntu"})
 
 
 class TestHeaderClaimsAreTrue:

@@ -3194,19 +3194,14 @@ def macos_budget_violations(tree: Tree) -> list[str]:
 #: its union is a job of its own, advisory as the canary is, and the gating union names it
 #: nowhere and waits on none of its jobs.
 _UNIONS: dict[str, tuple[str, ...]] = {
-    "shard-union": ("ubuntu", "macos", "arm", "coverage-shard", "random-order"),
+    "shard-union": ("ubuntu", "macos", "arm", "random-order"),
     "shard-union-canary": ("canary",),
 }
-#: breadth.yml's jobs #5846 retires with its coverage leg (the catalogue marks coverage-shard
-#: ``retiring``). A row holds each while breadth.yml has it: the removal lands in two merges, these
-#: rows first, so a tree without them is the change they wait for, not a check gone.
-_RETIRING_BREADTH_JOBS = frozenset({"coverage-shard", "coverage", "planned-ids-coverage-shard"})
 #: The jobs whose red is not a verdict on the run: the canary, its planned collection and its
 #: union, each continue-on-error.
 _ADVISORY_UNION_JOBS = frozenset({"canary", "planned-ids-canary", "shard-union-canary"})
-#: A suite leg's env a collection need not share: the Python is ``PY``, held on its own, and the
-#: coverage data file changes no test id.
-_COLLECTION_NEUTRAL_ENV = frozenset({"PY", "COVERAGE_FILE"})
+#: A suite leg's env a collection need not share: the Python is ``PY``, held on its own.
+_COLLECTION_NEUTRAL_ENV = frozenset({"PY"})
 _SHARD_LIST = '--shard-list "$RUNNER_TEMP/shard.txt"'
 
 
@@ -3329,16 +3324,12 @@ def shard_union_violations(tree: Tree) -> list[str]:
     jobs = _breadth_jobs(tree)
     bad: list[str] = []
     suites = {job_id for job_id, job in jobs.items() if _SHARD_LIST in _runs(job)}
-    unions = {
-        union: tuple(leg for leg in legs if leg in jobs or leg not in _RETIRING_BREADTH_JOBS)
-        for union, legs in _UNIONS.items()
-    }
-    held = [leg for legs in unions.values() for leg in legs]
+    held = [leg for legs in _UNIONS.values() for leg in legs]
     bad += [
         f"breadth.yml:{leg} runs suite shards that no union holds to its planned suite"
         for leg in sorted(suites - set(held))
     ]
-    for union, legs in unions.items():
+    for union, legs in _UNIONS.items():
         job = jobs.get(union)
         if job is None:
             bad.append(f"breadth.yml has no {union} job")
@@ -3559,8 +3550,8 @@ _INSTALLS_PYTHON = re.compile(r"\buv (?:venv|sync|tool install|python install)\b
 _ENTRY = re.compile(r"entry/([\w.-]+)__")
 
 
-#: breadth.yml's jobs that run no shard: the earlier record, the coverage combine, the report.
-_NOT_A_LEG = frozenset({"freshness", "coverage", "report"})
+#: breadth.yml's jobs that run no shard: the earlier record and the report.
+_NOT_A_LEG = frozenset({"freshness", "report"})
 #: The legs whose outside state moves daily, so the run's night is one of their inputs.
 _NIGHTLY_LEGS = frozenset({"install-smoke", "audit"})
 _NIGHT_INPUT = '--external "night=${NIGHT:?freshness named no night}"'
@@ -3625,7 +3616,7 @@ def _as_run(tree: Tree, job_id: str, step: dict[str, Any], bad: list[str]) -> st
 def breadth_shards_violations(tree: Tree) -> list[str]:
     """Every breadth shard records what it ran, so the record holds what the run did:
 
-    - every job but freshness, coverage and report is a leg, and writes entries under exactly
+    - every job but freshness and report is a leg, and writes entries under exactly
       one key, which no other job writes and its ``decide --key`` names; the keys and their
       matrices' shard counts (every dimension) are exactly ``SHARDS``;
     - a managed Python is installed before the first ``uv python find`` (setup-uv only names
@@ -3636,8 +3627,7 @@ def breadth_shards_violations(tree: Tree) -> list[str]:
       sha256sum`` pipe, continued lines included, and an unreadable one exits red after its
       inputs are written;
     - the installer smoke and the audit record freshness's night, which is the run's
-      ``created_at`` at the cron's slot (``NIGHT_STARTS_UTC``);
-    - the coverage combine reads a failed data download as a failure, never as "carried".
+      ``created_at`` at the cron's slot (``NIGHT_STARTS_UTC``).
     """
     workflow = _workflow(tree, "breadth.yml") or {}
     jobs = _breadth_jobs(tree)
@@ -3692,12 +3682,6 @@ def breadth_shards_violations(tree: Tree) -> list[str]:
                 and (at < 0 or not _UNREADABLE_IS_RED.search(raw[at:]))
             ):
                 bad.append(f"breadth.yml:{job_id}: an unreadable installer is not red")
-            if (
-                _action(step) == "actions/download-artifact"
-                and "coverage-data" in str((step.get("with") or {}).get("pattern", ""))
-                and step.get("continue-on-error")
-            ):
-                bad.append(f"breadth.yml:{job_id}: a failed coverage download is not a failure")
     if found != dict(breadth_evidence.SHARDS):
         bad.append(f"breadth.yml's shards {found} are not SHARDS {dict(breadth_evidence.SHARDS)}")
     return bad
@@ -5646,11 +5630,6 @@ ROWS: tuple[Row, ...] = (
                 "install-smoke, audit]\n    if: ${{ !cancelled() }}\n",
                 "install-smoke, audit]\n    if: ${{ success() }}\n",
             ),
-            Control(
-                "coverage, which reaches freshness through coverage-shard, passes",
-                _nothing,
-                fails=False,
-            ),
         ),
     ),
     _toolchain_row(
@@ -6207,20 +6186,6 @@ ROWS: tuple[Row, ...] = (
                 "installer=$(curl -fsSL https://personalclaw.dev/install | sha256sum)\n"
                 "          if true; then",
             ),
-            _plant_in_job(
-                "a failed coverage download read as carried",
-                _BREADTH,
-                "shard-union",
-                "      - name: each leg's shards collected its planned suite, each id once\n",
-                "      - name: Download the coverage data of every shard\n"
-                "        continue-on-error: true\n"
-                "        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
-                " # v8.0.2\n"
-                "        with:\n"
-                "          pattern: coverage-data-shard*\n"
-                "      - name: each leg's shards collected its planned suite, each id once\n",
-                expect="a failed coverage download is not a failure",
-            ),
             _plant(
                 "a shard count other than SHARDS'",
                 _BREADTH,
@@ -6745,7 +6710,6 @@ ROWS: tuple[Row, ...] = (
                     "run: >\n          uv run pytest\n          --no-cov\n          -n auto",
                 ),
             ),
-            Control("the coverage shard's --cov passes", _nothing, fails=False),
         ),
     ),
     FIXED_WAITS,
@@ -8995,8 +8959,6 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     # The suite in seeded orders: it runs the security-marked modules, and its seeds change every
     # run, so it is never reused.
     "random-order": _Mapped(("random-order",), ("breadth",), security="security"),
-    "coverage-shard": _Mapped(("coverage-shard",), ("breadth",), security="security"),
-    "coverage": _Mapped(("coverage",), ("breadth",)),
     "rails-macos": _Mapped(("rails-macos",), ("breadth",), reuse="tree"),
     "audit-nightly": _Mapped(("audit",), ("breadth",), live=True),
     # Collects the whole suite and runs no test (catalogue.collect_only), so it is no security
@@ -9008,7 +8970,6 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "planned-ids-ubuntu": _Mapped(("planned-ids-ubuntu",), ("breadth",)),
     "planned-ids-macos": _Mapped(("planned-ids-macos",), ("breadth",)),
     "planned-ids-arm": _Mapped(("planned-ids-arm",), ("breadth",)),
-    "planned-ids-coverage-shard": _Mapped(("planned-ids-coverage-shard",), ("breadth",)),
     "planned-ids-canary": _Mapped(("planned-ids-canary",), ("breadth",)),
     "planned-ids-random-order": _Mapped(("planned-ids-random-order",), ("breadth",)),
     "shard-union": _Mapped(("shard-union",), ("breadth",)),
@@ -9255,45 +9216,6 @@ _NOT_COMMAND_LINES = frozenset(
     tuple(words) for text in _NOT_COMMANDS.values() for _, words in _run_lines(text) if words
 )
 
-#: The lines of the coverage jobs #5846 retires that validate nothing, read as the lines above
-#: are. A row allows them while breadth.yml runs them and does not ask for them once it does not:
-#: the removal lands in two merges, these rows first.
-_RETIRING_NOT_COMMANDS: dict[str, str] = {
-    "coverage's: what its shards and its planned collection ran, written to the run's record": r"""
-"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
-
-"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-coverage-shard__1.json"
-""",  # noqa: E501
-    "coverage's: their results, read back from the entries they wrote": r"""
-"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
-
-"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-coverage-shard__1.json"
-""",  # noqa: E501
-    "breadth's: the coverage shards' result, gated before the combine": r"""
-result='${{ needs.coverage-shard.result }}'
-# Reachable only when a shard was cancelled while the run lived on: part of the
-# suite was measured by nothing, so it is red (matrix's doctrine).
-if [ "$result" = "cancelled" ]; then
-  echo "::error title=coverage shards unproven::a coverage shard was cancelled while" \
-       "this run was still live, so part of the suite was measured by nothing. Re-run."
-  exit 1
-fi
-if [ "$result" != "success" ]; then
-  echo "::error title=coverage shards failed::the coverage shards' result was" \
-       "'$result' (expected 'success'). Open the red 'coverage-shard (...)' leg(s) above."
-  exit 1
-fi
-echo "all coverage shards passed"
-
-""",  # noqa: E501
-}
-_RETIRING_NOT_COMMAND_LINES = frozenset(
-    tuple(words)
-    for text in _RETIRING_NOT_COMMANDS.values()
-    for _, words in _run_lines(text)
-    if words
-)
-
 
 @dataclass(frozen=True)
 class _Line:
@@ -9358,7 +9280,7 @@ def _job_lines(key: str, job: dict[str, Any], bad: list[str]) -> list[_Line]:
             if words is None:
                 bad.append(f"{_where(key)} runs {text!r} ({name!r}), which no argv can be")
                 continue
-            if tuple(words) in _NOT_COMMAND_LINES | _RETIRING_NOT_COMMAND_LINES:
+            if tuple(words) in _NOT_COMMAND_LINES:
                 continue
             argv = tuple(words)
             if argv in seen:
@@ -14037,7 +13959,7 @@ _STEPS_THAT_RUN_THEIR_OWN_TEST: frozenset[tuple[str, str, str]] = frozenset(
                 f"planned-ids-{leg}",
                 "pytest (collect the planned suite, writing its ids)",
             )
-            for leg in ("ubuntu", "macos", "arm", "coverage-shard", "canary", "random-order")
+            for leg in ("ubuntu", "macos", "arm", "canary", "random-order")
         ),
     }
 )
@@ -14070,10 +13992,7 @@ def own_test_step_violations(tree: Tree) -> list[str]:
                     " itself: a tier workflow runs each test through"
                     " `python -m tools.ci run-job <id>`"
                 )
-    present = {(name, str(job_id)) for name, job_id, _ in _jobs(tree, raw=True)}
     for name, job_id, label in sorted(_STEPS_THAT_RUN_THEIR_OWN_TEST - seen):
-        if job_id in _RETIRING_BREADTH_JOBS and (name, job_id) not in present:
-            continue
         if (name, job_id) not in runs_run_job:
             bad.append(
                 f"{name} job {job_id} step {label!r} runs no test any more, and its job runs no"
@@ -14187,7 +14106,6 @@ _FIRST_RUN_JOB_LEGS = {
     "macos": ("suite-macos", 6),
     "arm": ("suite-arm", 4),
     "canary": ("suite-canary", 4),
-    "coverage-shard": ("coverage-shard", 6),
 }
 #: Each one's suite step's name, as breadth.yml writes it, and as it runs through run-job.
 _SUITE_STEP_NAME = {"canary": "pytest (canary shard ${{ matrix.shard }})"}

@@ -30,23 +30,24 @@ a failing shard report *skipped* instead of red, hiding real failures) and a per
 (which stops the cancellation by fanning a 24-leg matrix out per merge). So each relation is
 stated on its own:
 
-1. no verdict job is gated on bare ``always()``: ``breadth.yml``'s ``coverage`` gate, and each
-   tier workflow's ``results``, whose steps would otherwise run on a cancelled run and publish a
-   green check for a run that measured nothing;
+1. no verdict job is gated on bare ``always()``: each tier workflow's ``results``, whose steps
+   would otherwise run on a cancelled run and publish a green check for a run that measured
+   nothing;
 2. each is gated on ``!cancelled()`` — a failing shard still reaches it and reds, because
    ``fail-fast: false`` means a shard failure never cancels the run;
 3. a shard cancelled on a live run is its OWN case, not folded into the generic failure: the
-   ``coverage`` gate says *unproven*, and the tier's verdict reads the job ``cancelled``, red
-   (``tests/test_ci_verdict_records.py``). On a push to main, a suite shard a newer push's
-   waiting shard replaced reads ``superseded``, red, when main's ``tools/ci/superseded.py``
-   proves it from the API (``merge.yml``'s ``results``), and ``cancelled`` otherwise;
+   tier's verdict reads the job ``cancelled``, red (``tests/test_ci_verdict_records.py``). On a
+   push to main, a suite shard a newer push's waiting shard replaced reads ``superseded``, red,
+   when main's ``tools/ci/superseded.py`` proves it from the API (``merge.yml``'s ``results``),
+   and ``cancelled`` otherwise;
 4. main's verification run never cancels in progress: ``breadth.yml``'s group, and
    ``merge.yml``'s, which cancels only a pull request's run;
 5. the tier still DOES cancel a pull request's run in progress — a newer push to its branch
    must cancel the run it supersedes, and fixing #2946 must not cost that.
 
 ci.yml, whose ``test`` gate this file first held, was retired by #3915; its verdict is the
-tier's ``results``.
+tier's ``results``. ``breadth.yml``'s ``coverage`` gate, the other aggregation gate it held, went
+with breadth's coverage leg (#5846).
 
 Parsed with a line scan rather than PyYAML, matching the convention its siblings
 ``tests/rails/test_ci_concurrency_dedupe.py`` and ``tests/rails/test_ci_tier_enforcement.py``
@@ -69,26 +70,8 @@ PR_YML = WORKFLOWS / "pr.yml"
 MERGE_YML = WORKFLOWS / "merge.yml"
 TIER = (PR_YML, MERGE_YML)
 
-#: ``(workflow file, aggregation job name, the sharded matrix job it aggregates)``.
-AGGREGATE_GATES: tuple[tuple[Path, str, str], ...] = ((BREADTH_YML, "coverage", "coverage-shard"),)
-#: The gates #5846 retires with breadth's coverage leg. Each is held while its workflow has it; a
-#: removal lands in two merges, these rows first, so a tree without it is no broken parse.
-RETIRING_GATES = frozenset({(BREADTH_YML, "coverage")})
-
-
-def _has_job(path: Path, job: str) -> bool:
-    return f"\n  {job}:\n" in path.read_text(encoding="utf-8")
-
-
-def _retired(path: Path, job: str) -> bool:
-    """Whether *job* is a retiring gate its workflow no longer has: nothing of it to hold."""
-    return (path, job) in RETIRING_GATES and not _has_job(path, job)
-
-
-#: The verdict jobs relations 1 and 2 hold: each aggregation gate and each tier's ``results``.
-VERDICT_JOBS: tuple[tuple[Path, str], ...] = tuple((p, j) for p, j, _ in AGGREGATE_GATES) + tuple(
-    (p, "results") for p in TIER
-)
+#: The verdict jobs relations 1 and 2 hold: each tier's ``results``.
+VERDICT_JOBS: tuple[tuple[Path, str], ...] = tuple((p, "results") for p in TIER)
 
 #: A tier workflow's cancel-in-progress: true for a pull request's run, false for any other and
 #: for a Dependabot head's, which waits its turn in the one group every Dependabot head's tier
@@ -149,20 +132,6 @@ def _cancel_in_progress(path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path,job,shard_job", AGGREGATE_GATES, ids=lambda v: getattr(v, "name", v))
-def test_the_aggregate_gate_was_actually_found(path: Path, job: str, shard_job: str) -> None:
-    if _retired(path, job):
-        return
-    block = _job_block(path, job)
-    assert block, f"{path.name}: the {job!r} job parsed as an empty block"
-    body = "\n".join(block)
-    assert f"needs.{shard_job}.result" in body, (
-        f"{path.name}: the {job!r} job does not read `needs.{shard_job}.result`, so it is not "
-        f"the aggregation gate this file thinks it is — the rail stopped watching the gate."
-    )
-    assert _job_if(path, job), f"{path.name}: the {job!r} job carries no job-level `if:`"
-
-
 @pytest.mark.parametrize("path", TIER, ids=lambda p: p.name)
 def test_the_tier_verdict_was_actually_found(path: Path) -> None:
     body = "\n".join(_job_block(path, "results"))
@@ -193,8 +162,6 @@ def test_the_gate_is_not_run_on_a_cancelled_run(path: Path, job: str) -> None:
     false`` on the matrix means a failing shard never cancels the run, so both conditions hold
     at once — the gate reds on a real failure and reports nothing at all on a cancellation.
     """
-    if _retired(path, job):
-        return
     expr = _job_if(path, job)
     assert "cancelled()" in expr, (
         f"{path.name}: the {job!r} gate is `if: {expr}`, which says nothing about cancellation. "
@@ -210,32 +177,6 @@ def test_the_gate_is_not_run_on_a_cancelled_run(path: Path, job: str) -> None:
         f"{path.name}: the {job!r} gate is `if: {expr}`. Gating on `success()` makes a FAILING "
         f"shard report this stable check as *skipped* rather than red, which hides exactly the "
         f"failures the gate exists to surface. `!cancelled()` is the condition that does both."
-    )
-
-
-@pytest.mark.parametrize("path,job,shard_job", AGGREGATE_GATES, ids=lambda v: getattr(v, "name", v))
-def test_the_gate_script_treats_cancelled_as_its_own_case(
-    path: Path, job: str, shard_job: str
-) -> None:
-    """Relation 3 — 'no answer' and 'a failing answer' must not share one message.
-
-    The job-level ``!cancelled()`` covers a cancelled RUN. A single leg cancelled while the run
-    lives on is a different state: the run is real, and one shard of the suite produced no
-    answer. That must red (an unanswered question is never a passing answer — the doctrine
-    ``breadth.yml``'s install-smoke legs already state) but with a message that says *unproven*
-    rather than sending the reader hunting for a failing test that does not exist.
-    """
-    if _retired(path, job):
-        return
-    body = "\n".join(_job_block(path, job))
-    assert "cancelled" in body, (
-        f"{path.name}: the {job!r} gate script never mentions 'cancelled', so a leg that was "
-        f"cancelled on a live run is reported as though a test had failed."
-    )
-    assert "unproven" in body, (
-        f"{path.name}: the {job!r} gate script has no 'unproven' branch. A cancelled leg means "
-        f"the suite measured nothing; saying 'shards failed' points the reader at a failing "
-        f"test that does not exist."
     )
 
 
