@@ -1502,7 +1502,8 @@ check of its own: `merge-verdict` is the trusted controller's alone (#3910).
 - **`results`** runs whatever ran before it unless the run was cancelled (`!cancelled()`, so a
   cancelled run publishes no verdict), after every other job, and judges the
   plan's keys against `toJSON(needs)` and the records the run's entries uploaded, with `main`'s
-  `tools/ci/verdict.py`, read from the API and run under `python3 -I`, with the partner head
+  `tools/ci/verdict.py`, fetched with git (one commit, no API call) and run under
+  `python3 -I`, with the partner head
   `changes` published as the candidate's partner and its partners by key: a planned entry with no
   record, a cancelled, skipped or red one, a record of another head, partner head, run or later
   attempt, a record naming other partners than its job reads, and a failed job of the run each

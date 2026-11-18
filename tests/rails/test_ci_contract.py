@@ -613,24 +613,6 @@ def _plant(
     return Control(name, plant, fails, expect)
 
 
-def _plant_either(
-    name: str, rel: str, edits: tuple[tuple[str, str], ...], expect: str = ""
-) -> Control:
-    """A violation planted by the first of *edits* whose text the file holds, for a row that reads
-    a step in either of two forms while the change between them lands (ci.md: the row first), so
-    it plants the same violation in either; a file that holds none of them fails loudly."""
-
-    def plant(root: Path) -> None:
-        text = (root / rel).read_text(encoding="utf-8")
-        for old, new in edits:
-            if old in text:
-                _write(root, rel, text.replace(old, new, 1))
-                return
-        raise AssertionError(f"the plant {name!r} found none of {[o for o, _ in edits]!r} in {rel}")
-
-    return Control(name, plant, True, expect)
-
-
 def _plant_line(
     name: str,
     rel: str,
@@ -15330,28 +15312,10 @@ python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
     _RESULTS_JOB: {
         "the runner's identity": _RUNNER_IDENTITY_LINE,
         # The flake rule's lists (tools/ci/verdict.py), on a pull request's run: the verdict step
-        # reads its inputs, then the two lists, then calls main's verdict with them.
+        # reads its inputs, then the two lists, then calls main's verdict with them. Main's
+        # verdict.py is fetched with git rather than read from the API, whose per-repository
+        # budget every workflow's token shares: one commit, at JUDGE, its blobs fetched as read.
         "the verdict's inputs, read": r"""
-set -u
-judge="$RUNNER_TEMP/verdict.py"
-if ! gh api -H "Accept: application/vnd.github.raw" \
-     "repos/${GITHUB_REPOSITORY}/contents/tools/ci/verdict.py?ref=${JUDGE:-main}" > "$judge"; then
-  echo "::error title=no verdict::main's tools/ci/verdict.py could not be read, so nothing judged this run. Re-run the job."
-  exit 1
-fi
-printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
-printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"
-printf '%s' "${KEY_PARTNERS:-"{}"}" > "$RUNNER_TEMP/key-partners.json"
-mkdir -p "$RUNNER_TEMP/records"
-proof=""
-if [ -f "$RUNNER_TEMP/superseded.json" ]; then
-  proof="$RUNNER_TEMP/superseded.json"
-fi
-""",  # noqa: E501
-        # The same inputs with main's verdict.py fetched with git rather than read from the API,
-        # whose per-repository budget every workflow's token shares: one commit, at JUDGE as
-        # before, its blobs fetched as read.
-        "the verdict's inputs, main's verdict.py fetched with git": r"""
 set -u
 judge="$RUNNER_TEMP/verdict.py"
 if ! ( export GIT_DIR="$RUNNER_TEMP/judge.git" \
@@ -15464,13 +15428,6 @@ _QUEUE_FLAKE_VERDICT = (
     "each later attempt's jobs, on a rerun, once main's verdict reads them",
     "main's verdict.py, given the flake rule's lists and the attempts' jobs",
 )
-#: The verdict step as the change that fetches main's verdict.py with git writes it in both
-#: workflows. Either verdict step passes here until that change lands, which lists only its own
-#: (ci.md: the row first).
-_QUEUE_FLAKE_VERDICT_FETCHED = (
-    "the verdict's inputs, main's verdict.py fetched with git",
-    *_QUEUE_FLAKE_VERDICT[1:],
-)
 #: The plan step, its changed paths compared with what the run compares with (0.4.0 A1): main, or
 #: a queue commit's queue base.
 _PLAN_STEP_TAIL = (
@@ -15515,7 +15472,6 @@ _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("the runner's identity",),
         ("main's superseded.py, over the suite shards a newer push to main replaced",),
         _QUEUE_FLAKE_VERDICT,
-        _QUEUE_FLAKE_VERDICT_FETCHED,
     ),
 }
 
@@ -15550,15 +15506,12 @@ _TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {
     # Each tier workflow's plan job runs one of these, as _TIER_ONE_OF holds: the plan step as it
     # is, or as the entry tier's change writes it.
     _PLAN_JOB: frozenset({_PLAN_COMPARED, _PLAN_TIERED}),
-    # Each tier workflow's results job runs one of these: the verdict step as it is, or as the
-    # change that fetches main's verdict.py with git writes it.
-    _RESULTS_JOB: frozenset({_QUEUE_FLAKE_VERDICT, _QUEUE_FLAKE_VERDICT_FETCHED}),
 }
 #: Listed steps of which each tier workflow's job runs exactly one: its plan step, and its results
 #: job's verdict.
 _TIER_ONE_OF: dict[str, frozenset[tuple[str, ...]]] = {
     _PLAN_JOB: frozenset({_PLAN_COMPARED, _PLAN_TIERED}),
-    _RESULTS_JOB: frozenset({_QUEUE_FLAKE_VERDICT, _QUEUE_FLAKE_VERDICT_FETCHED}),
+    _RESULTS_JOB: frozenset({_QUEUE_FLAKE_VERDICT}),
 }
 _STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
 #: The actions a stage job's steps use besides its two lines: the checkouts, the setup action,
@@ -17135,15 +17088,12 @@ _PR_JUDGE_LINE = '          JUDGE: ""\n'
 #: Each tier's JUDGE: merge.yml's push stage sets it, pr.yml's is empty.
 _JUDGE_OF = {"merge.yml": _JUDGE_REF, "pr.yml": ""}
 _JUDGE_AT_THE_PUSH = "          JUDGE: ${{ github.event_name == 'push' && github.sha || '' }}\n"
-#: What each step reads at JUDGE: the planner's archive, by the branch's full name off a push,
-#: and main's verdict.py, read from the API or, as the change that moves it writes it, fetched
-#: with git by the branch's full name too. Either read passes until that change lands, which
-#: lists only its own (ci.md: the row first).
-_JUDGED: dict[str, tuple[str, ...]] = {
-    "plan": ('git fetch --no-tags --depth=1 origin "${JUDGE:-refs/heads/main}"',),
+#: What each step reads at JUDGE, each by the branch's full name off a push: the planner's
+#: archive, and main's verdict.py, fetched with git.
+_JUDGED = {
+    "plan": 'git fetch --no-tags --depth=1 origin "${JUDGE:-refs/heads/main}"',
     "verdict": (
-        "contents/tools/ci/verdict.py?ref=${JUDGE:-main}",
-        'git fetch -q --no-tags --depth=1 --filter=blob:none origin "${JUDGE:-refs/heads/main}"',
+        'git fetch -q --no-tags --depth=1 --filter=blob:none origin "${JUDGE:-refs/heads/main}"'
     ),
 }
 
@@ -17183,11 +17133,8 @@ def judge_ref_violations(root: Path) -> list[str]:
                     f"{where} takes its judge's ref from {judge!r}, not the commit a push to main"
                     " replaced and main on any other run"
                 )
-            run = " ".join(str(step.get("run", "")).split())
-            if not any(read in run for read in _JUDGED[what]):
-                bad.append(
-                    f"{where} does not read its judge at JUDGE ({' or '.join(_JUDGED[what])})"
-                )
+            if _JUDGED[what] not in " ".join(str(step.get("run", "")).split()):
+                bad.append(f"{where} does not read its judge at JUDGE ({_JUDGED[what]})")
     return bad
 
 
@@ -17214,11 +17161,14 @@ A_COMMIT_NEVER_JUDGES_ITS_OWN_PUSH = Row(
         _plant_in_job("the planner read at before on a pull request", _PR_YML, "changes",
                       _PR_JUDGE_LINE, "          JUDGE: ${{ github.event.before }}\n",
                       expect="pr.yml's plan step takes its judge's ref from"),
-        _plant_either("the verdict's copy read at main whatever JUDGE says", _MERGE_YML, (
-                          ("verdict.py?ref=${JUDGE:-main}", "verdict.py?ref=main"),
-                          ('--filter=blob:none origin "${JUDGE:-refs/heads/main}"',
-                           "--filter=blob:none origin refs/heads/main"),
-                      ), expect="merge.yml's verdict step does not read its judge at JUDGE"),
+        _plant("the verdict's copy fetched at main whatever JUDGE says", _MERGE_YML,
+               '--filter=blob:none origin "${JUDGE:-refs/heads/main}"',
+               "--filter=blob:none origin refs/heads/main",
+               expect="merge.yml's verdict step does not read its judge at JUDGE"),
+        _plant("the verdict's copy fetched off a push by a name a tag could take", _PR_YML,
+               '--filter=blob:none origin "${JUDGE:-refs/heads/main}"',
+               '--filter=blob:none origin "${JUDGE:-main}"',
+               expect="pr.yml's verdict step does not read its judge at JUDGE"),
         _plant("the planner fetched at main whatever JUDGE says", _MERGE_YML,
                'origin "${JUDGE:-refs/heads/main}"', "origin refs/heads/main",
                expect="merge.yml's plan step does not read its judge at JUDGE"),
