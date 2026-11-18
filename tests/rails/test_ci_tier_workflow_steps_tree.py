@@ -1730,6 +1730,17 @@ def _timeouts(tmp: Path) -> list[str]:
 
 _SUDO_APT = f"sudo {_APT}"
 
+#: The step's bounds, first and after the move: 180 and 300 s today, 420 and 600 s once the step
+#: waits out a slow mirror (11-18). Main's rows hold either while that change lands, as its
+#: contract runs these rows over the head (rows first); the change itself holds only its own.
+_BOUNDS = ((180, 300), (420, 600))
+
+
+def _either_wording(warning: str) -> list[list[str]]:
+    """The move's warning as the step words it today ("did not answer") and once it waits out a
+    slow mirror ("did not answer in time"), each as the one warning a log holds."""
+    return [[warning], [warning.replace(" did not answer: ", " did not answer in time: ")]]
+
 
 @pytest.mark.parametrize(
     "sources", [_SOURCES, _STOCK_SOURCES], ids=["github-s-mirror-list", "ubuntu-s-own"]
@@ -1747,22 +1758,25 @@ def test_a_mirror_that_hangs_is_left_once_for_archive_ubuntu_com(
         f"{_APT} update -qq",
         f"{_APT} install -y --no-install-recommends ffmpeg",
     ]
-    assert _timeouts(tmp_path) == [
-        f"180 {_SUDO_APT} update -qq",
-        "300 sudo dpkg --configure -a",
-        f"300 {_SUDO_APT} update -qq",
-        f"300 {_SUDO_APT} install -y --no-install-recommends ffmpeg",
-    ]
+    assert _timeouts(tmp_path) in [
+        [
+            f"{first} {_SUDO_APT} update -qq",
+            f"{retry} sudo dpkg --configure -a",
+            f"{retry} {_SUDO_APT} update -qq",
+            f"{retry} {_SUDO_APT} install -y --no-install-recommends ffmpeg",
+        ]
+        for first, retry in _BOUNDS
+    ], _timeouts(tmp_path)
     for rel, text in sources.items():
         moved = text.replace("azure.archive.ubuntu.com", "archive.ubuntu.com")
         assert (tmp_path / "etc" / "apt" / rel).read_text() == moved, rel
     if "apt-mirrors.txt" in sources:
         first = (tmp_path / "etc" / "apt" / "apt-mirrors.txt").read_text().splitlines()[0]
         assert first == "http://archive.ubuntu.com/ubuntu/\tpriority:1", first
-    assert _warnings(log) == [
+    assert _warnings(log) in _either_wording(
         "::warning title=infrastructure::the runner's package mirror (azure.archive.ubuntu.com)"
         " did not answer: installing from archive.ubuntu.com"
-    ], log
+    ), log
 
 
 def _warnings(log: str) -> list[str]:
@@ -1780,10 +1794,10 @@ def test_an_arm_runner_s_mirror_is_left_for_ports_ubuntu_com(tmp_path: Path) -> 
     text = (tmp_path / "etc" / "apt" / rel).read_text()
     assert text == _PORTS_SOURCES[rel].replace("azure.ports.", "ports."), text
     assert not (tmp_path / "etc" / "apt" / "sources.list").exists()
-    assert _warnings(log) == [
+    assert _warnings(log) in _either_wording(
         "::warning title=infrastructure::the runner's package mirror (azure.ports.ubuntu.com)"
         " did not answer: installing from ports.ubuntu.com"
-    ], log
+    ), log
 
 
 #: GitHub's x64 image as its runs read it (11-17, "the runner's package mirror (security.ubuntu.com)
@@ -1836,10 +1850,10 @@ def test_the_security_host_is_left_with_the_runner_s_mirror(
             "security.ubuntu.com", "archive.ubuntu.com"
         )
         assert now == moved, rel
-    assert _warnings(log) == [
+    assert _warnings(log) in _either_wording(
         f"::warning title=infrastructure::the runner's package mirror ({left})"
         " did not answer: installing from archive.ubuntu.com"
-    ], log
+    ), log
 
 
 #: GitHub's x64 image as an 11-18 run read it (run 44220579059, python-suite (2/3)): apt-mirrors.txt
@@ -1870,11 +1884,11 @@ def test_a_regional_mirror_of_any_name_is_left_for_archive_ubuntu_com(tmp_path: 
         )
         assert now == moved, (rel, now)
         assert ".archive.ubuntu.com" not in now and "security.ubuntu.com" not in now, (rel, now)
-    assert _warnings(log) == [
+    assert _warnings(log) in _either_wording(
         "::warning title=infrastructure::the runner's package mirror (security.ubuntu.com,"
         " us-east-2.ec2.archive.ubuntu.com) did not answer: installing from"
         " archive.ubuntu.com"
-    ], log
+    ), log
 
 
 #: An arm runner on a regional ports mirror, as the x64 runner's archive mirror is regional.
@@ -1924,10 +1938,10 @@ def test_each_regional_host_is_left_whole_for_its_archive(
         now = (tmp_path / "etc" / "apt" / rel).read_text()
         hosts = [h.split("/", 1)[0] for h in now.split("//")[1:]]
         assert hosts and all(h == target for h in hosts), (rel, now)
-    assert _warnings(log) == [
+    assert _warnings(log) in _either_wording(
         f"::warning title=infrastructure::the runner's package mirror ({left})"
         f" did not answer: installing from {target}"
-    ], log
+    ), log
 
 
 @pytest.mark.parametrize(
@@ -1949,9 +1963,8 @@ def test_the_mirror_is_left_once_a_job_and_then_a_hang_is_an_infrastructure_fail
         line for line in log.splitlines() if line.startswith("::error title=infrastructure::")
     ]
     assert len(errors) == 1 and why in errors[0], log
-    assert [t.split(" ", 1)[0] for t in _timeouts(tmp_path)][1:] == ["300"] * (
-        len(_timeouts(tmp_path)) - 1
-    )
+    after = [t.split(" ", 1)[0] for t in _timeouts(tmp_path)][1:]
+    assert after in [[str(retry)] * len(after) for _first, retry in _BOUNDS], after
 
 
 def test_macos_installs_with_brew_and_no_timeout(tmp_path: Path) -> None:
