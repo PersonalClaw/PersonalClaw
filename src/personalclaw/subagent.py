@@ -30,10 +30,9 @@ from personalclaw import (
 )
 from personalclaw.approval_grants import ToolDecision, decision_of
 from personalclaw.cancellation import cancel_and_wait
-from personalclaw.config.loader import AppConfig
 from personalclaw.context import ContextBuilder
 from personalclaw.guardrails.failure import budget_refusal
-from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY, fire_tool_hooks, safe_read_file
+from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY, fire_tool_hooks
 from personalclaw.llm.base import (
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -53,9 +52,15 @@ from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel, sel_log_async
 from personalclaw.session import SessionManager
 from personalclaw.stats import Stats
+from personalclaw.subagent_admission import (  # noqa: F401 (the folder checks are re-exported)
+    _run_workdir_for,
+    admission,
+    charge_child_and_check_budget,
+    note_child_outcome,
+    validate_cwd,
+)
 from personalclaw.subagent_ask import spawn_ask, spawn_refusal
 from personalclaw.subagent_endings import _timeout_context
-from personalclaw.subagent_folders import _run_workdir_for, validate_cwd  # noqa: F401 (re-exported)
 from personalclaw.subagent_kill import sigkill_session
 from personalclaw.subagent_persistence import (
     ASKING,
@@ -82,7 +87,6 @@ from personalclaw.subagent_tier import (
     give_up_files_on_a_cli,
     refuse_unheld,
     refuse_without_tools,
-    run_agent,
     tier_for,
     without_tools,
 )
@@ -100,28 +104,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _validate_agent(requested: str) -> tuple[str, str]:
-    """Validate an agent name against the configured agents in AppConfig.
-
-    Returns ``(agent_name, error)``. An empty ``requested`` resolves to the
-    default agent with no error (``("", "")``). A KNOWN agent returns its name.
-    An UNKNOWN agent returns a TYPED error naming the valid agents — never a
-    silent downgrade to the default: a fan-out that named the wrong agent
-    used to run entirely on ``personalclaw`` with nothing but a log line, so the
-    caller must fail loudly and let the user fix the name.
-    """
-    if not requested:
-        return "", ""
-    from personalclaw.config.loader import AppConfig
-
-    cfg = AppConfig.load()
-    if requested in cfg.agents:
-        return requested, ""
-    available = sorted(cfg.agents.keys() - {"personalclaw", "personalclaw-orchestrator"})
-    listed = ", ".join(available) if available else "(none configured)"
-    return "", f"unknown agent {requested!r}; valid agents: {listed}"
-
-
 def _redact(text: str) -> str:
     """Redact credentials and exfiltration URLs from text."""
     text, _ = redact_exfiltration_urls(text)
@@ -135,11 +117,6 @@ _REAPER_INTERVAL = 60  # seconds between reaper sweeps
 _RESET_TIMEOUT = 30.0  # max seconds for session reset in finally block
 _ON_DONE_TIMEOUT = 1200.0  # outer cap: max total seconds for semaphore wait + injection
 INJECTION_TIMEOUT = 300.0  # inner cap: max seconds for a single stream_and_collect call
-
-# Consecutive child failures within one fan-out before its breaker trips.
-# Mirrors ``session._CIRCUIT_BREAKER_THRESHOLD`` — the per-child ``subagent:<id>``
-# session is released before it can fail, so the breaker must key on the FAN-OUT.
-_CIRCUIT_BREAKER_THRESHOLD = 5
 
 
 def spawn_approval_id(agent_id: str) -> str:
@@ -193,32 +170,6 @@ def _say_a_failed_reap(tail: "asyncio.Task[None]") -> None:
         return
     if (exc := tail.exception()) is not None:
         logger.error("Reaper: a stopped subagent's reap ended with an error", exc_info=exc)
-
-
-def check_memory_available(min_gb: float = 4.0, path: str = "/proc/meminfo") -> tuple[bool, float]:
-    """Check if enough memory is available to spawn a subagent.
-
-    Reads /proc/meminfo MemAvailable via ``safe_read_file`` (hooks.py)
-    and compares against *min_gb*.
-    Returns (ok, available_gb).  On read failure returns (True, -1.0)
-    to avoid blocking spawns on non-Linux systems.
-    """
-    try:
-        text = safe_read_file(path)
-    except PermissionError:
-        logger.warning("Memory check blocked: sensitive path %s", path)
-        return (True, -1.0)
-    except OSError:
-        return (True, -1.0)
-    try:
-        for line in text.splitlines():
-            if line.startswith("MemAvailable:"):
-                kb = int(line.split()[1])
-                avail = kb / (1024 * 1024)
-                return (avail >= min_gb, round(avail, 2))
-    except (ValueError, IndexError):
-        return (True, -1.0)
-    return (True, -1.0)
 
 
 # Capability class for a spawn's tool surface. The values mirror the
@@ -876,7 +827,7 @@ class SubagentManager:
             else:  # it was asking for its start: it leaves no record a restart could take back
                 info.never_ran = True
                 subagent_waiting.forget(agent_id)
-            self._note_child_outcome(info)
+            note_child_outcome(self, info)
             # Its slot goes to the helper waiting for it, as when a helper ends on its own: a
             # reaped run skips its own drain, so without this the waiting one stayed queued until
             # some other helper ended, and a later spawn took the slot first.
@@ -1133,7 +1084,7 @@ class SubagentManager:
         """
         # --- Redact task once for all SubagentInfo storage (raw task kept for ACP agent prompt) ---
         _redacted_task = redact_credentials(redact_exfiltration_urls(task)[0])[0]
-        refused, resolved_cwd, agent = self._admission(
+        refused, resolved_cwd, agent = admission(
             _redacted_task, parent_session_key, agent, cwd, parent_run, capability_class
         )
         if refused:
@@ -1173,157 +1124,6 @@ class SubagentManager:
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
         return self._enter(info)
-
-    def _admission(
-        self,
-        task: str,
-        parent_session_key: str,
-        agent: str,
-        cwd: str,
-        parent_run: str,
-        capability_class: str | None,
-    ) -> tuple[str, str, str]:
-        """Whether a spawn may be taken in now: ``(why not, its folder, its agent)``, ``why not``
-        empty when it may. The limits a new spawn meets, and one a restart took back
-        (``subagent_waiting.take_back``), each refusal audited where it is made. *task* is its
-        masked task."""
-        # --- Memory guard: refuse to spawn if system memory is critically low ---
-        try:
-            min_mem = AppConfig.load().agent.spawn_min_memory_gb
-        except Exception:
-            min_mem = 4.0
-        mem_ok, avail_gb = check_memory_available(min_gb=min_mem)
-        if not mem_ok:
-            logger.warning(
-                "Subagent spawn refused: only %.2f GB available (min %.1f GB required)",
-                avail_gb,
-                min_mem,
-            )
-            sel().log_tool_invocation(
-                session_key=parent_session_key or "",
-                source="subagent",
-                tool_name="subagent_run",
-                outcome="refused_low_memory",
-                metadata={"available_gb": avail_gb, "min_gb": min_mem, "task": task[:120]},
-            )
-            return (
-                f"spawn refused: only {avail_gb:.1f} GB memory available (need {min_mem:.0f} GB)",
-                "",
-                agent,
-            )
-
-        # --- Incident kill switch: refuse spawns during an incident ----------
-        # A subagent is unattended work. Interactive chat is untouched; a spawn is
-        # not the chat stream, so it is suspended.
-        try:
-            from personalclaw.guardrails.incident import incident_active
-
-            if incident_active():
-                logger.info("Subagent spawn refused: incident mode active")
-                sel().log_tool_invocation(
-                    session_key=parent_session_key or "",
-                    source="subagent",
-                    tool_name="subagent_run",
-                    outcome="refused_incident",
-                    metadata={"task": task[:120]},
-                )
-                return (
-                    "spawn refused: incident mode active (resume with `personalclaw incident off`)",
-                    "",
-                    agent,
-                )
-        except Exception:
-            logger.debug("subagent spawn incident check failed (fail-open)", exc_info=True)
-
-        # --- Budget guard: refuse to spawn if the day-scope token ceiling is hit ---
-        # A subagent is unattended work; if the day's token budget is already
-        # exhausted, don't start another one (pause-into-refuse). An UNREADABLE
-        # ceiling refuses too (#3458) — it follows `proactive/autoexec.py`'s "an unverified
-        # ceiling authorises nothing" rather than this seam's old blanket fail-open,
-        # because a spawn is exactly the unattended spend the ceiling exists to bound.
-        # Any other error still fails open: the budget is a guardrail, not a hard gate.
-        try:
-            from personalclaw.guardrails.budgets import (
-                BudgetConfigUnreadable,
-                BudgetVerdict,
-                budget_from_config,
-                get_meter,
-            )
-
-            try:
-                _day_budget = budget_from_config()
-            except BudgetConfigUnreadable as _exc:
-                logger.warning("Subagent spawn refused: %s", _exc)
-                sel().log_tool_invocation(
-                    session_key=parent_session_key or "",
-                    source="subagent",
-                    tool_name="subagent_run",
-                    outcome="refused_budget_unverified",
-                    metadata={"reason": str(_exc), "task": task[:120]},
-                )
-                return (
-                    f"spawn refused: {_exc}, so nothing ran (fix `guardrails.budgets` in "
-                    "config.json)",
-                    "",
-                    agent,
-                )
-            if not _day_budget.is_unlimited:
-                # The token ceiling only: a spent dollar one refuses the spawn's calls that cost
-                # money where they are made, and one on a model that costs nothing still runs.
-                _verdict, _reason = get_meter().check_day_before_work(_day_budget)
-                if _verdict is BudgetVerdict.EXCEEDED:
-                    logger.warning("Subagent spawn refused: %s", _reason)
-                    sel().log_tool_invocation(
-                        session_key=parent_session_key or "",
-                        source="subagent",
-                        tool_name="subagent_run",
-                        outcome="refused_budget_exceeded",
-                        metadata={"reason": _reason, "task": task[:120]},
-                    )
-                    return (
-                        f"spawn refused: {_reason} (resets next day, or raise the budget in "
-                        "Settings → Security → Guardrails)",
-                        "",
-                        agent,
-                    )
-        except Exception:
-            logger.debug("subagent spawn budget check failed (fail-open)", exc_info=True)
-
-        # --- CWD validation: reject bad paths before consuming a session ---
-        resolved_cwd = ""
-        if cwd:
-            try:
-                allowed_roots = AppConfig.load().agent.subagent_cwd_allowed_roots
-            except Exception:
-                # Fail closed: with the config unavailable, no folder the owner might have added
-                # counts, so a subagent may work in the workspace (and a run's step in its own
-                # run's folder) and nowhere else. `[]` is also the field's default, so a
-                # config.json the loader had to discard (`AppConfig.load` returns defaults and
-                # never raises for that) lands on the same narrow list without this arm. What
-                # remains here is defence in depth for an unexpected raise.
-                allowed_roots = []
-            resolved_cwd, cwd_err = validate_cwd(
-                cwd, allowed_roots, run_workdir=_run_workdir_for(parent_run)
-            )
-            if cwd_err:
-                logger.warning("Subagent spawn refused: invalid cwd %r: %s", cwd, cwd_err)
-                sel().log_tool_invocation(
-                    session_key=parent_session_key or "",
-                    source="subagent",
-                    tool_name="subagent_run",
-                    outcome="rejected_invalid_cwd",
-                    metadata={"cwd": cwd[:200], "reason": cwd_err, "task": task[:120]},
-                )
-                return f"spawn refused: {cwd_err}", "", agent
-
-        # --- Agent validation: an unknown agent is a TYPED error, never a
-        # silent downgrade. Done BEFORE any queue slot so a bad name fails fast and a
-        # queued spawn is never drained onto the wrong agent. ---
-        if agent:
-            agent, err = _validate_agent(agent)
-            if err:
-                return err, "", ""
-        return "", resolved_cwd, run_agent(capability_class, agent)
 
     def _enter(self, info: SubagentInfo) -> SubagentInfo:
         """*info*, taken in: its parent's marks handed on, its fan-out's stop, then a slot or its
@@ -1511,120 +1311,6 @@ class SubagentManager:
             self._running_by_fanout[fkey] = remaining
         else:
             self._running_by_fanout.pop(fkey, None)
-
-    def _note_child_outcome(self, info: SubagentInfo) -> None:
-        """Fold one finished child into its fan-out's consecutive-failure breaker.
-
-        The per-child ``subagent:<id>`` session is already released by the time a
-        child fails, so the session-level breaker (``session._CIRCUIT_BREAKER_``) can
-        never trip for sub-agents — the real guards were only the turn limit and the
-        reaper. This keys the breaker on the FAN-OUT instead: a SUCCESS resets
-        the count; a genuine FAILURE increments it, and at
-        ``_CIRCUIT_BREAKER_THRESHOLD`` consecutive failures the whole fan-out is
-        stopped so a broken run cannot keep burning children. A user-CANCELLED child
-        is neither (an intentional stop is not a failure).
-        """
-        if info._outcome_noted:
-            return
-        info._outcome_noted = True
-        fkey = _fanout_key(info)
-        if info.cancelled:
-            return
-        if info.error:
-            count = self._fanout_failures.get(fkey, 0) + 1
-            self._fanout_failures[fkey] = count
-            if count >= _CIRCUIT_BREAKER_THRESHOLD and fkey not in self._fanout_stops:
-                reason = f"fan-out breaker tripped after {count} consecutive child failures"
-                self._fanout_stops[fkey] = reason
-                logger.error("Subagent fan-out breaker tripped for %s: %s", fkey or "-", reason)
-                try:
-                    sel().log_tool_invocation(
-                        session_key=info.parent_session_key or "",
-                        source="subagent",
-                        tool_name="subagent_run",
-                        outcome="fanout_breaker_tripped",
-                        metadata={"fanout": fkey, "failures": count},
-                    )
-                except Exception:
-                    logger.debug("SEL audit failed for breaker trip %s", fkey, exc_info=True)
-        else:
-            # A success clears the consecutive-failure streak for this fan-out.
-            self._fanout_failures.pop(fkey, None)
-
-    def _charge_child_and_check_budget(self, info: SubagentInfo) -> None:
-        """Fold one child's cost into the fan-out's RUN-scoped budget and, if the
-        run ceiling is now exceeded, STOP the fan-out mid-flight.
-
-        Consumes the per-child cost/tokens already captured at ``EVENT_COMPLETE``
-        (NOT a second ledger) and composes with
-        the guardrails' :class:`SpendMeter` run scope: it charges the meter
-        keyed on the fan-out key and re-reads ``check_run`` after each child. The
-        day-scope check at spawn is a point-in-time snapshot; N children each spend
-        under it, so the run scope is what actually bounds a fan-out. On EXCEEDED the
-        fan-out is stopped with a TYPED reason (refusing queued/new spawns) and its
-        in-flight children are cancelled. Fail-open: a budget is a guardrail — except for
-        an UNREADABLE ceiling, which stops the fan-out (#3458), because the run scope is
-        the only thing that bounds N children each spending under one day snapshot.
-
-        The DAY scope is charged where each child's calls are made, once: by the spend guard on
-        a native child's model, and on an agent CLI's own turns (``acp.spend``), since every
-        spawn rides the metered orchestration axis. So only the fan-out's run scope is charged
-        here. Charging the day here as well counted a child twice, so the cap bit at half the
-        real spend and its refusal named a total the day had not spent.
-        """
-        fkey = _fanout_key(info)
-        try:
-            from personalclaw.guardrails.budgets import (
-                BudgetConfigUnreadable,
-                BudgetVerdict,
-                get_meter,
-                run_budget_from_config,
-            )
-
-            meter = get_meter()
-            tokens = info.input_tokens + info.output_tokens
-            try:
-                budget = run_budget_from_config()
-            except BudgetConfigUnreadable as exc:
-                if fkey not in self._fanout_stops:
-                    self._fanout_stops[fkey] = f"{exc}, so the fan-out stopped"
-                    logger.warning("Subagent fan-out %s stopped: %s", fkey or "-", exc)
-                return
-            if budget.is_unlimited:
-                return
-            meter.charge_run(fkey, tokens, info.cost_usd)
-            verdict, reason = meter.check_run(fkey, budget)
-            if verdict is BudgetVerdict.EXCEEDED and fkey not in self._fanout_stops:
-                typed = f"run budget exceeded ({reason})"
-                self._fanout_stops[fkey] = typed
-                logger.warning("Subagent fan-out %s stopped mid-flight: %s", fkey or "-", typed)
-                try:
-                    sel().log_tool_invocation(
-                        session_key=info.parent_session_key or "",
-                        source="subagent",
-                        tool_name="subagent_run",
-                        outcome="fanout_budget_exceeded",
-                        metadata={"fanout": fkey, "reason": reason},
-                    )
-                except Exception:
-                    logger.debug("SEL audit failed for budget stop %s", fkey, exc_info=True)
-                # Kill the in-flight children of this fan-out so "stops mid-flight"
-                # is literal, not just "refuses the next one". Later, and only while this stop
-                # still stands: the child that crossed the ceiling may be the fan-out's last.
-                asyncio.ensure_future(self._cancel_if_still_stopped(fkey, typed))
-        except Exception:
-            logger.debug("fan-out budget check failed (fail-open)", exc_info=True)
-
-    async def _cancel_if_still_stopped(self, fkey: str, reason: str) -> int:
-        """The run budget's cancel of *fkey*, which runs after the child that crossed the ceiling
-        has ended. It stops the fan-out only while the stop that scheduled it, *reason*, still
-        stands. When that child was a chat fan-out's last, its ending has drained the fan-out and
-        ended the stop, and the chat's next helper, started under *fkey* since, must not be ended
-        by a stop that is gone. A workflow run's stop stands until the run ends
-        (:meth:`_maybe_clear_fanout`), so its next agent step is refused, not started."""
-        if self._fanout_stops.get(fkey) != reason:
-            return 0
-        return await self.cancel_fanout(fkey, reason=reason)
 
     def _maybe_clear_fanout(self, fkey: str) -> None:
         """Drop a fan-out's breaker/budget/stop state once it is fully drained.
@@ -1918,7 +1604,7 @@ class SubagentManager:
                 # Record the child's outcome against the fan-out breaker
                 # BEFORE draining, so a failing fan-out trips before the next child
                 # takes its freed slot.
-                self._note_child_outcome(info)
+                note_child_outcome(self, info)
                 self._drain_queue()
                 self._maybe_clear_fanout(_fanout_key(info))
                 try:
@@ -2523,7 +2209,7 @@ class SubagentManager:
         # mid-flight if the run ceiling is now exceeded. Charged here, at the
         # one place the per-child cost is known, so the check re-runs after EVERY
         # child rather than once at spawn.
-        self._charge_child_and_check_budget(info)
+        charge_child_and_check_budget(self, info)
         if couldnt:
             Stats().inc_subagent_failed()
             self._write_tombstone(info, cause)

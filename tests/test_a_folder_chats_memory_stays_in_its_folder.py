@@ -403,7 +403,7 @@ def test_a_folder_chat_follows_the_lessons_for_everywhere_and_for_its_folder(gw)
 
 
 def test_the_after_turn_review_keeps_a_folder_chats_learning_without_an_embedding_model(gw):
-    from personalclaw.dashboard.chat_runner import _maybe_after_turn_review
+    from personalclaw.dashboard.turn_learning import _maybe_after_turn_review
 
     _key, session = _chat(gw, gw.garden)
 

@@ -441,9 +441,9 @@ def test_the_after_turn_seam_calls_the_stumble_arm():
     call OUT of the seam into dead code at module level reds. The absent-name assertion is the
     vacuity floor for the scan itself.
     """
-    from personalclaw.dashboard import chat_runner
+    from personalclaw.dashboard import turn_learning
 
-    src = inspect.getsource(chat_runner._maybe_after_turn_review)
+    src = inspect.getsource(turn_learning._maybe_after_turn_review)
     assert "_maybe_refine_stumble(" in src, "the stumble arm is never reached from the seam"
     assert "_maybe_refine_nothing(" not in src, "vacuity floor"
 
@@ -455,11 +455,11 @@ def test_the_call_site_files_a_proposal_and_surfaces_the_existing_learned_chip(h
     channel: that origin is what makes the chip's tap-through land on the proposals surface,
     where the diff renders.
     """
-    from personalclaw.dashboard import chat_runner
+    from personalclaw.dashboard import turn_learning
 
     _install(home)
     state = _State()
-    chat_runner._maybe_refine_stumble(
+    turn_learning._maybe_refine_stumble(
         state,
         _Session([{"name": SKILL, "state": "admitted", "loaded_tokens": 10}]),
         "No, use uv instead of pip.",
@@ -477,11 +477,11 @@ def test_the_call_site_files_a_proposal_and_surfaces_the_existing_learned_chip(h
 
 def test_the_call_site_is_silent_when_nothing_was_loaded(home):
     """Same turn, no loaded skill: no proposal, no chip. The vacuity floor for the test above."""
-    from personalclaw.dashboard import chat_runner
+    from personalclaw.dashboard import turn_learning
 
     _install(home)
     state = _State()
-    chat_runner._maybe_refine_stumble(
+    turn_learning._maybe_refine_stumble(
         state, _Session([]), "No, use uv instead of pip.", "Ran pip install.", [], _Cfg()
     )
     assert proposals.list_pending() == []
@@ -498,7 +498,7 @@ def test_full_arc_flawed_skill_stumble_refine_approve_rerun(home):
     whole arc must leave ``SKILL.md`` exactly as it was found (propose-don't-write, and
     the immutable base).
     """
-    from personalclaw.dashboard import chat_runner
+    from personalclaw.dashboard import turn_learning
 
     _install(home)
     original_bytes = (home / "skills" / SKILL / "SKILL.md").read_bytes()
@@ -509,7 +509,7 @@ def test_full_arc_flawed_skill_stumble_refine_approve_rerun(home):
 
     # 2. the turn that stumbles on it, driven through the real call site.
     state = _State()
-    chat_runner._maybe_refine_stumble(
+    turn_learning._maybe_refine_stumble(
         state,
         _Session([{"name": SKILL, "state": "admitted", "loaded_tokens": 10}]),
         "No, never use pip here — use uv.",

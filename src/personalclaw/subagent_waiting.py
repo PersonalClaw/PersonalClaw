@@ -26,7 +26,7 @@ grants starts it or approves its calls (``approval_grants``, rule 4), as before 
 After a restart :func:`take_back` settles each record, once the gateway can say what it did
 (``gateway._settle_left_behind_agents``), in the order the spawns were made, the ones that were
 asking first, since they held slots. Each goes back through the door a new spawn takes
-(``SubagentManager._admission``, then ``_enter``), its limits and grants read now, so a start nobody
+(:func:`admission`, then ``_enter``), its limits and grants read now, so a start nobody
 allowed asks again with the same card; or, when it can no longer run, it ends saying why. An app's
 work is held to what its app may run now: no wider than the app's tier, and refused once the app
 runs no agent work. The files a step may change are held to what an automation may be saved to
@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any
 from personalclaw import lasting_work, session_keys
 from personalclaw.security import redact_for_display, redact_for_model
 from personalclaw.sel import sel
+from personalclaw.subagent_admission import admission
 from personalclaw.subagent_persistence import (
     ASKING,
     QUEUED,
@@ -278,7 +279,7 @@ def _take_one(
 def _back_in(
     manager: SubagentManager, info: SubagentInfo, *, gone: str, refused: str
 ) -> tuple[str, bool]:
-    """Take *info* back through the door a new spawn takes (``SubagentManager._admission``, then
+    """Take *info* back through the door a new spawn takes (:func:`admission`, then
     ``_enter``): its limits and every grant read now, so a start nobody allowed asks again. When
     *gone* says why what it reports to is gone, *refused* why what holds it now does not start it
     (:func:`_what_holds_it_now`), or the door refuses it, it ends saying so; a refusal is
@@ -286,7 +287,7 @@ def _back_in(
     ended, whether a chat is told)``, ``("", False)`` when it was taken in."""
     why = gone or refused
     if not why:
-        why, cwd, agent = manager._admission(
+        why, cwd, agent = admission(
             info.task,
             info.parent_session_key,
             info.agent,

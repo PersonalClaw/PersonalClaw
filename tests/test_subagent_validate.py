@@ -19,7 +19,7 @@ def _config_with_agents(*names: str) -> MagicMock:
 
 
 def test_found_returns_requested():
-    from personalclaw.subagent import _validate_agent
+    from personalclaw.subagent_admission import _validate_agent
 
     with patch(
         "personalclaw.config.loader.AppConfig.load",
@@ -34,7 +34,7 @@ def test_unknown_agent_returns_typed_error_naming_valid_agents():
     """An unconfigured agent name is a TYPED error naming the valid agents —
     NOT a silent downgrade to the default. A fan-out that named the wrong agent used
     to run entirely on personalclaw with only a log line; now it fails loudly."""
-    from personalclaw.subagent import _validate_agent
+    from personalclaw.subagent_admission import _validate_agent
 
     with patch(
         "personalclaw.config.loader.AppConfig.load",
@@ -51,7 +51,7 @@ def test_unknown_agent_returns_typed_error_naming_valid_agents():
 
 def test_unknown_agent_error_when_no_other_agents():
     """The typed error still fires with a placeholder when only reserved agents exist."""
-    from personalclaw.subagent import _validate_agent
+    from personalclaw.subagent_admission import _validate_agent
 
     with patch(
         "personalclaw.config.loader.AppConfig.load",
@@ -64,7 +64,7 @@ def test_unknown_agent_error_when_no_other_agents():
 
 
 def test_empty_input_returns_empty():
-    from personalclaw.subagent import _validate_agent
+    from personalclaw.subagent_admission import _validate_agent
 
     name, err = _validate_agent("")
     assert name == ""

@@ -382,7 +382,7 @@ class TestRunChatPrompts:
     ):
         """🔴 Red before: a prompt over the size limit quoted all that was typed after `get`, every
         line and backtick of it."""
-        monkeypatch.setattr("personalclaw.dashboard.chat_runner.MAX_PROMPT_BYTES", 5)
+        monkeypatch.setattr("personalclaw.dashboard.referenced_content.MAX_PROMPT_BYTES", 5)
         _provider_prompt(tmp_path, "review", "Do review.")
         s, sl = _ss()
         asyncio.run(run_chat(s, sl, "/prompts get review\n```sh\necho x\n```"))

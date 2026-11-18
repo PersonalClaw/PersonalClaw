@@ -137,7 +137,7 @@ class TestInjection:
         return SimpleNamespace(_investigate_ctx=ctx_dict, messages=[])
 
     def test_first_turn_injects_fenced_and_keeps_display_fields(self):
-        from personalclaw.dashboard.chat_runner import _inject_investigate_context
+        from personalclaw.dashboard.referenced_content import _inject_investigate_context
 
         session = self._session(
             {
@@ -158,7 +158,7 @@ class TestInjection:
         assert "snapshot" not in session._investigate_ctx
 
     def test_second_turn_injects_nothing(self):
-        from personalclaw.dashboard.chat_runner import _inject_investigate_context
+        from personalclaw.dashboard.referenced_content import _inject_investigate_context
 
         session = self._session({"kind": "k", "title": "T", "back_link": "#/x", "snapshot": "data"})
         _inject_investigate_context(None, session, "first")
@@ -166,7 +166,7 @@ class TestInjection:
         assert out2 == "second"
 
     def test_no_staged_envelope_passthrough(self):
-        from personalclaw.dashboard.chat_runner import _inject_investigate_context
+        from personalclaw.dashboard.referenced_content import _inject_investigate_context
 
         session = self._session(None)
         assert _inject_investigate_context(None, session, "hello") == "hello"

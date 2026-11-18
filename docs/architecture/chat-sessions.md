@@ -68,7 +68,7 @@ chat, channel thread, loop worker, webhook, subagent).
   `restricted_session`, an artifact the chat's own agent made included. Both ask
   one check, `memory_reads.keeps_nothing`, and so does the chat's turn, which
   reads an artifact the person mentions in it without stamping the artifact with
-  the chat (`chat_runner._inject_artifact_content`, as the route that records a
+  the chat (`referenced_content._inject_artifact_content`, as the route that records a
   mention refuses one for it). A run it starts writes nothing to the library
   either, under the mode the run inherited (`memory_reads.why_work_keeps_nothing`):
   a stage's `publish:` is a no-op whose result says why

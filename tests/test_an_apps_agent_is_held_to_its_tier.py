@@ -548,7 +548,7 @@ async def test_a_task_held_to_fewer_tools_never_runs_where_they_cannot_be_held(t
     model = _Model()
     body = {"task": TASK, "agent": "a-cli"} if held == "read" else None
     with (
-        patch("personalclaw.subagent._validate_agent", lambda name: (name, "")),
+        patch("personalclaw.subagent_admission._validate_agent", lambda name: (name, "")),
         patch("personalclaw.subagent_tier.Stats"),
         patch("personalclaw.subagent_tier.sel") as audit,
     ):

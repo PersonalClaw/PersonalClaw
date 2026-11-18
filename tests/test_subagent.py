@@ -1820,7 +1820,7 @@ class TestCheckMemoryAvailable:
 
     def test_sufficient_memory(self, tmp_path):
         """Returns (True, gb) when MemAvailable exceeds threshold."""
-        from personalclaw.subagent import check_memory_available
+        from personalclaw.subagent_admission import check_memory_available
 
         f = tmp_path / "meminfo"
         f.write_text("MemTotal:       32768000 kB\nMemAvailable:    8388608 kB\n")
@@ -1830,7 +1830,7 @@ class TestCheckMemoryAvailable:
 
     def test_insufficient_memory(self, tmp_path):
         """Returns (False, gb) when MemAvailable is below threshold."""
-        from personalclaw.subagent import check_memory_available
+        from personalclaw.subagent_admission import check_memory_available
 
         f = tmp_path / "meminfo"
         f.write_text("MemAvailable:    3145728 kB\n")
@@ -1840,7 +1840,7 @@ class TestCheckMemoryAvailable:
 
     def test_file_not_found_fails_open(self):
         """Returns (True, -1.0) when /proc/meminfo is unreadable — fails open."""
-        from personalclaw.subagent import check_memory_available
+        from personalclaw.subagent_admission import check_memory_available
 
         ok, avail = check_memory_available(path="/nonexistent/path/meminfo")
         assert ok is True
@@ -1848,7 +1848,7 @@ class TestCheckMemoryAvailable:
 
     def test_custom_threshold(self, tmp_path):
         """Respects custom min_gb parameter."""
-        from personalclaw.subagent import check_memory_available
+        from personalclaw.subagent_admission import check_memory_available
 
         f = tmp_path / "meminfo"
         f.write_text("MemAvailable:    5242880 kB\n")
@@ -1861,18 +1861,20 @@ class TestCheckMemoryAvailable:
         """Returns (True, -1.0) for sensitive paths — fails open."""
         from unittest.mock import patch
 
-        from personalclaw.subagent import check_memory_available
+        from personalclaw.subagent_admission import check_memory_available
 
         f = tmp_path / "meminfo"
         f.write_text("MemAvailable:    8388608 kB\n")
-        with patch("personalclaw.subagent.safe_read_file", side_effect=PermissionError("blocked")):
+        with patch(
+            "personalclaw.subagent_admission.safe_read_file", side_effect=PermissionError("blocked")
+        ):
             ok, avail = check_memory_available(path=str(f))
         assert ok is True
         assert avail == -1.0
 
     def test_malformed_meminfo_indexerror(self, tmp_path):
         """Handles malformed MemAvailable line without value — fails open."""
-        from personalclaw.subagent import check_memory_available
+        from personalclaw.subagent_admission import check_memory_available
 
         f = tmp_path / "meminfo"
         f.write_text("MemAvailable:\n")
@@ -1898,9 +1900,12 @@ class TestSpawnMemoryGuard:
         )
 
         with (
-            patch("personalclaw.subagent.check_memory_available", return_value=(False, 2.5)),
-            patch("personalclaw.subagent.AppConfig") as mock_cfg,
+            patch(
+                "personalclaw.subagent_admission.check_memory_available", return_value=(False, 2.5)
+            ),
+            patch("personalclaw.subagent_admission.AppConfig") as mock_cfg,
             patch("personalclaw.subagent.sel") as mock_sel,
+            patch("personalclaw.subagent_admission.sel", mock_sel),
         ):
             mock_cfg.load.return_value.agent.spawn_min_memory_gb = 4.0
             mock_sel.return_value.log_tool_invocation = MagicMock()

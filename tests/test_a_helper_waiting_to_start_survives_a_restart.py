@@ -262,7 +262,7 @@ async def test_one_that_can_no_longer_run_is_ended_and_its_chat_told_why(home):
     owner = _Owner()
     before = _manager(owner)
     holder = before.spawn("Hold the slot", parent_session_key=CHAT)
-    with patch("personalclaw.subagent._validate_agent", lambda name: (name, "")):
+    with patch("personalclaw.subagent_admission._validate_agent", lambda name: (name, "")):
         on_helper = before.spawn("Run on the helper", parent_session_key=CHAT, agent="helper-x")
     for_a_gone_chat = before.spawn("Report to a chat she deleted", parent_session_key=OTHER_CHAT)
     for_a_helper = before.spawn("Asked for by a helper", parent_session_key="subagent:5e1f00aa")

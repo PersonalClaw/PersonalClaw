@@ -465,6 +465,7 @@ def test_a_child_s_completion_charges_the_fan_out_and_never_the_day():
     agent CLI's child twice now that its own turns are metered (below)."""
     from test_subagent import _mock_ctx_builder, _mock_sessions
 
+    from personalclaw import subagent_admission
     from personalclaw.guardrails.budgets import Budget, get_meter
     from personalclaw.subagent import SubagentInfo, SubagentManager
 
@@ -472,13 +473,13 @@ def test_a_child_s_completion_charges_the_fan_out_and_never_the_day():
     child = SubagentInfo(id="c1", task="t", agent="", parent_session_key="dashboard:p")
     child.input_tokens, child.output_tokens, child.cost_usd = 1_000, 100, 0.25
     with (
-        patch("personalclaw.subagent.sel"),
+        patch("personalclaw.subagent_admission.sel"),
         patch(
             "personalclaw.guardrails.budgets.run_budget_from_config",
             lambda: Budget(max_tokens=10**9),
         ),
     ):
-        manager._charge_child_and_check_budget(child)
+        subagent_admission.charge_child_and_check_budget(manager, child)
     assert get_meter().day_totals().dollars == 0.0
     assert get_meter().run_totals("dashboard:p").dollars == pytest.approx(0.25)
 

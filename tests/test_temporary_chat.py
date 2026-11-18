@@ -291,7 +291,7 @@ class TestMcpSessionKeyPlumbing:
 
 class TestAfterTurnReviewRestrictedGuard:
     def _run(self, session):
-        from personalclaw.dashboard.chat_runner import _maybe_after_turn_review
+        from personalclaw.dashboard.turn_learning import _maybe_after_turn_review
 
         state = MagicMock()
         with (
@@ -329,8 +329,8 @@ class TestAfterTurnReviewRestrictedGuard:
         assert capture.called
 
     def test_skill_ladder_skips_restricted(self):
-        from personalclaw.dashboard.chat_runner import _maybe_skill_ladder_review
         from personalclaw.dashboard.state import _ChatSession
+        from personalclaw.dashboard.turn_learning import _maybe_skill_ladder_review
 
         session = _ChatSession(key="inc-2", memory_mode="incognito")
         state = MagicMock()

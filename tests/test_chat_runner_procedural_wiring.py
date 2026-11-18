@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from personalclaw.dashboard.chat_runner import _maybe_after_turn_review
+from personalclaw.dashboard.turn_learning import _maybe_after_turn_review
 from personalclaw.memory_record import MemoryKind
 from personalclaw.memory_service import MemoryService
 from personalclaw.vector_memory import VectorMemoryStore

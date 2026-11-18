@@ -275,7 +275,7 @@ async def test_a_referenced_library_item_reaches_the_model_fenced(tmp_path):
     though it is the text a reader made of a file someone uploaded."""
     from chat_test_helpers import _make_state
 
-    from personalclaw.dashboard.chat_runner import _inject_knowledge_content
+    from personalclaw.dashboard.referenced_content import _inject_knowledge_content
     from personalclaw.security import outside_fences
 
     item = {"id": "k1", "type": "document", "title": "Pantry", "content": "Rice and lentils."}

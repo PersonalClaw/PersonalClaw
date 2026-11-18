@@ -221,7 +221,7 @@ def test_an_artifact_mentioned_in_a_private_chat_is_read_and_left_as_it_was(libr
     """🔴 Red before: the turn stamped the artifact with a ``referenced`` event naming the chat, a
     trace of it in the library the chat does not outlive, which the library's route refuses to
     record for it, and invited its agent to change the artifact."""
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     slug = _made_by(library, ELSEWHERE, "Pantry list")
     with _as_the_chat(mode):
@@ -234,7 +234,7 @@ def test_an_artifact_mentioned_in_a_private_chat_is_read_and_left_as_it_was(libr
 
 
 def test_an_artifact_mentioned_in_an_ordinary_chat_records_where_it_was_used(library):
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     slug = _made_by(library, ELSEWHERE, "Pantry list")
     with _as_the_chat("persistent"):

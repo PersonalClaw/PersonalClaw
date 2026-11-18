@@ -557,7 +557,7 @@ async def test_the_iterate_snapshot_carries_a_documents_text_and_its_base(store)
 
 
 def test_a_chat_reference_reads_a_document_as_its_text_with_its_base(store):
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     _tool("document_create", {"name": "Plan", "markdown": "# Plan\n\nThe agent's draft.\n"})
     base = _base(_tool("artifact_get", {"slug": "plan"}))

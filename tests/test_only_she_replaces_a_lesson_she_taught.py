@@ -31,9 +31,9 @@ from personalclaw import vector_memory
 from personalclaw.after_turn_review import CORRECTION_PREFIX
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard.chat_persistence import save_session_to_history
-from personalclaw.dashboard.chat_runner import _maybe_after_turn_review
 from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.dashboard.turn_learning import _maybe_after_turn_review
 from personalclaw.history import ConversationLog, HistoryConsolidator
 from personalclaw.inbox import InboxStore
 from personalclaw.learning import installers, proposals
