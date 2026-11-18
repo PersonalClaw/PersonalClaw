@@ -1399,6 +1399,42 @@ def test_the_post_sends_one_check_run_and_names_its_id() -> None:
         mc.post(REPO, found.body(), lambda p, b: (403, {"message": "no"}))
 
 
+def test_one_verdict_reads_each_blob_and_tree_once(tmp_path: Path, monkeypatch: Any) -> None:
+    """A blob or a tree is its sha's for good: one verdict reads each once, however many of main's
+    and the head's files share it (11-18: the controller's reads ran into the API's limits)."""
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
+    api = FakeApi()
+    argv = ["decide", "--repo", REPO, "--run-id", str(RUN), "--controller-revision", CONTROLLER]
+    assert mc.main([*argv, "--out", str(tmp_path / "v.json")], get=api) == 0
+    shared = [p for p in api.calls if "/git/blobs/" in p or "/git/trees/" in p]
+    assert shared and len(shared) == len(set(shared)), sorted(shared)
+
+
+def test_only_an_answer_by_sha_is_kept() -> None:
+    """A listing or a ref answers anew each time; a blob or tree read that failed is read again."""
+    calls: list[str] = []
+    answers = iter([OSError("refused"), {"sha": "x"}])
+
+    def get(path: str) -> Any:
+        calls.append(path)
+        if "/git/blobs/" in path:
+            answer = next(answers)
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+        return {"path": path}
+
+    reader = mc.content_addressed(get)
+    blob = f"/repos/{REPO}/git/blobs/{'a' * 40}"
+    with pytest.raises(OSError):
+        reader(blob)
+    assert reader(blob) == {"sha": "x"} and reader(blob) == {"sha": "x"}
+    ref = f"/repos/{REPO}/git/ref/heads/main"
+    reader(ref)
+    reader(ref)
+    assert calls == [blob, blob, ref, ref], calls
+
+
 def test_decide_writes_the_body_and_says_whether_to_post(tmp_path: Path, monkeypatch: Any) -> None:
     out, outputs = tmp_path / "verdict.json", tmp_path / "outputs"
     monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
@@ -4997,6 +5033,81 @@ def test_a_gate_answer_this_cannot_read_is_unread(plant: Any, says: str) -> None
     api = FakeApi()
     plant(api)
     assert _title(api).startswith(says), _title(api)
+
+
+class _RefusingApi(FakeApi):
+    """A FakeApi whose first blob read is one the API refused after every retry."""
+
+    def __call__(self, path: str) -> Any:
+        if "/git/blobs/" in path:
+            self.calls.append(path)
+            raise merge_verdict.ApiUnavailable(
+                "infrastructure: the API did not answer after 4 tries: HTTP Error 403: Forbidden"
+            )
+        return super().__call__(path)
+
+
+def _refusing(api: Any, needle: str) -> Any:
+    """*api*, its reads of a path holding *needle* refused after every retry."""
+
+    def get(path: str) -> Any:
+        if needle in path:
+            api.calls.append(path)
+            raise merge_verdict.ApiUnavailable(
+                "infrastructure: the API did not answer after 4 tries: HTTP Error 403: Forbidden"
+            )
+        return api(path)
+
+    return get
+
+
+def test_a_queue_commit_s_read_the_api_refused_is_an_infrastructure_red() -> None:
+    """11-18's case itself: the read was of a queue commit's blob."""
+    api, queue = _queued()
+    found = mc.decide(
+        _refusing(api, "/git/blobs/"), REPO, RUN, CONTROLLER, mc.Queue(queue, APP, True)
+    ).posting
+    assert found is not None and found.conclusion == "failure" and found.head_sha == QUEUE, found
+    title = found.output["title"]
+    assert title.startswith(f"Red: infrastructure: GET /repos/{REPO}/git/blobs/"), title
+    assert "unread" not in title and "text" not in found.output, found.output
+
+
+def test_a_retry_note_the_api_refused_says_infrastructure() -> None:
+    """A pull request's red keeps its reasons; its uncounted retries say why."""
+    found = _note_of(_refusing(_retried(), f"/compare/main...{HEAD}"))
+    assert found.output["title"] == f"Red: {RESULTS_RED}", found.output["title"]
+    summary = found.output["summary"]
+    assert "- retries not counted: infrastructure: GET " in summary, summary
+
+
+def test_a_queue_commit_s_retry_note_the_api_refused_says_infrastructure() -> None:
+    api, queue = _queue_red_run()
+    found = mc.decide(_refusing(api, f"/git/commits/{HEAD}"), REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure", found
+    assert found.output["title"].startswith("Red: "), found.output["title"]
+    summary = found.output["summary"]
+    assert "- retries not counted: infrastructure: GET " in summary, summary
+
+
+def _note_of(get: Any) -> mc.Posting:
+    outcome = mc.decide(get, REPO, RUN, CONTROLLER, mc.Queue(FakeRetry(), APP, False))
+    found = outcome.posting
+    assert isinstance(found, mc.Posting) and found.conclusion == "failure", outcome
+    return found
+
+
+def test_a_read_the_api_refused_after_its_retries_is_an_infrastructure_red() -> None:
+    """11-18: queue commit 81b2e93a3's verdict read "Red: unread: GET .../git/blobs/...: HTTP
+    Error 403" though every run on it was green. A read the API still refused after the reader's
+    retries is named as infrastructure in the title, and it is red: never green, never a wait."""
+    api = _RefusingApi()
+    found = mc.decide(api, REPO, RUN, CONTROLLER, None).posting
+    assert found is not None and found.conclusion == "failure", found
+    title = found.output["title"]
+    assert title.startswith(f"Red: infrastructure: GET /repos/{REPO}/git/blobs/"), title
+    assert "the API did not answer after 4 tries" in title and "unread" not in title, title
+    assert "text" not in found.output, found.output
 
 
 def test_only_the_last_attempt_of_a_run_a_newer_one_cancelled_is_set_aside() -> None:

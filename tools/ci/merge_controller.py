@@ -174,8 +174,11 @@ changes, and has an open flaky-test issue the workflow or a maintainer filed
 The note changes no conclusion, and one it cannot read says so.
 
 The verdict is ``success`` or ``failure``, never neutral, and an answer the API would not give is
-``failure``, named as unread. ``post`` sends the check run with the controller App's token, and
-refuses a body that is not one completed ``merge-verdict`` check run.
+``failure``, named as unread. Each read is tried again first when its refusal passes (a rate
+limit, a server's error, no answer: ``merge_verdict.RETRY_WAITS``), and one the API refused on
+every try is ``failure`` named as infrastructure, never a wait. ``post`` sends the check run with
+the controller App's token, and refuses a body that is not one completed ``merge-verdict`` check
+run.
 
 It is a required check: ``main-protect`` requires ``merge-verdict`` from the controller App, on
 a head up to date with ``main``, since 2026-10-25 22:55Z (#3910 piece 5), so the verdict says
@@ -291,11 +294,44 @@ class Unread(Exception):
     """An answer the API would not give, or gave in a shape this does not read."""
 
 
+class Infrastructure(Unread):
+    """A read the API refused or did not answer on each of its reader's tries: red, named as
+    infrastructure rather than unread, and never a wait."""
+
+
 def _read(get: Get, path: str) -> Any:
     try:
         return get(path)
+    except merge_verdict.ApiUnavailable as exc:
+        detail = str(exc).removeprefix("infrastructure: ")
+        raise Infrastructure(f"infrastructure: GET {path}: {detail}") from exc
     except (OSError, ValueError, http.client.HTTPException) as exc:
         raise Unread(f"GET {path}: {exc}") from exc
+
+
+#: A read whose answer is its sha's for good: a blob, or a tree (recursive or not).
+_BY_SHA = re.compile(r"/repos/[^/]+/[^/]+/git/(?:blobs|trees)/[0-9a-f]{40}(?:\?recursive=1)?")
+
+
+def content_addressed(get: Get) -> Get:
+    """*get*, keeping each blob's and tree's answer once it is read: one verdict reads each once,
+    however many of main's and the head's files share it. Nothing else is kept, and a read that
+    failed is read again."""
+    kept: dict[str, Any] = {}
+
+    def read(path: str) -> Any:
+        if not _BY_SHA.fullmatch(path):
+            return get(path)
+        if path not in kept:
+            kept[path] = get(path)
+        return kept[path]
+
+    return read
+
+
+def _unread(exc: Exception) -> str:
+    """A red's reason for an answer this could not read: an infrastructure one says so itself."""
+    return str(exc) if isinstance(exc, Infrastructure) else f"unread: {exc}"
 
 
 def _int(value: object) -> int | None:
@@ -2092,7 +2128,7 @@ def decide(
             reasons.append(f"the run has no `{RECORD_PREFIX}*` artifact, so no evidence")
         flakes = passed_flakes(get, repo, run) if not reasons else []
     except (Unread, trust.Refused) as exc:
-        return Outcome(posting=_red(run, [*reasons, f"unread: {exc}"], head, moved))
+        return Outcome(posting=_red(run, [*reasons, _unread(exc)], head, moved))
     # A head that changes a definition: its contract run is started once, at main's tip, and its
     # verdict waits for it. Once that run has reported, its branch goes with the posted verdict.
     # Until it reports, the head is a red that waits on it: a contract run dispatched with the
@@ -2464,7 +2500,7 @@ def _retry_note(
             results_red=bool(failing),
         )
     except (Unread, trust.Refused) as exc:
-        return f"unread: {exc}"
+        return _unread(exc)
 
 
 def retry(
@@ -2560,7 +2596,7 @@ def _queue_retry_note(
             changed=_change(get, repo, built_on, run.head_sha),
         )
     except (Unread, trust.Refused) as exc:
-        return f"unread: {exc}"
+        return _unread(exc)
 
 
 # ── A queue commit of main's merge queue (0.4.0 A1) ─────────────────────────────────────────
@@ -2774,7 +2810,7 @@ def decide_queue(
             reasons.append(f"the run has no `{RECORD_PREFIX}*` artifact, so no evidence")
         flakes = passed_flakes(get, repo, run) if not reasons else []
     except (Unread, trust.Refused) as exc:
-        return Outcome(posting=_red(run, [*reasons, f"unread: {exc}"], sha))
+        return Outcome(posting=_red(run, [*reasons, _unread(exc)], sha))
     # A queue commit that changes a definition: main's contract runs over it, at main's tip, and
     # its verdict waits for it, as a pull request's head's does. GitHub built it from an entry a
     # maintainer queued, so no approval gate stands before it.
@@ -3051,7 +3087,7 @@ def main(
     if not _REPO.fullmatch(args.repo):
         parser.error(f"--repo must be OWNER/NAME: {args.repo}")
     token = os.environ.get("GH_TOKEN", "")
-    reader = get or merge_verdict.github_get(API, token)
+    reader = content_addressed(get or merge_verdict.github_get(API, token))
     writer = api or github_api(token)
     if args.command == "decide" and args.start is not None:
         # A run that has started: at most its contract's dispatch. Nothing is posted, nothing is

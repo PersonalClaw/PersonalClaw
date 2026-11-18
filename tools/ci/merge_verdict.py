@@ -41,6 +41,8 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -330,10 +332,67 @@ def _verify(
 # ── The command ───────────────────────────────────────────────────────────────────────────────
 
 
-def github_get(api_url: str, token: str) -> Get:
-    """Reads from the GitHub API, with the token when one is given."""
+#: The waits, in seconds, before each read again of an answer the API refused for a reason that
+#: passes: a rate limit (403, 429), a server's error (5xx), or no answer (a dropped or refused
+#: connection, a timeout, a body cut short). Three waits, four tries: 65 s of waits a read, about
+#: 185 s with each try's 30 s timeout (11-18: a queue commit's verdict went red on one GET the API
+#: refused, every run on it green).
+RETRY_WAITS = (5, 15, 45)
 
-    def get(path: str) -> Any:
+#: The seconds one reader spends in all on reads that failed, waiting between tries and in the
+#: tries themselves (a try that hangs until its 30 s timeout): past them, each read is tried once,
+#: so a run whose API hangs ends inside its job's time and reads red, never waits on its timeout.
+RETRY_BUDGET = 240.0
+
+_DIGITS = re.compile(r"[0-9]+")
+
+
+class ApiUnavailable(OSError):
+    """A read the API refused or did not answer on every try: infrastructure, never the head's.
+    An OSError, so every caller that reads an OSError as unread still does."""
+
+
+def _passes(error: BaseException) -> bool:
+    """Whether a read that failed so may answer if asked again."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in (403, 429) or 500 <= error.code < 600
+    return isinstance(error, (OSError, http.client.HTTPException))
+
+
+def _own_wait(error: BaseException, now: float) -> float | None:
+    """The wait a refusal names: its Retry-After in seconds, or, with no request left, its rate
+    limit's reset; None when it names none."""
+    headers = error.headers if isinstance(error, urllib.error.HTTPError) else None
+    if headers is None:
+        return None
+    after = headers.get("Retry-After")
+    if after is not None:
+        return float(after) if _DIGITS.fullmatch(after.strip()) else None
+    reset = headers.get("x-ratelimit-reset")
+    if headers.get("x-ratelimit-remaining") == "0" and reset is not None:
+        return max(0.0, float(reset) - now) if _DIGITS.fullmatch(reset.strip()) else None
+    return None
+
+
+def github_get(
+    api_url: str,
+    token: str,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    budget: float = RETRY_BUDGET,
+) -> Get:
+    """Reads from the GitHub API, with the token when one is given. A read refused for a reason
+    that passes is read again after each of :data:`RETRY_WAITS`, or after the refusal's own wait;
+    one refused every time raises :class:`ApiUnavailable`, and so does one whose own wait is past
+    the longest of them, or past what is left of this reader's *budget*. Any other refusal (a 404,
+    a 422) raises at once, as before."""
+    spent = [0.0]
+
+    def unavailable(why: str, error: BaseException) -> ApiUnavailable:
+        return ApiUnavailable(f"infrastructure: {why}: {error}")
+
+    def once(path: str) -> Any:
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -344,6 +403,39 @@ def github_get(api_url: str, token: str) -> Get:
         request = urllib.request.Request(api_url.rstrip("/") + path, headers=headers)
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - the API root
             return json.loads(response.read().decode("utf-8"))
+
+    def get(path: str) -> Any:
+        for wait in RETRY_WAITS:
+            began = clock()
+            try:
+                return once(path)
+            except (OSError, http.client.HTTPException) as error:
+                if not _passes(error):
+                    raise
+                # A try that hung until its timeout spends the budget as a wait does.
+                spent[0] += max(0.0, clock() - began)
+                own = _own_wait(error, clock())
+                if own is not None and own > max(RETRY_WAITS):
+                    raise unavailable(
+                        f"the API asks for {own:.0f} s before it answers", error
+                    ) from error
+                pause = own if own is not None else wait
+                if spent[0] + pause > budget:
+                    raise unavailable(
+                        f"this reader's {budget:.0f} s of waits are spent", error
+                    ) from error
+                spent[0] += pause
+                sleep(pause)
+        began = clock()
+        try:
+            return once(path)
+        except (OSError, http.client.HTTPException) as error:
+            if not _passes(error):
+                raise
+            spent[0] += max(0.0, clock() - began)
+            raise unavailable(
+                f"the API did not answer after {len(RETRY_WAITS) + 1} tries", error
+            ) from error
 
     return get
 

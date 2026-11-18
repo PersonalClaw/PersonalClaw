@@ -10,11 +10,13 @@ is never accepted.
 from __future__ import annotations
 
 import copy
+import email.message
 import http.client
 import json
 import os
 import subprocess
 import sys
+import urllib.error
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -855,10 +857,190 @@ def test_a_body_the_api_cuts_short_is_unreadable(
     monkeypatch.setattr(
         mv.urllib.request, "urlopen", lambda request, timeout: _Response(b"[", expected=200)
     )
-    get = mv.github_get("https://api.example.invalid", "")
+    get = mv.github_get("https://api.example.invalid", "", sleep=lambda seconds: None)
     result = mv.verify(get, repo=REPO, sha=SHA, git_dir=planted, main="main")
     assert isinstance(result, mv.Unreadable), result
     assert "IncompleteRead" in result.reason
+
+
+def _refusals(monkeypatch: pytest.MonkeyPatch, answers: list[Any]) -> list[Any]:
+    """urlopen answers each read with the next of *answers*: an exception to raise, or a body."""
+    sent: list[Any] = []
+
+    def urlopen(request: Any, timeout: float) -> _Response:
+        sent.append(request)
+        answer = answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        return _Response(answer)
+
+    monkeypatch.setattr(mv.urllib.request, "urlopen", urlopen)
+    return sent
+
+
+def _refused(code: int, headers: dict[str, str] | None = None) -> urllib.error.HTTPError:
+    """The error urllib raises for an answer of *code*, with *headers*."""
+    message = email.message.Message()
+    for name, value in (headers or {}).items():
+        message[name] = value
+    return urllib.error.HTTPError("https://api.example.invalid/x", code, "Forbidden", message, None)
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        pytest.param(lambda: _refused(403), id="403"),
+        pytest.param(lambda: _refused(429), id="429"),
+        pytest.param(lambda: _refused(502), id="502"),
+        pytest.param(
+            lambda: urllib.error.URLError(ConnectionRefusedError(61, "refused")), id="refused"
+        ),
+        pytest.param(lambda: TimeoutError("timed out"), id="timed-out"),
+    ],
+)
+def test_a_read_the_api_refuses_once_is_read_again(
+    monkeypatch: pytest.MonkeyPatch, first: Callable[[], BaseException]
+) -> None:
+    """11-18: a queue commit's verdict went red on one GET the API refused (403) though every run
+    was green. A refusal that passes (a rate limit, a server's error, a dropped connection) is read
+    again after a wait."""
+    sent = _refusals(monkeypatch, [first(), b'{"total_count": 0}'])
+    waits: list[float] = []
+    assert mv.github_get("https://api.example.invalid", "", sleep=waits.append)("/x") == {
+        "total_count": 0
+    }
+    assert (len(sent), waits) == (2, [5])
+
+
+def test_a_read_the_api_refuses_every_time_is_infrastructure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three waits (5, 15, 45 s), four tries, then the read fails as infrastructure: an OSError,
+    so every caller still reads it as unread, never as an answer."""
+    sent = _refusals(monkeypatch, [_refused(403) for _ in range(4)])
+    waits: list[float] = []
+    with pytest.raises(mv.ApiUnavailable) as raised:
+        mv.github_get("https://api.example.invalid", "", sleep=waits.append)("/x")
+    assert isinstance(raised.value, OSError)
+    assert (len(sent), waits) == (4, [5, 15, 45])
+    assert str(raised.value).startswith(
+        "infrastructure: the API did not answer after 4 tries"
+    ), raised.value
+    assert "HTTP Error 403" in str(raised.value), raised.value
+
+
+@pytest.mark.parametrize(
+    ("headers", "wait"),
+    [
+        pytest.param({"Retry-After": "2"}, 2, id="retry-after"),
+        pytest.param({"Retry-After": "soon"}, 5, id="retry-after-not-a-number"),
+        pytest.param({"Retry-After": "\u00b2"}, 5, id="retry-after-a-digit-not-ascii"),
+        pytest.param(
+            {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1030"}, 30, id="rate-limit-reset"
+        ),
+        pytest.param(
+            {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "999"}, 0, id="reset-gone-by"
+        ),
+        pytest.param(
+            {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "\u00b2"},
+            5,
+            id="reset-a-digit-not-ascii",
+        ),
+        # GitHub sends its reset on every answer: with requests left it is no wait of the read's.
+        pytest.param(
+            {"x-ratelimit-remaining": "4999", "x-ratelimit-reset": "1030"},
+            5,
+            id="requests-left-so-no-reset-wait",
+        ),
+        pytest.param(
+            {"Retry-After": "2", "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1030"},
+            2,
+            id="retry-after-over-the-reset",
+        ),
+    ],
+)
+def test_a_refusal_s_own_wait_is_waited(
+    monkeypatch: pytest.MonkeyPatch, headers: dict[str, str], wait: float
+) -> None:
+    sent = _refusals(monkeypatch, [_refused(429, headers), b"{}"])
+    waits: list[float] = []
+    get = mv.github_get("https://api.example.invalid", "", sleep=waits.append, clock=lambda: 1000)
+    assert get("/x") == {}
+    assert (len(sent), waits) == (2, [wait])
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        pytest.param({"Retry-After": "900"}, id="retry-after-past-the-longest-wait"),
+        pytest.param(
+            {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "4600"}, id="reset-an-hour-off"
+        ),
+    ],
+)
+def test_a_refusal_whose_own_wait_is_past_the_longest_fails_at_once(
+    monkeypatch: pytest.MonkeyPatch, headers: dict[str, str]
+) -> None:
+    """Waiting the longest wait three times and asking again before the time the API named only
+    fails later: the read fails as infrastructure at once."""
+    sent = _refusals(monkeypatch, [_refused(429, headers), b"{}"])
+    waits: list[float] = []
+    get = mv.github_get("https://api.example.invalid", "", sleep=waits.append, clock=lambda: 1000)
+    with pytest.raises(mv.ApiUnavailable, match="^infrastructure: the API asks for"):
+        get("/x")
+    assert (len(sent), waits) == (1, [])
+
+
+def test_a_reader_s_waits_are_bounded_over_all_its_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Past the reader's budget each read is tried once, so a run whose API hangs ends in its
+    job's time with a red, never waiting on its timeout."""
+    sent = _refusals(monkeypatch, [_refused(503) for _ in range(4)])
+    waits: list[float] = []
+    get = mv.github_get(
+        "https://api.example.invalid", "", sleep=waits.append, clock=lambda: 1000, budget=20
+    )
+    with pytest.raises(mv.ApiUnavailable, match="waits are spent"):
+        get("/x")
+    assert (len(sent), waits) == (3, [5, 15])
+    with pytest.raises(mv.ApiUnavailable, match="waits are spent"):
+        get("/y")
+    assert (len(sent), waits) == (4, [5, 15])
+
+
+def test_a_reader_whose_api_hangs_ends_inside_its_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each try hangs until its 30 s timeout: the hung tries spend the budget as the waits do, so
+    six reads end well inside the job's ten minutes, the later ones one try each."""
+    now = [0.0]
+    calls: list[str] = []
+
+    def urlopen(request: Any, timeout: float) -> _Response:
+        calls.append(request.full_url)
+        now[0] += timeout
+        raise TimeoutError("timed out")
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    monkeypatch.setattr(mv.urllib.request, "urlopen", urlopen)
+    get = mv.github_get("https://api.example.invalid", "", sleep=sleep, clock=lambda: now[0])
+    for n in range(6):
+        with pytest.raises(mv.ApiUnavailable):
+            get(f"/read-{n}")
+    assert now[0] <= 400, now[0]
+    assert [sum(c.endswith(f"/read-{n}") for c in calls) for n in range(6)] == [4, 2, 1, 1, 1, 1]
+
+
+@pytest.mark.parametrize("code", [401, 404, 409, 422])
+def test_a_refusal_that_does_not_pass_is_not_read_again(
+    monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    """A path that is not there, or a request the API will not take, answers the same however
+    often it is asked: the read fails at once, as before."""
+    sent = _refusals(monkeypatch, [_refused(code)])
+    waits: list[float] = []
+    with pytest.raises(urllib.error.HTTPError):
+        mv.github_get("https://api.example.invalid", "", sleep=waits.append)("/x")
+    assert (len(sent), waits) == (1, [])
 
 
 @pytest.mark.parametrize(
