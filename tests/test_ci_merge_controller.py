@@ -1408,6 +1408,10 @@ def test_one_verdict_reads_each_blob_and_tree_once(tmp_path: Path, monkeypatch: 
     assert mc.main([*argv, "--out", str(tmp_path / "v.json")], get=api) == 0
     shared = [p for p in api.calls if "/git/blobs/" in p or "/git/trees/" in p]
     assert shared and len(shared) == len(set(shared)), sorted(shared)
+    commits = [
+        p for p in api.calls if "/git/commits/" in p or re.search(r"/compare/[0-9a-f]{40}\.", p)
+    ]
+    assert len(commits) == len(set(commits)), sorted(commits)
 
 
 def test_only_an_answer_by_sha_is_kept() -> None:
@@ -1433,6 +1437,34 @@ def test_only_an_answer_by_sha_is_kept() -> None:
     reader(ref)
     reader(ref)
     assert calls == [blob, blob, ref, ref], calls
+
+
+@pytest.mark.parametrize(
+    "path, kept",
+    [
+        pytest.param(f"/repos/{REPO}/git/commits/{'b' * 40}", True, id="a-commit"),
+        pytest.param(f"/repos/{REPO}/compare/{'b' * 40}...{'c' * 40}", True, id="two-commits"),
+        pytest.param(f"/repos/{REPO}/git/trees/{'b' * 40}", True, id="a-tree"),
+        pytest.param(f"/repos/{REPO}/compare/main...{'c' * 40}", False, id="against-a-branch"),
+        pytest.param(f"/repos/{REPO}/compare/{'b' * 40}...main", False, id="to-a-branch"),
+        pytest.param(f"/repos/{REPO}/commits/{'b' * 40}/check-runs", False, id="a-commit-s-checks"),
+        pytest.param(f"/repos/{REPO}/git/commits/{'b' * 40}?page=2", False, id="with-a-query"),
+        pytest.param(f"/repos/{REPO}/git/ref/heads/main", False, id="a-ref"),
+    ],
+)
+def test_a_read_is_kept_only_when_its_answer_is_its_shas_for_good(path: str, kept: bool) -> None:
+    """A commit, a tree and two commits' comparison answer the same for good; a comparison
+    against a branch moves with it, and anything else is read anew."""
+    calls: list[str] = []
+
+    def get(p: str) -> Any:
+        calls.append(p)
+        return {"path": p}
+
+    reader = mc.content_addressed(get)
+    reader(path)
+    reader(path)
+    assert calls == [path] if kept else calls == [path, path], calls
 
 
 def test_decide_writes_the_body_and_says_whether_to_post(tmp_path: Path, monkeypatch: Any) -> None:
@@ -2402,9 +2434,10 @@ def test_the_sweep_judges_again_only_a_waiting_red_of_the_controllers(why: str) 
     assert mc.judge_waiting(api, REPO, APP, CONTROLLER) == []
 
 
-def _graph(*pulls: tuple[str, list[tuple[int, str, str]]], total: int | None = None) -> Any:
+def _graph(*pulls: tuple[str, list[tuple[Any, ...]]], total: int | None = None) -> Any:
     """The one read's answer: each open pull request's head and its verdicts, as GraphQL spells
-    them (``databaseId``, an upper-case ``conclusion``, ``text``)."""
+    them (``databaseId``, an upper-case ``conclusion``, ``text``, and ``completedAt`` when a
+    verdict names a fourth field)."""
     nodes = [
         {
             "commits": {
@@ -2417,8 +2450,13 @@ def _graph(*pulls: tuple[str, list[tuple[int, str, str]]], total: int | None = N
                                     {
                                         "checkRuns": {
                                             "nodes": [
-                                                {"databaseId": i, "conclusion": c, "text": x}
-                                                for i, c, x in runs
+                                                {
+                                                    "databaseId": r[0],
+                                                    "conclusion": r[1],
+                                                    "text": r[2],
+                                                    **({"completedAt": r[3]} if r[3:] else {}),
+                                                }
+                                                for r in runs
                                             ]
                                         }
                                     }
@@ -2602,20 +2640,114 @@ def test_decide_waiting_writes_every_changed_verdict(tmp_path: Path, monkeypatch
     assert "post=true" in lines and "dispatch=\n" in lines
 
 
-# ── Every poster run judges a few waiting heads again (#4584 step 4) ───────────────────────────
+# ── A Merge run's poster run judges a few waiting heads again (#4584 step 4) ───────────────────
 
 
 def _verdicts_of(head: str) -> str:
     return VERDICTS.replace(HEAD, head)
 
 
+def _other_run(api: FakeApi, path: str, **more: Any) -> int:
+    """Another run of *path* that woke the poster, like the head's own run but for *more*."""
+    other = 777
+    run = api.answers[f"/repos/{REPO}/actions/runs/{RUN}"]
+    api.answers[f"/repos/{REPO}/actions/runs/{other}"] = {**run, "id": other, "path": path, **more}
+    return other
+
+
+def _reported(api: FakeApi) -> Any:
+    """A head red and waiting on its contract, whose contract has since passed: the GraphQL read
+    that names it as waiting."""
+    _contract(api)
+    first = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert first is not None and mc.WAITING_FENCE in first.output["text"]
+    _merge_runs(api, OWN_MERGE, [RUN])
+    _posted(api, _verdict(first, 1))
+    _contract(api, {})
+    _refs(api, mc.CONTRACT_PREFIX, {CONTRACT_BRANCH: MAIN})
+    _refs(api, mc.TRUSTED_PREFIX, {})
+    return _asked(_graph((HEAD, [(1, "FAILURE", first.output["text"])])))
+
+
+@pytest.mark.parametrize(
+    "path, more",
+    [
+        pytest.param(mc.DEPENDENCY_REVIEW, {"status": "in_progress"}, id="dependency-review"),
+        pytest.param(mc.DCO_CHECK, {"status": "in_progress"}, id="dco"),
+        pytest.param(mc.CONTRACT_WORKFLOW, {"event": "push"}, id="contract"),
+        pytest.param(f"{WF}nix.yml", {"event": "push"}, id="a-gate"),
+        pytest.param(mc.CODEQL_WORKFLOW, {"status": "in_progress"}, id="codeql"),
+        pytest.param(f"{WF}something-else.yml", {}, id="another-workflow"),
+    ],
+)
+def test_a_poster_run_another_workflow_woke_judges_no_waiting_head(
+    tmp_path: Path, monkeypatch: Any, path: str, more: Mapping[str, Any]
+) -> None:
+    """Only a Merge run's completion and a wake sweep: a run any other workflow's completion woke
+    judges its own head alone, so a pull request's one push no longer judges the oldest waiting
+    heads again once for each run it starts (the job token's hourly budget ran out)."""
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
+    api = _changes(FakeApi())
+    query, asked = _reported(api)
+    other = _other_run(api, path, **more)
+    api.calls.clear()
+    out = tmp_path / "v.json"
+    argv = ["decide", "--repo", REPO, "--run-id", str(other), "--controller-app-id", str(APP)]
+    assert (
+        mc.main(
+            [*argv, "--controller-revision", CONTROLLER, "--out", str(out)], get=api, query=query
+        )
+        == 0
+    )
+    assert not out.exists() and VERDICTS not in api.calls, "the waiting head is not judged again"
+    assert asked == [], "nor is the one read of the waiting heads made"
+
+
+def test_a_check_run_s_poster_run_judges_no_waiting_head(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
+    api = _changes(FakeApi())
+    query, asked = _reported(api)
+    api.answers[f"/repos/{REPO}/check-runs/55"] = {"id": 55, "name": "something else"}
+    api.calls.clear()
+    out = tmp_path / "v.json"
+    argv = ["decide", "--repo", REPO, "--check-run-id", "55", "--controller-app-id", str(APP)]
+    assert (
+        mc.main(
+            [*argv, "--controller-revision", CONTROLLER, "--out", str(out)], get=api, query=query
+        )
+        == 0
+    )
+    assert not out.exists() and VERDICTS not in api.calls, "the waiting head is not judged again"
+    assert asked == [], "nor is the one read of the waiting heads made"
+
+
+def test_a_wake_s_poster_run_judges_the_waiting_heads_too(tmp_path: Path, monkeypatch: Any) -> None:
+    """A contract run's wake names its own head; the sweep beside it judges the others."""
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
+    api = _changes(FakeApi())
+    query, _ = _reported(api)
+    other = "e" * 40
+    for event in ("pull_request", mc.QUEUE_EVENT):
+        _merge_runs(api, OWN_MERGE.replace(HEAD, other).replace("pull_request", event), [])
+    out = tmp_path / "v.json"
+    argv = ["decide", "--repo", REPO, "--head", other, "--controller-app-id", str(APP)]
+    assert (
+        mc.main(
+            [*argv, "--controller-revision", CONTROLLER, "--out", str(out)], get=api, query=query
+        )
+        == 0
+    )
+    [posted] = json.loads(out.read_text())
+    assert (posted["head_sha"], posted["conclusion"]) == (HEAD, "success")
+
+
 @pytest.mark.parametrize(
     "done, conclusion", [({}, "success"), ({"conclusion": "failure"}, "failure")]
 )
-def test_a_contract_that_reports_is_posted_by_the_next_unrelated_poster_run(
+def test_a_contract_that_reports_is_posted_by_the_next_merge_run_s_poster_run(
     tmp_path: Path, monkeypatch: Any, done: Mapping[str, Any], conclusion: str
 ) -> None:
-    """No schedule and no wake from the contract run: a poster run woken by another workflow's
+    """No schedule and no wake from the contract run: a poster run woken by another Merge run's
     completion judges the waiting head again, posts its verdict and deletes its branch."""
     outputs = tmp_path / "outputs"
     monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
@@ -2628,13 +2760,7 @@ def test_a_contract_that_reports_is_posted_by_the_next_unrelated_poster_run(
     _contract(api, done)
     _refs(api, mc.CONTRACT_PREFIX, {CONTRACT_BRANCH: MAIN})
     _refs(api, mc.TRUSTED_PREFIX, {})
-    other = 777
-    run = api.answers[f"/repos/{REPO}/actions/runs/{RUN}"]
-    api.answers[f"/repos/{REPO}/actions/runs/{other}"] = {
-        **run,
-        "id": other,
-        "path": f"{WF}something-else.yml",
-    }
+    other = _other_run(api, mc.MERGE_WORKFLOW, event="push")
     query, _ = _asked(_graph((HEAD, [(1, "FAILURE", first.output["text"])])))
     out = tmp_path / "v.json"
     argv = ["decide", "--repo", REPO, "--run-id", str(other), "--controller-app-id", str(APP)]
@@ -2659,6 +2785,94 @@ def test_a_poster_run_judges_at_most_a_few_waiting_heads_the_oldest_first() -> N
     assert mc.judge_waiting(api, REPO, APP, CONTROLLER, query, limit=2) == []
     read = [h for h in heads if _verdicts_of(h) in api.calls]
     assert sorted(read) == ["b" * 40, "d" * 40], "the two oldest waiting verdicts, no more"
+
+
+_NOW = datetime.datetime(2026, 11, 18, 12, 0, tzinfo=datetime.timezone.utc)
+
+
+def _ago(hours: float, now: datetime.datetime = _NOW) -> str:
+    return (now - datetime.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_a_sweep_beside_a_run_passes_over_a_verdict_that_has_waited_too_long() -> None:
+    """Oldest first, three heads waiting on a CodeQL analysis that never comes took the sweep's
+    places for good; past WAITING_MAX_AGE, the place goes to a head that waits now."""
+    stale, fresh = "a" * 40, "b" * 40
+    api = FakeApi()
+    api.answers[PULLS] = [{"number": n, "head": {"sha": h}} for n, h in enumerate((stale, fresh))]
+    for head in (stale, fresh):
+        api.answers[_verdicts_of(head)] = {"total_count": 0, "check_runs": []}
+    hours = mc.WAITING_MAX_AGE.total_seconds() / 3600
+    query, _ = _asked(
+        _graph(
+            (stale, [(1, "FAILURE", _WAITS, _ago(hours + 1))]),
+            (fresh, [(2, "FAILURE", _WAITS, _ago(1))]),
+        )
+    )
+    api.calls.clear()
+    assert mc.judge_waiting(api, REPO, APP, CONTROLLER, query, limit=1, now=_NOW) == []
+    assert [h for h in (stale, fresh) if _verdicts_of(h) in api.calls] == [fresh]
+
+
+@pytest.mark.parametrize(
+    "at, picked",
+    [
+        pytest.param(None, True, id="no-time"),
+        pytest.param("not a time", True, id="a-time-that-does-not-read"),
+        pytest.param("2026-11-18T05:00:00", True, id="a-time-with-no-zone"),
+        pytest.param(_ago(1), True, id="an-hour"),
+        pytest.param(_ago(48), False, id="two-days"),
+    ],
+)
+def test_only_a_verdict_known_to_have_waited_too_long_is_passed_over(
+    at: str | None, picked: bool
+) -> None:
+    run = (1, "FAILURE", _WAITS) if at is None else (1, "FAILURE", _WAITS, at)
+    query, _ = _asked(_graph((HEAD, [run])))
+    since = _NOW - mc.WAITING_MAX_AGE
+    assert mc.waiting_heads(query, REPO, APP, since=since) == ([HEAD] if picked else [])
+
+
+def test_the_schedule_s_sweep_judges_a_head_however_long_it_has_waited() -> None:
+    api = FakeApi()
+    api.answers[PULLS] = [{"number": 1, "head": {"sha": HEAD}}]
+    api.answers[VERDICTS] = {"total_count": 0, "check_runs": []}
+    query, _ = _asked(_graph((HEAD, [(1, "FAILURE", _WAITS, _ago(48))])))
+    api.calls.clear()
+    assert mc.judge_waiting(api, REPO, APP, CONTROLLER, query, now=_NOW) == []
+    assert VERDICTS in api.calls
+
+
+def test_a_head_waiting_on_codeql_for_ever_costs_nothing_between_sweeps(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A dependency bump waiting two days on CodeQL: a run any other workflow woke reads nothing of
+    it, not even the one read, and a Merge run's sweep makes that one read and passes it over."""
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
+    api = _changes(FakeApi())
+    now = datetime.datetime.now(datetime.timezone.utc)
+    query, asked = _asked(_graph((HEAD, [(1, "FAILURE", _WAITS, _ago(48, now))])))
+    api.answers[PULLS] = [{"number": 12, "head": {"sha": HEAD}}]
+    api.answers[f"/repos/{REPO}/check-runs/55"] = {"id": 55, "name": "something else"}
+    _refs(api, mc.CONTRACT_PREFIX, {})
+    _refs(api, mc.TRUSTED_PREFIX, {})
+    wakes = [
+        ["--run-id", str(_other_run(api, mc.DCO_CHECK, status="in_progress"))],
+        ["--check-run-id", "55"],
+    ]
+    for wake in wakes:
+        api.calls.clear()
+        argv = ["decide", "--repo", REPO, *wake, "--controller-app-id", str(APP)]
+        argv += ["--controller-revision", CONTROLLER, "--out", str(tmp_path / "v.json")]
+        assert mc.main(argv, get=api, query=query) == 0
+        assert VERDICTS not in api.calls and PULLS not in api.calls, wake
+    assert asked == [], "no wake but a Merge run's or a contract's makes the one read"
+    api.calls.clear()
+    merge = str(_other_run(api, mc.MERGE_WORKFLOW, event="push"))
+    argv = ["decide", "--repo", REPO, "--run-id", merge, "--controller-app-id", str(APP)]
+    argv += ["--controller-revision", CONTROLLER, "--out", str(tmp_path / "v.json")]
+    assert mc.main(argv, get=api, query=query) == 0
+    assert len(asked) == 1 and VERDICTS not in api.calls, "one read, and the head is passed over"
 
 
 def test_a_poster_run_does_not_judge_its_own_head_twice() -> None:
@@ -2699,7 +2913,7 @@ def test_a_red_head_whose_contract_reports_gets_its_final_reasons_and_its_branch
     tmp_path: Path, monkeypatch: Any, done: Mapping[str, Any], says: str | None
 ) -> None:
     """#5528's case: red for its own run, and waiting on its contract. Once the contract reports,
-    an unrelated poster run posts the final red, which no longer says it waits and names the
+    the next Merge run's poster run posts the final red, which no longer says it waits and names the
     contract's failure when there is one, and the contract branch is deleted."""
     outputs = tmp_path / "outputs"
     monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
@@ -2713,13 +2927,7 @@ def test_a_red_head_whose_contract_reports_gets_its_final_reasons_and_its_branch
     _contract(api, done)
     _refs(api, mc.CONTRACT_PREFIX, {CONTRACT_BRANCH: MAIN})
     _refs(api, mc.TRUSTED_PREFIX, {})
-    other = 777
-    run = api.answers[f"/repos/{REPO}/actions/runs/{RUN}"]
-    api.answers[f"/repos/{REPO}/actions/runs/{other}"] = {
-        **run,
-        "id": other,
-        "path": f"{WF}something-else.yml",
-    }
+    other = _other_run(api, mc.MERGE_WORKFLOW, event="push")
     query, _ = _asked(_graph((HEAD, [(1, "FAILURE", first.posting.output["text"])])))
     out = tmp_path / "v.json"
     argv = ["decide", "--repo", REPO, "--run-id", str(other), "--controller-app-id", str(APP)]

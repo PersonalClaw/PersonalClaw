@@ -202,7 +202,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -309,14 +309,19 @@ def _read(get: Get, path: str) -> Any:
         raise Unread(f"GET {path}: {exc}") from exc
 
 
-#: A read whose answer is its sha's for good: a blob, or a tree (recursive or not).
-_BY_SHA = re.compile(r"/repos/[^/]+/[^/]+/git/(?:blobs|trees)/[0-9a-f]{40}(?:\?recursive=1)?")
+#: A read whose answer is its sha's for good: a blob, a tree (recursive or not), a commit, or the
+#: comparison of two commits named by their shas.
+_BY_SHA = re.compile(
+    r"/repos/[^/]+/[^/]+/(?:git/(?:blobs|trees)/[0-9a-f]{40}(?:\?recursive=1)?"
+    r"|git/commits/[0-9a-f]{40}|compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40})"
+)
 
 
 def content_addressed(get: Get) -> Get:
-    """*get*, keeping each blob's and tree's answer once it is read: one verdict reads each once,
-    however many of main's and the head's files share it. Nothing else is kept, and a read that
-    failed is read again."""
+    """*get*, keeping each answer by sha once it is read (:data:`_BY_SHA`): one verdict reads each
+    blob, tree, commit and two commits' comparison once, however many heads and trees share it.
+    Nothing else is kept, a comparison against a branch included, and a read that failed is read
+    again."""
     kept: dict[str, Any] = {}
 
     def read(path: str) -> Any:
@@ -703,6 +708,9 @@ class Outcome:
     dispatch: str | None = None
     base: str | None = None
     cleanup: str | None = None
+    #: Whether the run that gave it also judges again a few waiting heads: a Merge run's
+    #: completion only (:func:`judge`, :data:`WAITING_PER_RUN`).
+    sweep: bool = False
 
 
 @dataclass(frozen=True)
@@ -1836,7 +1844,10 @@ def judge(
         if not _SHA.fullmatch(head):
             raise Unread(f"CodeQL run {run_id} names no head")
         return rejudge(get, repo, head, controller_revision, queue)
-    return decide(get, repo, run_id, controller_revision, queue)
+    outcome = decide(get, repo, run_id, controller_revision, queue)
+    # Only a Merge run's completion sweeps beside its own outcome (WAITING_PER_RUN).
+    merge = owner == repo and run.get("path") == MERGE_WORKFLOW
+    return replace(outcome, sweep=True) if merge else outcome
 
 
 def _newest_verdict(get: Get, repo: str, head: str, app: int) -> Mapping[str, Any] | None:
@@ -1871,10 +1882,22 @@ def _waiting(check: Mapping[str, Any]) -> bool:
 #: More open pull requests than this are not looked at again in one sweep.
 SWEEP_LIMIT = 100
 
-#: A poster run woken by anything but the schedule also judges again this many waiting heads,
-#: the oldest waiting verdict first. The schedule alone is no backstop: in the 24 hours to
-#: 2026-10-25 09:47 UTC it fired 7 times of its 144, 110 to 283 minutes apart.
+#: A poster run woken by a Merge run's completion, or by a contract run's wake, also judges again
+#: this many waiting heads, the oldest waiting verdict first (:attr:`Outcome.sweep`). The schedule
+#: alone is no backstop: in the 24 hours to 2026-10-25 09:47 UTC it fired 7 times of its 144, 110
+#: to 283 minutes apart. Every other run judges its own head alone: a pull request's one push wakes
+#: the poster for its dependency review, its sign-off check, CodeQL twice and each gate it starts,
+#: and each of those wakes judged the same oldest heads again, on the job's own token (in the
+#: 2 h 20 min to 09:20 UTC on 2026-11-18, 46 run wakes, 7 of them a Merge run's, at about 120 API
+#: reads a sweep).
 WAITING_PER_RUN = 3
+
+#: A waiting verdict older than this is passed over by the sweep beside a run's own head
+#: (:data:`WAITING_PER_RUN`): what it waits on has not come in that time, and its own wakes (a new
+#: push, its CodeQL check, a gate's run, its contract's wake) and the schedule's sweep still judge
+#: it. Without it, the oldest waiting heads take that sweep's places for good: on 2026-11-18 they
+#: were three dependency bumps waiting on a CodeQL analysis that never comes.
+WAITING_MAX_AGE = datetime.timedelta(hours=6)
 
 #: The sweep's first question in one read: each open pull request into main, its head, and the
 #: controller's merge verdicts on it. ``checkType`` is GitHub's default, the newest of each suite.
@@ -1891,7 +1914,7 @@ query($owner: String!, $name: String!, $app: Int!) {
               checkSuites(first: 10, filterBy: {appId: $app}) {
                 nodes {
                   checkRuns(first: 100, filterBy: {checkName: "merge-verdict"}) {
-                    nodes { databaseId conclusion text }
+                    nodes { databaseId conclusion text completedAt }
                   }
                 }
               }
@@ -1905,11 +1928,14 @@ query($owner: String!, $name: String!, $app: Int!) {
 """
 
 
-def waiting_heads(query: Query, repo: str, app: int) -> list[str] | None:
+def waiting_heads(
+    query: Query, repo: str, app: int, *, since: datetime.datetime | None = None
+) -> list[str] | None:
     """The heads of the open pull requests into main whose newest merge verdict of the App's is a
     red that still waits (on CodeQL, on its contract run or on a gate's run), the oldest such
     verdict first, from one GraphQL read. None when that read gives no answer this reads, or more
-    pull requests than a sweep looks at: the sweep then reads each head itself."""
+    pull requests than a sweep looks at: the sweep then reads each head itself. With ``since``, a
+    verdict completed before it is passed over; one whose time does not read is kept."""
     owner, name = repo.split("/", 1)
     try:
         answer = query(WAITING_QUERY, {"owner": owner, "name": name, "app": app})
@@ -1928,11 +1954,22 @@ def waiting_heads(query: Query, repo: str, app: int) -> list[str] | None:
                 newest is not None
                 and newest["conclusion"] == "FAILURE"
                 and f"```{WAITING_FENCE}" in (newest["text"] or "")
+                and not (since is not None and _completed_before(newest, since))
             ):
                 heads.append((int(newest["databaseId"]), str(commit["oid"])))
         return [oid for _, oid in sorted(heads)]
     except (OSError, KeyError, TypeError, ValueError):
         return None
+
+
+def _completed_before(run: Mapping[str, Any], since: datetime.datetime) -> bool:
+    """Whether the check run (as GraphQL spells it) completed before *since*: False when its time
+    does not read, so a verdict of no known age is never passed over."""
+    try:
+        when = datetime.datetime.fromisoformat(str(run["completedAt"]).replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        return False
+    return when.tzinfo is not None and when < since
 
 
 def judge_waiting(
@@ -1945,6 +1982,7 @@ def judge_waiting(
     limit: int | None = None,
     skip: frozenset[str] = frozenset(),
     queue: Queue | None = None,
+    now: datetime.datetime | None = None,
 ) -> list[Outcome]:
     """Every open pull request into main whose newest merge verdict, the controller App's, is a red
     that still waits (on CodeQL, on its contract run, whose completion wakes nothing, or on a gate's
@@ -1955,9 +1993,10 @@ def judge_waiting(
     and the sweep ends there; some, and only those are read again, through the REST reads below,
     which stay the gate. A read that gives no answer leaves the sweep reading every head.
 
-    With ``limit`` (a poster run woken by something else), only the first ``limit`` heads the one
-    read names, past ``skip``, are judged again, and a read that gives no answer judges none: the
-    schedule's own sweep reads every head.
+    With ``limit`` (beside a Merge run's or a wake's own head), only the first ``limit`` heads the
+    one read names, past ``skip`` and past any verdict that has waited longer than
+    :data:`WAITING_MAX_AGE` before *now*, are judged again, and a read that gives no answer judges
+    none: the schedule's own sweep reads every head, however long it has waited.
 
     Once main's merges are queued (``queue.live``), each built queue commit of main's merge queue
     whose verdict waits is judged again first, by the same ``limit`` and ``skip``."""
@@ -1972,7 +2011,10 @@ def judge_waiting(
                 outcome = rejudge(get, repo, commit, controller_revision, queue)
                 if outcome.posting is not None:
                     changed.append(outcome)
-    waiting = waiting_heads(query, repo, app) if query is not None else None
+    since = None
+    if limit is not None:
+        since = (now or datetime.datetime.now(datetime.timezone.utc)) - WAITING_MAX_AGE
+    waiting = waiting_heads(query, repo, app, since=since) if query is not None else None
     if limit is not None:
         if waiting is None:
             print("the one read of the open heads gave no answer: no waiting head judged here")
@@ -3065,7 +3107,7 @@ def main(
         "--controller-app-id",
         type=int,
         help="whose verdicts to read: with --waiting every waiting head is judged again; with a "
-        f"run or a check run, also up to {WAITING_PER_RUN} of them",
+        f"Merge run or a wake's head, also up to {WAITING_PER_RUN} of them",
     )
     one.add_argument("--out", required=True, type=Path)
     two = sub.add_parser("post", help="post the check run with the App's token (GH_TOKEN)")
@@ -3146,9 +3188,11 @@ def main(
             sweep = []
         # Only one head's own outcome starts a contract run; a sweep never does.
         single = outcomes[0] if len(outcomes) == 1 and not args.waiting else None
-        if single is not None and args.controller_app_id:
-            # Whatever woke this run, a few heads whose red still waits are judged again too: the
-            # schedule fires far less often than it says, and a contract run wakes nothing.
+        sweeps = single is not None and (single.sweep or args.head is not None)
+        if single is not None and sweeps and args.controller_app_id:
+            # A Merge run's completion or a wake also judges again a few heads whose red still
+            # waits: the schedule fires far less often than it says. Any other run judges its own
+            # head alone (WAITING_PER_RUN).
             mine = frozenset({single.posting.head_sha} if single.posting else set())
             try:
                 outcomes += judge_waiting(
