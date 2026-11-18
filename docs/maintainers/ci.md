@@ -561,11 +561,20 @@ verdict says all it must fix:
   sweep, for open pull requests whose newest verdict is a waiting red, posting only a verdict that
   changed. The sweep runs every ten minutes by its cron, but GitHub fires that schedule far less
   often: 7 times of 144 in the 24 hours to 09:47 UTC on 2026-10-25, 110 to 283 minutes apart. So
-  every poster run, whatever woke it, also judges again the three heads whose waiting verdict is
-  oldest (`WAITING_PER_RUN`), past its own head and only when the one GraphQL read answers. Heads
-  under review wake the poster all the time, so a waiting head is picked up within minutes of any
-  activity. The CodeQL workflow's wake is proved: the completion of main's CodeQL run 40071173659
-  started poster run 40072081053. The sweep stays all the same, for one gap: that wake fires when
+  a poster run woken by a Merge run's completion (a pull request's, a queue commit's or main's)
+  or by a contract run's wake also judges again the three heads whose waiting verdict is oldest
+  (`WAITING_PER_RUN`), past its own head and only when the one GraphQL read answers. Every other
+  run judges its own head alone. Before, every run swept, and a pull request's one push woke the
+  poster for its dependency review, its sign-off check, CodeQL twice and each gate it starts: on
+  2026-11-18, 46 run wakes in the 2 h 20 min to 09:20 UTC, 7 of them a Merge run's, each sweep about
+  120 of the job token's API reads, which ran the token's hourly budget out. A Merge run completes
+  several times an hour while heads are under review (7 in that window), so a waiting head is
+  picked up within about 20 minutes of activity, where it was within a few. That sweep passes over
+  a verdict that has waited more than 6 hours (`WAITING_MAX_AGE`): its own wakes and the schedule's
+  sweep still judge it, but it no longer holds one of the three places for good, as three dependency
+  bumps waiting on a CodeQL analysis that never came did on 2026-11-18. The CodeQL workflow's
+  wake is proved: the completion of main's CodeQL run 40071173659 started poster run 40072081053.
+  The sweep stays all the same, for one gap: that wake fires when
   the run completes, right after its last language uploads, and a head judged before that upload is
   processed waits with nothing left to wake it, since the summary check fired at the first upload.
   The sweep closes that gap, and it is the only wake for a head whose contract run has reported. Its

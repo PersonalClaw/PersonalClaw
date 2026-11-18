@@ -71,8 +71,8 @@ on:
   # Every ten minutes: judge again the open pull requests whose newest verdict is a red that still
   # waits, on CodeQL to finish or to process, on the head's contract run to report or on a gate's
   # run to finish, posting only what changed and deleting the contract branch of each head judged.
-  # GitHub fires it far less often (7 of 144 in the 24 hours to 2026-10-25 09:47 UTC), so every
-  # other run also judges again the few oldest waiting heads.
+  # GitHub fires it far less often (7 of 144 in the 24 hours to 2026-10-25 09:47 UTC), so a Merge
+  # run's completion and a contract run's wake also judge again the few oldest waiting heads.
   schedule:
     - cron: "*/10 * * * *"
   # A contract run's last job (contract.yml's `wake`) dispatches this on main for the head it
@@ -164,8 +164,9 @@ jobs:
           APP_ID: ${{ vars.CONTROLLER_APP_ID }}
         run: |
           set -euo pipefail
-          # Whatever woke it, the run also judges again a few heads whose red still waits: the
-          # schedule fires far less often than its cron says.
+          # A Merge run's completion and a wake also judge again a few heads whose red still waits:
+          # the schedule fires far less often than its cron says. Any other run judges its own
+          # head alone, so its reads stay within the job token's hourly budget.
           if [ -n "$RUN_ID" ] && [ "$ACTION" = in_progress ]; then
             # A pull request's Merge run has started: at most its head's contract, beside it.
             which=(--start "$RUN_ID")
