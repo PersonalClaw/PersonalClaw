@@ -71,10 +71,11 @@ runs:
         # Each apt-get fetch is retried, and each apt-get is cut off at its bound: the runner's own
         # mirror once hung for 55 min, where this whole step takes under 30 s. Once a job,
         # an update or install that times out or fails finishes what the cut left half done, moves
-        # every source off the runner's mirror (azure.archive.ubuntu.com to archive.ubuntu.com, and
-        # the arm runner's azure.ports.ubuntu.com to ports.ubuntu.com), and the security pocket off
-        # security.ubuntu.com to archive.ubuntu.com, which carries it too, warns which hosts it
-        # left for which, and tries again. GitHub's x64 image names only security.ubuntu.com in
+        # every source off the runner's mirror (any regional host of the archive, such as
+        # azure.archive.ubuntu.com or us-east-2.ec2.archive.ubuntu.com, and the security pocket's
+        # security.ubuntu.com, to archive.ubuntu.com, which carries both; any regional ports host,
+        # such as the arm runner's azure.ports.ubuntu.com, to ports.ubuntu.com), warns which hosts
+        # it left for which, and tries again. GitHub's x64 image names only security.ubuntu.com in
         # ubuntu.sources: it reads the rest from apt-mirrors.txt, the runner's own first, so the
         # move rewrites that list too, and a file the image lacks is passed over. One that still
         # fails is the package mirror, not the job's code: it fails this step under an
@@ -116,12 +117,26 @@ runs:
           for f in $sources; do
             if [ -f "$f" ]; then
               text=$(< "$f")
-              for move in azure.archive.ubuntu.com=archive.ubuntu.com \
-                azure.ports.ubuntu.com=ports.ubuntu.com security.ubuntu.com=archive.ubuntu.com; do
+              # Each regional host of the archive or of ports the file names, whatever its region
+              # and cloud, read whole from the `//` that opens it, so a host whose name ends in
+              # another's is its own.
+              regional=""
+              for pool in archive ports; do
+                rest=$text
+                while [[ $rest =~ //(([A-Za-z0-9-]+\.)+$pool\.ubuntu\.com) ]]; do
+                  # The pattern is a variable: bash 3.2 matches no quoted pattern opening `//`.
+                  found="//${BASH_REMATCH[1]}"
+                  rest=${rest//"$found"/}
+                  regional="$regional ${BASH_REMATCH[1]}=$pool.ubuntu.com"
+                done
+              done
+              for move in $regional security.ubuntu.com=archive.ubuntu.com; do
                 host=${move%%=*}
                 new=${move#*=}
-                case $text in *"$host"*) ;; *) continue ;; esac
-                text=${text//"$host"/"$new"}
+                old="//$host"
+                now="//$new"
+                case $text in *"$old"*) ;; *) continue ;; esac
+                text=${text//"$old"/"$now"}
                 case ", $left, " in *", $host, "*) ;; *) left=${left:+$left, }$host ;; esac
                 case ", $to, " in *", $new, "*) ;; *) to=${to:+$to, }$new ;; esac
               done

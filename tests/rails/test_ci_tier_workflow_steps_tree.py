@@ -37,10 +37,10 @@ runs it as GitHub does. The programs step is off unless a tier workflow names pr
 every name outside tmux, shellcheck, dash, ffmpeg and docker before it installs anything, and
 installs each one PATH lacks, docker aside, which it only checks for, from apt-get on Linux or brew
 on macOS, nothing elsewhere. apt-get retries each fetch and is cut off at 180 s; once a job, one
-that times out or fails moves the apt sources off the runner's mirror (to archive.ubuntu.com, or
-ports.ubuntu.com on arm), and the security pocket off security.ubuntu.com, with a warning naming
-every host it left and tries again under 300 s, and an install that still fails is an
-`infrastructure` failure of the step.
+that times out or fails moves the apt sources off the runner's mirror (any regional host of the
+archive, and the security pocket's security.ubuntu.com, to archive.ubuntu.com; any regional ports
+host to ports.ubuntu.com), each host whole, with a warning naming every host it left, and tries
+again under 300 s, and an install that still fails is an `infrastructure` failure of the step.
 """
 
 from __future__ import annotations
@@ -1839,6 +1839,94 @@ def test_the_security_host_is_left_with_the_runner_s_mirror(
     assert _warnings(log) == [
         f"::warning title=infrastructure::the runner's package mirror ({left})"
         " did not answer: installing from archive.ubuntu.com"
+    ], log
+
+
+#: GitHub's x64 image as an 11-18 run read it (run 44220579059, python-suite (2/3)): apt-mirrors.txt
+#: names the region's ec2 mirror first, then archive.ubuntu.com and security.ubuntu.com, and the
+#: ec2 mirror answered at 184 kB/s, so the 62.8 MB ffmpeg install outran each bound.
+_EC2_SOURCES = {
+    "sources.list.d/ubuntu.sources": _SECURITY_SOURCES["sources.list.d/ubuntu.sources"],
+    "sources.list": "# Ubuntu sources have moved to /etc/apt/sources.list.d/ubuntu.sources\n",
+    "apt-mirrors.txt": (
+        "http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+        "http://archive.ubuntu.com/ubuntu/\tpriority:2\n"
+        "http://security.ubuntu.com/ubuntu/\tpriority:3\n"
+    ),
+}
+
+
+def test_a_regional_mirror_of_any_name_is_left_for_archive_ubuntu_com(tmp_path: Path) -> None:
+    """The runner's mirror is a regional host of the archive, whatever its region and cloud
+    (us-east-2.ec2. on 11-18, azure. before): the move reads every source from archive.ubuntu.com,
+    the regional host and the security pocket's alike, and the warning names each host it left."""
+    rc, installs, log = _run_programs(tmp_path, "ffmpeg", hang_at=(1,), sources=_EC2_SOURCES)
+    assert rc == 0, log
+    assert installs[-1] == f"{_APT} install -y --no-install-recommends ffmpeg", installs
+    for rel, text in _EC2_SOURCES.items():
+        now = (tmp_path / "etc" / "apt" / rel).read_text()
+        moved = text.replace("us-east-2.ec2.archive.ubuntu.com", "archive.ubuntu.com").replace(
+            "security.ubuntu.com", "archive.ubuntu.com"
+        )
+        assert now == moved, (rel, now)
+        assert ".archive.ubuntu.com" not in now and "security.ubuntu.com" not in now, (rel, now)
+    assert _warnings(log) == [
+        "::warning title=infrastructure::the runner's package mirror (security.ubuntu.com,"
+        " us-east-2.ec2.archive.ubuntu.com) did not answer: installing from"
+        " archive.ubuntu.com"
+    ], log
+
+
+#: An arm runner on a regional ports mirror, as the x64 runner's archive mirror is regional.
+_EC2_PORTS_SOURCES = {
+    "sources.list.d/ubuntu.sources": (
+        "Types: deb\nURIs: http://us-east-2.ec2.ports.ubuntu.com/ubuntu-ports/\n"
+        "Suites: noble noble-updates noble-security\nComponents: main universe\n"
+    ),
+}
+
+#: Two regional hosts where one's name ends in the other's: each is its own host.
+_NESTED_SOURCES = {
+    "sources.list": (
+        "deb http://us.archive.ubuntu.com/ubuntu/ noble main universe\n"
+        "deb http://west.us.archive.ubuntu.com/ubuntu/ noble-updates main universe\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("sources", "host", "left", "target"),
+    [
+        (
+            _EC2_PORTS_SOURCES,
+            "us-east-2.ec2.ports.ubuntu.com",
+            "us-east-2.ec2.ports.ubuntu.com",
+            "ports.ubuntu.com",
+        ),
+        (
+            _NESTED_SOURCES,
+            "archive.ubuntu.com",
+            "us.archive.ubuntu.com, west.us.archive.ubuntu.com",
+            "archive.ubuntu.com",
+        ),
+    ],
+    ids=["a-regional-ports-mirror", "one-host-s-name-ends-in-another-s"],
+)
+def test_each_regional_host_is_left_whole_for_its_archive(
+    tmp_path: Path, sources: dict[str, str], host: str, left: str, target: str
+) -> None:
+    """A regional ports mirror is left for ports.ubuntu.com as an archive one is for
+    archive.ubuntu.com, and each host is moved whole, from the `//` that opens it: a host whose
+    name ends in another's is never cut down to a host that does not exist."""
+    rc, installs, log = _run_programs(tmp_path, "ffmpeg", hang_at=(1,), sources=sources)
+    assert rc == 0, log
+    for rel in sources:
+        now = (tmp_path / "etc" / "apt" / rel).read_text()
+        hosts = [h.split("/", 1)[0] for h in now.split("//")[1:]]
+        assert hosts and all(h == target for h in hosts), (rel, now)
+    assert _warnings(log) == [
+        f"::warning title=infrastructure::the runner's package mirror ({left})"
+        f" did not answer: installing from {target}"
     ], log
 
 
