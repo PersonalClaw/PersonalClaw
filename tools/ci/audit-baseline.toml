@@ -10,11 +10,3 @@
 # Only a high or critical finding (or a Python one, which pip-audit reports unrated) fails the
 # run when it is not waived. A moderate or low one is reported and gates nothing; it is listed
 # here so that what is left after the in-range updates is written down with its reason and date.
-
-[[waiver]]
-file = "package-lock.json"
-scope = "npm-audit"
-reference = "picomatch GHSA-fc5q-39xc-vjpf"
-owner = "maintainers"
-reason = "High: a ReDoS through single-branch repeated extglobs, reachable only with a glob pattern an attacker writes. picomatch is in the lock only as a dev package, reached through two build paths: web's devDependencies vite and vitest (with tinyglobby and fdir), and desktop's devDependency electron-builder (through app-builder-lib, @electron/rebuild, node-gyp and tinyglobby): build and test tools that match the project's own globs, never in an artifact's runtime. No picomatch release fixes it: 4.0.7, the newest, is in the advisory's range (<= 4.0.7, no patched version). This ends when picomatch publishes a fix, at which point the in-range update clears it and this waiver, then matching nothing, fails the run until it is deleted."
-expires = 2026-12-17
