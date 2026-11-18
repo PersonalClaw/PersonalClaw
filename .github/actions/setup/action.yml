@@ -72,12 +72,13 @@ runs:
         # mirror once hung for 55 min, where this whole step takes under 30 s. Once a job,
         # an update or install that times out or fails finishes what the cut left half done, moves
         # every source off the runner's mirror (azure.archive.ubuntu.com to archive.ubuntu.com, and
-        # the arm runner's azure.ports.ubuntu.com to ports.ubuntu.com), warns which host it left
-        # for which, and tries again. GitHub's x64 image names no host in ubuntu.sources: it reads
-        # them from apt-mirrors.txt, the runner's own first, so the move rewrites that list too,
-        # and a file the image lacks is passed over. One that still fails is the package mirror,
-        # not the job's code: it fails this step under an `infrastructure` title, before any test
-        # runs, so a flaky mirror never reads as a test red.
+        # the arm runner's azure.ports.ubuntu.com to ports.ubuntu.com), and the security pocket off
+        # security.ubuntu.com to archive.ubuntu.com, which carries it too, warns which hosts it
+        # left for which, and tries again. GitHub's x64 image names only security.ubuntu.com in
+        # ubuntu.sources: it reads the rest from apt-mirrors.txt, the runner's own first, so the
+        # move rewrites that list too, and a file the image lacks is passed over. One that still
+        # fails is the package mirror, not the job's code: it fails this step under an
+        # `infrastructure` title, before any test runs, so a flaky mirror never reads as a test red.
         # A runner with no coreutils `timeout` (every GitHub image has it) installs as it did before
         # the bound: unbounded, and with no move.
         bound=180
@@ -110,16 +111,25 @@ runs:
           from=$(mirror)
           bound=300
           timeout "$bound" sudo dpkg --configure -a || true
+          left=""
+          to=""
           for f in $sources; do
             if [ -f "$f" ]; then
               text=$(< "$f")
-              text=${text//azure.archive.ubuntu.com/archive.ubuntu.com}
-              text=${text//azure.ports.ubuntu.com/ports.ubuntu.com}
+              for move in azure.archive.ubuntu.com=archive.ubuntu.com \
+                azure.ports.ubuntu.com=ports.ubuntu.com security.ubuntu.com=archive.ubuntu.com; do
+                host=${move%%=*}
+                new=${move#*=}
+                case $text in *"$host"*) ;; *) continue ;; esac
+                text=${text//"$host"/"$new"}
+                case ", $left, " in *", $host, "*) ;; *) left=${left:+$left, }$host ;; esac
+                case ", $to, " in *", $new, "*) ;; *) to=${to:+$to, }$new ;; esac
+              done
               printf '%s\n' "$text" | sudo tee "$f" >/dev/null
             fi
           done
-          to=$(mirror)
-          echo "::warning title=infrastructure::the runner's package mirror ($from)" \
+          if [ -z "$left" ]; then left=$from; to=$(mirror); fi
+          echo "::warning title=infrastructure::the runner's package mirror ($left)" \
             "did not answer: installing from $to"
           moved=yes
         }
