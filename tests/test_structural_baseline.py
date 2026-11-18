@@ -706,6 +706,33 @@ def test_a_foundation_unit_that_imports_a_domain_unit_reds(tmp_path):
     assert "if ['probe_helper'] belong(s) in the foundation" in failures[0], failures[0]
 
 
+def test_the_documents_package_that_imports_another_unit_reds(tmp_path):
+    """🔴 Red before this: documents imported security, web and doc_parser, so it could not be
+    built or tested without core. It is a leaf pilot now (v0.4.0 B4): an import of any other unit,
+    a foundation unit's included, is the red; an import inside documents is not."""
+    src = _write_tree(
+        tmp_path,
+        {
+            "__init__.py": "",
+            "security.py": "",
+            "documents/__init__.py": "",
+            "documents/model.py": "",
+            "documents/from_markup.py": "from personalclaw.documents import model\n",
+        },
+    )
+    with gen._rooted(tmp_path):
+        before = {"per_file": gen.scan_upward_edges().rows}
+        (src / "documents" / "from_markup.py").write_text(
+            "from personalclaw.documents import model\nfrom personalclaw import security\n",
+            encoding="utf-8",
+        )
+        after = {"per_file": gen.scan_upward_edges().rows}
+        failures = gen.regressions_import_direction(before, after)
+    assert len(failures) == 1, failures
+    assert failures[0].startswith("src/personalclaw/documents/from_markup.py"), failures
+    assert "documents-imports-only-documents -> personalclaw.security" in failures[0], failures
+
+
 def test_a_unit_below_the_entry_points_that_imports_one_reds(tmp_path):
     """A unit below the entry points that imports one leans on the whole gateway. An entry point
     importing another is the layer composing itself, and stays green."""

@@ -17,8 +17,9 @@ Two properties an app front depends on and must not re-derive:
 
 ``from_markup`` is the primary authoring path rather than a convenience: markdown is
 what a model writes well, and "the model writes the source, code renders the file" is
-why no app needs to learn OOXML. HTML arriving there is treated as untrusted and routed
-through core's existing sanitizer and credential redactor.
+why no app needs to learn OOXML. HTML is treated as untrusted and routed through core's
+existing sanitizer and credential redactor (``personalclaw.html_documents``) before a model is
+made from it.
 """
 
 from personalclaw.documents import (  # noqa: F401
@@ -46,9 +47,9 @@ from personalclaw.documents import (  # noqa: F401
 )
 from personalclaw.documents.from_markup import (  # noqa: F401
     deck_from_markdown,
-    document_from_html,
     document_from_markdown,
 )
+from personalclaw.html_documents import document_from_html  # noqa: F401
 
 # ``register_writer`` is deliberately NOT promoted. A format an app registers would be
 # visible to every other caller of the shared registry while that app is enabled and

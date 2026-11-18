@@ -49,6 +49,18 @@ def is_parseable_document(mimetype: str = "", filename: str = "") -> bool:
     return ext in DOC_EXTENSIONS
 
 
+def text_of_pdf(data: bytes) -> str:
+    """The text of the pages of the PDF whose bytes are *data*, read as :func:`extract_text` reads
+    a PDF file: the reader the document tools hand ``documents.to_markup.document_text``."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        scratch = Path(tmp) / "document.pdf"
+        scratch.write_bytes(data)
+        return extract_text(str(scratch))
+
+
 def extract_text(path: str, mimetype: str = "", filename: str = "") -> str:
     """Extract readable text from a document file.
 

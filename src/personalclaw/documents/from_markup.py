@@ -4,9 +4,11 @@ The PRIMARY authoring path, not a convenience. The agent is already good at mark
 "model writes the source, code renders the artifact" is both cheaper and far more reliable
 than teaching a model a binary file format.
 
-Security: HTML reaching here is agent- or web-authored and therefore untrusted. It is
-routed through the platform's EXISTING sanitizer (`web/extract.sanitize_html`) and
-credential redactor (`security.redact_credentials`) — never a second implementation.
+Security: HTML is agent- or web-authored and therefore untrusted. This module takes HTML only
+once it is safe (:func:`document_from_safe_html`): ``personalclaw.html_documents`` routes it
+through the platform's existing sanitizer and credential redactor first, so the documents
+package stays a leaf that imports nothing of core (``structural-baseline.json``'s
+``documents-imports-only-documents``).
 """
 
 from __future__ import annotations
@@ -264,16 +266,12 @@ def document_from_markdown(md: str, *, title: str = "") -> DocumentModel:
     return model
 
 
-def document_from_html(html: str, *, title: str = "") -> DocumentModel:
-    """Sanitize untrusted HTML, convert to markdown, then reuse the markdown path.
+def document_from_safe_html(safe: str, *, title: str = "") -> DocumentModel:
+    """HTML already sanitized and redacted, converted to markdown, then the markdown path.
 
-    One parser, not two. The sanitize + redact steps are the platform's existing ones.
+    One parser, not two. Untrusted HTML comes here only through
+    ``personalclaw.html_documents.document_from_html``, which sanitizes and redacts it first.
     """
-    from personalclaw.security import redact_credentials
-    from personalclaw.web.extract import sanitize_html
-
-    safe = sanitize_html(html or "")
-    safe, _ = redact_credentials(safe)
     try:
         import html2text
 
