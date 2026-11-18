@@ -1441,6 +1441,118 @@ def test_no_other_run_reads_a_replaced_commit_as_its_base(
     assert jobs.pushed_before(_host(tmp_path, on_github=on_github)) is None
 
 
+_BLACK_RED = "import sys; print('would reformat src/x.py'); raise SystemExit(1)"
+
+
+def _two_red_tools(tmp_path: Path, *, lint_feedback: bool) -> tuple[Job, Path, Path]:
+    """A black diff, a step that passes, a flake8 error, and a step that passes."""
+    between, after = tmp_path / "between-ran", tmp_path / "after-ran"
+    job = _job(
+        "static",
+        _BLACK_RED,
+        f"open({str(between)!r}, 'w').close()",
+        _LINT_RED,
+        f"open({str(after)!r}, 'w').close()",
+        lint_feedback=lint_feedback,
+    )
+    return job, between, after
+
+
+def test_every_red_lint_tool_is_in_the_remediation_and_the_job_stays_red(
+    repo, tmp_path, monkeypatch
+):
+    """#5847: a pull request with a black diff and a flake8 error hears of both in one push. A
+    lint_feedback job's tools each read the tracked tree alone, so a red one stops none of the
+    others: each red tool's output follows the one before it, and the job stays red."""
+    _on_a_pull_request(tmp_path, monkeypatch, {"pull_request": {"number": 42}})
+    job, between, after = _two_red_tools(tmp_path, lint_feedback=True)
+    outcome = _run(repo, job, tmp_path, host=_host(repo, on_github=True))
+    assert outcome.code == run.RED, outcome.reasons
+    violations = (tmp_path / "work" / jobs.FEEDBACK / "violations.md").read_text()
+    assert "would reformat src/x.py" in violations, violations
+    assert "src/x.py:1:1: F401 unused" in violations, violations
+    assert violations.index("would reformat") < violations.index("F401"), violations
+    assert between.exists() and after.exists(), "a lint step after a red one never ran"
+    assert [s["exit"] for s in _record(outcome)["steps"]] == [1, 0, 1, 0]
+    assert any(r.startswith("step 1:") for r in outcome.reasons), outcome.reasons
+    assert any(r.startswith("step 3:") for r in outcome.reasons), outcome.reasons
+
+
+def test_any_other_jobs_first_red_step_stops_it(repo, tmp_path):
+    job, between, after = _two_red_tools(tmp_path, lint_feedback=False)
+    outcome = _run(repo, job, tmp_path)
+    assert outcome.code == run.RED
+    assert not between.exists() and not after.exists()
+    assert [s["exit"] for s in _record(outcome)["steps"]] == [1]
+
+
+def test_a_lint_jobs_red_install_stops_it_and_leaves_no_remediation(repo, tmp_path, monkeypatch):
+    """The run-on is the lint tools': an install before them that goes red stops the job as any
+    job's does, so no tool runs without what it installs, and nothing lands in the remediation."""
+    _on_a_pull_request(tmp_path, monkeypatch, {"pull_request": {"number": 42}})
+    stubs = _stubs(tmp_path, "npm")
+    (stubs / "npm").write_text("#!/bin/sh\necho 'npm ERR! the install failed'\nexit 3\n")
+    job, between, after = _two_red_tools(tmp_path, lint_feedback=True)
+    job = dataclasses.replace(job, toolchain=("npm-ci",))
+    host = _host(repo, on_github=True, path=f"{stubs}{os.pathsep}{os.environ['PATH']}")
+    outcome = _run(repo, job, tmp_path, host=host)
+    assert outcome.code == run.RED, outcome.reasons
+    assert [s["exit"] for s in _record(outcome)["steps"]] == [3], outcome.reasons
+    assert not between.exists() and not after.exists()
+    assert not (tmp_path / "work" / jobs.FEEDBACK).exists()
+
+
+def test_a_lint_step_interrupted_after_a_red_one_stops_the_job(repo, tmp_path, monkeypatch):
+    """After a red lint tool the others run on, but a later one that is signalled stops the job:
+    nothing runs after it, and the run is cancelled, never only red."""
+    _on_a_pull_request(tmp_path, monkeypatch, {"pull_request": {"number": 42}})
+    after = tmp_path / "after-ran"
+    job = _job(
+        "static",
+        _BLACK_RED,
+        _INTERRUPTS_ITS_RUNNER,
+        f"open({str(after)!r}, 'w').close()",
+        lint_feedback=True,
+    )
+    outcome = _run(repo, job, tmp_path, host=_host(repo, on_github=True), grace=0.5)
+    assert outcome.code == run.PARTIAL, outcome.reasons
+    assert "step 2: interrupted by SIGINT" in outcome.reasons, outcome.reasons
+    assert not after.exists(), "a step ran after the job was interrupted"
+
+
+def test_a_lint_step_cut_by_the_jobs_time_after_a_red_one_stops_the_job(
+    repo, tmp_path, monkeypatch
+):
+    _on_a_pull_request(tmp_path, monkeypatch, {"pull_request": {"number": 42}})
+    after = tmp_path / "after-ran"
+    job = _job(
+        "static",
+        _BLACK_RED,
+        "import time; time.sleep(30)",
+        f"open({str(after)!r}, 'w').close()",
+        lint_feedback=True,
+    )
+    outcome = _run(repo, job, tmp_path, host=_host(repo, on_github=True), deadline_s=3.0, grace=0.1)
+    assert outcome.code == run.RED, outcome.reasons
+    assert any("ran out before step 3" in r for r in outcome.reasons), outcome.reasons
+    assert not after.exists(), "a step ran after the job's time was spent"
+
+
+def test_a_later_remediation_section_follows_the_first(tmp_path) -> None:
+    kept = tmp_path / "kept.out"
+    kept.write_text("would reformat src/x.py\n")
+    jobs.write_feedback(tmp_path / "f", ["uv", "run", "black", "--check", "src"], kept, "7")
+    kept.write_text("src/x.py:1:1: F401\n")
+    jobs.write_feedback(tmp_path / "f", ["uv", "run", "flake8", "src"], kept, "7", append=True)
+    text = (tmp_path / "f" / "violations.md").read_text()
+    assert text == (
+        "**black --check src**\n```\nwould reformat src/x.py\n```\n\n"
+        "**flake8 src**\n```\nsrc/x.py:1:1: F401\n```\n"
+    )
+    jobs.write_feedback(tmp_path / "f", ["uv", "run", "black", "--check", "src"], kept, "7")
+    assert (tmp_path / "f" / "violations.md").read_text().count("**") == 2, "a new run starts over"
+
+
 def test_the_remediation_names_the_tool_as_ci_yml_does(tmp_path) -> None:
     kept = tmp_path / "kept.out"
     kept.write_bytes(b"would reformat src/x.py\n\xff\n")

@@ -198,7 +198,9 @@ command = [
 ]
 
 # A failed static step's output is a pull request's lint remediation (lint_feedback): run-job
-# leaves it, the stage job uploads it as lint-feedback, and pr-feedback.yml posts it. The asset
+# leaves it, the stage job uploads it as lint-feedback, and pr-feedback.yml posts it. Each step
+# reads the tracked tree alone, so a red one stops none of the others and the remediation names
+# every red tool (#5847): a step that reads what another left belongs in a job of its own. The asset
 # licences are checked here, from the tracked tree alone, so the pre-push hook checks them with no
 # npm install.
 [[job]]

@@ -193,9 +193,12 @@ A trusted job reads candidate output only as data:
 output, its first 60000 bytes (`run.OUTPUT_LIMIT`). When a step exits non-zero on a pull
 request's run, `run-job` leaves the step's command and output as `violations.md`, with the pull
 request's number from the run's own event as `pr.txt`, and the stage job uploads them. A
-dispatched run has no pull request, so it leaves none. `run-job` stops a job at its first failed
-step, so a PR run's comment shows the first failing tool's output alone (`black`'s before
-`flake8`'s): fix it, push, and the next run shows the next one.
+dispatched run has no pull request, so it leaves none. A red step of this job stops none of its
+other steps (#5847): each reads the tracked tree alone, so each still runs, each red one's command
+and output follows the one before it in `violations.md`, and the job stays red. A pull request with
+a `black` diff and a `flake8` error hears of both in one push. So a step that reads what another
+left belongs in a job of its own. An install before the tools, an interrupted step or a step past
+the job's time still stops the job.
 
 ### Definitions: which files judge
 
@@ -3252,7 +3255,9 @@ known failure.
   stateful homes still leave the blobs `e2e` and `ui-quality` merge: before, a flake in a shard's
   first run left a leg with no blob, and both merges went red on their own, which no flake
   explains. Only that step is diagnosed. Any other fault stops the job, and so does a second red
-  step: the record holds one rerun, and a job red in two steps is never a flake.
+  step: the record holds one rerun, and a job red in two steps is never a flake. The
+  `lint_feedback` job is the one exception: none of its tools' faults stops the others (see
+  "How a trusted job reads a candidate"), and none of its later red steps is diagnosed.
 
 `tests/test_ci_jobs_rerun.py` plants a suite in a temporary repository and runs it through
 `run-job`'s step path: a test that fails then passes, one that fails twice, one that times out
