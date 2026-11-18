@@ -23,6 +23,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A document an agent makes from HTML has its credentials masked in what it holds, not only in the markup it was made from.**
 - **A reload no longer has the gateway read its whole settings file once for every asset and read it answers. The public address every response's security header names is read again only when the settings file changes, so a page's many requests no longer each hold the gateway for a settings read.**
 
+### Security
+
+- **The gateway image runs its agent CLIs on Node 24.22.3, which carries Node's security fixes for HTTP/2 and TLS.**
+
 ## [0.3.9] — 2026-11-16
 
 A command prints only what it makes now, and a check exits 1 when it finds what it checks for, so read getting-started's Updating before you update a script that reads one. Five parts of the app are redesigned. Needs you is one list of what waits on your answer: each card leads with what it asks and answers it there, and its panel shows the proposal itself. Library is one page of everything you keep, with a preview beside it. The Projects page says what needs you and what is running in each project, and a project's page opens on a box to start a chat there. A plan step is approved only as you read it, and a change to it after you read it is put to you again. The agent orb shows each state in a form of its own, from a still ring when it is ready to the claw mark when a turn is done.
