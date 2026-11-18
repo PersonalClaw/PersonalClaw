@@ -71,6 +71,19 @@ TIER = (PR_YML, MERGE_YML)
 
 #: ``(workflow file, aggregation job name, the sharded matrix job it aggregates)``.
 AGGREGATE_GATES: tuple[tuple[Path, str, str], ...] = ((BREADTH_YML, "coverage", "coverage-shard"),)
+#: The gates #5846 retires with breadth's coverage leg. Each is held while its workflow has it; a
+#: removal lands in two merges, these rows first, so a tree without it is no broken parse.
+RETIRING_GATES = frozenset({(BREADTH_YML, "coverage")})
+
+
+def _has_job(path: Path, job: str) -> bool:
+    return f"\n  {job}:\n" in path.read_text(encoding="utf-8")
+
+
+def _retired(path: Path, job: str) -> bool:
+    """Whether *job* is a retiring gate its workflow no longer has: nothing of it to hold."""
+    return (path, job) in RETIRING_GATES and not _has_job(path, job)
+
 
 #: The verdict jobs relations 1 and 2 hold: each aggregation gate and each tier's ``results``.
 VERDICT_JOBS: tuple[tuple[Path, str], ...] = tuple((p, j) for p, j, _ in AGGREGATE_GATES) + tuple(
@@ -138,6 +151,8 @@ def _cancel_in_progress(path: Path) -> str:
 
 @pytest.mark.parametrize("path,job,shard_job", AGGREGATE_GATES, ids=lambda v: getattr(v, "name", v))
 def test_the_aggregate_gate_was_actually_found(path: Path, job: str, shard_job: str) -> None:
+    if _retired(path, job):
+        return
     block = _job_block(path, job)
     assert block, f"{path.name}: the {job!r} job parsed as an empty block"
     body = "\n".join(block)
@@ -178,6 +193,8 @@ def test_the_gate_is_not_run_on_a_cancelled_run(path: Path, job: str) -> None:
     false`` on the matrix means a failing shard never cancels the run, so both conditions hold
     at once — the gate reds on a real failure and reports nothing at all on a cancellation.
     """
+    if _retired(path, job):
+        return
     expr = _job_if(path, job)
     assert "cancelled()" in expr, (
         f"{path.name}: the {job!r} gate is `if: {expr}`, which says nothing about cancellation. "
@@ -208,6 +225,8 @@ def test_the_gate_script_treats_cancelled_as_its_own_case(
     ``breadth.yml``'s install-smoke legs already state) but with a message that says *unproven*
     rather than sending the reader hunting for a failing test that does not exist.
     """
+    if _retired(path, job):
+        return
     body = "\n".join(_job_block(path, job))
     assert "cancelled" in body, (
         f"{path.name}: the {job!r} gate script never mentions 'cancelled', so a leg that was "

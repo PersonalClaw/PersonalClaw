@@ -454,6 +454,10 @@ command = [
   { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}2", "--basetemp", "/var/tmp/pytest-random-order-{run_number}2", "--junitxml=reports/junit-random-order-2.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },
 ]
 
+# The suite under the coverage tracer, retiring (#5846): its reds are the tracer's, timing bounds a
+# traced run misses on tests every untraced leg passes, and nothing gates on the number. A
+# security job leaves in two merges: this mark first, then the entry, coverage and
+# planned-ids-coverage-shard go together.
 [[job]]
 id = "coverage-shard"
 tiers = ["breadth"]
@@ -462,6 +466,7 @@ external_inputs = ["shard-history"]
 toolchain = ["uv-sync"]
 cache = ["uv"]
 security = "security"
+retiring = "#5846"
 platform = "ubuntu-24.04"
 python = "3.12.15"
 timeout_min = 60

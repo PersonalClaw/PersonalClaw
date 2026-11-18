@@ -37,7 +37,7 @@ _BREADTH = _WORKFLOWS / "breadth.yml"
 #: Job ids old enough in each workflow that their absence means the parser broke rather
 #: than that CI changed. The vacuity floor for :func:`jobs`.
 _LONG_STANDING = {
-    "breadth.yml": frozenset({"coverage-shard", "coverage", "audit", "security", "install-smoke"}),
+    "breadth.yml": frozenset({"ubuntu", "macos", "audit", "security", "install-smoke"}),
 }
 
 
@@ -120,7 +120,7 @@ def test_the_pytest_step_scan_finds_every_known_leg(
         "arm",
         "canary",
         "security",
-        "coverage-shard",
+        "random-order",
     }, sorted(full)
 
 
