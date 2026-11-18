@@ -8,8 +8,8 @@ the step does not know plans nothing.
 Each step's ``run:`` is read out of its workflow and run under ``bash -e``, as GitHub runs a step
 with no ``shell:``, with ``gh`` and ``git`` stubbed: ``gh`` lists the changed names as its
 ``--jq`` prints them (or serves main's ``verdict.py`` raw), ``git`` hands over main's tools/ci
-(this checkout's, archived), and the planner either answers with a planted text or is the real
-one.
+(this checkout's, archived) or main's ``verdict.py`` as one fetched commit's blob, and the planner
+either answers with a planted text or is the real one.
 
 What the rows hold. The partner step publishes the apps repository's main as one full object id, and
 an answer that is not one (a failed read, an empty one, a ref name, two lines, a short id) publishes
@@ -153,8 +153,10 @@ exit 1
 _GIT = """#!/bin/sh
 printf '%s\\n' "$*" >> "$STUB/git.log"
 case "$1" in
+  init|remote) exit 0 ;;
   fetch) [ -f "$STUB/fetch-fails" ] && exit 128; exit 0 ;;
   archive) cat "$STUB/judge.tar"; exit 0 ;;
+  show) [ "$2" = FETCH_HEAD:tools/ci/verdict.py ] || exit 128; cat "$STUB/verdict.py"; exit 0 ;;
   ls-remote) [ -f "$STUB/ls-remote" ] || exit 128; cat "$STUB/ls-remote"; exit 0 ;;
 esac
 exit 1
@@ -498,16 +500,27 @@ def test_a_push_to_main_plans_with_the_planner_of_the_commit_it_replaced(
 @pytest.mark.parametrize("workflow", sorted(_TIERS))
 def test_a_push_to_mains_verdict_is_the_commit_it_replaced(tmp_path: Path, workflow: str) -> None:
     """The verdict's copy is read at the commit a push to main replaced (JUDGE), and at main on
-    any other run, so a commit never judges its own push."""
-    for judge, want in ((_BEFORE, _BEFORE), ("", "main")):
+    any other run, so a commit never judges its own push: from the API, or fetched with git by the
+    branch's full name, until the change that fetches it lands (ci.md: the row first)."""
+    for judge, want, branch in ((_BEFORE, _BEFORE, _BEFORE), ("", "main", "refs/heads/main")):
         tmp = tmp_path / (judge or "main")
         records = {k: _record(k) for k in _KEYS}
         ran = _run_verdict(
             tmp, workflow, keys=_KEYS, records=records, needs=_GREEN_NEEDS, judge=judge
         )
         assert ran.rc == 0, ran.log
-        url = (tmp / "stub" / "verdict.url").read_text().strip()
-        assert url.endswith(f"/contents/tools/ci/verdict.py?ref={want}"), url
+        stub = tmp / "stub"
+        read = (stub / "verdict.url").read_text().strip() if (stub / "verdict.url").exists() else ""
+        git = (stub / "git.log").read_text().splitlines() if (stub / "git.log").exists() else []
+        fetched = [line.split() for line in git if line.startswith("fetch ")]
+        assert bool(read) != bool(fetched), (read, fetched)
+        if read:
+            assert read.endswith(f"/contents/tools/ci/verdict.py?ref={want}"), read
+        else:
+            assert fetched == [
+                ["fetch", "-q", "--no-tags", "--depth=1", "--filter=blob:none", "origin", branch]
+            ], fetched
+            assert "show FETCH_HEAD:tools/ci/verdict.py" in git, git
 
 
 # ── the plan step ────────────────────────────────────────────────────────────────────────────
@@ -1173,6 +1186,7 @@ def _run_verdict(
     records: dict[str, str],
     needs: str,
     gh_down: bool = False,
+    fetch_fails: bool = False,
     attempt: str = "1",
     plant: Callable[[Path], None] | None = None,
     partner: str = _PARTNER,
@@ -1183,6 +1197,8 @@ def _run_verdict(
     (stub / "verdict.py").write_bytes((REPO / "tools" / "ci" / "verdict.py").read_bytes())
     if gh_down:
         (stub / "gh-down").write_text("")
+    if fetch_fails:
+        (stub / "fetch-fails").write_text("")
     folder = temp / "records"
     folder.mkdir(parents=True)
     for key, text in records.items():
@@ -1359,6 +1375,8 @@ def test_a_record_of_a_later_attempt_than_the_runs_is_refused(tmp_path: Path) ->
 
 
 def test_a_verdict_py_that_cannot_be_read_is_red(tmp_path: Path) -> None:
+    """Neither the API nor git answers: main's copy is read the one way or the other, until the
+    change that fetches it with git lands (ci.md: the row first)."""
     ran = _run_verdict(
         tmp_path,
         "merge.yml",
@@ -1366,6 +1384,7 @@ def test_a_verdict_py_that_cannot_be_read_is_red(tmp_path: Path) -> None:
         records={k: _record(k) for k in _KEYS},
         needs=_GREEN_NEEDS,
         gh_down=True,
+        fetch_fails=True,
     )
     assert ran.rc == 1 and "::error title=no verdict::" in ran.log, ran.log
 
