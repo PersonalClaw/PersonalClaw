@@ -959,7 +959,7 @@ jobs:
     # It runs whatever ran before it unless the run itself was cancelled (`!cancelled()`), so a
     # cancelled or failed job, or a stage that never started, is read rather than leaving no
     # verdict, and a cancelled run publishes none (#2946). Main's copy of tools/ci/verdict.py,
-    # read from the API, judges the plan's keys against the records this run's entries uploaded
+    # fetched with git, judges the plan's keys against the records this run's entries uploaded
     # and against `needs`; this checkout's copy never judges itself. On a push to main, main's
     # tip is the pushed commit, so the copy is the commit the push replaced's (`JUDGE`, as
     # tree-check's), and the planner's is too: a commit never judges its own push. It is standard-library
@@ -972,7 +972,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      contents: read   # main's tools/ci/verdict.py and superseded.py, read from the API
+      contents: read   # main's tools/ci/superseded.py, read from the API
       actions: read    # this run's jobs and main's later push runs (superseded.py)
       checks: read     # a cancelled shard's annotations (superseded.py)
     steps:
@@ -1025,9 +1025,16 @@ jobs:
         run: |
           set -u
           judge="$RUNNER_TEMP/verdict.py"
-          if ! gh api -H "Accept: application/vnd.github.raw" \
-               "repos/${GITHUB_REPOSITORY}/contents/tools/ci/verdict.py?ref=${JUDGE:-main}" > "$judge"; then
-            echo "::error title=no verdict::main's tools/ci/verdict.py could not be read, so nothing judged this run. Re-run the job."
+          # Main's copy is fetched with git, not read from the API, whose per-repository budget
+          # every workflow's token shares (11-18: a queue commit whose every job was green had no
+          # verdict when the API refused this read): one commit at JUDGE, by the branch's full
+          # name off a push, its blobs fetched as read, from the public repository with no token.
+          if ! ( export GIT_DIR="$RUNNER_TEMP/judge.git" \
+                 && git init -q --bare \
+                 && git remote add origin "https://github.com/${GITHUB_REPOSITORY}" \
+                 && git fetch -q --no-tags --depth=1 --filter=blob:none origin "${JUDGE:-refs/heads/main}" \
+                 && git show FETCH_HEAD:tools/ci/verdict.py ) > "$judge"; then
+            echo "::error title=no verdict::main's tools/ci/verdict.py could not be fetched, so nothing judged this run. Re-run the job."
             exit 1
           fi
           printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"

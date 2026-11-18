@@ -248,9 +248,9 @@ def _bin(folder: Path, name: str, body: str) -> None:
 def _verdict_step(
     tmp_path: Path, *, event: str, attempt: str = "1", with_list: bool = True, answers: str
 ) -> subprocess.CompletedProcess[str]:
-    """Run the results job's verdict step with stand-ins: ``gh`` answers main's verdict with one
-    that prints its arguments and the text of its ``--first-jobs`` file, and each listing as
-    *answers* (a ``case`` arm per path) says."""
+    """Run the results job's verdict step with stand-ins: ``git`` fetches main's verdict as one
+    that prints its arguments and the text of its ``--first-jobs`` file, and ``gh`` answers each
+    listing as *answers* (a ``case`` arm per path) says."""
     runner = tmp_path / "runner"
     (runner / "records").mkdir(parents=True)
     if with_list:
@@ -267,13 +267,14 @@ def _verdict_step(
     )
     _bin(
         bin_dir,
-        "gh",
-        'case "$*" in\n'
-        f"  *contents/tools/ci/verdict.py*) printf '%s' '{judge}';;\n"
-        f"{answers}"
+        "git",
+        'case "$1" in\n'
+        "  init|remote|fetch) exit 0;;\n"
+        f"  show) printf '%s' '{judge}';;\n"
         "  *) exit 1;;\n"
         "esac\n",
     )
+    _bin(bin_dir, "gh", f'case "$*" in\n{answers}  *) exit 1;;\nesac\n')
     python = shutil.which("python3")
     assert python
     env = {
