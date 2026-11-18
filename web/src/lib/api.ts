@@ -1623,7 +1623,12 @@ export interface RunState {
   helpers_waiting: string[]
   /** Set only in `approval` and `input`: the typed wait on the newest ask. */
   wait: RunWait | null
+  /** Set only in `tool`: what the call does, or `null` when it does not say. The word alone, never
+   *  a path or a command. */
+  act: RunAct | null
 }
+/** What a tool call does to the work (`work_phase.Act`). */
+export type RunAct = 'read' | 'edit' | 'run'
 /** What a chat's turn waits on (`work_wait.Wait`): why, what ends it (`ref` names the ask by its
  *  waiting list id), when it ends unanswered (`null` for never), and the registry that says so. */
 export interface RunWait {

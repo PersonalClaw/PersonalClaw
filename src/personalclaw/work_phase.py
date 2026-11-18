@@ -154,6 +154,56 @@ def classify_call(title: str, kind: str = "") -> tuple[WorkPhase, str]:
     return WorkPhase.TOOL, title
 
 
+class Act(str, Enum):
+    """What a tool call does to the work, as a chat's ``tool`` phase names it (``act``): it reads,
+    it changes something, or it runs a command. The word alone, so a surface can draw a call by
+    what it does with none of what it was given."""
+
+    READ = "read"
+    EDIT = "edit"
+    RUN = "run"
+
+
+#: The act of each kind an agent CLI declares for a call (its ACP ``kind``). A ``search`` and a
+#: ``think`` are phases of their own; ``other``, and a kind not listed, name no act.
+KIND_ACTS: Mapping[str, Act] = MappingProxyType(
+    {
+        "read": Act.READ,
+        "fetch": Act.READ,
+        "edit": Act.EDIT,
+        "delete": Act.EDIT,
+        "move": Act.EDIT,
+        "execute": Act.RUN,
+    }
+)
+
+#: The act of each of PersonalClaw's own runtime's tools (``agents/native/builtin_tools.py``),
+#: read by the tool's name, since that runtime declares no kind. A tool not listed names no act.
+OWN_TOOL_ACTS: Mapping[str, Act] = MappingProxyType(
+    {
+        "read_file": Act.READ,
+        "list_dir": Act.READ,
+        "repo_map": Act.READ,
+        "write_file": Act.EDIT,
+        "edit_file": Act.EDIT,
+        "bash": Act.RUN,
+    }
+)
+
+
+def act_of_call(title: str, kind: str = "") -> Act | None:
+    """What a tool call does (:class:`Act`), or ``None`` when it does not say or is no ``tool``
+    step: *title* is the call's own label and *kind* the kind its runtime declared, ``""`` for
+    none. A declared kind is read first, as :func:`classify_call` reads it; with none, one of the
+    own runtime's tools is known by its name. Never more than the act: no part of the call's
+    label or input is in what it returns."""
+    if classify_call(title, kind)[0] is not WorkPhase.TOOL:
+        return None
+    if kind:
+        return KIND_ACTS.get(kind)
+    return OWN_TOOL_ACTS.get(title)
+
+
 #: How a piece of work's ending reads, by how it ended: a Stop and a turn its agent ended after the
 #: owner declined a step are done, and a failure and a turn the gateway cut short (a restart, a
 #: shutdown) are an error, whose line gives the reason.

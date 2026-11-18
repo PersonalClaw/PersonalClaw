@@ -59,6 +59,7 @@ def idle(key: str) -> dict:
         "waiting": [],
         "helpers_waiting": [],
         "wait": None,
+        "act": None,
     }
 
 

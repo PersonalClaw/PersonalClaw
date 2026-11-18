@@ -1714,6 +1714,7 @@ payload, with these fields, in this order (`RunState`; `web/src/lib/api.ts` type
 | `waiting` | [str] | while a turn runs, the #3888 item ids (`approval:<id>`, `question:<id>`) of the asks it raised itself, oldest first |
 | `helpers_waiting` | [str] | while a turn runs, the #3888 item ids of the approvals its helpers raised (a helper's start or one of its calls, by the approval's id); the helpers' roll-up (§12) |
 | `wait` | Wait \| null | in `approval` and `input`: the typed wait on the newest ask, below |
+| `act` | `read` \| `edit` \| `run` \| null | in `tool`: what the call does (`work_phase.act_of_call`), from the kind an agent CLI declared or the own runtime's tool name; null when the call does not say. The word alone, never a path or a command |
 
 `scheduled_continue` (`{message_id, at, kind}`, while a timed Continue or Retry waits, §5.5) and `call`
 (`{message_id, state, since}`, while a voice call in this chat is `connecting`, `live` or `ending`) join the
