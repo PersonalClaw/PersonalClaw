@@ -98,3 +98,14 @@ def test_the_switch_waits_only_so_long_then_says_the_database_is_locked(tmp_path
     conn.close()
     holder.join(5)
     assert 0.25 <= waited < 1.2, f"waited {waited:.2f} s for a bound of 0.3 s"
+
+
+def test_only_a_lock_waits_and_any_other_refusal_is_said_at_once(tmp_path):
+    path = tmp_path / "memory.db"
+    _fresh(path)
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, isolation_level=None)
+    began = time.monotonic()
+    with pytest.raises(sqlite3.OperationalError, match="readonly database"):
+        sqlite_compat.use_wal(conn, within=2.0)
+    conn.close()
+    assert time.monotonic() - began < 0.5, "a read-only database waited as if it were locked"
