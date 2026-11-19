@@ -1804,15 +1804,18 @@ places:
   verdict's record") stands behind it, and the commit's own tree is the receipt's `tree_oid`.
   Which verdict: a **queue commit**'s own, and any other commit's pull request's head's. A commit
   is a queue commit when a `merge_group` run of `merge.yml` ran on it in this repository; every
-  such run must be its pull request's queue entry (`gh-readonly-queue/main/pr-<n>-<base>`) and the
-  newest must have passed, or the commit fails. A branch so named alone never makes one: a push
-  to it is a `push` run. Main's rules never choose between the two, so a rerun after the queue
-  goes live judges an earlier landing as it was judged when it landed. Each commit that passes is
-  recorded, with the pull request, its head, the commit whose verdict was read and its queue run,
-  the verified tree and the `main` commit, in the job summary and the run's `verified-tree-<sha>`
-  artifact, kept 90 days. It is a workflow of its own for provenance's reasons, and because it
-  reads the API: its token holds `checks: read`, `pull-requests: read` and `actions: read` beside
-  `contents: read`, and provenance's stays `contents: read` alone.
+  such run must be its pull request's queue entry (`gh-readonly-queue/main/pr-<n>-<base>`), or the
+  commit fails, and the newest is the queue run recorded. How that run concluded is the verdict's
+  to judge, not this check's: a run whose only red is a test the flake rule passed concludes
+  `failure` under a green verdict, and the queue commit's own verdict is what it is held to. A
+  branch so named alone never makes one: a push to it is a `push` run. Main's rules never choose
+  between the two, so a rerun after the queue goes live judges an earlier landing as it was
+  judged when it landed. Each commit that passes is recorded, with the pull request, its head, the
+  commit whose verdict was read and its queue run, the verified tree and the `main` commit, in the
+  job summary and the run's `verified-tree-<sha>` artifact, kept 90 days. It is a workflow of its
+  own for provenance's reasons, and because it reads the API: its token holds `checks: read`,
+  `pull-requests: read` and `actions: read` beside `contents: read`, and provenance's stays
+  `contents: read` alone.
 
 `dco.yml` also runs when a pull request's title is edited, since rule 5 reads the title. Its job
 token reaches one step, which only fetches the commits with `gh api`; the check that parses them

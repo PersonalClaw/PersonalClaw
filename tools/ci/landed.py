@@ -18,11 +18,14 @@ that lands another tree, or that no green verdict stands behind, is red the mome
 2. Which commit's verdict stands behind it. The commit is a queue commit when a ``merge_group``
    run of merge.yml ran on it, in this repository (:func:`_queue_run`); every such run must be
    the pull request's own queue entry (its branch ``gh-readonly-queue/main/pr-<n>-<base>``, with
-   ``<n>`` that pull request) and the newest must have passed. A branch so named is never enough
-   alone: a push to it is a ``push`` run, not a ``merge_group`` one. A queue commit's verdict is
-   the one on itself; any other commit's is the one on its pull request's head. Which one is
-   read never depends on main's rules as they read when this runs, so a rerun judges a landing
-   by what stood behind it when it landed.
+   ``<n>`` that pull request), and the newest is the one recorded. How that run concluded is not
+   read here: the verdict on the commit decides (rule 3). The verdict is what judges a run, flakes
+   included: a run whose only red is a test the flake rule passed concludes ``failure`` and still
+   has a green verdict, and a run whose red is real has a red one. A branch so named is never
+   enough alone: a push to it is a ``push`` run, not a ``merge_group`` one. A queue commit's
+   verdict is the one on itself; any other commit's is the one on its pull request's head. Which
+   one is read never depends on main's rules as they read when this runs, so a rerun judges a
+   landing by what stood behind it when it landed.
 3. That verdict counts, by :func:`merge_verdict.verify`'s rules: the App main's rule names, its
    newest run green, one receipt naming that commit and its tree, a controller revision on
    ``main``.
@@ -157,7 +160,8 @@ def _queue_run(get: merge_verdict.Get, repo: str, sha: str, number: int) -> int 
     #``number``'s entry, why such runs do not stand for that entry, or None when none ran on it.
 
     A run counts only as all of: the ``merge_group`` event, merge.yml, ``sha`` itself, and this
-    repository as both the run's and its head's. A page this cannot read whole is no answer."""
+    repository as both the run's and its head's. How the newest concluded is not read: the verdict
+    on ``sha`` decides that (rule 3). A page this cannot read whole is no answer."""
     query = urllib.parse.urlencode({"head_sha": sha, "event": QUEUE_EVENT, "per_page": _PER_PAGE})
     try:
         page = get(f"/repos/{repo}/actions/workflows/merge.yml/runs?{query}")
@@ -191,15 +195,11 @@ def _queue_run(get: merge_verdict.Get, repo: str, sha: str, number: int) -> int 
                 f"is a queue commit whose merge.yml merge_group run {run.get('id')} is on"
                 f" {run.get('head_branch')!r}, which names no queue entry of #{number}"
             )
+    # How the run concluded is the verdict's to judge, not this check's: the flake rule passes a
+    # run whose `results` job is red, so its conclusion is `failure` under a green verdict. The
+    # verdict on the commit itself is what rule 3 holds it to.
     newest = max(ours, key=lambda r: (_field(r, "run_number", int, sha), _field(r, "id", int, sha)))
-    ident = newest["id"]
-    status, conclusion = newest.get("status"), newest.get("conclusion")
-    if status != "completed" or conclusion != "success":
-        return (
-            f"is a queue commit whose newest merge.yml merge_group run {ident} concluded"
-            f" {conclusion or status}"
-        )
-    return ident
+    return int(newest["id"])
 
 
 def check(get: merge_verdict.Get, *, repo: str, commit: str, git_dir: Path) -> Landed | str:

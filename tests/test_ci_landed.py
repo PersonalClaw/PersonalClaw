@@ -429,14 +429,6 @@ def test_a_queue_commits_verdict_counts_only_for_that_commit_and_its_tree(
             id="a run on no queue branch",
         ),
         pytest.param(
-            {"conclusion": "failure"}, "concluded failure", id="a queue run that did not pass"
-        ),
-        pytest.param(
-            {"status": "in_progress", "conclusion": None},
-            "concluded in_progress",
-            id="a queue run still going",
-        ),
-        pytest.param(
             {"repository": {"full_name": "someone/fork"}},
             "a merge_group run of another repository",
             id="a run in another repository",
@@ -465,21 +457,70 @@ def test_a_queue_run_that_does_not_stand_for_the_entry_fails(
 
 
 @pytest.mark.parametrize(
-    ("older", "newer", "code"),
+    "overrides",
     [
-        pytest.param("success", "failure", 1, id="a newer run that failed after an older passed"),
-        pytest.param("failure", "success", 0, id="a newer run that passed after an older failed"),
+        pytest.param(
+            {"conclusion": "failure"},
+            id="a run whose only red is a test the flake rule passed",
+        ),
+        pytest.param(
+            {"status": "in_progress", "conclusion": None},
+            id="a run rerun after the commit landed",
+        ),
     ],
 )
-def test_the_newest_queue_run_on_the_commit_decides(
+def test_a_queue_commit_lands_by_its_own_green_verdict_however_its_run_concluded(
+    planted: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    overrides: dict[str, Any],
+) -> None:
+    """The verdict judges the run, flakes included: the flake rule passes a run whose `results`
+    job is red, so the run concludes `failure` while the commit's own verdict is green, and that
+    verdict is the one the landing is held to (rule 3). A run's conclusion is never read here."""
+    answers = _queued(planted)
+    landed_sha = _sha(planted, "main")
+    answers[_queue_runs(landed_sha)]["workflow_runs"] = [_queue_run(landed_sha, **overrides)]
+    code, records = _main(planted, answers, tmp_path)
+    assert code == 0, capsys.readouterr()
+    assert records and records[0]["queue_run"] == 501
+    assert records[0]["verified_sha"] == landed_sha and records[0]["check_run_id"] == 11
+
+
+def test_a_queue_commit_whose_own_verdict_is_red_fails_however_its_run_concluded(
+    planted: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The run concluded `success`, and the commit still fails: its verdict, which decides, is red.
+    Neither its head's verdict nor the run stands in for it."""
+    answers = _queued(planted)
+    landed_sha = _sha(planted, "main")
+    tree = _sha(planted, "main^{tree}")
+    answers[_checks(sha=landed_sha)] = {
+        "total_count": 1,
+        "check_runs": [_run(planted, tree, on=landed_sha, id=11, conclusion="failure")],
+    }
+    code, records = _main(planted, answers, tmp_path)
+    out = capsys.readouterr().out
+    assert code == 1 and records == []
+    assert f"lands #{NUMBER} as a queue commit, whose verdict on itself does not count" in out
+
+
+@pytest.mark.parametrize(
+    ("older", "newer"),
+    [
+        pytest.param("success", "failure", id="a newer run that failed after an older passed"),
+        pytest.param("failure", "success", id="a newer run that passed after an older failed"),
+    ],
+)
+def test_the_newest_queue_run_on_the_commit_is_the_one_recorded(
     planted: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     older: str,
     newer: str,
-    code: int,
 ) -> None:
-    """A queue commit re-queued runs merge.yml again: the newest run is the one that stands."""
+    """A queue commit re-queued runs merge.yml again: the newest run is the one recorded, and the
+    commit's own verdict, green here, decides whatever either run concluded."""
     answers = _queued(planted)
     landed_sha = _sha(planted, "main")
     answers[_queue_runs(landed_sha)] = {
@@ -490,12 +531,8 @@ def test_the_newest_queue_run_on_the_commit_decides(
         ],
     }
     got, records = _main(planted, answers, tmp_path)
-    out = capsys.readouterr().out
-    assert got == code, out
-    if code:
-        assert records == [] and "newest merge.yml merge_group run 601 concluded failure" in out
-    else:
-        assert records and records[0]["queue_run"] == 601
+    assert got == 0, capsys.readouterr()
+    assert records and records[0]["queue_run"] == 601
 
 
 @pytest.mark.parametrize(
