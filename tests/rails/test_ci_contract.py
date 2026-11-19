@@ -12693,10 +12693,23 @@ def _waits_its_turn(value: object, context: dict[str, Any]) -> bool:
         return False
 
 
-#: The dependency review's group: the pull_request_target workflow the plants below edit, which
-#: stays on it when dco.yml moves to pull_request (#3908).
-_REVIEW = f"{_WORKFLOWS}/dependency-review.yml"
-_REVIEW_GROUP = "group: dependency-review-${{ github.event.pull_request.number }}"
+#: A workflow of its own on pull_request_target, which the plants below add with a group each, so
+#: they hold whether or not the tree runs any workflow on that event (#3908).
+_TARGET_WORKFLOW = (
+    "name: Target\non:\n  pull_request_target:\n    types: [opened]\n"
+    "concurrency:\n  group: {group}\n  cancel-in-progress: true\npermissions: {{}}\njobs: {{}}\n"
+)
+
+
+def _target_group(name: str, group: str, expect: str = "", fails: bool = True) -> Control:
+    return Control(
+        name,
+        _new_workflow(f"{_WORKFLOWS}/target.yml", _TARGET_WORKFLOW.format(group=group)),
+        fails,
+        expect,
+    )
+
+
 _NIX = f"{_WORKFLOWS}/nix.yml"
 #: The start of nix.yml's group line: :func:`_plant_line` reads the line whatever key it holds.
 _NIX_GROUP = "group: nix-"
@@ -12781,18 +12794,17 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                               "concurrency:\n  group: nightly\npermissions: {}\njobs: {}\n"),
                 fails=False),
         # pull_request_target runs in the base branch's context, the same for every pull request.
-        _plant("a pull_request_target group every pull request shares", _REVIEW,
-               _REVIEW_GROUP, "group: review-lane",
-               expect="dependency-review.yml: the group 'review-lane' is shared by"),
-        _plant("a pull_request_target group keyed on github.ref", _REVIEW, _REVIEW_GROUP,
-               "group: review-${{ github.ref }}", expect="under pull_request_target"),
-        _plant("a pull_request_target group keyed on github.ref_name", _REVIEW, _REVIEW_GROUP,
-               "group: review-${{ github.ref_name }}", expect="under pull_request_target"),
-        _plant("a pull_request_target group keyed on github.sha", _REVIEW,
-               _REVIEW_GROUP, "group: review-${{ github.sha }}", expect="is shared by"),
+        _target_group("a pull_request_target group every pull request shares", "target-lane",
+                      "target.yml: the group 'target-lane' is shared by"),
+        _target_group("a pull_request_target group keyed on github.ref",
+                      "target-${{ github.ref }}", "under pull_request_target"),
+        _target_group("a pull_request_target group keyed on github.ref_name",
+                      "target-${{ github.ref_name }}", "under pull_request_target"),
+        _target_group("a pull_request_target group keyed on github.sha",
+                      "target-${{ github.sha }}", "is shared by"),
+        _target_group("a pull_request_target group keyed on the pull request's number",
+                      "target-${{ github.event.pull_request.number }}", fails=False),
         Control("dco.yml's own group, keyed on the pull request's number", _nothing, fails=False),
-        Control("the dependency review's own group, keyed on the pull request's number", _nothing,
-                fails=False),
         # A called workflow takes part in whatever its callers take part in.
         Control("a reusable workflow a candidate calls, with one shared group",
                 _both(_new_workflow(f"{_WORKFLOWS}/reusable.yml",

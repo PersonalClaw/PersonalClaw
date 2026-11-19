@@ -481,6 +481,17 @@ verdict says all it must fix:
   is still running or did not pass is red. The poster also follows Dependency review: when one
   completes, it judges that head again from the head's own completed Merge run (and, for a head
   that changes a definition, its contract run). So they finish in any order.
+- **The dependency review, by main's own read:** the poster also reads the dependency graph's
+  comparison of `main`'s tip with the head itself, both by sha and three dots, so only the head's
+  own changes count. It judges it by the action's rule with core's settings, its defaults: an
+  added package version with a known vulnerability of any severity, in the runtime scope, is red,
+  and so is one in any other scope but development (one the graph does not know, or a new one),
+  which fails closed. A red names each package, where it is added and its advisories in a fenced
+  block in its summary, and none of that text in its title. An answer that is not a list of
+  entries, a 404 (the graph off, or not yet built for the head) and a read refused on every try
+  are red, never read as no change.
+  `dependency-review.yml` moves to `pull_request` before 2026-12-02, when GitHub's default policy
+  stops `pull_request_target` runs in public repositories; until it does, both count.
 - **The commit policy, by main's own check (#3908):** the poster runs `main`'s
   `scripts/check_commit_provenance.py` itself, in `pr` mode (rules 1, 3 and 5, with `main`'s
   `MAINTAINERS`, both from its own checkout), over the pull request's commits as the commits API

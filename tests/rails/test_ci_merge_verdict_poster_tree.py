@@ -115,6 +115,17 @@ _CONTRACT_QUEUE_LINES = (
 _WAKES_QUEUE = " ".join(_QUEUE_LINES)
 _CONTRACT_IF_QUEUE = " ".join(_CONTRACT_QUEUE_LINES)
 _WAKES_BY_SHAPE = {_BESIDE: _WAKES_BESIDE, _QUEUE: _WAKES_QUEUE}
+#: The clause that takes a run of a ``pull_request_target`` workflow. Once the dependency review
+#: moves to ``pull_request`` (#3908), no workflow runs on that event, and the poster may drop it:
+#: each condition is held as it is spelled with the clause, or without it.
+_TARGET_RUN = "|| github.event.workflow_run.event == 'pull_request_target'"
+
+
+def _untargeted(lines: tuple[str, ...]) -> tuple[str, ...]:
+    """*lines* without :data:`_TARGET_RUN`."""
+    return tuple(line for line in lines if line != _TARGET_RUN)
+
+
 #: What the beside shape's concurrency group keys a dispatch on: the head it names, empty for any
 #: other event (a context the concurrency row models, unlike ``inputs``).
 _HEAD_KEY = "${{ github.event.inputs.head }}"
@@ -125,6 +136,15 @@ _ACTION_KEY = "${{ github.event.action }}"
 _CONTRACT_IF_BY_SHAPE = {
     _BESIDE: _CONTRACT_IF_BESIDE,
     _QUEUE: _CONTRACT_IF_QUEUE,
+}
+#: Each shape's conditions, the post job's and the contract job's, as each may be spelled.
+_POST_IFS = {
+    shape: (" ".join(lines), " ".join(_untargeted(lines)))
+    for shape, lines in ((_BESIDE, _BESIDE_LINES), (_QUEUE, _QUEUE_LINES))
+}
+_CONTRACT_IFS = {
+    shape: (" ".join(lines), " ".join(_untargeted(lines)))
+    for shape, lines in ((_BESIDE, _CONTRACT_BESIDE_LINES), (_QUEUE, _CONTRACT_QUEUE_LINES))
 }
 #: The beside shape's decision: a started run is decided by ``--start`` alone, before anything
 #: else, and a wake by ``--head``.
@@ -160,7 +180,7 @@ def _checkout_problems(where: str, steps: list[dict]) -> list[str]:
 
 def _contract_problems(job: dict, shape: str = _QUEUE) -> list[str]:
     found: list[str] = []
-    if job.get("needs") != "post" or job.get("if") != _CONTRACT_IF_BY_SHAPE[shape]:
+    if job.get("needs") != "post" or job.get("if") not in _CONTRACT_IFS[shape]:
         found.append("the contract job runs other than after post, on a head or a branch it names")
     if job.get("environment") != "ci-controller":
         found.append(f"the contract job deploys to {job.get('environment')!r}")
@@ -203,7 +223,7 @@ def _problems(text: str) -> list[str]:
     shape = _QUEUE
     found += _contract_problems(jobs["contract"], shape)
     job = jobs["post"]
-    if job.get("if") != _WAKES_BY_SHAPE[shape]:
+    if job.get("if") not in _POST_IFS[shape]:
         found.append(
             "the post job's condition is not exactly: the runs that can judge a pull request's"
             f" head ({job.get('if')!r})"
@@ -253,8 +273,10 @@ def _problems(text: str) -> list[str]:
     return found
 
 
-#: The runs the poster wakes on: Merge, the four that judge a head again, and each gate's
-#: (tools/ci/workflows.py's GATES), whose completion judges its head again.
+#: The runs the poster wakes on: Merge, the three that judge a head again, and each gate's
+#: (tools/ci/workflows.py's GATES), whose completion judges its head again. Once the dependency
+#: review moves to ``pull_request`` (#3908), the poster reads its judgement itself, so the list may
+#: leave it out.
 _WAKES = [
     workflows.NAMES[workflows.MERGE],
     "Dependency review",
@@ -274,7 +296,11 @@ def _shape(on: object) -> str | None:
     head = inputs.get("head") if isinstance(inputs, dict) else None
     if (
         all(on[k] == v for k, v in both.items())
-        and on["workflow_run"] == {"workflows": _WAKES, "types": ["in_progress", "completed"]}
+        and on["workflow_run"]
+        in (
+            {"workflows": wakes, "types": ["in_progress", "completed"]}
+            for wakes in (_WAKES, [w for w in _WAKES if w != "Dependency review"])
+        )
         and set(dispatch) == {"inputs"}
         and set(inputs) == {"head"}
         and isinstance(head, dict)
@@ -814,13 +840,20 @@ def _answers(expr: str, event: tuple[str, str, dict[str, Any], str, str], live: 
 def _wake_problems(where: str, expr: str, shape: str = _QUEUE) -> list[str]:
     """Each event that starts the shape's runs, as the condition answers it, with
     MERGE_VERDICT_LIVE each way, against whether it can judge a head then."""
+    targeted = _TARGET_RUN in expr
+
+    def wanted(e: tuple[str, str, dict[str, Any], str, str], live: str | None) -> bool:
+        # A pull_request_target run judges a head only while the condition names the event.
+        dropped = not targeted and e[2].get("event") == "pull_request_target"
+        return _wanted(e[3], live, shape) and not dropped
+
     return [
-        f"{where} {'takes no runner for' if _wanted(e[3], live, shape) else 'takes a runner for'}"
+        f"{where} {'takes no runner for' if wanted(e, live) else 'takes a runner for'}"
         f" {e[0]} with MERGE_VERDICT_LIVE {live!r}"
         for e in _EVENTS
         if e[4] in _DELIVERS[shape]
         for live in _LIVE
-        if _answers(expr, e, live) is not _wanted(e[3], live, shape)
+        if _answers(expr, e, live) is not wanted(e, live)
     ]
 
 
@@ -881,8 +914,8 @@ def test_the_evaluator_reads_the_condition_it_judges() -> None:
             "takes a runner for CodeQL on main with MERGE_VERDICT_LIVE 'true'",
         ),
         (
-            "      || github.event.workflow_run.event == 'pull_request_target'\n",
-            "      || github.event.workflow_run.event == 'pull_request_target'\n"
+            "      || github.event.workflow_run.event == 'merge_group'\n",
+            "      || github.event.workflow_run.event == 'merge_group'\n"
             "      || github.event.workflow_run.event == 'push'\n",
             "takes a runner for the push stage on main",
         ),
@@ -1172,8 +1205,9 @@ def test_the_folded_conditions_read_as_the_expressions() -> None:
         assert yaml.safe_load("job:\n" + _folded(lines))["job"]["if"] == expr
     poster = yaml.safe_load(_beside_poster())["jobs"]
     assert (poster["post"]["if"], poster["contract"]["if"]) in (
-        (_WAKES_BESIDE, _CONTRACT_IF_BESIDE),
-        (_WAKES_QUEUE, _CONTRACT_IF_QUEUE),
+        (_POST_IFS[shape][i], _CONTRACT_IFS[shape][i])
+        for shape in (_BESIDE, _QUEUE)
+        for i in (0, 1)
     )
 
 
@@ -1225,7 +1259,7 @@ def test_the_queue_shape_takes_a_queue_commit_s_run_as_a_heads() -> None:
             "      && (github.event.workflow_run.event == 'pull_request'\n",
             "      || (github.event_name == 'workflow_run'\n"
             "      && (github.event.workflow_run.event == 'pull_request'\n",
-            "takes a runner for a Dependency review run starting",
+            "takes a runner for CodeQL on a pull request starting",
         ),
         # A start that waits on nothing: the variable left out of its clause.
         (
