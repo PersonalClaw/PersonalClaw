@@ -35,7 +35,7 @@ from personalclaw.identity import contributor_label as _contributor_label
 from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import EMBED_QUERY, MemoryProvider
 from personalclaw.security import redact_values_for_display
-from personalclaw.sqlite_compat import connect_shared, sqlite3, use_wal
+from personalclaw.sqlite_compat import SharedConnection, connect_shared, sqlite3, use_wal
 
 
 def config_dir() -> Path:
@@ -116,6 +116,21 @@ def recall_store(db_path: Path) -> "VectorMemoryStore | None":
 # ── Constants ──
 
 _DB_FILE = "memory.db"
+
+#: Two stores this process opens on one database take turns through opening it, so its schema is
+#: brought up to date once, by the first, and the second finds it done. Side by side, both read an
+#: empty ``schema_version`` and applied every migration: each waited out the other's write lock,
+#: and a guarded ``ADD COLUMN`` could be checked by both before either added it. A small fixed set
+#: of locks, chosen by the database's resolved path, keeps that bounded however many databases a
+#: process opens; two databases that share one only take turns opening.
+_OPENING_LOCKS = tuple(threading.RLock() for _ in range(16))
+
+
+def _opening_lock(path: Path) -> threading.RLock:
+    """The lock a store opening the database at *path* holds while it brings its schema up."""
+    return _OPENING_LOCKS[hash(str(Path(path).resolve())) % len(_OPENING_LOCKS)]
+
+
 _FAISS_FILE = "memory.faiss"
 _KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_.]*[a-z0-9]$")
 _MAX_KEY_LEN = 100
@@ -1346,7 +1361,28 @@ class VectorMemoryStore(MemoryProvider):
     def init(self) -> None:
         """Create DB and apply migrations. The database holds the owner's memories, so it is
         0600 from its first byte wherever it is, and so are the files SQLite keeps beside it
-        (``atomic_write.make_private_database``)."""
+        (``atomic_write.make_private_database``). Two stores this process opens on one database
+        take turns bringing its schema up (``_opening_lock``)."""
+        with _opening_lock(self._db_path):
+            db = self._open_schema()
+        # From here on every statement passes the one memory-write check: inside work that
+        # derives from an Incognito or Temporary session, or an app's that was not given your
+        # memory, anything that would change memory is refused. Set after the schema is in place
+        # and the store's own repairs are made, which no session's work writes.
+        db.statement_check = memory_writes.check_memory_statement
+
+        # Load persisted FAISS index (or rebuild from SQLite embeddings)
+        try:
+            self.load_faiss_index()
+        except Exception:
+            logger.warning(
+                "FAISS index not loaded (faiss-cpu may not be installed yet)", exc_info=True
+            )
+
+    def _open_schema(self) -> SharedConnection:
+        """Open the database, switch it to WAL, apply the migrations it lacks and make the
+        store's own repairs: the part of :meth:`init` one store at a time does on a database.
+        Returns the store's connection."""
         make_private_database(self._db_path, anywhere=True)
         # Shared by every thread that reaches the store (each page request, the agent's tools, the
         # background workers), so every call into the driver on it is taken one at a time.
@@ -1385,19 +1421,7 @@ class VectorMemoryStore(MemoryProvider):
             contextvars.Context().run(self._restore_replaced_by_nothing)
         except Exception:  # noqa: BLE001
             logger.warning("Could not restore records left replaced by nothing", exc_info=True)
-        # From here on every statement passes the one memory-write check: inside work that
-        # derives from an Incognito or Temporary session, or an app's that was not given your
-        # memory, anything that would change memory is refused. Set after the schema is in place
-        # and the store's own repairs are made, which no session's work writes.
-        self._db.statement_check = memory_writes.check_memory_statement
-
-        # Load persisted FAISS index (or rebuild from SQLite embeddings)
-        try:
-            self.load_faiss_index()
-        except Exception:
-            logger.warning(
-                "FAISS index not loaded (faiss-cpu may not be installed yet)", exc_info=True
-            )
+        return self._db
 
     def capabilities(self) -> "MemoryCapabilities":
         """Declare what this provider can do (the L2 contract).
