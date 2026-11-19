@@ -125,6 +125,13 @@ cancellation included. Nothing runs the turn engine around it
   own runtime declares none, so its search tools are known by name and say where they
   look ("Searching your knowledge", "your memory", "the files", "your tools", "the
   web"); any other call is a tool.
+- A tool step also says what the call does, in the frame's `act`
+  (`work_phase.act_of_call`): `read`, `edit` or `run`, read from the declared kind
+  (`read` and `fetch` read; `edit`, `delete` and `move` edit; `execute` runs) or, for
+  the own runtime, the tool's name (`read_file`, `list_dir` and `repo_map` read;
+  `write_file` and `edit_file` edit; `bash` runs). A call that says neither has no act,
+  and the act is gone in any other phase. It is the word alone: nothing the call was
+  given is in it.
 - `streaming` once, on the first word of the answer after any other phase, and
   `thinking` again after a tool's result.
 - `approval` while the approval registry holds a request for the chat, and `input`

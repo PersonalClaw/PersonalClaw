@@ -43,7 +43,9 @@ from personalclaw.textfmt import clip_words
 from personalclaw.work_phase import (
     ENDINGS,
     LINE_LIMIT,
+    Act,
     WorkPhase,
+    act_of_call,
     classify_call,
     done_in,
     family_of,
@@ -114,6 +116,10 @@ class RunState:
     #: Set only in ``approval`` and ``input``: the typed wait on the newest ask
     #: (``work_wait.Wait``), which says what ends it and the registry it is known from.
     wait: dict[str, Any] | None = None
+    #: Set only in ``tool``: what the call does, ``read``, ``edit`` or ``run``
+    #: (``work_phase.Act``), or ``None`` when the call does not say. The word alone: never a path,
+    #: a command or anything else the call was given.
+    act: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -155,6 +161,8 @@ class ChatRun:
     #: While ``retrying``, the retry's payload field, and while ``waiting_model``, the queue's.
     retry: dict[str, Any] | None = None
     queue: dict[str, Any] | None = None
+    #: While ``tool``, what the call does (``work_phase.act_of_call``), when it says.
+    act: Act | None = None
 
 
 def _run(session: _ChatSession) -> ChatRun:
@@ -190,7 +198,7 @@ def served(session: _ChatSession) -> dict[str, Any]:
     if run is None or run.sent is None:
         return idle_payload(session.key)
     if run.turn is None:
-        idle = {"phase": WorkPhase.IDLE.value, "line": "", "turn": None, "wait": None}
+        idle = {"phase": WorkPhase.IDLE.value, "line": "", "turn": None, "wait": None, "act": None}
         return {**run.sent, **idle, "waiting": [], "helpers_waiting": []}
     return dict(run.sent)
 
@@ -305,6 +313,7 @@ def _send(state: DashboardState, session: _ChatSession, run: ChatRun, *, again=F
         waiting=asks.own,
         helpers_waiting=asks.helpers,
         wait=asks.newest[2] if asks.newest is not None else None,
+        act=run.act.value if phase is WorkPhase.TOOL and run.act is not None else None,
     ).as_dict()
     previous = run.sent
     if not again and previous is not None:
@@ -353,6 +362,7 @@ def begin(state: DashboardState, session: _ChatSession, message_id: str = "") ->
         rows_at_start=len(session.messages),
     )
     run.phase, run.line, run.last_step = WorkPhase.QUEUED, _LINES[WorkPhase.QUEUED], None
+    run.act = None
     _send(state, session, run)
     # Held by the chat's run state, which cancels it where the turn ends: it is the turn's own,
     # not background work of the gateway's that anything else waits on.
@@ -449,6 +459,7 @@ def end(state: DashboardState, session: _ChatSession, *, unsaid: str = "stopped"
     _stop_saying(run)
     run.last_outcome = outcome
     run.phase, run.line = ENDINGS[ending], _clip(_ending_line(session, ending, turn))
+    run.act = None
     _send(state, session, run)
     # Its ending joins what just finished (`running_now`). Only read from the frame, so a failure
     # there never stops the chat's own.
@@ -474,14 +485,21 @@ def touch(session: _ChatSession) -> None:
 
 
 def say(
-    state: DashboardState, session: _ChatSession, phase: WorkPhase, line: str | None = None
+    state: DashboardState,
+    session: _ChatSession,
+    phase: WorkPhase,
+    line: str | None = None,
+    *,
+    act: Act | None = None,
 ) -> None:
     """The chat's running turn is now in *phase*, said with *line* (the phase's own words by
-    default). Sent when it changes what the chat's payload says."""
+    default) and, in ``tool``, what the call does (*act*). Sent when it changes what the chat's
+    payload says."""
     run = _run(session)
     if run.turn is None:
         return
     run.phase, run.line = phase, _clip(_LINES.get(phase, "") if line is None else line)
+    run.act = act if phase is WorkPhase.TOOL else None
     if phase is not WorkPhase.RETRYING:
         run.retry = None
     if phase is not WorkPhase.WAITING_MODEL:
@@ -497,8 +515,9 @@ def thinking(session: _ChatSession) -> WorkPhase:
 
 
 def step(state: DashboardState, session: _ChatSession, title: str, kind: str) -> None:
-    """The turn's runtime started a call (its card's *title* and its declared *kind*)."""
-    say(state, session, *classify_call(title, kind))
+    """The turn's runtime started a call (its card's *title* and its declared *kind*): its phase,
+    its line and, for a ``tool`` step, what it does."""
+    say(state, session, *classify_call(title, kind), act=act_of_call(title, kind))
 
 
 def writing(state: DashboardState, session: _ChatSession) -> None:
