@@ -380,7 +380,8 @@ verdict says all it must fix:
     JSON object each, at most 8): a step keeps ten notices, so a red whose named tests fall short of
     the count is not flake-class. A queue entry two entries list is a named red, never a crash.
   - **A queue commit's red** carries the same note, so the lane's tooling can re-enqueue a
-    flake-class red: its pull request's removals from the queue and the run's attempts count, and
+    flake-class red that did not rerun in place (rule 4, below, says when it does; the note then
+    says why not): its pull request's removals from the queue and the run's attempts count, and
     the pull request's earlier heads are held to its head's tree and change, as on its own red.
     Its failed tests are read against the queue commit's own change against its parent, which is
     what they ran on.
@@ -477,8 +478,40 @@ verdict says all it must fix:
   verdict's word that nothing else was red (`--attempt` below). The later attempts' verdicts judge
   those jobs, each attempt held to `success`, and the green says attempt 1 was red only for them.
   A listed job `verdict.listed_job` refuses, two such notices, or annotations that can't be read
-  are unread, so red. A queue commit's run excuses nothing: its attempt-1 red is its posted
-  verdict, so its entry is queued again.
+  are unread, so red. A queue commit's run excuses nothing of the kind: its attempt-1 red is its
+  posted verdict, so its entry is queued again, but for the rerun in place below.
+- **A flake-class queue red reruns its failed jobs in place (#5809 piece 3).** When a queue
+  commit's attempt 1 is red only for its `results`, its retry note says flake-class with a retry
+  left, each red job failed (not cancelled or timed out, which may leave no attempt-1 record) and
+  is one no other catalogue job waits for or is waited by (it runs in `test`, whose one dependent
+  is `results`, so its rerun reruns nothing else), and `main`'s merge queue's
+  check limit (read from `main`'s rules, 120 minutes) leaves at
+  least 45 minutes, and the longest red job's attempt-1 time plus 15, the poster posts
+  `merge-verdict` in progress, with no conclusion, titled "Rerunning in place". GitHub keeps an
+  entry whose required check has no conclusion, so the entry stays queued. The note's fence names
+  the run, attempt 1, its deadline (12 minutes before the limit) and the failed jobs. The poster's
+  `rerun` job, the one job besides `contract` whose token holds `actions: write`, reads the run
+  again (a queue commit's attempt 1, red, its red jobs the note's, the note still the App's newest
+  verdict), reruns those jobs (GitHub's rerun of a run's failed jobs and what needs them), waits
+  until attempt 2 completes or the deadline, at most 95 minutes, and dispatches the poster on
+  `main` for the queue commit. It runs no action but `main`'s checkout and nothing of the
+  candidate's, and it holds one Linux runner while the jobs rerun, which counts against the
+  account's concurrent jobs. Attempt 2 is judged by `main`'s verdict in its `results`: still red,
+  since a rerun never turns a red green there, but when every reason is a key red only on an
+  earlier attempt and attempt 2's own listing shows every other job green or skipped, its one
+  notice "red only on an earlier attempt" names those keys as a JSON list. The poster excuses
+  attempt 1, and attempt 2's red with it, only when the note is its own (the App's, by id),
+  attempt 2 is the queue commit's run's attempt 2 exactly, it reran exactly attempt 1's red jobs
+  and `results` (a job reran when it started at or after attempt 2 did: GitHub gives a carried
+  job a new id but its old times), its listing shows every other job green or skipped, and the
+  one notice names exactly the note's jobs (two notices are unread); the rest of the queue
+  commit's rules hold as on attempt 1. A pull request's rerun, or a third attempt, reads no such
+  notice. Any other end posts attempt 1's red: `rerun-fallback` runs
+  whenever `rerun` did not succeed and judges the queue commit with its rerun ended (attempt 2's
+  verdict if it completed, else attempt 1's red), posting only while the note is the newest
+  verdict, or while the queue commit has no verdict at all (the note never posted); and the sweep beside each Merge run's completion does the same for a note past its
+  deadline. One in-place rerun per queue commit: a red on attempt 2 posts, with its retry counted,
+  for the lane's re-enqueue. Pull requests' runs are unchanged.
 - **The dependency review, by main's own read (#4585 step 6):** the poster reads the dependency
   graph's comparison of `main`'s tip with the head itself, both by sha and three dots, so only the
   head's own changes count. It judges it by the action's rule with core's settings, its defaults:

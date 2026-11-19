@@ -55,7 +55,11 @@ attempt. A key no runner took on every attempt so far reads ``not acquired``, st
 verdict red for nothing else (aside from a stage job whose ``needs`` result is ``abandoned``
 while the attempt's own listing shows nothing else red) names those keys in
 :data:`NOT_ACQUIRED_NOTICE`'s notice (:func:`not_acquired_notices`), for the merge controller to
-read, so it knows a rerun may fill them.
+read, so it knows a rerun may fill them. A key whose latest attempt is green after a red one still
+reads ``red on an earlier attempt`` (:data:`RED_EARLIER`): a rerun never turns it green here. A
+verdict red for those keys alone names them in :data:`EARLIER_NOTICE`'s notice
+(:func:`earlier_notices`), so the merge controller can tell an in-place rerun of a queue commit's
+failed jobs that it asked for, which went green, from any other red (#5809).
 
 Planned keys are opaque strings: a job id from ``needs``, a matrix entry from a per-job verdict
 file, or a job the controller read from the API all mean the same thing here.
@@ -126,6 +130,15 @@ ABANDONED = "abandoned"
 #: runner took (:func:`not_acquired_notices`), for the merge controller to read from attempt 1's
 #: ``results`` job, so it knows a rerun may fill them.
 NOT_ACQUIRED_NOTICE = "red only for jobs no runner took"
+#: The reason a planned key reads when its latest attempt's result is green and an earlier
+#: attempt's was red (:func:`_planned` reads the latest attempt first): a red is never rerun into
+#: green here.
+RED_EARLIER = "red on an earlier attempt"
+#: The title of the notice a verdict writes when it is red only for planned keys whose latest
+#: attempt is green (:data:`RED_EARLIER`, :func:`earlier_notices`), naming them, for the merge
+#: controller to read from a queue commit's rerun attempt: an in-place rerun of the failed jobs it
+#: asked for (#5809) is green there only when those keys are exactly the rerun's.
+EARLIER_NOTICE = "red only on an earlier attempt"
 
 #: A full object id, SHA-1 or SHA-256, as ``tools/ci/trust.py``'s receipts carry. Matched with
 #: ``fullmatch``, so nothing may follow the id, not even a newline.
@@ -241,6 +254,10 @@ class Verdict:
     #: On attempt 1, the planned keys no runner took, when they are the whole of why it is red (a
     #: stage job ``needs`` calls ``abandoned`` aside). Empty everywhere else. Never green.
     not_acquired: tuple[str, ...] = ()
+    #: On a rerun attempt, the planned keys red only on an earlier attempt (:data:`RED_EARLIER`),
+    #: when they are the whole of why it is red and the attempt's own listing shows every job but
+    #: ``results`` green or skipped (:func:`_only_earlier`). Empty everywhere else. Never green.
+    earlier: tuple[str, ...] = ()
 
 
 def _fault(
@@ -339,7 +356,7 @@ def _planned(
     for r in sorted(results, key=lambda r: r.attempt):
         fault = _fault(r, candidate, run_id, reads)
         if fault:
-            return "red on an earlier attempt", f"attempt {r.attempt}: {fault[0]}; {fault[1]}"
+            return RED_EARLIER, f"attempt {r.attempt}: {fault[0]}; {fault[1]}"
     return None
 
 
@@ -397,8 +414,8 @@ FLAKE_NOTICE = "flake passed"
 FAILED_NOTICE = "failed test"
 #: At most this many failed tests are named, after the count, and a reader that finds fewer than
 #: the count knows it did not read them all. GitHub keeps ten notices a step: on a red, the
-#: not-acquired notice, the count and these eight fill them (:func:`notices`), so a new notice
-#: needs its place here first.
+#: not-acquired notice or the earlier-attempt one (never both), the count and these eight fill
+#: them (:func:`notices`), so a new notice needs its place here first.
 FAILED_NOTICES = 8
 #: What every pytest test's run reads besides its own file and the conftests above it.
 PYTEST_CONFIG = ("pyproject.toml",)
@@ -1038,7 +1055,28 @@ def decide(
         not_acquired=_only_not_acquired(
             reasons, by_key, first_jobs if attempt in (None, 1) else (later_jobs or {}).get(attempt)
         ),
+        earlier=_only_earlier(
+            reasons, None if attempt in (None, 1) else (later_jobs or {}).get(attempt)
+        ),
     )
+
+
+def _only_earlier(reasons: Sequence[Reason], jobs: Sequence[JobRun] | None) -> tuple[str, ...]:
+    """The keys of the :data:`RED_EARLIER` reasons, sorted, when they are every reason and the
+    rerun attempt's own listing (*jobs*) shows every job but :data:`RESULTS_JOB` completed
+    ``success`` or ``skipped`` (#5809, CORE G2, as :func:`_only_not_acquired` reads attempt 1's):
+    the listing is the proof the rerun went green, and the records' reasons that only attempt 1
+    was red. No listing, or anything else in it, names none."""
+    if not reasons or jobs is None:
+        return ()
+    if any(r.kind != RED_EARLIER or not r.key for r in reasons):
+        return ()
+    for job in jobs:
+        if job.name == RESULTS_JOB:
+            continue
+        if not (job.status == "completed" and job.conclusion in (SUCCESS, SKIPPED)):
+            return ()
+    return tuple(sorted({r.key for r in reasons}))
 
 
 def _untaken(
@@ -1860,10 +1898,30 @@ def not_acquired_notices(verdict: Verdict) -> str:
     return f"::notice title={NOT_ACQUIRED_NOTICE}::{text}\n"
 
 
+def earlier_notices(verdict: Verdict) -> str:
+    """On a rerun attempt red only for planned keys red on an earlier attempt, with its own
+    listing green (``Verdict.earlier``, :func:`_only_earlier`), one ``::notice`` titled
+    :data:`EARLIER_NOTICE` whose message is those keys as one JSON list, sorted and distinct, for
+    the merge controller to read from a queue commit's rerun attempt; nothing otherwise. Escaped
+    as a workflow command's message is (``%``, CR and LF), so a key's own text never makes a line
+    of its own. It never stands beside the not-acquired notice, whose reds are another kind, so
+    the step's notices stay within GitHub's ten."""
+    if verdict.green or not verdict.earlier:
+        return ""
+    text = json.dumps(list(verdict.earlier), ensure_ascii=True).replace("%", "%25")
+    return f"::notice title={EARLIER_NOTICE}::{text}\n"
+
+
 def notices(verdict: Verdict) -> str:
     """Every ``::notice`` the verdict step writes, in its order: the flakes passed, the jobs no
-    runner took, then the failed tests. GitHub keeps ten a step (:data:`FAILED_NOTICES`)."""
-    return flake_notices(verdict) + not_acquired_notices(verdict) + failed_notices(verdict)
+    runner took or the keys red only on an earlier attempt (never both), then the failed tests.
+    GitHub keeps ten a step (:data:`FAILED_NOTICES`)."""
+    return (
+        flake_notices(verdict)
+        + not_acquired_notices(verdict)
+        + earlier_notices(verdict)
+        + failed_notices(verdict)
+    )
 
 
 def failed_notices(verdict: Verdict) -> str:

@@ -35,6 +35,13 @@
 # tools/ci. When it completes, the head is judged again and its verdict posted, and the branch is
 # deleted.
 #
+# A queue commit whose red is flake-class, with time left in main's merge queue's check limit,
+# reruns its failed jobs in place (#5809 piece 3): post posts its verdict in progress, so the
+# queue keeps the entry; the `rerun` job reruns those jobs, waits for that attempt and dispatches
+# this poster for the queue commit; and `rerun-fallback` posts attempt 1's red if it ends any
+# other way. The rerun attempt is green only when main's verdict in its `results` is red for
+# nothing but the jobs the note named, each green on attempt 2.
+#
 # The check run is posted with the controller App's token (personalclaw-ci-controller, the one
 # App main-protect will name), minted only when there is one to post and handed only to the
 # step that posts. Its key is a secret of the `ci-controller` environment, which only main may
@@ -142,6 +149,7 @@ jobs:
       dispatch: ${{ steps.decide.outputs.dispatch }}
       base: ${{ steps.decide.outputs.base }}
       cleanup: ${{ steps.decide.outputs.cleanup }}
+      rerun: ${{ steps.decide.outputs.rerun }}
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -280,3 +288,133 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m tools.ci merge-controller dispatch --repo "$GITHUB_REPOSITORY" --branch "$BRANCH"
+
+  # A queue commit whose red is flake-class, with time left in main's merge queue's check limit:
+  # post has posted its verdict in progress, so the queue keeps the entry, and names the run
+  # here (#5809 piece 3). Rerun its failed jobs in place, wait for that attempt, then dispatch
+  # this poster on main for the queue commit: a rerun asked with the job's token raises no
+  # workflow_run when it completes. The controller reads the run again first (it must still be
+  # the queue commit's attempt 1, red, its failed jobs the note's) and waits no longer than the
+  # note's deadline. The job's token holds actions: write for this alone: no action but main's
+  # checkout, no secret, nothing of the candidate's checked out, fetched or run. One Linux
+  # runner, held while the jobs rerun: it counts in the account's concurrent jobs.
+  rerun:
+    needs: post
+    if: >-
+      (github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_run'
+      && github.event.action == 'completed'
+      && github.event.workflow_run.event == 'workflow_dispatch'
+      && github.event.workflow_run.head_branch != 'main')
+      || (vars.MERGE_VERDICT_LIVE == 'true'
+      && ((github.event_name == 'check_run'
+      && github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')
+      || (github.event_name == 'workflow_run'
+      && github.event.action == 'completed'
+      && (github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'merge_group'
+      || (github.event.workflow_run.event == 'dynamic'
+      && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))
+      || (github.event_name == 'workflow_run'
+      && github.event.action == 'in_progress'
+      && (github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'merge_group')
+      && github.event.workflow_run.path == '.github/workflows/merge.yml'))))
+      && needs.post.outputs.rerun != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    # contents: read for main's tip; actions: write to rerun the run's failed jobs, read its
+    # attempts and dispatch this poster.
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Runner identity
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: rerun the failed jobs in place, then wake the poster
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RERUN: ${{ needs.post.outputs.rerun }}
+          APP_ID: ${{ vars.CONTROLLER_APP_ID }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.ci merge-controller rerun --repo "$GITHUB_REPOSITORY" \
+            --run-id "$RERUN" --controller-app-id "$APP_ID"
+
+  # rerun did not end with its wake sent: refused, past the note's deadline, timed out or
+  # cancelled. Judge the queue commit again with its rerun ended: attempt 2's verdict when it
+  # has completed, else attempt 1's red, so the queue drops the entry and the lane re-enqueues
+  # it as before. It posts only while the note is the queue commit's newest verdict, so a rerun
+  # never stays in progress for good. Never for a poster run that names no run to rerun.
+  rerun-fallback:
+    needs: [post, rerun]
+    if: >-
+      always()
+      && (github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_run'
+      && github.event.action == 'completed'
+      && github.event.workflow_run.event == 'workflow_dispatch'
+      && github.event.workflow_run.head_branch != 'main')
+      || (vars.MERGE_VERDICT_LIVE == 'true'
+      && ((github.event_name == 'check_run'
+      && github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')
+      || (github.event_name == 'workflow_run'
+      && github.event.action == 'completed'
+      && (github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'merge_group'
+      || (github.event.workflow_run.event == 'dynamic'
+      && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))
+      || (github.event_name == 'workflow_run'
+      && github.event.action == 'in_progress'
+      && (github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'merge_group')
+      && github.event.workflow_run.path == '.github/workflows/merge.yml'))))
+      && needs.post.outputs.rerun != ''
+      && needs.rerun.result != 'success'
+    # post's reads: main's tip, both trees and the comparison; the run, every attempt's jobs and
+    # the run's artifact digests; CodeQL's analyses on main and the open alerts.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ci-controller
+    permissions:
+      contents: read
+      actions: read
+      security-events: read
+    steps:
+      - name: Runner identity
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: judge the queue commit with its rerun ended
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RERUN: ${{ needs.post.outputs.rerun }}
+          APP_ID: ${{ vars.CONTROLLER_APP_ID }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.ci merge-controller decide --repo "$GITHUB_REPOSITORY" \
+            --rerun-ended "$RERUN" --controller-app-id "$APP_ID" \
+            --controller-revision "$GITHUB_SHA" --out "$RUNNER_TEMP/merge-verdict.json"
+      - name: the controller's token
+        id: controller
+        if: steps.decide.outputs.post == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CONTROLLER_APP_ID }}
+          private-key: ${{ secrets.CONTROLLER_APP_KEY }}
+          permission-checks: write
+      - name: post merge-verdict
+        if: steps.decide.outputs.post == 'true'
+        env:
+          GH_TOKEN: ${{ steps.controller.outputs.token }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.ci merge-controller post --repo "$GITHUB_REPOSITORY" \
+            --body "$RUNNER_TEMP/merge-verdict.json"

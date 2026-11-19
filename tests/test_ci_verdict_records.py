@@ -634,6 +634,129 @@ def test_a_job_that_ran_and_failed_on_attempt_1_stays_red_after_a_green_rerun(
     assert f"`{_LEFT}`: red on an earlier attempt" in capsys.readouterr().out
 
 
+# ── a key red only on an earlier attempt, named for an in-place rerun (#5809) ──────────────────
+
+_EARLIER = f"::notice title={verdict.EARLIER_NOTICE}::"
+_FAILED_1 = {"conclusion": "failure", "steps": 5}
+
+
+def _earlier_records(*, rerun: str = "success", test: str | None = None) -> dict[str, str]:
+    """Attempt 1 red in one key (its failed test *test*, if any), its rerun on attempt 2
+    *rerun*, every other key green on attempt 1."""
+    more: dict[str, object] = {}
+    if test is not None:
+        more["rerun"] = {
+            "argv": ["pytest", "-n", "0", test],
+            "exit": 1,
+            "tests": [{"test": test, "rerun_result": "repeated failure", "why": "failed again"}],
+        }
+    return _named(
+        _record("static"),
+        _record("suite (1/2)"),
+        _record(_LEFT, result="failure", **more),
+        _record(_LEFT, result=rerun, attempt=2),
+    )
+
+
+def test_a_rerun_green_where_attempt_1_was_red_names_its_keys_in_one_notice(
+    tmp_path, capsys
+) -> None:
+    """Still red (a rerun never turns a red green here), but red for nothing else, and the rerun's
+    own listing green: the one notice names the key as a JSON list, for the merge controller to
+    hold to the jobs it asked to rerun."""
+    args = [*_setup(tmp_path, _earlier_records()), "--attempt", "2"]
+    args += [*_first_jobs(tmp_path, _FAILED_1), *_later_jobs(tmp_path, {2: {}})]
+    assert _run(args) == 1
+    out = capsys.readouterr().out
+    assert f'{_EARLIER}["{_LEFT}"]\n' in out, out
+    assert verdict.NOT_ACQUIRED_NOTICE not in out
+
+
+@pytest.mark.parametrize(
+    "later",
+    [None, {2: {"conclusion": "failure", "steps": 5}}],
+    ids=["no listing of the rerun", "the rerun's listing red"],
+)
+def test_a_rerun_its_own_listing_does_not_show_green_names_no_earlier_attempt(
+    tmp_path, capsys, later
+) -> None:
+    """CORE G2: the rerun attempt's own listing is the proof, as attempt 1's is for jobs no
+    runner took."""
+    args = [*_setup(tmp_path, _earlier_records()), "--attempt", "2"]
+    args += _first_jobs(tmp_path, _FAILED_1)
+    if later is not None:
+        args += _later_jobs(tmp_path, later)
+    assert _run(args) == 1
+    assert _EARLIER not in capsys.readouterr().out
+
+
+def test_a_rerun_still_red_names_no_earlier_attempt(tmp_path, capsys) -> None:
+    args = [*_setup(tmp_path, _earlier_records(rerun="failure")), "--attempt", "2"]
+    args += [*_first_jobs(tmp_path, _FAILED_1), *_later_jobs(tmp_path, {2: _FAILED_1})]
+    assert _run(args) == 1
+    out = capsys.readouterr().out
+    assert f"`{_LEFT}`: failure" in out and _EARLIER not in out, out
+
+
+def test_an_earlier_attempt_beside_another_red_names_no_earlier_attempt(tmp_path, capsys) -> None:
+    records = _earlier_records()
+    records.update(_named(_record("static", result="failure", attempt=2)))
+    args = [*_setup(tmp_path, records), "--attempt", "2"]
+    args += [*_first_jobs(tmp_path, _FAILED_1), *_later_jobs(tmp_path, {2: {}})]
+    assert _run(args) == 1
+    assert _EARLIER not in capsys.readouterr().out
+
+
+def test_an_attempt_2_record_that_names_attempt_1_names_no_earlier_attempt(
+    tmp_path, capsys
+) -> None:
+    """CORE R3: a record in attempt 2's folder that says it is attempt 1's is no green rerun of
+    the key. The verdict refuses it as unreadable, so it names nothing."""
+    records = _named(_record("static"), _record("suite (1/2)"), _record(_LEFT, result="failure"))
+    records[_folder(_LEFT, 2)] = _record(_LEFT)
+    args = [*_setup(tmp_path, records), "--attempt", "2", *_first_jobs(tmp_path, _FAILED_1)]
+    assert _run([*args, *_later_jobs(tmp_path, {2: {}})]) == 2
+    seen = capsys.readouterr()
+    assert _EARLIER not in seen.out and "verdict: unreadable input" in seen.err, seen
+
+
+def test_a_test_id_that_spells_a_notice_writes_no_workflow_command_of_its_own(
+    tmp_path, capsys
+) -> None:
+    """CORE G4: a failed test's id is the candidate's text. Spelling a notice in it, after a line
+    break, writes no line that starts a workflow command beyond the verdict's own notices."""
+    forged = f'tests/test_x.py::test_y\n{_EARLIER}["static"]\n::error::forged'
+    args = [*_setup(tmp_path, _earlier_records(test=forged)), "--attempt", "2"]
+    args += [*_first_jobs(tmp_path, _FAILED_1), *_later_jobs(tmp_path, {2: {}})]
+    assert _run(args) == 1
+    commands = [line for line in capsys.readouterr().out.splitlines() if line.startswith("::")]
+    assert [c for c in commands if c.startswith(_EARLIER)] == [f'{_EARLIER}["{_LEFT}"]'], commands
+    ours = (f"::notice title={verdict.FAILED_NOTICE}::", _EARLIER)
+    assert all(c.startswith(ours) for c in commands), commands
+
+
+def test_the_earlier_notice_names_each_key_once_sorted_and_escaped() -> None:
+    red = verdict.Verdict(green=False, earlier=("a", "b%c\nd"))
+    assert verdict.earlier_notices(red) == f'{_EARLIER}["a", "b%25c\\nd"]\n'
+    assert verdict.earlier_notices(verdict.Verdict(green=True, earlier=("a",))) == ""
+    assert verdict.earlier_notices(verdict.Verdict(green=False)) == ""
+
+
+def test_a_red_only_on_an_earlier_attempt_writes_at_most_ten_notices() -> None:
+    tests = tuple(
+        verdict.FailedTest(_LEFT, 1, f"tests/test_t.py::test_{n}", verdict.FLAKE) for n in range(12)
+    )
+    red = verdict.Verdict(
+        green=False,
+        reasons=(verdict.Reason(_LEFT, verdict.RED_EARLIER),),
+        tests=tests,
+        earlier=(_LEFT,),
+    )
+    lines = verdict.notices(red).splitlines()
+    assert len(lines) == 10 and lines[0] == f'{_EARLIER}["{_LEFT}"]', lines
+    assert all(f"title={verdict.FAILED_NOTICE}::" in line for line in lines[1:])
+
+
 @pytest.mark.parametrize(
     "field",
     [
