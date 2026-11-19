@@ -6,7 +6,7 @@
 
   * **per-file size ceiling + a shrink-only band population** — no file may reach 6000 lines
     (one 1000-line step above the measured max of 5447), and the COUNT of files at or above the
-    2800-line watch band (9) may only shrink. Growth WITHIN the band, below the ceiling, is
+    2900-line watch band (8) may only shrink. Growth WITHIN the band, below the ceiling, is
     deliberately not a violation: decay is a new 2,500-line module appearing, not three lines
     added to the file that by construction gets maintained most.
   * **module-boundary / import direction** — a declared layer order (the ledger is a leaf;
@@ -156,11 +156,12 @@ def test_the_watch_band_is_not_sitting_on_a_cliff():
     did when each member's length was pinned: a band placed 12 lines above the next-largest file
     would drag an innocent module in on an unrelated commit, and the first thing that teaches
     everyone is to regenerate the baseline — which kills every other ratchet in the file.
-    Measured LIVE (217 lines at the 2800 band) rather than read from the baseline, because a
+    Measured LIVE (200 lines at the 2900 band) rather than read from the baseline, because a
     stored headroom moves whenever any sub-band file grows and would itself demand a
     regeneration. This rail has already earned its keep once: ``builtin_tools.py`` grew ~233
     lines in three days to 2467, cut the original 2500 band's headroom from 206 to 33, and
-    forced the boundary to move to 2800 (see ``SIZE_WATCH_BAND_LINES``).
+    forced the boundary to move to 2800 (see ``SIZE_WATCH_BAND_LINES``). Three files grown to 2700
+    later held the 2800 band at exactly the floor, and it moved to 2900 (#5855).
     """
     headroom = gen.watch_band_headroom()
     assert headroom >= 100, (

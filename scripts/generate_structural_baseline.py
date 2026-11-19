@@ -42,7 +42,7 @@ the other three.
 
 ⚠️  AND A RATCHET THAT REDS ORDINARY MAINTENANCE IS AN OUTAGE, NOT A GATE. The size ratchet
     counts HOW MANY files are giant; it does not freeze each giant's exact length. Decay is a new
-    2,800-line module appearing — not three lines added to the module that, by construction, gets
+    2,900-line module appearing — not three lines added to the module that, by construction, gets
     maintained most (three of the config round-trip's five points live in
     ``config/loader.py``, the largest file in the repo). A ratchet that turned a boolean config
     toggle into "split a 5,447-line file first" is the gate people route around, which is exactly
@@ -97,7 +97,7 @@ the other three.
     which means the boundary has stopped sitting at a gap. When that happens: measure the whole
     distribution, pick the boundary at a real gap, and record the measured table plus the
     reasoning beside SIZE_WATCH_BAND_LINES — 2500 -> 2800 on 2026-08-21 is the
-    worked example.
+    worked example, and 2800 -> 2900 on 2026-11-19 the second.
 
     It is FORBIDDEN to move the band in response to a population RISE. That is a counter, the
     forbidden-to-raise rule owns it, and widening the band to make a new giant disappear is the
@@ -320,7 +320,28 @@ class Scan:
 # for the boundary itself to be re-authored. Optimise the
 # margin against GROWTH, which is the direction this ratchet exists to measure, and pay the cheap
 # remedy on the other side.
-SIZE_WATCH_BAND_LINES = 2800
+#
+# RE-MEASURED 2026-11-19 over 1570 production files (#5855). The trigger was the cliff rail at its
+# floor: three files had grown to exactly 2700 (``security.py``, ``mcp_artifacts.py`` and
+# ``dashboard/state.py``), so the 2800 band's headroom was exactly 100. The rail reds under 100,
+# so it had not fired yet; this move lands one line ahead of it. The population had FALLEN, from
+# 9 to 8, so the move answers no rise, and the forbidden-to-raise rule does not reach it:
+#
+#     band   population   largest non-member          headroom
+#     2800         8       2700  security.py              100   <- the cliff that forced this move
+#     2900         8       2700  security.py              200   <- CHOSEN
+#     3000         8       2700  security.py              300
+#     3100         8       2700  security.py              400
+#     3200         8       2700  security.py              500
+#
+# (The population is 8 at every boundary from 2800 to 3500; at 3600 it is 7, with 38 lines of
+# headroom under ``chat_handlers.py``.) 2900 by the rule that chose 2800: the boundary in a real
+# gap that keeps the most pressure on the large files outside the band, at about twice the rail's
+# 100-line floor. 2800 had 217 (2.17x); 2900 has 200 (2x). Every 100 lines above it takes pressure
+# off the 18 files in [2600, 2800) for nothing, since the band holds the same 8 files all the way
+# to 3500. The shrink margin is now wide: the band's smallest member is ``chat_handlers.py`` at
+# 3562, 662 lines above the boundary, against 2026-08-21's 8.
+SIZE_WATCH_BAND_LINES = 2900
 
 # The absolute per-file ceiling. FORBIDDEN TO RAISE.
 #
@@ -359,19 +380,20 @@ _SIZE_RATIONALE = (
     "measured max of 5447 on purpose — pinned AT the max it would give the repo's most-"
     "maintained file zero headroom and turn a boolean config toggle into a mandatory 5,447-line "
     "split, which is the gate people route around. (2) The WATCH-BAND POPULATION is the honest "
-    "decay signal: how MANY files are giant, shrink-only. A file ENTERING the 2800-line band "
-    "reds (9 -> 10); splitting one is how you go green (9 -> 8). Growth WITHIN the band, below "
+    "decay signal: how MANY files are giant, shrink-only. A file ENTERING the 2900-line band "
+    "reds (8 -> 9); splitting one is how you go green (8 -> 7). Growth WITHIN the band, below "
     "the ceiling, is ordinary maintenance of the files that by construction get maintained most, "
     "and is deliberately NOT a violation. Everything below the band is unconstrained except by "
-    "the ceiling: routine work is untaxed, and the count is what has to come down. WHY 2800 AND "
-    "NOT A ROUND 2500: the boundary has to sit at a real gap, and this repo proved it within "
-    "three days — agents/native/builtin_tools.py grew ~233 lines (one change added 122) to 2467, "
-    "leaving the original 2500 band 33 lines of headroom. 2800 sits in the 225-line gap between "
-    "engine.py (2583) and chat_handlers.py (2808): 217 lines of headroom, 2.17x the cliff rail's "
-    "floor. It also leaves engine.py and builtin_tools.py OUTSIDE the band, where crossing 2800 "
-    "reds them — at 2400 they would be grandfathered members, free to grow to the ceiling "
-    "unchallenged. The full measured distribution and the accepted 8-line shrink margin on "
-    "chat_handlers.py are recorded beside SIZE_WATCH_BAND_LINES."
+    "the ceiling: routine work is untaxed, and the count is what has to come down. WHY 2900 AND "
+    "NOT A ROUND NUMBER: the boundary has to sit at a real gap, and this repo has proved it twice. "
+    "Within three days of the first band, agents/native/builtin_tools.py grew ~233 lines (one "
+    "change added 122) to 2467, leaving the original 2500 band 33 lines of headroom, and the band "
+    "moved to 2800; by 2026-11-19 three files had grown to 2700, leaving 2800 exactly the cliff "
+    "rail's 100-line floor (#5855). 2900 sits in the 862-line gap between those three (2700) and "
+    "chat_handlers.py (3562): 200 lines of headroom, 2x the floor, as 2800's 217 was. It leaves "
+    "the 18 files between 2600 and 2800 OUTSIDE the band, where crossing 2900 reds them; inside "
+    "it they would be grandfathered members, free to grow to the ceiling unchallenged. Both "
+    "moves' measured distributions are recorded beside SIZE_WATCH_BAND_LINES."
 )
 
 
