@@ -807,9 +807,12 @@ export async function hideToasts(page: Page): Promise<void> {
 
 async function resize(page: Page, width: number, height: number): Promise<void> {
   await page.setViewportSize({ width, height })
-  // Two frames for layout and `matchMedia` listeners (`useIsMobile`). What they render, and any
-  // panel that springs to the new width, is waited out by `settleControls`, not by a fixed beat.
-  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+  // Back to the start in the same task as the relayout, then the two frames layout and `matchMedia`
+  // listeners (`useIsMobile`) render in, which are also the frames a windowed list draws the rows
+  // the scroll brought back in: a scroll to the start survives the relayout. What they render, and
+  // any panel that springs to the new width, is waited out by `settleControls`, not by a fixed beat.
+  // The resize and the scroll each took two frames of their own, 81 s of a main run's matrix (#5851).
+  await scrollToStart(page)
 }
 
 /** How long apart two reads of the controls are, and how long a width may take to hold still. */
@@ -856,6 +859,58 @@ export async function settleControls(page: Page, where: string): Promise<void> {
       )
     }
     before = now
+  }
+}
+
+/** The page's finite animations and transitions still running, each named by its target and what it
+ *  animates. An endless one (a pulse, a spinner) is a resting state, not a change. */
+async function runningAnimations(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    document
+      .getAnimations()
+      .filter((a) => a.playState === 'running' && a.effect?.getComputedTiming().iterations !== Infinity)
+      .map((a) => {
+        const target = (a.effect as KeyframeEffect | null)?.target ?? null
+        const label = target?.getAttribute('aria-label') ?? target?.id ?? ''
+        const what =
+          (a as Partial<CSSAnimation>).animationName ?? (a as Partial<CSSTransition>).transitionProperty ?? 'an animation'
+        return `${target ? target.tagName.toLowerCase() : 'nothing'}${label ? ` "${label}"` : ''}: ${what}`
+      }),
+  )
+}
+
+/** Wait until what the page shows holds still: every finite animation and transition has finished,
+ *  then the controls hold still (`settleControls`), and none started meanwhile. A fixed beat waited
+ *  a guess, and a later read met whatever was still changing when it ran out: a box still moving, or
+ *  a fade that moves no box (an opacity, a colour, a focus ring easing in), which axe's contrast
+ *  read half done. An endless animation is a resting state and is not waited for. A page that does
+ *  not hold still within SETTLE_LIMIT_MS fails, naming what still moved. Only what the browser runs
+ *  as an Animation (`getAnimations`) is seen: a fade a script steps frame by frame, such as
+ *  framer-motion's colour tweens and `onUpdate` animations on the main thread, is not waited for. */
+export async function settleMotion(page: Page, where: string): Promise<void> {
+  const until = Date.now() + SETTLE_LIMIT_MS
+  for (;;) {
+    const finished = await page.evaluate(
+      (ms) =>
+        Promise.race([
+          Promise.all(
+            document
+              .getAnimations()
+              .filter((a) => a.playState === 'running' && a.effect?.getComputedTiming().iterations !== Infinity)
+              .map((a) => a.finished.catch(() => undefined)),
+          ).then(() => true),
+          new Promise<boolean>((done) => setTimeout(() => done(false), ms)),
+        ]),
+      Math.max(0, until - Date.now()),
+    )
+    if (finished) {
+      await settleControls(page, where)
+      if ((await runningAnimations(page)).length === 0) return
+    }
+    if (Date.now() >= until) {
+      const still = (await runningAnimations(page)).slice(0, 10)
+      throw new Error(`${where}: the page did not hold still within ${SETTLE_LIMIT_MS} ms; still running: ${still.join('; ') || '(none)'}`)
+    }
   }
 }
 
@@ -919,10 +974,12 @@ export async function runMatrix(page: Page, ctx: SurfaceContext, baselines: Base
   // 768 on one run and was gone on the next). The page behind is its route's own row.
   if (ctx.kind !== 'opener') await page.keyboard.press('Escape')
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.())
-  await page.waitForTimeout(200)
+  // What the Escape and the blur set going (a pill that closes 120 ms after its blur, a window that
+  // leaves on a spring) is waited out, not a fixed 200 ms (39 s of a main run's matrix, #5851); and
+  // each width's own `settleControls` still reads only once its controls hold still.
+  await settleMotion(page, `${ctx.where} after the keyboard walk`)
   for (const w of WIDTHS) {
     await resize(page, w, isCompact(w) ? PHONE_HEIGHT : REST_VIEWPORT.height)
-    await scrollToStart(page)
     await settleControls(page, `${ctx.where} at ${w}px`)
     await baselined(overflowStep(w), () => overflowFindings(page))
     if (isCompact(w)) {
