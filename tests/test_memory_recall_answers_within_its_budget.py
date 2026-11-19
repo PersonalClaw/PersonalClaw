@@ -317,11 +317,33 @@ OTHERS = (
 )
 
 
+#: How long a search is given beside a rebuild the test holds: one that waits for the rebuild never
+#: answers in it, however long, and one that does not answers in milliseconds.
+_ANSWERS_IN = 10.0
+
+
+def _searched(store: VectorMemoryStore) -> list[dict[str, Any]] | None:
+    """A search for the kestrel, or None when it did not answer in :data:`_ANSWERS_IN`."""
+    found: list[list[dict[str, Any]]] = []
+    search = threading.Thread(
+        target=lambda: found.append(
+            store.search_episodic(query_embedding=_bag("kestrel"), query_text="kestrel")
+        )
+    )
+    search.start()
+    search.join(timeout=_ANSWERS_IN)
+    return found[0] if found else None
+
+
 def test_a_search_during_a_reindex_never_waits_for_the_index_to_be_rebuilt(tmp_path, model):
     """🔴 Red before: a search that found the index on another model's vectors, or behind the
     re-index, rebuilt it then and there, so every search during a re-index paid for a rebuild of
     the whole index, or waited for the one in progress. A search answers from what it has: the
-    index it can read and, beside it, the memories re-embedded since, compared one by one."""
+    index it can read and, beside it, the memories re-embedded since, compared one by one.
+
+    The rebuild is held until the test lets it go, so a search that waits for it, or makes one of
+    its own, never answers while it is held. That is the structure, not a time: a bound of 0.4 s
+    on the search read a macOS queue shard's stall as a wait (0.55 s, run 44508176523, #5809)."""
     import pytest as _pytest
 
     _pytest.importorskip("faiss")
@@ -332,19 +354,20 @@ def test_a_search_during_a_reindex_never_waits_for_the_index_to_be_rebuilt(tmp_p
     for text in (KESTREL, *OTHERS):
         assert store.write_episodic(text, conversation_id="chat-1", source="user_explicit")
 
-    # A rebind: the new model embeds slowly, and building its index takes a while.
+    # A rebind: the new model embeds slowly, and each build of its index waits for the test.
     model.ref = "test:b"
     model.latency = 0.3
     real_build = VectorMemoryStore._build_index_for
     building = threading.Event()
+    let_go = threading.Event()
 
-    def _slow_build(self, space):
+    def _held_build(self, space):
         with self._index_lock:
             building.set()
-            time.sleep(1.2)
+            let_go.wait(timeout=60)
             return real_build(self, space)
 
-    store._build_index_for = _slow_build.__get__(store)  # type: ignore[method-assign]
+    store._build_index_for = _held_build.__get__(store)  # type: ignore[method-assign]
     first_row = threading.Event()
     reindex = threading.Thread(
         target=store.reembed_stale, kwargs={"on_progress": lambda d, _t: first_row.set()}
@@ -355,18 +378,17 @@ def test_a_search_during_a_reindex_never_waits_for_the_index_to_be_rebuilt(tmp_p
         deadline = time.monotonic() + 5
         while not (building.is_set() or first_row.is_set()) and time.monotonic() < deadline:
             time.sleep(0.01)
-        start = time.monotonic()
-        during = store.search_episodic(query_embedding=_bag("kestrel"), query_text="kestrel")
-        took = time.monotonic() - start
-        assert took < 0.4, f"a search waited {took:.2f}s for the index to be rebuilt"
+        during = _searched(store)
+        assert during is not None, "a search waited for the index to be rebuilt"
         assert KESTREL in {r["text"] for r in during}, "the memory is found meanwhile"
 
+        let_go.set()
         assert first_row.wait(timeout=10)
-        start = time.monotonic()
-        after_one = store.search_episodic(query_embedding=_bag("kestrel"), query_text="kestrel")
-        took = time.monotonic() - start
-        assert took < 0.4, f"a search waited {took:.2f}s once the re-index had re-embedded one"
+        let_go.clear()  # a rebuild from here on is held again
+        after_one = _searched(store)
+        assert after_one is not None, "a search waited once the re-index had re-embedded one"
         assert KESTREL in {r["text"] for r in after_one}
     finally:
+        let_go.set()
         reindex.join(timeout=30)
         store.close()

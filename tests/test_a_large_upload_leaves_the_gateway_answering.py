@@ -52,6 +52,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import cpu_budget
+import loop_held
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -803,6 +804,36 @@ class _Probe:
         #: (:attr:`on_macos`, :attr:`reads_no_instructions`).
         self.snapshots = 0
         self.instructions_read = False
+        #: The blocking calls the loop thread makes, read while :meth:`during` runs
+        #: (:func:`loop_held.watch`); None for a probe driven by hand, which judges its steps as
+        #: counted.
+        self.calls: loop_held.Watch | None = None
+        #: The longest any step held the loop (:func:`loop_held.held`): counted in full when it made
+        #: a blocking call, else its CPU and the CPU beside it; what it ran, and its count, CPU,
+        #: CPU beside and calls. None until a step is judged so.
+        self._worst_held: float | None = None
+        self.worst_held_was = "nothing"
+        self.worst_held_own: tuple[float, float, float, tuple[str, ...]] = (0.0, 0.0, 0.0, ())
+        #: The slowest answer, less what the steps inside it were excused (:attr:`excused`).
+        self._slowest_answer_held: float | None = None
+        #: The time the steps' judgment left out of their counts, in all: what a step the runner
+        #: stopped with no call counted beyond its CPU.
+        self.excused = 0.0
+
+    @property
+    def worst_held(self) -> float:
+        """The longest any step held the loop: a step that made a blocking call on it for its count,
+        any other for the CPU it and the process beside it used (``tests/loop_held.py``). A probe
+        driven by hand reads its longest step as counted."""
+        return self.worst_step if self._worst_held is None else self._worst_held
+
+    @property
+    def slowest_answer_held(self) -> float:
+        """The slowest answer less what the steps inside it were excused, never less than its CPU;
+        as counted for a probe driven by hand."""
+        return (
+            self.slowest_answer if self._slowest_answer_held is None else self._slowest_answer_held
+        )
 
     @property
     def reads_no_instructions(self) -> bool:
@@ -834,6 +865,9 @@ class _Probe:
             try:
                 # What the step runs, and the thread's counts, read outside its window.
                 runs, counts = _what_runs(handle), probe.counts.read()
+                # The calls the step makes and the process's CPU, from before its window.
+                mark = probe.calls.mark() if probe.calls is not None else 0
+                process = time.process_time()
                 # The step's window: its reads of the time ready inside its wall time (_Window).
                 window = _Window(probe.no_cpu, {threading.get_native_id()})
             except BaseException:
@@ -862,6 +896,15 @@ class _Probe:
                 if window.awake_excused is not None:
                     probe.awake_steps.append((wall, cpu, *window.awake_excused))
                 took = max(wall - waited, cpu)
+                if probe.calls is not None:
+                    made = probe.calls.since(mark)
+                    beside = max(0.0, time.process_time() - process - cpu)
+                    step_held = loop_held.held(took, cpu, beside, made)
+                    probe.excused += took - step_held
+                    if probe._worst_held is None or step_held > probe._worst_held:
+                        probe._worst_held = step_held
+                        probe.worst_held_was = _said(runs)
+                        probe.worst_held_own = (took, cpu, beside, made)
                 probe.worst_step_wall = max(probe.worst_step_wall, wall)
                 if window.could > probe.worst_step_could:
                     probe.worst_step_could, probe.worst_step_could_was = window.could, _said(runs)
@@ -897,13 +940,17 @@ class _Probe:
         self.no_cpu.open()
         self.counts.open()
         try:
-            with patch.object(
-                asyncio.events.Handle,
-                "_run",
-                self._timed(threading.get_ident(), asyncio.events.Handle._run),
+            with (
+                loop_held.watch() as self.calls,
+                patch.object(
+                    asyncio.events.Handle,
+                    "_run",
+                    self._timed(threading.get_ident(), asyncio.events.Handle._run),
+                ),
             ):
                 return await self._during(work)
         finally:
+            self.calls = None
             self.counts.close()
             self.no_cpu.close()
             if self.slept_steps:
@@ -957,7 +1004,7 @@ class _Probe:
         the loop thread's own time ready, never less than its CPU time, nor than the steps inside
         it were counted (:func:`_held_to_its_steps`)."""
         window = _Window(self.no_cpu, {threading.get_native_id()})
-        slept_before = self.slept_ready
+        slept_before, excused_before = self.slept_ready, self.excused
         stepped, ruled_before, unruled_before = (
             self.stepped,
             self.left_out_ruled,
@@ -974,6 +1021,9 @@ class _Probe:
         self.slowest_answer_unruled = max(self.slowest_answer_unruled, wall - unruled, cpu)
         waited = ruled if _SLEPT_STEPS_EXCUSE_NOTHING else unruled
         self.slowest_answer = max(self.slowest_answer, wall - waited, cpu)
+        if self.calls is not None:
+            answer_held = max(cpu, wall - waited - (self.excused - excused_before))
+            self._slowest_answer_held = max(self._slowest_answer_held or 0.0, answer_held)
         self.slowest_answer_could = max(self.slowest_answer_could, window.could)
         self._note(window)
         if wall > self.slowest_answer_wall:
@@ -1082,6 +1132,15 @@ class _Probe:
             f"the longest step in wall time: {self.worst_step_wall:.3f}s",
             f"the longest gap between turns: {self.worst_gap:.3f}s",
         ]
+        held_took, held_cpu, held_beside, held_calls = self.worst_held_own
+        made = ", ".join(dict.fromkeys(held_calls)) if held_calls else "no blocking call"
+        lines += [
+            f"the step that held the loop longest (what is judged): {self.worst_held:.3f}s, of"
+            f" {held_took:.3f}s counted, {held_cpu:.3f}s of CPU and {held_beside:.3f}s beside it,"
+            f" {made}",
+            f"  it ran {self.worst_held_was}",
+            f"the slowest health check held (what is judged): {self.slowest_answer_held:.3f}s",
+        ]
         if self.slept_steps:
             rule = "judged" if _SLEPT_STEPS_EXCUSE_NOTHING else "not judged"
             lines.append(
@@ -1173,9 +1232,14 @@ def _items(store: KnowledgeStore) -> int:
 
 
 def _holds(probe: _Probe, *, answers: bool = True, limited: bool = False) -> None:
-    """*probe*'s reading held to the bound: its longest step and, with *answers*, its slowest
-    answer under :data:`_BOUND`; with *limited*, under :func:`cpu_budget.limit`'s, three times it
-    under a tracer.
+    """*probe*'s reading held to the bound: the longest any step held the loop and, with *answers*,
+    its slowest answer under :data:`_BOUND`; with *limited*, under :func:`cpu_budget.limit`'s,
+    three times it under a tracer.
+
+    A step is held for its count when it made a blocking call on the loop, and for the CPU it and
+    the process beside it used when it made none (:attr:`_Probe.worst_held`, in
+    ``tests/loop_held.py``): a queue runner that stops the process stretches a step's count with
+    neither (run 44516860509).
 
     Under a tracer (breadth's coverage leg) every line of the upload's threads runs several times
     slower, and the loop thread waits for the interpreter's lock behind them: breadth run
@@ -1191,9 +1255,9 @@ def _holds(probe: _Probe, *, answers: bool = True, limited: bool = False) -> Non
     all 11 of its coverage-leg runs, from 2026-10-31 to 11-08, 10 of them from 11-01, at 0.1 s.
     The CPU budget rail holds each test to its choice."""
     bound = cpu_budget.limit(_BOUND) if limited else _BOUND
-    assert probe.worst_step < bound, f"the bound is {bound:.2f}s; {probe.says()}"
+    assert probe.worst_held < bound, f"the bound is {bound:.2f}s; {probe.says()}"
     if answers:
-        assert probe.slowest_answer < bound, f"the bound is {bound:.2f}s; {probe.says()}"
+        assert probe.slowest_answer_held < bound, f"the bound is {bound:.2f}s; {probe.says()}"
     if probe.before is not None:
         first = probe.before
         line = (
@@ -1753,7 +1817,53 @@ async def test_a_blocking_call_on_the_loop_fails_the_probe(subtests, tmp_path):
 
             assert status == 200, f"{name}: premise: the planted request answered"
             assert probe.worst_step >= _BOUND, f"{name}: the step missed it; {probe.says()}"
+            assert probe.worst_held >= _BOUND, f"{name}: no step held it; {probe.says()}"
             assert probe.worst_gap >= _BOUND, f"{name}: premise: the tick saw it; {probe.says()}"
+
+
+#: The macOS queue runner's step that failed the completing test (run 44516860509): 0.200 s of
+#: wall time with 0.001 s of CPU and none of it ready, every other thread idle, running a socket's
+#: non-blocking read (``_SelectorSocketTransport._read_ready``).
+_CI_STOPPED_READ = (0.200, 0.001, 0.0, 0)
+
+
+def _judged_by_hand(step: tuple, block=None) -> _Probe:
+    """A probe that ran one *step* over Linux's counts by hand (:class:`_LinuxReads`), with its
+    steps judged as :meth:`_Probe.during` judges them; *block* is made inside the step."""
+    reads = _LinuxReads()
+    probe = _Probe(None, asking=False, no_cpu=reads)
+    probe.took = step[0]
+
+    def ran(_handle) -> None:
+        if block is not None:
+            block()
+        reads.spend(*step)
+
+    run = probe._timed(threading.get_ident(), ran)
+    with (
+        loop_held.watch() as probe.calls,
+        patch.object(time, "monotonic", reads.monotonic),
+        patch.object(time, "thread_time", reads.thread_time),
+    ):
+        run(SimpleNamespace())
+    return probe
+
+
+def test_a_step_the_runner_stopped_with_no_call_holds_the_loop_for_its_cpu():
+    """🔴 Red before: the runner's step was counted 0.200 s, over the 0.1 s bound, and failed a
+    queue commit that never touched the upload. It made no blocking call and used 0.001 s of CPU,
+    the process none beside it, so it held the loop for 0.001 s (``tests/loop_held.py``)."""
+    probe = _judged_by_hand(_CI_STOPPED_READ)
+    assert probe.worst_step >= _BOUND, f"premise: counted as the runner made it; {probe.says()}"
+    assert probe.worst_held < _BOUND, probe.says()
+
+
+def test_the_same_step_with_a_blocking_call_in_it_holds_the_loop_for_its_count():
+    """The control: the same step, with a file opened in it on the loop thread, holds the loop for
+    all of its count."""
+    probe = _judged_by_hand(_CI_STOPPED_READ, block=lambda: open(os.devnull, "rb").close())
+    assert probe.worst_held == pytest.approx(0.200), probe.says()
+    assert "open" in probe.says()
 
 
 #: How long the step the report test plants keeps the loop.
@@ -1871,7 +1981,9 @@ async def test_a_process_stopped_while_the_loop_is_idle_does_not_fail_the_probe(
 
     assert stop.stopped, "premise: the process was stopped"
     assert probe.worst_gap >= _STOPPED, f"premise: the tick counted the stop; {probe.says()}"
-    assert probe.worst_step < _BOUND, f"the stop was counted as a step; {probe.says()}"
+    assert (
+        probe.worst_held < _BOUND
+    ), f"the stop held the loop: its longest step counted {probe.worst_step:.3f}s; {probe.says()}"
 
 
 #: The step breadth's Linux runner counted short (run 40259756916): a 0.2 s wait to read, the
@@ -3738,6 +3850,88 @@ async def test_a_parts_record_is_saved_in_a_worker_thread(gateway, monkeypatch):
     assert status["received"] == [0, 1], f"premise: both parts were recorded; {status}"
     assert len(saved) == 2, f"premise: one save of the record per part; {saved}"
     assert loop_thread not in saved, "a part's record was saved on the event loop's thread"
+
+
+class _RecordedFile:
+    """An upload's open file, recording the thread of each write made to it."""
+
+    def __init__(self, fh, wrote: list[int]) -> None:
+        self._fh, self._wrote = fh, wrote
+
+    def write(self, data):
+        self._wrote.append(threading.get_ident())
+        return self._fh.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
+
+
+def _spool_writes_recorded(monkeypatch, wrote: list[int]) -> None:
+    """Each :class:`~personalclaw.uploads.spool.Spool` writes to its file through a
+    :class:`_RecordedFile`."""
+    from personalclaw.uploads import spool as spool_module
+
+    real_init = spool_module.Spool.__init__
+
+    def init(self, fh) -> None:
+        real_init(self, _RecordedFile(fh, wrote))
+
+    monkeypatch.setattr(spool_module.Spool, "__init__", init)
+
+
+async def _upload_through_each_spool(client, route: str) -> None:
+    payload = _bytes(10 * _MB)
+    if route == "in parts":
+        info = await _init(
+            client, len(payload), target="knowledge", filename="clip.mp4", mime="video/mp4"
+        )
+        await _send_parts(client, info, payload)
+        status, body = await _complete(client, info["uploadId"])
+    else:
+        boundary = "pcuploadboundary"
+        r = await client.post(
+            "/api/knowledge/ingest",
+            data=_multipart("clip.mp4", "video/mp4", payload, boundary),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        status, body = r.status, await r.json()
+    assert status == 200, f"premise: the upload {route} landed; {body}"
+
+
+@pytest.mark.parametrize("route", ["in parts", "in one request"])
+@pytest.mark.asyncio
+async def test_an_uploads_bytes_are_written_to_its_file_in_a_worker_thread(
+    gateway, monkeypatch, route
+):
+    """🔴 Red before (#5809): the loop's bound read this only by the time a write took, and a write
+    to a file already open raises no audit event and waits with no CPU, so a stalled write on the
+    loop reads as the runner's (``tests/loop_held.py``). Every write a spool makes to its upload's
+    file is pinned to a worker thread instead, on both routes that spool an upload."""
+    loop_thread = threading.get_ident()
+    wrote: list[int] = []
+    _spool_writes_recorded(monkeypatch, wrote)
+    async with TestClient(TestServer(gateway.app)) as client:
+        await _upload_through_each_spool(client, route)
+    assert wrote, f"premise: the upload {route} was written through a spool"
+    assert loop_thread not in wrote, f"an upload {route} was written on the event loop's thread"
+
+
+@pytest.mark.asyncio
+async def test_a_spool_that_writes_on_the_loop_fails_the_pin(gateway, monkeypatch):
+    """The control: with the spool's thread handed nothing (its write made in place), the write
+    is on the loop's thread, which the pin above names."""
+    from personalclaw.uploads import spool as spool_module
+
+    async def in_place(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    loop_thread = threading.get_ident()
+    wrote: list[int] = []
+    _spool_writes_recorded(monkeypatch, wrote)
+    monkeypatch.setattr(spool_module.asyncio, "to_thread", in_place)
+    async with TestClient(TestServer(gateway.app)) as client:
+        await _upload_through_each_spool(client, "in parts")
+    assert loop_thread in wrote, wrote
 
 
 class _Body:
