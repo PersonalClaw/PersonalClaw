@@ -61,3 +61,25 @@ def test_a_second_store_opening_while_the_first_migrates_applies_no_migration_ag
         assert store._db.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == len(
             vector_memory._MIGRATIONS
         )
+
+
+def test_every_migration_runs_again_on_a_store_that_has_it(tmp_path):
+    """Another process takes no turn with this one's lock: having read ``schema_version`` before
+    this store finished, it applies migrations already applied. Each one must find its column,
+    table or rows already in place and change nothing."""
+    store = VectorMemoryStore(db_path=tmp_path / "memory.db")
+    store.init()
+    db = store._db
+
+    def shape() -> dict[str, list[tuple]]:
+        tables = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        return {t: db.execute(f"PRAGMA table_info({t})").fetchall() for t in sorted(tables)}
+
+    before = shape()
+    for ver, sql, fn in vector_memory._MIGRATIONS:
+        if sql:
+            db.executescript(sql)
+        if fn:
+            fn(db)
+        db.commit()
+        assert shape() == before, f"migration v{ver} changed a store that already had it"
