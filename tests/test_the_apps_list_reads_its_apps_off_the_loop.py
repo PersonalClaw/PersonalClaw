@@ -10,6 +10,7 @@ with apps that take 0.3 s to list and one whose interface takes 0.3 s to hash.
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import threading
 import time
@@ -25,6 +26,9 @@ from personalclaw.dashboard.handlers import apps as apps_handlers
 
 #: How long the stand-in interface takes to hash.
 _HASH_S = 0.3
+#: How many times the list is measured before its lag is judged: the best of them is the one held
+#: to the bound (see :func:`test_the_list_holds_no_other_request`).
+_ATTEMPTS = 3
 
 
 @pytest.fixture()
@@ -58,7 +62,11 @@ def _request() -> web.Request:
     return make_mocked_request("GET", "/api/apps", app=web.Application())
 
 
-def test_the_list_holds_no_other_request(one_slow_app: None) -> None:
+def _measured_once() -> tuple[float, dict[str, Any]]:
+    """The loop's worst lag while one list is read, with the collector paused for the read: a
+    full collection in a process that has run a whole suite holds the loop for as long as it
+    takes, and is no part of what the list does on the loop."""
+
     async def scenario() -> tuple[float, dict[str, Any]]:
         worst = 0.0
         done = asyncio.Event()
@@ -79,10 +87,49 @@ def test_the_list_holds_no_other_request(one_slow_app: None) -> None:
         assert response.text is not None
         return worst, json.loads(response.text)
 
-    worst, body = asyncio.run(scenario())
-    rows = [a for a in body["apps"] if a["name"] == "slow-ui"]
-    assert rows and rows[0]["uiRevision"] == "rev", body
-    assert worst < _HASH_S / 2, f"the apps list held the loop {worst * 1000:.0f} ms"
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        return asyncio.run(scenario())
+    finally:
+        if enabled:
+            gc.enable()
+
+
+def test_the_list_holds_no_other_request(one_slow_app: None) -> None:
+    """The loop never waits on a folder read: its worst lag while the list is read stays under
+    half of one stand-in read (0.3 s).
+
+    A read the list made on the loop holds it 0.3 s or more on every attempt, so the best of
+    :data:`_ATTEMPTS` is the one held to the bound. One attempt's lag also counts whatever stalled
+    the process on a loaded runner: a macOS queue shard once read 534 ms (run 44487362307) where
+    the loop-side reads take about 16 ms. The structural pin is
+    :func:`test_the_list_hands_its_reads_to_one_worker`."""
+    lags: list[float] = []
+    for _attempt in range(_ATTEMPTS):
+        worst, body = _measured_once()
+        rows = [a for a in body["apps"] if a["name"] == "slow-ui"]
+        assert rows and rows[0]["uiRevision"] == "rev", body
+        lags.append(worst)
+        if worst < _HASH_S / 2:
+            break
+    assert (
+        min(lags) < _HASH_S / 2
+    ), f"the apps list held the loop {', '.join(f'{lag * 1000:.0f}' for lag in lags)} ms"
+
+
+def test_a_list_that_reads_on_the_loop_holds_it_on_every_attempt(
+    one_slow_app: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control: with the folder reads run on the loop, as the list ran them before, every
+    attempt's lag passes the bound, so the best of them cannot hide the regression."""
+
+    async def on_the_loop(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(apps_handlers.asyncio, "to_thread", on_the_loop)
+    lags = [_measured_once()[0] for _attempt in range(_ATTEMPTS)]
+    assert min(lags) >= _HASH_S, lags
 
 
 def test_each_row_still_carries_the_gateway_s_runtime_status(one_slow_app: None) -> None:
