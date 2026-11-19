@@ -84,10 +84,23 @@ _NO_NAMESPACES = (
     "withholds the namespaces and those cases skip, and its macOS and other cases run (#3918)"
 )
 
+_NO_CORE = (
+    "documents runs it on Linux with only the package's libraries; the shards' run is its only "
+    "run on macOS and its only run with core installed"
+)
+
 #: Files a job runs by name that the shards keep collecting on purpose, each with why.
 #: ``(job, file): reason``, the job a catalogue id or ``<workflow> <job>``. An exemption whose
 #: file is no longer a copy fails, so the list shrinks with the tree.
 EXEMPT_FILE_COPIES: Mapping[tuple[str, str], str] = {
+    ("documents", "tests/documents/test_decks.py"): _NO_CORE,
+    ("documents", "tests/documents/test_document_model_runs.py"): _NO_CORE,
+    ("documents", "tests/documents/test_document_parser_limits.py"): _NO_CORE,
+    ("documents", "tests/documents/test_docx_parser.py"): _NO_CORE,
+    ("documents", "tests/documents/test_docx_roundtrip.py"): _NO_CORE,
+    ("documents", "tests/documents/test_docx_word_authored.py"): _NO_CORE,
+    ("documents", "tests/documents/test_docx_writer_coverage.py"): _NO_CORE,
+    ("documents", "tests/documents/test_sheets.py"): _NO_CORE,
     ("apps-contract", "tests/test_acp_bundles.py"): _NO_APPS,
     ("apps-contract", "tests/test_action_schema_executor_parity.py"): _NO_APPS,
     ("apps-contract", "tests/test_app_manifest_secret_fields.py"): _NO_APPS,

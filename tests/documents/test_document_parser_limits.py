@@ -138,8 +138,6 @@ class TestArchiveCaps:
         reader stops at the claim and fails its checksum); and a part over the cap is
         refused, naming it, whatever it claims.
         """
-        from table_rows import row
-
         over = b"<a>" + b"x" * (MAX_XML_PART_BYTES + 1) + b"</a>"
         rows = [
             (
@@ -169,7 +167,7 @@ class TestArchiveCaps:
             ),
         ]
         for name, parts, refused in rows:
-            with row(subtests, name=name):
+            with subtests.test(name=name):
                 archive = _claiming(parts)
                 with zipfile.ZipFile(io.BytesIO(archive)) as forged:
                     claims = {i.filename: i.file_size for i in forged.infolist()}

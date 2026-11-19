@@ -208,7 +208,7 @@ _PINNED = _pinned({j.id for j in _CAT.jobs})
 #: The jobs whose row here lands before the job: a new catalogue job lands in two changes, main's
 #: rows first (main's CI contract reads every job's row over each head). A row named here is left
 #: out while the catalogue has no such job, and the change that adds the job takes its name off.
-_LANDS_NEXT = frozenset({"documents"})
+_LANDS_NEXT: frozenset[str] = frozenset()
 _INPUT_ROWS = {
     "static": ("Makefile", None),
     "rails": ("tests/rails/test_ci_plan_tree.py", None),

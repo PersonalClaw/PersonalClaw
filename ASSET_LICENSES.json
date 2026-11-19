@@ -1106,13 +1106,13 @@
     },
     {
       "id": "word-authored-fixture",
-      "source": "Project-authored document saved by Word for Mac 16.111, then cleared of its custom-properties part and retitled, by the steps tests/test_docx_word_authored.py records",
+      "source": "Project-authored document saved by Word for Mac 16.111, then cleared of its custom-properties part and retitled, by the steps tests/documents/test_docx_word_authored.py records",
       "version": "repository-revision",
       "license": "MIT",
       "ownership": "project-owned",
       "required_notice": "LICENSE",
       "files": [
-        "tests/fixtures/word_authored.docx"
+        "tests/documents/fixtures/word_authored.docx"
       ]
     },
     {

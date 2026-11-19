@@ -749,7 +749,7 @@ class _Parser:
         end of a numbered list and clicking the bullet button leaves the new paragraph
         styled "List Number" with a bullet `w:numPr` on it, and Word shows a bullet.
         Reading the style name first turned those bullets into extra items on the numbered
-        list above them; `tests/test_docx_word_authored.py` owns that case on a file Word
+        list above them; `tests/documents/test_docx_word_authored.py` owns that case on a file Word
         actually saved.
         """
         # `w:numPr` is a child of `w:pPr`, never of `w:p` — reading it off the paragraph

@@ -754,7 +754,7 @@ def test_the_home_path_rule_reads_an_office_documents_parts(tmp_path):
 def test_the_office_rule_reads_the_document_the_tree_carries():
     """Vacuity. The tree test's zero means something only if the rule OPENED the office document
     this repository publishes, and the home-path rule read its parts."""
-    fixture = "tests/fixtures/word_authored.docx"
+    fixture = "tests/documents/fixtures/word_authored.docx"
     assert hygiene.office_kind((REPO_ROOT / fixture).read_bytes()) == "package"
     texts = dict(hygiene._text_blobs([fixture], REPO_ROOT))
     assert f"{fixture}!word/document.xml" in texts, sorted(texts)

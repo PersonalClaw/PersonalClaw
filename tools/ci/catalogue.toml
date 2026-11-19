@@ -32,6 +32,7 @@ jobs = [
   "python-suite",
   "python-suite-macos",
   "client",
+  "documents",
   "web-unit",
   "desktop-unit",
   "mobile-unit",
@@ -63,6 +64,7 @@ jobs = [
   "rails-checks",
   "python-suite",
   "client",
+  "documents",
   "web-unit",
   "desktop-unit",
   "mobile-unit",
@@ -749,6 +751,35 @@ command = [
   { argv = ["uv", "venv", ".venv-client"] },
   { argv = ["uv", "pip", "install", "--python", ".venv-client", "packages/personalclaw-client-py[dev]"] },
   { argv = [".venv-client/bin/python", "-m", "pytest", "packages/personalclaw-client-py/tests", "--junitxml=reports/junit-client.xml"] },
+]
+
+# The documents package, tested alone (v0.4.0 B4): an environment holding only the lock's
+# `documents` group (`uv run --isolated --only-group`, so no package off the lock and none of core),
+# the package's source on PYTHONPATH, and tests/documents with only its own conftest. A test there
+# that reaches core fails here. Linux only: the shards' run of the same files is their run on macOS
+# and their run with core installed (tests/rails/test_each_tree_check_runs_in_one_place.py). The
+# step's DOCUMENTS_JOB fails the run on any skipped test, so every test the shards run here ran.
+[[job]]
+id = "documents"
+tiers = ["change", "entry", "merge"]
+inputs = [
+  "src/personalclaw/__init__.py",
+  "src/personalclaw/documents/",
+  "tests/documents/",
+  "pyproject.toml",
+  "uv.lock",
+  ".python-version",
+]
+external_inputs = ["package-index"]
+toolchain = ["uv"]
+cache = ["uv"]
+security = "ordinary"
+python = "3.12.15"
+timeout_min = 5
+junit = ["reports/junit-documents.xml"]
+prepush = false  # its own environment and its folder's suite: CI is its gate, not the pre-push hook
+command = [
+  { argv = ["uv", "run", "--locked", "--isolated", "--only-group=documents", "python", "-m", "pytest", "tests/documents", "--confcutdir=tests/documents", "--junitxml=reports/junit-documents.xml"], env = { PYTHONPATH = "src", DOCUMENTS_JOB = "1" } },
 ]
 
 # The web job's tests, its build, and the wheel built with that build: three entries, one job.

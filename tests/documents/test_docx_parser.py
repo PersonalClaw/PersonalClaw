@@ -49,9 +49,9 @@ from personalclaw.documents.writers.docx_writer import render_docx
 # the tuple itself), so the spreadsheet kinds are exercised by the spreadsheet suite. The
 # coverage rail below reads that module's namespace so a single registry can still be
 # asserted complete against the whole tuple — two registries could leave a kind in neither.
-from tests import test_decks as _deck_suite
-from tests import test_document_parser_limits as _limits_suite
-from tests import test_sheets as _sheet_suite
+from tests.documents import test_decks as _deck_suite
+from tests.documents import test_document_parser_limits as _limits_suite
+from tests.documents import test_sheets as _sheet_suite
 
 _W = nsdecls("w")
 #: VML is not in python-docx's namespace map, so a legacy shape's declaration is spelled
