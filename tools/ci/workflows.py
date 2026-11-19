@@ -95,6 +95,13 @@ OUTSIDE_PREFIXES: tuple[str, ...] = ("Run actions/checkout@",)
 #: tier's run, the sign-off check and the dependency review.
 READ: tuple[str, ...] = (MERGE, "dco.yml", "dependency-review.yml")
 
+#: The workflows that run on ``pull_request_target``: main's copy, with a token that can write,
+#: started by a pull request's events. GitHub's default policy stops such runs in public
+#: repositories from 2026-12-02, so each moves off it (#3908). A rail holds this to exactly the
+#: workflows that run on it, and to no more than the rail's own list, which only shrinks. The rail
+#: reads it as a literal, so it stays a literal tuple of file names, assigned once.
+PULL_REQUEST_TARGET: tuple[str, ...] = ("dco.yml", "dependency-review.yml")
+
 #: Every other workflow a pull request's events start, and why the merge verdict needs no run of it.
 NOT_GATING: dict[str, str] = {
     FEEDBACK: (

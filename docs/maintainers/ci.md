@@ -491,6 +491,18 @@ verdict says all it must fix:
   naming GitHub proves nothing, and a merge commit can carry a conflict resolution no one signed
   off. A red names the fix, update with rebase or rebase locally, in its title. The poster
   follows DCO as it follows Dependency review.
+- **The commit policy, by main's own check (#3908):** the poster also runs `main`'s
+  `scripts/check_commit_provenance.py` itself, in `pr` mode (rules 1, 3 and 5, with `main`'s
+  `MAINTAINERS`, both from its own checkout), over the pull request's commits as the commits API
+  lists them and its title. The pull request is the one the run lists, or, for a fork's run, which
+  GitHub lists none on, the one open pull request into `main` from the run's head branch whose head
+  is the run's head: none or several is red. The list must hold the pull request's own count and
+  end at the run's head, so a push between the reads, or a pull request longer than the 250 commits
+  the API lists, is red. A red names each commit and rule in a fenced block in its summary, with
+  the fix for each rule, and none of the commits' text in its title. It reads what `dco.yml` reads,
+  so `dco.yml` can move to `pull_request` with `main`'s check still the gate; until it does, both
+  count. A queue commit's own message, which is what lands, is held to rule 5 too, since a title
+  edited after the head's green verdict is what the queue builds it from.
 - **The path-filtered gates:** a workflow of its own that a pull request's paths start, not the
   plan, is a gate (`tools/ci/workflows.py`'s `GATES`, each with its jobs and its outside-input
   steps). Every `pull_request` run of the gate's workflow file on the head is read, by its path, its
@@ -1806,8 +1818,9 @@ are in [CONTRIBUTING.md](../../CONTRIBUTING.md#developer-certificate-of-origin-d
 places:
 
 - **`dco.yml`, on every pull request,** in `pr` mode: rules 1, 3 and 5, over the commits the
-  API returns and the title in the event payload. The merge verdict reads its run on the head
-  (see "The merge controller's poster"), so a red one keeps the pull request from merging. It runs on `pull_request_target`, so it checks
+  API returns and the title in the event payload. The merge verdict reads its run on the head,
+  and runs the same check itself over the same commits (see "The merge controller's poster"), so
+  a red one keeps the pull request from merging. It runs on `pull_request_target`, so it checks
   out only the base branch's script and `MAINTAINERS`, and puts no file or git object of the pull
   request on disk. The commits endpoint returns at most 250 commits, so a list short of the pull
   request's own count fails the check rather than passing half of it. It also answers for the

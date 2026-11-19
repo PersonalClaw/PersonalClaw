@@ -71,7 +71,11 @@ trusted-run branch the old path left).
    GitHub's Update branch makes a merge commit with no sign-off, and rule 1 of
    ``scripts/check_commit_provenance.py`` refuses it on purpose, with no exemption: a commit's
    committer is text anyone can write, so naming GitHub proves nothing, and a merge commit can
-   carry a conflict resolution no one signed off. The head is updated with rebase. When a Dependency
+   carry a conflict resolution no one signed off. The head is updated with rebase. The poster also
+   runs main's ``scripts/check_commit_provenance.py`` itself (:func:`policy_reading`), pr mode with
+   main's MAINTAINERS, over the commits API's list of the head's pull request and its title: a
+   fork's run lists no pull request, so it is found by the run's head branch and kept only if its
+   head is the run's. Until ``dco.yml`` moves to ``pull_request``, both count. When a Dependency
    review or DCO run completes, the poster judges its head again from the head's own completed
    Merge run (and, for a head that changes a definition, its contract run), so they may finish
    in any order.
@@ -142,6 +146,10 @@ failing closed, all read through the API:
   rule 3).
 - **What it brings.** Its change against that parent is exactly its pull request's: the same
   ``+/-`` lines in the same files (:func:`change_reasons`).
+- **What it says.** Its own message, which is the commit that lands, carries no marker that would
+  start no run on main (rule 5 of main's commit-policy check, :func:`queue_message_reasons`). The
+  queue builds it from the pull request's title when it is queued, which may be after the head's
+  green verdict.
 - **Its pull request's head.** The App's newest verdict on the pull request's head is green. That
   verdict holds the head's dependency review, its sign-off check and CodeQL, each of the pull
   request's own change, which the queue commit's change is.
@@ -198,6 +206,7 @@ import binascii
 import datetime
 import hashlib
 import http.client
+import importlib.util
 import json
 import os
 import re
@@ -207,6 +216,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -389,6 +399,9 @@ class Run:
     #: The pull request of this repository the run lists with the run's head as its head, for
     #: the retry note (0.4.0 A5); None for a run that lists none (a fork's, a dispatch, a queue's).
     pull: int | None = None
+    #: The login of the head repository's owner: with :attr:`branch`, how the sign-off rule finds a
+    #: fork's pull request, which GitHub lists on none of its runs (:func:`judged_pull`).
+    head_owner: str = ""
 
 
 def read_run(get: Get, repo: str, run_id: int) -> Run | str:
@@ -424,7 +437,10 @@ def read_run(get: Get, repo: str, run_id: int) -> Run | str:
         and p["head"].get("sha") == head
     ]
     pull = numbers[0] if len(numbers) == 1 and numbers[0] else None
-    return Run(run_id, attempt, head, event, url, branch, pull)
+    head_repository = run.get("head_repository")
+    owner_of = head_repository.get("owner") if isinstance(head_repository, Mapping) else None
+    head_owner = str(owner_of.get("login") or "") if isinstance(owner_of, Mapping) else ""
+    return Run(run_id, attempt, head, event, url, branch, pull, head_owner)
 
 
 def results_reasons(
@@ -734,6 +750,7 @@ def _red(
     head: str,
     moved: list[Moved] | None = None,
     retried: Retry | str | None = None,
+    detail: list[str] | None = None,
 ) -> Posting:
     note = [f"- {moved_note(moved)}"] if moved else []
     if isinstance(retried, Retry):
@@ -741,7 +758,8 @@ def _red(
     elif retried:
         note.append(f"- retries not counted: {retried}")
     summary = "\n".join(
-        ["This head's merge verdict is red:", "", *[f"- {r}" for r in reasons], *note, ""]
+        ["This head's merge verdict is red:", "", *[f"- {r}" for r in reasons], *note]
+        + [*(detail or []), ""]
         + [f"From Merge run {run.url or run.id}, attempt {run.attempt}."]
     )
     label = f" ({retried.label()})" if isinstance(retried, Retry) else ""
@@ -878,6 +896,221 @@ def sign_off_reasons(get: Get, repo: str, head: str) -> list[str]:
     if newest.get("conclusion") != "success":
         return [f"the head's sign-off check (DCO) is {newest.get('conclusion')!r}: {DCO_FIX}"]
     return []
+
+
+# ── The commit policy, judged by main's own check (#3908) ─────────────────────────────────────
+#
+# The sign-off rule's gate is main's code, never the head's. The poster runs main's
+# ``scripts/check_commit_provenance.py`` itself, in pr mode, over the pull request's commits as the
+# commits API lists them: the same input dco.yml reads, so no git object and no file of the
+# candidate is ever read. Until dco.yml moves to ``pull_request``, its run counts as well
+# (:func:`sign_off_reasons`), so neither copy of main's check gates alone during the move.
+
+#: The checkout this module runs from. On the poster it is main's: merge-verdict.yml checks out the
+#: default branch, and reads every file of the candidate through the API.
+CHECKOUT = Path(__file__).resolve().parents[2]
+#: Main's commit-policy check, which provenance.yml runs on main's pushes, and its MAINTAINERS.
+PROVENANCE = CHECKOUT / "scripts" / "check_commit_provenance.py"
+PROVENANCE_MAINTAINERS = CHECKOUT / "MAINTAINERS"
+#: The commits API lists at most this many of a pull request's commits, and then stops paging.
+_COMMITS_LISTED = 250
+#: How many of the check's lines a red verdict's summary shows; the rest are counted.
+POLICY_LINES = 40
+#: What a red against the commit policy tells the contributor, short enough for a title.
+POLICY_FIX = "the summary names each commit, the rule it breaks and the fix"
+_CONTRIBUTING = "blob/main/CONTRIBUTING.md#developer-certificate-of-origin-dco"
+
+
+@cache
+def provenance() -> Any:
+    """Main's commit-policy check, read from this checkout (:data:`PROVENANCE`)."""
+    spec = importlib.util.spec_from_file_location("_check_commit_provenance", PROVENANCE)
+    if spec is None or spec.loader is None:
+        raise Unread(f"cannot read the commit-policy check at {PROVENANCE}")
+    module = importlib.util.module_from_spec(spec)
+    # A dataclass looks its module up in sys.modules while the class is built, so the module is
+    # registered while it runs, and taken out again after.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
+
+
+def judged_pull(get: Get, repo: str, run: Run) -> Mapping[str, Any] | str:
+    """The open pull request into main whose head is the run's head, read whole, or why there is
+    not exactly one. A run of this repository's branch lists it (:attr:`Run.pull`). GitHub lists no
+    pull request on a fork's run, so for one the open pull requests into main from the run's head
+    branch are read: the branch and its owner are the fork's to name, so they only find candidates,
+    and each is kept only if its head is the run's. None, or more than one, is a red, never a pass.
+    """
+    head = run.head_sha
+    if run.pull is not None:
+        numbers = [run.pull]
+    elif not run.head_owner or not run.branch:
+        return "the run names no head branch, so no pull request's commits are checked"
+    else:
+        query = urllib.parse.urlencode(
+            {
+                "state": "open",
+                "head": f"{run.head_owner}:{run.branch}",
+                "base": "main",
+                "per_page": _PER_PAGE,
+            }
+        )
+        listed = _read(get, f"/repos/{repo}/pulls?{query}")
+        if not isinstance(listed, list):
+            raise Unread(f"the open pull requests from {head}'s branch are not a list")
+        numbers = []
+        for item in listed:
+            number = _int(item.get("number")) if isinstance(item, Mapping) else None
+            found = item.get("head") if isinstance(item, Mapping) else None
+            if number and isinstance(found, Mapping) and found.get("sha") == head:
+                numbers.append(number)
+        numbers = sorted(set(numbers))
+    if len(numbers) != 1:
+        return (
+            f"{len(numbers)} open pull requests into main have this head, not one, so its commits"
+            " are not checked against the commit policy"
+        )
+    pull = _read(get, f"/repos/{repo}/pulls/{numbers[0]}")
+    if not isinstance(pull, Mapping):
+        raise Unread(f"pull request #{numbers[0]} is not an object")
+    found, base = pull.get("head"), pull.get("base")
+    base_repo = base.get("repo") if isinstance(base, Mapping) else None
+    if (
+        pull.get("state") != "open"
+        or not isinstance(found, Mapping)
+        or found.get("sha") != head
+        or not isinstance(base, Mapping)
+        or base.get("ref") != "main"
+        or not isinstance(base_repo, Mapping)
+        or base_repo.get("full_name") != repo
+    ):
+        return (
+            f"pull request #{numbers[0]} is not open into main with this head now, so its commits"
+            " are not checked against the commit policy"
+        )
+    return pull
+
+
+@dataclass(frozen=True)
+class Policy:
+    """Main's commit-policy check over a pull request's commits and its title: why it is red, and
+    the check's own lines (``<sha> rule <n> <what was found>``) for the summary."""
+
+    reasons: list[str]
+    lines: list[str] = field(default_factory=list)
+    rules: frozenset[int] = frozenset()
+    commits: int = 0
+
+
+def policy_reading(get: Get, repo: str, run: Run) -> Policy:
+    """Rules 1, 3 and 5 of main's check (:data:`PROVENANCE`), pr mode, with main's MAINTAINERS,
+    over the commits of the head's pull request (:func:`judged_pull`) and its title. The list must
+    hold the pull request's own count and end at the run's head, as the check requires, so a push
+    between the reads, or a pull request longer than the API lists, is red."""
+    found = judged_pull(get, repo, run)
+    if isinstance(found, str):
+        return Policy([found])
+    number, count, title = _int(found.get("number")), _int(found.get("commits")), found.get("title")
+    if number is None or count is None or count < 1 or not isinstance(title, str):
+        raise Unread(f"pull request {number} gives no commit count or no title")
+    pages: list[Any] = []
+    listed = 0
+    for page in range(1, _COMMITS_LISTED // _PER_PAGE + 2):
+        answer = _read(
+            get, f"/repos/{repo}/pulls/{number}/commits?per_page={_PER_PAGE}&page={page}"
+        )
+        if not isinstance(answer, list):
+            raise Unread(f"pull request #{number}'s commits are not a list")
+        pages.append(answer)
+        listed += len(answer)
+        if listed >= count or len(answer) < _PER_PAGE:
+            break
+    check = provenance()
+    try:
+        maintainers = check.read_maintainers(PROVENANCE_MAINTAINERS)
+        commits = check.commits_from_api(
+            "\n".join(json.dumps(p) for p in pages), count, run.head_sha
+        )
+    except check.Unusable as exc:
+        why = f"the head's commits could not be checked against the commit policy: {exc}"
+        return Policy([why])
+    lines = [
+        f"pull-request rule 5 {what}"
+        for what in check.rule_5_no_skip_marker(title, "the pull request's title")
+    ]
+    lines += check.check(commits, maintainers, "pr")
+    if not lines:
+        return Policy([], commits=len(commits))
+    rules = frozenset(int(line.split(" ")[2]) for line in lines)
+    named = ", ".join(str(r) for r in sorted(rules))
+    return Policy(
+        [
+            f"the head's commits break the commit policy (rule {named}), by main's check:"
+            f" {POLICY_FIX}"
+        ],
+        lines,
+        rules,
+        len(commits),
+    )
+
+
+def policy_detail(policy: Policy, repo: str) -> list[str]:
+    """A red's summary lines for the commit policy: the check's lines in a fence one backtick
+    longer than any run in them, so no commit text can close it, at most :data:`POLICY_LINES` of
+    them, and the fix for each rule they break."""
+    if not policy.lines:
+        return []
+    shown = policy.lines[:POLICY_LINES]
+    longest = max((len(r) for r in re.findall(r"`+", "\n".join(shown))), default=0)
+    bar = "`" * max(3, longest + 1)
+    more = len(policy.lines) - len(shown)
+    out = [
+        "",
+        "Each commit that breaks the commit policy, with the rule it breaks and what was found:",
+        "",
+        f"{bar}text",
+        *shown,
+        bar,
+        *([f"and {more} more"] if more else []),
+        "",
+    ]
+    if 1 in policy.rules:
+        out.append(
+            "- Rule 1, a `Signed-off-by` that matches its author on every commit: sign them off"
+            " with `git rebase --signoff origin/main` (or `git commit --amend --signoff --no-edit`"
+            " for the last one), and push again with `git push --force-with-lease`."
+        )
+    if 3 in policy.rules:
+        out.append(
+            "- Rule 3, no co-author, tool or session trailer on a maintainer's commit: take the"
+            " line out of the message (`git rebase -i origin/main`, then `reword`), and push"
+            " again with `git push --force-with-lease`."
+        )
+    if 5 in policy.rules:
+        out.append(
+            "- Rule 5, no marker that would start no workflow run: take it out of the title, or"
+            " reword the commit and push again."
+        )
+    out.append(f"More: [CONTRIBUTING.md](https://github.com/{repo}/{_CONTRIBUTING}).")
+    return out
+
+
+def queue_message_reasons(get: Get, repo: str, sha: str) -> list[str]:
+    """Rule 5 of main's check on the queue commit's own message, which is the commit that lands.
+    A pull request's title can change after its head's verdict, and the queue builds its message
+    from the title then, so a marker that would start no run on main is stopped here."""
+    commit = _read(get, f"/repos/{repo}/git/commits/{sha}")
+    message = commit.get("message") if isinstance(commit, Mapping) else None
+    if not isinstance(message, str):
+        raise Unread(f"commit {sha} gives no message")
+    return [
+        f"{what}: take it out of the pull request's title and description, and queue it again"
+        for what in provenance().rule_5_no_skip_marker(message, "the queue commit's message")
+    ]
 
 
 @dataclass(frozen=True)
@@ -2112,6 +2345,7 @@ def decide(
     moved: list[Moved] = []
     gates = Gates([], [], {}, [])
     codeql = CodeQL([], [])
+    policy = Policy([])
     # The jobs no runner took, when they alone were why the first attempts' results were red,
     # and the last attempt they excused (rule 4).
     untaken: list[str] = []
@@ -2153,6 +2387,8 @@ def decide(
         reasons += failing
         reasons += dependency_review_reasons(get, repo, head)
         reasons += sign_off_reasons(get, repo, head)
+        policy = policy_reading(get, repo, run)
+        reasons += policy.reasons
         codeql = codeql_reading(get, repo, head, base)
         reasons += codeql.reasons
         moved = codeql.moved
@@ -2174,7 +2410,8 @@ def decide(
             reasons.append(f"the run has no `{RECORD_PREFIX}*` artifact, so no evidence")
         flakes = passed_flakes(get, repo, run) if not reasons else []
     except (Unread, trust.Refused) as exc:
-        return Outcome(posting=_red(run, [*reasons, _unread(exc)], head, moved))
+        detail = policy_detail(policy, repo)
+        return Outcome(posting=_red(run, [*reasons, _unread(exc)], head, moved, detail=detail))
     # A head that changes a definition: its contract run is started once, at main's tip, and its
     # verdict waits for it. Once that run has reported, its branch goes with the posted verdict.
     # Until it reports, the head is a red that waits on it: a contract run dispatched with the
@@ -2196,7 +2433,7 @@ def decide(
         outside = [*gates.outside, *codeql.outside]
         retried = _retry_note(get, repo, run, tree_oid, failing, reasons, queue, outside)
         return Outcome(
-            posting=_red(run, reasons, head, moved, retried),
+            posting=_red(run, reasons, head, moved, retried, policy_detail(policy, repo)),
             dispatch=start,
             base=base,
             cleanup=cleanup,
@@ -2237,6 +2474,8 @@ def decide(
             ),
             "- its dependency review passed",
             "- its sign-off check (DCO) passed",
+            f"- main's commit-policy check passed on its {policy.commits} commit(s) and its title"
+            " (rules 1, 3 and 5), run by this verdict",
             "- CodeQL analysed every language main has, and found no alert it brings",
             *([f"- {moved_note(moved)}"] if moved else []),
             *[f"- {line}" for line in gates.lines],
@@ -2888,6 +3127,7 @@ def decide_queue(
                 f"#{entry.number} is {entry.state} into {entry.base}, not open into main"
             )
         parents = commit_parents(get, repo, sha)
+        reasons += queue_message_reasons(get, repo, sha)
         if parents != [built_on] or entry.built_on != built_on:
             reasons.append(
                 f"it is built on {', '.join(parents) or 'nothing'}, the queue says "
@@ -2981,6 +3221,7 @@ def decide_queue(
             f"- the queue commit of #{entry.number}, built on `{built_on}`, which is "
             + ("main's tip" if built_on == base else "the queue commit of the entry ahead"),
             "- its change is its pull request's own, file by file and line by line",
+            "- its message, which is what lands, carries no marker that would start no run on main",
             f"- its pull request's head `{entry.pr_head}` has a green merge verdict, which holds"
             " its dependency review, its sign-off check and CodeQL",
             *[f"- {line}, on the tree main would reach" for line in gates.lines],

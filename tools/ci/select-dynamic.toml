@@ -546,6 +546,12 @@ outside = true
 why = "loads the web-tools app's provider.py from the apps repository beside this one"
 
 [[site]]
+file = "tools/ci/merge_controller.py"
+call = "importlib.util.spec_from_file_location('_check_commit_provenance', PROVENANCE)"
+named = true
+why = "loads scripts/check_commit_provenance.py, a file it names by its path"
+
+[[site]]
 file = "tools/ci/release_tag.py"
 call = "importlib.util.spec_from_file_location('_release_tags', path)"
 named = true

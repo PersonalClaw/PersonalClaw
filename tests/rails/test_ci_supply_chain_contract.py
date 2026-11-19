@@ -104,13 +104,14 @@ _PINNED_NODE_BASE = (
 _SPA_FROM = f"FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/{_NODE_BASE}"
 #: The action pins the action-sha plants below edit, as the workflows pin them today, and the Nix
 #: install action's release comment in nix.yml, so a Dependabot bump of the actions leaves those
-#: plants able to find what they edit.
+#: plants able to find what they edit. github-script's is pr-feedback.yml's, which keeps it when
+#: dco.yml moves to pull_request and drops its comment step (#3908).
 _PYPI_PUBLISH = _pinned(_RELEASE_YML, r"(pypa/gh-action-pypi-publish@[0-9a-f]{40} # v[0-9.]+)")
 _NIX_ACTION_COMMENT = _pinned(
     ".github/workflows/nix.yml", r"cachix/install-nix-action@[0-9a-f]{40}( # v[0-9.]+)"
 )
 _GITHUB_SCRIPT = _pinned(
-    ".github/workflows/dco.yml", r"(actions/github-script@[0-9a-f]{40} # v[0-9.]+)"
+    ".github/workflows/pr-feedback.yml", r"(actions/github-script@[0-9a-f]{40} # v[0-9.]+)"
 )
 _UPLOAD_ARTIFACT = _pinned(
     ".github/workflows/pr.yml", r"(actions/upload-artifact@[0-9a-f]{40} # v[0-9.]+)"
@@ -360,7 +361,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
         (
             _plant(
                 "an action by tag",
-                ".github/workflows/dco.yml",
+                ".github/workflows/pr-feedback.yml",
                 _GITHUB_SCRIPT,
                 "actions/github-script@v9",
                 expect="actions/github-script@v9 is not pinned by commit SHA",
@@ -395,7 +396,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "a SHA whose comment is a bare major",
-                ".github/workflows/dco.yml",
+                ".github/workflows/pr-feedback.yml",
                 _GITHUB_SCRIPT.split(" ", 1)[1],
                 _GITHUB_SCRIPT.split(" ", 1)[1].split(".", 1)[0],
             ),
@@ -1675,24 +1676,24 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                     f"an audited write with no {field}", _POLICY, start, expect=f"missing {field}"
                 )
                 for field, start in (
-                    ("workflow", 'workflow = "dco.yml"'),
-                    ("job", 'job = "dco"'),
+                    ("workflow", 'workflow = "pr-feedback.yml"'),
+                    ("job", 'job = "lint-help"'),
                     ("permission", 'permission = "pull-requests: write"'),
-                    ("steps", 'steps = ["Explain how to fix DCO"]'),
-                    ("reason", 'reason = "Posts or updates the one comment that names each'),
+                    ("steps", 'steps = ["Post the remediation"]'),
+                    ("reason", 'reason = "Posts or updates the one comment that carries a failed'),
                 )
             ),
             _line(
                 "an audited write for a job that is gone",
                 _POLICY,
-                'job = "dco"',
+                'job = "lint-help"',
                 'job = "gone"',
                 expect="matches no job",
             ),
             _line(
                 "an audited write naming a step the job lacks",
                 _POLICY,
-                'steps = ["Explain how to fix DCO"]',
+                'steps = ["Post the remediation"]',
                 'steps = ["No such step"]',
                 expect="no step named",
             ),

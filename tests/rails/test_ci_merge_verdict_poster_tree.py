@@ -263,6 +263,9 @@ _WAKES = [
     "DCO",
     *(gate.name for gate in workflows.GATES),
 ]
+#: The same once dco.yml runs on ``pull_request`` (#3908): the poster runs main's commit-policy
+#: check itself and no longer reads a DCO run, so no DCO run wakes it.
+_WAKES_ONCE_DCO_MOVES = [name for name in _WAKES if name != "DCO"]
 
 
 def _shape(on: object) -> str | None:
@@ -275,7 +278,11 @@ def _shape(on: object) -> str | None:
     head = inputs.get("head") if isinstance(inputs, dict) else None
     if (
         all(on[k] == v for k, v in both.items())
-        and on["workflow_run"] == {"workflows": _WAKES, "types": ["in_progress", "completed"]}
+        and on["workflow_run"]
+        in (
+            {"workflows": wakes, "types": ["in_progress", "completed"]}
+            for wakes in (_WAKES, _WAKES_ONCE_DCO_MOVES)
+        )
         and set(dispatch) == {"inputs"}
         and set(inputs) == {"head"}
         and isinstance(head, dict)
@@ -514,11 +521,19 @@ def _spelled(names: list[str], *, block: bool) -> str:
 
 
 @pytest.mark.parametrize("block", [False, True], ids=["on one line", "one name a line"])
-def test_the_wake_list_in_either_spelling_keeps_the_trust_shape(block: bool) -> None:
+@pytest.mark.parametrize("dco", [True, False], ids=["with DCO", "once DCO moves"])
+def test_the_wake_list_in_either_spelling_keeps_the_trust_shape(block: bool, dco: bool) -> None:
     text = _WORKFLOW.read_text(encoding="utf-8")
-    old, new = _anchored(text, _WAKE_LIST, _spelled(_WAKES, block=block))
+    wakes = _WAKES if dco else _WAKES_ONCE_DCO_MOVES
+    old, new = _anchored(text, _WAKE_LIST, _spelled(wakes, block=block))
     assert text.count(old) == 1, f"the wake's list is not once: {old!r}"
     assert _problems(text.replace(old, new)) == []
+
+
+def test_a_wake_list_without_dco_that_adds_a_run_still_fails() -> None:
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    old, new = _anchored(text, _WAKE_LIST, _spelled([*_WAKES_ONCE_DCO_MOVES, "PR"], block=False))
+    assert any("runs on" in p for p in _problems(text.replace(old, new)))
 
 
 #: Each event the poster can be started by, and when its jobs take a runner: ``head``, a pull
