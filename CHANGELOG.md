@@ -22,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A document an agent makes from HTML has its credentials masked in what it holds, not only in the markup it was made from.**
 - **A reload no longer has the gateway read its whole settings file once for every asset and read it answers. The public address every response's security header names is read again only when the settings file changes, so a page's many requests no longer each hold the gateway for a settings read.**
+- **A reload no longer waits while the gateway reads every installed app's folder. The apps list reads each app's manifest, hero image, disclosure and interface files in a worker thread, so a home with many apps no longer holds the page's other requests while it does.**
 
 ### Security
 
