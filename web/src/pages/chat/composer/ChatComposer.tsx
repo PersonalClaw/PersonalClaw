@@ -315,7 +315,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
             reload. Approve/cancel hand back the restored task mode, so the
             composer's pill can't drift from the posture the backend gate enforces. */}
         {sessionRef.current && (
-          <ChatPlanGate session={sessionRef.current} refreshKey={`${turns.length}:${streaming ? 'live' : 'idle'}`}
+          <ChatPlanGate session={sessionRef.current} refreshKey={`${turns.length}:${streaming ? 'live' : 'idle'}:${selection.taskMode ?? ''}`}
             onTaskMode={(m) => setSelection((sel) => ({ ...sel, taskMode: m }))}
             onOpenChat={(key) => navigate(`chat/${encodeURIComponent(key)}`)} />
         )}

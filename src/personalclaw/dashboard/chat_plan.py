@@ -157,6 +157,28 @@ def in_progress(chat_key: str) -> bool:
     return sess is not None and not PS.is_complete(sess)
 
 
+def drafts_now(chat: _ChatSession) -> bool:
+    """Whether *chat*'s running turn is the plan's own: running in plan mode while the walkthrough
+    is open. A turn plan mode only waits on (``after_turn``) runs in its own mode, and is not."""
+    return (
+        bool(chat.running) and getattr(chat, "_task_mode", "") == "plan" and in_progress(chat.key)
+    )
+
+
+async def stop_the_planning_turn(state: DashboardState, chat: _ChatSession) -> None:
+    """Stop the plan's own turn while the chat is still in plan mode, as a Stop press stops it.
+
+    Leaving plan mode used to hand that turn the restored mode's tools for its remaining calls:
+    the gate that keeps a planning turn from changing anything is the task mode, read at each
+    tool call, and under Trust or YOLO a change it asked for ran with no plan approved (#5792).
+    So a door that leaves plan mode asks :func:`drafts_now` first, drops the plan, stops the turn
+    here and only then changes the mode. The plan goes before the stop because the stopped turn's
+    end hands its partial reply to the walkthrough as a draft, and with no plan there is none."""
+    from personalclaw.dashboard.chat_handlers import stop_the_turn
+
+    await stop_the_turn(state, chat)
+
+
 def cancel_unsubmitted(chat_key: str) -> bool:
     """The chat left plan mode before its plan was drafted: the plan is cancelled, as Cancel
     cancels it, and its parked run is let go with it. Returns whether there was one.
@@ -750,15 +772,25 @@ async def api_chat_plan_cancel(request: web.Request) -> web.Response:
 
     The counterpart to a manual-only activation: without an exit, a chat that opened a
     plan gate could never leave it (the task-mode control refuses to while a step is
-    awaiting review). Restores the remembered task mode and drops the sidecar.
+    awaiting review). Restores the remembered task mode and drops the sidecar. With no plan open
+    it changes nothing.
     """
     resolved = _resolve(request)
     if isinstance(resolved, web.Response):
         return resolved
     state, chat = resolved
-    _sess, binding = read(chat.key)
+    planning = drafts_now(chat)
+    sess, binding = read(chat.key)
+    if sess is None and not binding:
+        # No plan open: the pill already left plan mode, and a panel drawn before that (here or in
+        # another tab) still offered Cancel. Restoring a mode now would overrule the pill's.
+        return web.json_response(
+            {"ok": True, "task_mode": getattr(chat, "_task_mode", "agent") or "agent"}
+        )
     restored = str(binding.get("resume_task_mode", "agent")) or "agent"
     clear(chat.key)
+    if planning:
+        await stop_the_planning_turn(state, chat)
     apply_task_mode(state, chat, restored)
     state.push_sessions_update()
     return web.json_response({"ok": True, "task_mode": restored})

@@ -3009,9 +3009,14 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
     take_pick(state, body, "task_mode")
     for session in targets:
         # Leaving plan mode before its plan is drafted cancels that plan, as Cancel does: the
-        # next turn runs in this mode, and its answer is not a plan (#5723).
+        # next turn runs in this mode, and its answer is not a plan (#5723). The plan's own turn,
+        # if it is running, is stopped after the plan is dropped and before the mode changes, so
+        # none of its calls runs in this mode and its end drafts nothing (#5792).
         if mode != "plan":
+            planning = chat_plan.drafts_now(session)
             chat_plan.cancel_unsubmitted(session.key)
+            if planning:
+                await chat_plan.stop_the_planning_turn(state, session)
         # One write path for both postures — the session's own and the runtime's (the
         # native runtime gates in _guard_and_invoke, before approval, so a Trust/YOLO
         # auto-approve can't bypass an ask/plan/build restriction).

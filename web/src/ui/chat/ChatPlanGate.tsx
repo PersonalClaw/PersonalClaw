@@ -194,6 +194,14 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
     finally { setBusy(false) }
   }
   const blocked = guard.conflict !== null
+  // The way out of plan mode in every state: drafting, waiting for the turn to end, and under
+  // review (#5792). The server drops the plan and a run it parked, and names the mode to go back to.
+  const cancelPlan = (
+    <Button size="xs" variant="ghost" disabled={busy} disabledReason={BUSY_REASON}
+      onClick={() => void run(async () => { const r = await api.chatPlanCancel(session); onTaskMode(r.task_mode) })}>
+      <X size={14} /> Cancel plan mode
+    </Button>
+  )
 
   return (
     <div className="mb-1 rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3">
@@ -210,11 +218,14 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
       </div>
       {step.objective && <p data-type="body-s" className="mb-2 text-on-surface-low">{step.objective}</p>}
       {!open ? (
-        <p data-type="body-s" className="text-on-surface-low">
-          {afterTurn
-            ? 'This turn runs to its end. Your next message gets a plan, and nothing runs until you approve it.'
-            : 'Nothing runs until you approve. The plan appears here when this turn finishes.'}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p data-type="body-s" className="text-on-surface-low">
+            {afterTurn
+              ? 'This turn runs to its end. Your next message gets a plan, and nothing runs until you approve it.'
+              : 'Nothing runs until you approve. The plan appears here when this turn finishes.'}
+          </p>
+          {cancelPlan}
+        </div>
       ) : editText !== null ? (
         <div className="flex flex-col gap-2">
           {/* Read-only while a refused edit is held: what the notice reapplies is the text as it was
@@ -281,10 +292,7 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
                 onClick={() => void run(async () => { await api.chatPlanComment(session, step.id, comment.trim()); clearComment() })}>
                 <MessageSquarePlus size={14} /> Send comment &amp; redraft
               </Button>
-              <Button size="xs" variant="ghost" disabled={busy} disabledReason={BUSY_REASON}
-                onClick={() => void run(async () => { const r = await api.chatPlanCancel(session); onTaskMode(r.task_mode) })}>
-                <X size={14} /> Cancel plan mode
-              </Button>
+              {cancelPlan}
             </div>
           </div>
         </>
