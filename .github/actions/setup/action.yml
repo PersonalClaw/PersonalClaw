@@ -47,6 +47,97 @@ runs:
       with:
         node-version-file: .nvmrc
         cache: ${{ inputs.node-cache }}
+    # ffmpeg and ffprobe on Linux come from one pinned static build, not from the Ubuntu archive:
+    # on 2026-11-19 the runner's mirror and archive.ubuntu.com both failed to serve ffmpeg's
+    # packages for over an hour, and every suite shard went red before a test ran. The build is
+    # FFmpeg-Builds' month-end release (formerly BtbN/FFmpeg-Builds; ffmpeg.org's download page
+    # links it, and month-end tags are kept for years), its GPL variant for the encoders Ubuntu's
+    # ffmpeg has (libx264, libopus). tools/ci/pinned-downloads.toml records it: URL, SHA-256,
+    # version, provenance, and how to move it. Its bytes are held to the SHA-256 before anything
+    # unpacks, a cached copy's included, and other bytes are a red, never a fallback: they are
+    # not an outage. A fetch that fails falls back to the programs step below, which installs it
+    # from the mirror as before, with a warning that says so. Only a push to main saves the cache,
+    # and only a copy this step held to the pin. It is fetched, never re-hosted.
+    - name: Restore the pinned ffmpeg build
+      id: ffmpeg-cache
+      if: runner.os == 'Linux' && contains(format(' {0} ', inputs.programs), ' ffmpeg ')
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/ffmpeg-build/ffmpeg.tar.xz
+        key: ffmpeg-linux64-41e9c565594c390622cf968d82fa4135d9e9a11d06c1515644288cbc844e3380
+    - name: Install the pinned ffmpeg build
+      id: ffmpeg-install
+      if: runner.os == 'Linux' && contains(format(' {0} ', inputs.programs), ' ffmpeg ')
+      shell: bash
+      env:
+        FFMPEG_URL: https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n8.1.3-27-g8dca1586f4-linux64-gpl-8.1.tar.xz
+        FFMPEG_SHA256: 41e9c565594c390622cf968d82fa4135d9e9a11d06c1515644288cbc844e3380
+        FFMPEG_VERSION: n8.1.3-27-g8dca1586f4-20261031
+        FFMPEG_DIR: ${{ runner.temp }}/ffmpeg-build
+      run: |
+        set -euf
+        infra() { echo "::error title=infrastructure::$1"; exit 1; }
+        archive="$FFMPEG_DIR/ffmpeg.tar.xz"
+        mkdir -p "$FFMPEG_DIR"
+        pinned() {
+          digest=$(sha256sum "$archive") || return 1
+          [ "${digest%% *}" = "$FFMPEG_SHA256" ]
+        }
+        if [ -f "$archive" ]; then
+          # Only a copy this step held to the pin is ever saved: other bytes here were not saved
+          # by it, so they are a red, never refetched over.
+          pinned || infra "the cached ffmpeg build is not the pinned SHA-256 $FFMPEG_SHA256"
+          echo "the pinned ffmpeg build, from the cache"
+        else
+          if ! curl --fail --silent --show-error --location --retry 3 --retry-delay 5 \
+            --connect-timeout 30 --max-time 300 --output "$archive" "$FFMPEG_URL"; then
+            rm -f "$archive"
+            echo "::warning title=infrastructure::the pinned ffmpeg build could not be fetched" \
+              "from $FFMPEG_URL: this job installs ffmpeg from the package mirror instead"
+            echo "ffmpeg: from the package mirror, not the pinned build, which could not be" \
+              "fetched from $FFMPEG_URL" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          pinned || infra "the ffmpeg build fetched from $FFMPEG_URL is not the pinned SHA-256"
+        fi
+        # Exactly the two programs, named by the archive's own listing: nothing else unpacks.
+        members=$(tar -tJf "$archive") || infra "the pinned ffmpeg build could not be listed"
+        wanted=""
+        for tool in ffmpeg ffprobe; do
+          member=$(printf '%s\n' "$members" | grep -E "^[^/]+/bin/$tool\$") ||
+            infra "the pinned ffmpeg build has no bin/$tool"
+          wanted="$wanted $member"
+        done
+        unpacked="$FFMPEG_DIR/unpacked-$FFMPEG_SHA256"
+        mkdir -p "$unpacked"
+        # shellcheck disable=SC2086 # each member is one word: a listed path under */bin/
+        tar -xJf "$archive" -C "$unpacked" $wanted ||
+          infra "the pinned ffmpeg build could not be unpacked"
+        bin="$FFMPEG_DIR/bin-$FFMPEG_SHA256"
+        mkdir -p "$bin"
+        for member in $wanted; do
+          tool=${member##*/}
+          mv "$unpacked/$member" "$bin/$tool"
+          chmod 0755 "$bin/$tool"
+          # The program on PATH names the pinned build, so no other file can stand in for it.
+          said=$("$bin/$tool" -hide_banner -version) || infra "the pinned $tool does not run"
+          case "$said" in
+            "$tool version $FFMPEG_VERSION "*) ;;
+            *) infra "the pinned $tool does not name $FFMPEG_VERSION: ${said%%$'\n'*}" ;;
+          esac
+        done
+        echo "$bin" >> "$GITHUB_PATH"
+        echo "pinned=true" >> "$GITHUB_OUTPUT"
+    - name: Save the pinned ffmpeg build
+      if: >-
+        runner.os == 'Linux' && contains(format(' {0} ', inputs.programs), ' ffmpeg ')
+        && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        && steps.ffmpeg-install.outputs.pinned == 'true'
+        && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/ffmpeg-build/ffmpeg.tar.xz
+        key: ffmpeg-linux64-41e9c565594c390622cf968d82fa4135d9e9a11d06c1515644288cbc844e3380
     # A program that is missing reds here, in this step, rather than as a skip later: run-job
     # refuses a job whose toolchain program is not on PATH, and a test gated on the program
     # would otherwise read its absence as a pass. Only the programs SETUP_PROGRAMS names, each

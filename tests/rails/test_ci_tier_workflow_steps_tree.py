@@ -45,12 +45,16 @@ again under 300 s, and an install that still fails is an `infrastructure` failur
 
 from __future__ import annotations
 
+import datetime
+import hashlib
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -2022,3 +2026,354 @@ def test_a_runner_with_no_timeout_installs_as_before_the_bound(
     assert "::warning" not in log, log
     for rel, text in _SOURCES.items():
         assert (tmp_path / "etc" / "apt" / rel).read_text() == text, rel
+
+
+# ── ffmpeg comes from one pinned static build, not the Ubuntu archive ────────────────────────
+# On 2026-11-19 the runner's mirror and archive.ubuntu.com both failed to serve ffmpeg's packages
+# for over an hour: three queue attempts and an entry run went red at toolchain setup, before any
+# test ran. The setup action now puts a pinned build's ffmpeg and ffprobe on PATH before its
+# programs step, which then passes ffmpeg over. Bytes other than the pinned ones are a red; a
+# fetch that fails falls back to the mirror, as before, and says so.
+
+_FFMPEG_STEPS = (
+    "Restore the pinned ffmpeg build",
+    "Install the pinned ffmpeg build",
+    "Save the pinned ffmpeg build",
+)
+_FFMPEG_WHEN = "runner.os == 'Linux' && contains(format(' {0} ', inputs.programs), ' ffmpeg ')"
+_FFMPEG_URL = re.compile(
+    r"https://github\.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/"
+    r"autobuild-(?P<date>\d{4}-\d{2}-\d{2})-\d{2}-\d{2}/"
+    r"ffmpeg-(?P<version>[A-Za-z0-9.+-]+)-linux64-gpl-[0-9.]+\.tar\.xz"
+)
+_PINNED_DOWNLOADS = REPO / "tools" / "ci" / "pinned-downloads.toml"
+
+
+def _ffmpeg_steps(action: dict | None = None) -> dict[str, dict]:
+    steps = (action or _setup_action())["runs"]["steps"]
+    return {s["name"]: s for s in steps if s.get("name") in _FFMPEG_STEPS}
+
+
+def test_the_pinned_ffmpeg_build_is_one_release_asset_held_to_its_sha256() -> None:
+    steps = _ffmpeg_steps()
+    assert sorted(steps) == sorted(_FFMPEG_STEPS)
+    restore, install, save = (steps[n] for n in _FFMPEG_STEPS)
+    names = [s.get("name") for s in _setup_action()["runs"]["steps"]]
+    # Restored, installed and saved in that order, all three before the programs step.
+    at = [names.index(n) for n in _FFMPEG_STEPS]
+    assert at == sorted(at) and at[-1] < names.index(_programs_step()["name"])
+    env = install["env"]
+    url, digest, version = env["FFMPEG_URL"], env["FFMPEG_SHA256"], env["FFMPEG_VERSION"]
+    found = _FFMPEG_URL.fullmatch(url)
+    assert found, url
+    # A month-end autobuild: FFmpeg-Builds keeps those for years, the daily ones for weeks.
+    day = datetime.date.fromisoformat(found["date"])
+    # Its programs call themselves the asset's version and its build day, as `-version` prints.
+    assert version == f"{found['version']}-{day:%Y%m%d}", (url, version)
+    assert (day + datetime.timedelta(days=1)).day == 1, f"{day} is not the last day of a month"
+    assert re.fullmatch(r"[0-9a-f]{64}", digest), digest
+    key = f"ffmpeg-linux64-{digest}"
+    path = "${{ runner.temp }}/ffmpeg-build/ffmpeg.tar.xz"
+    assert restore["with"] == {"path": path, "key": key}
+    assert save["with"] == {"path": path, "key": key}
+    assert env["FFMPEG_DIR"] == "${{ runner.temp }}/ffmpeg-build"
+    assert (restore["id"], install["id"]) == ("ffmpeg-cache", "ffmpeg-install")
+    assert restore["if"] == install["if"] == _FFMPEG_WHEN
+    assert install["shell"] == "bash" and "${{" not in install["run"]
+    # Only a push to main writes the cache, only when it was not restored, and only a copy the
+    # install step held to the pin; a pull request's run and a queue commit's read it at most.
+    assert (
+        save["if"].split()
+        == (
+            f"{_FFMPEG_WHEN} && steps.ffmpeg-cache.outputs.cache-hit != 'true'"
+            " && steps.ffmpeg-install.outputs.pinned == 'true'"
+            " && github.event_name == 'push' && github.ref == 'refs/heads/main'"
+        ).split()
+    )
+    restore_action, save_action = restore["uses"].split("@"), save["uses"].split("@")
+    assert restore_action[0] == "actions/cache/restore" and save_action[0] == "actions/cache/save"
+    assert restore_action[1] == save_action[1] and re.fullmatch(r"[0-9a-f]{40}", save_action[1])
+    # Neither the URL nor the digest reaches the shell but through the step's env.
+    assert url not in install["run"] and digest not in install["run"]
+
+
+def test_the_pinned_ffmpeg_build_is_the_one_the_pinned_downloads_record() -> None:
+    """The pin-refresh job (#4585) reads tools/ci/pinned-downloads.toml for every downloaded
+    program a workflow or action runs: the setup action's ffmpeg is there, as the step pins it,
+    with where it came from and how to move it."""
+    record = tomllib.loads(_PINNED_DOWNLOADS.read_text(encoding="utf-8"))
+    [entry] = [d for d in record["download"] if d["name"] == "ffmpeg"]
+    env = _ffmpeg_steps()["Install the pinned ffmpeg build"]["env"]
+    assert entry["used_by"] == ".github/actions/setup/action.yml"
+    assert (REPO / entry["used_by"]).is_file()
+    assert (entry["url"], entry["sha256"], entry["version"]) == (
+        env["FFMPEG_URL"],
+        env["FFMPEG_SHA256"],
+        env["FFMPEG_VERSION"],
+    )
+    for field in ("upstream", "provenance", "license", "refresh"):
+        assert entry[field].strip(), field
+    assert "never re-hosted" in entry["license"]
+    assert isinstance(entry["pinned"], datetime.date)
+
+
+def _ffmpeg_fixture(folder: Path, version: str) -> tuple[Path, str]:
+    """A tar.xz laid out as FFmpeg-Builds' builds are: one top folder holding bin/ffmpeg and
+    bin/ffprobe, each a script that answers `-version` as a build of *version* does, beside more
+    that must not unpack."""
+    archive = folder / "build.tar.xz"
+    top = f"ffmpeg-{version}-linux64-gpl-0.0"
+    members = {
+        f"{top}/bin/ffmpeg": "ffmpeg",
+        f"{top}/bin/ffprobe": "ffprobe",
+        f"{top}/bin/ffplay": "ffplay",
+        f"{top}/doc/ffmpeg.html": None,
+    }
+    with tarfile.open(archive, "w:xz") as tar:
+        for name, tool in members.items():
+            body = (
+                f"#!/bin/sh\necho '{tool} version {version} Copyright (c) the fixture'\n".encode()
+                if tool
+                else b"<html></html>\n"
+            )
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(body), 0o755
+            tar.addfile(info, io.BytesIO(body))
+    return archive, hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+#: curl as the step calls it: it copies "$STUB/served" to its --output, or fails as a dead host
+#: does (exit 22) when nothing is served, and logs each call.
+_CURL = """#!/bin/sh
+printf '%s\\n' "$*" >> "$STUB/fetches"
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in --output) out=$2; shift ;; esac
+  shift
+done
+[ -f "$STUB/served" ] || exit 22
+/bin/cp "$STUB/served" "$out"
+"""
+
+
+@dataclass
+class _Setup:
+    rc: int
+    log: str
+    fetches: list[str]
+    installs: list[str]
+    path: list[str]
+    summary: str
+
+
+def _run_setup(
+    tmp: Path,
+    programs: str = "tmux ffmpeg",
+    *,
+    action: dict | None = None,
+    cached: bytes | None = None,
+    served: bytes | None = b"",
+    version: str | None = None,
+    mirror_refuses: bool = True,
+) -> _Setup:
+    """Run the setup action's Linux steps as GitHub would for *programs*: the pinned build's
+    install step (restore and save are actions, so a restore is *cached* put in place), then,
+    with what it put on GITHUB_PATH first, the programs step, as written, under the same stubs
+    as :func:`_run_programs`. *served* is what the pinned URL answers (the fixture's own bytes
+    when b"", None for a host that does not answer); *version* is what the fixture's programs
+    call themselves (the pinned one when None); *mirror_refuses* has every apt-get exit 100."""
+    action = action or _setup_action()
+    install = _ffmpeg_steps(action).get("Install the pinned ffmpeg build")
+    pinned_version = (install or {}).get("env", {}).get("FFMPEG_VERSION", "n0.0")
+    stub, bin_, cwd, temp = tmp / "stub", tmp / "bin", tmp / "cwd", tmp / "temp"
+    for folder in (stub, bin_, cwd, temp):
+        folder.mkdir(parents=True)
+    fixture, digest = _ffmpeg_fixture(tmp, version or pinned_version)
+    if served is not None:
+        (stub / "served").write_bytes(served or fixture.read_bytes())
+    build = temp / "ffmpeg-build"
+    if cached is not None:
+        build.mkdir()
+        (build / "ffmpeg.tar.xz").write_bytes(cached or fixture.read_bytes())
+    for name in ("apt-get", "brew", "dpkg"):
+        (bin_ / name).write_text(_INSTALLER)
+        (bin_ / name).chmod(0o755)
+    if mirror_refuses:
+        (stub / "install-fails").write_text("")
+    for name, text in (("timeout", _TIMEOUT), ("curl", _CURL), ("sudo", '#!/bin/sh\nexec "$@"\n')):
+        (bin_ / name).write_text(text)
+        (bin_ / name).chmod(0o755)
+    (bin_ / "tmux").write_text("#!/bin/sh\n")
+    (bin_ / "tmux").chmod(0o755)
+    (bin_ / "tee").symlink_to(shutil.which("tee") or "/usr/bin/tee")
+    apt = tmp / "etc" / "apt"
+    for rel, text in _SOURCES.items():
+        (apt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (apt / rel).write_text(text)
+    github_path, outputs, summary = tmp / "github-path", tmp / "outputs", tmp / "summary"
+    for file in (github_path, outputs, summary):
+        file.write_text("")
+    env = {
+        "HOME": str(tmp),
+        "STUB": str(stub),
+        "BIN": str(bin_),
+        "PROGRAMS": programs,
+        "RUNNER_OS": "Linux",
+        "GITHUB_PATH": str(github_path),
+        "GITHUB_OUTPUT": str(outputs),
+        "GITHUB_STEP_SUMMARY": str(summary),
+    }
+    bash = shutil.which("bash") or "/bin/bash"
+    rc, log = 0, ""
+    if install is not None and " ffmpeg " in f" {programs} ":
+        script = tmp / "ffmpeg.sh"
+        script.write_text(install["run"], encoding="utf-8")
+        step_env = env | {
+            "PATH": f"{bin_}:/usr/bin:/bin:/usr/sbin:/sbin",
+            "FFMPEG_URL": install["env"]["FFMPEG_URL"],
+            "FFMPEG_SHA256": digest,
+            "FFMPEG_VERSION": pinned_version,
+            "FFMPEG_DIR": str(build),
+        }
+        done = subprocess.run(
+            [bash, "--noprofile", "--norc", "-e", str(script)],
+            cwd=cwd, env=step_env, capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        rc, log = done.returncode, done.stdout + done.stderr
+    added = [p for p in github_path.read_text().splitlines() if p]
+    if rc == 0:
+        [step] = [s for s in action["runs"]["steps"] if "PROGRAMS" in (s.get("env") or {})]
+        script = tmp / "programs.sh"
+        script.write_text(step["run"].replace("/etc/apt/", f"{apt}/"), encoding="utf-8")
+        # Only what the job's PATH holds: the pinned build's folder first, then the stubs.
+        done = subprocess.run(
+            [bash, "--noprofile", "--norc", "-eo", "pipefail", str(script)],
+            cwd=cwd, env=env | {"PATH": ":".join([*reversed(added), str(bin_)])},
+            capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        rc, log = done.returncode, log + done.stdout + done.stderr
+    lines = {name: (stub / name).read_text().splitlines() for name in ("fetches", "installs")
+             if (stub / name).exists()}  # fmt: skip
+    return _Setup(
+        rc, log, lines.get("fetches", []), lines.get("installs", []), added, summary.read_text()
+    )
+
+
+def test_a_suite_shard_gets_ffmpeg_while_every_package_mirror_refuses(tmp_path: Path) -> None:
+    ran = _run_setup(tmp_path)
+    assert ran.rc == 0, ran.log
+    # Nothing asked the archive, or any mirror, for anything.
+    assert ran.installs == [], ran.log
+    [fetch] = ran.fetches
+    assert _FFMPEG_URL.search(fetch), fetch
+    [folder] = ran.path
+    assert sorted(p.name for p in Path(folder).iterdir()) == ["ffmpeg", "ffprobe"]
+    version = _ffmpeg_steps()["Install the pinned ffmpeg build"]["env"]["FFMPEG_VERSION"]
+    for tool in ("ffmpeg", "ffprobe"):
+        said = subprocess.run(
+            [str(Path(folder) / tool), "-version"], capture_output=True, text=True
+        )
+        assert said.stdout.startswith(f"{tool} version {version} "), said
+
+
+def test_a_setup_action_without_the_pinned_build_reds_on_the_mirror_that_refuses(
+    tmp_path: Path,
+) -> None:
+    """The plant: the action as main had it before, with no pinned build. The same refusing
+    mirror reds the shard before any test, as it did on 2026-11-19."""
+    action = _setup_action()
+    action["runs"]["steps"] = [
+        s for s in action["runs"]["steps"] if s.get("name") not in _FFMPEG_STEPS
+    ]
+    ran = _run_setup(tmp_path, action=action)
+    assert ran.rc != 0
+    assert re.search(r"::error title=infrastructure::apt-get .*ffmpeg", ran.log), ran.log
+    # The archive was asked, and refused, before any test could run.
+    assert ran.installs and ran.installs[0] == f"{_APT} update -qq", ran.installs
+
+
+def test_a_cached_build_that_is_the_pinned_one_is_used_without_a_fetch(tmp_path: Path) -> None:
+    ran = _run_setup(tmp_path, cached=b"", served=None)
+    assert ran.rc == 0, ran.log
+    assert ran.fetches == [] and ran.installs == []
+    assert "the pinned ffmpeg build, from the cache" in ran.log
+
+
+@pytest.mark.parametrize(
+    ("bytes_from", "says"),
+    [
+        pytest.param("cache", "the cached ffmpeg build is not the pinned SHA-256", id="cached"),
+        pytest.param("fetch", "is not the pinned SHA-256", id="fetched"),
+    ],
+)
+def test_bytes_that_are_not_the_pinned_build_red_and_never_fall_back(
+    tmp_path: Path, bytes_from: str, says: str
+) -> None:
+    """Other bytes are not an outage: whether a cache or the URL served them, the step reds
+    under an infrastructure title, nothing unpacks, nothing goes on PATH, and the mirror is
+    never asked instead, though it would answer."""
+    other = b"not the pinned build"
+    ran = _run_setup(
+        tmp_path,
+        cached=other if bytes_from == "cache" else None,
+        served=other if bytes_from == "fetch" else b"",
+        mirror_refuses=False,
+    )
+    assert ran.rc != 0
+    assert "::error title=infrastructure::" in ran.log and says in ran.log, ran.log
+    assert ran.path == [] and ran.installs == []
+    if bytes_from == "cache":
+        assert ran.fetches == [], "a cached copy with other bytes is not fetched over"
+    build = tmp_path / "temp" / "ffmpeg-build"
+    assert [p.name for p in build.iterdir()] == ["ffmpeg.tar.xz"]
+
+
+def test_a_build_that_cannot_be_fetched_falls_back_to_the_mirror_and_says_so(
+    tmp_path: Path,
+) -> None:
+    """An upstream outage is never worse than before the pin: the programs step installs
+    ffmpeg from the mirror, and the run's warning and summary say the shard is on that path."""
+    ran = _run_setup(tmp_path, served=None, mirror_refuses=False)
+    assert ran.rc == 0, ran.log
+    assert ran.path == []
+    assert ran.installs == [
+        f"{_APT} update -qq",
+        f"{_APT} install -y --no-install-recommends ffmpeg",
+    ]
+    assert "::warning title=infrastructure::the pinned ffmpeg build could not be fetched" in ran.log
+    assert "from the package mirror, not the pinned build" in ran.summary
+    # With the mirror down too, the shard reds where it did before: the fallback adds nothing.
+    down = _run_setup(tmp_path / "both-down", served=None)
+    assert down.rc != 0 and "::error title=infrastructure::apt-get" in down.log, down.log
+
+
+def test_a_program_that_does_not_name_the_pinned_build_reds(tmp_path: Path) -> None:
+    """The pinned bytes are checked, and so is what runs: a program that does not call itself
+    the pinned version cannot stand in for it on PATH."""
+    ran = _run_setup(tmp_path, version="n0.0-another-build", mirror_refuses=False)
+    assert ran.rc != 0
+    assert "does not name" in ran.log and "::error title=infrastructure::" in ran.log, ran.log
+    assert ran.path == [] and ran.installs == []
+
+
+def test_only_the_two_programs_unpack_from_the_build(tmp_path: Path) -> None:
+    ran = _run_setup(tmp_path)
+    assert ran.rc == 0, ran.log
+    build = tmp_path / "temp" / "ffmpeg-build"
+    unpacked = [p for p in build.rglob("*") if p.is_file() and p.name != "ffmpeg.tar.xz"]
+    assert sorted(p.name for p in unpacked) == ["ffmpeg", "ffprobe"], unpacked
+
+
+def test_only_a_build_held_to_the_pin_is_marked_for_the_cache_to_save(tmp_path: Path) -> None:
+    ran = _run_setup(tmp_path)
+    assert ran.rc == 0, ran.log
+    assert (tmp_path / "outputs").read_text().splitlines() == ["pinned=true"]
+    fell_back = _run_setup(tmp_path / "fell-back", served=None, mirror_refuses=False)
+    assert fell_back.rc == 0, fell_back.log
+    assert (tmp_path / "fell-back" / "outputs").read_text() == ""
+
+
+def test_a_job_that_names_no_ffmpeg_runs_no_pinned_build_step(tmp_path: Path) -> None:
+    ran = _run_setup(tmp_path, programs="tmux")
+    assert ran.rc == 0, ran.log
+    assert ran.fetches == [] and ran.installs == [] and ran.path == []
