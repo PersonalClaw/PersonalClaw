@@ -29,7 +29,7 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -8229,6 +8229,10 @@ ROWS = (*ROWS, VERIFIED_TREE_RUNS_ON_EVERY_MAIN_PUSH)
 # trust property: what runs is the base branch's, the token reaches only the step that calls the
 # API, nothing a contributor wrote is pasted into code or carried between steps, and the check is
 # handed what it needs to refuse a short or stale list.
+#
+# It moves to `pull_request` (#3908), where it is the head's own copy and gates nothing: the merge
+# verdict runs main's copy of the check itself. In that shape it holds `contents: read` alone, runs
+# no action but the checkout, names no secret and posts no comment, and the rest holds as before.
 
 _DCO = ".github/workflows/dco.yml"
 _DCO_TYPES = ["opened", "edited", "synchronize", "reopened"]
@@ -8252,9 +8256,14 @@ def dco_violations(tree: Tree) -> list[str]:
         return [f"{_DCO} is missing"]
     bad: list[str] = []
     triggers = _triggers(workflow)
-    if set(triggers) != {"pull_request_target"}:
-        bad.append(f"{_DCO} runs on {sorted(triggers)}, not pull_request_target alone")
-    types = (triggers.get("pull_request_target") or {}).get("types")  # type: ignore[union-attr]
+    moved = set(triggers) == {"pull_request"}
+    if set(triggers) != {"pull_request_target"} and not moved:
+        bad.append(
+            f"{_DCO} runs on {sorted(triggers)}, not pull_request_target alone, or once it moves"
+            " (#3908) pull_request alone"
+        )
+    event = "pull_request" if moved else "pull_request_target"
+    types = (triggers.get(event) or {}).get("types")  # type: ignore[union-attr]
     if types != _DCO_TYPES:
         bad.append(f"{_DCO} runs on {types}, not {_DCO_TYPES} (an edited title is rule 5's)")
     steps = ((workflow.get("jobs") or {}).get("dco") or {}).get("steps") or []
@@ -8312,7 +8321,22 @@ def dco_violations(tree: Tree) -> list[str]:
             bad.append(f"{_DCO}'s check is not handed the head the event names")
         if '--event "$GITHUB_EVENT_PATH"' not in run:
             bad.append(f"{_DCO}'s check does not read the title from the event file")
-    if comment is None:
+    if moved:
+        job = (workflow.get("jobs") or {}).get("dco") or {}
+        if job.get("permissions") != {"contents": "read"}:
+            bad.append(
+                f"{_DCO} on pull_request holds {job.get('permissions')!r}, not contents: read"
+            )
+        if workflow.get("permissions") not in (None, {}, {"contents": "read"}):
+            bad.append(f"{_DCO} on pull_request grants {workflow.get('permissions')!r}")
+        others = sorted({_action(s) for s in steps if _action(s)} - {"actions/checkout"})
+        if others:
+            bad.append(f"{_DCO} on pull_request runs {others}, where it runs only the check")
+        if "secrets." in json.dumps(workflow, default=str):
+            bad.append(f"{_DCO} on pull_request names a secret")
+        if "dco-help" in json.dumps(workflow, default=str):
+            bad.append(f"{_DCO} on pull_request still writes the dco-help comment")
+    elif comment is None:
         bad.append(f"{_DCO} has no comment step")
     else:
         script = str((comment.get("with") or {}).get("script", ""))
@@ -8445,6 +8469,151 @@ DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK = _toolchain_row(
             expect="hands the job token to a step that does not fetch",
         ),
         Control("the tree's dco.yml passes", _nothing, fails=False),
+    ),
+)
+
+#: dco.yml once it moves to pull_request (#3908), as the plants below write it before each edit,
+#: so they hold that shape whichever one the tree has.
+_DCO_ON_PULL_REQUEST = (
+    "name: DCO\n"
+    "on:\n"
+    "  pull_request:\n"
+    "    types: [opened, edited, synchronize, reopened]\n"
+    "concurrency:\n"
+    "  group: dco-${{ github.event.pull_request.number }}\n"
+    "  cancel-in-progress: true\n"
+    "jobs:\n"
+    "  dco:\n"
+    "    runs-on: ubuntu-24.04\n"
+    "    timeout-minutes: 5\n"
+    "    permissions:\n"
+    "      contents: read\n"
+    "    steps:\n"
+    + _IDENTITY_STEP
+    + "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
+    "        with:\n"
+    "          sparse-checkout: |\n"
+    "            scripts/check_commit_provenance.py\n"
+    "            MAINTAINERS\n"
+    "          sparse-checkout-cone-mode: false\n"
+    "          persist-credentials: false\n"
+    "      - name: Fetch the pull request's commits\n"
+    "        env:\n"
+    "          GH_TOKEN: ${{ github.token }}\n"
+    "          REPO: ${{ github.repository }}\n"
+    "          PR: ${{ github.event.pull_request.number }}\n"
+    "        run: |\n"
+    "          set -euo pipefail\n"
+    '          gh api --paginate "repos/$REPO/pulls/$PR/commits" > "$RUNNER_TEMP/commits.json"\n'
+    "      - name: Verify DCO sign-off on every commit\n"
+    "        env:\n"
+    "          COMMITS: ${{ github.event.pull_request.commits }}\n"
+    "          HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n"
+    "        run: |\n"
+    "          set -euo pipefail\n"
+    "          python3 -I scripts/check_commit_provenance.py --mode pr \\\n"
+    "            --maintainers MAINTAINERS \\\n"
+    '            --commits-json "$RUNNER_TEMP/commits.json" \\\n'
+    '            --expected-count "$COMMITS" \\\n'
+    '            --expected-head "$HEAD_SHA" \\\n'
+    '            --event "$GITHUB_EVENT_PATH"\n'
+)
+
+
+def _on_pull_request(name: str, old: str = "", new: str = "", **kw: Any) -> Control:
+    """A plant on dco.yml as it moves to pull_request: :data:`_DCO_ON_PULL_REQUEST` written, then
+    *old* replaced by *new* (nothing, for the shape as it is)."""
+
+    def plant(root: Path) -> None:
+        assert old in _DCO_ON_PULL_REQUEST, f"the plant {name!r} found no {old!r}"
+        _write(root, _DCO, _DCO_ON_PULL_REQUEST.replace(old, new, 1))
+
+    return Control(f"on pull_request: {name}", plant, **kw)
+
+
+_DCO_ON_PULL_REQUEST_PLANTS = (
+    _on_pull_request("the shape it moves to passes", fails=False),
+    _on_pull_request(
+        "a title edit that starts no run",
+        "types: [opened, edited, synchronize, reopened]",
+        "types: [opened, synchronize, reopened]",
+    ),
+    _on_pull_request(
+        "pull_request_target beside it",
+        "  pull_request:\n",
+        "  pull_request_target:\n    types: [opened]\n  pull_request:\n",
+        expect="not pull_request_target alone",
+    ),
+    _on_pull_request(
+        "a write permission",
+        "      contents: read\n",
+        "      contents: read\n      pull-requests: write\n",
+        expect="not contents: read",
+    ),
+    _on_pull_request(
+        "a workflow-wide write permission",
+        "concurrency:\n",
+        "permissions:\n  pull-requests: write\nconcurrency:\n",
+        expect="on pull_request grants",
+    ),
+    _on_pull_request(
+        "the comment step kept",
+        "      - name: Verify DCO",
+        "      - name: Explain how to fix DCO\n"
+        "        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0\n"
+        "        with:\n          script: |\n            const marker = '<!-- dco-help -->';\n"
+        "      - name: Verify DCO",
+        expect="where it runs only the check",
+    ),
+    _on_pull_request(
+        "a secret",
+        "          COMMITS: ${{ github.event.pull_request.commits }}\n",
+        "          COMMITS: ${{ github.event.pull_request.commits }}\n"
+        "          KEY: ${{ secrets.KEY }}\n",
+        expect="names a secret",
+    ),
+    _on_pull_request(
+        "the token on the check step",
+        "          COMMITS: ${{ github.event.pull_request.commits }}\n",
+        "          COMMITS: ${{ github.event.pull_request.commits }}\n"
+        "          GH_TOKEN: ${{ github.token }}\n",
+    ),
+    _on_pull_request(
+        "an expression pasted into the check's run",
+        '--expected-count "$COMMITS"',
+        "--expected-count ${{ github.event.pull_request.commits }}",
+    ),
+    _on_pull_request(
+        "the commit count not handed over", '--expected-count "$COMMITS"', "--expected-count 9"
+    ),
+    _on_pull_request(
+        "the event's head not handed over",
+        '            --expected-head "$HEAD_SHA" \\\n',
+        "",
+        expect="not handed the head the event names",
+    ),
+    _on_pull_request(
+        "a checkout that keeps its credentials",
+        "          persist-credentials: false\n",
+        "          persist-credentials: true\n",
+    ),
+)
+
+
+def _dco_moved() -> bool:
+    """Whether the tree's dco.yml runs on pull_request alone: its old shape's plants, which edit
+    its comment step and its base-branch checkout, then have nothing to edit."""
+    text = (REPO / _DCO).read_text(encoding="utf-8")
+    return set(_triggers(yaml.safe_load(text))) == {"pull_request"}
+
+
+DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK = replace(
+    DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK,
+    controls=(
+        # Once it has moved, the old shape's plants have nothing to edit: the tree's own dco.yml
+        # passes (the last control) and the plants on the shape it moves to hold the rest.
+        *DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK.controls[-1 if _dco_moved() else 0 :],
+        *_DCO_ON_PULL_REQUEST_PLANTS,
     ),
 )
 
@@ -12681,7 +12850,10 @@ def _waits_its_turn(value: object, context: dict[str, Any]) -> bool:
         return False
 
 
-_DCO_GROUP = "group: dco-${{ github.event.pull_request.number }}"
+#: The dependency review's group: the pull_request_target workflow the plants below edit, which
+#: stays on it when dco.yml moves to pull_request (#3908).
+_REVIEW = f"{_WORKFLOWS}/dependency-review.yml"
+_REVIEW_GROUP = "group: dependency-review-${{ github.event.pull_request.number }}"
 _NIX = f"{_WORKFLOWS}/nix.yml"
 #: The start of nix.yml's group line: :func:`_plant_line` reads the line whatever key it holds.
 _NIX_GROUP = "group: nix-"
@@ -12766,15 +12938,18 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                               "concurrency:\n  group: nightly\npermissions: {}\njobs: {}\n"),
                 fails=False),
         # pull_request_target runs in the base branch's context, the same for every pull request.
-        _plant("a pull_request_target group every pull request shares", _DCO,
-               _DCO_GROUP, "group: dco-lane", expect="dco.yml: the group 'dco-lane' is shared by"),
-        _plant("a pull_request_target group keyed on github.ref", _DCO,
-               _DCO_GROUP, "group: dco-${{ github.ref }}", expect="under pull_request_target"),
-        _plant("a pull_request_target group keyed on github.ref_name", _DCO,
-               _DCO_GROUP, "group: dco-${{ github.ref_name }}", expect="under pull_request_target"),
-        _plant("a pull_request_target group keyed on github.sha", _DCO,
-               _DCO_GROUP, "group: dco-${{ github.sha }}", expect="is shared by"),
+        _plant("a pull_request_target group every pull request shares", _REVIEW,
+               _REVIEW_GROUP, "group: review-lane",
+               expect="dependency-review.yml: the group 'review-lane' is shared by"),
+        _plant("a pull_request_target group keyed on github.ref", _REVIEW, _REVIEW_GROUP,
+               "group: review-${{ github.ref }}", expect="under pull_request_target"),
+        _plant("a pull_request_target group keyed on github.ref_name", _REVIEW, _REVIEW_GROUP,
+               "group: review-${{ github.ref_name }}", expect="under pull_request_target"),
+        _plant("a pull_request_target group keyed on github.sha", _REVIEW,
+               _REVIEW_GROUP, "group: review-${{ github.sha }}", expect="is shared by"),
         Control("dco.yml's own group, keyed on the pull request's number", _nothing, fails=False),
+        Control("the dependency review's own group, keyed on the pull request's number", _nothing,
+                fails=False),
         # A called workflow takes part in whatever its callers take part in.
         Control("a reusable workflow a candidate calls, with one shared group",
                 _both(_new_workflow(f"{_WORKFLOWS}/reusable.yml",

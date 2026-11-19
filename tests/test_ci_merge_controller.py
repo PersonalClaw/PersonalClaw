@@ -36,6 +36,33 @@ WF = trust.DEFINITION_ROOTS[0]
 ACTIONS = trust.DEFINITION_ROOTS[1]
 MERGE_PATH = mc.MERGE_WORKFLOW
 MERGE_YML = "name: Merge\non:\n  workflow_dispatch: {}\njobs: {}\n"
+#: The default run's head: a fork's branch, whose run GitHub lists no pull request on.
+FORK_OWNER = "contributor"
+BRANCH = "topic"
+PULL = 12
+AUTHOR = "A Contributor <contributor@example.com>"
+
+
+def commit(
+    sha: str,
+    message: str | None = None,
+    author: str = AUTHOR,
+    committer: str = AUTHOR,
+) -> dict[str, Any]:
+    """One commit as a pull request's commits API lists it, signed off by its author unless
+    *message* says otherwise."""
+
+    def who(identity: str) -> dict[str, str]:
+        name, _, email = identity.rpartition(" <")
+        return {"name": name, "email": email.rstrip(">")}
+
+    text = message if message is not None else f"a change\n\nSigned-off-by: {author}\n"
+    return {
+        "sha": sha,
+        "commit": {"author": who(author), "committer": who(committer), "message": text},
+    }
+
+
 #: Each gate's workflow (rule 5b) with its filter as main's stands, planted in every tree.
 GATE = {g.file: g for g in workflows.GATES}
 
@@ -91,9 +118,46 @@ class FakeApi:
         self.artifacts({"ci-record-unit": DIGEST, "web-dist": "sha256:" + "e" * 64})
         self.review(HEAD, ("completed", "success"))
         self.sign_off(HEAD, ("completed", "success"))
+        self.pull_request()
         self.codeql(HEAD)
         for file in GATE_FILTERS:
             self.gate(file)
+
+    def pull_request(
+        self,
+        *commits: Mapping[str, Any],
+        number: int = PULL,
+        head: str = HEAD,
+        title: str = "improvement: a change",
+        count: int | None = None,
+        listed: list[Mapping[str, Any]] | None = None,
+        **fields: Any,
+    ) -> None:
+        """The head's pull request, as the sign-off rule reads it: the open pull requests from the
+        run's head branch (:data:`FORK_OWNER`'s ``topic``, since the default run is a fork's and
+        lists none), the pull request whole (*fields* plant what it says of itself, its count
+        *count* or the commits' own) and its commits, one signed-off commit ending at *head* by
+        default, a hundred a page."""
+        commits = commits or (commit(head),)
+        query = urllib.parse.urlencode(
+            {"state": "open", "head": f"{FORK_OWNER}:{BRANCH}", "base": "main", "per_page": 100}
+        )
+        self.answers[f"/repos/{REPO}/pulls?{query}"] = (
+            listed if listed is not None else [{"number": number, "head": {"sha": head}}]
+        )
+        self.answers[f"/repos/{REPO}/pulls/{number}"] = {
+            "number": number,
+            "state": "open",
+            "title": title,
+            "commits": len(commits) if count is None else count,
+            "head": {"sha": head},
+            "base": {"ref": "main", "repo": {"full_name": REPO}},
+            **fields,
+        }
+        pages = [list(commits[i : i + 100]) for i in range(0, len(commits), 100)] or [[]]
+        for page, items in enumerate(pages, 1):
+            path = f"/repos/{REPO}/pulls/{number}/commits?per_page=100&page={page}"
+            self.answers[path] = items
 
     def gate(
         self, file: str, *runs: Mapping[str, Any], head: str = HEAD, event: str = "pull_request"
@@ -239,6 +303,12 @@ class FakeApi:
             "event": "pull_request",
             "status": "completed",
             "head_sha": HEAD,
+            "head_branch": BRANCH,
+            "head_repository": {
+                "full_name": f"{FORK_OWNER}/project",
+                "owner": {"login": FORK_OWNER},
+            },
+            "pull_requests": [],
             "run_attempt": 1,
             "html_url": f"https://github.com/{REPO}/actions/runs/{RUN}",
         }
@@ -299,6 +369,7 @@ class FakeApi:
         self.answers[f"/repos/{REPO}/git/commits/{commit}"] = {
             "tree": {"sha": tree_oid},
             "parents": [{"sha": p} for p in parents],
+            "message": f"a change ({commit[:7]})\n\nSigned-off-by: {AUTHOR}\n",
         }
         entries = []
         for path, text in files.items():
@@ -1760,6 +1831,238 @@ def test_a_head_red_on_its_review_and_its_sign_off_names_both() -> None:
     summary = _red(api).output["summary"]
     assert "the head's dependency review is 'failure'" in summary, summary
     assert "the head's sign-off check (DCO) is 'failure'" in summary, summary
+
+
+# ── The commit policy, by main's own check (#3908) ────────────────────────────────────────────
+
+OTHER = "9" * 40
+UNSIGNED = "a change, not signed off\n"
+
+
+def _policy_red(api: FakeApi) -> tuple[str, str]:
+    found = _red(api)
+    return found.output["title"], found.output["summary"]
+
+
+def test_a_fork_s_run_lists_no_pull_request_and_its_head_s_is_found_and_checked() -> None:
+    api = FakeApi()
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    query = urllib.parse.urlencode(
+        {"state": "open", "head": f"{FORK_OWNER}:{BRANCH}", "base": "main", "per_page": 100}
+    )
+    assert f"/repos/{REPO}/pulls?{query}" in api.calls
+    assert f"/repos/{REPO}/pulls/{PULL}" in api.calls
+    assert f"/repos/{REPO}/pulls/{PULL}/commits?per_page=100&page=1" in api.calls
+    assert (
+        "- main's commit-policy check passed on its 1 commit(s) and its title (rules 1, 3 and 5),"
+        " run by this verdict" in found.output["summary"]
+    )
+
+
+def test_a_fork_s_unsigned_commit_is_red_though_its_sign_off_run_is_green() -> None:
+    # The fork-shaped run (pull_requests: []) with its DCO run green: a resolution that gave up on
+    # the pull request, or a check that read the DCO run alone, would post green here.
+    api = FakeApi()
+    api.pull_request(commit(HEAD, UNSIGNED))
+    title, summary = _policy_red(api)
+    assert title == (
+        "Red: the head's commits break the commit policy (rule 1), by main's check: "
+        + mc.POLICY_FIX
+    )
+    assert f"{HEAD} rule 1 no `Signed-off-by: {AUTHOR}` line" in summary
+    assert "git rebase --signoff origin/main" in summary
+    assert "git commit --amend --signoff --no-edit" in summary
+    assert f"https://github.com/{REPO}/{mc._CONTRIBUTING}" in summary
+
+
+def test_a_run_of_this_repository_s_branch_reads_its_pull_request_by_number() -> None:
+    api = FakeApi()
+    api.run(pull_requests=[{"number": PULL, "head": {"sha": HEAD}}])
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert not any(c.startswith(f"/repos/{REPO}/pulls?") for c in api.calls), api.calls
+    assert f"/repos/{REPO}/pulls/{PULL}/commits?per_page=100&page=1" in api.calls
+
+
+@pytest.mark.parametrize(
+    ("listed", "says"),
+    [
+        ([], "0 open pull requests into main have this head, not one"),
+        ([{"number": PULL, "head": {"sha": OTHER}}], "0 open pull requests into main"),
+        (
+            [{"number": PULL, "head": {"sha": HEAD}}, {"number": 13, "head": {"sha": HEAD}}],
+            "2 open pull requests into main have this head, not one",
+        ),
+    ],
+    ids=["none", "another-head", "two"],
+)
+def test_a_head_that_is_not_one_pull_request_s_is_red(
+    listed: list[dict[str, Any]], says: str
+) -> None:
+    api = FakeApi()
+    api.pull_request(listed=listed)
+    _title, summary = _policy_red(api)
+    assert says in summary, summary
+
+
+def test_a_run_that_names_no_head_branch_is_red() -> None:
+    api = FakeApi()
+    api.run(head_branch=None, head_repository=None)
+    assert "the run names no head branch" in _policy_red(api)[1]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"state": "closed"},
+        {"head": {"sha": OTHER}},
+        {"base": {"ref": "release", "repo": {"full_name": REPO}}},
+        {"base": {"ref": "main", "repo": {"full_name": "fork/project"}}},
+    ],
+    ids=["closed", "moved-on", "into-another-branch", "into-another-repository"],
+)
+def test_a_pull_request_not_open_into_main_with_this_head_is_red(fields: dict[str, Any]) -> None:
+    api = FakeApi()
+    api.answers[f"/repos/{REPO}/pulls/{PULL}"].update(fields)
+    assert f"pull request #{PULL} is not open into main with this head now" in _policy_red(api)[1]
+
+
+@pytest.mark.parametrize(
+    ("commits", "count", "says"),
+    [
+        ((commit(HEAD),), 2, "the list holds 1 commit(s) where the pull request has 2"),
+        ((commit(OTHER),), None, f"the list ends at {OTHER}, not at the event's head {HEAD}"),
+    ],
+    ids=["short-of-its-count", "not-ending-at-the-head"],
+)
+def test_a_commit_list_the_check_cannot_use_is_red(
+    commits: tuple[dict[str, Any], ...], count: int | None, says: str
+) -> None:
+    api = FakeApi()
+    api.pull_request(*commits, count=count)
+    title, summary = _policy_red(api)
+    assert title.startswith("Red: the head's commits could not be checked against the commit")
+    assert says in summary, summary
+
+
+def test_a_pull_request_longer_than_the_api_lists_is_red_after_three_pages() -> None:
+    shas = [f"{n:040x}" for n in range(1, 251)]
+    api = FakeApi()
+    api.pull_request(*(commit(s) for s in shas), head=shas[-1], count=251)
+    api.answers[f"/repos/{REPO}/pulls/{PULL}"]["head"] = {"sha": HEAD}
+    api.answers[f"/repos/{REPO}/pulls?" + urllib.parse.urlencode(
+        {"state": "open", "head": f"{FORK_OWNER}:{BRANCH}", "base": "main", "per_page": 100}
+    )] = [{"number": PULL, "head": {"sha": HEAD}}]  # fmt: skip
+    summary = _policy_red(api)[1]
+    assert "the list holds 250 commit(s) where the pull request has 251" in summary, summary
+    pages = [c for c in api.calls if c.startswith(f"/repos/{REPO}/pulls/{PULL}/commits")]
+    assert [p.rsplit("=", 1)[-1] for p in pages] == ["1", "2", "3"]
+
+
+def test_a_pull_request_of_more_than_a_page_is_read_whole() -> None:
+    shas = [f"{n:040x}" for n in range(1, 150)] + [HEAD]
+    api = FakeApi()
+    api.pull_request(*(commit(s) for s in shas))
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert "passed on its 150 commit(s)" in found.output["summary"]
+
+
+def test_a_pull_request_that_gives_no_count_or_no_title_is_unread() -> None:
+    api = FakeApi()
+    api.pull_request(title=None)
+    assert "unread: pull request 12 gives no commit count or no title" in _policy_red(api)[1]
+
+
+def test_rule_3_and_rule_5_are_main_s_and_read_main_s_maintainers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listed = tmp_path / "MAINTAINERS"
+    listed.write_text("A Contributor <contributor@example.com>  a test's maintainer\n")
+    monkeypatch.setattr(mc, "PROVENANCE_MAINTAINERS", listed)
+    marked = f"a change\n\nCo-authored-by: Someone <s@example.com>\nSigned-off-by: {AUTHOR}\n"
+    api = FakeApi()
+    api.pull_request(commit(OTHER, marked), commit(HEAD), title="a change [skip ci]")
+    title, summary = _policy_red(api)
+    assert "commit policy (rule 3, 5)" in title, title
+    assert "pull-request rule 5 the pull request's title carries `[skip ci]`" in summary
+    assert f"{OTHER} rule 3 a maintainer's commit carries a co-author trailer" in summary
+    assert "Rule 3, no co-author, tool or session trailer" in summary
+    assert "Rule 5, no marker that would start no workflow run" in summary
+    assert "Rule 1," not in summary
+
+
+def test_main_s_maintainers_that_cannot_be_read_is_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mc, "PROVENANCE_MAINTAINERS", tmp_path / "gone")
+    assert (
+        "could not be checked against the commit policy: cannot read" in _policy_red(FakeApi())[1]
+    )
+
+
+def test_the_check_and_its_maintainers_are_this_checkout_s() -> None:
+    root = Path(mc.__file__).resolve().parents[2]
+    assert mc.CHECKOUT == root
+    assert mc.PROVENANCE == root / "scripts" / "check_commit_provenance.py"
+    assert mc.PROVENANCE_MAINTAINERS == root / "MAINTAINERS"
+    assert mc.provenance().__file__ == str(mc.PROVENANCE)
+
+
+def test_commit_text_stays_in_the_fence_and_out_of_the_title() -> None:
+    author = "Eve ```` [a link](https://example.com) <eve@example.com>"
+    api = FakeApi()
+    api.pull_request(commit(HEAD, UNSIGNED, author=author))
+    title, summary = _policy_red(api)
+    assert "Eve" not in title and "example.com" not in title
+    bar = "`" * 5
+    opened = summary.index(bar + "text\n")
+    closed = summary.index("\n" + bar + "\n", opened)
+    assert "[a link](https://example.com)" in summary[opened:closed]
+    assert summary.count(bar) == 2
+
+
+def test_the_summary_shows_the_first_lines_and_counts_the_rest() -> None:
+    shas = [f"{n:040x}" for n in range(1, 45)] + [HEAD]
+    api = FakeApi()
+    api.pull_request(*(commit(s, UNSIGNED) for s in shas))
+    summary = _policy_red(api)[1]
+    assert summary.count(" rule 1 no `Signed-off-by") == mc.POLICY_LINES
+    assert f"\nand {45 - mc.POLICY_LINES} more\n" in summary
+
+
+def test_a_red_sign_off_run_with_clean_commits_is_still_red() -> None:
+    # Both count until dco.yml moves to pull_request: main's run of it, and the verdict's own.
+    api = FakeApi()
+    api.sign_off(HEAD, ("completed", "failure"))
+    title, summary = _policy_red(api)
+    assert "the head's sign-off check (DCO) is 'failure'" in title
+    assert "commit policy" not in summary
+
+
+def test_a_queue_commit_whose_message_carries_a_skip_marker_is_red() -> None:
+    api, queue = _queued()
+    api.answers[f"/repos/{REPO}/git/commits/{QUEUE}"]["message"] = (
+        "improvement: a change [skip ci] (#12)\n\nSigned-off-by: " + AUTHOR + "\n"
+    )
+    summary = _queue_red(api, queue).output["summary"]
+    assert (
+        "the queue commit's message carries `[skip ci]`, which would start no workflow run: take"
+        " it out of the pull request's title and description, and queue it again" in summary
+    ), summary
+
+
+def test_a_queue_commit_that_gives_no_message_is_unread() -> None:
+    api, queue = _queued()
+    del api.answers[f"/repos/{REPO}/git/commits/{QUEUE}"]["message"]
+    assert f"unread: commit {QUEUE} gives no message" in _queue_red(api, queue).output["summary"]
+
+
+def test_a_green_queue_commit_says_its_message_was_checked() -> None:
+    found = _judge_queue(*_queued())
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert "its message, which is what lands, carries no marker" in found.output["summary"]
 
 
 REVIEW_RUN = 55
