@@ -62,23 +62,22 @@ trusted-run branch the old path left).
    (``verdict.py``), and every attempt after n must be ``success``. A red after a green attempt or
    after any other red stays red. The green says the first attempts were red only for those jobs.
    A queue commit's run excuses nothing: its attempt-1 red is its posted verdict.
-5. The head's dependency review passed (#4585 step 6), and so did its sign-off check (#3908):
-   the newest ``pull_request_target`` run of ``dependency-review.yml``, and of ``dco.yml``, on the
-   head, main's copy of each, concluded ``success``. One that has not run, is still running or
-   did not pass is red. Each is read by its path, its event and the head, so a candidate's own
-   workflow named for either, which runs under ``pull_request``, never stands in for it, and a
-   run on an older head of the pull request does not count. A red sign-off check names its fix.
-   GitHub's Update branch makes a merge commit with no sign-off, and rule 1 of
-   ``scripts/check_commit_provenance.py`` refuses it on purpose, with no exemption: a commit's
-   committer is text anyone can write, so naming GitHub proves nothing, and a merge commit can
-   carry a conflict resolution no one signed off. The head is updated with rebase. The poster also
-   runs main's ``scripts/check_commit_provenance.py`` itself (:func:`policy_reading`), pr mode with
-   main's MAINTAINERS, over the commits API's list of the head's pull request and its title: a
-   fork's run lists no pull request, so it is found by the run's head branch and kept only if its
-   head is the run's. Until ``dco.yml`` moves to ``pull_request``, both count. When a Dependency
-   review or DCO run completes, the poster judges its head again from the head's own completed
-   Merge run (and, for a head that changes a definition, its contract run), so they may finish
-   in any order.
+5. The head's dependency review passed (#4585 step 6): the newest ``pull_request_target`` run
+   of ``dependency-review.yml`` on the head, main's copy, concluded ``success``. One that has not
+   run, is still running or did not pass is red. It is read by its path, its event and the head,
+   so a candidate's own workflow named for it, which runs under ``pull_request``, never stands in
+   for it, and a run on an older head of the pull request does not count. And its commits pass
+   the commit policy (#3908): the poster runs main's ``scripts/check_commit_provenance.py`` itself
+   (:func:`policy_reading`), pr mode with main's MAINTAINERS, over the commits API's list of the
+   head's pull request and its title. A fork's run lists no pull request, so it is found by the
+   run's head branch and kept only if its head is the run's. ``dco.yml`` runs the head's copy of
+   the same check under ``pull_request``, as feedback, and gates nothing. GitHub's Update branch
+   makes a merge commit with no sign-off, and rule 1 refuses it on purpose, with no exemption: a
+   commit's committer is text anyone can write, so naming GitHub proves nothing, and a merge
+   commit can carry a conflict resolution no one signed off. The head is updated with rebase.
+   When a Dependency review run completes, the poster judges its head again from the head's own
+   completed Merge run (and, for a head that changes a definition, its contract run), so they may
+   finish in any order.
 5b. The head's gates passed: each workflow of its own that a pull request's paths start
    (``workflows.GATES``). Every ``pull_request`` run of the gate's workflow file on the head is
    read, by its path, its event and the head, so a candidate's own workflow of the same name, a
@@ -151,7 +150,7 @@ failing closed, all read through the API:
   queue builds it from the pull request's title when it is queued, which may be after the head's
   green verdict.
 - **Its pull request's head.** The App's newest verdict on the pull request's head is green. That
-  verdict holds the head's dependency review, its sign-off check and CodeQL, each of the pull
+  verdict holds the head's dependency review, its commit policy and CodeQL, each of the pull
   request's own change, which the queue commit's change is.
 - **Its gates.** The head's gates (rule 5b) ran on the head's merge with main as it was then, and
   the queue commit is that change on a main that may have moved since, a tree no gate has run on.
@@ -238,13 +237,6 @@ QUEUE_BRANCH = re.compile(
 )
 #: The dependency review: a pull_request_target workflow, so the run is main's copy.
 DEPENDENCY_REVIEW = ".github/workflows/dependency-review.yml"
-#: The sign-off check: a pull_request_target workflow too, so the run is main's copy.
-DCO_CHECK = ".github/workflows/dco.yml"
-#: What a red sign-off check tells the contributor to do, short enough to stay whole in the title.
-DCO_FIX = (
-    "its run names each commit and rule it refused. A merge commit from GitHub's Update branch"
-    " has no Signed-off-by, so update with rebase, or rebase locally, and push again"
-)
 #: GitHub's dynamic CodeQL workflow (code scanning's default setup), by its run path.
 CODEQL_WORKFLOW = "dynamic/github-code-scanning/codeql"
 #: The analysis key default setup's CodeQL analyses carry.
@@ -886,25 +878,12 @@ def dependency_review_reasons(get: Get, repo: str, head: str) -> list[str]:
     return []
 
 
-def sign_off_reasons(get: Get, repo: str, head: str) -> list[str]:
-    """Why the head's sign-off check is not green (rule 5), or nothing: a red one names its fix."""
-    newest = _newest_target_run(get, repo, head, DCO_CHECK, "sign-off check")
-    if not newest:
-        return ["the head has no sign-off check (dco.yml) yet"]
-    if newest.get("status") != "completed":
-        return [f"the head's sign-off check (DCO) is {newest.get('status')!r}, not finished"]
-    if newest.get("conclusion") != "success":
-        return [f"the head's sign-off check (DCO) is {newest.get('conclusion')!r}: {DCO_FIX}"]
-    return []
-
-
 # ── The commit policy, judged by main's own check (#3908) ─────────────────────────────────────
 #
 # The sign-off rule's gate is main's code, never the head's. The poster runs main's
 # ``scripts/check_commit_provenance.py`` itself, in pr mode, over the pull request's commits as the
-# commits API lists them: the same input dco.yml reads, so no git object and no file of the
-# candidate is ever read. Until dco.yml moves to ``pull_request``, its run counts as well
-# (:func:`sign_off_reasons`), so neither copy of main's check gates alone during the move.
+# commits API lists them, so no git object and no file of the candidate is ever read. dco.yml runs
+# the head's copy of the check under ``pull_request``, as feedback: its run counts for nothing here.
 
 #: The checkout this module runs from. On the poster it is main's: merge-verdict.yml checks out the
 #: default branch, and reads every file of the candidate through the API.
@@ -1082,7 +1061,8 @@ def policy_detail(policy: Policy, repo: str) -> list[str]:
         out.append(
             "- Rule 1, a `Signed-off-by` that matches its author on every commit: sign them off"
             " with `git rebase --signoff origin/main` (or `git commit --amend --signoff --no-edit`"
-            " for the last one), and push again with `git push --force-with-lease`."
+            " for the last one), and push again with `git push --force-with-lease`. A merge commit"
+            " from GitHub's Update branch has no sign-off: update with rebase instead."
         )
     if 3 in policy.rules:
         out.append(
@@ -1883,12 +1863,10 @@ def decide_review(
     controller_revision: str,
     queue: Queue | None = None,
 ) -> Outcome:
-    """A completed Dependency review or DCO run: judge its head again (:func:`rejudge`)."""
+    """A completed Dependency review run: judge its head again (:func:`rejudge`)."""
     head = run.get("head_sha")
     if run.get("event") != "pull_request_target" or not isinstance(head, str):
-        return Outcome(
-            why=f"run {run.get('id')} is not a pull request's dependency review or sign-off check"
-        )
+        return Outcome(why=f"run {run.get('id')} is not a pull request's dependency review")
     if not _SHA.fullmatch(head):
         raise Unread(f"run {run.get('id')} of {run.get('path')} names no head")
     return rejudge(get, repo, head, controller_revision, queue)
@@ -2043,13 +2021,13 @@ def judge(
     get: Get, repo: str, run_id: int, controller_revision: str, queue: Queue | None = None
 ) -> Outcome:
     """What a completed run of a workflow the poster follows does: a Merge run is judged; a
-    Dependency review, DCO, CodeQL, gate (rule 5b) or contract run judges its head again."""
+    Dependency review, CodeQL, gate (rule 5b) or contract run judges its head again."""
     run = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
     if not isinstance(run, Mapping):
         raise Unread(f"run {run_id} is not an object")
     repository = run.get("repository")
     owner = repository.get("full_name") if isinstance(repository, Mapping) else None
-    if owner == repo and run.get("path") in (DEPENDENCY_REVIEW, DCO_CHECK):
+    if owner == repo and run.get("path") == DEPENDENCY_REVIEW:
         if run.get("status") != "completed":
             return Outcome(why=f"run {run_id} is {run.get('status')!r}, not completed")
         return decide_review(get, repo, run, controller_revision, queue)
@@ -2122,11 +2100,11 @@ SWEEP_LIMIT = 100
 #: A poster run woken by a Merge run's completion, or by a contract run's wake, also judges again
 #: this many waiting heads, the oldest waiting verdict first (:attr:`Outcome.sweep`). The schedule
 #: alone is no backstop: in the 24 hours to 2026-10-25 09:47 UTC it fired 7 times of its 144, 110
-#: to 283 minutes apart. Every other run judges its own head alone: a pull request's one push wakes
+#: to 283 minutes apart. Every other run judges its own head alone: a pull request's one push woke
 #: the poster for its dependency review, its sign-off check, CodeQL twice and each gate it starts,
 #: and each of those wakes judged the same oldest heads again, on the job's own token (in the
 #: 2 h 20 min to 09:20 UTC on 2026-11-18, 46 run wakes, 7 of them a Merge run's, at about 120 API
-#: reads a sweep).
+#: reads a sweep). The sign-off check no longer wakes it (#3908).
 WAITING_PER_RUN = 3
 
 #: A waiting verdict older than this is passed over by the sweep beside a run's own head
@@ -2386,7 +2364,6 @@ def decide(
         failing, labels, untaken, through = results_reasons(get, repo, run, excuse=True)
         reasons += failing
         reasons += dependency_review_reasons(get, repo, head)
-        reasons += sign_off_reasons(get, repo, head)
         policy = policy_reading(get, repo, run)
         reasons += policy.reasons
         codeql = codeql_reading(get, repo, head, base)
@@ -2473,7 +2450,6 @@ def decide(
                 else "- the head is behind main, which the merge queue tests it on before it lands"
             ),
             "- its dependency review passed",
-            "- its sign-off check (DCO) passed",
             f"- main's commit-policy check passed on its {policy.commits} commit(s) and its title"
             " (rules 1, 3 and 5), run by this verdict",
             "- CodeQL analysed every language main has, and found no alert it brings",
@@ -3223,7 +3199,7 @@ def decide_queue(
             "- its change is its pull request's own, file by file and line by line",
             "- its message, which is what lands, carries no marker that would start no run on main",
             f"- its pull request's head `{entry.pr_head}` has a green merge verdict, which holds"
-            " its dependency review, its sign-off check and CodeQL",
+            " its dependency review, its commit policy and CodeQL",
             *[f"- {line}, on the tree main would reach" for line in gates.lines],
             *ran,
             f"- {len(records)} job records, their digests in the receipt below",

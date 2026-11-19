@@ -28,13 +28,6 @@ openssl_minimum = "3.6.3"
 # names each checkout that keeps its credentials by a `name:` no other checkout in its job
 # shares. Anything unlisted fails, and an entry that matches nothing fails.
 [[audited_write]]
-workflow = "dco.yml"
-job = "dco"
-permission = "pull-requests: write"
-steps = ["Explain how to fix DCO"]
-reason = "Posts or updates the one comment that names each commit, and the title, that breaks a provenance rule (sign-off, tool marks, skip markers) and how to fix it."
-
-[[audited_write]]
 workflow = "pr-feedback.yml"
 job = "lint-help"
 permission = "pull-requests: write"

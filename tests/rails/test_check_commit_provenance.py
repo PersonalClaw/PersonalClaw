@@ -799,97 +799,16 @@ def test_the_repositorys_maintainers_file_lists_the_squash_merge_identity() -> N
     assert all(len(line.split(">", 1)[1].strip()) > 0 for line in lines), lines
 
 
-# ── dco.yml: the base branch's check, over the API's data, nothing of the candidate run ─────
-
-
-def _workflow(name: str) -> dict:
-    return yaml.safe_load((_WORKFLOWS / name).read_text("utf-8"))
-
-
-def _dco_steps() -> list[dict]:
-    return _workflow("dco.yml")["jobs"]["dco"]["steps"]
-
-
-def _step(steps: list[dict], name: str) -> dict:
-    return next(s for s in steps if s.get("name") == name)
-
-
-# dco.yml's trust shape (trigger, base-only checkout, token in the fetch step alone, no
-# expression in code, the count and the event handed over, the growing fence) is the CI contract
-# row `dco-checks-a-pull-request-with-the-base-branchs-check`, each property with its own plant.
-# What is left here is behaviour: the comment step's own script, run.
-
-
-def _run_the_comment_script(
-    tmp_path: Path, report: str | None, comments: list[dict] | None = None
-) -> list[dict]:
-    """The comment step's own script, run under node with GitHub's client stubbed, against a
-    report file (or none) and the comments already on the pull request. Returns what it would
-    have created or updated, each marked with which."""
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node is not on PATH, so the comment step's script cannot run here")
-    script = _step(_dco_steps(), "Explain how to fix DCO")["with"]["script"]
-    path = tmp_path / "provenance.txt"
-    if report is not None:
-        path.write_text(report, encoding="utf-8")
-    harness = tmp_path / "harness.js"
-    harness.write_text(
-        "const posted = [];\n"
-        f"const existing = {json.dumps(comments or [])};\n"
-        "const github = { paginate: async () => existing, rest: { issues: {\n"
-        "  listComments: () => {},\n"
-        "  createComment: async (a) => posted.push({...a, made: 'created'}),\n"
-        "  updateComment: async (a) => posted.push({...a, made: 'updated'}) } } };\n"
-        "const context = { repo: { owner: 'o', repo: 'r' },\n"
-        "  payload: { pull_request: { number: 7, base: { ref: 'main' } } } };\n"
-        "(async () => {\n" + script + "\n})().then(() => console.log(JSON.stringify(posted)));\n",
-        encoding="utf-8",
-    )
-    done = subprocess.run(
-        [node, str(harness)],
-        env={"PATH": os.environ["PATH"], "REPORT": str(path)},
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert done.returncode == 0, done.stderr
-    return json.loads(done.stdout)
-
-
-def test_the_comment_fences_the_report_with_a_fence_it_cannot_close(tmp_path: Path) -> None:
-    sha = "c" * 40
-    report = f"{sha} rule 1 no `Signed-off-by: A <a@example.org>` line ````` [x](https://x)\n"
-    [posted] = _run_the_comment_script(tmp_path, report)
-    body = posted["body"]
-    assert body.startswith("<!-- dco-help -->")
-    assert "\n``````text\n" + report.strip() + "\n``````\n" in body, body
-    assert "Rule 1:" in body and "Rule 3:" not in body
-
-
-def test_the_comment_updates_only_the_bots_own_marked_comment(tmp_path: Path) -> None:
-    """A person's comment that happens to hold the marker is left alone: the bot posts its own,
-    and on a later run updates only that one."""
-    report = f"{'c' * 40} rule 1 no sign-off\n"
-    person = {"id": 1, "body": "quoting <!-- dco-help --> here", "user": {"type": "User"}}
-    [posted] = _run_the_comment_script(tmp_path, report, [person])
-    assert posted["made"] == "created", posted
-    bot = {"id": 2, "body": "<!-- dco-help --> old", "user": {"type": "Bot"}}
-    [posted] = _run_the_comment_script(tmp_path, report, [person, bot])
-    assert posted["made"] == "updated" and posted["comment_id"] == 2, posted
-
-
-@pytest.mark.parametrize("report", [None, ""], ids=["no-report", "an-empty-report"])
-def test_the_comment_posts_nothing_without_a_report(tmp_path: Path, report: str | None) -> None:
-    assert _run_the_comment_script(tmp_path, report) == []
-
-
 # ── provenance.yml: every push to main, with the previous main commit's check ───────────────
 
 
 # provenance.yml's shape is the CI contract row
 # `provenance-checks-every-main-push-with-mains-previous-check`. What is left here is behaviour:
 # the workflow's own shell, run against a scratch main.
+
+
+def _workflow(name: str) -> dict:
+    return yaml.safe_load((_WORKFLOWS / name).read_text("utf-8"))
 
 
 def _provenance_run() -> tuple[str, dict]:

@@ -31,7 +31,6 @@ _NAME = "PULL_REQUEST_TARGET"
 
 #: The most the tree may run on ``pull_request_target``, each with why. Only ever shrinks.
 ALLOWED: dict[str, str] = {
-    "dco.yml": "the sign-off check, until it moves to pull_request (#3908)",
     "dependency-review.yml": "the dependency review, which the merge verdict reads (#4585)",
 }
 

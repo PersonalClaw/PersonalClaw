@@ -1,4 +1,4 @@
-# DCO — sign-off and commit provenance on every commit in a PR.
+# DCO: sign-off and commit provenance on every commit in a PR, as fast feedback.
 #
 # The rules live in scripts/check_commit_provenance.py, which a push to main also runs
 # (provenance.yml). Here it runs in `pr` mode: rule 1 (a Signed-off-by matching the author),
@@ -6,41 +6,24 @@
 # commit message or the title, that would start no run). Rule 2, the committer list, applies on
 # main only: on a pull request a contributor commits their own work.
 #
-# WHY THIS IS ITS OWN WORKFLOW, not a job in pr.yml.
-# pr.yml runs on `pull_request`. This repo's fork-PR policy is
-# `approval_policy: first_time_contributors_new_to_github`, so a PR from an account new
-# to GitHub runs no workflow until a maintainer clicks "Approve and run". PR #680 (a fork
-# PR with 8 unsigned commits) had ZERO check-runs on its head SHA, and neither it
-# nor #350 ever received the remediation comment below. The check was gated on
-# exactly the contributors most likely to need it, so four contributors in a row
-# learned about DCO in review instead of from CI.
-#
-# `pull_request_target` runs in the BASE repo's context, so it is not subject to
-# that approval gate and reports on a new contributor's first push. It also carries
-# a write-capable token, which the remediation comment needs — a fork PR under
-# `pull_request` gets a read-only token, so that step could not have posted even
-# after approval.
-#
-# SAFETY — `pull_request_target` runs with the base repo's secrets, so it must never
-# execute fork-supplied code (the "pwn request" hole). The one checkout is the BASE branch's
-# copy of the check and MAINTAINERS (no `ref:`, so GitHub checks out the base, and a sparse
-# list of those two files), so a pull request that edits the check is judged by the copy it
-# would replace. The pull request's commits arrive as metadata over the commits API: no fork
-# file and no fork git object is ever on disk, so there is nothing to execute.
-# Do NOT add a checkout of the PR head, or a fetch of its ref, here. `actions/checkout` refuses
-# a fork ref under this trigger anyway, and a step that runs contributor code belongs in pr.yml
-# or merge.yml under `pull_request`, where the first-time-contributor approval gate guards it.
+# It gates nothing. It runs on `pull_request`, so it is the head's own copy, with a read-only
+# token and no secret. The merge verdict runs main's copy of the same check itself, over the same
+# commits API, and that is the gate (tools/ci/merge_controller.py, the sign-off rule). This run
+# only reports sooner, and its log names each commit and rule. The verdict's summary names the fix.
+
 name: DCO
 
 on:
-  pull_request_target:
+  pull_request:
     # `edited`: rule 5 reads the title, so a title edited after the last push is checked again,
     # and removing a marker from it clears the red without a new push.
     types: [opened, edited, synchronize, reopened]
 
-# One in-flight run per PR — a new push supersedes the previous check.
+# One in-flight run per PR — a new push supersedes the previous check. The group is `dco-pr-`,
+# not the `dco-` main's pull_request_target copy ran in: on the pull request that moved it, both
+# copies ran, and in one group each cancelled the other.
 concurrency:
-  group: dco-${{ github.event.pull_request.number }}
+  group: dco-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -52,20 +35,17 @@ jobs:
     # Dependabot is exempt from the sign-off rule, per COMMIT by its author address, not by the
     # run's triggering actor: it still holds after a maintainer pushes a fix onto a dependabot
     # branch, which changes github.actor to a human.
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: write   # post the remediation comment on failure
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
-      # The BASE branch's check and MAINTAINERS, and nothing else. No `ref:` and no
-      # `repository:`: under pull_request_target the default is the base branch, so the copy
-      # that runs is the one already on it. The check reads only the JSON below, never a git
-      # object, so the pull request's commits are not fetched.
+      # The check and MAINTAINERS, and nothing else: the pull request's own copy, as any job of a
+      # pull_request run checks out. The check reads only the JSON below, never a git object.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: |
@@ -73,8 +53,8 @@ jobs:
             MAINTAINERS
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      # The job token reaches one step only: this one, which runs nothing but `gh api`. The check
-      # that parses what the pull request supplied runs in the next step, with no token at all.
+      # The job token, which can only read, reaches one step: this one, which runs nothing but
+      # `gh api`. The check that parses what the pull request supplied runs with no token at all.
       - name: Fetch the pull request's commits
         env:
           GH_TOKEN: ${{ github.token }}
@@ -103,67 +83,3 @@ jobs:
             --expected-head "$HEAD_SHA" \
             --event "$GITHUB_EVENT_PATH" \
             --report "$RUNNER_TEMP/provenance.txt"
-      # On a violation, post the exact fix as a PR comment (find-and-update a single
-      # marked comment, so re-runs don't stack). The buried log line is easy to miss;
-      # contributors need the remediation in the PR conversation. The report holds commit
-      # text, so it is read from the file and fenced, never passed through an output.
-      - name: Explain how to fix DCO
-        # A check that could not run (exit 2) writes no report; the step then posts nothing.
-        if: failure() && steps.verify.outcome == 'failure'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          REPORT: ${{ runner.temp }}/provenance.txt
-        with:
-          script: |
-            const fs = require('fs');
-            if (!fs.existsSync(process.env.REPORT)) return;
-            const report = fs.readFileSync(process.env.REPORT, 'utf8').trim();
-            if (!report) return;
-            const runs = report.match(/`+/g) ?? [];
-            const bar = '`'.repeat(Math.max(2, ...runs.map((r) => r.length)) + 1);
-            const lines = report.split('\n');
-            const has = (rule) => lines.some((l) => l.split(' ')[1] === 'rule' && l.split(' ')[2] === String(rule));
-            // The fence is one backtick longer than the longest run in the report, so no commit
-            // text inside it can close it.
-            const base = context.payload.pull_request.base.ref;
-            const marker = '<!-- dco-help -->';
-            const body = [
-              marker,
-              "### ✍️ This PR's commits need fixing before it can merge",
-              "",
-              "Each line names a commit, the rule it breaks and what was found:",
-              "",
-              bar + "text",
-              report,
-              bar,
-              "",
-              ...(has(1) ? [
-                "**Rule 1: every commit carries a `Signed-off-by` whose name and email match its author.** Sign off every commit and re-push:",
-                "```bash",
-                "git rebase --signoff origin/" + base,
-                "git push --force-with-lease",
-                "```",
-                "For a single commit, `git commit --amend --signoff --no-edit && git push --force-with-lease` also works.",
-                "",
-                "If your author identity is wrong (e.g. a placeholder email), set `git config user.name`/`user.email` to your real GitHub identity first, then rebase with `--signoff --exec 'git commit --amend --no-edit --reset-author'`.",
-                "",
-              ] : []),
-              ...(has(3) ? [
-                "**Rule 3: a maintainer's commit carries no `Co-authored-by`, tool or session trailer, generated-with footer or session link.** Edit the message to remove the line (`git rebase -i origin/" + base + "`, then `reword`), and re-push with `git push --force-with-lease`.",
-                "",
-              ] : []),
-              ...(has(5) ? [
-                "**Rule 5: no commit message and no pull request title carries a marker that tells GitHub to start no workflow run.** Remove it from the title, or reword the commit (`git rebase -i origin/" + base + "`, then `reword`) and re-push with `git push --force-with-lease`.",
-                "",
-              ] : []),
-              "More: [CONTRIBUTING.md → DCO](../blob/" + base + "/CONTRIBUTING.md#developer-certificate-of-origin-dco).",
-            ].join("\n");
-            const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
-            const existing = comments.find(c => c.user && c.user.type === 'Bot' && c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
-            }

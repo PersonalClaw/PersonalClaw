@@ -41,7 +41,9 @@ git commit -s -m "fix(memory): correct recall ordering"
 This appends `Signed-off-by: Your Name <your@email>` (using your git
 `user.name`/`user.email`), certifying you wrote the change or have the right to
 submit it under the project's license. A CI check enforces it on every PR; an
-unsigned commit fails, and so does the merge verdict. If you forget, `git commit --amend -s`
+unsigned commit fails, and so does the merge verdict. Sign off before you open the pull request:
+on your first contribution GitHub runs no check until a maintainer approves the run, so nothing
+tells you about a missing sign-off before then. If you forget, `git commit --amend -s`
 (or `git rebase --signoff`) fixes it. To bring your branch up to date with `main`, use
 **Update with rebase** or rebase locally: GitHub's plain **Update branch** adds a merge commit
 with no sign-off, which fails the check.
