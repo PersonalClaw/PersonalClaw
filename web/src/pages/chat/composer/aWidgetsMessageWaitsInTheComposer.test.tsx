@@ -123,7 +123,7 @@ beforeEach(async () => {
   ;({ AppearanceProvider } = await import('../../../app/appearance'))
 })
 
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
 async function open(text = /Here it is/) {
   render(<AppearanceProvider><ChatPage sub={SESSION} navigate={() => {}} query={{}} setQuery={() => {}} /></AppearanceProvider>)
@@ -351,6 +351,36 @@ describe('a widget\'s message in the chat composer', () => {
   const postFrom = (frame: HTMLIFrameElement, action: string) => act(() => {
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'widget-action', action }, source: frame.contentWindow as MessageEventSource }))
   })
+  /** *close* takes an overlay off the frames, and the pointer, resting where it was, arrives over
+   *  *frame*, which then posts. A browser fires that arrival within a frame of the overlay going,
+   *  where this test first awaits the overlay's exit, and the bridge reads its own clock
+   *  (Date.now) to tell a resting pointer from a move: an arrival more than its 500 ms settle
+   *  after the overlay went is the owner's. So that clock is held from the close to the post, as
+   *  long as the await takes, and *after* ms pass on it between the exit and the arrival. A loaded
+   *  runner once stretched the await past the settle and turned the chip into a fill (#6264). */
+  async function arriveAsItCloses(frame: HTMLIFrameElement, close: () => Promise<void>, after = 0) {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      await close()
+      if (after) vi.advanceTimersByTime(after)
+      act(() => { frame.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+      act(() => { frame.focus(); window.dispatchEvent(new Event('blur')) })
+      postFrom(frame, 'refresh')
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+  /** Over the frames, Something else's confirm, cancelled. */
+  async function aDialogCloses() {
+    let asked: Promise<boolean> = Promise.resolve(false)
+    act(() => { asked = confirm({ title: 'Something else', body: 'b', confirmLabel: 'OK', cancelLabel: 'Cancel' }) })
+    await screen.findByRole('dialog', { name: 'Something else' })
+    return async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      await asked
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Something else' })).toBeNull())
+    }
+  }
 
   it('🔴 offers the second frame\'s message as a chip when the owner presses one frame and then the other', async () => {
     const { sales, notes } = await twoFrames()
@@ -439,17 +469,20 @@ describe('a widget\'s message in the chat composer', () => {
     act(() => { sales.dispatchEvent(new Event('load')) })
     await settle(700)
     // A dialog over the frames goes away; the pointer rests where it was.
-    let asked: Promise<boolean> = Promise.resolve(false)
-    act(() => { asked = confirm({ title: 'Something else', body: 'b', confirmLabel: 'OK', cancelLabel: 'Cancel' }) })
-    await screen.findByRole('dialog', { name: 'Something else' })
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    await asked
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Something else' })).toBeNull())
-    act(() => { sales.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
-    act(() => { sales.focus(); window.dispatchEvent(new Event('blur')) })
-    postFrom(sales, 'refresh')
+    await arriveAsItCloses(sales, await aDialogCloses())
     await chipped('Sales')
     expect(composerText()).not.toContain('[UI] refresh')
+  })
+
+  it('fills the composer from a frame the pointer arrives over a while after a dialog closed', async () => {
+    render(<DialogHost />)
+    const { sales } = await twoFrames()
+    act(() => { sales.dispatchEvent(new Event('load')) })
+    await settle(700)
+    // The frames came to rest once the dialog went; the pointer moving onto one is the owner's.
+    await arriveAsItCloses(sales, await aDialogCloses(), 600)
+    await landed('[UI] refresh')
+    expect(screen.queryByTestId('widget-suggestion')).toBeNull()
   })
 
   it('🔴 offers as a chip the message of a frame the prompt palette just closed over', async () => {
@@ -461,11 +494,10 @@ describe('a widget\'s message in the chat composer', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Saved prompts/ }))
     const palette = await screen.findByRole('dialog', { name: 'Insert a prompt' })
     await settle(700)
-    fireEvent.click(within(palette).getByRole('button', { name: 'Close' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Insert a prompt' })).toBeNull())
-    act(() => { sales.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
-    act(() => { sales.focus(); window.dispatchEvent(new Event('blur')) })
-    postFrom(sales, 'refresh')
+    await arriveAsItCloses(sales, async () => {
+      fireEvent.click(within(palette).getByRole('button', { name: 'Close' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Insert a prompt' })).toBeNull())
+    })
     await chipped('Sales')
     expect(composerText()).not.toContain('[UI] refresh')
   })
