@@ -298,7 +298,7 @@ no workflow calls it yet.
 ### The merge controller's poster
 
 `.github/workflows/merge-verdict.yml` posts `merge-verdict` on a head each time a Merge run
-(`merge.yml`), a Dependency review run or a run of a gate (`nix.yml`,
+(`merge.yml`) or a run of a gate (`nix.yml`,
 `action-pins.yml`, `release-image-tooling.yml`) completes, or code scanning's CodeQL check
 does. It is a `workflow_run` listener, so GitHub
 runs main's copy of it and of
@@ -476,22 +476,17 @@ verdict says all it must fix:
   A listed job `verdict.listed_job` refuses, two such notices, or annotations that can't be read
   are unread, so red. A queue commit's run excuses nothing: its attempt-1 red is its posted
   verdict, so its entry is queued again.
-- **The dependency review (#4585 step 6):** the newest `pull_request_target` run of
-  `dependency-review.yml` on the head, `main`'s copy, concluded `success`. One that has not run,
-  is still running or did not pass is red. The poster also follows Dependency review: when one
-  completes, it judges that head again from the head's own completed Merge run (and, for a head
-  that changes a definition, its contract run). So they finish in any order.
-- **The dependency review, by main's own read:** the poster also reads the dependency graph's
-  comparison of `main`'s tip with the head itself, both by sha and three dots, so only the head's
-  own changes count. It judges it by the action's rule with core's settings, its defaults: an
-  added package version with a known vulnerability of any severity, in the runtime scope, is red,
-  and so is one in any other scope but development (one the graph does not know, or a new one),
-  which fails closed. A red names each package, where it is added and its advisories in a fenced
-  block in its summary, and none of that text in its title. An answer that is not a list of
+- **The dependency review, by main's own read (#4585 step 6):** the poster reads the dependency
+  graph's comparison of `main`'s tip with the head itself, both by sha and three dots, so only the
+  head's own changes count. It judges it by the action's rule with core's settings, its defaults:
+  an added package version with a known vulnerability of any severity, in the runtime scope, is
+  red, and so is one in any other scope but development (one the graph does not know, or a new
+  one), which fails closed. A red names each package, where it is added and its advisories in a
+  fenced block in its summary, and none of that text in its title. An answer that is not a list of
   entries, a 404 (the graph off, or not yet built for the head) and a read refused on every try
   are red, never read as no change.
-  `dependency-review.yml` moves to `pull_request` before 2026-12-02, when GitHub's default policy
-  stops `pull_request_target` runs in public repositories; until it does, both count.
+  `dependency-review.yml` runs the head's copy of the action on `pull_request`, as feedback, and
+  its run is never read (#3908).
 - **The commit policy, by main's own check (#3908):** the poster runs `main`'s
   `scripts/check_commit_provenance.py` itself, in `pr` mode (rules 1, 3 and 5, with `main`'s
   `MAINTAINERS`, both from its own checkout), over the pull request's commits as the commits API
@@ -531,8 +526,8 @@ verdict says all it must fix:
   none). The filter is read as GitHub reads it (`workflows.filter_matches`), and one with a pattern
   beyond `*`, a last `**` and plain paths, or a `pull_request` filtered by more than its paths, is
   unread, so red. A run still going is a red that waits, its fence word the gate's file. Its
-  completion wakes the poster, which judges the head again from its Merge run, as a Dependency
-  review run's does. A gate's red is flake-class only when each of its red jobs was cancelled before
+  completion wakes the poster, which judges the head again from its Merge run. A gate's red is
+  flake-class only when each of its red jobs was cancelled before
   its bound or failed at a step that fetches only outside inputs (GitHub's set-up, the checkout, the
   Nix installer), so the retry note (above) reads it as one a retry may clear; not so for a head
   that changes the gate's workflow or a local action, since its run takes those steps from the head;
@@ -615,7 +610,7 @@ verdict says all it must fix:
   request's head. The schedule, a dispatch of the poster on `main` (a contract run's wake, never
   off `main`) and a completed dispatch off `main` (a contract run, a dispatch proof) always do. A
   pull request's wakes, code scanning's CodeQL check, a completed run of a pull request (its own
-  Merge run, its dependency review, a gate's, CodeQL's on `refs/pull/*`) and a
+  Merge run, a gate's, CodeQL's on `refs/pull/*`) and a
   pull request's own Merge run starting do only while the repository variable `MERGE_VERDICT_LIVE`
   is `true`. It is `false` until #3915's flip
   runs merge.yml on pull requests, because until then a head has no Merge run to judge, and the
@@ -710,9 +705,10 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
   request runs main's copy of a `pull_request_target` workflow and its head's copy of a
   `pull_request` one, so a workflow moved off `pull_request_target` runs from both trees on the
   pull request that moves it. On PersonalClaw/PersonalClawApps#554 each moved workflow's two copies
-  shared a group and the head's runs were cancelled, so dco.yml moved into `dco-pr-<number>`, and a
-  test beside the row reads main's tree as well as the head's: `tools.ci contract` runs the rails
-  with main's pytest settings, so the settings' folder is main's.
+  shared a group and the head's runs were cancelled, so dco.yml and dependency-review.yml moved
+  into `dco-pr-<number>` and `dependency-review-pr-<number>`, and a test beside the row reads
+  main's tree as well as the head's: `tools.ci contract` runs the rails with main's pytest
+  settings, so the settings' folder is main's.
 
 Main's `tools/ci` now reads a pull request's catalogue (see "Main's copy reads a pull request's
 catalogue" under "The catalogue"), and these rows still run in the candidate's own suite. A
@@ -3887,14 +3883,13 @@ repositories audit, and the images' OS packages, which need a scanner of their o
 
 ### Dependency review
 
-`.github/workflows/dependency-review.yml` runs on `pull_request_target`, so GitHub takes it from
-`main` and a pull request cannot edit what reviews it. It holds `contents: read` and no
-checkout: `actions/dependency-review-action` reads the pull request's base and head commits from
-the event and asks the dependency-graph API to compare them, and it fails on a dependency the
-pull request adds, or moves to, with a known vulnerability. It is not a required check; with
-CodeQL's default setup, which lives in the repository settings out of a candidate's reach, it
-is an input of the one required `merge-verdict` (#3910). The apps and the website run the
-same workflow.
+`.github/workflows/dependency-review.yml` runs on `pull_request`, as feedback: it is the head's
+own copy, and gates nothing (#3908). It holds `contents: read` and no checkout:
+`actions/dependency-review-action` reads the pull request's base and head commits from the event
+and asks the dependency-graph API to compare them, and it fails on a dependency the pull request
+adds, or moves to, with a known vulnerability. The gate is the one required `merge-verdict`,
+which reads the same comparison itself by the same rule (see "The merge controller's poster"),
+so a pull request cannot edit what reviews it. The apps and the website run the same workflow.
 
 ### Nothing throws an exit status away unseen
 

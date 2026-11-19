@@ -91,16 +91,15 @@ GATES: tuple[Gate, ...] = (
 #: ``Run actions/checkout@<sha>``.
 OUTSIDE_PREFIXES: tuple[str, ...] = ("Run actions/checkout@",)
 
-#: The workflows a pull request's events start that the merge verdict reads itself: the merge
-#: tier's run and the dependency review.
-READ: tuple[str, ...] = (MERGE, "dependency-review.yml")
+#: The workflows a pull request's events start whose runs the merge verdict reads: the merge tier's.
+READ: tuple[str, ...] = (MERGE,)
 
 #: The workflows that run on ``pull_request_target``: main's copy, with a token that can write,
 #: started by a pull request's events. GitHub's default policy stops such runs in public
 #: repositories from 2026-12-02, so each moves off it (#3908). A rail holds this to exactly the
 #: workflows that run on it, and to no more than the rail's own list, which only shrinks. The rail
 #: reads it as a literal, so it stays a literal tuple of file names, assigned once.
-PULL_REQUEST_TARGET: tuple[str, ...] = ("dependency-review.yml",)
+PULL_REQUEST_TARGET: tuple[str, ...] = ()
 
 #: Every other workflow a pull request's events start, and why the merge verdict needs no run of it.
 NOT_GATING: dict[str, str] = {
@@ -110,6 +109,7 @@ NOT_GATING: dict[str, str] = {
     ),
     "cancel-closed-pr-runs.yml": "it runs only when a pull request closes, and judges no head",
     "dco.yml": "fast feedback only: the verdict runs main's copy of the same check itself",
+    "dependency-review.yml": "feedback only: the verdict reads the dependency graph itself",
 }
 
 #: A filter pattern this reads as GitHub does: path segments of word characters, ``.`` and ``-``,

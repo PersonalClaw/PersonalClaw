@@ -29,10 +29,9 @@ _WORKFLOWS = REPO / ".github" / "workflows"
 _LIST = REPO / "tools" / "ci" / "workflows.py"
 _NAME = "PULL_REQUEST_TARGET"
 
-#: The most the tree may run on ``pull_request_target``, each with why. Only ever shrinks.
-ALLOWED: dict[str, str] = {
-    "dependency-review.yml": "the dependency review, which the merge verdict reads (#4585)",
-}
+#: The most the tree may run on ``pull_request_target``, each with why. Only ever shrinks, and holds
+#: nothing since the dependency review moved off it.
+ALLOWED: dict[str, str] = {}
 
 
 def events(text: str) -> set[str]:

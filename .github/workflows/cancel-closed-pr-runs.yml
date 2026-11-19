@@ -19,7 +19,7 @@
 # `github.sha` is the merge commit, so a key read from either would name main's run of that
 # commit. Each key here is what that workflow's key evaluated to on the pull request's own runs:
 # Each keys on the pull request's number: pr.yml, merge.yml, the merge verdict's gates (Nix,
-# Action pins, Release image tooling) and dco.yml.
+# Action pins, Release image tooling), dco.yml and dependency-review.yml.
 # tests/rails/test_ci_contract.py evaluates both, for every workflow that runs on `pull_request`, and
 # holds them equal, merged or not, from this repository or a fork.
 #
@@ -104,6 +104,18 @@ jobs:
     timeout-minutes: 5
     concurrency:
       group: dco-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+
+  dependency-review:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    timeout-minutes: 5
+    concurrency:
+      group: dependency-review-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
       - name: Runner identity
