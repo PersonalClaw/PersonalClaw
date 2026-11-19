@@ -755,7 +755,7 @@ def _carry(
     """The artifact a previous run of ``carrier``'s workflow uploaded (the weekly one unless it
     says otherwise): upload-artifact's archive, holding the one window archive the fetch built
     (``members``, or that archive as it is), and ``beside`` it whatever else the artifact holds."""
-    name, path, _ = fetch.CARRIES[carrier]
+    name, path, _, _ = fetch.CARRIES[carrier]
     own = {
         "id": 77,
         "path": path,
@@ -1117,7 +1117,7 @@ def test_each_carry_trusts_only_its_own_workflows_run(
     dispatched run on main; the same name uploaded by the other workflow's run is refused, and
     the window refills from the record."""
     gh = _gh_with_three_histories()
-    name, _, _ = fetch.CARRIES[carrier]
+    name, _, _, _ = fetch.CARRIES[carrier]
     _carry(gh, _carried_two(), carrier=carrier, path=fetch.CARRIES[uploader][1])
     assert gh.carried[0]["name"] == name
     out = tmp_path / "window"
@@ -1140,6 +1140,41 @@ def test_a_carry_the_table_does_not_name_is_refused(tmp_path: Path) -> None:
         f"{telemetry.WORKFLOWS}/flaky-tests.yml",
     )
     assert fetch.CARRIES["flake-report"][:2] == (fetch.CARRY, fetch.FLAKE_REPORT_PATH)
+
+
+@pytest.mark.parametrize(
+    ("carrier", "event", "kept"),
+    [
+        pytest.param("flaky-tests", "workflow_run", True, id="the-daily-runs-chained-run"),
+        pytest.param("flake-report", "workflow_run", False, id="a-chained-run-of-the-weekly"),
+        pytest.param("flaky-tests", "pull_request", False, id="a-pr-run-of-the-daily"),
+        pytest.param("flake-report", "pull_request", False, id="a-pr-run-of-the-weekly"),
+        pytest.param("flaky-tests", "schedule", True, id="the-daily-runs-cron-run"),
+        pytest.param("flaky-tests", "workflow_dispatch", True, id="the-daily-runs-dispatch"),
+    ],
+)
+def test_each_carry_trusts_the_events_its_own_workflow_runs_on(
+    tmp_path: Path, carrier: str, event: str, kept: bool
+) -> None:
+    """The daily flaky-tests run after CI telemetry's scheduled run is started by
+    ``workflow_run``, so its window is kept by the next run, the cron one; the weekly report runs
+    on no ``workflow_run``, so one is refused for it, and a pull request's run is refused for
+    both. Without the first, the cron run after a chained one refills all 15 days."""
+    gh = _gh_with_three_histories()
+    _carry(gh, _carried_two(), carrier=carrier, event=event)
+    out = tmp_path / "window"
+    got = _fetch(gh, out, carrier=carrier)
+    if kept:
+        assert (got.carried, got.fetched) == (2, 1), _status(out)
+        assert _status(out)["carry"].startswith("kept: "), _status(out)
+    else:
+        assert (got.carried, got.fetched) == (0, 3), _status(out)
+        assert _status(out)["carry"].startswith("refused: "), _status(out)
+
+
+def test_the_weekly_carry_trusts_its_schedule_and_a_dispatch_and_the_daily_also_a_chained_run():
+    assert fetch.CARRIES["flake-report"][3] == {"schedule", "workflow_dispatch"}
+    assert fetch.CARRIES["flaky-tests"][3] == {"schedule", "workflow_dispatch", "workflow_run"}
 
 
 def test_a_carried_history_that_aged_out_of_the_window_is_neither_dropped_nor_refused(

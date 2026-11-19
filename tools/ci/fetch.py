@@ -34,8 +34,10 @@ job token's, which GitHub allows 1,000 an hour for the whole repository. So the 
 carries the window it built to its next run as one artifact, and the daily flaky-tests workflow
 carries its 15 days to its next day's run the same way, each under its own name
 (:data:`CARRIES`, ``--carry``). The next run reads the uploading run through the API, by the id
-the artifact names, and takes the window only when that run is the carry's own workflow's
-scheduled or dispatched run on main; anything else is ignored, and the window refills from the
+the artifact names, and takes the window only when that run is the carry's own workflow's run
+on main, started by an event the carry trusts: its schedule or a dispatch, and for flaky-tests
+also CI telemetry's scheduled run finishing (``workflow_run``, which runs main's own file);
+anything else is ignored, and the window refills from the
 record within the budget, the status saying why. Every carried history is then checked again as a
 fetched one is: its collector run, which :data:`MANIFEST` names, must still be listed as the
 collector's own, and its own run must be shown. One that fails, or whose manifest entry is not in
@@ -77,17 +79,36 @@ from typing import IO, Any
 
 from . import report, telemetry
 
+#: The events whose run of the weekly report is trusted to have uploaded its window: its schedule
+#: and a dispatch, each on main.
+CARRY_EVENTS = frozenset({"schedule", "workflow_dispatch"})
+#: The daily flaky-tests run's: those, and ``workflow_run``. Its run after CI telemetry's
+#: scheduled run is started that way, and a ``workflow_run`` run is always the default branch's
+#: own file, so main's code; :func:`telemetry.own_run` still holds it to the workflow's path, main
+#: and this repository. Without it the cron run after a chained one would refuse the chained run's
+#: window and refill all 15 days: about 740 histories, twice the token's hourly calls.
+DAILY_CARRY_EVENTS = CARRY_EVENTS | {"workflow_run"}
 #: The windows a workflow carries to its own next run, by the name ``--carry`` gives: the
-#: artifact it is carried in, the one workflow whose own scheduled or dispatched run on main is
-#: trusted to have uploaded it, and what the status calls that run. Fixed here and never read from
-#: the command line, so no run can point the fetch at another workflow's artifact.
-CARRIES: dict[str, tuple[str, str, str]] = {
-    "flake-report": ("flake-report-window", f"{telemetry.WORKFLOWS}/flake-report.yml", "weekly"),
-    "flaky-tests": ("flaky-tests-window", f"{telemetry.WORKFLOWS}/flaky-tests.yml", "daily"),
+#: artifact it is carried in, the one workflow whose own run on main is trusted to have uploaded
+#: it, what the status calls that run, and the events that run may have been started by. Fixed
+#: here and never read from the command line, so no run can point the fetch at another
+#: workflow's artifact, or widen what it trusts.
+CARRIES: dict[str, tuple[str, str, str, frozenset[str]]] = {
+    "flake-report": (
+        "flake-report-window",
+        f"{telemetry.WORKFLOWS}/flake-report.yml",
+        "weekly",
+        CARRY_EVENTS,
+    ),
+    "flaky-tests": (
+        "flaky-tests-window",
+        f"{telemetry.WORKFLOWS}/flaky-tests.yml",
+        "daily",
+        DAILY_CARRY_EVENTS,
+    ),
 }
 #: The weekly report's carry, the default.
-CARRY, FLAKE_REPORT_PATH, _ = CARRIES["flake-report"]
-CARRY_EVENTS = frozenset({"schedule", "workflow_dispatch"})
+CARRY, FLAKE_REPORT_PATH = CARRIES["flake-report"][:2]
 #: The window: one stored archive of collector archives, and the file naming where each came from.
 WINDOW = "window.zip"
 MANIFEST = "fetched.json"
@@ -429,8 +450,9 @@ def _carried_artifact(
 ) -> Path | None:
     """The artifact ``carrier``'s workflow's own last run carried, downloaded, or None (and why,
     in ``got.carry``). The uploading run is read through the API by the id the artifact names, and
-    only that workflow's own scheduled or dispatched run on main is trusted, never a name."""
-    carry, workflow, called = CARRIES[carrier]
+    only that workflow's own run on main, started by an event the carry trusts, is trusted, never
+    a name."""
+    carry, workflow, called, events = CARRIES[carrier]
     listed = _json(
         text("api", f"repos/{repo}/actions/artifacts?name={carry}&per_page=100"),
         "the carried window",
@@ -445,10 +467,10 @@ def _carried_artifact(
     newest = max(candidates, key=lambda a: (str(a.get("created_at") or ""), int(a["id"])))
     uploader = newest["workflow_run"]["id"]
     run = _json(text("api", f"repos/{repo}/actions/runs/{uploader}"), "its run")
-    if not telemetry.own_run(run, repo, workflow, CARRY_EVENTS):
+    if not telemetry.own_run(run, repo, workflow, events):
         got.carry = (
             f"refused: artifact {newest['id']} was uploaded by run {uploader}, which is not this "
-            "workflow's own scheduled or dispatched run on main"
+            f"workflow's own run on main of {', '.join(sorted(events))}"
         )
         return None
     path = scratch / "carried.zip"
