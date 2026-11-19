@@ -50,8 +50,14 @@ def _served(app: web.Application) -> set[tuple[str, str]]:
 
 
 @pytest.fixture(scope="module")
-def served() -> set[tuple[str, str]]:
-    return _served(gateway_routes())
+def served(tmp_path_factory) -> set[tuple[str, str]]:
+    """The routes, built once for the module in a home of its own. A module's fixture is set up
+    before any test's, the suite's per-test home included, so registering the routes here asked
+    for the unchosen home, which is the real one: under a random order nothing earlier in the
+    process had made one, and the real-home guard refused its folder."""
+    with pytest.MonkeyPatch.context() as env:
+        env.setenv("PERSONALCLAW_HOME", str(tmp_path_factory.mktemp("device-scope-home")))
+        return _served(gateway_routes())
 
 
 def test_every_route_in_a_scoped_family_has_a_row(served) -> None:
