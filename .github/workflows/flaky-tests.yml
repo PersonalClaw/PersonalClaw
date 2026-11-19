@@ -14,32 +14,48 @@
 # workflow's account opened, and a body holds the test's id, its counts and its runs' links,
 # never a log line.
 #
-# It carries the window it fetched to its next day's run (`flaky-tests-window`, kept 3 days). The
-# next run takes it only when this workflow's own scheduled or dispatched run on main uploaded it
-# (tools/ci/fetch.py, CARRIES), checks every history in it again, and fetches only the collector
-# runs it does not hold: about 25 a day, where 15 days fetched afresh were about 740 histories
-# and twice the token's hourly calls.
+# It carries the window it fetched to its next run (`flaky-tests-window`, kept 3 days). The next
+# run takes it only when this workflow's own run on main uploaded it, started by its schedule, a
+# dispatch or CI telemetry's run (tools/ci/fetch.py, CARRIES), checks every history in it again,
+# and fetches only the collector runs it does not hold: about 25 a day, where 15 days fetched
+# afresh were about 740 histories and twice the token's hourly calls.
 #
-# A workflow of its own, so the collector (ci-telemetry.yml) holds no write. Its own schedule
-# slot, daily at 11:23 UTC, after the collector's daily run and clear of every other workflow's.
+# A workflow of its own, so the collector (ci-telemetry.yml) holds no write. It runs minutes after
+# the collector's daily run, CI telemetry's scheduled one, finishes green on main (#5850), however
+# late GitHub fires that, rather than waiting on a second late cron of its own: GitHub started
+# the scheduled workflows here 283-335 min late (the median, 2026-10-21..26). Its own cron stays as
+# the fallback, in its own slot, daily at 11:23 UTC, after the collector's and clear of every
+# other workflow's; on a day the chained run ran, the cron run fetches only the histories since.
 name: Flaky tests
 
 on:
   schedule:
     - cron: "23 11 * * *"  # daily, 11:23 UTC
   workflow_dispatch:
-
-# One run at a time, never cancelled: a second would list the same issues and open a test's twice.
-concurrency:
-  group: flaky-tests
-  cancel-in-progress: false
+  # CI telemetry's scheduled run finishing (#5850): every run of it on main starts one here,
+  # and the job skips all but the scheduled one, finished green.
+  workflow_run:
+    workflows: ["CI telemetry"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
   flaky-tests:
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: >-
+      ${{ github.ref == 'refs/heads/main'
+      && (github.event_name != 'workflow_run'
+          || (github.event.workflow_run.event == 'schedule'
+              && github.event.workflow_run.head_branch == 'main'
+              && github.event.workflow_run.conclusion == 'success')) }}
+    # One run at a time, never cancelled: a second would list the same issues and open a
+    # test's twice. The job's group, not the workflow's: a skipped run joins no group, and a
+    # run queued in the workflow's would cancel the one pending there.
+    concurrency:
+      group: flaky-tests
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     # The carried window down and up (about 0.4 GB), and the day's new histories, two calls and one
     # download each. A run with no carried window lists every collector run of the 15 days.
