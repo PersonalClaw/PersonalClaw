@@ -6,9 +6,9 @@ import { act, render } from '@testing-library/react'
 // `docs/design/buddy/decisions/rig.md`, "The quiet re-measure": with the orb capped at 30 frames a
 // second, the motion library still moved the pose's values on every frame the display drew while a
 // change ran, so the 60 s loop drew about 3,030 frames at 120 Hz and 1,660 at 60 Hz, and neither
-// candidate passed the animating CPU bar at 120 Hz. The pose's values, and the claw ring's morph
-// into the new state, now step on the orb's capped clock: a change asks for at most the buddy's
-// frames a second, whatever the display offers.
+// candidate passed the animating CPU bar at 120 Hz. The halftone's morph into the new state now
+// steps on the orb's capped clock: a change asks for at most the buddy's frames a second, whatever
+// the display offers.
 //
 // The motion library captures `requestAnimationFrame` when it loads, so the counter is installed
 // before anything imports it. The display is simulated: at each refresh the timers due by then

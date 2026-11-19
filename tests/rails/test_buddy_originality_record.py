@@ -14,6 +14,9 @@ test:
 - each transition that ships in v0.3.0 (``motion.md``'s Transitions table), and the play and drop
   transitions of its later work;
 - the notification treatment: its icon, its line, what a tap does;
+- the halftone orb the buddy draws (round 6, ``docs/design/agent-orb.md``): each of the agent orb's
+  twenty states, but for the four its plate judges with it, and the plate, the small forms, the
+  morph and the desktop buddy's disc;
 - the sound event map (``sound.md``), the portable export and the bridges, all later work.
 
 The record ends with the maintainer's dated sign-off.
@@ -29,6 +32,7 @@ from rails_repo import REPO
 
 ROOT = REPO
 DESIGN = ROOT / "docs" / "design" / "buddy"
+AGENT_ORB = ROOT / "docs" / "design" / "agent-orb.md"
 RECORD = DESIGN / "decisions" / "originality.md"
 
 VERDICTS = {"distinct", "changed", "pending"}
@@ -38,6 +42,12 @@ LATER_TASKS = ("#3894", "#3895", "#3900", "#3903", "PersonalClawApps#164")
 CHARACTER = ("outline", "badge", "wash", "poses", "gestures", "presence", "whole-orb")
 FAMILIES = ("quiet", "active", "waiting", "blocked")
 NOTIFICATION = ("icon", "line", "tap")
+#: The halftone's forms that are no one state: the plate the five plate states share, the small
+#: forms at 20 and 12 px, the morph between two states, and the desktop buddy's disc.
+HALFTONE_FORMS = ("plate", "small-forms", "morph", "desktop-disc")
+#: The plate states whose drawing is the orb's pose and its mark on the plate, judged by the
+#: plate's row. Done has a row of its own, for its swirl and bump.
+PLATE_JUDGED = ("needs-your-ok", "asks-you", "error", "offline")
 
 
 def slug(text: str, words: int = 6) -> str:
@@ -63,15 +73,20 @@ def table_after(text: str, heading: str) -> list[list[str]]:
     return rows[2:]
 
 
-def shipping_elements(design: Path = DESIGN) -> set[str]:
+def shipping_elements(design: Path = DESIGN, orb: Path = AGENT_ORB) -> set[str]:
     surfaces = (design / "surfaces.md").read_text(encoding="utf-8")
     motion = (design / "motion.md").read_text(encoding="utf-8")
+    states = {
+        slug(r[0]) for r in table_after(orb.read_text(encoding="utf-8"), "## The twenty states")
+    }
     out = {f"character.{a}" for a in CHARACTER}
     out |= {f"layout.{slug(r[0])}" for r in table_after(surfaces, "## The room budget")}
     out |= {"layout.docked-notch", "layout.docked-plain"}
     out |= {f"family.{f}" for f in FAMILIES}
     out |= {f"transition.{slug(r[0])}" for r in table_after(motion, "## Transitions")}
     out |= {f"notification.{n}" for n in NOTIFICATION}
+    out |= {f"halftone.{s}" for s in sorted(states - set(PLATE_JUDGED))}
+    out |= {f"halftone.{f}" for f in HALFTONE_FORMS}
     return out
 
 
@@ -88,7 +103,8 @@ def later_elements(design: Path = DESIGN) -> set[str]:
 
 
 def record_rows(text: str) -> dict[str, list[tuple[str, str, str]]]:
-    """Each section's rows, ``(id, verdict, the rest)``, keyed ``ships`` or ``later``."""
+    """Each section's rows, ``(id, verdict, the rest)``, keyed ``ships`` (every part titled
+    "Ships ...") or ``later``."""
     sections: dict[str, list[tuple[str, str, str]]] = {"ships": [], "later": []}
     current: str | None = None
     for line in text.splitlines():
@@ -96,7 +112,7 @@ def record_rows(text: str) -> dict[str, list[tuple[str, str, str]]]:
             title = line[3:].strip().lower()
             current = (
                 "ships"
-                if title.startswith("ships in v0.3.0")
+                if title.startswith("ships ")
                 else "later" if title.startswith("later work") else None
             )
             continue
@@ -123,7 +139,7 @@ def problems(text: str, ships: set[str], later: set[str]) -> list[str]:
     shipped = {rid for rid, _, _ in rows["ships"]}
     later_ids = {rid for rid, _, _ in rows["later"]}
     for rid in sorted(ships - shipped):
-        out.append(f"{rid} ships in v0.3.0 and has no row in the shipping part")
+        out.append(f"{rid} ships and has no row in a shipping part")
     for rid in sorted(later - later_ids - shipped):
         out.append(f"{rid} is later work and has no row")
     for rid in sorted((shipped | later_ids) - ships - later):
@@ -133,7 +149,7 @@ def problems(text: str, ships: set[str], later: set[str]) -> list[str]:
             out.append(f"{rid}: verdict {verdict!r} is not one of {sorted(VERDICTS)}")
     for rid, verdict, _ in rows["ships"]:
         if verdict == "pending":
-            out.append(f"{rid} ships in v0.3.0 and reads pending")
+            out.append(f"{rid} ships and reads pending")
     for rid, verdict, rest in rows["later"]:
         if verdict == "pending" and not any(task in rest for task in LATER_TASKS):
             out.append(f"{rid} reads pending and names no task that resolves it")
@@ -147,8 +163,10 @@ def problems(text: str, ships: set[str], later: set[str]) -> list[str]:
 def test_the_record_holds_every_element_and_the_maintainer_signed_it():
     ships, later = shipping_elements(), later_elements()
     # 39 since the three top-edge rooms and the floating orb became one orb and its two
-    # cards (#5216).
-    assert len(ships) >= 36, f"vacuity floor: the shipping elements read {len(ships)}"
+    # cards (#5216), and 59 with the halftone's 16 states and 4 forms.
+    assert len(ships) >= 56, f"vacuity floor: the shipping elements read {len(ships)}"
+    halftone = sum(e.startswith("halftone.") for e in ships)
+    assert halftone == 20, f"the agent orb's states were misread: {halftone} halftone elements"
     assert len(later) >= 15, f"vacuity floor: the later elements read {len(later)}"
     assert problems(RECORD.read_text(encoding="utf-8"), ships, later) == []
 
@@ -231,7 +249,20 @@ def test_a_transition_added_without_a_row_fails(tmp_path):
     found = problems(
         RECORD.read_text(encoding="utf-8"), shipping_elements(design), later_elements(design)
     )
-    assert "transition.shimmer ships in v0.3.0 and has no row in the shipping part" in found
+    assert "transition.shimmer ships and has no row in a shipping part" in found
+
+
+def test_a_halftone_state_added_without_a_row_fails(tmp_path):
+    orb = tmp_path / "agent-orb.md"
+    text = AGENT_ORB.read_text(encoding="utf-8")
+    rule = "|---|---|---|---|\n"
+    first = text.index(rule, text.index("## The twenty states")) + len(rule)
+    planted = "| Juggling | a planted state | one toss per 1 s | alive |\n"
+    orb.write_text(text[:first] + planted + text[first:], encoding="utf-8")
+    found = problems(
+        RECORD.read_text(encoding="utf-8"), shipping_elements(orb=orb), later_elements()
+    )
+    assert "halftone.juggling ships and has no row in a shipping part" in found
 
 
 def test_a_pending_shipping_row_fails():
@@ -239,7 +270,7 @@ def test_a_pending_shipping_row_fails():
         "| `transition.peek-in` | the orb slides down | distinct |",
         "| `transition.peek-in` | the orb slides down | pending |",
     )
-    assert "transition.peek-in ships in v0.3.0 and reads pending" in problems(
+    assert "transition.peek-in ships and reads pending" in problems(
         fixture(ships, GOOD_LATER), FIXTURE_SHIPS, FIXTURE_LATER
     )
 
@@ -253,9 +284,7 @@ def test_a_later_row_naming_no_task_fails():
 
 def test_a_later_section_moved_into_the_shipping_part_fails():
     moved = fixture(GOOD_SHIPS + GOOD_LATER, "")
-    assert "play.greeting ships in v0.3.0 and reads pending" in problems(
-        moved, FIXTURE_SHIPS, FIXTURE_LATER
-    )
+    assert "play.greeting ships and reads pending" in problems(moved, FIXTURE_SHIPS, FIXTURE_LATER)
 
 
 def test_an_unsigned_record_fails():

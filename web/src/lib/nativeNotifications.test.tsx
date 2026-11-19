@@ -34,7 +34,7 @@ vi.mock('./useChatSocket', () => ({
 const waiting = vi.fn()
 vi.mock('./api', async (orig) => ({ ...(await orig<Record<string, unknown>>()), api: { waiting: () => waiting() } }))
 const painted: string[] = []
-vi.mock('../ui/buddy/paintOrb', () => ({
+vi.mock('../ui/buddy/stillOrbPng', () => ({
   stillOrbPng: (state: string) => { painted.push(state); return `data:image/png;base64,${state}` },
 }))
 

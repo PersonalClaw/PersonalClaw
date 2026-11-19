@@ -41,8 +41,8 @@ with its ×, and then goes; after that, with no turn running, nothing on the pag
   the words' ink, `--color-on-surface`, and in forced colours everything takes the system's text
   colour. Every state keeps its own shape, and each mark its own glyph.
 - The form and its painter are the project's own code, and no package draws either orb. The desktop
-  buddy's orb (`web/src/ui/BuddyOrb.tsx`) still draws the claw ring until it moves to the halftone
-  ([`buddy/character.md`](buddy/character.md#the-poses)).
+  buddy's orb (`web/src/ui/BuddyOrb.tsx`) is this halftone, through the same painter
+  ([`buddy/character.md`](buddy/character.md#the-poses)), on a disc of its own on the desktop.
 
 ## The form
 
@@ -159,9 +159,10 @@ shape alone.
 |---|---|---|
 | a sidebar row, a project's chat row (`ORB_STATE_OF_PIP`) | running, waiting, failed, unread | thinking, needs your OK, error, done |
 | Home's agent rows (`ORB_STATE_OF_AGENT_ROW`) | working, blocked, waiting, failed, interrupted, idle | thinking, thinking, needs your OK, error, error, ready |
-| the tray's six stills (`desktop/trayPresence.js`'s `TRAY_STILLS`) | idle, working, needs-you, error, listening, offline | ready, thinking (the lit orb with its ripple, the one still that reads as at work at 18 px), needs your OK, error, recording (the dense dot in its ring of ticks, which a template image draws by shape alone), offline |
+| the tray's six stills (`desktop/trayPresence.js`'s `TRAY_STILLS`) | idle, working, needs-you, error, listening, offline | ready, running a command (decided on the maintainer's delegation, 2026-11-17, "Decide yourself.": its stream and output lines, which a template image tells from ready's sphere by shape alone, where thinking's ripple, the earlier mapping, is only a colour), needs your OK, error, recording (the dense dot in its ring of ticks, which a template image draws by shape alone), offline |
 
-The tray's stills move to the halftone with the buddy.
+The buddy draws the same states, but for its listening, the recording dot, and its restart, retrying
+(`web/src/ui/buddy/buddyHalftone.ts`, [`buddy/character.md`](buddy/character.md#the-poses)).
 
 ## Behaviour
 
@@ -228,8 +229,7 @@ The tray's stills move to the halftone with the buddy.
   the resting sphere, in the shared state tokens with the state's words beside it.
 - **The buddy card's rows, 12 px:** each row of the work in sight and each of a step's helpers is
   the still mark (`web/src/ui/BuddyCard.tsx`), so nothing in the card's lists moves. The buddy's own
-  orb, on its window, its stage, its sheets and the phone's list of all work, keeps the claw ring
-  until it moves to the halftone too.
+  orb, on its window, its stage, its sheets and the phone's list of all work, is the halftone too.
 - **Not the orb:** a workflow's runs and its run page keep their own status icons, since a
   workflow run's statuses are not a turn's states.
 - **The send button:** while a turn runs, it is the Stop control, morphed from the send arrow with

@@ -15,8 +15,8 @@ column is taken with the buddy's acceptance in CI ([#3902]).
 
 **Retired 2026-11-12.** The spike's harness, its two candidates, its probe, its route and its
 build flag are gone, with the script and the window that measured them, and the buddy draws the
-agent orb's claw ring, as the chat's orb does (#6117,
-[`../../agent-orb.md`](../../agent-orb.md#the-component)). What this record measured stays as
+agent orb's drawing, as the chat's orb does: the claw ring from #6117, and since 2026-11-16 the
+halftone ([`../../agent-orb.md`](../../agent-orb.md#the-component)). What this record measured stays as
 the buddy's: the one capped clock both orbs paint on, at 30 frames a second, and the pose's values
 stepping on it. The numbers below are the dots' and stay as the record of the choice.
 

@@ -26,7 +26,7 @@ import { ALERT_STATE, alertBanner, alertOf, itemOfNote, type AlertKind } from '.
 import { api, type WaitingItem, type WaitingList } from './api'
 import { desktopBridge, type DesktopBridge } from './desktopBridge'
 import { useChatSocket, type WsMessage } from './useChatSocket'
-import { stillOrbPng } from '../ui/buddy/paintOrb'
+import { stillOrbPng } from '../ui/buddy/stillOrbPng'
 import { previewLine, previewText } from './previewText'
 import { isKnowledgeItemId } from './itemRef'
 

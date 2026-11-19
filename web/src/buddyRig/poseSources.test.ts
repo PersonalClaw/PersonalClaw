@@ -12,8 +12,9 @@ import { describe, expect, it } from 'vitest'
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SYSTEM_STATE_FAMILIES, WORK_PHASE_LOOKS } from '../lib/workPhase'
-import { FAMILIES, FAMILY_STATES, TRAY_STATES, familyOf, movesOf, orbLookOf, poseSet, stillOf, type Frame } from './poseSet'
-import { contactSheets, poseSources } from './poseSources'
+import { FAMILIES, FAMILY_STATES, TRAY_STATES, familyOf, movesOf, poseSet, stillOf, type Frame } from './poseSet'
+import { contactSheets, markOfFrame, poseSources } from './poseSources'
+import { buddySceneOf } from '../ui/buddy/buddyHalftone'
 
 const WRITE_ENV = 'PC_WRITE_BUDDY_POSES'
 const POSES = join(process.cwd(), '..', 'docs', 'design', 'buddy', 'poses')
@@ -62,56 +63,56 @@ describe('pose sources: generator', () => {
 describe('the pose set keeps to the phase contract', () => {
   const frames = (): Frame[] => poseSet().flatMap((p) => (p.key ? [p.still, p.key] : [p.still]))
 
-  it('every family pose reads in its family, alive where an agent is and at rest where none is', () => {
+  it('every family pose reads in its family, drawn as the agent orb draws its state', () => {
     for (const family of FAMILIES) {
       for (const state of FAMILY_STATES[family]) {
         expect(familyOf(state), state).toBe(family)
-        expect(stillOf(state).ink, state).toBe(family === 'active' || family === 'waiting' ? 'alive' : 'rest')
+        expect(stillOf(state).scene, state).toBe(buddySceneOf(state))
       }
     }
     expect(Object.keys(SYSTEM_STATE_FAMILIES).every((s) => FAMILY_STATES[SYSTEM_STATE_FAMILIES[s as keyof typeof SYSTEM_STATE_FAMILIES]].includes(s as never))).toBe(true)
   })
 
-  it("queued is drawn alive in the scheme's primary, and listening's microphone keeps the warn tone", () => {
-    expect(stillOf('queued')).toMatchObject({ ink: 'alive', tone: 'primary', mark: 'working' })
-    // Listening is the agent orb's ready state (`lib/orbState.ts`): the still ring, alive.
-    // A still is never moving (`stillOf` draws the still frame); whether listening moves is movesOf's.
-    expect(stillOf('listening')).toMatchObject({ ink: 'alive', tone: 'warn', mark: 'listening', form: 'ready' })
-    expect(movesOf('listening')).toBe(false)
+  it('queued waits behind another’s turn, and the buddy’s listening is the recording dot, which moves with the level', () => {
+    expect(stillOf('queued').scene).toBe('queued')
+    expect(stillOf('listening').scene).toBe('recording')
+    expect(movesOf('listening')).toBe(true)
     expect(WORK_PHASE_LOOKS.listening.tone).toBe('warn')
   })
 
-  it('no buddy state, pose or still closes into the claw mark: done and an error hold ready’s open ring', () => {
-    // The owner's choice of 2026-10-18 (`docs/design/buddy/character.md`, "The choice"): the chat's
-    // orb closes into the mark at done; the buddy never draws it.
-    const states = [...FAMILIES.flatMap((f) => FAMILY_STATES[f]), ...Object.values(TRAY_STATES)]
-    for (const state of states) {
-      expect(stillOf(state).form, state).not.toBe('done')
-      expect(orbLookOf(state).state, state).not.toBe('done')
+  it('done, a wait, an error and offline carry their mark on the plate, and nothing else does', () => {
+    const sources = poseSources()
+    const PLATED = ['done', 'approval', 'question', 'error', 'offline']
+    for (const pose of poseSet()) {
+      for (const f of [pose.still, pose.key].filter(Boolean) as Frame[]) {
+        const svg = sources[`${pose.id}${f === pose.key ? '.motion' : ''}.svg`]
+        expect(svg.includes('data-part="mark"'), pose.id).toBe(Boolean(markOfFrame(f)))
+        if (!f.weights) expect(Boolean(markOfFrame(f)), pose.id).toBe(PLATED.includes(f.scene))
+      }
     }
-    for (const pose of poseSet()) for (const f of [pose.still, pose.key].filter(Boolean)) expect(f!.form, pose.id).not.toBe('done')
-    expect(stillOf('done')).toMatchObject({ form: 'ready', mark: 'done' })
-    expect(stillOf('error')).toMatchObject({ form: 'ready', mark: 'error' })
-    expect(stillOf('error').sink, 'an error still droops').toBeGreaterThan(0)
+    expect(markOfFrame(stillOf('done'))).toBe('done')
+    expect(markOfFrame(stillOf('error'))).toBe('error')
+    expect(markOfFrame(stillOf('offline'))).toBe('offline')
+    expect(markOfFrame(stillOf('tool'))).toBeNull()
   })
 
-  it('offline is ready’s ring, dimmed, with the slash: it never borrows an error’s droop or wash', () => {
-    const offline = stillOf('offline')
-    expect(offline).toMatchObject({ form: 'ready', ink: 'rest', mark: 'offline', sink: 0, wash: 0 })
-    expect(offline.dim).toBeLessThan(1)
-    expect(stillOf('error').sink, 'the control: an error does droop').toBeGreaterThan(0)
-  })
-
-  it('an alert tone is only ever a badge or a wash, and a wash is only an alert', () => {
-    for (const frame of frames()) {
-      if (frame.wash > 0) expect(['warn', 'info', 'danger']).toContain(frame.tone)
+  it('every colour a source paints is a token, or black in a template', () => {
+    for (const [name, svg] of Object.entries(poseSources())) {
+      const colours = [...svg.matchAll(/(?:fill|stroke): ([^;"]+)/g)].map((m) => m[1].trim())
+      expect(colours.length, name).toBeGreaterThan(0)
+      for (const c of colours) {
+        if (name.includes('-template')) expect(['black', 'none'], `${name}: ${c}`).toContain(c)
+        else expect(c, `${name}: ${c}`).toMatch(/^(var\(--color-[a-z-]+\)|color-mix\(in srgb, var\(--color-[a-z-]+\) [\d.]+%, var\(--color-[a-z-]+\)\)|none)$/)
+      }
     }
-    expect(frames().some((f) => f.wash > 0)).toBe(true)
   })
 
   it('each tray still is a still of its family, as the brief maps them', () => {
     const families = Object.fromEntries(Object.entries(TRAY_STATES).map(([still, state]) => [still, familyOf(state)]))
     expect(families).toEqual({ idle: 'quiet', working: 'active', 'needs-you': 'waiting', error: 'blocked', listening: 'active', offline: 'blocked' })
+    expect(Object.fromEntries(Object.entries(TRAY_STATES).map(([still, state]) => [still, stillOf(state).scene]))).toEqual({
+      idle: 'ready', working: 'running', 'needs-you': 'approval', error: 'error', listening: 'recording', offline: 'offline',
+    })
   })
 
   it('a pose that moves has a motion frame that differs from its still, and nothing else has one', () => {

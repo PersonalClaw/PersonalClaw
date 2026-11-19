@@ -1,21 +1,22 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { stillOrbPng, stillTokens } from './paintOrb'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { stillOrbPng } from './stillOrbPng'
 
 // ── An alert's still orb, as the PNG a native banner shows (#3897) ───────────────────────────
 //
-// The banner's icon is the alert kind's still: waiting with the "!" in the warn tone for an
-// approval, waiting with the "?" in the info tone for a question, blocked with the danger mark for
-// an error. It is painted by the buddy orb's own painter, once, into a canvas of its own.
+// The banner's icon is the alert kind's still: needs your OK with its "!" in the warn tone for an
+// approval, asks you with its "?" in the info tone for a question, the error mark in the danger
+// tone for an error. It is painted by the buddy orb's own painter, once, into a canvas of its own.
 
-afterEach(() => { vi.restoreAllMocks() })
-
-describe('the still’s tones', () => {
-  it('an approval is warn, a question info, an error danger', () => {
-    expect(stillTokens('approval').tone).toBe('--color-warn')
-    expect(stillTokens('input').tone).toBe('--color-info')
-    expect(stillTokens('error').tone).toBe('--color-danger')
-  })
+beforeEach(() => {
+  // The page's tokens, as the app's sheet sets them: a still paints only in resolved inks.
+  document.documentElement.style.setProperty('--color-orb-alive', '#3366cc')
+  document.documentElement.style.setProperty('--color-orb-rest', '#8a8f98')
+})
+afterEach(() => {
+  vi.restoreAllMocks()
+  document.documentElement.style.removeProperty('--color-orb-alive')
+  document.documentElement.style.removeProperty('--color-orb-rest')
 })
 
 describe('stillOrbPng', () => {

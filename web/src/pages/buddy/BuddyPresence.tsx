@@ -56,7 +56,9 @@ const undo = (zoom: number) => (zoom !== 1 ? { zoom: 1 / zoom } : {})
  *  window by (`app/BuddyWindowRoot.tsx`, #3831), and the shared `Button`, a 44 px target and more;
  *  in the playground's stage it is drawn inert. */
 export function BuddyFace({ state, label, at, zoom = 1, onClick, onPointer }: { state: OrbState; label: string; at?: BuddyRect; zoom?: number } & PresenceHandlers) {
-  const orb = <BuddyOrb state={state} line="" size={ORB_SIZE} />
+  // On its disc plate, as the desktop shows it: the orb's own surface under it, so it reads over
+  // any wallpaper or window (`docs/design/buddy/surfaces.md`).
+  const orb = <BuddyOrb state={state} line="" size={ORB_SIZE} plate />
   return (
     <div data-buddy-orb-slot="" {...(onClick ? { 'data-buddy-shape': '', 'data-buddy-drag': '' } : {})}
       className={at ? 'absolute flex items-center justify-center' : 'relative flex shrink-0'} style={at ? { ...px(at), ...undo(zoom) } : undefined}

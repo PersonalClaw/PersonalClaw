@@ -27,7 +27,7 @@ Only a test keeps the two from drifting, and this is it. It holds the record's o
 * **What the buddy shares with the agent orb, and what it adds, each have one home.** The agent
   orb's design says what the two share, and the rig's candidates list what the buddy adds. The
   brief's first constraint links both, and the originality checks in the brief and in the test
-  plan link the agent orb's component, whose claw ring the buddy shares on purpose. None of them
+  plan link the agent orb's component, whose halftone the buddy shares on purpose. None of them
   keeps a list of its own, which would drift from the one it copies.
 * **Every pose is drawn, and only the poses the brief names.** The census reads the v0.3.0 set
   from the brief's own words (the family table's phases, the focused card's orb for each family,
@@ -35,16 +35,18 @@ Only a test keeps the two from drifting, and this is it. It holds the record's o
   versions) and holds ``poses/`` to it: a source for each, none for anything else, and a motion
   frame beside each pose that moves, whose ``.svg`` is its reduced-motion still.
 * **Each source is drawn in parts a renderer moves, in the tokens, and round.** One whole orb with
-  its pivot holds its strokes (the claw ring's, round-capped curves), the badge and the wash;
-  every colour is a token ``tokens.css`` has (a template's is black, which the menu bar recolours);
-  and no transform squashes or stretches it.
-* **At 18 px the four families are told apart** by the orb's ink and arrangement and by its
-  badge, in colour and as templates, and every tray still as a template differs from the others
-  by its badge or its strokes. Waiting's badge holds it apart from active by its weight too: drawn
-  at full strength, with several times the ink of active's mark, so a still waiting orb (the
-  tray's, or under reduced motion) never reads as an active one. The contact sheets show every
-  pose at 18, 24, 48 and 96 px and every still at its size, in light and dark, each with its words
-  beside it, for the owner to look at.
+  its pivot holds its dots (the agent orb's halftone: round dots and round-capped lines) and, in a
+  plate state, its mark; every colour is a token ``tokens.css`` has, or a mix of two (a template's
+  is black, which the menu bar recolours); and no transform squashes or stretches it.
+* **The buddy draws no mark of its own.** The only drawing beside the dots is the mark of one of
+  the agent orb's five plate states, so the ClawMark stays out of the buddy, as the owner chose.
+* **At 18 px the four families are told apart** by the orb's dots or by its mark, in colour and as
+  templates, and every tray still as a template differs from the others the same way. Waiting's
+  mark holds it apart from active by its weight too: drawn at full strength, with several times
+  the ink of any mark active draws, so a still waiting orb (the tray's, or under reduced motion)
+  never reads as an active one. The contact sheets show every pose at 18, 24, 48 and 96 px and
+  every still at its size, in light and dark, each with its words beside it, for the owner to look
+  at.
 
 Each check returns what is wrong, as sentences. The last test plants one defect for each check and
 sees it reported, so none of them can pass by looking at nothing.
@@ -220,20 +222,23 @@ MOTION = ".motion.svg"
 #: The sizes the contact sheet draws every pose at, and its two modes.
 SHEET_SIZES = (18, 24, 48, 96)
 MODES = ("light", "dark")
-#: The size the four families are told apart at by the orb's ink and arrangement alone.
+#: The size the four families are told apart at by the orb's dots and its mark alone.
 SMALLEST = 18
-#: How far apart two orbs' strokes are to be told apart: this many times the ink (each stroke's
-#: width times its length), or this share of the orb's size in how far their middles reach from
-#: its centre, how far those reaches spread (one ring, or two), or where their middle sits.
+#: How far apart two orbs' dots are to be told apart: this many times the ink (each dot's area,
+#: each short line's width times its length), or this share of the orb's size in how far their
+#: middles reach from its centre, how far those reaches spread, or where their middle sits.
 DENSITY_APART = 1.25
 ARRANGEMENT_APART = 0.05
-#: How many times the ink of active's badge waiting's carries at the smallest size: its badge's
-#: area, a disc's and a stroke's width times its length, measured on the drawing.
+#: How many times the ink of any mark active draws waiting's mark carries at the smallest size:
+#: its discs' area and its strokes' width times their length, measured on the drawing.
 BADGE_APART = 4.0
-#: The widest gap, in degrees, a buddy orb's strokes may leave round their middle: midway between
-#: the claw ring's open forms, which leave at most about 90 degrees between two strokes, and the
-#: closed claw mark, which leaves about 107 on the side its blade and hook open to.
-OPEN_GAP = 98.0
+#: The marks a buddy source may draw: the agent orb's five plate states' (``ui/orb/plateMarks.ts``).
+#: Nothing else is drawn beside the dots, so the ClawMark stays out of the buddy.
+PLATE_MARKS = ("done", "approval", "question", "error", "offline")
+#: What each part of a source may hold: the dots are round dots and round-capped short lines, and
+#: the mark is round strokes and dots.
+DOT_ELEMENTS = {"g", "circle", "line"}
+MARK_ELEMENTS = {"g", "circle", "path"}
 #: The properties that carry a colour, and the one ink a template image is drawn in, which the
 #: menu bar recolours.
 COLOUR_PROPERTIES = ("fill", "stroke", "stop-color", "color")
@@ -251,6 +256,10 @@ _PAREN = re.compile(r"\s*\([^)]*\)")
 _ITEMS = re.compile(r",\s*|\s+and\s+")
 _BELONGS = re.compile(r"(.+?) (?:is|are) (\w+)")
 _VAR = re.compile(r"^var\((--color-[a-z0-9-]+)\)$")
+#: A mix of two tokens, as a source names a dot that blends two inks mid-change.
+_MIX = re.compile(
+    r"^color-mix\(in srgb, var\((--color-[a-z0-9-]+)\) [\d.]+%, var\((--color-[a-z0-9-]+)\)\)$"
+)
 #: The numbers of a path's data or an attribute.
 _NUM = re.compile(r"-?\d+(?:\.\d+)?(?:e-?\d+)?")
 #: A transform that keeps the orb round: moves, turns, and scales that take one factor.
@@ -699,17 +708,17 @@ class Named(NamedTuple):
 
 
 class Look(NamedTuple):
-    """What a drawn orb shows at a glance: the ink its strokes carry (each stroke's width times its
-    length, in orb sizes squared), how far their middles reach from the orb's centre and how far
-    their middle sits below it (each in orb sizes), the badge's mark, the ink its badge carries
-    (a disc's area and a stroke's width times its length, in orb sizes squared), and whether any
-    of the badge is drawn under full strength."""
+    """What a drawn orb shows at a glance: the ink its dots carry (each dot's area and each short
+    line's width times its length, in orb sizes squared), how far their middles reach from the
+    orb's centre and how far their middle sits below it (each in orb sizes), its mark, the ink its
+    mark carries (its discs' area and its strokes' width times their length, in orb sizes
+    squared), and whether any of the mark is drawn under full strength."""
 
     ink: float
     reach: float
     height: float
-    #: How far the strokes' reaches spread about their mean, in orb sizes: none for one ring, much
-    #: for two.
+    #: How far the dots' reaches spread about their mean, in orb sizes: little for a dot or a
+    #: ring, much for a sphere.
     rings: float
     badge: str = ""
     badge_ink: float = 0.0
@@ -843,33 +852,55 @@ def census_problems(brief: str, folder: Path) -> list[str]:
     return found
 
 
+def _colour_problem(value: str, template: bool, defined: set[str]) -> str | None:
+    """What is wrong with a colour a source sets in a style, or ``None``: a template's is black,
+    and any other's is a token ``tokens.css`` defines, or a mix of two of them."""
+    if value == "none":
+        return None
+    if template:
+        return (
+            None
+            if value == TEMPLATE_INK
+            else f"a template is drawn in {TEMPLATE_INK}, not {value!r}"
+        )
+    token, mix = _VAR.match(value), _MIX.match(value)
+    names = token.groups() if token else mix.groups() if mix else ()
+    if names and set(names) <= defined:
+        return None
+    return f"is {value!r}, not a token tokens.css has"
+
+
 def source_problems(folder: Path, defined: set[str]) -> list[str]:
     """Where a source is not drawn in the parts a renderer moves, keeps a colour out of the
     tokens, or squashes the orb, each a sentence. A source has one whole orb, with its pivot and
-    size, holding its strokes (the claw ring's curves, round-capped), its badge when it has one and
-    its wash; a template has no wash, since one colour cannot show it. Every colour is a
-    ``--color-`` token ``tokens.css`` defines, set in a style, or ``none``, which names no colour;
-    a template's is black, which the menu bar recolours. Every transform keeps the orb round: a
-    move, a turn, or one scale for both axes."""
+    size, holding its dots (round dots and round-capped short lines, the agent orb's halftone) and,
+    in a plate state, its mark, which the source names; a template has no plate under it, since one
+    colour cannot show it. Every colour is a ``--color-`` token ``tokens.css`` defines, or a mix of
+    two, set in a style, or ``none``, which names no colour; a template's is black, which the menu
+    bar recolours. Every transform keeps the orb round: a move, a turn, or one scale for both
+    axes."""
     paths = sorted(folder.glob("*.svg"))
     found: list[str] = [] if paths else [f"{folder.name}/ holds no source"]
     for path in paths:
         name = f"poses/{path.name}"
         root = _svg(path)
         template = root.get("data-template") == "true"
-        orbs, strokes = _parts(root, "orb"), _parts(root, "strokes")
-        if len(orbs) != 1 or len(strokes) != 1 or strokes[0] not in list(orbs[0].iter()):
-            found.append(f"{name}: not one whole orb holding its strokes")
+        orbs, dots = _parts(root, "orb"), _parts(root, "dots")
+        if len(orbs) != 1 or len(dots) != 1 or dots[0] not in list(orbs[0].iter()):
+            found.append(f"{name}: not one whole orb holding its dots")
         elif len((orbs[0].get("data-pivot") or "").split()) != 2 or not orbs[0].get("data-orb"):
             found.append(f"{name}: its whole orb names no pivot and size")
-        if strokes and {_local(e) for e in strokes[0].iter()} - {"g", "path"}:
-            found.append(f"{name}: its strokes hold something other than strokes")
-        if strokes and strokes[0].get("stroke-linecap") != "round":
-            found.append(f"{name}: its strokes are not round-capped")
-        if bool(root.get("data-badge")) != bool(_parts(root, "badge")):
-            found.append(f"{name}: its badge and the badge it says it has disagree")
-        if template and _parts(root, "wash"):
-            found.append(f"{name}: a template has no wash")
+        if dots and {_local(e) for e in dots[0].iter()} - DOT_ELEMENTS:
+            found.append(f"{name}: its dots hold something other than dots")
+        if dots and any(
+            _local(e) == "line" and e.get("stroke-linecap") != "round" for e in dots[0].iter()
+        ):
+            found.append(f"{name}: its dots' lines are not round-capped")
+        marks = _parts(root, "mark")
+        if (root.get("data-mark") or "") != (marks[0].get("data-mark") if len(marks) == 1 else ""):
+            found.append(f"{name}: its mark and the mark it says it has disagree")
+        if template and _parts(root, "plate"):
+            found.append(f"{name}: a template has no plate")
         for element in root.iter():
             if _local(element) == "ellipse":
                 found.append(f"{name}: draws an ellipse, and the orb is round")
@@ -878,44 +909,37 @@ def source_problems(folder: Path, defined: set[str]) -> list[str]:
                     found.append(f"{name}: names a colour as its {attr} attribute, not a style")
             for declaration in (element.get("style") or "").split(";"):
                 prop, _, value = (part.strip() for part in declaration.partition(":"))
-                if prop not in COLOUR_PROPERTIES:
-                    continue
-                token = _VAR.match(value)
-                if value == "none":
-                    continue
-                if template and value != TEMPLATE_INK:
-                    found.append(f"{name}: a template is drawn in {TEMPLATE_INK}, not {value!r}")
-                elif not template and not (token and token.group(1) in defined):
-                    found.append(f"{name}: its {prop} is {value!r}, not a token tokens.css has")
+                problem = (
+                    _colour_problem(value, template, defined) if prop in COLOUR_PROPERTIES else None
+                )
+                if problem:
+                    found.append(f"{name}: its {prop} {problem}")
             transform = element.get("transform")
             if transform is not None and not _ROUND.match(transform):
                 found.append(f"{name}: {transform!r} squashes or stretches the orb")
     return found
 
 
-def _stroke_ink(element: ET.Element) -> tuple[float, tuple[float, float] | None]:
-    """A stroke's ink (its width times its length, with its round caps) and its middle, from its
-    path's data: a curve, a line, or a point a hair long. An arc is measured by its chord."""
+def _ink(element: ET.Element) -> tuple[float, tuple[float, float] | None]:
+    """A drawn element's ink and its middle: a dot's area; a line's width times its length, with
+    its round caps; and a path's, read as the points it runs through."""
+    kind = _local(element)
+    if kind == "circle":
+        r = float(element.get("r") or 0)
+        return math.pi * r**2, (float(element.get("cx") or 0), float(element.get("cy") or 0))
     width = float(element.get("stroke-width") or 1)
-    nums = [float(n) for n in _NUM.findall(element.get("d") or "")]
-    d = element.get("d") or ""
     cap = math.pi * (width / 2) ** 2
-    if "Q" in d and len(nums) >= 6:
-        x0, y0, cx, cy, x1, y1 = nums[:6]
-        length = (
-            math.dist((x0, y0), (cx, cy))
-            + math.dist((cx, cy), (x1, y1))
-            + math.dist((x0, y0), (x1, y1))
-        ) / 2
-        middle = (0.25 * x0 + 0.5 * cx + 0.25 * x1, 0.25 * y0 + 0.5 * cy + 0.25 * y1)
-        return width * length + cap, middle
-    if "A" in d and len(nums) >= 9:
-        x0, y0, x1, y1 = (nums[0], nums[1], nums[7], nums[8])
-        return width * math.dist((x0, y0), (x1, y1)) + cap, ((x0 + x1) / 2, (y0 + y1) / 2)
-    if "L" in d and len(nums) >= 4:
-        x0, y0, x1, y1 = nums[:4]
-        return width * math.dist((x0, y0), (x1, y1)) + cap, ((x0 + x1) / 2, (y0 + y1) / 2)
-    return cap, (nums[0], nums[1]) if len(nums) >= 2 else None
+    if kind == "line":
+        a = (float(element.get("x1") or 0), float(element.get("y1") or 0))
+        b = (float(element.get("x2") or 0), float(element.get("y2") or 0))
+        return width * math.dist(a, b) + cap, ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+    nums = [float(n) for n in _NUM.findall(element.get("d") or "")]
+    points = list(zip(nums[::2], nums[1::2], strict=False))
+    if not points:
+        return 0.0, None
+    length = sum(math.dist(a, b) for a, b in itertools.pairwise(points))
+    middle = (sum(x for x, _ in points) / len(points), sum(y for _, y in points) / len(points))
+    return width * length + cap, middle
 
 
 def look_of(path: Path) -> Look:
@@ -924,25 +948,17 @@ def look_of(path: Path) -> Look:
     orb = _parts(root, "orb")[0]
     cx, cy = (float(v) for v in (orb.get("data-pivot") or "0 0").split())
     size = float(orb.get("data-orb") or 1)
-    measured = [_stroke_ink(e) for e in _parts(root, "strokes")[0].iter() if _local(e) == "path"]
+    measured = [_ink(e) for e in _parts(root, "dots")[0].iter() if _local(e) in {"circle", "line"}]
     middles = [m for _, m in measured if m is not None]
     ink = sum(i for i, _ in measured) / size**2
     badge_ink = 0.0
     faint = False
-    for part in _parts(root, "badge"):
+    for part in _parts(root, "mark"):
         for e in part.iter():
             faint = faint or float(e.get("opacity", 1)) < 1
-            if _local(e) == "circle":
-                r = float(e.get("r", 0))
-                # A ring is stroked round its circle; a solid badge is its disc.
-                badge_ink += (
-                    2 * math.pi * r * float(e.get("stroke-width"))
-                    if e.get("stroke-width")
-                    else math.pi * r**2
-                )
-            elif _local(e) == "path":
-                badge_ink += _stroke_ink(e)[0]
-    mark = root.get("data-badge") or ""
+            if _local(e) in {"circle", "path"}:
+                badge_ink += _ink(e)[0]
+    mark = root.get("data-mark") or ""
     if not middles:
         return Look(0.0, 0.0, 0.0, 0.0, mark, badge_ink / size**2, faint)
     reaches = [math.dist((x, y), (cx, cy)) / size for x, y in middles]
@@ -953,7 +969,7 @@ def look_of(path: Path) -> Look:
 
 
 def _apart(a: Look, b: Look) -> bool:
-    """Whether two orbs differ by their strokes' ink or arrangement."""
+    """Whether two orbs differ by their dots' ink or arrangement."""
     dense = (
         max(a.ink, b.ink) >= DENSITY_APART * min(a.ink, b.ink)
         if min(a.ink, b.ink) > 0
@@ -966,42 +982,34 @@ def _apart(a: Look, b: Look) -> bool:
     return dense or arranged
 
 
-def closed_mark_problems(folder: Path) -> list[str]:
-    """Where a buddy source draws the claw mark itself, each a sentence. The owner's choice of
-    2026-10-18 keeps the ClawMark out of the buddy (``character.md``, "The choice"): the chat's orb
-    closes its strokes into the mark at done, and no buddy pose, size or still does. A drawing is
-    the closed mark when its strokes, read round their own middle, leave a gap wider than
-    ``OPEN_GAP``, as the mark's blade and hook do and no open form of the ring does."""
+def mark_problems(folder: Path) -> list[str]:
+    """Where a buddy source draws a mark the agent orb's plate does not have, each a sentence. The
+    owner's choice of 2026-10-18 keeps the ClawMark out of the buddy (``character.md``, "The
+    choice"): its dots are dots (``source_problems``), and the one other drawing is the mark of
+    one of the agent orb's five plate states, in round strokes and dots."""
     found: list[str] = []
     for path in sorted(folder.glob("*.svg")):
-        root = _svg(path)
-        parts = _parts(root, "strokes")
-        if not parts:
-            continue
-        middles = [
-            m for e in parts[0].iter() if _local(e) == "path" for m in [_stroke_ink(e)[1]] if m
-        ]
-        if len(middles) < 3:
-            continue
-        mx = sum(x for x, _ in middles) / len(middles)
-        my = sum(y for _, y in middles) / len(middles)
-        angles = sorted(math.degrees(math.atan2(x - mx, my - y)) % 360 for x, y in middles)
-        gaps = [b - a for a, b in itertools.pairwise(angles)] + [360 - angles[-1] + angles[0]]
-        if max(gaps) > OPEN_GAP:
-            found.append(
-                f"poses/{path.name}: its strokes leave a {max(gaps):.0f} degree gap, the closed"
-                " claw mark, which no buddy pose draws"
-            )
+        for part in _parts(_svg(path), "mark"):
+            mark = part.get("data-mark") or ""
+            if mark not in PLATE_MARKS:
+                found.append(
+                    f"poses/{path.name}: draws the {mark!r} mark, which the agent orb's plate does"
+                    " not have"
+                )
+            if {_local(e) for e in part.iter()} - MARK_ELEMENTS:
+                found.append(
+                    f"poses/{path.name}: its mark holds something other than strokes and dots"
+                )
     return found
 
 
 def small_size_problems(brief: str, folder: Path) -> list[str]:
     """Where two families' stills can be mistaken at the tray's smallest sizes, each a sentence.
     At 18 px each family's first still in the brief (in colour and as a template) differs from
-    each other family's by its strokes' ink or arrangement, and by its badge, and waiting's
-    badge is drawn at full strength with ``BADGE_APART`` times the ink of active's. As templates,
-    at every size, each of the stills differs from every other by its badge or its strokes, since a
-    template carries the state in shape alone."""
+    each other family's by its mark, or by its dots' ink or arrangement where the two draw the
+    same mark or none, and waiting's mark is drawn at full strength with ``BADGE_APART`` times the
+    ink of any mark active draws. As templates, at every size, each of the stills differs from
+    every other the same way, since a template carries the state in shape alone."""
     named, found = brief_sources(brief)
     stills = {stem: n for stem, n in named.items() if n.kind == "still"}
     for flat in (False, True):
@@ -1019,19 +1027,22 @@ def small_size_problems(brief: str, folder: Path) -> list[str]:
             continue
         looks = {family: look_of(folder / f"{picks[family]}.svg") for family in FAMILIES}
         for a, b in itertools.combinations(FAMILIES, 2):
-            if not _apart(looks[a], looks[b]):
+            if looks[a].badge == looks[b].badge and not _apart(looks[a], looks[b]):
                 found.append(
-                    f"at {SMALLEST} px{as_what}, {a} and {b} have the same density and arrangement"
+                    f"at {SMALLEST} px{as_what}, {a} and {b} have the same mark and the same dots"
                 )
-            if looks[a].badge == looks[b].badge:
-                found.append(f"at {SMALLEST} px{as_what}, {a} and {b} have the same badge")
         waiting, active = looks["waiting"], looks["active"]
         if waiting.badge_faint:
-            found.append(f"at {SMALLEST} px{as_what}, waiting's badge is drawn under full strength")
-        if waiting.badge_ink < BADGE_APART * active.badge_ink:
-            weight = waiting.badge_ink / active.badge_ink if active.badge_ink else 0.0
+            found.append(f"at {SMALLEST} px{as_what}, waiting's mark is drawn under full strength")
+        if not waiting.badge_ink:
             found.append(
-                f"at {SMALLEST} px{as_what}, waiting's badge carries {weight:.1f} times the ink of"
+                f"at {SMALLEST} px{as_what}, waiting draws no mark: a still waiting orb reads as an"
+                " active one"
+            )
+        elif waiting.badge_ink < BADGE_APART * active.badge_ink:
+            weight = waiting.badge_ink / active.badge_ink
+            found.append(
+                f"at {SMALLEST} px{as_what}, waiting's mark carries {weight:.1f} times the ink of"
                 f" active's, under {BADGE_APART:g}: a still waiting orb reads as an active one"
             )
     sizes = sorted({n.size for n in stills.values()})
@@ -1142,11 +1153,11 @@ def test_every_source_is_drawn_in_parts_in_the_tokens_and_never_squashes_the_orb
     assert source_problems(POSES, _defined_colours()) == []
 
 
-def test_no_buddy_pose_closes_into_the_claw_mark() -> None:
-    assert closed_mark_problems(POSES) == []
+def test_no_buddy_source_draws_a_mark_the_agent_orbs_plate_does_not_have() -> None:
+    assert mark_problems(POSES) == []
 
 
-def test_at_18_px_the_four_families_differ_by_density_arrangement_and_badge() -> None:
+def test_at_18_px_the_four_families_differ_by_their_dots_or_their_mark() -> None:
     assert small_size_problems(source_index.text(CHARACTER), POSES) == []
 
 
@@ -1204,28 +1215,13 @@ def _replaced(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
-def _open_a_gap(path: Path) -> None:
-    """*path* with two neighbouring strokes of its ring taken out, which leaves the gap the closed
-    claw mark's blade and hook leave."""
-    text = path.read_text(encoding="utf-8")
-    planted = re.sub(
-        r'(<g data-part="strokes"[^>]*>)<path [^>]*/><path [^>]*/>', r"\g<1>", text, count=1
+def _faint_mark(path: Path) -> None:
+    """*path* with its approval mark drawn at half strength, as a fading badge would be."""
+    _replaced(
+        path,
+        '<g data-part="mark" data-mark="approval"',
+        '<g data-part="mark" data-mark="approval" opacity="0.5"',
     )
-    assert planted != text, f"{path.name} has no strokes to take out, so nothing would be planted"
-    path.write_text(planted, encoding="utf-8")
-
-
-def _faint_badge(path: Path) -> None:
-    """*path* with its badge drawn the way the waiting badges were below 24 px before #3830's
-    review: the mark's own thin strokes alone, with no solid disc, in the tone."""
-    text = path.read_text(encoding="utf-8")
-    faint = (
-        '<path d="M14 -0.12L14 2.28" stroke-width="0.5"/>'
-        '<path d="M14 4.68h0.01" stroke-width="0.5"/>'
-    )
-    planted = re.sub(r'(<g data-part="badge"[^>]*>).*?(</g>)', rf"\g<1>{faint}\g<2>", text, count=1)
-    assert planted != text, f"{path.name} has no badge, so nothing would be planted"
-    path.write_text(planted, encoding="utf-8")
 
 
 def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> None:
@@ -1402,7 +1398,7 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
                 ),
                 _defined_colours(),
             ),
-            "poses/active-thinking.svg: its stroke is '#e5533d', not a token",
+            "is '#e5533d', not a token tokens.css has",
         ),
         (
             "the whole orb squashed",
@@ -1420,11 +1416,18 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
             "poses/active-thinking.svg: 'scale(1 0.8)' squashes or stretches the orb",
         ),
         (
-            "a buddy pose drawn as the closed claw mark",
-            lambda: closed_mark_problems(
-                _copy_of_the_poses(tmp_path / "mark", lambda f: _open_a_gap(f / "quiet-idle.svg"))
+            "a buddy source drawing a mark of its own",
+            lambda: mark_problems(
+                _copy_of_the_poses(
+                    tmp_path / "mark",
+                    lambda f: _replaced(
+                        f / "quiet-done.svg",
+                        'data-part="mark" data-mark="done"',
+                        'data-part="mark" data-mark="claw"',
+                    ),
+                )
             ),
-            "poses/quiet-idle.svg: its strokes leave a",
+            "poses/quiet-done.svg: draws the 'claw' mark",
         ),
         (
             "two families alike at 18 px",
@@ -1435,17 +1438,17 @@ def test_each_check_reports_a_planted_defect(subtests: Any, tmp_path: Path) -> N
                     lambda f: shutil.copy(f / "tray-needs-you-18.svg", f / "tray-error-18.svg"),
                 ),
             ),
-            "at 18 px, waiting and blocked have the same density and arrangement",
+            "at 18 px, waiting and blocked have the same mark and the same dots",
         ),
         (
-            "waiting's badge as faint as active's at 18 px",
+            "waiting's mark faded at 18 px",
             lambda: small_size_problems(
                 brief,
                 _copy_of_the_poses(
-                    tmp_path / "faint", lambda f: _faint_badge(f / "tray-needs-you-18.svg")
+                    tmp_path / "faint", lambda f: _faint_mark(f / "tray-needs-you-18.svg")
                 ),
             ),
-            "at 18 px, waiting's badge carries",
+            "at 18 px, waiting's mark is drawn under full strength",
         ),
         (
             "the contact sheet missing a pose in dark",
