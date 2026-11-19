@@ -345,7 +345,7 @@ def test_slot_key_maps_to_its_own_kind_and_decay_profile():
     """`_DECAY_PROFILES` raises for an unmapped kind — this asserts the map was swept."""
     assert _kind_from_key("slot.persona") is MemoryKind.SLOT
     assert decay_profile(MemoryKind.SLOT) == "slot"
-    from personalclaw.learning.decay import KIND_MULTIPLIERS
+    from personalclaw.relevance_decay import KIND_MULTIPLIERS
 
     assert "slot" in KIND_MULTIPLIERS
     assert KIND_MULTIPLIERS["slot"] < KIND_MULTIPLIERS["semantic"], "a slot must age slower"

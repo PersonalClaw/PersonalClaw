@@ -94,7 +94,7 @@ MEASURED = "measured"
 INCONCLUSIVE = "inconclusive"
 
 #: The memory decay profile each resolution's evidence inherits. Keys of
-#: `learning.decay.KIND_MULTIPLIERS` — `speculative` (3.0) decays roughly four times faster than
+#: `relevance_decay.KIND_MULTIPLIERS` — `speculative` (3.0) decays roughly four times faster than
 #: `lesson` (0.7), which is the whole "an unmeasurable outcome decays faster" rule expressed as
 #: data rather than as an `if` at each consumer. `test_ledger_outcomes.py` rails the direction
 #: against the kernel's own table so the two can never drift into agreeing.
@@ -378,7 +378,7 @@ def resolution_for(measured: float | None, *, answer: str = "") -> str:
 
 
 def decay_profile(resolution: str) -> str:
-    """The `learning.decay` kind whose rate this resolution's evidence ages at."""
+    """The `relevance_decay` kind whose rate this resolution's evidence ages at."""
     return DECAY_PROFILE.get(resolution, DECAY_PROFILE[INCONCLUSIVE])
 
 

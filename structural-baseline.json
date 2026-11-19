@@ -85,12 +85,6 @@
           "verdict-type:Verdict"
         ]
       },
-      "src/personalclaw/learning/decay.py": {
-        "count": 1,
-        "sites": [
-          "verdict-type:DecayVerdict"
-        ]
-      },
       "src/personalclaw/learning/hygiene.py": {
         "count": 1,
         "sites": [
@@ -132,6 +126,12 @@
         "count": 1,
         "sites": [
           "verdict-type:Verdict"
+        ]
+      },
+      "src/personalclaw/relevance_decay.py": {
+        "count": 1,
+        "sites": [
+          "verdict-type:DecayVerdict"
         ]
       },
       "src/personalclaw/service/macos.py": {
@@ -259,6 +259,8 @@
       "media_fixtures",
       "memory_holder",
       "memory_push",
+      "memory_ranking",
+      "memory_record",
       "memory_slots",
       "memory_topology",
       "notification_kinds",
@@ -278,6 +280,7 @@
       "quoted_credentials",
       "record_ids",
       "reference",
+      "relevance_decay",
       "request_validation",
       "resource_limits",
       "safety_flags",

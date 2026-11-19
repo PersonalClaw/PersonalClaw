@@ -268,7 +268,7 @@ def test_contradiction_cancels_observations_one_for_one():
 
 
 def test_recency_rides_the_shared_decay_kernel_not_a_private_curve():
-    from personalclaw.learning import decay
+    from personalclaw import relevance_decay as decay
 
     evidence = lc.LessonEvidence(observations=5)
     expected = lc.corroboration(5) * decay.strength(

@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from personalclaw.learning import decay
+from personalclaw import relevance_decay as decay
 from personalclaw.memory_record import MemoryKind, _kind_from_key, decay_profile
 
 # ── kind mapping ──

@@ -172,7 +172,7 @@ class UsageStore:
             )
             # Reinforcement damping: a repeat inside the window counts half, so a
             # retrieval burst can't inflate the heat that drives eviction.
-            from personalclaw.learning.decay import reinforcement_weight
+            from personalclaw.relevance_decay import reinforcement_weight
 
             now = time.time()
             weight = reinforcement_weight(now - slot["ts"]) if slot["ts"] else 1.0

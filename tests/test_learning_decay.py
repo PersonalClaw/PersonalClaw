@@ -7,7 +7,7 @@ silently changes meaning on upgrade.
 
 import pytest
 
-from personalclaw.learning import decay as D
+from personalclaw import relevance_decay as D
 
 # ── the curve ──
 
