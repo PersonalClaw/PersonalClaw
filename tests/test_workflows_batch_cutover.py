@@ -846,8 +846,8 @@ def test_a_batch_naming_an_UNKNOWN_agent_is_refused_at_compile(monkeypatch):
     `roster.*` — a test that drives the roster directly is what made it look shipped while no
     module in `src/` imported it.
 
-    An unknown agent is an ERROR because `subagent._validate_agent` would fail the spawn anyway
-    (it is a typed error, never a silent downgrade). Catching it at compile costs nothing;
+    An unknown agent is an ERROR because `subagent_admission._validate_agent` would fail the spawn
+    anyway (it is a typed error, never a silent downgrade). Catching it at compile costs nothing;
     catching it at spawn has already minted a run whose branches all fail on one typo."""
     monkeypatch.setattr(roster, "catalog", lambda agents=None: [])
 

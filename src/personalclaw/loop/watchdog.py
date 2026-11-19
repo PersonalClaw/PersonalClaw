@@ -815,7 +815,7 @@ class LoopWatchdog:
     def _schedule_loop_end_ladder(self, loop_id: str) -> None:
         """Gate + schedule the end-of-run skill-ladder review.
 
-        Mirrors ``dashboard.chat_runner._maybe_skill_ladder_review``: the gate is answered
+        Mirrors ``dashboard.turn_learning._maybe_skill_ladder_review``: the gate is answered
         here, synchronously, and only the expensive half is handed to the background. Gate
         order is deliberate and matches the chat path — ``decision.allowed`` and the
         ``skill_ladder`` cadence flag are checked BEFORE anything reads the loop's task or

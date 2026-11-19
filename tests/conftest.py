@@ -785,9 +785,11 @@ def _a_host_with_memory_to_spare(_meminfo_with_memory_to_spare, monkeypatch):
     ``personalclaw.subagent`` here happens before the home is redirected, so the home resolvers
     it binds are the ones that fixture re-points in every test.
     """
-    from personalclaw import subagent
+    # `subagent` is imported first here, before the home is redirected (above); the floor it
+    # asks is `subagent_admission`'s.
+    from personalclaw import subagent, subagent_admission  # noqa: F401
 
-    read = subagent.check_memory_available
+    read = subagent_admission.check_memory_available
     params = inspect.signature(read).parameters
     host = params["path"].default
 
@@ -797,7 +799,7 @@ def _a_host_with_memory_to_spare(_meminfo_with_memory_to_spare, monkeypatch):
             min_gb=min_gb, path=str(_meminfo_with_memory_to_spare) if path == host else path
         )
 
-    monkeypatch.setattr(subagent, "check_memory_available", check)
+    monkeypatch.setattr(subagent_admission, "check_memory_available", check)
 
 
 @pytest.fixture

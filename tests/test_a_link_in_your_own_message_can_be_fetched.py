@@ -742,7 +742,7 @@ async def test_a_comment_you_leave_on_a_plan_grants_its_link(tmp_path, monkeypat
 async def test_a_library_item_you_attach_shows_and_grants_its_source_link(tmp_path):
     """An item from your knowledge library, attached to your message, carries the link it was
     saved from: the turn shows it beside the item, and the agent may open it."""
-    from personalclaw.dashboard.chat_runner import _inject_knowledge_content
+    from personalclaw.dashboard.referenced_content import _inject_knowledge_content
 
     async with _site() as site:
         _network()

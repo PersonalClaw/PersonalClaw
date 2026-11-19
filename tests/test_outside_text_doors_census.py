@@ -141,11 +141,11 @@ FENCED_NOT_SCREENED: dict[tuple[str, str], str] = {
     ),
     ("dashboard/attachment_extract.py", "file_block"): "a file attached in a chat",
     ("dashboard/screen_frames.py", "_apply_screen_frame"): "what a shared screen shows, described",
-    ("dashboard/chat_runner.py", "_inject_investigate_context"): (
+    ("dashboard/referenced_content.py", "_inject_investigate_context"): (
         "an Inbox item or an artifact the owner opens in a chat to look into"
     ),
     (
-        "dashboard/chat_runner.py",
+        "dashboard/referenced_content.py",
         "_inject_knowledge_content",
     ): "a knowledge item attached to a chat",
     ("doc_parser.py", "text_for_model"): "a document's text",

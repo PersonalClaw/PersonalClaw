@@ -104,7 +104,11 @@ async def test_a_subagent_spawn_is_refused_on_an_unverified_ceiling(unreadable_c
         ctx_builder=_mock_ctx_builder(),
         is_yolo=lambda: True,  # would auto-approve; the budget guard precedes it
     )
-    with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel"):
+    with (
+        patch("personalclaw.subagent.Stats"),
+        patch("personalclaw.subagent.sel"),
+        patch("personalclaw.subagent_admission.sel"),
+    ):
         info = manager.spawn("expensive unattended task")
     assert info is not None and info.done is True
     assert "could not be verified" in info.error
@@ -113,14 +117,15 @@ async def test_a_subagent_spawn_is_refused_on_an_unverified_ceiling(unreadable_c
 def test_a_subagent_fanout_stops_on_an_unverified_ceiling(unreadable_ceiling: Path):
     """The run scope is what actually bounds a fan-out (N children each spend under the
     day snapshot), so an unverifiable run ceiling stops it with a typed reason."""
+    from personalclaw import subagent_admission
     from personalclaw.subagent import SubagentInfo, SubagentManager
     from tests.test_subagent import _mock_ctx_builder, _mock_sessions
 
     manager = SubagentManager(sessions=_mock_sessions(), ctx_builder=_mock_ctx_builder())
     info = SubagentInfo(id="c1", task="t", agent="", parent_session_key="s")
     info.input_tokens, info.output_tokens, info.cost_usd = 10, 20, 0.5
-    with patch("personalclaw.subagent.sel"):
-        manager._charge_child_and_check_budget(info)
+    with patch("personalclaw.subagent_admission.sel"):
+        subagent_admission.charge_child_and_check_budget(manager, info)
     stops = [v for v in manager._fanout_stops.values()]
     assert stops and "could not be verified" in stops[0]
 

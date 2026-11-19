@@ -10,7 +10,7 @@ with that entity's full context. One shared primitive:
 * ``POST /api/investigate`` creates a fresh chat session in ``ask`` mode (read-only
   investigation — propose-don't-write), stages the envelope on the session, and
   returns the session key.
-* at the session's FIRST turn, ``chat_runner._inject_investigate_context`` prepends
+* at the session's FIRST turn, ``referenced_content._inject_investigate_context`` prepends
   the envelope to the model-bound message — ``fence_untrusted`` wrapped, DATA not
   instructions — exactly like the knowledge/attachment injections. The user's
   visible message stays clean, and the user always fires the first turn.

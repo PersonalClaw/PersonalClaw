@@ -191,7 +191,7 @@ def test_a_denied_session_is_never_classified(monkeypatch):
     first, then the message is touched.
     """
     from personalclaw import after_turn_review as atr
-    from personalclaw.dashboard.chat_runner import learning_decision_for_turn
+    from personalclaw.dashboard.turn_learning import learning_decision_for_turn
 
     calls: list[str] = []
 
@@ -221,16 +221,16 @@ def test_a_denied_session_is_never_classified(monkeypatch):
 
 def test_both_reviews_share_one_decision(monkeypatch):
     """The reason this function exists: two computations of one rule drift."""
-    from personalclaw.dashboard import chat_runner
+    from personalclaw.dashboard import turn_learning
 
     computed = []
-    real = chat_runner.learning_decision_for_turn
+    real = turn_learning.learning_decision_for_turn
 
     def counting(session, message, tool_calls, cfg=None):
         computed.append(message)
         return real(session, message, tool_calls, cfg)
 
-    monkeypatch.setattr(chat_runner, "learning_decision_for_turn", counting)
+    monkeypatch.setattr(turn_learning, "learning_decision_for_turn", counting)
 
     session = MagicMock()
     session.key = "shared-decision"
@@ -241,8 +241,10 @@ def test_both_reviews_share_one_decision(monkeypatch):
     computed.clear()
 
     # Passing the decision in means neither review recomputes it.
-    chat_runner._maybe_after_turn_review(MagicMock(), session, "hello", "ok", 4, decision=decision)
-    chat_runner._maybe_skill_ladder_review(
+    turn_learning._maybe_after_turn_review(
+        MagicMock(), session, "hello", "ok", 4, decision=decision
+    )
+    turn_learning._maybe_skill_ladder_review(
         MagicMock(), session, "hello", "ok", 4, decision=decision
     )
     assert computed == []
@@ -345,7 +347,7 @@ def test_recording_never_breaks_the_capture_path(tmp_path, monkeypatch):
 
 def test_chat_runner_records_the_denial_it_acts_on(tmp_path, monkeypatch):
     """The WIRING, not just the function: the real branch must write the row."""
-    from personalclaw.dashboard import chat_runner
+    from personalclaw.dashboard import turn_learning
     from personalclaw.learning import staging
 
     store = _isolated_store(tmp_path, monkeypatch)
@@ -356,7 +358,7 @@ def test_chat_runner_records_the_denial_it_acts_on(tmp_path, monkeypatch):
     denied = LearningGate(is_restricted=True).decide(Cadence.PER_TURN, tool_calls=9)
     assert not denied.permitted
 
-    chat_runner._maybe_after_turn_review(MagicMock(), session, "hello", "ok", 9, decision=denied)
+    turn_learning._maybe_after_turn_review(MagicMock(), session, "hello", "ok", 9, decision=denied)
     rows = _skipped_rows(store)
     assert len(rows) == 1
     assert GateReason.RESTRICTED.value in str(rows[0].get("detail", ""))

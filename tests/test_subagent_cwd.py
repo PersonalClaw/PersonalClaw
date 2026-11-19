@@ -262,7 +262,9 @@ def _only_the_cwd_gate_can_fire() -> Iterator[None]:
     from personalclaw.guardrails.budgets import Budget
 
     with (
-        patch("personalclaw.subagent.check_memory_available", return_value=(True, 1024.0)),
+        patch(
+            "personalclaw.subagent_admission.check_memory_available", return_value=(True, 1024.0)
+        ),
         patch("personalclaw.guardrails.incident.incident_active", return_value=False),
         # Unlimited short-circuits the gate before it meters spend, so this also
         # keeps the test off the real home's ``spend.json``.
@@ -305,7 +307,7 @@ class TestSpawnCwd:
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+            patch("personalclaw.subagent_admission.AppConfig.load", return_value=mock_cfg),
         ):
             info = manager.spawn("t", cwd=str(project))
 
@@ -345,7 +347,8 @@ class TestSpawnCwd:
             _only_the_cwd_gate_can_fire(),
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel", return_value=sel_mock),
-            patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+            patch("personalclaw.subagent_admission.sel", return_value=sel_mock),
+            patch("personalclaw.subagent_admission.AppConfig.load", return_value=mock_cfg),
         ):
             info = manager.spawn("t", cwd="/etc")
 
@@ -389,7 +392,8 @@ class TestSpawnCwd:
                 _only_the_cwd_gate_can_fire(),
                 patch("personalclaw.subagent.Stats"),
                 patch("personalclaw.subagent.sel", return_value=sel_mock),
-                patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+                patch("personalclaw.subagent_admission.sel", return_value=sel_mock),
+                patch("personalclaw.subagent_admission.AppConfig.load", return_value=mock_cfg),
             ):
                 info = manager.spawn("t", cwd=str(folder))
             assert info is not None
@@ -433,7 +437,9 @@ class TestSpawnCwd:
 
         sel_mock = MagicMock()
         with (
-            patch("personalclaw.subagent.check_memory_available", return_value=(False, 0.1)),
+            patch(
+                "personalclaw.subagent_admission.check_memory_available", return_value=(False, 0.1)
+            ),
             patch("personalclaw.guardrails.incident.incident_active", return_value=True),
             patch(
                 "personalclaw.guardrails.budgets.budget_from_config",
@@ -443,7 +449,8 @@ class TestSpawnCwd:
             _only_the_cwd_gate_can_fire(),
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel", return_value=sel_mock),
-            patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+            patch("personalclaw.subagent_admission.sel", return_value=sel_mock),
+            patch("personalclaw.subagent_admission.AppConfig.load", return_value=mock_cfg),
         ):
             info = manager.spawn("t", cwd="/etc")
 
@@ -474,7 +481,7 @@ class TestSpawnCwd:
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+            patch("personalclaw.subagent_admission.AppConfig.load", return_value=mock_cfg),
         ):
             refused = manager.spawn("t", cwd=str(outside))
             taken = manager.spawn("t", cwd=str(inside))
@@ -508,7 +515,7 @@ class TestSpawnCwd:
         with (
             patch("personalclaw.subagent.Stats"),
             patch("personalclaw.subagent.sel"),
-            patch("personalclaw.subagent.AppConfig.load", return_value=mock_cfg),
+            patch("personalclaw.subagent_admission.AppConfig.load", return_value=mock_cfg),
         ):
             info = manager.spawn("t", cwd=str(project))
 
@@ -547,7 +554,7 @@ class TestSpawnCwd:
             ctx_builder=_mock_ctx_builder_auto_spawn(),
         )
         load_mock = patch(
-            "personalclaw.subagent.AppConfig.load",
+            "personalclaw.subagent_admission.AppConfig.load",
             side_effect=OSError("config unreadable"),
         )
         budget_ok = patch(

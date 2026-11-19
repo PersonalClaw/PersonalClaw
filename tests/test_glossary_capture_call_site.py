@@ -10,7 +10,7 @@ is exactly how this shipped inert: `capture_slot_lines` was already correct and 
 tested. What had to be proved is that a real turn reaches it, through both callers:
 
 * :func:`after_turn_review.run_after_turn_review` — the review pass itself, and
-* :func:`dashboard.chat_runner._maybe_after_turn_review` — the gateway hook that every
+* :func:`dashboard.turn_learning._maybe_after_turn_review` — the gateway hook that every
   dashboard chat turn actually goes through.
 
 Each is paired with a vacuity control, because "the slot has a line" is only evidence of
@@ -26,7 +26,7 @@ from types import SimpleNamespace
 import pytest
 
 from personalclaw import after_turn_review as atr
-from personalclaw.dashboard.chat_runner import _maybe_after_turn_review
+from personalclaw.dashboard.turn_learning import _maybe_after_turn_review
 from personalclaw.learning.gate import Cadence, GateDecision, GateReason
 from personalclaw.memory_service import MemoryService
 from personalclaw.vector_memory import VectorMemoryStore

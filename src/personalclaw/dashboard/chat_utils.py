@@ -1203,3 +1203,15 @@ def _prepare_messages(messages: list[dict], running: bool) -> list[dict]:
             msg_out["meta"] = meta
         out.append(msg_out)
     return out
+
+
+def _agent_label(session: object) -> str:
+    """Telemetry/display agent name for a session.
+
+    Falls back to the seeded default agent (native ``PersonalClaw``) rather than
+    a hardcoded ``"personalclaw"`` literal, so logs/labels track the configured
+    default. Resolution is name-only (no provider build), safe on any hot path.
+    """
+    from personalclaw.agents.defaults import DEFAULT_NATIVE_AGENT_NAME
+
+    return getattr(session, "agent", "") or DEFAULT_NATIVE_AGENT_NAME

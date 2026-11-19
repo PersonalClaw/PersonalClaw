@@ -150,7 +150,7 @@ def test_a_provider_failure_degrades_to_none(monkeypatch, tmp_path):
     monkeypatch.setattr(registry, "get_provider", _boom)
     assert asyncio.run(inv._resolve_artifact("anything", _State())) is None
     # And the injection path must degrade the same way rather than killing the turn.
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     assert _inject_artifact_content(None, _Session(_msg(["x"])), "go") == "go"
 
@@ -169,7 +169,7 @@ def _msg(slugs):
 
 
 def test_injection_prepends_the_current_body(provider):
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     provider.create(name="Sales dashboard", content="<div>the chart</div>", kind="widget")
     out = _inject_artifact_content(None, _Session(_msg(["sales-dashboard"])), "make it blue")
@@ -180,7 +180,7 @@ def test_injection_prepends_the_current_body(provider):
 
 def test_injection_uses_the_LATEST_version(provider):
     """Referencing an artifact means "what it is now"."""
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     provider.create(name="Doc", content="old body", kind="document")
     provider.update("doc", content="new body", actor="agent")
@@ -190,14 +190,14 @@ def test_injection_uses_the_LATEST_version(provider):
 
 
 def test_no_mention_leaves_the_message_untouched(provider):
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     session = _Session([{"role": "user", "content": "hi", "meta": {}}])
     assert _inject_artifact_content(None, session, "hi") == "hi"
 
 
 def test_a_missing_slug_is_skipped_without_failing_the_turn(provider):
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     provider.create(name="Real", content="real body", kind="document")
     out = _inject_artifact_content(None, _Session(_msg(["real", "ghost"])), "go")
@@ -207,7 +207,7 @@ def test_a_missing_slug_is_skipped_without_failing_the_turn(provider):
 
 def test_injection_records_a_referenced_event_with_the_session_id(provider):
     """The artifact's timeline is how a user sees where it was used."""
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     provider.create(name="Doc", content="body", kind="document")
     _inject_artifact_content(None, _Session(_msg(["doc"])), "go")
@@ -219,7 +219,7 @@ def test_injection_records_a_referenced_event_with_the_session_id(provider):
 
 def test_referencing_twice_in_one_session_records_one_impression(provider):
     """A long conversation about one artifact must not flood its timeline."""
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     provider.create(name="Doc", content="body", kind="document")
     session = _Session(_msg(["doc"]))
@@ -230,7 +230,7 @@ def test_referencing_twice_in_one_session_records_one_impression(provider):
 
 
 def test_a_binary_artifact_reference_does_not_inline_bytes(provider):
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     provider.create_binary(
         name="Chart", data=b"\x89PNG\r\n\x1a\nfake", kind="image", mime="image/png"
@@ -242,7 +242,7 @@ def test_a_binary_artifact_reference_does_not_inline_bytes(provider):
 
 def test_the_header_tells_the_model_to_update_in_place(provider):
     """Without this the model creates a near-duplicate artifact instead of a version."""
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     provider.create(name="Doc", content="body", kind="document")
     out = _inject_artifact_content(None, _Session(_msg(["doc"])), "change it")
@@ -252,7 +252,7 @@ def test_the_header_tells_the_model_to_update_in_place(provider):
 
 def test_credentials_in_an_artifact_body_are_redacted_on_the_way_in(provider):
     """An artifact body is agent-authored and can contain anything it was told."""
-    from personalclaw.dashboard.chat_runner import _inject_artifact_content
+    from personalclaw.dashboard.referenced_content import _inject_artifact_content
 
     provider.create(
         name="Doc",

@@ -34,7 +34,7 @@ from chat_test_helpers import _make_state
 
 from personalclaw.context_engine import AssembledContext
 from personalclaw.context_headroom import HeadroomState
-from personalclaw.dashboard import chat_runner
+from personalclaw.dashboard import chat_runner, turn_learning
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.skills.allocation import SkillLoadState
 
@@ -317,7 +317,7 @@ def test_after_turn_review_origins(monkeypatch, facet, lesson, worthwhile, expec
     monkeypatch.setattr(learning, "record_denial", lambda *_a, **_k: None)
 
     state = _learning_state()
-    chat_runner._maybe_after_turn_review(
+    turn_learning._maybe_after_turn_review(
         state,
         _learning_session(),
         user_message="no, use tabs",
@@ -359,7 +359,7 @@ def test_what_a_turn_learned_is_kept_on_the_turn(monkeypatch):
     ]
     state = _learning_state()
 
-    kept = chat_runner._maybe_after_turn_review(
+    kept = turn_learning._maybe_after_turn_review(
         state,
         session,
         user_message="From now on, keep your answers short.",
@@ -382,7 +382,7 @@ def test_a_turn_that_learned_nothing_keeps_no_record(monkeypatch):
     session = _learning_session()
     session.messages = [{"role": "assistant", "content": "Here is the summary."}]
 
-    kept = chat_runner._maybe_after_turn_review(
+    kept = turn_learning._maybe_after_turn_review(
         _learning_state(),
         session,
         user_message="Summarize the notes.",
@@ -408,7 +408,7 @@ async def test_skill_ladder_origin_is_proposal():
     atr.run_skill_ladder_review = _summary  # type: ignore[assignment]
     try:
         state = _learning_state()
-        chat_runner._maybe_skill_ladder_review(
+        turn_learning._maybe_skill_ladder_review(
             state,
             _learning_session(),
             user_message="that was wrong",
@@ -436,7 +436,7 @@ def test_the_three_origins_are_distinct_and_closed():
     """
     import personalclaw.after_turn_review as atr
 
-    runner = Path(chat_runner.__file__).read_text()
+    runner = "".join(Path(m.__file__).read_text() for m in (chat_runner, turn_learning))
     origins = set(re.findall(r'"origin":\s*"([a-z]+)"', runner))
     origins |= set(re.findall(r'_announce_learned\(\s*state,\s*session,\s*"([a-z]+)"', runner))
     origins |= set(re.findall(r'Learned\(\s*"([a-z]+)"', Path(atr.__file__).read_text()))
@@ -515,7 +515,7 @@ def _a_review(monkeypatch, facet, lesson, worthwhile):
     monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: object())
     monkeypatch.setattr(learning, "record_denial", lambda *_a, **_k: None)
     state = _learning_state()
-    chat_runner._maybe_after_turn_review(
+    turn_learning._maybe_after_turn_review(
         state,
         _learning_session(),
         user_message="no, use tabs",
@@ -536,7 +536,7 @@ async def _a_ladder(monkeypatch):
 
     monkeypatch.setattr(atr, "run_skill_ladder_review", _summary)
     state = _learning_state()
-    chat_runner._maybe_skill_ladder_review(
+    turn_learning._maybe_skill_ladder_review(
         state,
         _learning_session(),
         user_message="that was wrong",
@@ -566,7 +566,7 @@ def _a_stumble(monkeypatch):
     state = _learning_state()
     session = _learning_session()
     session._skills_used = [{"name": "git-hygiene", "state": "admitted", "loaded_tokens": 900}]
-    chat_runner._maybe_refine_stumble(
+    turn_learning._maybe_refine_stumble(
         state,
         session,
         "No, use uv instead of pip.",

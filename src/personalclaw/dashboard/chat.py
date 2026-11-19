@@ -107,11 +107,7 @@ from personalclaw.dashboard.chat_regenerate import (  # noqa: F401
     api_chat_session_regenerate,
     api_chat_session_switch_variant,
 )
-from personalclaw.dashboard.chat_runner import (  # noqa: F401
-    _expand_prompt_mention,
-    _flush_segment,
-    run_chat,
-)
+from personalclaw.dashboard.chat_runner import _flush_segment, run_chat  # noqa: F401
 from personalclaw.dashboard.chat_session_map import (  # noqa: F401
     SESSION_MARK_KINDS,
     TURN_TELEMETRY_KEY,
@@ -164,6 +160,7 @@ from personalclaw.dashboard.chat_utils import (  # noqa: F401
     is_deprecated_model,
 )
 from personalclaw.dashboard.chat_voice import api_voice_synthesize  # noqa: F401
+from personalclaw.dashboard.referenced_content import _expand_prompt_mention  # noqa: F401
 from personalclaw.dashboard.side import (  # noqa: F401
     api_side_close,
     api_side_open,

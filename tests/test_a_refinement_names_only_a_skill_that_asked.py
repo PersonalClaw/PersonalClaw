@@ -80,10 +80,10 @@ class _Cfg:
 
 
 def _turn(used: list[str], outcomes: list[tuple[str, str]], user: str = "What changed?") -> _State:
-    from personalclaw.dashboard import chat_runner
+    from personalclaw.dashboard import turn_learning
 
     state = _State()
-    chat_runner._maybe_refine_stumble(
+    turn_learning._maybe_refine_stumble(
         state, _Session(used), user, "It is a maintenance release.", outcomes, _Cfg()
     )
     return state

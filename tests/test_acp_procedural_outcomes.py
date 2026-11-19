@@ -4,7 +4,7 @@ The measured gap: a six-tool-call ACP turn produced **zero** procedural rows.
 Root cause was a two-link break, and both links are pinned here:
 
 1. ``drain_tool_outcomes`` existed on exactly ONE provider (the native runtime). The
-   dashboard reads it duck-typed (``chat_runner.py``: ``getattr(provider,
+   dashboard reads it duck-typed (``turn_learning.py``: ``getattr(provider,
    "drain_tool_outcomes", None)``), so on an ACP provider it returned ``None``,
    ``tool_outcomes`` stayed ``[]`` and ``record_procedural_outcomes`` was handed nothing.
 2. ``acp/translate.py`` stamps the failure bit (``tool_meta = {"ok": False}``) but
@@ -233,7 +233,7 @@ class TestAcpTurnProducesProceduralRows:
 
     @pytest.mark.asyncio
     async def test_the_zero_rows_reproduction_through_the_duck_typed_read(self, svc):
-        """The zero-rows gap end to end, read the way ``chat_runner.py`` reads it — the same
+        """The zero-rows gap end to end, read the way ``turn_learning.py`` reads it — the same
         ``getattr(provider, "drain_tool_outcomes", None)``, not a direct call. This is
         the test that reds on ZERO ROWS if the hook is ever removed from the ACP
         providers again, instead of failing on a missing attribute."""
@@ -242,7 +242,7 @@ class TestAcpTurnProducesProceduralRows:
         provider = _provider([_turn_events([(f"c{i}", "Read", "completed") for i in range(6)])])
         await _drive(provider)
 
-        # verbatim chat_runner.py shape
+        # verbatim turn_learning.py shape
         drain = getattr(provider, "drain_tool_outcomes", None)
         tool_outcomes: list[tuple[str, str]] = []
         if callable(drain):
@@ -302,11 +302,11 @@ class TestDrainOnceAndTurnBoundary:
         assert provider.drain_tool_outcomes() == [("Read", "success")]
 
 
-# ── the second reader at chat_runner.py's self-model observer ────────────────
+# ── the second reader at turn_learning.py's self-model observer ──────────────
 
 
 class TestSelfModelObserverStillSeesTheTools:
-    """``chat_runner`` computes ``tools=tuple(sorted({t for t, _ in tool_outcomes}))`` and
+    """``turn_learning`` computes ``tools=tuple(sorted({t for t, _ in tool_outcomes}))`` and
     ``succeeded=all(outcome == "success" ...)`` from the SAME drained list. Breaking the
     drain-once discipline (a second drain in between) starves this consumer silently."""
 
@@ -334,7 +334,7 @@ class TestSelfModelObserverStillSeesTheTools:
         must be fed from the single drained list: procedural memory gets rows, AND the
         self-model observer gets the tool names. Adding a second ``drain()`` between them
         clears the accumulator and starves whichever reader comes second."""
-        from personalclaw.dashboard import chat_runner as cr
+        from personalclaw.dashboard import turn_learning
         from personalclaw.learning import self_model_observer
 
         monkeypatch.setattr("personalclaw.memory_service.service_for", lambda _m: svc)
@@ -357,7 +357,7 @@ class TestSelfModelObserverStillSeesTheTools:
             ]
         )
         await _drive(provider)
-        cr._maybe_after_turn_review(
+        turn_learning._maybe_after_turn_review(
             _state_for(svc),
             _session(),
             user_message="do the thing",

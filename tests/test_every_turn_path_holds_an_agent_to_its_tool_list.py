@@ -264,7 +264,9 @@ async def world(tmp_path, monkeypatch):
     try:
         with (
             patch("personalclaw.subagent_persistence._subagents_dir", lambda: tmp_path / "agents"),
-            patch("personalclaw.subagent.check_memory_available", lambda **_kw: (True, 8.0)),
+            patch(
+                "personalclaw.subagent_admission.check_memory_available", lambda **_kw: (True, 8.0)
+            ),
             patch("personalclaw.subagent.Stats"),
         ):
             yield w

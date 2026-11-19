@@ -28,7 +28,12 @@ import pytest_asyncio
 
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.started_work import TURN_STOPPED
-from personalclaw.subagent import _CIRCUIT_BREAKER_THRESHOLD, SubagentInfo, SubagentManager
+from personalclaw.subagent import SubagentInfo, SubagentManager
+from personalclaw.subagent_admission import (
+    _CIRCUIT_BREAKER_THRESHOLD,
+    charge_child_and_check_budget,
+    note_child_outcome,
+)
 
 # Bounded stand-in hang: long enough to outlast the cap under test, short enough that a
 # cap which fails to bind costs one assertion failure rather than the 120s
@@ -389,7 +394,7 @@ class TestFanoutControl:
                     id=f"c{i}", task="t", parent_session_key="dashboard:x", parent_run=fkey
                 )
                 info.error = "boom"
-                mgr._note_child_outcome(info)
+                note_child_outcome(mgr, info)
             assert mgr._fanout_failures.get(fkey, 0) >= _CIRCUIT_BREAKER_THRESHOLD
             assert fkey in mgr._fanout_stops
             # A new spawn for the tripped fan-out is refused.
@@ -410,9 +415,9 @@ class TestFanoutControl:
             for i in range(4):
                 bad = SubagentInfo(id=f"b{i}", task="t", parent_run=fkey)
                 bad.error = "boom"
-                mgr._note_child_outcome(bad)
+                note_child_outcome(mgr, bad)
             good = SubagentInfo(id="ok", task="t", parent_run=fkey)  # no error
-            mgr._note_child_outcome(good)
+            note_child_outcome(mgr, good)
             assert mgr._fanout_failures.get(fkey, 0) == 0
             assert fkey not in mgr._fanout_stops
 
@@ -430,7 +435,7 @@ class TestFanoutControl:
                 c = SubagentInfo(id=f"c{i}", task="t", parent_run=fkey)
                 c.error = "cancelled"
                 c.cancelled = True
-                mgr._note_child_outcome(c)
+                note_child_outcome(mgr, c)
             assert fkey not in mgr._fanout_stops
 
 
@@ -557,7 +562,7 @@ def _trip(mgr: SubagentManager, chat: str) -> None:
     for i in range(_CIRCUIT_BREAKER_THRESHOLD):
         failed = SubagentInfo(id=f"f{i}", task="t", parent_session_key=chat)
         failed.error = "boom"
-        mgr._note_child_outcome(failed)
+        note_child_outcome(mgr, failed)
     assert chat in mgr._fanout_stops
 
 
@@ -1016,7 +1021,7 @@ class TestTheStopEndsWithItsFanout:
             # schedules the late cancel, and its ending then drains the fan-out, as `_run` does.
             crossed = SubagentInfo(id="crossed", task="t", parent_session_key=chat)
             crossed.input_tokens, crossed.output_tokens = 1000, 500
-            mgr._charge_child_and_check_budget(crossed)
+            charge_child_and_check_budget(mgr, crossed)
             assert chat in mgr._fanout_stops
             mgr._maybe_clear_fanout(chat)
             # Before the late cancel has run, the chat starts its next helper.
