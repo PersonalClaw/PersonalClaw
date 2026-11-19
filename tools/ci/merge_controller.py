@@ -66,7 +66,10 @@ trusted-run branch the old path left).
    of ``dependency-review.yml`` on the head, main's copy, concluded ``success``. One that has not
    run, is still running or did not pass is red. It is read by its path, its event and the head,
    so a candidate's own workflow named for it, which runs under ``pull_request``, never stands in
-   for it, and a run on an older head of the pull request does not count. And its commits pass
+   for it, and a run on an older head of the pull request does not count. The poster also reads
+   the dependency graph's comparison itself (:func:`review_reading`): an added package version
+   with a known vulnerability, in any scope but development, is red. Until
+   ``dependency-review.yml`` moves to ``pull_request``, both count. And its commits pass
    the commit policy (#3908): the poster runs main's ``scripts/check_commit_provenance.py`` itself
    (:func:`policy_reading`), pr mode with main's MAINTAINERS, over the commits API's list of the
    head's pull request and its title. A fork's run lists no pull request, so it is found by the
@@ -210,6 +213,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1043,20 +1047,11 @@ def policy_detail(policy: Policy, repo: str) -> list[str]:
     them, and the fix for each rule they break."""
     if not policy.lines:
         return []
-    shown = policy.lines[:POLICY_LINES]
-    longest = max((len(r) for r in re.findall(r"`+", "\n".join(shown))), default=0)
-    bar = "`" * max(3, longest + 1)
-    more = len(policy.lines) - len(shown)
-    out = [
-        "",
+    out = _fenced(
         "Each commit that breaks the commit policy, with the rule it breaks and what was found:",
-        "",
-        f"{bar}text",
-        *shown,
-        bar,
-        *([f"and {more} more"] if more else []),
-        "",
-    ]
+        policy.lines,
+        POLICY_LINES,
+    )
     if 1 in policy.rules:
         out.append(
             "- Rule 1, a `Signed-off-by` that matches its author on every commit: sign them off"
@@ -1077,6 +1072,129 @@ def policy_detail(policy: Policy, repo: str) -> list[str]:
         )
     out.append(f"More: [CONTRIBUTING.md](https://github.com/{repo}/{_CONTRIBUTING}).")
     return out
+
+
+def _fenced(intro: str, lines: list[str], cap: int) -> list[str]:
+    """*lines*, which hold the head's text, as a summary shows them: in a fence one backtick longer
+    than any run in them, so none can close it, at most *cap* of them and the rest counted."""
+    shown = lines[:cap]
+    longest = max((len(r) for r in re.findall(r"`+", "\n".join(shown))), default=0)
+    bar = "`" * max(3, longest + 1)
+    more = len(lines) - len(shown)
+    return [
+        "",
+        intro,
+        "",
+        f"{bar}text",
+        *shown,
+        bar,
+        *([f"and {more} more"] if more else []),
+        "",
+    ]
+
+
+# ── The dependency review, judged by main's own read ──────────────────────────────────────────
+#
+# dependency-review.yml runs on ``pull_request_target``, which GitHub's default policy stops in
+# public repositories from 2026-12-02. The poster reads the same comparison the action reads, the
+# dependency graph's, and judges it by the action's rule with core's settings, its defaults: an
+# added package version with a known vulnerability of any severity, in the runtime scope, is red.
+# Every scope but development counts, one the graph does not know or a new one included, so a gap
+# in the graph fails closed. Until the
+# workflow moves to ``pull_request``, its run counts too (:func:`dependency_review_reasons`).
+
+#: How many of the review's lines a red verdict's summary shows; the rest are counted.
+REVIEW_LINES = 40
+#: What a red against the dependency review tells the contributor, short enough for a title.
+REVIEW_FIX = "the summary names each package, where it is added and its advisories"
+#: The one scope the review lets through. The action's default fails on the runtime scope alone, and
+#: the graph's only other known scope is development: any other value, unknown or new, counts.
+_REVIEW_SKIPS = frozenset({"development"})
+
+
+def _flat(text: object, limit: int = 160) -> str:
+    """*text* on one line: every control, format and line-separator character a space, runs of
+    whitespace one space, and at most *limit* characters. A package's name and its manifest's
+    path are the head's to write."""
+    spaced = "".join(
+        (
+            " "
+            if unicodedata.category(ch)[0] == "C" or unicodedata.category(ch) in ("Zl", "Zp")
+            else ch
+        )
+        for ch in str(text)
+    )
+    flat = " ".join(spaced.split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+@dataclass(frozen=True)
+class Review:
+    """Main's dependency review of a head: why it is red, its lines for the summary (each added
+    package version with a known vulnerability), and how many changes the comparison held."""
+
+    reasons: list[str]
+    lines: list[str] = field(default_factory=list)
+    changes: int = 0
+
+
+def review_reading(get: Get, repo: str, base: str, head: str) -> Review:
+    """The dependency graph's comparison of main's tip *base* with *head*, both by sha, three
+    dots, so from their merge base and of the head's own changes alone, judged by the action's
+    rule (:data:`_REVIEW_SKIPS`). An answer that is not a list of entries each naming its change,
+    scope and vulnerabilities is unread, so red: a 404 (the graph off, or not yet built for the
+    head) included, never read as no change."""
+    answer = _read(get, f"/repos/{repo}/dependency-graph/compare/{base}...{head}")
+    if not isinstance(answer, list):
+        raise Unread(f"the dependency comparison {base}...{head} is not a list")
+    lines: list[str] = []
+    for item in answer:
+        kind = item.get("change_type") if isinstance(item, Mapping) else None
+        scope = item.get("scope") if isinstance(item, Mapping) else None
+        found = item.get("vulnerabilities") if isinstance(item, Mapping) else None
+        if not isinstance(kind, str) or not isinstance(scope, str) or not isinstance(found, list):
+            raise Unread(
+                f"an entry of the dependency comparison {base}...{head} names no change, scope"
+                " or vulnerabilities"
+            )
+        if kind != "added" or not found or scope in _REVIEW_SKIPS:
+            continue
+        ids = sorted(
+            {_flat(v.get("advisory_ghsa_id") or "", 40) for v in found if isinstance(v, Mapping)}
+            - {""}
+        )
+        where = (
+            f"{_flat(item.get('ecosystem'), 40)} {_flat(item.get('name'))}"
+            f" {_flat(item.get('version'), 80)} in {_flat(item.get('manifest'))}"
+        )
+        advisories = ", ".join(ids) if ids else f"{len(found)} advisories"
+        named = "" if scope == "runtime" else f" (scope {_flat(scope, 40)})"
+        lines.append(f"{where}: {advisories}{named}")
+    if not lines:
+        return Review([], changes=len(answer))
+    return Review(
+        [
+            f"the head adds {len(lines)} package version(s) with a known vulnerability, by main's"
+            f" dependency review: {REVIEW_FIX}"
+        ],
+        lines,
+        len(answer),
+    )
+
+
+def review_detail(review: Review) -> list[str]:
+    """A red's summary lines for the dependency review (:func:`_fenced`), and the fix."""
+    if not review.lines:
+        return []
+    return [
+        *_fenced(
+            "Each package version the head adds with a known vulnerability, where it is added and"
+            " its advisories:",
+            review.lines,
+            REVIEW_LINES,
+        ),
+        "- Move each to a version with no known advisory, or drop it, and push again.",
+    ]
 
 
 def queue_message_reasons(get: Get, repo: str, sha: str) -> list[str]:
@@ -2324,6 +2442,7 @@ def decide(
     gates = Gates([], [], {}, [])
     codeql = CodeQL([], [])
     policy = Policy([])
+    review = Review([])
     # The jobs no runner took, when they alone were why the first attempts' results were red,
     # and the last attempt they excused (rule 4).
     untaken: list[str] = []
@@ -2364,6 +2483,8 @@ def decide(
         failing, labels, untaken, through = results_reasons(get, repo, run, excuse=True)
         reasons += failing
         reasons += dependency_review_reasons(get, repo, head)
+        review = review_reading(get, repo, base, head)
+        reasons += review.reasons
         policy = policy_reading(get, repo, run)
         reasons += policy.reasons
         codeql = codeql_reading(get, repo, head, base)
@@ -2387,7 +2508,7 @@ def decide(
             reasons.append(f"the run has no `{RECORD_PREFIX}*` artifact, so no evidence")
         flakes = passed_flakes(get, repo, run) if not reasons else []
     except (Unread, trust.Refused) as exc:
-        detail = policy_detail(policy, repo)
+        detail = [*review_detail(review), *policy_detail(policy, repo)]
         return Outcome(posting=_red(run, [*reasons, _unread(exc)], head, moved, detail=detail))
     # A head that changes a definition: its contract run is started once, at main's tip, and its
     # verdict waits for it. Once that run has reported, its branch goes with the posted verdict.
@@ -2410,7 +2531,14 @@ def decide(
         outside = [*gates.outside, *codeql.outside]
         retried = _retry_note(get, repo, run, tree_oid, failing, reasons, queue, outside)
         return Outcome(
-            posting=_red(run, reasons, head, moved, retried, policy_detail(policy, repo)),
+            posting=_red(
+                run,
+                reasons,
+                head,
+                moved,
+                retried,
+                [*review_detail(review), *policy_detail(policy, repo)],
+            ),
             dispatch=start,
             base=base,
             cleanup=cleanup,
@@ -2450,6 +2578,8 @@ def decide(
                 else "- the head is behind main, which the merge queue tests it on before it lands"
             ),
             "- its dependency review passed",
+            f"- main's dependency review passed on the dependency graph's {review.changes}"
+            " change(s), run by this verdict",
             f"- main's commit-policy check passed on its {policy.commits} commit(s) and its title"
             " (rules 1, 3 and 5), run by this verdict",
             "- CodeQL analysed every language main has, and found no alert it brings",

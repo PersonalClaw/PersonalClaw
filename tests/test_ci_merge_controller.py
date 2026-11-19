@@ -118,6 +118,7 @@ class FakeApi:
         self.artifacts({"ci-record-unit": DIGEST, "web-dist": "sha256:" + "e" * 64})
         self.review(HEAD, ("completed", "success"))
         self.pull_request()
+        self.answers[f"/repos/{REPO}/dependency-graph/compare/{MAIN}...{HEAD}"] = []
         self.codeql(HEAD)
         for file in GATE_FILTERS:
             self.gate(file)
@@ -1762,6 +1763,154 @@ def test_a_review_from_another_workflow_counts_for_nothing() -> None:
     api = FakeApi()
     api.review(HEAD, ("completed", "success"), path=f"{WF}fake-review.yml")
     assert "has no dependency review" in _red(api).output["summary"]
+
+
+# ── The dependency review, by main's own read ─────────────────────────────────────────────────
+
+GRAPH = f"/repos/{REPO}/dependency-graph/compare/{MAIN}...{HEAD}"
+
+
+def change(
+    kind: str = "added",
+    name: str = "left-pad",
+    version: str = "1.0.0",
+    scope: str | None = "runtime",
+    advisories: tuple[str, ...] = ("GHSA-aaaa-bbbb-cccc",),
+    manifest: str = "package-lock.json",
+    **fields: Any,
+) -> dict[str, Any]:
+    """One entry of the dependency graph's comparison, as GitHub answers it."""
+    entry: dict[str, Any] = {
+        "change_type": kind,
+        "manifest": manifest,
+        "ecosystem": "npm",
+        "name": name,
+        "version": version,
+        "scope": scope,
+        "vulnerabilities": [{"severity": "low", "advisory_ghsa_id": a} for a in advisories],
+        **fields,
+    }
+    if scope is None:
+        del entry["scope"]
+    return entry
+
+
+def test_the_review_reads_the_graph_by_main_s_sha_and_the_head_s_and_says_so() -> None:
+    api = FakeApi()
+    api.answers[GRAPH] = [change(advisories=()), change("removed", version="0.9.0")]
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert GRAPH in api.calls
+    assert (
+        "- main's dependency review passed on the dependency graph's 2 change(s), run by this"
+        " verdict" in found.output["summary"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("entry", "says"),
+    [
+        (change(), "npm left-pad 1.0.0 in package-lock.json: GHSA-aaaa-bbbb-cccc"),
+        (change(scope="unknown"), "GHSA-aaaa-bbbb-cccc (scope unknown)"),
+        (change(scope="optional"), "GHSA-aaaa-bbbb-cccc (scope optional)"),
+        (change(advisories=("GHSA-2", "GHSA-1")), "GHSA-1, GHSA-2"),
+    ],
+    ids=["runtime", "scope-unknown", "a-scope-the-code-does-not-know", "two-advisories"],
+)
+def test_an_added_version_with_a_known_vulnerability_is_red(
+    entry: dict[str, Any], says: str
+) -> None:
+    api = FakeApi()
+    api.answers[GRAPH] = [entry]
+    found = _red(api)
+    assert found.output["title"] == (
+        "Red: the head adds 1 package version(s) with a known vulnerability, by main's dependency"
+        f" review: {mc.REVIEW_FIX}"
+    )
+    assert says in found.output["summary"], found.output["summary"]
+    assert "Move each to a version with no known advisory" in found.output["summary"]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        change(scope="development"),
+        change("removed"),
+        change(advisories=()),
+    ],
+    ids=["development-scope", "removed", "no-advisory"],
+)
+def test_what_the_action_lets_through_the_review_lets_through(entry: dict[str, Any]) -> None:
+    api = FakeApi()
+    api.answers[GRAPH] = [entry]
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+
+
+@pytest.mark.parametrize(
+    ("answer", "says"),
+    [
+        ({"message": "Not Found"}, "is not a list"),
+        ([change(scope=None)], "names no change, scope or vulnerabilities"),
+        ([change(vulnerabilities=None)], "names no change, scope or vulnerabilities"),
+        (["not an entry"], "names no change, scope or vulnerabilities"),
+    ],
+    ids=["not-a-list", "no-scope", "no-vulnerabilities", "not-an-entry"],
+)
+def test_a_comparison_the_review_cannot_read_is_red(answer: Any, says: str) -> None:
+    api = FakeApi()
+    api.answers[GRAPH] = answer
+    summary = _red(api).output["summary"]
+    assert "unread: " in summary and says in summary, summary
+
+
+def test_a_graph_that_answers_404_is_red_never_no_change() -> None:
+    api = FakeApi()
+    del api.answers[GRAPH]
+    summary = _red(api).output["summary"]
+    assert f"unread: GET {GRAPH}: HTTP 404" in summary, summary
+
+
+def test_a_graph_the_api_refuses_on_every_try_is_infrastructure() -> None:
+    api = FakeApi()
+
+    def refused(path: str) -> Any:
+        if path == GRAPH:
+            raise merge_verdict.ApiUnavailable("infrastructure: HTTP 503 on each of 3 tries")
+        return api(path)
+
+    found = mc.decide(refused, REPO, RUN, CONTROLLER).posting
+    assert found is not None and found.conclusion == "failure"
+    assert f"- infrastructure: GET {GRAPH}: HTTP 503 on each of 3 tries" in found.output["summary"]
+
+
+def test_package_text_stays_in_the_fence_and_out_of_the_title() -> None:
+    api = FakeApi()
+    api.answers[GRAPH] = [change(name="evil ```` [a link](https://example.com)\x1b[2Kline")]
+    found = _red(api)
+    assert "evil" not in found.output["title"] and "example.com" not in found.output["title"]
+    summary = found.output["summary"]
+    bar = "`" * 5
+    opened = summary.index(bar + "text\n")
+    closed = summary.index("\n" + bar + "\n", opened)
+    assert "evil ```` [a link](https://example.com) [2Kline" in summary[opened:closed]
+    assert "\x1b" not in summary
+
+
+def test_the_review_shows_the_first_lines_and_counts_the_rest() -> None:
+    api = FakeApi()
+    api.answers[GRAPH] = [change(name=f"pkg-{n}") for n in range(45)]
+    summary = _red(api).output["summary"]
+    assert summary.count(": GHSA-aaaa-bbbb-cccc") == mc.REVIEW_LINES
+    assert f"\nand {45 - mc.REVIEW_LINES} more\n" in summary
+
+
+def test_a_red_dependency_review_run_with_a_clean_graph_is_still_red() -> None:
+    # Both count until dependency-review.yml moves to pull_request.
+    api = FakeApi()
+    api.review(HEAD, ("completed", "failure"))
+    title = _red(api).output["title"]
+    assert "the head's dependency review is 'failure'" in title, title
 
 
 # ── The commit policy, by main's own check (#3908) ────────────────────────────────────────────

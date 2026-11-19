@@ -138,17 +138,20 @@ def test_a_new_workflow_on_pull_request_target_fails(on: str) -> None:
 
 
 def test_a_listed_workflow_that_moved_off_it_fails() -> None:
-    texts = _texts()
-    [name, *_] = _names()
-    texts[name] = texts[name].replace("pull_request_target:", "pull_request:")
-    assert problems(texts, _names(), ALLOWED) == [f"{name} is listed but no longer runs on it"]
+    # A planted entry, so the row holds when the tree's own list is empty.
+    moved = "name: Planted\non:\n  pull_request:\n    types: [opened]\njobs: {}\n"
+    texts = {**_texts(), "planted.yml": moved}
+    names = (*_names(), "planted.yml")
+    assert problems(texts, names, {**ALLOWED, "planted.yml": "a plant"}) == [
+        "planted.yml is listed but no longer runs on it"
+    ]
 
 
 def test_a_listed_workflow_that_is_gone_fails() -> None:
-    texts = _texts()
-    [name, *_] = _names()
-    del texts[name]
-    assert problems(texts, _names(), ALLOWED) == [f"{name} is listed but is gone"]
+    names = (*_names(), "gone.yml")
+    assert problems(_texts(), names, {**ALLOWED, "gone.yml": "a plant"}) == [
+        "gone.yml is listed but is gone"
+    ]
 
 
 def test_a_list_that_names_more_than_this_rail_allows_fails() -> None:
