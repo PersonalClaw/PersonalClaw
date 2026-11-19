@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { THEMES } from './routes'
-import { seedTheme, gotoRoute, driveScriptedTurns, openHeaderOverflowIfNeeded, settleEntranceAnimations } from './helpers'
+import { seedTheme, gotoRoute, driveScriptedTurns, openHeaderOverflowIfNeeded, settleEntranceAnimations, settleTurnLine } from './helpers'
 // Two defects axe has no rule for, asserted on the same navigation as the axe scan.
 import { expectNoNonAxeA11yDefects } from './nonAxeA11yChecks'
 
@@ -54,6 +54,8 @@ test.describe('a11y (WCAG AA): mobile viewport — in-session navigation', () =>
       await gotoRoute(page, 'chat')
       // Four messages: the map appears at four (`SESSION_MAP_MIN_MARKS`).
       await driveScriptedTurns(page, 'Index this turn on the session map, please', 4)
+      // The last turn's line fades and goes; a scan taken mid-fade measures the fade (`settleTurnLine`).
+      await settleTurnLine(page)
 
       // The floor: in-session nav must remain REACHABLE at this viewport. The
       // gutter rail is gone here by design, so if the one named control is also unreachable the
@@ -134,6 +136,8 @@ test.describe('a11y (WCAG AA): desktop viewport — the Session Map rail, OPEN',
       await seedTheme(page, theme)
       await gotoRoute(page, 'chat')
       await driveScriptedTurns(page, 'Index this turn on the session map, please', 4)
+      // The last turn's line fades and goes; a scan taken mid-fade measures the fade (`settleTurnLine`).
+      await settleTurnLine(page)
 
       // ── FLOOR 1: the rail is actually here, with marks ──────────────────────
       // Desktop defaults OPEN (`useQueryParam(…, 'map', isMobile ? '0' : '1')`), so no
@@ -226,6 +230,7 @@ test.describe('a11y (WCAG AA): a chat in focus mode and reading mode', () => {
       await seedTheme(page, theme)
       await gotoRoute(page, 'chat')
       await driveScriptedTurns(page, 'Read me a long answer, please', 1)
+      await settleTurnLine(page)
       await page.keyboard.press('ControlOrMeta+Backslash')
       await page.keyboard.press('ControlOrMeta+Shift+Period')
       await expect(page.locator('nav[data-tour="rail"]')).toHaveCount(0)

@@ -441,6 +441,24 @@ export async function settleDom(
     .catch(() => false)
 }
 
+/** Wait until the chat's turn line has gone. A turn's ending holds on the line, then the line fades
+ *  over the Medium length (`--duration-medium`) and goes (`ui/TurnStatusRow.tsx`). Mid-fade its
+ *  words are drawn at part opacity, and axe composites that: measured on the dark theme, "Done in
+ *  under a second" reads 3.9:1 at opacity 0.46 and 3.1:1 at 0.38, though it is 14.9:1 settled in
+ *  both themes. So a scan taken right after scripted turns went red on a fade it happened to
+ *  catch, in a merge-queue run, and green on the runs before it. A scan after a turn waits for
+ *  this first. The line goes in about a second; the timeout leaves room for a slow host.
+ *  `settleEntranceAnimations` cannot see this fade: it compares inline opacities, and the line's
+ *  inline opacity is 0 for the whole of it while the transition moves the computed one. The line's
+ *  own contrast at rest is held from its tokens (`src/design/turnLineContrast.test.ts`), since a
+ *  scan that waits for it to go no longer reads it. */
+export async function settleTurnLine(page: Page, timeout = 15_000): Promise<void> {
+  await expect(
+    page.locator('[data-turn-status]'),
+    "the last turn's line never went: its ending held, or its fade never finished, so a scan now would read the line mid-fade",
+  ).toHaveCount(0, { timeout })
+}
+
 /** Block until no element is mid-fade, so a scan measures the page AT REST.
  *
  *  A partially-faded element composites its ink toward the background, and axe reads
