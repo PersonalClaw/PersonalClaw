@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 import personalclaw.mcp_workflows as mw
+import personalclaw.workflows.agent_plans as ap
 from personalclaw.workflows import preflight as PF
 from personalclaw.workflows.revision import NO_UPDATE
 
@@ -130,13 +131,13 @@ class TestProviderRequirementGap:
 class TestPreflightSurface:
     def test_it_emits_the_reports_own_keys(self, monkeypatch: Any) -> None:
         _resolvable(monkeypatch)
-        surface = mw._preflight_surface(DEF_WITH_PROVIDER)
+        surface = ap._preflight_surface(DEF_WITH_PROVIDER)
         assert set(surface) == {"preflight"}
         assert set(surface["preflight"]) == {"ok", "findings", "checked"}
 
     def test_it_checks_all_four_classes_not_just_the_cheap_ones(self, monkeypatch: Any) -> None:
         _resolvable(monkeypatch)
-        checked = mw._preflight_surface(DEF_WITH_PROVIDER)["preflight"]["checked"]
+        checked = ap._preflight_surface(DEF_WITH_PROVIDER)["preflight"]["checked"]
         assert set(checked) == {"credentials", "binaries", "models", "action_providers"}
         # The REFERENCED secret is checked even though nothing declared it — that reference is
         # what the engine will actually try to resolve.
@@ -155,7 +156,7 @@ class TestPreflightSurface:
         that checked a class it never examined, which re-observes `partial`.
         """
         _resolvable(monkeypatch)
-        report = mw._preflight_surface(DEF_WITH_PROVIDER)["preflight"]
+        report = ap._preflight_surface(DEF_WITH_PROVIDER)["preflight"]
         gaps = [
             f for f in report["findings"] if f["code"] == "WF_PRE_PROVIDER_REQUIREMENTS_UNCHECKED"
         ]
@@ -168,7 +169,7 @@ class TestPreflightSurface:
         # The other direction: the report is not merely decorative. An unresolvable model is an
         # ERROR and `ok` follows it, which is what makes a plan-time green worth anything.
         _resolvable(monkeypatch, yes=False)
-        report = mw._preflight_surface(DEF_NO_ACTIONS)["preflight"]
+        report = ap._preflight_surface(DEF_NO_ACTIONS)["preflight"]
         assert report["ok"] is False
         assert "WF_PRE_MODEL_UNRESOLVED" in [f["code"] for f in report["findings"]]
 
@@ -177,7 +178,7 @@ class TestPreflightSurface:
 
         monkeypatch.setattr(mod, "preflight", lambda _s: (_ for _ in ()).throw(RuntimeError("no")))
         # A surface that raised must cost the user advice, never the plan.
-        assert mw._preflight_surface(DEF_WITH_PROVIDER) == {}
+        assert ap._preflight_surface(DEF_WITH_PROVIDER) == {}
 
 
 # ── the TEMPLATE path (the clause) ──
@@ -192,7 +193,7 @@ class TestTemplatePathWiring:
             return {"ok": True, "definition": DEF_WITH_PROVIDER}
 
         monkeypatch.setattr(mw.service, "get_def", fake_get_def)
-        body, summary = mw._plan_from_template("ship the thing", "shipper")
+        body, summary = ap._plan_from_template("ship the thing", "shipper")
         return _body(mw._fmt(body, summary=summary))
 
     def test_the_response_carries_a_preflight_report(self, planned: dict[str, Any]) -> None:
@@ -220,7 +221,7 @@ class TestScaffoldPathWiring:
     def planned(self, monkeypatch: Any) -> dict[str, Any]:
         _resolvable(monkeypatch)
         # No template may match, or this exercises the template path instead.
-        monkeypatch.setattr(mw, "_match_library", lambda *a, **k: None)
+        monkeypatch.setattr(ap, "_match_library", lambda *a, **k: None)
         return _body(mw._plan({"goal": "write a haiku about cold starts"}))
 
     def test_it_is_actually_the_scaffold_path(self, planned: dict[str, Any]) -> None:

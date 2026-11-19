@@ -255,6 +255,8 @@
       "mcp_prompts",
       "mcp_status",
       "mcp_subagents",
+      "mcp_workflows",
+      "mcp_workflows_gateway",
       "media_catalogs",
       "media_fixtures",
       "memory_holder",

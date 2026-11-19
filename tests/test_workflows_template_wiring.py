@@ -26,7 +26,7 @@ import json
 import pytest
 
 from personalclaw import mcp_core, mcp_workflows
-from personalclaw.workflows import template_pipeline, template_store
+from personalclaw.workflows import agent_plans, template_pipeline, template_store
 
 
 @pytest.fixture
@@ -177,7 +177,7 @@ class TestEvalSpecsAreProduced:
             "inputs": {"topic": {"type": "string", "required": True}},
             "metadata": {"keywords": ["demo"], "example_outputs": ["a demo report"]},
         }
-        surface = mcp_workflows._eval_surface("demo", definition)
+        surface = agent_plans._eval_surface("demo", definition)
         assert surface["eval_spec"]["template"] == "demo"
         assert surface["eval_spec"]["fixtures"]
 
@@ -197,7 +197,7 @@ class TestEvalSpecsAreProduced:
             "inputs": {},
             "metadata": {"keywords": ["demo"]},
         }
-        spec = mcp_workflows._eval_surface("demo", definition)["eval_spec"]
+        spec = agent_plans._eval_surface("demo", definition)["eval_spec"]
         # A model-spending template is not free, and the graded checks name the work rather than
         # asserting a result.
         assert spec["free"] is (not spec["graded_checks"])
@@ -210,7 +210,7 @@ class TestEvalSpecsAreProduced:
         `eval_specs` is TOLERANT rather than strict (its own docstring: pure functions over spec
         dicts), so a junk `root` degrades to a thin spec instead of erroring — either outcome is
         acceptable here, and raising is not. What this pins is that the plan survives."""
-        surface = mcp_workflows._eval_surface("demo", {"root": "not-a-dict"})
+        surface = agent_plans._eval_surface("demo", {"root": "not-a-dict"})
         assert surface == {} or surface["eval_spec"]["template"] == "demo"
 
     def test_the_plan_output_carries_the_eval_block(self, home):
@@ -359,7 +359,7 @@ class TestDiscoverThenFreeze:
             session_id="",
         )
         template_store.save_candidate(candidate)
-        names = [p.name for p in mcp_workflows._library_profiles()]
+        names = [p.name for p in agent_plans._library_profiles()]
         assert candidate.name in names
 
     def test_a_frozen_candidate_loads_back_as_a_plan_source(self, home):
@@ -376,7 +376,7 @@ class TestDiscoverThenFreeze:
             session_id="",
         )
         template_store.save_candidate(candidate)
-        assert mcp_workflows._def_resolvable(candidate.name) is True
+        assert agent_plans._def_resolvable(candidate.name) is True
         out = mcp_workflows._call_tool(
             "workflow_plan", {"goal": "probe staging", "template": candidate.name}
         )
@@ -419,7 +419,7 @@ class TestDiscoverThenFreeze:
             pytest.skip("no bundled templates in this environment")
         clash = template_pipeline.Candidate(name=bundled[0], origin_goal="impostor")
         template_store.save_candidate(clash)
-        profiles = [p for p in mcp_workflows._library_profiles() if p.name == bundled[0]]
+        profiles = [p for p in agent_plans._library_profiles() if p.name == bundled[0]]
         assert len(profiles) == 1
         assert profiles[0].description != "impostor"
 

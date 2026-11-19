@@ -185,7 +185,7 @@ async def current(name: str) -> Current | None:
 def _blocking(make: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
     """Run the coroutine *make* returns to completion from synchronous code: directly with no loop
     running here, else on a loop of its own in a worker thread, as the workflow tools read a
-    definition from their synchronous boundary (``mcp_workflows._run``)."""
+    definition from their synchronous boundary (``workflows.agent_plans._run``)."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
