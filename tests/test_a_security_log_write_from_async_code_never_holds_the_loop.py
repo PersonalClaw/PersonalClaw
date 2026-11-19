@@ -18,6 +18,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from loop_held import LoopSteps
 
 from personalclaw.guardrails.audit import reset_current_caller, set_current_caller
 from personalclaw.sel import SecurityEventLog, sel, sel_log_async
@@ -50,32 +51,41 @@ async def test_the_write_runs_in_a_worker_and_is_on_disk_when_the_await_returns(
     assert row["outcome"] == "success"
 
 
-@pytest.mark.asyncio
-async def test_the_loop_answers_while_a_slow_write_waits_on_the_disk(home, monkeypatch):
-    """A write the disk takes 0.2 s for holds no turn of the loop: a 10 ms tick keeps ticking."""
+def _slowed(monkeypatch) -> None:
+    """Each write waits 0.2 s on the disk, a blocking call wherever it runs."""
     real = SecurityEventLog.log
 
     def slow(self, event):
         time.sleep(0.2)
         return real(self, event)
 
-    ticks: list[float] = []
-    stop = asyncio.Event()
-
-    async def tick() -> None:
-        while not stop.is_set():
-            ticks.append(time.monotonic())
-            await asyncio.sleep(0.01)
-
     monkeypatch.setattr(SecurityEventLog, "log", slow)
-    ticker = asyncio.create_task(tick())
-    await asyncio.sleep(0.02)
-    await sel_log_async(_write, "probe.slow")
-    stop.set()
-    await ticker
-    gaps = [b - a for a, b in zip(ticks, ticks[1:])]
-    assert len(ticks) >= 10, f"premise: the tick ran beside the write ({len(ticks)} ticks)"
-    assert max(gaps) < 0.1, f"the loop went {max(gaps):.3f}s without a turn during the write"
+
+
+@pytest.mark.asyncio
+async def test_the_loop_answers_while_a_slow_write_waits_on_the_disk(home, monkeypatch):
+    """A write the disk takes 0.2 s for holds no step of the loop (``tests/loop_held.py``). The
+    loop is judged by its steps, not by a tick's gaps in wall time, so a queue runner that stops
+    the process meanwhile is not the write's."""
+    _slowed(monkeypatch)
+    with LoopSteps() as steps:
+        await steps.during(sel_log_async(_write, "probe.slow"))
+    assert steps.steps, "premise: the write's steps were timed"
+    assert steps.held < 0.1, f"the write held the loop: {steps.says()}"
+
+
+@pytest.mark.asyncio
+async def test_a_write_made_on_the_loop_holds_it_for_the_disk(home, monkeypatch):
+    """The control: the same write made on the loop, as before #5605, holds a step for the whole
+    wait on the disk."""
+    _slowed(monkeypatch)
+
+    async def on_the_loop() -> None:
+        _write("probe.on-the-loop")
+
+    with LoopSteps() as steps:
+        await steps.during(on_the_loop())
+    assert steps.held >= 0.2, steps.says()
 
 
 @pytest.mark.asyncio
