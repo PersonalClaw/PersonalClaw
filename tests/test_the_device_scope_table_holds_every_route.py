@@ -16,6 +16,8 @@ is that nobody forgets one. It reads the real router (:func:`gateway_routes`, bu
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from aiohttp import web
 
@@ -58,6 +60,10 @@ def served(tmp_path_factory) -> set[tuple[str, str]]:
     with pytest.MonkeyPatch.context() as env:
         env.setenv("PERSONALCLAW_HOME", str(tmp_path_factory.mktemp("device-scope-home")))
         return _served(gateway_routes())
+
+
+def test_the_home_the_routes_were_built_in_is_given_back_before_any_test(served) -> None:
+    assert "device-scope-home" not in os.environ.get("PERSONALCLAW_HOME", "")
 
 
 def test_every_route_in_a_scoped_family_has_a_row(served) -> None:
