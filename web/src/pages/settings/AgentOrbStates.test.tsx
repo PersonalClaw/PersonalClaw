@@ -1,17 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { WORK_PHASES, phaseLabel } from '../../lib/workPhase'
-import { ORB_STATES, ORB_STATE_OF } from '../../lib/orbState'
-import { MOVES } from '../../ui/orb/clawRing'
+import { ORB_SCENES, ORB_SCENE_OF, ORB_STAGES, ORB_STAGE_LABELS, SCENE_MOVES, markSceneOfPhase, type OrbScene } from '../../lib/orbState'
+import type { WorkPhase } from '../../lib/workPhase'
 
 // ── Settings → Design: the agent orb's states, in the owner's own colours ────────────────────────
 //
 // The orb is the agent's working signal, tinted by the scheme, so an owner choosing a scheme sees
-// what it does to the orb here: every phase of the contract at the three sizes the orb is drawn
-// at, 64 px in an empty chat, 20 px in a turn's live line and 12 px as a list row's still mark,
-// grouped by the claw ring's five states (#6117). It is closed until asked for, because thinking
-// and working move and a settings page with nothing running animates nothing. It is also the
-// surface the visual suite photographs for every state.
+// what it does to the orb here: every state it can show, each with what drives it (a phase of the
+// contract or a page's stage), at the three sizes the orb is drawn at, 64 px in an empty chat, 20 px
+// in a turn's live line and 12 px as a list row's still mark, grouped by family
+// (`docs/design/agent-orb.md`). It is closed until asked for, because most states move and a
+// settings page with nothing running animates nothing. It is also the surface the visual suite
+// photographs for every state.
 
 vi.mock('../../lib/api', () => ({
   api: new Proxy({}, { get: (_t, key) => (key === 'themes' ? () => Promise.resolve([]) : () => Promise.resolve(null)) }),
@@ -48,33 +49,42 @@ describe('the agent orb’s states', () => {
     expect(orbs()).toHaveLength(0)
   })
 
-  it('shows every phase of the contract at 64, 20 and 12 px, each named, under its state', () => {
+  it('shows every phase of the contract and every stage at 64, 20 and 12 px, each named, under its state and family', () => {
     render(<AgentOrbStates />)
     open()
     expect(screen.getByRole('button', { name: 'Hide its states' })).toHaveAttribute('aria-expanded', 'true')
     const gallery = document.querySelector('[data-orb-gallery]') as HTMLElement
-    const groups = within(gallery).getAllByRole('group')
-    expect(groups.map((g) => g.getAttribute('data-orb-sheet-state'))).toEqual([...ORB_STATES])
-    for (const phase of WORK_PHASES) {
-      const card = gallery.querySelector(`[data-orb-sheet-phase="${phase}"]`) as HTMLElement
-      expect(card, phase).toBeTruthy()
-      expect(card.closest('[data-orb-sheet-state]')?.getAttribute('data-orb-sheet-state'), phase).toBe(ORB_STATE_OF[phase].state)
-      const words = card.cloneNode(true) as HTMLElement
-      for (const o of words.querySelectorAll('[data-agent-orb]')) o.remove()
-      expect(words.textContent, 'its words name the phase with the orbs hidden').toBe(phaseLabel(phase))
-      const sizes = Array.from(card.querySelectorAll<HTMLElement>('[data-agent-orb]')).map((o) => [o.dataset.orbPhase, o.dataset.orbSize])
-      expect(sizes, phase).toEqual([[phase, '64'], [phase, '20'], [phase, '12']])
+    const families = Array.from(gallery.querySelectorAll('[data-orb-sheet-family]')).map((g) => g.getAttribute('data-orb-sheet-family'))
+    expect(families).toEqual(['Quiet', 'Thinking', 'Working', 'Needs you', 'Voice', 'Stopped'])
+    for (const family of gallery.querySelectorAll<HTMLElement>('[data-orb-sheet-family]')) {
+      expect(within(family).getByText(family.dataset.orbSheetFamily!, { selector: 'h3, h2' })).toBeTruthy()
     }
-    expect(orbs()).toHaveLength(WORK_PHASES.length * 3)
+    const drivers: [string, OrbScene, string, OrbScene][] = [
+      ...WORK_PHASES.map((p) => [p, ORB_SCENE_OF[p], phaseLabel(p), markSceneOfPhase(p)] as [string, OrbScene, string, OrbScene]),
+      ...ORB_STAGES.map((s) => [s, s, ORB_STAGE_LABELS[s], markSceneOfPhase('idle' as WorkPhase, s)] as [string, OrbScene, string, OrbScene]),
+    ]
+    for (const [driver, scene, label, mark] of drivers) {
+      const card = gallery.querySelector(`[data-orb-sheet-phase="${driver}"]`) as HTMLElement
+      expect(card, driver).toBeTruthy()
+      expect(card.getAttribute('data-orb-sheet-state'), driver).toBe(scene)
+      expect(card.textContent, 'its words name the driver with the orbs hidden').toContain(label)
+      const sizes = Array.from(card.querySelectorAll<HTMLElement>('[data-agent-orb]')).map((o) => [o.dataset.orbScene, o.dataset.orbSize])
+      // The 12 px mark is the sphere's own form for it.
+      expect(sizes, driver).toEqual([[scene, '64'], [scene, '20'], [mark, '12']])
+    }
+    expect(orbs()).toHaveLength(drivers.length * 3)
+    // Reading and editing are drawn by the orb but driven by nothing yet, so the gallery leaves them out.
+    const shown = new Set(orbs().filter((o) => o.dataset.orbSize !== '12').map((o) => o.dataset.orbScene))
+    expect(ORB_SCENES.filter((s) => !shown.has(s))).toEqual(['reading', 'editing'])
   })
 
-  it('thinking and working move at 64 and 20 px, and nothing else does', () => {
+  it('every state but rest, the waits, done and the stops moves at 64 and 20 px, and nothing else does', () => {
     render(<AgentOrbStates />)
     open()
     for (const o of orbs()) {
-      const phase = o.dataset.orbPhase as (typeof WORK_PHASES)[number]
-      const moves = MOVES[ORB_STATE_OF[phase].state] && o.dataset.orbSize !== '12'
-      expect(o.dataset.agentOrb, `${phase} at ${o.dataset.orbSize}`).toBe(moves ? 'animated' : 'still')
+      const scene = o.dataset.orbScene as OrbScene
+      const moves = SCENE_MOVES[scene] && o.dataset.orbSize !== '12'
+      expect(o.dataset.agentOrb, `${scene} at ${o.dataset.orbSize}`).toBe(moves ? 'animated' : 'still')
     }
   })
 

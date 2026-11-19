@@ -119,7 +119,7 @@ describe('a turn that runs in the peeked chat', () => {
     frame(runningState({ session: KEY, phase: 'approval', line: 'Needs your OK: shell', seq: 4 }))
     expect(orb()!.dataset.orbPhase).toBe('approval')
     expect(orb()!.dataset.agentOrb).toBe('still')
-    expect(orb()!.querySelector('[data-orb-badge]')?.textContent).toBe('!')
+    expect(orb()!.dataset.orbGlyph).toBe('!')
     expect(line()).toBe('Needs your OK: shell')
   })
 

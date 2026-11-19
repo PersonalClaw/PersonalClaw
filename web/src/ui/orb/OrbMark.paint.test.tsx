@@ -1,32 +1,20 @@
 /**
- * The orb's 12 px still mark paints its state's rest form in its tone (#6117), and nothing else:
- * once, with no frame asked for. The mark alone, the sidebar's rows and a project page's rows draw
- * it here; Home's agent rows are painted in `AgentDay.test.tsx`. The paint is recorded and compared with the painter's own paint of the form, so a mark that
- * painted the wrong form, painted nothing or ran the loop would fail here.
+ * The orb's 12 px still mark paints its state's still in its tone (#6117, `docs/design/agent-orb.md`,
+ * "Sizes and places"), and nothing else: once, with no frame asked for. The mark alone, the sidebar's
+ * rows and a project page's rows draw it here; Home's agent rows are painted in `AgentDay.test.tsx`.
+ * The paint is recorded and compared with the painter's own paint of the sphere's form for the
+ * state (`lib/orbState.ts`, `markSceneOf`), so a mark that painted the wrong state, painted nothing or
+ * ran the loop would fail here.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { OrbMark } from './OrbMark'
-import { restForm } from './clawRing'
-import { paintRing } from './paintRing'
-import { ORB_STATE_OF_PIP } from '../../lib/orbState'
+import { ORB_STATE_OF_PIP, markSceneOf, type OrbBadge, type OrbStateName } from '../../lib/orbState'
 import { ThreadRail } from '../ThreadRail'
 import { ProjectThreadRow } from '../../pages/projects/ProjectThreadRow'
 import type { Thread, ThreadPip } from '../../lib/useThreads'
-
-type Entry = (string | number | boolean | undefined)[]
-function recorder(log: Entry[]): CanvasRenderingContext2D {
-  const state: Record<string, unknown> = { fillStyle: '', strokeStyle: '', lineWidth: 1, lineCap: 'butt', lineJoin: 'miter', globalAlpha: 1 }
-  return new Proxy(state, {
-    get(target, key: string) {
-      if (key in target) return target[key]
-      if (key === 'getImageData') return () => ({ data: [0, 0, 0, 0] })
-      return (...args: (string | number | boolean)[]) => { log.push([key, ...args]) }
-    },
-    set(target, key: string, value) { target[key] = value; log.push(['=', key, value]); return true },
-  }) as unknown as CanvasRenderingContext2D
-}
+import { STILL_CLOCK, lastPaint, orbPaint, recorder, type Entry } from '../../test/orbPaint'
 
 const logs = new WeakMap<HTMLCanvasElement, Entry[]>()
 const ORIGINAL = { getContext: HTMLCanvasElement.prototype.getContext, raf: window.requestAnimationFrame }
@@ -59,16 +47,13 @@ async function marksOf(ui: ReactElement): Promise<{ el: HTMLElement; last: Entry
   const { container } = render(ui)
   await act(async () => { vi.advanceTimersByTime(1000) })
   vi.useRealTimers()
-  return [...container.querySelectorAll<HTMLElement>('[data-orb-mark]')].map((el) => {
-    const log = logs.get(el.querySelector('canvas')!) ?? []
-    const starts = log.flatMap((e, i) => (e[0] === 'setTransform' ? [i] : []))
-    return { el, last: starts.length ? log.slice(starts[starts.length - 1]) : [] }
-  })
+  return [...container.querySelectorAll<HTMLElement>('[data-orb-mark]')].map((el) => ({ el, last: lastPaint(logs.get(el.querySelector('canvas')!) ?? []) }))
 }
-function want(state: Parameters<typeof restForm>[0], token: string): Entry[] {
-  const out: Entry[] = []
-  paintRing(recorder(out), restForm(state), { size: 12, dpr: 1, ink: hex(TONES[token]), scale: 1 })
-  return out
+/** The painter's own paint of a mark: the state's sphere form, every ink the list's colour for it. */
+function want(state: OrbStateName, token: string, badge?: OrbBadge): Entry[] {
+  const c = hex(TONES[token])
+  const inks = { alive: c, rest: c, ok: c, warn: c, info: c, danger: c, plate: undefined, hair: c, dark: true }
+  return orbPaint({ [markSceneOf({ state, badge })]: 1 }, { size: 12, dpr: 1, clock: STILL_CLOCK, inks })
 }
 const thread = (key: string, pip: ThreadPip | null): Thread => ({
   key, kind: 'chat', id: key, title: `Chat ${key}`, projectId: 'p1', route: `chat/${key}`,
@@ -81,7 +66,7 @@ describe('the still mark paints its state in its tone, once', () => {
     ['working', '--color-ok'], ['waiting', '--color-state-waiting'], ['done', '--color-state-quiet'], ['ready', '--color-state-blocked'],
   ] as const)('%s in %s', async (state, tone) => {
     const [mark] = await marksOf(<OrbMark state={state} tone={tone} />)
-    expect(mark.last.filter((e) => e[0] === 'stroke'), 'the control: it painted').toHaveLength(6)
+    expect(mark.last.filter((e) => e[0] === 'arc').length, 'the control: it painted').toBeGreaterThan(0)
     expect(mark.last).toEqual(want(state, tone))
     expect(asked, 'a still mark asked for a frame').toBe(0)
   })
@@ -91,7 +76,7 @@ describe('the still mark paints its state in its tone, once', () => {
     const marks = await marksOf(rail)
     expect(marks).toHaveLength(PIPS.length)
     const RAIL: Record<ThreadPip, string> = { running: '--color-ok', waiting: '--color-state-waiting', unread: '--color-state-quiet', failed: '--color-state-blocked' }
-    PIPS.forEach((pip, i) => expect(marks[i].last, pip).toEqual(want(ORB_STATE_OF_PIP[pip].state, RAIL[pip])))
+    PIPS.forEach((pip, i) => expect(marks[i].last, pip).toEqual(want(ORB_STATE_OF_PIP[pip].state, RAIL[pip], ORB_STATE_OF_PIP[pip].badge)))
     expect(asked).toBe(0)
   })
 
@@ -99,7 +84,7 @@ describe('the still mark paints its state in its tone, once', () => {
     const marks = await marksOf(<ul>{PIPS.map((p) => <ProjectThreadRow key={p} thread={thread(p, p)} onOpen={() => {}} />)}</ul>)
     const FAMILY: Record<ThreadPip, string> = { running: '--color-state-active', waiting: '--color-state-waiting', unread: '--color-state-quiet', failed: '--color-state-blocked' }
     expect(marks).toHaveLength(PIPS.length)
-    PIPS.forEach((pip, i) => expect(marks[i].last, pip).toEqual(want(ORB_STATE_OF_PIP[pip].state, FAMILY[pip])))
+    PIPS.forEach((pip, i) => expect(marks[i].last, pip).toEqual(want(ORB_STATE_OF_PIP[pip].state, FAMILY[pip], ORB_STATE_OF_PIP[pip].badge)))
     expect(asked).toBe(0)
   })
 })

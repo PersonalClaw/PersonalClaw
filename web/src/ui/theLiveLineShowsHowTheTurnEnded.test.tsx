@@ -18,8 +18,7 @@ import { TurnStatusRow, SHOW_DELAY_MS } from './TurnStatusRow'
 import { MIN_HOLD_MS, fadeMs } from './turnEnding'
 import { runtime } from '../design/runtime'
 import { TurnHead } from '../pages/chat/transcript/TurnHead'
-import { restForm } from './orb/clawRing'
-import { paintRing } from './orb/paintRing'
+import { STILL_CLOCK, lastPaint, orbPaint, twoInks } from '../test/orbPaint'
 
 type Entry = (string | number | boolean | undefined)[]
 
@@ -128,7 +127,7 @@ describe('the live line holds how the turn ended', () => {
     await displayFor(SHOW_DELAY_MS + 300)
     rerender(<TurnStatusRow {...props(ended('error', 'Stopped: the model refused the request'))} />)
     expect(line()?.querySelector('[data-turn-state]')?.textContent).toBe('Stopped: the model refused the request')
-    expect(line()?.querySelector('[data-orb-badge]')?.textContent).toBe('×')
+    expect(orb()?.dataset.orbGlyph).toBe('×')
     await untilSettled(() => expect(orb()?.dataset.orbChange, 'a failure bloomed').not.toBe('bloom'))
     await displayFor(MIN_HOLD_MS + 50)
     expect(line()?.dataset.turnStage).toBe('leaving')
@@ -201,7 +200,7 @@ describe('the live line holds how the turn ended', () => {
     expect(opacities.filter((o) => o === '0'), 'it faded').toEqual([])
   })
 
-  it('a turn that starts inside the hold takes the line back, and its orb comes home to scale 1', async () => {
+  it('a turn that starts inside the hold takes the line back, and its orb settles on the new turn’s state', async () => {
     const { rerender } = render(<TurnStatusRow {...props()} />)
     await displayFor(SHOW_DELAY_MS + 300)
     rerender(<TurnStatusRow {...props(ended('done', 'Done in 1 second'))} />)
@@ -213,10 +212,8 @@ describe('the live line holds how the turn ended', () => {
     expect(line()?.querySelector('[data-turn-state]')?.textContent).toBe('Waiting to start')
     rerender(<TurnStatusRow {...props({ phase: 'approval' })} />)
     await untilSettled()
-    const want: Entry[] = []
-    paintRing(recorder(want), restForm('waiting'), { size: 20, dpr: 1, ink: { r: 0x33, g: 0x66, b: 0xcc }, scale: 1 })
-    const start = log.map((e, i) => (e[0] === 'setTransform' && e[5] === 0 && e[6] === 0 ? i : -1)).filter((i) => i >= 0).at(-1)!
-    expect(log.slice(start), 'the clasp is not at scale 1').toEqual(want)
+    const want = orbPaint({ approval: 1 }, { size: 20, dpr: 1, clock: STILL_CLOCK, inks: twoInks({ r: 0x33, g: 0x66, b: 0xcc }, { r: 0x8a, g: 0x8f, b: 0x98 }) })
+    expect(lastPaint(log), 'needs your OK is not what was painted last').toEqual(want)
     await displayFor(2000)
     expect(line(), 'the new turn’s line went').not.toBeNull()
   })

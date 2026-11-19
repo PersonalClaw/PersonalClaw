@@ -1,16 +1,17 @@
 /**
- * The agent orb schedules an animation frame only while its state moves (thinking or working), on
- * screen, with motion allowed, at 20 or 64 px, or while it morphs from one state to the next, and
- * then at most 30 a second (#6117).
+ * The agent orb schedules an animation frame only while its state moves (every state but rest, the
+ * waits on the owner, done and the stops), on screen, with motion allowed, at 20 or 64 px, or while
+ * it morphs from one state to the next, and then at most 30 a second (#6117,
+ * `docs/design/agent-orb.md`).
  *
  * Each half is paired with the control that makes it mean something, as `DotGlow.reducedMotion`'s
  * are:
  *
- *  - MOTION ALLOWED, a thinking or working phase: frames ARE scheduled, and running one schedules
+ *  - MOTION ALLOWED, a phase whose state moves: frames ARE scheduled, and running one schedules
  *    the next. A spy that never saw a frame would make every "no frame" below vacuous.
- *  - REDUCED MOTION, a hidden tab, the 12 px mark, and every still state (ready, waiting on you,
- *    done): no frame is scheduled at all, AND the orb is still painted once. An orb that drew
- *    nothing would satisfy "no frame" for free.
+ *  - REDUCED MOTION, a hidden tab, the 12 px mark, and every still state (ready, the waits on the
+ *    owner, done and a failure): no frame is scheduled at all, AND the orb is still painted once.
+ *    An orb that drew nothing would satisfy "no frame" for free.
  *  - A CHANGE OF STATE: the morph asks for frames, on the same cap, and once it has settled the
  *    still state it arrived at asks for none.
  *
@@ -28,17 +29,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render } from '@testing-library/react'
 import { AgentOrb } from './AgentOrb'
 import { WORK_PHASES } from '../lib/workPhase'
-import { ORB_STATE_OF } from '../lib/orbState'
-import { MOVES } from './orb/clawRing'
+import { ORB_SCENE_OF, SCENE_MOVES } from '../lib/orbState'
 
-const RECORDED = ['setTransform', 'clearRect', 'beginPath', 'moveTo', 'quadraticCurveTo', 'stroke'] as const
+const RECORDED = ['setTransform', 'clearRect', 'beginPath', 'moveTo', 'lineTo', 'arc', 'fill', 'stroke', 'save', 'restore'] as const
 
 function fakeContext() {
   const calls: Record<string, number> = Object.fromEntries(RECORDED.map((k) => [k, 0]))
   const tally = (k: string) => () => { calls[k] += 1 }
   const ctx = Object.fromEntries(RECORDED.map((k) => [k, tally(k)]))
-  return { calls, ctx: { ...ctx, fillStyle: '', strokeStyle: '', lineWidth: 1 } as unknown as CanvasRenderingContext2D }
+  return { calls, ctx: { ...ctx, fillStyle: '', strokeStyle: '', lineWidth: 1, globalAlpha: 1, lineCap: 'butt', lineJoin: 'miter' } as unknown as CanvasRenderingContext2D }
 }
+/** Whether anything was drawn: a dot, a line or a mark. */
+const drew = () => instrument.calls.arc + instrument.calls.stroke
 
 /** The most frames a second the orb asks for while it works: the buddy's rate. */
 const CAP = 30
@@ -114,10 +116,10 @@ async function settle(): Promise<void> {
   await act(async () => {})
 }
 
-const MOVING = WORK_PHASES.filter((p) => MOVES[ORB_STATE_OF[p].state])
-const STILL = WORK_PHASES.filter((p) => !MOVES[ORB_STATE_OF[p].state])
+const MOVING = WORK_PHASES.filter((p) => SCENE_MOVES[ORB_SCENE_OF[p]])
+const STILL = WORK_PHASES.filter((p) => !SCENE_MOVES[ORB_SCENE_OF[p]])
 
-describe('with motion allowed, a thinking or working phase animates: the positive control', () => {
+describe('with motion allowed, a phase whose state moves animates: the positive control', () => {
   it.each(MOVING)('%s schedules a frame after its gap, and each frame the next', (phase) => {
     const { container } = render(<AgentOrb phase={phase} />)
     expect((container.querySelector('[data-agent-orb]') as HTMLElement).dataset.agentOrb).toBe('animated')
@@ -126,7 +128,7 @@ describe('with motion allowed, a thinking or working phase animates: the positiv
     frames.shift()!(GAP_MS)
     vi.advanceTimersByTime(GAP_MS)
     expect(frames.length, 'the loop did not go on').toBe(1)
-    expect(instrument.calls.stroke, 'no stroke was drawn').toBeGreaterThan(0)
+    expect(drew(), 'nothing was drawn').toBeGreaterThan(0)
   })
 })
 
@@ -168,10 +170,14 @@ describe(`while it works, it asks for at most ${CAP} frames a second, and none b
     const read = (path: string) => readFileSync(join(process.cwd(), 'src', path), 'utf8')
     for (const orb of ['ui/AgentOrb.tsx', 'ui/BuddyOrb.tsx']) {
       expect(read(orb), `${orb} does not draw through the shared loop`).toMatch(/\brunDots\(/)
-      expect(read(orb), `${orb} does not change state through the shared morph`).toMatch(/\buseMorph\(/)
     }
-    // The morph and the bloom move on the same capped clock, not on every frame the display draws.
-    expect(read('ui/orb/useMorph.ts'), 'the morph runs off the capped clock').toMatch(/\bcappedDriver\(\)/)
+    // Each orb's morph moves on the same capped clock, not on every frame the display draws: the
+    // halftone's (the chat's orb) and the claw ring's (the buddy's, until it takes the halftone).
+    expect(read('ui/AgentOrb.tsx'), 'the chat\u2019s orb does not change state through the halftone\u2019s morph').toMatch(/\buseSceneMorph\(/)
+    expect(read('ui/BuddyOrb.tsx'), 'the buddy does not change state through the shared morph').toMatch(/\buseMorph\(/)
+    for (const morph of ['ui/orb/useSceneMorph.ts', 'ui/orb/useMorph.ts']) {
+      expect(read(morph), `${morph} does not run off the capped clock`).toMatch(/\bcappedDriver\(\)/)
+    }
   })
 })
 
@@ -180,10 +186,10 @@ describe('under reduced motion, every phase is one static frame', () => {
 
   it.each([...WORK_PHASES])('%s paints once and schedules no frame', (phase) => {
     const { container } = render(<AgentOrb phase={phase} />)
-    expect((container.querySelector('[data-agent-orb]') as HTMLElement).dataset.agentOrb).toBe(MOVES[ORB_STATE_OF[phase].state] ? 'instant' : 'still')
+    expect((container.querySelector('[data-agent-orb]') as HTMLElement).dataset.agentOrb).toBe(SCENE_MOVES[ORB_SCENE_OF[phase]] ? 'instant' : 'still')
     vi.advanceTimersByTime(1000)
     expect(frames.length, 'a frame was scheduled under reduced motion').toBe(0)
-    expect(instrument.calls.stroke, 'the still frame was never painted').toBeGreaterThan(0)
+    expect(drew(), 'the still frame was never painted').toBeGreaterThan(0)
   })
 })
 
@@ -193,16 +199,16 @@ describe('in a hidden tab, nothing is scheduled', () => {
     render(<AgentOrb phase={phase} />)
     vi.advanceTimersByTime(1000)
     expect(frames.length, 'a hidden tab scheduled a frame').toBe(0)
-    expect(instrument.calls.stroke).toBeGreaterThan(0)
+    expect(drew()).toBeGreaterThan(0)
   })
 })
 
 describe('the 12 px mark never moves', () => {
-  it.each(MOVING)('%s paints its rest form once and schedules no frame, with motion allowed', (phase) => {
+  it.each(MOVING)('%s paints its still once and schedules no frame, with motion allowed', (phase) => {
     const { container } = render(<AgentOrb phase={phase} size={12} />)
     expect((container.querySelector('[data-agent-orb]') as HTMLElement).dataset.agentOrb).toBe('still')
     expect(displayFor(1000, 120).asked, `${phase}'s mark asked for a frame`).toBe(0)
-    expect(instrument.calls.stroke, `${phase}'s mark was never painted`).toBeGreaterThan(0)
+    expect(drew(), `${phase}'s mark was never painted`).toBeGreaterThan(0)
   })
 
   it('a mark that changes state swaps at once, with no morph', () => {
@@ -219,10 +225,10 @@ describe('a turn that is ready, needs the owner, or has ended, is a still frame'
     expect((container.querySelector('[data-agent-orb]') as HTMLElement).dataset.agentOrb).toBe('still')
     vi.advanceTimersByTime(1000)
     expect(frames.length, `${phase} scheduled a frame`).toBe(0)
-    expect(instrument.calls.stroke, `${phase} was never painted`).toBeGreaterThan(0)
+    expect(drew(), `${phase} was never painted`).toBeGreaterThan(0)
   })
 
-  it('a running orb that turns to approval morphs into the clasp on the cap, then asks for nothing', async () => {
+  it('a running orb that turns to approval morphs into needs your OK on the cap, then asks for nothing', async () => {
     const { container, rerender } = render(<AgentOrb phase="tool" />)
     displayFor(200, 60)
     rerender(<AgentOrb phase="approval" />)
@@ -237,18 +243,18 @@ describe('a turn that is ready, needs the owner, or has ended, is a still frame'
     expect(displayFor(1000, 120).asked, 'the approval kept the loop alive').toBe(0)
   })
 
-  it('a turn that ends blooms once, then asks for nothing', async () => {
+  it('a turn that ends swirls once, then asks for nothing', async () => {
     const { container, rerender } = render(<AgentOrb phase="streaming" />)
     displayFor(200, 60)
     rerender(<AgentOrb phase="done" />)
     const orb = container.querySelector('[data-agent-orb]') as HTMLElement
     expect(orb.dataset.orbChange).toBe('bloom')
     await settle()
-    expect(orb.dataset.orbChange, 'the bloom never settled').toBe('none')
+    expect(orb.dataset.orbChange, 'the swirl never settled').toBe('none')
     expect(displayFor(1000, 120).asked, 'done kept the loop alive').toBe(0)
   })
 
-  it('a failure closes with no bloom', () => {
+  it('a failure closes with no swirl', () => {
     const { container, rerender } = render(<AgentOrb phase="tool" />)
     displayFor(200, 60)
     rerender(<AgentOrb phase="error" />)

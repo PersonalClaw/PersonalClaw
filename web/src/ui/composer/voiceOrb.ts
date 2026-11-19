@@ -1,3 +1,4 @@
+import type { OrbStage } from '../../lib/orbState'
 import type { WorkPhase } from '../../lib/workPhase'
 import type { TurnEnding } from '../turnEnding'
 
@@ -10,4 +11,14 @@ import type { TurnEnding } from '../turnEnding'
 export function voiceOrbPhase({ heard, phase, ending = null }: { heard: boolean; phase?: WorkPhase | null; ending?: TurnEnding | null }): WorkPhase {
   if (heard) return 'listening'
   return phase ?? ending?.phase ?? 'idle'
+}
+
+/** Voice mode's stage, which wins over the phase while it holds (`docs/design/agent-orb.md`, "Phase
+ *  to state"): a reply read aloud is the orb speaking, and the last piece of what the owner said,
+ *  being turned into text, is the orb transcribing. While the microphone hears the owner it is
+ *  neither: the phase is `listening`. */
+export function voiceOrbStage({ heard, transcribing, speaking }: { heard: boolean; transcribing: boolean; speaking: boolean }): OrbStage | null {
+  if (heard) return null
+  if (speaking) return 'speaking'
+  return transcribing ? 'transcribing' : null
 }

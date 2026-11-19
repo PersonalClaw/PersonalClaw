@@ -3,17 +3,17 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { AgentOrb } from './AgentOrb'
-import { ORB_STATE_OF } from '../lib/orbState'
-import { MOVES } from './orb/clawRing'
+import { ORB_SCENE_OF, ORB_STATE_OF, SCENE_MOVES } from '../lib/orbState'
 import { WORK_PHASES, WORK_PHASE_LOOKS, phaseFamily, phaseLabel, type WorkPhase } from '../lib/workPhase'
 
-// ── The agent orb: each phase drawn as its state of the claw ring, in the orb tokens (#6117) ─────
+// ── The agent orb: each phase drawn as its state of the halftone orb, in the orb tokens (#6117) ──
 //
-// The orb is handed a phase of the contract (`lib/workPhase`) and nothing else, and draws it as one
-// of the claw ring's five states through the one mapping (`lib/orbState.ts`): thinking and working
-// move, ready, waiting and done hold still, and a waiting or failed turn carries a badge whose shape,
-// not its colour, says which (`docs/design/agent-orb.md`, "Phase to state"). The mapping's own cases,
-// and that no raw string reaches it, are `lib/orbState.test.ts`'s.
+// The orb is handed a phase of the contract (`lib/workPhase`), and a typed stage where a page has
+// one, and draws it as one of the halftone orb's twenty states through the one mapping
+// (`lib/orbState.ts`): rest, the waits on the owner, done and the stops hold still and every other
+// state moves, and a waiting or failed turn carries a mark on its plate whose shape, not its colour,
+// says which (`docs/design/agent-orb.md`, "Phase to state"). The mapping's own cases, and that no raw
+// string reaches it, are `lib/theOrbDrawsEachPhaseAsOneOfItsTwentyStates.test.ts`'s.
 const BADGED: Partial<Record<WorkPhase, string>> = { approval: '!', input: '?', error: '×' }
 
 /** What the platform says it wants, flippable per test: matching media queries by substring. */
@@ -39,13 +39,14 @@ afterEach(() => {
 const orbOf = (container: HTMLElement) => container.querySelector('[data-agent-orb]') as HTMLElement
 
 describe('every phase of the contract is drawn as its one state', () => {
-  it.each([...WORK_PHASES])('%s: its state, moving only while it thinks or works, alive only while an agent is', (phase) => {
+  it.each([...WORK_PHASES])('%s: its state, moving exactly when its state does, alive only while an agent is', (phase) => {
     const { container } = render(<AgentOrb phase={phase} />)
     const orb = orbOf(container)
     const look = ORB_STATE_OF[phase]
     const family = phaseFamily(phase)
     expect(orb.dataset.orbState).toBe(look.state)
-    expect(orb.dataset.agentOrb, 'it moves exactly when its state does').toBe(MOVES[look.state] ? 'animated' : 'still')
+    expect(orb.dataset.orbScene).toBe(ORB_SCENE_OF[phase])
+    expect(orb.dataset.agentOrb, 'it moves exactly when its state does').toBe(SCENE_MOVES[ORB_SCENE_OF[phase]] ? 'animated' : 'still')
     expect(look.ink, 'alive while an agent works, listens or waits on the owner, at rest otherwise').toBe(family === 'active' || family === 'waiting' ? 'alive' : 'rest')
     expect(look.badge ?? null, 'a badge only where the owner is needed or the turn failed').toBe(phase in BADGED ? phase : null)
   })
@@ -63,15 +64,14 @@ describe('what it draws for each phase', () => {
     expect(screen.getByRole('img')).toHaveAccessibleName(phaseLabel(phase))
   })
 
-  it.each(Object.entries(BADGED))('%s carries the "%s" badge in its tone, as decoration', (phase, glyph) => {
+  it.each(Object.entries(BADGED))('%s carries the "%s" mark on its plate, drawn in the orb’s own image', (phase, glyph) => {
     const { container } = render(<AgentOrb phase={phase as WorkPhase} />)
-    const badge = container.querySelector('[data-orb-badge]') as HTMLElement
-    expect(badge.dataset.orbBadge).toBe(phase)
-    expect(badge.textContent).toBe(glyph)
-    expect(badge.getAttribute('aria-hidden')).toBe('true')
-    // The phase's own tone from the contract: warn for her OK, info for her answer, danger on error.
-    expect(badge.style.color).toBe(`var(--color-${WORK_PHASE_LOOKS[phase as WorkPhase].tone})`)
-    expect(badge.style.borderColor).toBe(`var(--color-${WORK_PHASE_LOOKS[phase as WorkPhase].tone})`)
+    const orb = orbOf(container)
+    expect(orb.dataset.orbBadge).toBe(phase)
+    expect(orb.dataset.orbGlyph).toBe(glyph)
+    // The mark is part of the one image, which names the phase; no second element says it again.
+    expect(screen.getAllByRole('img')).toHaveLength(1)
+    expect(container.querySelectorAll('canvas')).toHaveLength(1)
   })
 
   it('every other phase has no badge', () => {
@@ -83,13 +83,18 @@ describe('what it draws for each phase', () => {
   })
 
   it('is drawn at 20 px by default, at 64 px for an empty state and at 12 px as a list\'s still mark', () => {
+    // Its box is its size; its canvas reaches past it on each side, where the burst mid-change and
+    // the plate's shadow draw, and takes no pointer, so the box alone is what the layout holds.
     const small = render(<AgentOrb phase="thinking" />)
     expect(orbOf(small.container).dataset.orbSize).toBe('20')
-    expect((small.container.querySelector('canvas') as HTMLCanvasElement).style.width).toBe('20px')
+    expect(orbOf(small.container).style.width).toBe('20px')
+    expect((small.container.querySelector('canvas') as HTMLCanvasElement).style.width).toBe('28px')
+    expect((small.container.querySelector('canvas') as HTMLCanvasElement).className).toMatch(/\bpointer-events-none\b/)
     small.unmount()
     const large = render(<AgentOrb phase="thinking" size={64} />)
     expect(orbOf(large.container).dataset.orbSize).toBe('64')
-    expect((large.container.querySelector('canvas') as HTMLCanvasElement).style.width).toBe('64px')
+    expect(orbOf(large.container).style.width).toBe('64px')
+    expect((large.container.querySelector('canvas') as HTMLCanvasElement).style.width).toBe('86px')
     large.unmount()
     // The list's mark never moves, whatever its state: shape and ink only.
     const mark = render(<AgentOrb phase="tool" size={12} />)
@@ -127,7 +132,7 @@ describe('its colour is the orb tokens, never a literal', () => {
 })
 
 describe('high contrast', () => {
-  it('under a request for more contrast, the strokes take the words’ ink', () => {
+  it('under a request for more contrast, the dots take the words’ ink', () => {
     MATCHING = ['prefers-contrast: more']
     for (const phase of WORK_PHASES) {
       const { container, unmount } = render(<AgentOrb phase={phase} />)
@@ -137,7 +142,7 @@ describe('high contrast', () => {
     }
   })
 
-  it('in forced colours, the strokes take the system’s text colour', () => {
+  it('in forced colours, the dots take the system’s text colour', () => {
     MATCHING = ['forced-colors: active']
     for (const phase of WORK_PHASES) {
       const { container, unmount } = render(<AgentOrb phase={phase} />)
@@ -147,7 +152,7 @@ describe('high contrast', () => {
     }
   })
 
-  it('with every author colour removed, each phase still names itself and its badge keeps its shape and ring', () => {
+  it('with every author colour removed, each phase still names itself and its mark keeps its shape', () => {
     MATCHING = ['forced-colors: active']
     for (const phase of WORK_PHASES) {
       const { container, unmount } = render(<AgentOrb phase={phase} />)
@@ -157,14 +162,11 @@ describe('high contrast', () => {
         el.style.removeProperty('color')
       }
       expect(screen.getByRole('img'), phase).toHaveAccessibleName(phaseLabel(phase))
-      const badge = container.querySelector('[data-orb-badge]') as HTMLElement | null
-      if (phase in BADGED) {
-        expect(badge!.textContent, phase).toBe(BADGED[phase])
-        // A border survives forced colours in the system's text colour; a fill alone would vanish.
-        expect(badge!.className, phase).toMatch(/\bborder\b/)
-      } else {
-        expect(badge, phase).toBeNull()
-      }
+      // The mark is drawn with the dots, in the system's text colour, so its shape is what tells
+      // the waits and the failure apart.
+      const orb = orbOf(container)
+      expect(orb.dataset.orbInkToken, phase).toBe('CanvasText')
+      expect(orb.dataset.orbGlyph ?? null, phase).toBe(BADGED[phase] ?? null)
       unmount()
     }
   })

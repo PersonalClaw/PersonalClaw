@@ -9,10 +9,11 @@ import { MIN_HOLD_MS } from '../turnEnding'
 //
 // `docs/design/agent-orb.md` puts the 64 px orb in three places; voice mode is the composer's.
 // While hands-free is on, the orb is `listening` while the microphone hears the owner, and the
-// turn's own phase the rest of the time: muted while a reply is spoken, transcribing, or between
-// segments. With hands-free off there is no 64 px orb. Listening is the claw ring's ready form, so it
-// holds still while the owner speaks and the words say Listening (#6117); a turn's own phase moves
-// only while it thinks or works, and under reduced motion that is one still frame.
+// turn's own phase the rest of the time: between segments, or what the turn does while a reply is
+// spoken or the last piece transcribed, when the orb is speaking or transcribing instead. With
+// hands-free off there is no 64 px orb. Listening is the halftone orb's audio graph, its waves
+// travelling into the orb while the owner speaks, and the words say Listening; under reduced motion
+// every state is one still frame (`docs/design/agent-orb.md`).
 
 let REDUCE = false
 Object.defineProperty(window, 'matchMedia', {
@@ -168,13 +169,33 @@ describe('voice mode', () => {
     expect(voiceOrb()).toBeNull()
   })
 
-  it.each([false, true])('holds still while it listens (reduced motion: %s)', (reduce) => {
+  it.each([false, true])('listens with its waves travelling in, one still frame under reduced motion (reduced motion: %s)', (reduce) => {
     REDUCE = reduce
     const { rerender } = render(composer())
     fireEvent.click(handsFree())
     hears(rerender, composer())
-    expect(voiceOrb()!.getAttribute('data-orb-state')).toBe('ready')
-    expect(voiceOrb()!.getAttribute('data-agent-orb')).toBe('still')
+    expect(voiceOrb()!.getAttribute('data-orb-scene')).toBe('listening')
+    expect(voiceOrb()!.getAttribute('data-agent-orb')).toBe(reduce ? 'instant' : 'animated')
+  })
+
+  it('speaks while a reply is read aloud, and transcribes while the last piece is turned into text', () => {
+    const speaking = { confirmationPhrases: ['go ahead'], exitPhrases: ['stop listening'], speaking: true }
+    const { rerender } = render(composer({ phase: 'streaming', streaming: true }))
+    fireEvent.click(handsFree())
+    mic.state = 'recording'
+    mic.muted = true
+    rerender(composer({ phase: 'streaming', streaming: true, handsFree: speaking }))
+    expect(voiceOrb()!.getAttribute('data-orb-stage')).toBe('speaking')
+    expect(voiceOrb()!.getAttribute('data-orb-phase'), 'the turn’s phase is still named').toBe('streaming')
+    expect(screen.getByRole('img', { name: 'Reading the reply aloud' })).toBeTruthy()
+    mic.state = 'transcribing'
+    mic.muted = false
+    rerender(composer({ phase: null }))
+    expect(voiceOrb()!.getAttribute('data-orb-stage')).toBe('transcribing')
+    mic.state = 'recording'
+    rerender(composer({ phase: null }))
+    expect(voiceOrb()!.getAttribute('data-orb-stage'), 'hearing the owner is no stage').toBeNull()
+    expect(voiceOrb()!.getAttribute('data-orb-scene')).toBe('listening')
   })
 
   it('a turn thinking between segments moves, and is one still frame under reduced motion', () => {

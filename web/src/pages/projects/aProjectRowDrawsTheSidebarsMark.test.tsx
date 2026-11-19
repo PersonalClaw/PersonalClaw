@@ -25,7 +25,7 @@ describe("a project page's chat row", () => {
     expect(mark, 'no mark').not.toBeNull()
     expect(mark!.dataset.orbMark).toBe(ORB_STATE_OF_PIP[pip].state)
     expect(mark!.dataset.orbInkToken).toBe(`--color-state-${PIP[pip].family}`)
-    expect(Boolean(mark!.querySelector('[data-orb-badge]'))).toBe(Boolean(ORB_STATE_OF_PIP[pip].badge))
+    expect(mark!.dataset.orbBadge ?? null).toBe(ORB_STATE_OF_PIP[pip].badge ?? null)
     expect(screen.getByRole('button').textContent).toContain(PIP[pip].word)
     expect(container.querySelector('[data-state-family] > span.size-2'), 'the old dot is drawn').toBeNull()
   })

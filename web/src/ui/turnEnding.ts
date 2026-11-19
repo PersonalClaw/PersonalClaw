@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ORB_STATE_OF, type OrbStateName } from '../lib/orbState'
+import { ORB_SCENE_OF, type OrbScene } from '../lib/orbState'
 import type { WorkPhase } from '../lib/workPhase'
 import { duration } from '../design/motion'
 import type { TurnOutcome } from '../pages/chat/turnOutcome'
@@ -27,9 +27,9 @@ export function bloomsFor(ending: TurnEnding | null): boolean {
 
 /** The turn's ending while it is held, and the callback its orb calls once it has settled
  *  (`AgentOrb`'s `onSettled`). An ending is held from the turn's last frame until its orb has settled
- *  on the ending's form, done's bloom or the swap to a failure's ×, and `MIN_HOLD_MS` more; then
+ *  on the ending's state, done's swirl or the swap to a failure's ×, and `MIN_HOLD_MS` more; then
  *  `held` is `null`. An ending that arrives while nothing shows it (`showing` false) is not held. */
-export function useHeldEnding(ending: TurnEnding | null, showing: boolean): { held: TurnEnding | null; onSettled: (state: OrbStateName) => void } {
+export function useHeldEnding(ending: TurnEnding | null, showing: boolean): { held: TurnEnding | null; onSettled: (scene: OrbScene) => void } {
   const [over, setOver] = useState<TurnEnding | null>(null)
   const current = useRef(ending)
   current.current = ending
@@ -40,9 +40,9 @@ export function useHeldEnding(ending: TurnEnding | null, showing: boolean): { he
   useEffect(() => { if (ending && !showing) setOver(ending) }, [ending]) // eslint-disable-line react-hooks/exhaustive-deps -- once per ending
   // Its orb settles in its own effect, which runs before this hook's host's: so the ending is read
   // from the render that drew it, and each ending's hold is timed once.
-  const onSettled = useCallback((state: OrbStateName) => {
+  const onSettled = useCallback((scene: OrbScene) => {
     const e = current.current
-    if (!e || timing.current === e || state !== ORB_STATE_OF[e.phase].state) return
+    if (!e || timing.current === e || scene !== ORB_SCENE_OF[e.phase]) return
     timing.current = e
     const t = window.setTimeout(() => { timers.current.delete(t); setOver(e) }, MIN_HOLD_MS)
     timers.current.add(t)
