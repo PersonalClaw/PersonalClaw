@@ -298,7 +298,7 @@ no workflow calls it yet.
 ### The merge controller's poster
 
 `.github/workflows/merge-verdict.yml` posts `merge-verdict` on a head each time a Merge run
-(`merge.yml`), a Dependency review run, a DCO run or a run of a gate (`nix.yml`,
+(`merge.yml`), a Dependency review run or a run of a gate (`nix.yml`,
 `action-pins.yml`, `release-image-tooling.yml`) completes, or code scanning's CodeQL check
 does. It is a `workflow_run` listener, so GitHub
 runs main's copy of it and of
@@ -327,7 +327,7 @@ verdict says all it must fix:
   - **what it brings:** its change against that parent is exactly its pull request's, file by
     file with the same `+/-` lines;
   - **its pull request's head** has a green verdict, which holds that head's dependency review,
-    sign-off check and CodeQL, each of the pull request's own change;
+    commit policy and CodeQL, each of the pull request's own change;
   - **its gates:** the head's gates (below) ran on the head's merge with main as it was then,
     and the queue commit is that change on a main that may have moved since, a tree no gate ran
     on. Each gate's workflow also starts on `merge_group`, which takes no filter, so every gate
@@ -481,17 +481,7 @@ verdict says all it must fix:
   is still running or did not pass is red. The poster also follows Dependency review: when one
   completes, it judges that head again from the head's own completed Merge run (and, for a head
   that changes a definition, its contract run). So they finish in any order.
-- **The sign-off check (#3908):** the newest `pull_request_target` run of `dco.yml` on the head,
-  `main`'s copy, concluded `success`, read as the dependency review is: by its path, its event
-  and the head, so a candidate's own workflow named DCO, a `pull_request` run of the head's copy
-  or a run on an older head of the pull request counts for nothing. Before, the verdict did not
-  read it, and it is the one required check: #5601's head went red on DCO after GitHub's Update
-  branch gave it a merge commit with no sign-off, and the verdict stayed green. That merge commit
-  is refused on purpose, with no exemption: a commit's committer is text anyone can write, so
-  naming GitHub proves nothing, and a merge commit can carry a conflict resolution no one signed
-  off. A red names the fix, update with rebase or rebase locally, in its title. The poster
-  follows DCO as it follows Dependency review.
-- **The commit policy, by main's own check (#3908):** the poster also runs `main`'s
+- **The commit policy, by main's own check (#3908):** the poster runs `main`'s
   `scripts/check_commit_provenance.py` itself, in `pr` mode (rules 1, 3 and 5, with `main`'s
   `MAINTAINERS`, both from its own checkout), over the pull request's commits as the commits API
   lists them and its title. The pull request is the one the run lists, or, for a fork's run, which
@@ -499,9 +489,14 @@ verdict says all it must fix:
   is the run's head: none or several is red. The list must hold the pull request's own count and
   end at the run's head, so a push between the reads, or a pull request longer than the 250 commits
   the API lists, is red. A red names each commit and rule in a fenced block in its summary, with
-  the fix for each rule, and none of the commits' text in its title. It reads what `dco.yml` reads,
-  so `dco.yml` can move to `pull_request` with `main`'s check still the gate; until it does, both
-  count. A queue commit's own message, which is what lands, is held to rule 5 too, since a title
+  the fix for each rule, and none of the commits' text in its title. `dco.yml` runs the head's copy
+  of the same check on `pull_request`, as feedback, and its run is never read: a pull request
+  that edits the check or `MAINTAINERS` is still judged by `main`'s. #5601's head went red on DCO
+  after GitHub's Update branch gave it a merge commit with no sign-off, while the verdict, which
+  did not read DCO then, stayed green. That merge commit is refused on purpose, with no exemption:
+  a commit's committer is text anyone can write, so naming GitHub proves nothing, and a merge
+  commit can carry a conflict resolution no one signed off. A red's rule 1 fix says to update with
+  rebase. A queue commit's own message, which is what lands, is held to rule 5 too, since a title
   edited after the head's green verdict is what the queue builds it from.
 - **The path-filtered gates:** a workflow of its own that a pull request's paths start, not the
   plan, is a gate (`tools/ci/workflows.py`'s `GATES`, each with its jobs and its outside-input
@@ -525,8 +520,8 @@ verdict says all it must fix:
   none). The filter is read as GitHub reads it (`workflows.filter_matches`), and one with a pattern
   beyond `*`, a last `**` and plain paths, or a `pull_request` filtered by more than its paths, is
   unread, so red. A run still going is a red that waits, its fence word the gate's file. Its
-  completion wakes the poster, which judges the head again from its Merge run, as a DCO run's
-  does. A gate's red is flake-class only when each of its red jobs was cancelled before
+  completion wakes the poster, which judges the head again from its Merge run, as a Dependency
+  review run's does. A gate's red is flake-class only when each of its red jobs was cancelled before
   its bound or failed at a step that fetches only outside inputs (GitHub's set-up, the checkout, the
   Nix installer), so the retry note (above) reads it as one a retry may clear; not so for a head
   that changes the gate's workflow or a local action, since its run takes those steps from the head;
@@ -609,7 +604,7 @@ verdict says all it must fix:
   request's head. The schedule, a dispatch of the poster on `main` (a contract run's wake, never
   off `main`) and a completed dispatch off `main` (a contract run, a dispatch proof) always do. A
   pull request's wakes, code scanning's CodeQL check, a completed run of a pull request (its own
-  Merge run, its dependency review, its sign-off check, a gate's, CodeQL's on `refs/pull/*`) and a
+  Merge run, its dependency review, a gate's, CodeQL's on `refs/pull/*`) and a
   pull request's own Merge run starting do only while the repository variable `MERGE_VERDICT_LIVE`
   is `true`. It is `false` until #3915's flip
   runs merge.yml on pull requests, because until then a head has no Merge run to judge, and the
@@ -699,6 +694,14 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
   candidates include two Dependabot pull requests and a fork's on a branch named as Dependabot
   names its own. The one group two candidates may share is one only Dependabot heads join, where
   every run waits its turn: no cancel-in-progress, and `queue: max` (see "The tier workflows").
+- No two workflows that run on one pull request share a concurrency group, the workflow's or a
+  job's, unless every run in it waits its turn there, as every Dependabot head's runs do. A pull
+  request runs main's copy of a `pull_request_target` workflow and its head's copy of a
+  `pull_request` one, so a workflow moved off `pull_request_target` runs from both trees on the
+  pull request that moves it. On PersonalClaw/PersonalClawApps#554 each moved workflow's two copies
+  shared a group and the head's runs were cancelled, so dco.yml moved into `dco-pr-<number>`, and a
+  test beside the row reads main's tree as well as the head's: `tools.ci contract` runs the rails
+  with main's pytest settings, so the settings' folder is main's.
 
 Main's `tools/ci` now reads a pull request's catalogue (see "Main's copy reads a pull request's
 catalogue" under "The catalogue"), and these rows still run in the candidate's own suite. A
@@ -1817,15 +1820,19 @@ Every commit that reaches `main` is checked by `scripts/check_commit_provenance.
 are in [CONTRIBUTING.md](../../CONTRIBUTING.md#developer-certificate-of-origin-dco)), in two
 places:
 
-- **`dco.yml`, on every pull request,** in `pr` mode: rules 1, 3 and 5, over the commits the
-  API returns and the title in the event payload. The merge verdict reads its run on the head,
-  and runs the same check itself over the same commits (see "The merge controller's poster"), so
-  a red one keeps the pull request from merging. It runs on `pull_request_target`, so it checks
-  out only the base branch's script and `MAINTAINERS`, and puts no file or git object of the pull
-  request on disk. The commits endpoint returns at most 250 commits, so a list short of the pull
-  request's own count fails the check rather than passing half of it. It also answers for the
-  pull request as it is when asked, not as the event saw it, so a list whose last commit is not
-  the event's head (a push after the event, or a list cut short or reordered) fails it too.
+- **The merge verdict, on every pull request's head,** in `pr` mode: rules 1, 3 and 5, with
+  `main`'s copy of the check and of `MAINTAINERS`, over the commits the API returns and the title
+  (see "The merge controller's poster"), so a red keeps the pull request from merging. `dco.yml`
+  runs the head's own copy of the same check on `pull_request`, with a token that can only read,
+  as feedback that gates nothing. What that gives up: a fork pull request from an account new to
+  GitHub runs no workflow until a maintainer approves its run, so the poster has nothing to judge
+  before then either. Such a contributor's sign-off feedback used to come on their first push,
+  from `dco.yml` on `pull_request_target`, and now comes after the approval, in the verdict's
+  summary. CONTRIBUTING asks for the sign-off before the pull request is opened. The commits
+  endpoint returns at most 250 commits, so a list short of the pull request's own count fails the
+  check rather than passing half of it. It also answers for the pull request as it is when asked,
+  so a list whose last commit is not the head being judged (a push since, or a list cut short or
+  reordered) fails it too.
 - **`provenance.yml`, on every push to `main`,** in `main` mode: rules 1, 2, 3 and 5, over
   `before..sha`. It is a workflow of its own because each push checks only its own range, so a
   run that never finished would leave its commits unchecked for good. One job with no `needs:`
@@ -1852,9 +1859,9 @@ places:
   `contents: read` alone.
 
 `dco.yml` also runs when a pull request's title is edited, since rule 5 reads the title. Its job
-token reaches one step, which only fetches the commits with `gh api`; the check that parses them
-runs in the next step with no token. Each violation is also printed as an `::error::` annotation,
-so a red run's summary names the commit.
+token, which can only read, reaches one step, which only fetches the commits with `gh api`; the
+check that parses them runs in the next step with no token. Each violation is also printed as an
+`::error::` annotation, so a red run's summary names the commit.
 
 Both main-push checks run the **previous** main commit's copy. `verified-tree.yml` archives
 `BEFORE`'s `tools/ci` into a folder of its own and runs `verify-landed` from it, as `merge.yml` runs
@@ -3811,7 +3818,6 @@ The audited writes today:
 
 | Workflow | Job | Permission | Used by |
 |---|---|---|---|
-| `dco.yml` | `dco` | `pull-requests: write` | the commit-provenance remediation comment |
 | `pr-feedback.yml` | `lint-help` | `pull-requests: write` | the lint remediation comment |
 | `release.yml` | `pypi`, `pypi-client` | `id-token: write` | Trusted Publishing to PyPI |
 | `release.yml` | `images` | `packages: write` | pushing the two images to GHCR |

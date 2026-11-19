@@ -1,7 +1,7 @@
 """``.github/workflows/merge-verdict.yml``: the merge verdict's poster keeps its trust shape.
 
 It runs only as a ``workflow_run`` listener of Merge and of the runs that judge a head again
-(Dependency review, CodeQL, Contract, DCO and each gate's) and a listener of completed check runs,
+(Dependency review, CodeQL, Contract and each gate's) and a listener of completed check runs,
 so GitHub runs main's copy, and, beside a head's Merge run (the shape ``beside``), also on a pull
 request's Merge run's start, to start the head's contract with it (``decide --start``, which posts
 nothing), and on a dispatch on main alone, which a contract run's ``wake`` job sends for its head
@@ -260,12 +260,8 @@ _WAKES = [
     "Dependency review",
     "CodeQL",
     "Contract",
-    "DCO",
     *(gate.name for gate in workflows.GATES),
 ]
-#: The same once dco.yml runs on ``pull_request`` (#3908): the poster runs main's commit-policy
-#: check itself and no longer reads a DCO run, so no DCO run wakes it.
-_WAKES_ONCE_DCO_MOVES = [name for name in _WAKES if name != "DCO"]
 
 
 def _shape(on: object) -> str | None:
@@ -278,11 +274,7 @@ def _shape(on: object) -> str | None:
     head = inputs.get("head") if isinstance(inputs, dict) else None
     if (
         all(on[k] == v for k, v in both.items())
-        and on["workflow_run"]
-        in (
-            {"workflows": wakes, "types": ["in_progress", "completed"]}
-            for wakes in (_WAKES, _WAKES_ONCE_DCO_MOVES)
-        )
+        and on["workflow_run"] == {"workflows": _WAKES, "types": ["in_progress", "completed"]}
         and set(dispatch) == {"inputs"}
         and set(inputs) == {"head"}
         and isinstance(head, dict)
@@ -352,8 +344,7 @@ _DISPATCH_TOKEN = (
 
 #: The poster's wake, which workflows' runs it judges, as the tree spells it, in either shape (its
 #: types are ``[completed]``, or ``[in_progress, completed]`` beside) and its list in either
-#: spelling (``[...]``, or one name a line): a plant anchored here reads a tree that lists the DCO
-#: run as well as one that does not.
+#: spelling (``[...]``, or one name a line): a plant anchored here reads whichever the tree has.
 _WAKE = "<the poster's workflow_run wake>"
 _WAKE_LIST = "<the poster's workflows list>"
 _WAKE_LINES = re.compile(
@@ -521,18 +512,17 @@ def _spelled(names: list[str], *, block: bool) -> str:
 
 
 @pytest.mark.parametrize("block", [False, True], ids=["on one line", "one name a line"])
-@pytest.mark.parametrize("dco", [True, False], ids=["with DCO", "once DCO moves"])
-def test_the_wake_list_in_either_spelling_keeps_the_trust_shape(block: bool, dco: bool) -> None:
+def test_the_wake_list_in_either_spelling_keeps_the_trust_shape(block: bool) -> None:
     text = _WORKFLOW.read_text(encoding="utf-8")
-    wakes = _WAKES if dco else _WAKES_ONCE_DCO_MOVES
-    old, new = _anchored(text, _WAKE_LIST, _spelled(wakes, block=block))
+    old, new = _anchored(text, _WAKE_LIST, _spelled(_WAKES, block=block))
     assert text.count(old) == 1, f"the wake's list is not once: {old!r}"
     assert _problems(text.replace(old, new)) == []
 
 
-def test_a_wake_list_without_dco_that_adds_a_run_still_fails() -> None:
+def test_a_wake_list_that_wakes_on_dco_again_fails() -> None:
+    # dco.yml is the head's copy now (#3908): its run judges nothing, so it wakes nothing.
     text = _WORKFLOW.read_text(encoding="utf-8")
-    old, new = _anchored(text, _WAKE_LIST, _spelled([*_WAKES_ONCE_DCO_MOVES, "PR"], block=False))
+    old, new = _anchored(text, _WAKE_LIST, _spelled([*_WAKES, "DCO"], block=False))
     assert any("runs on" in p for p in _problems(text.replace(old, new)))
 
 
@@ -550,7 +540,6 @@ _EVENTS: tuple[tuple[str, str, dict[str, Any], str, str], ...] = (
         "head",
         "completed",
     ),
-    ("a DCO run", "workflow_run", {"event": "pull_request_target"}, "head", "completed"),
     (
         "CodeQL on a pull request",
         "workflow_run",
@@ -633,13 +622,6 @@ _EVENTS: tuple[tuple[str, str, dict[str, Any], str, str], ...] = (
         "a Dependency review run starting",
         "workflow_run",
         {"event": "pull_request_target", "path": ".github/workflows/dependency-review.yml"},
-        "never",
-        "in_progress",
-    ),
-    (
-        "a DCO run starting",
-        "workflow_run",
-        {"event": "pull_request_target", "path": ".github/workflows/dco.yml"},
         "never",
         "in_progress",
     ),

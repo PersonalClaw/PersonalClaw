@@ -29,7 +29,7 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -8224,23 +8224,18 @@ VERIFIED_TREE_RUNS_ON_EVERY_MAIN_PUSH = _toolchain_row(
 ROWS = (*ROWS, VERIFIED_TREE_RUNS_ON_EVERY_MAIN_PUSH)
 
 
-# ── dco.yml checks a pull request with the base branch's check, and nothing of the candidate ──
-# It runs on `pull_request_target` and holds `pull-requests: write`, so each property here is a
-# trust property: what runs is the base branch's, the token reaches only the step that calls the
-# API, nothing a contributor wrote is pasted into code or carried between steps, and the check is
-# handed what it needs to refuse a short or stale list.
-#
-# It moves to `pull_request` (#3908), where it is the head's own copy and gates nothing: the merge
-# verdict runs main's copy of the check itself. In that shape it holds `contents: read` alone, runs
-# no action but the checkout, names no secret and posts no comment, and the rest holds as before.
+# ── dco.yml runs the head's check as feedback, with a token that can only read ──────────────
+# It runs on `pull_request` (#3908), so it is the head's own copy and gates nothing: the merge
+# verdict runs main's copy of the check itself. It holds `contents: read` alone, runs no action but
+# the checkout, names no secret and posts no comment. The token reaches only the step that calls
+# the API, nothing a contributor wrote is pasted into code or carried between steps, and the check
+# is handed what it needs to refuse a short or stale list, so its feedback is the verdict's.
 
 _DCO = ".github/workflows/dco.yml"
 _DCO_TYPES = ["opened", "edited", "synchronize", "reopened"]
 _DCO_SPARSE = {"scripts/check_commit_provenance.py", "MAINTAINERS"}
 _DCO_FETCH = "Fetch the pull request's commits"
 _DCO_CHECK = "Verify DCO sign-off on every commit"
-_DCO_COMMENT = "Explain how to fix DCO"
-_DCO_FENCE = "const bar = '`'.repeat(Math.max(2, ...runs.map((r) => r.length)) + 1);"
 #: The Runner identity step's comment line, the anchor its token plant edits.
 _IDENTITY_COMMENT = (
     "        # The image this job ran on, so a runner image that moves is visible in the log."
@@ -8256,25 +8251,20 @@ def dco_violations(tree: Tree) -> list[str]:
         return [f"{_DCO} is missing"]
     bad: list[str] = []
     triggers = _triggers(workflow)
-    moved = set(triggers) == {"pull_request"}
-    if set(triggers) != {"pull_request_target"} and not moved:
-        bad.append(
-            f"{_DCO} runs on {sorted(triggers)}, not pull_request_target alone, or once it moves"
-            " (#3908) pull_request alone"
-        )
-    event = "pull_request" if moved else "pull_request_target"
-    types = (triggers.get(event) or {}).get("types")  # type: ignore[union-attr]
+    if set(triggers) != {"pull_request"}:
+        bad.append(f"{_DCO} runs on {sorted(triggers)}, not pull_request alone")
+    types = (triggers.get("pull_request") or {}).get("types")  # type: ignore[union-attr]
     if types != _DCO_TYPES:
         bad.append(f"{_DCO} runs on {types}, not {_DCO_TYPES} (an edited title is rule 5's)")
     steps = ((workflow.get("jobs") or {}).get("dco") or {}).get("steps") or []
     by_name = {str(s.get("name", "")): s for s in steps}
     checkouts = [s for s in steps if _action(s) == "actions/checkout"]
     if len(checkouts) != 1:
-        bad.append(f"{_DCO} has {len(checkouts)} checkouts, not the base branch's one")
+        bad.append(f"{_DCO} has {len(checkouts)} checkouts, not one")
     for checkout in checkouts:
         inputs = checkout.get("with") or {}
         if {"ref", "repository"} & set(inputs):
-            bad.append(f"{_DCO}'s checkout names a ref or repository, not the base branch")
+            bad.append(f"{_DCO}'s checkout names a ref or repository")
         if inputs.get("persist-credentials") is not False:
             bad.append(f"{_DCO}'s checkout keeps its credentials")
         if set(str(inputs.get("sparse-checkout", "")).split()) != _DCO_SPARSE:
@@ -8292,7 +8282,7 @@ def dco_violations(tree: Tree) -> list[str]:
             bad.append(f"{where} reads a file by path through the contents API")
         if "GITHUB_OUTPUT" in json.dumps(step):
             bad.append(f"{where} writes a step output")
-    fetch, check, comment = (by_name.get(n) for n in (_DCO_FETCH, _DCO_CHECK, _DCO_COMMENT))
+    fetch, check = (by_name.get(n) for n in (_DCO_FETCH, _DCO_CHECK))
     if fetch is None or not hands_token(fetch.get("env")):
         bad.append(f"{_DCO} has no fetch step holding the token")
     elif [w for words in _commands(str(fetch.get("run", ""))) for w in words[:1]] != [
@@ -8307,7 +8297,7 @@ def dco_violations(tree: Tree) -> list[str]:
         if not run.lstrip().startswith("set -euo pipefail"):
             bad.append(f"{_DCO}'s check step does not start with `set -euo pipefail`")
         if "python3 -I scripts/check_commit_provenance.py --mode pr" not in run:
-            bad.append(f"{_DCO}'s check step does not run the base copy, isolated, in pr mode")
+            bad.append(f"{_DCO}'s check step does not run the check, isolated, in pr mode")
         if (
             '--expected-count "$COMMITS"' not in run
             or (check.get("env") or {}).get("COMMITS") != "${{ github.event.pull_request.commits }}"
@@ -8321,166 +8311,30 @@ def dco_violations(tree: Tree) -> list[str]:
             bad.append(f"{_DCO}'s check is not handed the head the event names")
         if '--event "$GITHUB_EVENT_PATH"' not in run:
             bad.append(f"{_DCO}'s check does not read the title from the event file")
-    if moved:
-        job = (workflow.get("jobs") or {}).get("dco") or {}
-        if job.get("permissions") != {"contents": "read"}:
-            bad.append(
-                f"{_DCO} on pull_request holds {job.get('permissions')!r}, not contents: read"
-            )
-        if workflow.get("permissions") not in (None, {}, {"contents": "read"}):
-            bad.append(f"{_DCO} on pull_request grants {workflow.get('permissions')!r}")
-        others = sorted({_action(s) for s in steps if _action(s)} - {"actions/checkout"})
-        if others:
-            bad.append(f"{_DCO} on pull_request runs {others}, where it runs only the check")
-        if "secrets." in json.dumps(workflow, default=str):
-            bad.append(f"{_DCO} on pull_request names a secret")
-        if "dco-help" in json.dumps(workflow, default=str):
-            bad.append(f"{_DCO} on pull_request still writes the dco-help comment")
-    elif comment is None:
-        bad.append(f"{_DCO} has no comment step")
-    else:
-        script = str((comment.get("with") or {}).get("script", ""))
-        if "fs.readFileSync(process.env.REPORT, 'utf8')" not in script:
-            bad.append(f"{_DCO}'s comment does not read the report from its file")
-        if _DCO_FENCE not in script:
-            bad.append(f"{_DCO}'s comment fence does not grow with the report")
+    job = (workflow.get("jobs") or {}).get("dco") or {}
+    if job.get("permissions") != {"contents": "read"}:
+        bad.append(f"{_DCO} holds {job.get('permissions')!r}, not contents: read")
+    if workflow.get("permissions") not in (None, {}, {"contents": "read"}):
+        bad.append(f"{_DCO} grants {workflow.get('permissions')!r}")
+    others = sorted({_action(s) for s in steps if _action(s)} - {"actions/checkout"})
+    if others:
+        bad.append(f"{_DCO} runs {others}, where it runs only the check")
+    if "secrets." in json.dumps(workflow, default=str):
+        bad.append(f"{_DCO} names a secret")
+    if "dco-help" in json.dumps(workflow, default=str):
+        bad.append(f"{_DCO} still writes the dco-help comment")
     return bad
 
 
-DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK = _toolchain_row(
-    "dco-checks-a-pull-request-with-the-base-branchs-check",
-    dco_violations,
-    (
-        _plant(
-            "a title edit that starts no run",
-            _DCO,
-            "types: [opened, edited, synchronize, reopened]",
-            "types: [opened, synchronize, reopened]",
-        ),
-        _plant(
-            "the checkout of the pull request's head",
-            _DCO,
-            "          sparse-checkout-cone-mode: false\n",
-            "          sparse-checkout-cone-mode: false\n"
-            "          ref: ${{ github.event.pull_request.head.sha }}\n",
-        ),
-        _plant(
-            "a checkout that keeps its credentials",
-            _DCO,
-            "          persist-credentials: false\n",
-            "          persist-credentials: true\n",
-        ),
-        _plant(
-            "a checkout of more than the check and MAINTAINERS",
-            _DCO,
-            "            MAINTAINERS\n",
-            "            MAINTAINERS\n            scripts/\n",
-        ),
-        _plant(
-            "the token on the check step",
-            _DCO,
-            "          COMMITS: ${{ github.event.pull_request.commits }}\n",
-            "          COMMITS: ${{ github.event.pull_request.commits }}\n"
-            "          GH_TOKEN: ${{ github.token }}\n",
-        ),
-        _plant(
-            "the token on the Runner identity step",
-            _DCO,
-            _IDENTITY_COMMENT + "\n        run: echo",
-            "        env:\n          GH_TOKEN: ${{ github.token }}\n        run: echo",
-        ),
-        _plant(
-            "the token on the comment step",
-            _DCO,
-            "          REPORT: ${{ runner.temp }}/provenance.txt\n",
-            "          REPORT: ${{ runner.temp }}/provenance.txt\n"
-            "          GH_TOKEN: ${{ github.token }}\n",
-        ),
-        _plant(
-            "the check run in the fetch step",
-            _DCO,
-            'gh api --paginate "repos/$REPO/pulls/$PR/commits" > "$RUNNER_TEMP/commits.json"\n',
-            'gh api --paginate "repos/$REPO/pulls/$PR/commits" > "$RUNNER_TEMP/commits.json"\n'
-            "          python3 -I scripts/check_commit_provenance.py --help\n",
-        ),
-        _plant(
-            "an expression pasted into the check's run",
-            _DCO,
-            '--expected-count "$COMMITS"',
-            "--expected-count ${{ github.event.pull_request.commits }}",
-        ),
-        _plant(
-            "a step output carrying text",
-            _DCO,
-            '            --report "$RUNNER_TEMP/provenance.txt"\n',
-            '            --report "$RUNNER_TEMP/provenance.txt"\n'
-            '          echo "report=x" >> "$GITHUB_OUTPUT"\n',
-        ),
-        _plant(
-            "a check without pipefail",
-            _DCO,
-            "          set -euo pipefail\n          python3 -I",
-            "          python3 -I",
-        ),
-        _plant(
-            "the pushed copy run without isolation",
-            _DCO,
-            "python3 -I scripts/check_commit_provenance.py --mode pr",
-            "python3 scripts/check_commit_provenance.py --mode pr",
-        ),
-        _plant(
-            "the commit count not handed over",
-            _DCO,
-            '--expected-count "$COMMITS"',
-            "--expected-count 250",
-        ),
-        _plant(
-            "the event's head not handed over",
-            _DCO,
-            '            --expected-head "$HEAD_SHA" \\\n',
-            "",
-            expect="not handed the head the event names",
-        ),
-        _plant(
-            "the head read from somewhere other than the event",
-            _DCO,
-            "          HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n",
-            "          HEAD_SHA: ${{ github.sha }}\n",
-            expect="not handed the head the event names",
-        ),
-        _plant(
-            "the title not read from the event file",
-            _DCO,
-            '--event "$GITHUB_EVENT_PATH"',
-            '--event "$RUNNER_TEMP/event.json"',
-        ),
-        _plant(
-            "the report read from somewhere else",
-            _DCO,
-            "fs.readFileSync(process.env.REPORT, 'utf8')",
-            "(process.env.REPORT_TEXT || '')",
-        ),
-        _plant("a fence of fixed length", _DCO, _DCO_FENCE, "const bar = '```';"),
-        _plant(
-            "the token handed to the checkout",
-            _DCO,
-            "          persist-credentials: false\n",
-            "          persist-credentials: false\n          token: ${{ github.token }}\n",
-            expect="hands the job token to a step that does not fetch",
-        ),
-        Control("the tree's dco.yml passes", _nothing, fails=False),
-    ),
-)
-
-#: dco.yml once it moves to pull_request (#3908), as the plants below write it before each edit,
-#: so they hold that shape whichever one the tree has.
+#: dco.yml as it runs, which the plants below write before each edit, so they hold the shape
+#: whatever wording the tree's copy has.
 _DCO_ON_PULL_REQUEST = (
     "name: DCO\n"
     "on:\n"
     "  pull_request:\n"
     "    types: [opened, edited, synchronize, reopened]\n"
     "concurrency:\n"
-    "  group: dco-${{ github.event.pull_request.number }}\n"
+    "  group: dco-pr-${{ github.event.pull_request.number }}\n"
     "  cancel-in-progress: true\n"
     "jobs:\n"
     "  dco:\n"
@@ -8521,18 +8375,18 @@ _DCO_ON_PULL_REQUEST = (
 
 
 def _on_pull_request(name: str, old: str = "", new: str = "", **kw: Any) -> Control:
-    """A plant on dco.yml as it moves to pull_request: :data:`_DCO_ON_PULL_REQUEST` written, then
-    *old* replaced by *new* (nothing, for the shape as it is)."""
+    """A plant on dco.yml: :data:`_DCO_ON_PULL_REQUEST` written, then *old* replaced by *new*
+    (nothing, for the shape as it is)."""
 
     def plant(root: Path) -> None:
         assert old in _DCO_ON_PULL_REQUEST, f"the plant {name!r} found no {old!r}"
         _write(root, _DCO, _DCO_ON_PULL_REQUEST.replace(old, new, 1))
 
-    return Control(f"on pull_request: {name}", plant, **kw)
+    return Control(name, plant, **kw)
 
 
 _DCO_ON_PULL_REQUEST_PLANTS = (
-    _on_pull_request("the shape it moves to passes", fails=False),
+    _on_pull_request("the shape as it runs passes", fails=False),
     _on_pull_request(
         "a title edit that starts no run",
         "types: [opened, edited, synchronize, reopened]",
@@ -8542,7 +8396,7 @@ _DCO_ON_PULL_REQUEST_PLANTS = (
         "pull_request_target beside it",
         "  pull_request:\n",
         "  pull_request_target:\n    types: [opened]\n  pull_request:\n",
-        expect="not pull_request_target alone",
+        expect="not pull_request alone",
     ),
     _on_pull_request(
         "a write permission",
@@ -8554,7 +8408,7 @@ _DCO_ON_PULL_REQUEST_PLANTS = (
         "a workflow-wide write permission",
         "concurrency:\n",
         "permissions:\n  pull-requests: write\nconcurrency:\n",
-        expect="on pull_request grants",
+        expect="grants",
     ),
     _on_pull_request(
         "the comment step kept",
@@ -8600,24 +8454,13 @@ _DCO_ON_PULL_REQUEST_PLANTS = (
 )
 
 
-def _dco_moved() -> bool:
-    """Whether the tree's dco.yml runs on pull_request alone: its old shape's plants, which edit
-    its comment step and its base-branch checkout, then have nothing to edit."""
-    text = (REPO / _DCO).read_text(encoding="utf-8")
-    return set(_triggers(yaml.safe_load(text))) == {"pull_request"}
-
-
-DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK = replace(
-    DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK,
-    controls=(
-        # Once it has moved, the old shape's plants have nothing to edit: the tree's own dco.yml
-        # passes (the last control) and the plants on the shape it moves to hold the rest.
-        *DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK.controls[-1 if _dco_moved() else 0 :],
-        *_DCO_ON_PULL_REQUEST_PLANTS,
-    ),
+DCO_RUNS_THE_CHECK_AS_FEEDBACK = _toolchain_row(
+    "dco-runs-the-check-as-feedback-with-a-read-only-token",
+    dco_violations,
+    (*_DCO_ON_PULL_REQUEST_PLANTS, Control("the tree's dco.yml passes", _nothing, fails=False)),
 )
 
-ROWS = (*ROWS, DCO_CHECKS_WITH_THE_BASE_BRANCHS_CHECK)
+ROWS = (*ROWS, DCO_RUNS_THE_CHECK_AS_FEEDBACK)
 
 
 # ── Every timeout mark is listed with its reason ────────────────────────────────────────────
@@ -13099,6 +12942,172 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
 )  # fmt: skip
 
 ROWS = (*ROWS, NO_CANDIDATE_POSTS_THE_MERGE_VERDICT, CONCURRENCY_KEYS_ON_THE_CANDIDATE)
+
+
+# ── No two workflows that run on one pull request share a group ─────────────────────────────
+#
+# The row above holds each group to one candidate. Two workflows that run on one pull request can
+# still share one, and then each run cancels or replaces the other's. GitHub runs main's copy of
+# a pull_request_target workflow and the head's copy of a pull_request one, so a workflow moved
+# off pull_request_target runs from both trees on the pull request that moves it. On the one that
+# moved the apps repository's sign-off check and dependency review,
+# PersonalClaw/PersonalClawApps#554, each workflow's two copies shared a group (`dco-<n>`,
+# `dependency-review-<n>`) and the head's runs were cancelled. The tests after the row read main's
+# tree for it.
+
+#: The events whose runs are a pull request's own.
+_PR_EVENTS = ("pull_request", "pull_request_target")
+
+
+@dataclass(frozen=True)
+class _PrMember:
+    """A workflow that runs on one of :data:`_PR_EVENTS`, as read from one tree."""
+
+    label: str
+    name: str
+    event: str
+    tree: Tree
+    workflow: dict[str, Any]
+
+
+def _pr_members(tree: Tree, prefix: str = "") -> list[_PrMember]:
+    workflows = [(name, wf if isinstance(wf, dict) else {}) for name, wf in _workflows(tree)]
+    kinds = _candidate_kinds(workflows)
+    return [
+        _PrMember(f"{prefix}{name}", name, event, tree, workflow)
+        for name, workflow in workflows
+        for event in _PR_EVENTS
+        if event in kinds.get(name, set())
+    ]
+
+
+def shared_pr_group_violations(tree: Tree, main: Tree | None = None) -> list[str]:
+    """No two workflows that run on one pull request share a concurrency group, at the workflow's
+    level or a job's, unless every run that joins it waits its turn there (no cancel-in-progress,
+    ``queue: max``), as every Dependabot head's runs do. With *main*, the runs are those of the
+    head's own pull request: main's pull_request_target copies and the head's pull_request ones.
+    A group the keying row cannot evaluate is left to it."""
+    if main is None:
+        members = _pr_members(tree)
+    else:
+        members = [m for m in _pr_members(main, "main's ") if m.event == "pull_request_target"]
+        members += [m for m in _pr_members(tree) if m.event == "pull_request"]
+    #: (candidate, group key) -> the (workflow, where, whether it waits its turn) that join it
+    joined: dict[tuple[str, str], list[tuple[str, str, bool]]] = {}
+    for member in members:
+        values = [(member.label, member.workflow.get("concurrency"), {})]
+        values += [
+            (f"{member.label}:{job_id}", job.get("concurrency"),
+             _literal_matrix(member.tree, member.name, job))
+            for job_id, job in _trust_jobs(member.workflow).items()
+        ]  # fmt: skip
+        for where, value, job in values:
+            group = _concurrency_group(value)
+            if group is None:
+                continue
+            try:
+                legs = _group_legs(job, group)
+                if any(_unmodelled(leg) for leg in legs):
+                    continue
+                for run in _pr_runs(member.event):
+                    waits = _waits_its_turn(value, run.context)
+                    for key in {_evaluate(leg, run.context) for leg in legs}:
+                        joined.setdefault((run.candidate, key), []).append(
+                            (member.label, where, waits)
+                        )
+            except ValueError:
+                continue
+    shared: dict[str, str] = {}
+    for (_candidate, key), joins in joined.items():
+        if len({label for label, _where, _waits in joins}) < 2:
+            continue
+        if all(waits for _label, _where, waits in joins):
+            continue
+        shared.setdefault(", ".join(sorted({where for _label, where, _waits in joins})), key)
+    return [
+        f"{wheres}: both run on one pull request in the group {key!r}, so each run cancels or"
+        " replaces the other's"
+        for wheres, key in shared.items()
+    ]
+
+
+_DCO_GROUP_TEXT = "group: dco-pr-${{ github.event.pull_request.number }}"
+_NEW_TARGET = (
+    "name: New target\non:\n  pull_request_target:\n"
+    f"concurrency:\n  {_DCO_GROUP_TEXT}\n  cancel-in-progress: true\n"
+    "permissions: {}\njobs: {}\n"
+)
+
+NO_TWO_PR_WORKFLOWS_SHARE_A_GROUP = _toolchain_row(
+    "no two workflows that run on one pull request share a concurrency group",
+    shared_pr_group_violations,
+    (
+        Control("a pull_request workflow in dco.yml's group",
+                _new_pr_workflow("new-check.yml", f"concurrency:\n  {_DCO_GROUP_TEXT}\n"),
+                expect="dco.yml, new-check.yml: both run on one pull request"),
+        Control("a pull_request_target workflow in a pull_request workflow's group",
+                _new_workflow(f"{_WORKFLOWS}/new-target.yml", _NEW_TARGET),
+                expect="dco.yml, new-target.yml"),
+        Control("a job's own group that is another workflow's",
+                _new_workflow(
+                    f"{_WORKFLOWS}/new-check.yml",
+                    "name: New check\non:\n  pull_request:\npermissions: {}\njobs:\n"
+                    "  lane:\n    runs-on: ubuntu-24.04\n    concurrency:\n"
+                    "      group: nix-${{ github.event.pull_request.number || github.sha }}\n"
+                    "    steps: []\n"),
+                expect="new-check.yml:lane, nix.yml"),
+        Control("two workflows in one group where every run waits its turn",
+                _both(*(_new_pr_workflow(rel,
+                                         "concurrency:\n"
+                                         "  group: lane-${{ github.event.pull_request.number }}\n"
+                                         "  cancel-in-progress: false\n  queue: max\n")
+                        for rel in ("new-a.yml", "new-b.yml"))),
+                fails=False),
+        Control("two workflows, each in a group of its own", _both(
+            _new_pr_workflow("new-a.yml",
+                             "concurrency:\n  group: a-${{ github.event.pull_request.number }}\n"),
+            _new_pr_workflow("new-b.yml",
+                             "concurrency:\n  group: b-${{ github.event.pull_request.number }}\n")),
+                fails=False),
+    ),
+)  # fmt: skip
+
+ROWS = (*ROWS, NO_TWO_PR_WORKFLOWS_SHARE_A_GROUP)
+
+
+def _dco_on_target(tree: Tree, group: str) -> Tree:
+    """*tree* as main holds it before dco.yml moves: dco.yml on pull_request_target in *group*."""
+    rel = f"{_WORKFLOWS}/dco.yml"
+    text = tree[rel]
+    for old, new in (("  pull_request:\n", "  pull_request_target:\n"), (_DCO_GROUP_TEXT, group)):
+        assert text.count(old) == 1, f"the plant found {old!r} {text.count(old)} times in {rel}"
+        text = text.replace(old, new)
+    return {**tree, rel: text}
+
+
+def _main_tree(config: pytest.Config) -> Tree:
+    """The tree main's contract was laid out from. ``tools.ci contract`` runs these rails with
+    main's pytest settings (``-c <main>/pyproject.toml``) and the head's tree as the rootdir, so
+    the settings' folder is main's; run on their own, it is this tree."""
+    return _tree(Path(config.inipath).parent if config.inipath else REPO)
+
+
+def test_main_s_pull_request_target_copies_share_no_group_with_the_head_s_runs(
+    pytestconfig: pytest.Config,
+) -> None:
+    """On the head's own pull request, main's pull_request_target copies run beside the head's
+    pull_request ones, and no two share a group."""
+    assert shared_pr_group_violations(_tree(REPO), main=_main_tree(pytestconfig)) == []
+
+
+def test_a_workflow_moved_in_its_old_group_shares_it_with_main_s_copy() -> None:
+    """A workflow moved off pull_request_target in the group main's copy runs in shares it on its
+    own pull request; moved into a group of its own, it shares none."""
+    head = _tree(REPO)
+    found = shared_pr_group_violations(head, main=_dco_on_target(head, _DCO_GROUP_TEXT))
+    assert [p for p in found if "dco.yml, main's dco.yml: both run" in p], found
+    old_group = "group: dco-${{ github.event.pull_request.number }}"
+    assert shared_pr_group_violations(head, main=_dco_on_target(head, old_group)) == []
 
 
 # ── No new getsource call outside tests/rails ───────────────────────────────────────────────

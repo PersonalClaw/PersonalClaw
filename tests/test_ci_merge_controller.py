@@ -117,7 +117,6 @@ class FakeApi:
         self.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {"behind_by": 0}
         self.artifacts({"ci-record-unit": DIGEST, "web-dist": "sha256:" + "e" * 64})
         self.review(HEAD, ("completed", "success"))
-        self.sign_off(HEAD, ("completed", "success"))
         self.pull_request()
         self.codeql(HEAD)
         for file in GATE_FILTERS:
@@ -269,10 +268,6 @@ class FakeApi:
     def review(self, head: str, *runs: tuple[str, str | None], path: str = "") -> None:
         """The head's dependency-review runs, oldest first."""
         self._target_runs(mc.DEPENDENCY_REVIEW, head, runs, path=path)
-
-    def sign_off(self, head: str, *runs: tuple[str, str | None], **fields: Any) -> None:
-        """The head's DCO runs, oldest first; *fields* plant what each run says of itself."""
-        self._target_runs(mc.DCO_CHECK, head, runs, **fields)
 
     def _target_runs(
         self, workflow: str, head: str, runs: Any, *, path: str = "", **fields: Any
@@ -1769,70 +1764,6 @@ def test_a_review_from_another_workflow_counts_for_nothing() -> None:
     assert "has no dependency review" in _red(api).output["summary"]
 
 
-# ── The sign-off check (#3908) ─────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "runs, says",
-    [
-        ((), "has no sign-off check (dco.yml)"),
-        ((("in_progress", None),), "sign-off check (DCO) is 'in_progress', not finished"),
-        ((("completed", "failure"),), "sign-off check (DCO) is 'failure'"),
-        ((("completed", "success"), ("completed", "failure")), "sign-off check (DCO) is 'failure'"),
-    ],
-)
-def test_a_sign_off_check_that_did_not_pass_is_red(runs: Any, says: str) -> None:
-    api = FakeApi()
-    api.sign_off(HEAD, *runs)
-    assert says in _red(api).output["summary"]
-
-
-def test_a_red_sign_off_check_names_its_fix_in_the_title() -> None:
-    """The case of #5601: GitHub's Update branch wrote a merge commit with no sign-off, DCO went
-    red and the verdict stayed green. The red says how to update the head instead."""
-    api = FakeApi()
-    api.sign_off(HEAD, ("completed", "failure"))
-    title = _red(api).output["title"]
-    assert title == f"Red: the head's sign-off check (DCO) is 'failure': {mc.DCO_FIX}"
-    assert len(title) <= 255, "the title is cut at 255, and the fix is its tail"
-    assert "Update branch" in title and "update with rebase, or rebase locally" in title
-
-
-def test_the_newest_sign_off_check_decides() -> None:
-    api = FakeApi()
-    api.sign_off(HEAD, ("completed", "failure"), ("completed", "success"))
-    found = _decide(api)
-    assert isinstance(found, mc.Posting) and found.conclusion == "success"
-    assert "its sign-off check (DCO) passed" in found.output["summary"]
-
-
-@pytest.mark.parametrize(
-    "fields",
-    [
-        pytest.param({"path": f"{WF}fake-dco.yml"}, id="a candidate's own workflow named DCO"),
-        pytest.param(
-            {"event": "pull_request"}, id="dco.yml run as the head's copy, on pull_request"
-        ),
-        pytest.param({"head_sha": "d" * 40}, id="a run on an older head of the same pull request"),
-    ],
-)
-def test_a_sign_off_check_that_is_not_mains_on_this_head_counts_for_nothing(
-    fields: dict[str, Any],
-) -> None:
-    api = FakeApi()
-    api.sign_off(HEAD, ("completed", "success"), **fields)
-    assert "has no sign-off check (dco.yml)" in _red(api).output["summary"]
-
-
-def test_a_head_red_on_its_review_and_its_sign_off_names_both() -> None:
-    api = FakeApi()
-    api.review(HEAD, ("completed", "failure"))
-    api.sign_off(HEAD, ("completed", "failure"))
-    summary = _red(api).output["summary"]
-    assert "the head's dependency review is 'failure'" in summary, summary
-    assert "the head's sign-off check (DCO) is 'failure'" in summary, summary
-
-
 # ── The commit policy, by main's own check (#3908) ────────────────────────────────────────────
 
 OTHER = "9" * 40
@@ -2032,13 +1963,36 @@ def test_the_summary_shows_the_first_lines_and_counts_the_rest() -> None:
     assert f"\nand {45 - mc.POLICY_LINES} more\n" in summary
 
 
-def test_a_red_sign_off_run_with_clean_commits_is_still_red() -> None:
-    # Both count until dco.yml moves to pull_request: main's run of it, and the verdict's own.
+def test_no_dco_run_is_read_since_the_head_s_own_copy_judges_nothing() -> None:
+    # dco.yml runs the head's copy under pull_request, as feedback: main's check in the poster is
+    # the gate, and a run of it, green or red, is never read.
     api = FakeApi()
-    api.sign_off(HEAD, ("completed", "failure"))
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert not any("/workflows/dco.yml/" in c for c in api.calls), api.calls
+    assert "sign-off check (DCO)" not in found.output["summary"]
+
+
+def test_a_merge_commit_from_update_branch_is_red_and_names_the_rebase() -> None:
+    """The case of #5601: GitHub's Update branch wrote a merge commit with no sign-off."""
+    api = FakeApi()
+    merged = "Merge branch 'main' into topic\n"
+    api.pull_request(commit(OTHER), commit(HEAD, merged, committer="GitHub <noreply@github.com>"))
     title, summary = _policy_red(api)
-    assert "the head's sign-off check (DCO) is 'failure'" in title
-    assert "commit policy" not in summary
+    assert "commit policy (rule 1)" in title
+    assert f"{HEAD} rule 1 no `Signed-off-by: {AUTHOR}` line" in summary
+    assert (
+        "A merge commit from GitHub's Update branch has no sign-off: update with rebase" in summary
+    )
+
+
+def test_a_head_red_on_its_review_and_its_commits_names_both() -> None:
+    api = FakeApi()
+    api.review(HEAD, ("completed", "failure"))
+    api.pull_request(commit(HEAD, UNSIGNED))
+    summary = _red(api).output["summary"]
+    assert "the head's dependency review is 'failure'" in summary, summary
+    assert "the head's commits break the commit policy (rule 1)" in summary, summary
 
 
 def test_a_queue_commit_whose_message_carries_a_skip_marker_is_red() -> None:
@@ -2123,26 +2077,15 @@ def test_a_review_of_a_head_that_changes_ci_reads_its_contract_run() -> None:
     assert judged.posting.conclusion == "success" and judged.cleanup == CONTRACT_BRANCH
 
 
-def test_a_completed_sign_off_check_judges_its_head_again() -> None:
+@pytest.mark.parametrize("event", ["pull_request", "pull_request_target"])
+def test_a_completed_dco_run_judges_nothing(event: str) -> None:
+    # It no longer wakes the poster (merge-verdict.yml lists no DCO), and a run of it that reached
+    # the controller, the head's own or one main's old copy left, is no Merge run: it posts nothing.
     api = FakeApi()
-    _review_run(api, path=mc.DCO_CHECK)
+    _review_run(api, path=f"{WF}dco.yml", event=event)
     _merge_runs(api, OWN_MERGE, [RUN])
-    api.sign_off(HEAD, ("completed", "failure"))
-    red = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
-    assert red.posting is not None and red.posting.head_sha == HEAD
-    assert red.posting.conclusion == "failure"
-    assert "update with rebase" in red.posting.output["title"]
-    api.sign_off(HEAD, ("completed", "failure"), ("completed", "success"))
-    green = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
-    assert green.posting is not None and green.posting.conclusion == "success"
-
-
-def test_a_sign_off_run_from_a_fork_or_on_pull_request_posts_nothing() -> None:
-    api = FakeApi()
-    _review_run(api, path=mc.DCO_CHECK, event="pull_request")
-    assert "not a pull request's" in mc.judge(api, REPO, REVIEW_RUN, CONTROLLER).why
-    _review_run(api, path=mc.DCO_CHECK, repository={"full_name": "someone/fork"})
-    assert mc.judge(api, REPO, REVIEW_RUN, CONTROLLER).posting is None
+    outcome = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    assert outcome.posting is None and outcome.why, outcome
 
 
 def test_a_review_run_that_is_not_a_pull_requests_posts_nothing() -> None:
@@ -2977,7 +2920,6 @@ def _reported(api: FakeApi) -> Any:
     "path, more",
     [
         pytest.param(mc.DEPENDENCY_REVIEW, {"status": "in_progress"}, id="dependency-review"),
-        pytest.param(mc.DCO_CHECK, {"status": "in_progress"}, id="dco"),
         pytest.param(mc.CONTRACT_WORKFLOW, {"event": "push"}, id="contract"),
         pytest.param(f"{WF}nix.yml", {"event": "push"}, id="a-gate"),
         pytest.param(mc.CODEQL_WORKFLOW, {"status": "in_progress"}, id="codeql"),
@@ -3161,7 +3103,7 @@ def test_a_head_waiting_on_codeql_for_ever_costs_nothing_between_sweeps(
     _refs(api, mc.CONTRACT_PREFIX, {})
     _refs(api, mc.TRUSTED_PREFIX, {})
     wakes = [
-        ["--run-id", str(_other_run(api, mc.DCO_CHECK, status="in_progress"))],
+        ["--run-id", str(_other_run(api, mc.DEPENDENCY_REVIEW, status="in_progress"))],
         ["--check-run-id", "55"],
     ]
     for wake in wakes:
@@ -4733,7 +4675,7 @@ def test_a_red_that_is_not_flake_class_says_why(
 
 def test_a_red_with_a_reason_beside_its_tests_is_not_flake_class() -> None:
     api = _retried()
-    api.sign_off(HEAD, ("completed", "failure"))
+    api.review(HEAD, ("completed", "failure"))
     found = _note(api)
     assert "- not flake-class: its red is not its tests' alone: " in found.output["summary"]
 
