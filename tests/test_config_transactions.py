@@ -88,6 +88,12 @@ hold, value = float(sys.argv[2]), sys.argv[3]
 wait_for_go()
 def hold_then_write(document):
     (home / f"holding-{name}").touch()
+    if len(sys.argv) > 4:  # holding until the named worker is about to ask for the lock
+        deadline = time.monotonic() + 60
+        while not (home / f"ready-{sys.argv[4]}").exists():
+            if time.monotonic() > deadline:
+                raise SystemExit("the other worker never started")
+            time.sleep(0.002)
     time.sleep(hold)
     document["winner"] = value
 mutate_config(hold_then_write, timeout=10)
@@ -184,12 +190,14 @@ def test_two_processes_incrementing_one_key_lose_no_update(home):
 
 
 def test_the_same_key_lands_in_lock_order(home):
-    first = _spawn(home, _HOLDING_WORKER, "first", 0.5, "first")
+    """The first worker holds the lock until the second is about to ask for it, then 0.5 s more,
+    so the second always meets it held and writes after the first. Held for a fixed 0.5 s alone,
+    a loaded runner could start the second only after the first had let the lock go, and the test
+    then passed with no lock at all: with the lock taken out, it was green 7 of 10 runs."""
+    first = _spawn(home, _HOLDING_WORKER, "first", 0.5, "first", "second")
     _release(home, [first], ["first"])
     _wait_for(home / "holding-first", [first])
     second = _spawn(home, _HOLDING_WORKER, "second", 0.0, "second")
-    # The first worker may finish and exit 0 while the second interpreter is still starting;
-    # that is not an early exit, so only the second worker is watched here.
     _wait_for(home / "ready-second", [second])
     _finish([first, second])
 
