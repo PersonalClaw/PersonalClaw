@@ -360,7 +360,18 @@ verdict says all it must fix:
     unclassified or a quarantined one), reads no file the pull request changes (as the flake rule
     reads it), and has a flaky history: an open `Flaky test: <id>` issue that the flaky-tests
     workflow's account or a maintainer (owner, member, collaborator) filed, since anyone can open
-    an issue of any title. A failure on main in the last 7 days is not read yet, so fewer reds are
+    an issue of any title. A job that failed on CI's own `infrastructure` error, with no failed
+    test in it, does not stop a red being flake-class (#5848), but only where CI's own code alone
+    can have written it: the job's first failed step is `Set up the toolchain`, the setup action,
+    which runs before any of the head's code and writes the error when the runner's package mirror
+    or Homebrew could not install a program the job names, after its own retries. Any other step
+    runs the head's tests or tools, which can print the same error (the dependency audit's own step
+    runs the head's `tools/ci/`), so that red is held as any other is. None of it holds when the
+    head changes what the setup step runs or reads, which the run takes from the head: a tier
+    workflow (`merge.yml`, `pr.yml`), what writes the error (`INFRA_WRITERS`: a local action or
+    `tools/ci/audit.py`), or the setup's inputs (`.nvmrc`, `.python-version`, `pyproject.toml`
+    and `tools/ci/catalogue.toml`).
+    A failure on main in the last 7 days is not read yet, so fewer reds are
     flake-class, never more. A red's verdict writes one `::notice` titled `failed test` that counts
     its failed tests, then one per test (one JSON object each, at most 8): a step keeps ten
     notices, so a red whose named tests fall short of the count is not flake-class. A queue entry
@@ -3783,8 +3794,14 @@ resolution would be clean:
 
 It fails on a tool that did not run (no report, or one that cannot be read), on a high or
 critical finding no live waiver covers, and on a waiver that is expired, more than 30 days
-out, missing a field, or matching no finding. pip-audit reports no severity, so a Python
-finding gates as a high one would. Every other finding is listed in the job summary.
+out, missing a field, or matching no finding. A tool that could not reach its advisory service
+(PyPI for pip-audit, the npm registry for npm audit, each by the closed list of what it writes
+then) is tried again after 15, 45 and 90 s, three more tries in the whole run. If it still
+cannot, the job stays red, under the `infrastructure` title, so the red says it was the network.
+The merge verdict does not read it as flake-class: the audit's step runs the head's `tools/ci/`,
+which can print the same title (#5848). It is never green when it did not run. pip-audit reports
+no severity, so a Python finding gates as a high one would. Every other finding is listed in the
+job summary.
 
 It runs as breadth's nightly `audit` leg every night, whatever changed, and in the merge tier
 when a change reaches what it audits: the catalogue's `audit` entry is marked

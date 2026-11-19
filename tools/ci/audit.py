@@ -19,6 +19,12 @@ The verdict:
 
 - a tool that fails to run (a non-zero exit other than "found something", no report, or a
   report that cannot be read) fails the job, exit 2: a missing audit is never a clean one;
+- a tool that could not reach its advisory service (PyPI's JSON API for pip-audit, the npm
+  registry's audit endpoint for npm audit) is tried again, after 15, 45 and 90 s, at most three
+  more tries in the whole run (``FETCH_WAITS``). If it still cannot reach it, the job fails,
+  exit 2, under the ``infrastructure`` title (#5848), so the merge verdict reads it as the
+  runner's network and not the change. That is a closed list of what each tool writes when the
+  network failed (``_PIP_UNREACHED``, ``_NPM_UNREACHED``); any other failure is a plain one;
 - a high or critical finding that no live waiver covers fails it, exit 1. ``pip-audit``
   reports no severity, so a Python finding is ``unrated`` and gates as if it were high;
 - a waiver that is expired, more than ``MAX_DAYS`` out, missing a field, or matching no
@@ -35,10 +41,13 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import functools
 import json
 import os
+import re
 import subprocess
 import sys
+import time
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -83,10 +92,80 @@ REPO = Path(__file__).resolve().parents[2]
 IMAGE_FOLDER = "deploy/docker"
 
 Runner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
+Sleep = Callable[[float], None]
+
+#: The seconds the audit waits before each new try of a tool that could not reach its advisory
+#: service, shared by the whole run: three more tries at most, about 2.5 minutes of waiting, well
+#: inside the job's bound however many graphs the outage reaches.
+FETCH_WAITS = (15, 45, 90)
+#: The annotation title the merge verdict reads as the runner's, not the change's
+#: (``tools/ci/merge_controller.py``'s ``INFRA_TITLE``).
+INFRA_TITLE = "infrastructure"
+#: What pip-audit writes when it could not reach PyPI: requests' and urllib3's network errors
+#: (uncaught, so they end its traceback) and pip-audit's own two for a feed it cannot reach.
+_PIP_UNREACHED = re.compile(
+    r"requests\.exceptions\.(?:ConnectionError|ConnectTimeout|ReadTimeout|SSLError"
+    r"|ChunkedEncodingError)\b"
+    r"|urllib3\.exceptions\.(?:MaxRetryError|NewConnectionError|ProtocolError|ReadTimeoutError)\b"
+    r"|Could not connect to PyPI's vulnerability feed|PyPI is not redirecting properly"
+)
+#: The error codes npm gives an audit whose registry it could not reach or that answered with a
+#: server error: in its JSON report's ``error.code``, or on stderr as ``npm error code <code>``.
+_NPM_UNREACHED = frozenset(
+    {"EAI_AGAIN", "ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "ESOCKETTIMEDOUT", "ETIMEDOUT"}
+    | {"E429", "E500", "E502", "E503", "E504"}
+)
+_NPM_CODE = re.compile(r"npm (?:error|ERR!) code (E[A-Z0-9_]+)")
 
 
 class ToolFailure(Exception):
     """An audit tool did not run to a readable report."""
+
+
+class Unreachable(ToolFailure):
+    """An audit tool could not reach its advisory service, on its last try."""
+
+    def __init__(self, tool: str, target: str, detail: str) -> None:
+        super().__init__(f"{tool} on {target} could not reach its advisory service: {detail}")
+        self.tool, self.target = tool, target
+
+
+@dataclass
+class Tries:
+    """The run's tries left, shared by every tool: each new try waits its turn's seconds."""
+
+    sleep: Sleep
+    waits: list[float]
+
+    def run(
+        self,
+        once: Callable[[], "subprocess.CompletedProcess[str]"],
+        unreached: Callable[["subprocess.CompletedProcess[str]"], bool],
+    ) -> "subprocess.CompletedProcess[str]":
+        """*once*'s answer, tried again while *unreached* holds and a try is left."""
+        proc = once()
+        while unreached(proc) and self.waits:
+            self.sleep(self.waits.pop(0))
+            proc = once()
+        return proc
+
+
+def _pip_unreached(proc: "subprocess.CompletedProcess[str]") -> bool:
+    return bool(_PIP_UNREACHED.search(f"{proc.stderr or ''}\n{proc.stdout or ''}"))
+
+
+def _npm_unreached(proc: "subprocess.CompletedProcess[str]") -> bool:
+    if proc.returncode == 0:
+        return False
+    try:
+        doc = json.loads(proc.stdout or "")
+    except ValueError:
+        doc = None
+    error = doc.get("error") if isinstance(doc, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    return code in _NPM_UNREACHED or any(
+        c in _NPM_UNREACHED for c in _NPM_CODE.findall(proc.stderr or "")
+    )
 
 
 @dataclass(frozen=True)
@@ -261,7 +340,10 @@ def export_argv(extras: Sequence[str], out: Path) -> list[str]:
     return [*argv, "--output-file", str(out)]
 
 
-def audit_python(pip_audit_python: str, work: Path, run: Runner) -> tuple[list[Finding], list[str]]:
+def audit_python(
+    pip_audit_python: str, work: Path, run: Runner, tries: Tries | None = None
+) -> tuple[list[Finding], list[str]]:
+    tries = tries or Tries(time.sleep, list(FETCH_WAITS))
     findings: list[Finding] = []
     skipped: list[str] = []
     for graph, extras in PYTHON_GRAPHS.items():
@@ -269,12 +351,21 @@ def audit_python(pip_audit_python: str, work: Path, run: Runner) -> tuple[list[F
         proc = run(export_argv(extras, req))
         if proc.returncode != 0:
             raise ToolFailure(f"uv export for {graph} failed: {_tail(proc)}")
-        proc = run(
-            [pip_audit_python, "-m", "pip_audit", "-r", str(req), "--no-deps", "--disable-pip"]
-            + ["-f", "json", "-o", str(report)]
-        )
+        argv = [pip_audit_python, "-m", "pip_audit", "-r", str(req), "--no-deps", "--disable-pip"]
+        argv += ["-f", "json", "-o", str(report)]
+
+        def once(argv: list[str] = argv, report: Path = report) -> subprocess.CompletedProcess[str]:
+            report.unlink(missing_ok=True)
+            return run(argv)
+
         # 1 is "found something" only when the report was written; anything else is a failure.
-        if proc.returncode not in (0, 1) or not report.is_file():
+        def failed(proc: subprocess.CompletedProcess[str], report: Path = report) -> bool:
+            return proc.returncode not in (0, 1) or not report.is_file()
+
+        proc = tries.run(once, lambda p: failed(p) and _pip_unreached(p))
+        if failed(proc) and _pip_unreached(proc):
+            raise Unreachable("pip-audit", graph, _tail(proc))
+        if failed(proc):
             raise ToolFailure(f"pip-audit on {graph} wrote no report: {_tail(proc)}")
         got, skips = pip_findings(graph, report.read_text(encoding="utf-8"))
         findings += got
@@ -295,12 +386,16 @@ def npm_graphs(root: Path) -> list[tuple[str, str]]:
     return [("npm", "package-lock.json")] + [(f, f"{f}/package-lock.json") for f in sorted(folders)]
 
 
-def audit_npm(run: Runner, root: Path) -> list[Finding]:
+def audit_npm(run: Runner, root: Path, tries: Tries | None = None) -> list[Finding]:
+    tries = tries or Tries(time.sleep, list(FETCH_WAITS))
     findings: list[Finding] = []
     for graph, lock in npm_graphs(root):
         folder = lock.rpartition("/")[0]
         argv = ["npm", "audit", "--package-lock-only", "--json"]
-        proc = run([*argv, "--prefix", folder] if folder else argv)
+        argv = [*argv, "--prefix", folder] if folder else argv
+        proc = tries.run(functools.partial(run, argv), _npm_unreached)
+        if _npm_unreached(proc):
+            raise Unreachable("npm audit", lock, _tail(proc))
         if proc.returncode not in (0, 1):
             raise ToolFailure(f"npm audit of {lock} exited {proc.returncode}: {_tail(proc)}")
         findings += npm_findings(proc.stdout, graph, lock)
@@ -350,6 +445,7 @@ def main(
     run: Runner = _run,
     today: datetime.date | None = None,
     root: Path = REPO,
+    sleep: Sleep = time.sleep,
 ) -> int:
     parser = argparse.ArgumentParser(prog="python -m tools.ci audit")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -359,11 +455,24 @@ def main(
     go.add_argument("--baseline", type=Path, default=BASELINE)
     args = parser.parse_args(list(argv))
     day = today or datetime.datetime.now(datetime.UTC).date()
+    tries = Tries(sleep, list(FETCH_WAITS))
     try:
         args.work.mkdir(parents=True, exist_ok=True)
         waivers = load_waivers(args.baseline)
-        python, skipped = audit_python(args.pip_audit, args.work, run)
-        verdict = judge([*python, *audit_npm(run, root)], waivers, day)
+        python, skipped = audit_python(args.pip_audit, args.work, run, tries)
+        verdict = judge([*python, *audit_npm(run, root, tries)], waivers, day)
+    except Unreachable as err:
+        # Still red, never green: an audit that could not reach its advisories did not run.
+        where = f"{err.tool} on {err.target}"
+        print(
+            f"::error title={INFRA_TITLE}::the dependency audit could not reach its advisory"
+            f" service ({where})"
+        )
+        _publish(
+            "### Dependency audit\n\n**The audit could not reach its advisory service**, after"
+            f" {len(FETCH_WAITS) - len(tries.waits)} more tries in this run: {err}\n"
+        )
+        return 2
     except (ToolFailure, OSError, tomllib.TOMLDecodeError) as err:
         print(f"::error title=the dependency audit did not run::{err}")
         _publish(f"### Dependency audit\n\n**The audit did not run:** {err}\n")

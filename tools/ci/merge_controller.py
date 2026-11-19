@@ -170,8 +170,12 @@ every job that did not pass is a suite, end-to-end or web-unit job's, failed in 
 ``results`` job names (``verdict.FAILED_NOTICE``, all of them, by its count) or cancelled or timed
 out with none, and each failed test was classified by its rerun, reads no file the pull request
 changes, and has an open flaky-test issue the workflow or a maintainer filed
-(:func:`flake_class`). A queue commit's red carries the same note (:func:`_queue_retry_note`).
-The note changes no conclusion, and one it cannot read says so.
+(:func:`flake_class`). A job that failed on CI's own ``infrastructure`` error at its setup step,
+naming no failed test, does not stop a red being flake-class, unless the head changes what the
+setup runs or reads: a tier workflow, a local action, the audit or the setup's inputs (#5848).
+The error at any other step may be the head's own code printing it. A queue
+commit's red carries the same note (:func:`_queue_retry_note`). The note changes no conclusion,
+and one it cannot read says so.
 
 The verdict is ``success`` or ``failure``, never neutral, and an answer the API would not give is
 ``failure``, named as unread. Each read is tried again first when its refusal passes (a rate
@@ -2275,6 +2279,30 @@ RETRY_HEADS = 10
 #: The jobs whose failed test, or cancelled or timed-out shard, a red may be flake-class for: the
 #: suites, the end-to-end tests and the web unit tests, each by its catalogue id.
 FLAKE_CLASS_JOBS = ("python-suite", "python-suite-macos", "e2e", "e2e-shard", "web-unit")
+#: The title of the error CI's own tooling writes when a job could not reach what it fetches,
+#: after its own retries: the setup action, when the runner's package mirror or Homebrew could
+#: not install a program the job names, and the dependency audit, when its advisory service did
+#: not answer. A job of any kind red only for it at its setup step is flake-class (#5848): no
+#: test failed in it, and that step runs before any of the head's code (:data:`SETUP_STEP`).
+INFRA_TITLE = "infrastructure"
+#: What writes that error. A head that changes one, or merge.yml, owns the error: the run takes
+#: them from the head. ``tests/rails/test_merge_controller_gate_plants_tree.py`` holds every
+#: writer of the title in CI's code to this list.
+INFRA_WRITERS = (LOCAL_ACTIONS, "tools/ci/audit.py")
+#: How much of that error's message the note quotes, on one line.
+_INFRA_QUOTE = 200
+#: Where a job's infrastructure error is CI's own word (#5848, CORE F1): its first failed step is
+#: the setup action's, which runs before any of the head's code. Any other step runs the head's
+#: tests or tools, the audit's step included (it runs the head's ``tools/ci``), and they can print
+#: any workflow command, the error's too: such a red stays the change's own. Compared by equality,
+#: so a job that lists no failed step reads none. Main's contract pins the name (``_TIER_STEPS``).
+SETUP_STEP = "Set up the toolchain"
+#: What the setup step runs or reads of the head: each tier workflow, which names the step, and the
+#: versions and programs it installs (Node's, Python's, uv's, and the catalogue's toolchain). A
+#: head that changes one can fail the setup by itself under the error's title, so it owns the
+#: error, as it does a writer of it (:data:`INFRA_WRITERS`).
+PR_WORKFLOW = f".github/workflows/{workflows.FEEDBACK}"
+SETUP_INPUTS = (".nvmrc", ".python-version", "pyproject.toml", "tools/ci/catalogue.toml")
 #: The failed tests' standings a flake-class red may hold: a rail's, a security test's and one no
 #: rerun classified are never flake-class, nor is a quarantined failure the change reads.
 _FLAKE_STANDINGS = frozenset({verdict.FLAKE, verdict.REPEATED_FAILURE})
@@ -2433,6 +2461,23 @@ def _flake_job(name: str) -> bool:
     return any(name == j or name.startswith(f"{j} (") for j in FLAKE_CLASS_JOBS)
 
 
+def _infrastructure(get: Get, repo: str, job: Mapping[str, Any]) -> str:
+    """The infrastructure error a red job failed on, or "" when it failed on none (#5848): it
+    failed, and that job's annotations hold a ``failure`` titled :data:`INFRA_TITLE`, which only
+    :data:`INFRA_WRITERS` write, from whichever step. Its message is quoted on one line, cut at
+    :data:`_INFRA_QUOTE` characters."""
+    if job.get("conclusion") != "failure":
+        return ""
+    job_id = _int(job.get("id"))
+    if job_id is None:
+        raise Unread(f"`{job.get('name')}` names no job id to read its annotations by")
+    for note in _all_pages(get, f"/repos/{repo}/check-runs/{job_id}/annotations"):
+        if note.get("title") == INFRA_TITLE and note.get("annotation_level") == "failure":
+            said = " ".join(str(note.get("message") or "").split()).replace("`", "'")
+            return said[:_INFRA_QUOTE] or "no message"
+    return ""
+
+
 def flake_class(
     get: Get,
     repo: str,
@@ -2449,6 +2494,12 @@ def flake_class(
     suite, end-to-end or web-unit job's, failed in its tests or cancelled or timed out with none
     failed; and each failed test was classified by its rerun, reads no file the pull request
     changes, and has a flaky history: an open flaky-test issue. Anything else goes to a person.
+
+    A job that failed on CI's own infrastructure error (:func:`_infrastructure`), naming no
+    failed test, is flake-class too (#5848), but only at its setup step (:data:`SETUP_STEP`),
+    the one step CI's own code alone runs. Not when the head changes a tier workflow, one of
+    :data:`INFRA_WRITERS` or :data:`SETUP_INPUTS`, which the setup runs or reads from the head:
+    then the error is the change's own.
 
     A gate's red is flake-class when every red job of it was cancelled or failed at a step that
     fetches only outside inputs (*outside*, each such red's why, :func:`gate_reading`): alone
@@ -2468,20 +2519,40 @@ def flake_class(
             False,
             f"attempt {run.attempt} has no one `{RESULTS_JOB}` job naming its failed tests",
         )
+    paths = {p for key in changed for p in key}
+    owned = (MERGE_WORKFLOW, PR_WORKFLOW, *SETUP_INPUTS)
+    own = any(p in owned or p.startswith(INFRA_WRITERS) for p in paths)
     failed: dict[str, str] = {}
+    infra: dict[str, str] = {}
     for job in jobs:
         name, conclusion = str(job.get("name") or ""), job.get("conclusion")
         if name == RESULTS_JOB or conclusion in ("success", "skipped", "neutral"):
             continue
+        # The error is read only where CI's own code alone can have written it (SETUP_STEP).
+        step = _red_step(job)
+        said = _infrastructure(get, repo, job) if step == SETUP_STEP else ""
+        if said and own:
+            return False, (
+                f"`{name}` failed on an infrastructure error, and the head changes what the setup"
+                " step runs or reads (a tier workflow, a local action, the audit, or the setup's"
+                " inputs)"
+            )
+        if said:
+            at = f" at `{step}`" if step else ""
+            infra[name] = f"`{name}` failed{at} on an infrastructure error ({said}), no test failed"
+            continue
         if not _flake_job(name):
             return False, f"`{name}` is {conclusion!r}, and only a test job's red is flake-class"
         failed[name] = str(conclusion)
-    if not failed:
+    if not failed and not infra:
         return False, "no test job failed, was cancelled or timed out"
     tests = failed_tests(get, repo, judges[0])
     if isinstance(tests, str):
         return False, tests
     keys = {str(t["key"]) for t in tests}
+    both = sorted(infra.keys() & keys)
+    if both:
+        return False, f"`{both[0]}` failed on an infrastructure error with a failed test in it"
     for name, conclusion in sorted(failed.items()):
         if conclusion == "failure" and name not in keys:
             return False, f"`{name}` failed with no failed test named"
@@ -2489,7 +2560,6 @@ def flake_class(
             return False, f"`{name}` is {conclusion!r}"
         if conclusion != "failure" and name in keys:
             return False, f"`{name}` is {conclusion} with a failed test in it"
-    paths = {p for key in changed for p in key}
     for t in tests:
         test, standing = str(t["test"]), str(t["standing"])
         if standing not in _FLAKE_STANDINGS:
@@ -2504,12 +2574,16 @@ def flake_class(
                 f"`{test}` has no flaky history (no open flaky-test issue the workflow or a"
                 " maintainer filed)"
             )
-    if not tests:
-        return True, f"{len(failed)} test job(s) cancelled or timed out, with no failed test"
-    return True, (
-        f"{len(tests)} failed test(s), each with an open flaky-test issue and reading no file the"
-        " pull request changes"
-    )
+    found = [infra[name] for name in sorted(infra)]
+    if tests:
+        found.insert(
+            0,
+            f"{len(tests)} failed test(s), each with an open flaky-test issue and reading no file"
+            " the pull request changes",
+        )
+    elif failed:
+        found.insert(0, f"{len(failed)} test job(s) cancelled or timed out, with no failed test")
+    return True, "; ".join(found)
 
 
 def _retry_note(
