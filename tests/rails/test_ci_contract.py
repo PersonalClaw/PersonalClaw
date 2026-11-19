@@ -8977,6 +8977,9 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "shard-union": _Mapped(("shard-union",), ("breadth",)),
     "shard-union-canary": _Mapped(("shard-union-canary",), ("breadth",)),
     "client": _Mapped((), ("change", "merge")),
+    # The documents package's own job (v0.4.0 B4), run through run-job like client: its row lands
+    # before the job, and holds it once the job is in the catalogue.
+    "documents": _Mapped((), ("change", "merge")),
     "web-unit": _Mapped((), ("change", "merge"), reuse="tree"),
     "desktop-unit": _Mapped((), ("change", "merge"), reuse="tree"),
     "mobile-unit": _Mapped((), ("change", "merge"), reuse="tree"),
