@@ -20,12 +20,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A reload of Needs you or the Library starts the page's reads while the app learns who you are, so the page paints as soon as you're known instead of asking only then.**
 - **The chat's agent orb is a halftone sphere of dots that becomes a picture of what the agent is doing: it ripples while it thinks, charts a route on a globe while it plans, sends its dots through a command's output, fills a reply's bubble, and for done, a wait on your OK or your answer, an error or offline it steps aside with its mark on a small plate. Each of its twenty states is named in Settings › Design's gallery.**
 - **The desktop buddy, its tray icon and its dock icon draw the chat's halftone orb: the buddy shows the agent orb's own picture for each state, on a disc of its own over the desktop, and the tray's working icon is a command running, which reads apart from idle in the menu bar's one colour.**
+- **The plan panel offers Cancel plan mode while a plan drafts and while it waits for a turn to end, not only once a draft is ready for review.**
 
 ### Fixed
 
 - **A document an agent makes from HTML has its credentials masked in what it holds, not only in the markup it was made from.**
 - **A reload no longer has the gateway read its whole settings file once for every asset and read it answers. The public address every response's security header names is read again only when the settings file changes, so a page's many requests no longer each hold the gateway for a settings read.**
 - **A reload no longer waits while the gateway reads every installed app's folder. The apps list reads each app's manifest, hero image, disclosure and interface files in a worker thread, so a home with many apps no longer holds the page's other requests while it does.**
+- **Leaving plan mode, by Cancel or the task-mode pill, while the plan's own turn is running stops that turn first, so none of its tool calls runs in the mode the chat goes back to.**
 
 ### Security
 
