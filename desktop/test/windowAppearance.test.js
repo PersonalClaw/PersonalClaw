@@ -263,7 +263,7 @@ describe("main.js wires the appearance in", () => {
     const ready = MAIN.slice(MAIN.indexOf("app.whenReady().then("));
     const set = ready.indexOf("nativeTheme.themeSource = launched.themeSource");
     assert.ok(set > 0, "set at launch");
-    assert.ok(set < ready.indexOf("const win = createWindow();"), "before the first window");
+    assert.ok(set < ready.indexOf("const win = createWindow({ show: !quietLogin });"), "before the first window");
     assert.ok(ready.indexOf("shellStore = openShellStore(") < set, "after the store opens");
   });
 

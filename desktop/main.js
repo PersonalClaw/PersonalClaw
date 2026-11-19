@@ -17,7 +17,7 @@ const {
   shouldHideOnClose,
   shouldQuitOnAllWindowsClosed,
 } = require("./trayPresence");
-const { makeLoginItem, registerLoginItemIpc } = require("./loginItem");
+const { makeLoginItem, registerLoginItemIpc, opensQuietly } = require("./loginItem");
 const {
   makeNativeNotifications,
   registerNativeNotificationIpc,
@@ -217,6 +217,9 @@ let reachAttempt = 0;
 let reachTimer = null;
 /** Warnings from the last startup decision, shown in the dialog's banner area. */
 let startupWarnings = [];
+/** This launch is one macOS made at login, with a menu-bar item to open the window from
+ *  (`opensQuietly`): the boot shows no window of its own, and the tray or the dock opens it. */
+let quietLogin = false;
 
 // ── Backend lifecycle ──
 
@@ -454,17 +457,20 @@ function setOlder() {
 /**
  * Nothing serves the app's windows: the main window says so, with no spinner, and the chooser opens
  * (use this home's running gateway, when one proved it serves the home; add a gateway; try again).
- * The Gateways window stays in the menu. A window showing a paired gateway keeps it.
+ * The Gateways window stays in the menu. A window showing a paired gateway keeps it. A quiet login
+ * start (*quiet*) only says so on the window, for when the tray or the dock opens it.
  */
-function showNotConnected() {
+function showNotConnected({ quiet = false } = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (!activeUrl || activeUrl === localGatewayUrl) {
       mainWindow.webContents.loadFile(path.join(__dirname, "loading.html"), { query: { state: "offline" } });
     }
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
+    if (!quiet) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+    }
   }
-  connectDialog?.openChooser();
+  if (!quiet) connectDialog?.openChooser();
 }
 
 /** What the Gateways window's "This computer" row says, told to the window if it is open. */
@@ -2224,8 +2230,9 @@ async function noteSessionEvent(details) {
 /** The appearance the shell keeps (`windowAppearance.js`), made again at launch from the store. */
 let windowAppearance = makeWindowAppearance({ nativeTheme, canvas: DARK_CANVAS, focusedAppWindow: () => focusedAppWindow(allWindows) });
 const windowChrome = makeWindowChrome({ platform: process.platform, canvas: () => windowAppearance.canvas() });
-function makeWindow() {
+function makeWindow({ show = true } = {}) {
   const win = new BaseWindow({
+    show,
     width: 1280,
     height: 860,
     minWidth: 550, minHeight: 600,
@@ -2261,8 +2268,8 @@ function releaseBuddyIfAlone() {
   if (!buddyOutlivesClose({ appWindowsLeft: appWindows().length, quitsWithNoWindow })) buddyPresence.stop();
 }
 
-function createWindow() {
-  mainWindow = makeWindow();
+function createWindow({ show = true } = {}) {
+  mainWindow = makeWindow({ show });
   setupWindowContents(mainWindow);
 
   // Hiding on close is only safe while the menu bar can bring the window back, so
@@ -2910,7 +2917,7 @@ function connectHandlers() {
 async function showLoadingThenConnect(win) {
   const wc = win.webContents;
   wc.loadFile(path.join(__dirname, "loading.html"));
-  win.show();
+  if (!quietLogin) win.show();
 
   try {
     if (startFailure || !localGatewayUrl) throw new Error("no gateway serves this home");
@@ -2924,7 +2931,7 @@ async function showLoadingThenConnect(win) {
       startFailure = { unanswered: true };
       setLocalState("stopped", notStartedSentence(startFailure));
     }
-    showNotConnected();
+    showNotConnected({ quiet: quietLogin });
   }
 }
 
@@ -3887,7 +3894,15 @@ if (!app.requestSingleInstanceLock()) {
     }
     syncLoginItemToTray();
     syncBuddyToTray();
-    const win = createWindow();
+    quietLogin = opensQuietly({ app, platform: process.platform, trayAvailable: trayPresence.available });
+    const win = createWindow({ show: !quietLogin });
+    // The Dock, and a Finder or Spotlight open, which macOS sends a running app as `activate`, show
+    // the window from here on, before the boot's first wait: a quiet start's window is otherwise out
+    // of reach while the gateway is looked for, and for good if the boot throws. The menu-bar item
+    // can be hidden, so the Dock may be the only way in.
+    app.on("activate", () => {
+      if (!mainWindow?.isVisible()) mainWindow?.show();
+    });
     // Never a blank window while this home's gateway is looked for or started.
     win.webContents.loadFile(path.join(__dirname, "loading.html"));
     // The Linux tray's stills follow the system's light or dark appearance.
@@ -3930,10 +3945,6 @@ if (!app.requestSingleInstanceLock()) {
     refreshHealth().catch(() => {});
     startBuddy();
     startAppUpdater();
-
-    app.on("activate", () => {
-      if (!mainWindow?.isVisible()) mainWindow?.show();
-    });
 
     app.on("new-window-for-tab", () => {
       openNewTab();

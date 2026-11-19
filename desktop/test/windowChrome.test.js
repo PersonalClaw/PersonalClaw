@@ -66,7 +66,7 @@ describe("the shell paints the web UI's own surfaces", () => {
 });
 
 describe("main.js takes the window chrome from windowChrome.js", () => {
-  const makeWindow = /function makeWindow\(\) \{[\s\S]*?\n\}/.exec(MAIN);
+  const makeWindow = /function makeWindow\(\{ show = true \} = \{\}\) \{[\s\S]*?\n\}/.exec(MAIN);
 
   it("makeWindow spreads the chrome's options and sets no title bar or colour of its own", () => {
     assert.ok(makeWindow, "makeWindow must be findable");

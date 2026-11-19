@@ -76,9 +76,7 @@ function makeLoginItem({ app, platform = process.platform, log = () => {} } = {}
       return { ok: true, enabled: current, changed: false, supported: true };
     }
     try {
-      // `openAsHidden` keeps a login launch from throwing a window in the user's face
-      // at every boot — the point of the tray presence is to be quiet.
-      app.setLoginItemSettings({ openAtLogin: want, openAsHidden: true });
+      app.setLoginItemSettings({ openAtLogin: want });
     } catch (err) {
       log(`login item write failed: ${err.message}`);
       return {
@@ -147,4 +145,21 @@ function registerLoginItemIpc(ipcMain, loginItem, channels, onChanged = () => {}
   });
 }
 
-module.exports = { makeLoginItem, registerLoginItemIpc, SUPPORTED_PLATFORMS };
+/**
+ * Whether this launch starts with no window: one macOS made at login, while a menu-bar item can
+ * bring the window back. A login start is meant to be quiet, with the tray as the app's presence.
+ * Electron says a launch was a login one only on macOS (`wasOpenedAtLogin`), so everywhere else,
+ * and whenever the settings can't be read, the window opens. With no tray it always opens, so a
+ * quiet start can never leave the app running with nothing to open it from.
+ * @param {{app: {getLoginItemSettings: Function}, platform?: string, trayAvailable: boolean}} deps
+ */
+function opensQuietly({ app, platform = process.platform, trayAvailable } = {}) {
+  if (platform !== "darwin" || !trayAvailable || !app) return false;
+  try {
+    return Boolean((app.getLoginItemSettings() || {}).wasOpenedAtLogin);
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { makeLoginItem, registerLoginItemIpc, opensQuietly, SUPPORTED_PLATFORMS };

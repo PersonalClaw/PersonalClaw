@@ -1,7 +1,11 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { makeLoginItem, registerLoginItemIpc, SUPPORTED_PLATFORMS } = require("../loginItem");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+const { makeLoginItem, registerLoginItemIpc, opensQuietly, SUPPORTED_PLATFORMS } = require("../loginItem");
 const { buildTrayMenuTemplate } = require("../trayPresence");
 
 /**
@@ -91,10 +95,10 @@ describe("login item — reversibility", () => {
     );
   });
 
-  it("requests a hidden launch, so a login start is quiet", () => {
+  it("writes only openAtLogin", () => {
     const app = fakeApp();
     makeLoginItem({ app, platform: "darwin" }).set(true);
-    assert.equal(app.writes[0].openAsHidden, true);
+    assert.deepStrictEqual(app.writes, [{ openAtLogin: true }]);
   });
 });
 
@@ -270,5 +274,78 @@ describe("login item — one registration, two surfaces", () => {
     assert.equal(w.tray().enabled, false, "an unsupported platform must not offer a live checkbox");
     await w.settingsSet(true);
     assert.deepStrictEqual(w.app.writes, [], "and nothing may be written there");
+  });
+});
+
+describe("login item — a login start is quiet", () => {
+  const launched = ({ atLogin = false, throwOnGet = false } = {}) => ({
+    getLoginItemSettings() {
+      if (throwOnGet) throw new Error("settings unavailable");
+      return { openAtLogin: true, wasOpenedAtLogin: atLogin };
+    },
+  });
+
+  it("a launch macOS made at login starts with no window while the menu bar can bring it back", () => {
+    assert.equal(opensQuietly({ app: launched({ atLogin: true }), platform: "darwin", trayAvailable: true }), true);
+  });
+
+  for (const [why, deps] of [
+    ["a launch the user made", { app: launched(), platform: "darwin", trayAvailable: true }],
+    ["a login launch with no menu-bar item to open it from", { app: launched({ atLogin: true }), platform: "darwin", trayAvailable: false }],
+    ["a login launch whose settings can't be read", { app: launched({ atLogin: true, throwOnGet: true }), platform: "darwin", trayAvailable: true }],
+    ["Windows, where Electron never says a launch was a login one", { app: launched({ atLogin: true }), platform: "win32", trayAvailable: true }],
+    ["Linux", { app: launched({ atLogin: true }), platform: "linux", trayAvailable: true }],
+  ]) {
+    it(`${why} opens the window`, () => {
+      assert.equal(opensQuietly(deps), false);
+    });
+  }
+
+  it("main.js starts the main window hidden on a quiet start, and keeps the boot's own shows quiet", () => {
+    const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+    const boot = main.slice(main.indexOf("trayPresence.start()"));
+    const asked = boot.indexOf("quietLogin = opensQuietly({ app, platform: process.platform, trayAvailable: trayPresence.available });");
+    assert.ok(asked >= 0, "the boot must ask once the tray is up");
+    assert.ok(asked < boot.indexOf("const win = createWindow({ show: !quietLogin });"), "and before the main window is made");
+    assert.match(main, /function makeWindow\(\{ show = true \} = \{\}\) \{\n  const win = new BaseWindow\(\{\n    show,/);
+    const loading = /async function showLoadingThenConnect\(win\) \{[\s\S]*?\n\}/.exec(main)[0];
+    assert.match(loading, /if \(!quietLogin\) win\.show\(\);/);
+    assert.doesNotMatch(loading, /^  win\.show\(\);$/m);
+    assert.match(loading, /showNotConnected\(\{ quiet: quietLogin \}\);/);
+  });
+
+  it("the Dock can open a quiet start's window before the boot's first wait", () => {
+    const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+    assert.equal([...main.matchAll(/app\.on\("activate"/g)].length, 1, "one activate handler");
+    const boot = main.slice(main.indexOf("app.whenReady().then("));
+    const made = boot.indexOf("const win = createWindow({ show: !quietLogin });");
+    const dock = boot.indexOf('app.on("activate"');
+    assert.ok(made >= 0 && made < dock, "after the window is made");
+    assert.ok(dock < boot.indexOf("await bringUpLocalGateway();"), "and before the boot waits for a gateway");
+    assert.ok(dock < boot.indexOf("await ", made), "or for anything else once the window is made");
+    assert.match(boot.slice(dock), /^app\.on\("activate", \(\) => \{\n\s*if \(!mainWindow\?\.isVisible\(\)\) mainWindow\?\.show\(\);\n\s*\}\);/, "and it shows the window");
+  });
+
+  it("a quiet not-connected only loads the offline page, and a loud one also shows the window and opens the chooser", () => {
+    const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+    const source = /function showNotConnected\(\{ quiet = false \} = \{\}\) \{[\s\S]*?\n\}/.exec(main);
+    assert.ok(source, "showNotConnected must be findable");
+    const run = (quiet) => {
+      const did = [];
+      const mainWindow = {
+        isDestroyed: () => false,
+        isMinimized: () => true,
+        restore: () => did.push("restore"),
+        show: () => did.push("show"),
+        webContents: { loadFile: (file, options) => did.push(`load ${path.basename(file)} ${options?.query?.state}`) },
+      };
+      const connectDialog = { openChooser: () => did.push("chooser") };
+      vm.runInNewContext(`${source[0]}\nshowNotConnected({ quiet: ${quiet} });`, {
+        path, __dirname: "/app", mainWindow, connectDialog, activeUrl: null, localGatewayUrl: "http://127.0.0.1:1",
+      });
+      return did;
+    };
+    assert.deepStrictEqual(run(true), ["load loading.html offline"]);
+    assert.deepStrictEqual(run(false), ["load loading.html offline", "restore", "show", "chooser"]);
   });
 });
