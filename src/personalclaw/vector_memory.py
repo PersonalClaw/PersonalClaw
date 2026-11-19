@@ -35,7 +35,7 @@ from personalclaw.identity import contributor_label as _contributor_label
 from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import EMBED_QUERY, MemoryProvider
 from personalclaw.security import redact_values_for_display
-from personalclaw.sqlite_compat import connect_shared, sqlite3, use_wal
+from personalclaw.sqlite_compat import SharedConnection, connect_shared, sqlite3, use_wal
 
 
 def config_dir() -> Path:
@@ -1364,12 +1364,12 @@ class VectorMemoryStore(MemoryProvider):
         (``atomic_write.make_private_database``). Two stores this process opens on one database
         take turns bringing its schema up (``_opening_lock``)."""
         with _opening_lock(self._db_path):
-            self._open_schema()
+            db = self._open_schema()
         # From here on every statement passes the one memory-write check: inside work that
         # derives from an Incognito or Temporary session, or an app's that was not given your
         # memory, anything that would change memory is refused. Set after the schema is in place
         # and the store's own repairs are made, which no session's work writes.
-        self._db.statement_check = memory_writes.check_memory_statement
+        db.statement_check = memory_writes.check_memory_statement
 
         # Load persisted FAISS index (or rebuild from SQLite embeddings)
         try:
@@ -1379,9 +1379,10 @@ class VectorMemoryStore(MemoryProvider):
                 "FAISS index not loaded (faiss-cpu may not be installed yet)", exc_info=True
             )
 
-    def _open_schema(self) -> None:
+    def _open_schema(self) -> SharedConnection:
         """Open the database, switch it to WAL, apply the migrations it lacks and make the
-        store's own repairs: the part of :meth:`init` one store at a time does on a database."""
+        store's own repairs: the part of :meth:`init` one store at a time does on a database.
+        Returns the store's connection."""
         make_private_database(self._db_path, anywhere=True)
         # Shared by every thread that reaches the store (each page request, the agent's tools, the
         # background workers), so every call into the driver on it is taken one at a time.
@@ -1420,6 +1421,7 @@ class VectorMemoryStore(MemoryProvider):
             contextvars.Context().run(self._restore_replaced_by_nothing)
         except Exception:  # noqa: BLE001
             logger.warning("Could not restore records left replaced by nothing", exc_info=True)
+        return self._db
 
     def capabilities(self) -> "MemoryCapabilities":
         """Declare what this provider can do (the L2 contract).
