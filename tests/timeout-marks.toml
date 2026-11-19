@@ -72,12 +72,12 @@ reason = "the inert-surface census, built once a worker by whichever of its test
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen"
 cap = 100
-reason = "the inert-surface census, built once a worker by whichever of its tests runs first (_inventory), from the suite's shared trees, which are parsed outside the test's time, and a sweep of the same trees for the lineage's iteration sites; 22.6 s alone locally at load average 40, where main's took 32 s, which CI ran in 62 s (rails leg 2, run 44459096797)"
+reason = "the inert-surface census, built once a worker by whichever of its tests runs first (_inventory), from the suite's shared trees, which are parsed outside the test's time, and a sweep of the same trees for the lineage's iteration sites; 26.1 s alone locally at load average 40, where main's took 32 s, which CI ran in 62 s (rails leg 2, run 44459096797)"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_enum_census_still_finds_a_nontrivial_population"
 cap = 100
-reason = "the inert-surface census, built once a worker by whichever of its tests runs first (_inventory), from the suite's shared trees, which are parsed outside the test's time, and an enum sweep of the same trees; 20.9 s alone locally at load average 40, where main's took 32 s, which CI ran in 62 s (rails leg 2, run 44459096797)"
+reason = "the inert-surface census, built once a worker by whichever of its tests runs first (_inventory), from the suite's shared trees, which are parsed outside the test's time, and an enum sweep of the same trees; 22.9 s alone locally at load average 40, where main's took 32 s, which CI ran in 62 s (rails leg 2, run 44459096797)"
 
 [[mark]]
 site = "tests/test_optimize_harness_runs_to_its_proposal.py::test_max_iterations_is_the_number_of_candidates_the_search_tries"

@@ -177,23 +177,29 @@ def _parse(path: Path) -> ast.Module | None:
         return None
 
 
-#: Each parsed file's nodes, in ``ast.walk``'s order, by the tree's ``id``, beside the tree
-#: itself so the ``id`` cannot be reused while its entry is held.
-_WALKED: dict[int, tuple[ast.AST, tuple[ast.AST, ...]]] = {}
+#: Each tree's nodes (a file's, or a function's in one), in ``ast.walk``'s order, by the tree's
+#: ``id``, beside the tree so its ``id`` cannot be reused while the entry is held: for the length
+#: of one build (:func:`build_inventory`), and nothing outside one. Held for a worker's life they
+#: were about 130 MB, 6M node references, which no later read of the census reuses.
+_WALKS: contextvars.ContextVar[dict[int, tuple[ast.AST, tuple[ast.AST, ...]]] | None] = (
+    contextvars.ContextVar("_WALKS", default=None)
+)
 
 
 def _walk(tree: ast.AST) -> tuple[ast.AST, ...]:
-    """Every node of one parsed tree (a file, or a function in one), walked once per process.
+    """Every node of one parsed tree (a file, or a function in one), walked once a build.
 
     Each kind of the census reads every production file, and each used to walk every file's
     whole tree again: about 23M node visits a build, most of the census's time. The trees come
-    from :func:`_parse`, which keeps one per file for the process, so their walks can be kept
-    beside them. The order is ``ast.walk``'s, so a kind that reads the first match reads the same
-    node it did."""
-    held = _WALKED.get(id(tree))
+    from :func:`_parse`, which keeps one per file, so a build keeps their walks beside them. The
+    order is ``ast.walk``'s, so a kind that reads the first match reads the same node it did."""
+    walks = _WALKS.get()
+    if walks is None:
+        return tuple(ast.walk(tree))
+    held = walks.get(id(tree))
     if held is None or held[0] is not tree:
         held = (tree, tuple(ast.walk(tree)))
-        _WALKED[id(tree)] = held
+        walks[id(tree)] = held
     return held[1]
 
 
@@ -1478,8 +1484,12 @@ def build_inventory(root: Path | None = None) -> dict[str, Any]:
         KIND_CONFIG_READER: 0,
         KIND_SDK_EXPORT: 0,
     }
-    with _rooted(root):
-        surfaces = _all_inert_surfaces()
+    kept = _WALKS.set({})
+    try:
+        with _rooted(root):
+            surfaces = _all_inert_surfaces()
+    finally:
+        _WALKS.reset(kept)
     for rel, surface in surfaces:
         bucket = per_file.setdefault(rel, {"inert": 0, "surfaces": []})
         bucket["surfaces"].append(surface)

@@ -109,6 +109,13 @@ def _planted(root: Path) -> list[str]:
     return [site for site in inert.sites(build_inventory(root)) if site.startswith(planted)]
 
 
+def test_a_build_keeps_its_walks_to_itself(tmp_path):
+    """A build keeps each tree's walk while it runs, and none once it returns: held for a
+    worker's life, a real build's were about 130 MB that no later read reuses."""
+    assert sorted(_planted(tmp_path)) == sorted(_PLANTED_SITES)
+    assert inert._WALKS.get() is None
+
+
 @pytest.mark.timeout(100)
 def test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line(tmp_path):
     """The positive control, on the real list: the tree's surfaces with a planted module's fail,
