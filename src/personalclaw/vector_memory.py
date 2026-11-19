@@ -35,7 +35,7 @@ from personalclaw.identity import contributor_label as _contributor_label
 from personalclaw.identity import current_username
 from personalclaw.memory_providers.base import EMBED_QUERY, MemoryProvider
 from personalclaw.security import redact_values_for_display
-from personalclaw.sqlite_compat import connect_shared, sqlite3
+from personalclaw.sqlite_compat import connect_shared, sqlite3, use_wal
 
 
 def config_dir() -> Path:
@@ -1352,8 +1352,9 @@ class VectorMemoryStore(MemoryProvider):
         # background workers), so every call into the driver on it is taken one at a time.
         self._db = connect_shared(str(self._db_path), isolation_level=None)
         self._db.row_factory = sqlite3.Row
-        self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA busy_timeout=5000")
+        # A fresh database another store is opening too can't be switched at once (``use_wal``).
+        use_wal(self._db)
         self._db.isolation_level = ""  # Restore implicit transaction handling
 
         # Apply migrations

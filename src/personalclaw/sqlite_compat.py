@@ -39,6 +39,7 @@ driver makes when a connection nobody closed is let go. The two never run side b
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
@@ -396,3 +397,32 @@ def connect_shared(database: str, **kwargs: Any) -> SharedConnection:
     kwargs["check_same_thread"] = False
     make_private_database(database)
     return sqlite3.connect(database, factory=SharedConnection, **kwargs)
+
+
+#: How long a store waits to switch its database to WAL while another connection holds the lock.
+WAL_SWITCH_SECS = 5.0
+
+
+def use_wal(conn: Any, *, within: float = WAL_SWITCH_SECS) -> None:
+    """Put *conn*'s database in WAL mode, waiting up to *within* seconds for another connection.
+
+    Switching a database still in rollback mode takes its exclusive lock, and while another
+    connection holds the write lock, or is switching the same database, SQLite answers "database is
+    locked" at once: it calls no busy handler there, to avoid a deadlock, so the busy timeout never
+    applies. Two stores opening one fresh database at once, as a new home's first start does, raced
+    there (#6172). So the switch is tried again, after a short pause that grows, until it holds;
+    past *within* the lock's error is raised. A database already in WAL mode switches at once, so
+    only a fresh one ever waits.
+    """
+    deadline = time.monotonic() + within
+    pause = 0.01
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            left = deadline - time.monotonic()
+            if "database is locked" not in str(exc) or left <= 0:
+                raise
+            time.sleep(min(pause, left))
+            pause = min(pause * 2, 0.25)
