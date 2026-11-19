@@ -62,25 +62,20 @@ trusted-run branch the old path left).
    (``verdict.py``), and every attempt after n must be ``success``. A red after a green attempt or
    after any other red stays red. The green says the first attempts were red only for those jobs.
    A queue commit's run excuses nothing: its attempt-1 red is its posted verdict.
-5. The head's dependency review passed (#4585 step 6): the newest ``pull_request_target`` run
-   of ``dependency-review.yml`` on the head, main's copy, concluded ``success``. One that has not
-   run, is still running or did not pass is red. It is read by its path, its event and the head,
-   so a candidate's own workflow named for it, which runs under ``pull_request``, never stands in
-   for it, and a run on an older head of the pull request does not count. The poster also reads
-   the dependency graph's comparison itself (:func:`review_reading`): an added package version
-   with a known vulnerability, in any scope but development, is red. Until
-   ``dependency-review.yml`` moves to ``pull_request``, both count. And its commits pass
-   the commit policy (#3908): the poster runs main's ``scripts/check_commit_provenance.py`` itself
-   (:func:`policy_reading`), pr mode with main's MAINTAINERS, over the commits API's list of the
+5. The head's dependency review passed (#4585 step 6): the poster reads the dependency graph's
+   comparison of main's tip with the head itself (:func:`review_reading`), and an added package
+   version with a known vulnerability, in any scope but development, is red.
+   ``dependency-review.yml`` runs the head's copy of the action under ``pull_request``, as
+   feedback, and gates nothing. And its commits pass the commit policy (#3908): the poster runs
+   main's ``scripts/check_commit_provenance.py`` itself (:func:`policy_reading`), pr mode with
+   main's MAINTAINERS, over the commits API's list of the
    head's pull request and its title. A fork's run lists no pull request, so it is found by the
    run's head branch and kept only if its head is the run's. ``dco.yml`` runs the head's copy of
    the same check under ``pull_request``, as feedback, and gates nothing. GitHub's Update branch
    makes a merge commit with no sign-off, and rule 1 refuses it on purpose, with no exemption: a
    commit's committer is text anyone can write, so naming GitHub proves nothing, and a merge
    commit can carry a conflict resolution no one signed off. The head is updated with rebase.
-   When a Dependency review run completes, the poster judges its head again from the head's own
-   completed Merge run (and, for a head that changes a definition, its contract run), so they may
-   finish in any order.
+   Both are read whenever the head is judged, so no run of either workflow wakes the poster.
 5b. The head's gates passed: each workflow of its own that a pull request's paths start
    (``workflows.GATES``). Every ``pull_request`` run of the gate's workflow file on the head is
    read, by its path, its event and the head, so a candidate's own workflow of the same name, a
@@ -239,8 +234,6 @@ QUEUE_EVENT = "merge_group"
 QUEUE_BRANCH = re.compile(
     r"gh-readonly-queue/main/pr-(?P<number>[1-9][0-9]*)-(?P<built_on>[0-9a-f]{40})"
 )
-#: The dependency review: a pull_request_target workflow, so the run is main's copy.
-DEPENDENCY_REVIEW = ".github/workflows/dependency-review.yml"
 #: GitHub's dynamic CodeQL workflow (code scanning's default setup), by its run path.
 CODEQL_WORKFLOW = "dynamic/github-code-scanning/codeql"
 #: The analysis key default setup's CodeQL analyses carry.
@@ -847,41 +840,6 @@ def contract_run(get: Get, repo: str, head: str, base: str) -> Contract | None:
     )
 
 
-def _newest_target_run(get: Get, repo: str, head: str, path: str, what: str) -> Mapping[str, Any]:
-    """The newest ``pull_request_target`` run of main's *path* on *head*, or an empty mapping:
-    read by its path, its event and the head, so no other run stands in for it."""
-    name = path.rsplit("/", 1)[-1]
-    query = urllib.parse.urlencode(
-        {"head_sha": head, "event": "pull_request_target", "per_page": _PER_PAGE}
-    )
-    answer = _read(get, f"/repos/{repo}/actions/workflows/{name}/runs?{query}")
-    runs = answer.get("workflow_runs") if isinstance(answer, Mapping) else None
-    if not isinstance(runs, list):
-        raise Unread(f"{head}'s {what}s are not a list")
-    ours = [
-        r
-        for r in runs
-        if isinstance(r, Mapping)
-        and r.get("path") == path
-        and r.get("event") == "pull_request_target"
-        and r.get("head_sha") == head
-        and _int(r.get("id")) is not None
-    ]
-    return max(ours, key=lambda r: int(r["id"])) if ours else {}
-
-
-def dependency_review_reasons(get: Get, repo: str, head: str) -> list[str]:
-    """Why the head's dependency review is not green (rule 5), or nothing."""
-    newest = _newest_target_run(get, repo, head, DEPENDENCY_REVIEW, "dependency review")
-    if not newest:
-        return ["the head has no dependency review (dependency-review.yml) yet"]
-    if newest.get("status") != "completed":
-        return [f"the head's dependency review is {newest.get('status')!r}, not finished"]
-    if newest.get("conclusion") != "success":
-        return [f"the head's dependency review is {newest.get('conclusion')!r}"]
-    return []
-
-
 # ── The commit policy, judged by main's own check (#3908) ─────────────────────────────────────
 #
 # The sign-off rule's gate is main's code, never the head's. The poster runs main's
@@ -1095,13 +1053,12 @@ def _fenced(intro: str, lines: list[str], cap: int) -> list[str]:
 
 # ── The dependency review, judged by main's own read ──────────────────────────────────────────
 #
-# dependency-review.yml runs on ``pull_request_target``, which GitHub's default policy stops in
-# public repositories from 2026-12-02. The poster reads the same comparison the action reads, the
-# dependency graph's, and judges it by the action's rule with core's settings, its defaults: an
-# added package version with a known vulnerability of any severity, in the runtime scope, is red.
-# Every scope but development counts, one the graph does not know or a new one included, so a gap
-# in the graph fails closed. Until the
-# workflow moves to ``pull_request``, its run counts too (:func:`dependency_review_reasons`).
+# The poster reads the comparison the dependency-review action reads, the dependency graph's, and
+# judges it by the action's rule with core's settings, its defaults: an added package version with
+# a known vulnerability of any severity, in the runtime scope, is red. Every scope but development
+# counts, one the graph does not know or a new one included, so a gap in the graph fails closed.
+# dependency-review.yml runs the head's copy of the action under ``pull_request``, as feedback: its
+# run counts for nothing here.
 
 #: How many of the review's lines a red verdict's summary shows; the rest are counted.
 REVIEW_LINES = 40
@@ -1974,22 +1931,6 @@ def _latest_merge_run(get: Get, repo: str, **query: str) -> int | None:
     return max(ids) if ids else None
 
 
-def decide_review(
-    get: Get,
-    repo: str,
-    run: Mapping[str, Any],
-    controller_revision: str,
-    queue: Queue | None = None,
-) -> Outcome:
-    """A completed Dependency review run: judge its head again (:func:`rejudge`)."""
-    head = run.get("head_sha")
-    if run.get("event") != "pull_request_target" or not isinstance(head, str):
-        return Outcome(why=f"run {run.get('id')} is not a pull request's dependency review")
-    if not _SHA.fullmatch(head):
-        raise Unread(f"run {run.get('id')} of {run.get('path')} names no head")
-    return rejudge(get, repo, head, controller_revision, queue)
-
-
 def judge_check(
     get: Get, repo: str, check_id: int, controller_revision: str, queue: Queue | None = None
 ) -> Outcome:
@@ -2139,16 +2080,12 @@ def judge(
     get: Get, repo: str, run_id: int, controller_revision: str, queue: Queue | None = None
 ) -> Outcome:
     """What a completed run of a workflow the poster follows does: a Merge run is judged; a
-    Dependency review, CodeQL, gate (rule 5b) or contract run judges its head again."""
+    CodeQL, gate (rule 5b) or contract run judges its head again."""
     run = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
     if not isinstance(run, Mapping):
         raise Unread(f"run {run_id} is not an object")
     repository = run.get("repository")
     owner = repository.get("full_name") if isinstance(repository, Mapping) else None
-    if owner == repo and run.get("path") == DEPENDENCY_REVIEW:
-        if run.get("status") != "completed":
-            return Outcome(why=f"run {run_id} is {run.get('status')!r}, not completed")
-        return decide_review(get, repo, run, controller_revision, queue)
     if owner == repo and run.get("path") == CONTRACT_WORKFLOW:
         branch = str(run.get("head_branch") or "")
         named = branch.removeprefix(CONTRACT_PREFIX)
@@ -2482,7 +2419,6 @@ def decide(
             )
         failing, labels, untaken, through = results_reasons(get, repo, run, excuse=True)
         reasons += failing
-        reasons += dependency_review_reasons(get, repo, head)
         review = review_reading(get, repo, base, head)
         reasons += review.reasons
         policy = policy_reading(get, repo, run)
@@ -2577,9 +2513,8 @@ def decide(
                 if not behind
                 else "- the head is behind main, which the merge queue tests it on before it lands"
             ),
-            "- its dependency review passed",
-            f"- main's dependency review passed on the dependency graph's {review.changes}"
-            " change(s), run by this verdict",
+            f"- its dependency review passed on the dependency graph's {review.changes}"
+            " change(s), read by this verdict",
             f"- main's commit-policy check passed on its {policy.commits} commit(s) and its title"
             " (rules 1, 3 and 5), run by this verdict",
             "- CodeQL analysed every language main has, and found no alert it brings",
@@ -3509,7 +3444,7 @@ def main(
     one = sub.add_parser("decide", help="judge a Merge run and write the check run to post")
     one.add_argument("--controller-revision", required=True)
     which = one.add_mutually_exclusive_group(required=True)
-    which.add_argument("--run-id", type=int, help="a completed run of Merge or Dependency review")
+    which.add_argument("--run-id", type=int, help="a completed run of Merge, or one that wakes it")
     which.add_argument("--check-run-id", type=int, help="a completed CodeQL check run")
     which.add_argument(
         "--start",

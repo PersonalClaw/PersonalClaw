@@ -116,7 +116,6 @@ class FakeApi:
         self.answers[f"/repos/{REPO}/git/ref/heads/main"] = {"object": {"sha": MAIN}}
         self.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {"behind_by": 0}
         self.artifacts({"ci-record-unit": DIGEST, "web-dist": "sha256:" + "e" * 64})
-        self.review(HEAD, ("completed", "success"))
         self.pull_request()
         self.answers[f"/repos/{REPO}/dependency-graph/compare/{MAIN}...{HEAD}"] = []
         self.codeql(HEAD)
@@ -266,31 +265,10 @@ class FakeApi:
             {"number": n} for n in main_alerts
         ]
 
-    def review(self, head: str, *runs: tuple[str, str | None], path: str = "") -> None:
-        """The head's dependency-review runs, oldest first."""
-        self._target_runs(mc.DEPENDENCY_REVIEW, head, runs, path=path)
-
-    def _target_runs(
-        self, workflow: str, head: str, runs: Any, *, path: str = "", **fields: Any
-    ) -> None:
-        listed = [
-            {
-                "id": 900 + n,
-                "path": path or workflow,
-                "event": "pull_request_target",
-                "head_sha": head,
-                "status": s,
-                "conclusion": c,
-                **fields,
-            }
-            for n, (s, c) in enumerate(runs)
-        ]
-        query = f"head_sha={head}&event=pull_request_target&per_page=100"
-        name = workflow.rsplit("/", 1)[-1]
-        self.answers[f"/repos/{REPO}/actions/workflows/{name}/runs?{query}"] = {
-            "total_count": len(listed),
-            "workflow_runs": listed,
-        }
+    def vulnerable(self) -> None:
+        """The head adds a package version with a known vulnerability, so main's dependency
+        review is red."""
+        self.answers[f"/repos/{REPO}/dependency-graph/compare/{MAIN}...{HEAD}"] = [change()]
 
     def run(self, **fields: Any) -> None:
         run = {
@@ -1350,11 +1328,11 @@ def test_a_head_behind_main_and_failing_names_both() -> None:
     api = FakeApi()
     api.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {"behind_by": 3}
     api.jobs(1, ("results", "completed", "failure"))
-    api.review(HEAD, ("completed", "failure"))
+    api.vulnerable()
     summary = _red(api).output["summary"]
     assert "3 commits behind main" in summary
     assert "attempt 1's `results` is 'failure'" in summary, summary
-    assert "the head's dependency review is 'failure'" in summary, summary
+    assert "the head adds 1 package version(s) with a known vulnerability" in summary, summary
 
 
 def test_an_unread_answer_keeps_the_reasons_read_before_it() -> None:
@@ -1736,35 +1714,6 @@ def test_a_judged_contract_branch_is_deleted_and_one_already_gone_is_fine() -> N
 # ── The dependency review (#4585 step 6) ───────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "runs, says",
-    [
-        ((), "has no dependency review"),
-        ((("in_progress", None),), "is 'in_progress', not finished"),
-        ((("completed", "failure"),), "dependency review is 'failure'"),
-        ((("completed", "success"), ("completed", "failure")), "dependency review is 'failure'"),
-    ],
-)
-def test_a_dependency_review_that_did_not_pass_is_red(runs: Any, says: str) -> None:
-    api = FakeApi()
-    api.review(HEAD, *runs)
-    assert says in _red(api).output["summary"]
-
-
-def test_the_newest_dependency_review_decides() -> None:
-    api = FakeApi()
-    api.review(HEAD, ("completed", "failure"), ("completed", "success"))
-    found = _decide(api)
-    assert isinstance(found, mc.Posting) and found.conclusion == "success"
-    assert "its dependency review passed" in found.output["summary"]
-
-
-def test_a_review_from_another_workflow_counts_for_nothing() -> None:
-    api = FakeApi()
-    api.review(HEAD, ("completed", "success"), path=f"{WF}fake-review.yml")
-    assert "has no dependency review" in _red(api).output["summary"]
-
-
 # ── The dependency review, by main's own read ─────────────────────────────────────────────────
 
 GRAPH = f"/repos/{REPO}/dependency-graph/compare/{MAIN}...{HEAD}"
@@ -1802,7 +1751,7 @@ def test_the_review_reads_the_graph_by_main_s_sha_and_the_head_s_and_says_so() -
     assert isinstance(found, mc.Posting) and found.conclusion == "success", found
     assert GRAPH in api.calls
     assert (
-        "- main's dependency review passed on the dependency graph's 2 change(s), run by this"
+        "- its dependency review passed on the dependency graph's 2 change(s), read by this"
         " verdict" in found.output["summary"]
     )
 
@@ -1905,12 +1854,13 @@ def test_the_review_shows_the_first_lines_and_counts_the_rest() -> None:
     assert f"\nand {45 - mc.REVIEW_LINES} more\n" in summary
 
 
-def test_a_red_dependency_review_run_with_a_clean_graph_is_still_red() -> None:
-    # Both count until dependency-review.yml moves to pull_request.
+def test_no_dependency_review_run_is_read_since_the_head_s_own_copy_judges_nothing() -> None:
+    # dependency-review.yml runs the head's copy under pull_request, as feedback: the graph the
+    # poster reads is the gate, and a run of the workflow, green or red, is never read.
     api = FakeApi()
-    api.review(HEAD, ("completed", "failure"))
-    title = _red(api).output["title"]
-    assert "the head's dependency review is 'failure'" in title, title
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert not any("/workflows/dependency-review.yml/" in c for c in api.calls), api.calls
 
 
 # ── The commit policy, by main's own check (#3908) ────────────────────────────────────────────
@@ -2137,10 +2087,10 @@ def test_a_merge_commit_from_update_branch_is_red_and_names_the_rebase() -> None
 
 def test_a_head_red_on_its_review_and_its_commits_names_both() -> None:
     api = FakeApi()
-    api.review(HEAD, ("completed", "failure"))
+    api.vulnerable()
     api.pull_request(commit(HEAD, UNSIGNED))
     summary = _red(api).output["summary"]
-    assert "the head's dependency review is 'failure'" in summary, summary
+    assert "the head adds 1 package version(s) with a known vulnerability" in summary, summary
     assert "the head's commits break the commit policy (rule 1)" in summary, summary
 
 
@@ -2168,19 +2118,20 @@ def test_a_green_queue_commit_says_its_message_was_checked() -> None:
     assert "its message, which is what lands, carries no marker" in found.output["summary"]
 
 
-REVIEW_RUN = 55
+WAKE_RUN = 55
 
 
-def _review_run(api: FakeApi, **fields: Any) -> None:
+def _wake_run(api: FakeApi, **fields: Any) -> None:
+    """A completed run that wakes the poster to judge its head again: a gate's, by default."""
     run = {
-        "id": REVIEW_RUN,
+        "id": WAKE_RUN,
         "repository": {"full_name": REPO},
-        "path": mc.DEPENDENCY_REVIEW,
-        "event": "pull_request_target",
+        "path": f"{WF}nix.yml",
+        "event": "pull_request",
         "status": "completed",
         "head_sha": HEAD,
     }
-    api.answers[f"/repos/{REPO}/actions/runs/{REVIEW_RUN}"] = {**run, **fields}
+    api.answers[f"/repos/{REPO}/actions/runs/{WAKE_RUN}"] = {**run, **fields}
 
 
 def _merge_runs(api: FakeApi, query: str, ids: list[int]) -> None:
@@ -2194,34 +2145,34 @@ def _merge_runs(api: FakeApi, query: str, ids: list[int]) -> None:
 OWN_MERGE = f"head_sha={HEAD}&event=pull_request&status=completed&per_page=100"
 
 
-def test_a_completed_review_judges_its_head_from_its_own_merge_run() -> None:
+def test_a_completed_wake_judges_its_head_from_its_own_merge_run() -> None:
     api = FakeApi()
-    _review_run(api)
+    _wake_run(api)
     _merge_runs(api, OWN_MERGE, [RUN - 1, RUN])
-    outcome = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    outcome = mc.judge(api, REPO, WAKE_RUN, CONTROLLER)
     assert outcome.posting is not None and outcome.posting.conclusion == "success"
     assert outcome.posting.external_id == f"{RUN}/1", "the newest own Merge run is judged"
 
 
-def test_a_review_with_no_completed_merge_run_posts_nothing() -> None:
+def test_a_wake_with_no_completed_merge_run_posts_nothing() -> None:
     api = FakeApi()
-    _review_run(api)
+    _wake_run(api)
     _merge_runs(api, OWN_MERGE, [])
-    outcome = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    outcome = mc.judge(api, REPO, WAKE_RUN, CONTROLLER)
     assert outcome.posting is None and outcome.dispatch is None
     assert "no completed Merge run of its own" in outcome.why
 
 
-def test_a_review_of_a_head_that_changes_ci_reads_its_contract_run() -> None:
+def test_a_wake_of_a_head_that_changes_ci_reads_its_contract_run() -> None:
     api = _changes(FakeApi())
-    _review_run(api)
+    _wake_run(api)
     _merge_runs(api, OWN_MERGE, [RUN])
     _contract(api, {"status": "in_progress", "conclusion": None})
-    waiting = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    waiting = mc.judge(api, REPO, WAKE_RUN, CONTROLLER)
     assert waiting.posting is not None and waiting.dispatch is None
     assert "is 'in_progress'" in waiting.posting.output["title"]
     _contract(api, {})
-    judged = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    judged = mc.judge(api, REPO, WAKE_RUN, CONTROLLER)
     assert judged.posting is not None and judged.posting.head_sha == HEAD
     assert judged.posting.conclusion == "success" and judged.cleanup == CONTRACT_BRANCH
 
@@ -2231,18 +2182,21 @@ def test_a_completed_dco_run_judges_nothing(event: str) -> None:
     # It no longer wakes the poster (merge-verdict.yml lists no DCO), and a run of it that reached
     # the controller, the head's own or one main's old copy left, is no Merge run: it posts nothing.
     api = FakeApi()
-    _review_run(api, path=f"{WF}dco.yml", event=event)
+    _wake_run(api, path=f"{WF}dco.yml", event=event)
     _merge_runs(api, OWN_MERGE, [RUN])
-    outcome = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    outcome = mc.judge(api, REPO, WAKE_RUN, CONTROLLER)
     assert outcome.posting is None and outcome.why, outcome
 
 
-def test_a_review_run_that_is_not_a_pull_requests_posts_nothing() -> None:
+@pytest.mark.parametrize("event", ["pull_request", "pull_request_target"])
+def test_a_completed_dependency_review_run_judges_nothing(event: str) -> None:
+    # It no longer wakes the poster (merge-verdict.yml lists no Dependency review), and a run of
+    # it that reached the controller is no Merge run: it posts nothing.
     api = FakeApi()
-    _review_run(api, event="pull_request")
-    assert (
-        "not a pull request's dependency review" in mc.judge(api, REPO, REVIEW_RUN, CONTROLLER).why
-    )
+    _wake_run(api, path=f"{WF}dependency-review.yml", event=event)
+    _merge_runs(api, OWN_MERGE, [RUN])
+    outcome = mc.judge(api, REPO, WAKE_RUN, CONTROLLER)
+    assert outcome.posting is None and outcome.why, outcome
 
 
 def test_a_head_main_has_moved_past_is_told_to_update_and_starts_no_contract() -> None:
@@ -3068,7 +3022,7 @@ def _reported(api: FakeApi) -> Any:
 @pytest.mark.parametrize(
     "path, more",
     [
-        pytest.param(mc.DEPENDENCY_REVIEW, {"status": "in_progress"}, id="dependency-review"),
+        pytest.param(f"{WF}dependency-review.yml", {}, id="dependency-review"),
         pytest.param(mc.CONTRACT_WORKFLOW, {"event": "push"}, id="contract"),
         pytest.param(f"{WF}nix.yml", {"event": "push"}, id="a-gate"),
         pytest.param(mc.CODEQL_WORKFLOW, {"status": "in_progress"}, id="codeql"),
@@ -3252,7 +3206,7 @@ def test_a_head_waiting_on_codeql_for_ever_costs_nothing_between_sweeps(
     _refs(api, mc.CONTRACT_PREFIX, {})
     _refs(api, mc.TRUSTED_PREFIX, {})
     wakes = [
-        ["--run-id", str(_other_run(api, mc.DEPENDENCY_REVIEW, status="in_progress"))],
+        ["--run-id", str(_other_run(api, f"{WF}dependency-review.yml"))],
         ["--check-run-id", "55"],
     ]
     for wake in wakes:
@@ -3641,7 +3595,7 @@ def _state(name: str) -> FakeApi:
     if name == "no contract yet":
         _contract(api)
     if name == "review red":
-        api.review(HEAD, ("completed", "failure"))
+        api.vulnerable()
     if name == "no evidence":
         api.artifacts({"web-dist": "sha256:" + "e" * 64})
     _merge_runs(api, OWN_MERGE, [RUN])
@@ -4824,7 +4778,7 @@ def test_a_red_that_is_not_flake_class_says_why(
 
 def test_a_red_with_a_reason_beside_its_tests_is_not_flake_class() -> None:
     api = _retried()
-    api.review(HEAD, ("completed", "failure"))
+    api.vulnerable()
     found = _note(api)
     assert "- not flake-class: its red is not its tests' alone: " in found.output["summary"]
 
@@ -5588,7 +5542,7 @@ def test_a_date_only_retry_of_an_errored_analysis_counts_as_retry_1() -> None:
 
 def test_an_errored_analysis_beside_a_red_of_the_change_s_own_is_not_flake_class() -> None:
     api = _errored()
-    api.review(HEAD, ("completed", "failure"))
+    api.vulnerable()
     found = _note(api)
     assert found.output["title"].startswith("Red (retry 0 of 2): "), found.output["title"]
     assert ERRORED in found.output["summary"]

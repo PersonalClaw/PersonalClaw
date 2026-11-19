@@ -2,22 +2,23 @@
 # head, read over the API, failing on a dependency the pull request adds or moves to with a
 # known vulnerability.
 #
-# `pull_request_target` runs this file as it is on main, so a pull request cannot edit what
-# reviews it, and runs a first-time contributor's pull request without waiting for approval. It
-# never checks out or runs the pull request's code: the action reads the base and head commits
-# from the event and asks the dependency-graph API to compare them, with a read-only token. There
-# is no checkout here at all; do not add one.
-#
-# Not a required check: #3910 makes it an input of the one required `merge-verdict` instead.
+# Feedback only (#3908): it runs on `pull_request`, so it is the head's own copy, and gates
+# nothing. The merge verdict reads the same dependency-graph comparison itself and judges it by
+# this action's rule with these settings, so the head cannot change what judges it. It never checks
+# out the pull request's code: the action reads the base and head commits from the event and asks
+# the dependency-graph API to compare them, with a read-only token. There is no checkout here at
+# all; do not add one.
 name: Dependency review
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened]
 
-# One review per pull request: a new head cancels the review of the old one.
+# One review per pull request: a new head cancels the review of the old one. The group is
+# `dependency-review-pr-`, not the `dependency-review-` main's pull_request_target copy ran in:
+# on the pull request that moved it, both copies ran, and in one group each cancelled the other.
 concurrency:
-  group: dependency-review-${{ github.event.pull_request.number }}
+  group: dependency-review-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:

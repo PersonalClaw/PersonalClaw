@@ -1,7 +1,7 @@
 """``.github/workflows/merge-verdict.yml``: the merge verdict's poster keeps its trust shape.
 
 It runs only as a ``workflow_run`` listener of Merge and of the runs that judge a head again
-(Dependency review, CodeQL, Contract and each gate's) and a listener of completed check runs,
+(CodeQL, Contract and each gate's) and a listener of completed check runs,
 so GitHub runs main's copy, and, beside a head's Merge run (the shape ``beside``), also on a pull
 request's Merge run's start, to start the head's contract with it (``decide --start``, which posts
 nothing), and on a dispatch on main alone, which a contract run's ``wake`` job sends for its head
@@ -70,7 +70,6 @@ _BESIDE_LINES = (
     "|| (github.event_name == 'workflow_run'",
     "&& github.event.action == 'completed'",
     "&& (github.event.workflow_run.event == 'pull_request'",
-    "|| github.event.workflow_run.event == 'pull_request_target'",
     "|| (github.event.workflow_run.event == 'dynamic'",
     "&& startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))",
     "|| (github.event_name == 'workflow_run'",
@@ -115,15 +114,9 @@ _CONTRACT_QUEUE_LINES = (
 _WAKES_QUEUE = " ".join(_QUEUE_LINES)
 _CONTRACT_IF_QUEUE = " ".join(_CONTRACT_QUEUE_LINES)
 _WAKES_BY_SHAPE = {_BESIDE: _WAKES_BESIDE, _QUEUE: _WAKES_QUEUE}
-#: The clause that takes a run of a ``pull_request_target`` workflow. Once the dependency review
-#: moves to ``pull_request`` (#3908), no workflow runs on that event, and the poster may drop it:
-#: each condition is held as it is spelled with the clause, or without it.
+#: The clause that would take a run of a ``pull_request_target`` workflow: no workflow runs on that
+#: event (#3908), so no condition names it.
 _TARGET_RUN = "|| github.event.workflow_run.event == 'pull_request_target'"
-
-
-def _untargeted(lines: tuple[str, ...]) -> tuple[str, ...]:
-    """*lines* without :data:`_TARGET_RUN`."""
-    return tuple(line for line in lines if line != _TARGET_RUN)
 
 
 #: What the beside shape's concurrency group keys a dispatch on: the head it names, empty for any
@@ -136,15 +129,6 @@ _ACTION_KEY = "${{ github.event.action }}"
 _CONTRACT_IF_BY_SHAPE = {
     _BESIDE: _CONTRACT_IF_BESIDE,
     _QUEUE: _CONTRACT_IF_QUEUE,
-}
-#: Each shape's conditions, the post job's and the contract job's, as each may be spelled.
-_POST_IFS = {
-    shape: (" ".join(lines), " ".join(_untargeted(lines)))
-    for shape, lines in ((_BESIDE, _BESIDE_LINES), (_QUEUE, _QUEUE_LINES))
-}
-_CONTRACT_IFS = {
-    shape: (" ".join(lines), " ".join(_untargeted(lines)))
-    for shape, lines in ((_BESIDE, _CONTRACT_BESIDE_LINES), (_QUEUE, _CONTRACT_QUEUE_LINES))
 }
 #: The beside shape's decision: a started run is decided by ``--start`` alone, before anything
 #: else, and a wake by ``--head``.
@@ -180,7 +164,7 @@ def _checkout_problems(where: str, steps: list[dict]) -> list[str]:
 
 def _contract_problems(job: dict, shape: str = _QUEUE) -> list[str]:
     found: list[str] = []
-    if job.get("needs") != "post" or job.get("if") not in _CONTRACT_IFS[shape]:
+    if job.get("needs") != "post" or job.get("if") != _CONTRACT_IF_BY_SHAPE[shape]:
         found.append("the contract job runs other than after post, on a head or a branch it names")
     if job.get("environment") != "ci-controller":
         found.append(f"the contract job deploys to {job.get('environment')!r}")
@@ -223,7 +207,7 @@ def _problems(text: str) -> list[str]:
     shape = _QUEUE
     found += _contract_problems(jobs["contract"], shape)
     job = jobs["post"]
-    if job.get("if") not in _POST_IFS[shape]:
+    if job.get("if") != _WAKES_BY_SHAPE[shape]:
         found.append(
             "the post job's condition is not exactly: the runs that can judge a pull request's"
             f" head ({job.get('if')!r})"
@@ -273,13 +257,11 @@ def _problems(text: str) -> list[str]:
     return found
 
 
-#: The runs the poster wakes on: Merge, the three that judge a head again, and each gate's
-#: (tools/ci/workflows.py's GATES), whose completion judges its head again. Once the dependency
-#: review moves to ``pull_request`` (#3908), the poster reads its judgement itself, so the list may
-#: leave it out.
+#: The runs the poster wakes on: Merge, the two that judge a head again, and each gate's
+#: (tools/ci/workflows.py's GATES), whose completion judges its head again. The dependency review
+#: and the sign-off check are the poster's own reads (#3908), so no run of either wakes it.
 _WAKES = [
     workflows.NAMES[workflows.MERGE],
-    "Dependency review",
     "CodeQL",
     "Contract",
     *(gate.name for gate in workflows.GATES),
@@ -296,11 +278,7 @@ def _shape(on: object) -> str | None:
     head = inputs.get("head") if isinstance(inputs, dict) else None
     if (
         all(on[k] == v for k, v in both.items())
-        and on["workflow_run"]
-        in (
-            {"workflows": wakes, "types": ["in_progress", "completed"]}
-            for wakes in (_WAKES, [w for w in _WAKES if w != "Dependency review"])
-        )
+        and on["workflow_run"] == {"workflows": _WAKES, "types": ["in_progress", "completed"]}
         and set(dispatch) == {"inputs"}
         and set(inputs) == {"head"}
         and isinstance(head, dict)
@@ -559,11 +537,12 @@ def test_a_wake_list_that_wakes_on_dco_again_fails() -> None:
 _FORK = {"head_repository": {"full_name": "someone/project", "fork": True}, "pull_requests": []}
 _EVENTS: tuple[tuple[str, str, dict[str, Any], str, str], ...] = (
     ("a pull request's Merge run", "workflow_run", {"event": "pull_request"}, "head", "completed"),
+    # No workflow runs on pull_request_target (#3908): a run that claims it takes no runner.
     (
-        "a Dependency review run",
+        "a pull_request_target run",
         "workflow_run",
         {"event": "pull_request_target"},
-        "head",
+        "never",
         "completed",
     ),
     (
@@ -645,7 +624,7 @@ _EVENTS: tuple[tuple[str, str, dict[str, Any], str, str], ...] = (
         "in_progress",
     ),
     (
-        "a Dependency review run starting",
+        "a pull_request_target run starting",
         "workflow_run",
         {"event": "pull_request_target", "path": ".github/workflows/dependency-review.yml"},
         "never",
@@ -840,20 +819,13 @@ def _answers(expr: str, event: tuple[str, str, dict[str, Any], str, str], live: 
 def _wake_problems(where: str, expr: str, shape: str = _QUEUE) -> list[str]:
     """Each event that starts the shape's runs, as the condition answers it, with
     MERGE_VERDICT_LIVE each way, against whether it can judge a head then."""
-    targeted = _TARGET_RUN in expr
-
-    def wanted(e: tuple[str, str, dict[str, Any], str, str], live: str | None) -> bool:
-        # A pull_request_target run judges a head only while the condition names the event.
-        dropped = not targeted and e[2].get("event") == "pull_request_target"
-        return _wanted(e[3], live, shape) and not dropped
-
     return [
-        f"{where} {'takes no runner for' if wanted(e, live) else 'takes a runner for'}"
+        f"{where} {'takes no runner for' if _wanted(e[3], live, shape) else 'takes a runner for'}"
         f" {e[0]} with MERGE_VERDICT_LIVE {live!r}"
         for e in _EVENTS
         if e[4] in _DELIVERS[shape]
         for live in _LIVE
-        if _answers(expr, e, live) is not wanted(e, live)
+        if _answers(expr, e, live) is not _wanted(e[3], live, shape)
     ]
 
 
@@ -956,6 +928,19 @@ def test_a_planted_wake_condition_fails(old: str, new: str, says: str) -> None:
     planted = text.replace(old, new, 1)
     found = _problems(planted)
     assert any(says in p for p in found), found
+    assert any("condition is not exactly" in p for p in found), found
+
+
+def test_a_condition_that_takes_a_pull_request_target_run_again_fails() -> None:
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    line = (
+        "      && github.event.action == 'completed'\n"
+        "      && (github.event.workflow_run.event == 'pull_request'\n"
+    )
+    assert text.count(line) == 2, f"the anchor is not in both conditions: {line!r}"
+    planted = text.replace(line, line + f"      {_TARGET_RUN}\n")
+    found = _problems(planted)
+    assert any("takes a runner for a pull_request_target run" in p for p in found), found
     assert any("condition is not exactly" in p for p in found), found
 
 
@@ -1205,9 +1190,8 @@ def test_the_folded_conditions_read_as_the_expressions() -> None:
         assert yaml.safe_load("job:\n" + _folded(lines))["job"]["if"] == expr
     poster = yaml.safe_load(_beside_poster())["jobs"]
     assert (poster["post"]["if"], poster["contract"]["if"]) in (
-        (_POST_IFS[shape][i], _CONTRACT_IFS[shape][i])
-        for shape in (_BESIDE, _QUEUE)
-        for i in (0, 1)
+        (_WAKES_BESIDE, _CONTRACT_IF_BESIDE),
+        (_WAKES_QUEUE, _CONTRACT_IF_QUEUE),
     )
 
 

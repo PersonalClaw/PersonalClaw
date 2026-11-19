@@ -1,9 +1,8 @@
 """``.github/workflows/dependency-review.yml``'s trust shape (#4585).
 
-It runs on one event alone: ``pull_request_target``, so GitHub takes it from main, or, once it
-moves (#3908), ``pull_request``, where it is the head's copy and feedback only, since the merge
-verdict reads the dependency graph itself. It has no checkout at all, so no candidate file is ever
-on disk; it holds
+It runs on ``pull_request`` alone (#3908), so it is the head's copy and feedback only: the merge
+verdict reads the dependency graph itself, and never this workflow's run. It has no checkout at
+all, so no candidate file is ever on disk; it holds
 ``contents: read`` and nothing else, and references no secret; and its one step is the pinned
 dependency-review action, which reads the base and head from the event and compares them over the
 API. Each rule fails on a planted edit of the real workflow.
@@ -12,7 +11,6 @@ API. Each rule fails on a planted edit of the real workflow.
 from __future__ import annotations
 
 import json
-import re
 
 import pytest
 import yaml
@@ -20,12 +18,8 @@ from rails_repo import REPO
 
 _WORKFLOW = REPO / ".github" / "workflows" / "dependency-review.yml"
 _ACTION = "actions/dependency-review-action@"
-#: The one event it runs on: ``pull_request_target``, main's copy, until it moves to
-#: ``pull_request`` (#3908), where the head's copy runs as feedback and the merge verdict reads
-#: the dependency graph itself. The rest holds the same either way.
-_TRIGGERS = ({"pull_request_target"}, {"pull_request"})
-#: The trigger's line, whichever of the two the tree has: the plants below edit it as it is.
-_TRIGGER = re.compile(r"^  (pull_request_target|pull_request):\n", re.M)
+#: The one event it runs on: no workflow runs on ``pull_request_target`` (#3908).
+_TRIGGERS = ({"pull_request"},)
 
 
 def _problems(text: str) -> list[str]:
@@ -93,10 +87,13 @@ def test_a_planted_edit_fails(old: str, new: str, says: str) -> None:
     assert any(says in p for p in problems), problems
 
 
-def test_it_runs_on_either_event_alone_and_on_both_fails() -> None:
+@pytest.mark.parametrize(
+    "new",
+    ["  pull_request_target:\n", "  pull_request_target:\n    types: [opened]\n  pull_request:\n"],
+    ids=["back-on-pull_request_target", "on-both"],
+)
+def test_it_runs_on_pull_request_alone(new: str) -> None:
     text = _WORKFLOW.read_text(encoding="utf-8")
-    [line] = _TRIGGER.findall(text)
-    other = "pull_request" if line == "pull_request_target" else "pull_request_target"
-    assert _problems(_TRIGGER.sub(f"  {other}:\n", text)) == []
-    both = _TRIGGER.sub(f"  {other}:\n    types: [opened]\n  {line}:\n", text)
-    assert any("alone" in p for p in _problems(both)), _problems(both)
+    assert text.count("  pull_request:\n") == 1
+    found = _problems(text.replace("  pull_request:\n", new))
+    assert any("alone" in p for p in found), found
