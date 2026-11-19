@@ -177,7 +177,7 @@ describe("a gateway that did not start, or stopped, lands on the Gateways window
   it("says a failed start at once, before the two-minute wait, on the Gateways window", () => {
     const loading = body("showLoadingThenConnect");
     comesBefore(loading, "if (startFailure || !localGatewayUrl) throw", "await waitForBackend(");
-    assert.match(loading, /showNotConnected\(\)/);
+    assert.match(loading, /showNotConnected\(\{ quiet: quietLogin \}\)/);
     assert.match(loading, /startFailure = \{ unanswered: true \};/);
   });
 

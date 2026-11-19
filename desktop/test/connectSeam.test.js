@@ -530,9 +530,9 @@ describe("there is no second retry loop racing the SPA", () => {
     assert.ok(registers[0].index > watchAt && registers[0].index < watchAt + watch.length, "the windows' traffic is registered outside watchWindowTraffic");
     const ready = MAIN.slice(MAIN.indexOf("app.whenReady().then("));
     assert.equal([...ready.matchAll(/watchWindowTraffic\(/g)].length, 1);
-    assert.ok(ready.indexOf("watchWindowTraffic(") < ready.indexOf("createWindow()"), "a window loads before its traffic is decided");
+    assert.ok(ready.indexOf("watchWindowTraffic(") < ready.indexOf("createWindow("), "a window loads before its traffic is decided");
     const purge = ready.indexOf("await purgeStaleLocalCookies(session.defaultSession);");
-    assert.ok(purge > ready.indexOf("syncPaired();") && purge < ready.indexOf("createWindow()"), "the first window loads before the stale cookies are gone");
+    assert.ok(purge > ready.indexOf("syncPaired();") && purge < ready.indexOf("createWindow("), "the first window loads before the stale cookies are gone");
   });
 
   it("has no interval in the file: the menu bar's counts ride the doorbell, which polls only while down", () => {
