@@ -1016,6 +1016,110 @@ def test_an_alone_rerun_that_ran_another_test_classifies_nothing(tmp_path):
     assert any("b.spec.ts::other [chromium]" in r for r in outcome.reasons), outcome.reasons
 
 
+# A test written in a loop reports each variant at its own one place, and Playwright runs every
+# test at a named place in every named project: the alone rerun of one variant runs its
+# siblings too (PersonalClaw/PersonalClaw#6267's a11y.spec.ts:133, light beside dark).
+DARK = "Session Map rail, OPEN [desktop] (dark)"
+LIGHT = "Session Map rail, OPEN [desktop] (light)"
+DARK_ID = f"web/e2e/a11y.spec.ts::{DARK} [chromium]"
+
+
+def _looped(*tests: tuple, line: int = 133) -> dict:
+    """A report of a11y.spec.ts whose specs all sit at *line*, as a looped test's variants do."""
+    report = _playwright_report(*(("a11y.spec.ts", *test) for test in tests))
+    for suite in report["suites"]:
+        for spec in suite["specs"]:
+            spec["line"] = line
+    return report
+
+
+def test_a_looped_tests_sibling_that_passed_in_the_alone_rerun_leaves_it_a_flake(tmp_path):
+    """The (dark) variant flaked, and the alone rerun of its place ran it and its (light)
+    sibling, which passed in the step and passes there again. The sibling is read only to hold
+    that it passed, and is never classified: the (dark) variant is a flake."""
+    report = _looped((DARK, "flaky", ["failed", "passed"]), (LIGHT, "expected", ["passed"]))
+    root, path = _plant(tmp_path, playwright=report)
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    assert {t: e["rerun_result"] for t, e in _by_test(_record(outcome)).items()} == {
+        DARK_ID: verdict.FLAKE
+    }
+    _, alone = _playwright_calls(tmp_path)
+    assert [a for a in alone["argv"][2:] if not a.startswith("-")] == ["e2e/a11y.spec.ts:133"]
+    assert sorted(alone["ran"]) == sorted([DARK, LIGHT]), "the place runs both variants"
+    assert not any("was not rerun" in r for r in outcome.reasons), outcome.reasons
+
+
+@pytest.mark.parametrize("got", ["unexpected", "flaky"])
+def test_a_sibling_that_did_not_pass_in_the_alone_rerun_classifies_nothing(tmp_path, got):
+    """A sibling that failed there, or ended ``flaky`` (which a rerun with no retries of its own
+    never reports), means the rerun did not show its place passing alone: it classifies nothing,
+    and names the sibling."""
+    report = _looped((DARK, "flaky", ["failed", "passed"]), (LIGHT, "expected", ["passed"]))
+    root, path = _plant(tmp_path, playwright=report, alone={LIGHT: got})
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    [entry] = _record(outcome)["rerun"]["tests"]
+    assert entry["rerun_result"] is None, entry
+    said = f"a11y.spec.ts::{LIGHT} [chromium] ran beside the rerun at its own place and was {got}"
+    assert any(said in r for r in outcome.reasons), outcome.reasons
+
+
+@pytest.mark.parametrize(
+    ("line", "project"),
+    [(140, "chromium"), (133, "smoke")],
+    ids=["another line of the spec", "a project the rerun did not name"],
+)
+def test_a_test_beside_the_alone_rerun_but_not_at_its_selection_is_foreign(tmp_path, line, project):
+    """Only the argv's own selection makes a sibling: a test at another place, or at the place
+    in a project the rerun did not name, was not run by it, so it classifies nothing."""
+    report = _looped((DARK, "flaky", ["failed", "passed"]))
+    other = _looped(("beside", "expected", ["passed"], project), line=line)["suites"]
+    root, path = _plant(tmp_path, playwright=report, beside_in_rerun=other)
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    [entry] = _record(outcome)["rerun"]["tests"]
+    assert entry["rerun_result"] is None, entry
+    said = f"a11y.spec.ts::beside [{project}], which was not rerun"
+    assert any(said in r for r in outcome.reasons), outcome.reasons
+
+
+def _both_projects(file: str, line: int, chromium: tuple, smoke: tuple) -> dict:
+    """A suite of *file* with one spec at *line* that runs in chromium and in smoke, each
+    project's test with its own status and results."""
+    tests = [
+        {
+            "projectName": project,
+            "status": status,
+            "results": [{"status": r, "retry": n} for n, r in enumerate(results)],
+        }
+        for project, (status, results) in (("chromium", chromium), ("smoke", smoke))
+    ]
+    spec = {"title": "loads", "file": file, "line": line, "tests": tests}
+    return {"title": file, "file": file, "specs": [spec], "suites": []}
+
+
+def test_two_flakes_of_two_projects_each_run_the_others_place_and_both_are_flakes(tmp_path):
+    """Two flakes at two places in two projects: the rerun names both places and both projects,
+    so Playwright runs each place in each project, four tests. The two it was not asked for are
+    siblings of its own selection: both flakes are flakes, and nothing reads as foreign."""
+    flaky, passed = ("flaky", ["failed", "passed"]), ("expected", ["passed"])
+    report = {
+        "suites": [
+            _both_projects("a.spec.ts", 1, flaky, passed),
+            _both_projects("b.spec.ts", 2, passed, flaky),
+        ]
+    }
+    root, path = _plant(tmp_path, playwright=report)
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    assert {t: e["rerun_result"] for t, e in _by_test(_record(outcome)).items()} == {
+        "web/e2e/a.spec.ts::loads [chromium]": verdict.FLAKE,
+        "web/e2e/b.spec.ts::loads [smoke]": verdict.FLAKE,
+    }
+    _, alone = _playwright_calls(tmp_path)
+    assert {"--project=chromium", "--project=smoke"} <= set(alone["argv"])
+    assert len(alone["ran"]) == 4, alone["ran"]
+    assert not any("was not rerun" in r or "beside the rerun" in r for r in outcome.reasons)
+
+
 def test_the_alone_rerun_leaves_the_steps_report_as_the_step_wrote_it(tmp_path):
     report = _playwright_report(("a.spec.ts", "loads", "flaky", ["failed", "passed"]))
     root, path = _plant(tmp_path, playwright=report, faults={"alone": {"beside": True}})
