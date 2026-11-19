@@ -979,3 +979,95 @@ def test_an_ordinary_flake_in_a_security_job_whose_security_tests_all_passed_is_
     assert judged.green
     assert [(t.key, t.test, t.standing) for t in judged.flakes] == [(ONE, FLAKY, verdict.FLAKE)]
     assert f"{FLAKY} ({ONE})" in verdict.flake_notices(judged)
+
+
+# ── A change to pyproject.toml is read by its keys (#5809) ────────────────────────────────────
+#
+# Every pytest run reads pyproject.toml, but not every key of it: a change to only the
+# formatter's, the import sorter's or the type checker's settings, or to a dependency group the
+# suite's environment does not install, leaves a failed test its flake pass.
+
+PYPROJECT = (
+    '[project]\nname = "personalclaw"\ndependencies = ["aiohttp>=3"]\n\n'
+    '[tool.pytest.ini_options]\naddopts = "-q"\n\n'
+    "[tool.black]\nline-length = 100\n\n[tool.uv]\n"
+)
+DOCUMENTS = '\n[dependency-groups]\ndocuments = ["python-docx>=1.1,<2"]\n'
+
+
+def test_a_pyproject_change_to_inert_keys_alone_is_read_by_no_pytest_run() -> None:
+    """#6267 added only a dependency group no suite job installs; a formatter setting is the
+    same."""
+    edited = PYPROJECT.replace("line-length = 100", "line-length = 99") + DOCUMENTS
+    assert verdict.pyproject_reads(PYPROJECT, edited) == ""
+    assert verdict.pyproject_reads(PYPROJECT, PYPROJECT) == ""
+
+
+@pytest.mark.parametrize(
+    ("head", "read"),
+    [
+        (PYPROJECT.replace('addopts = "-q"', 'addopts = "-q -x"'), "tool.pytest"),
+        (PYPROJECT.replace('"aiohttp>=3"', '"aiohttp>=3.9"'), "project.dependencies"),
+        (PYPROJECT + '\n[dependency-groups]\ndev = ["pytest>=7"]\n', "dependency-groups.dev"),
+        (
+            PYPROJECT.replace("[tool.uv]\n", '[tool.uv]\ndefault-groups = ["documents"]\n')
+            + DOCUMENTS,
+            "dependency-groups.documents",
+        ),
+        # D1: a group the dev group includes is installed with it (PEP 735's include-group).
+        (
+            PYPROJECT + '\n[dependency-groups]\ndev = [{include-group = "documents"}]\n'
+            'documents = ["python-docx>=1.1,<2"]\n',
+            "dependency-groups.dev",
+        ),
+        # D1: "all" installs every group.
+        (
+            PYPROJECT.replace("[tool.uv]\n", '[tool.uv]\ndefault-groups = "all"\n') + DOCUMENTS,
+            "dependency-groups.documents",
+        ),
+        (PYPROJECT + "\n[tool.newtool]\nx = 1\n", "tool.newtool"),
+        ('new-top = "x"\n' + PYPROJECT, "new-top"),
+    ],
+    ids=[
+        "pytest settings",
+        "dependencies",
+        "the dev group",
+        "a default group",
+        "a group dev includes",
+        "default-groups all",
+        "an unknown tool table",
+        "a new top-level key",
+    ],
+)
+def test_a_pyproject_change_a_pytest_run_reads_names_the_key(head: str, read: str) -> None:
+    assert verdict.pyproject_reads(PYPROJECT, head).startswith(read)
+
+
+def test_the_dev_group_counts_even_when_default_groups_leave_it_out() -> None:
+    """Read conservatively: ``dev`` is installed beside every ``default-groups`` name, so a change
+    to it is read even where ``default-groups`` names only others on both sides."""
+    base = PYPROJECT.replace("[tool.uv]\n", '[tool.uv]\ndefault-groups = ["lint"]\n')
+    head = base + '\n[dependency-groups]\ndev = ["pytest>=7"]\n'
+    assert verdict.pyproject_reads(base, head) == "dependency-groups.dev"
+
+
+def test_a_group_the_dev_group_includes_is_read_even_when_only_it_changes() -> None:
+    """D1: the include-group closure, not the group's own name, says what is installed."""
+    base = PYPROJECT + '\n[dependency-groups]\ndev = [{include-group = "documents"}]\n'
+    head = base + 'documents = ["python-docx>=1.1,<2"]\n'
+    assert verdict.pyproject_reads(base, head) == "dependency-groups.documents"
+
+
+@pytest.mark.parametrize(
+    ("base", "head", "said"),
+    [
+        (None, PYPROJECT, "which the base has none of"),
+        (PYPROJECT, None, "which the head has none of"),
+        (PYPROJECT, PYPROJECT + "[unclosed\n", "whose head copy does not parse"),
+    ],
+    ids=["added", "deleted", "unparsable"],
+)
+def test_a_pyproject_side_that_cannot_be_compared_is_read_whole(
+    base: str | None, head: str | None, said: str
+) -> None:
+    assert said in verdict.pyproject_reads(base, head)
