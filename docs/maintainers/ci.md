@@ -815,7 +815,28 @@ before any job names it because the plan of a pull request is made by `main`'s `
 (`pr.yml`'s plan step): a toolchain word a job uses must be on `main` before the change that
 uses it, or the planner refuses that change's catalogue. `ffmpeg` (which brings `ffprobe`) is in the
 vocabulary before the suite names it for the same reason: the tests that build and read a video
-skip without it (#3918). Each job keeps the rest itself:
+skip without it (#3918).
+
+On Linux, `ffmpeg` comes from one pinned static build, not the archive. When `programs` names
+it, three steps before the programs step put that build's `ffmpeg` and `ffprobe` on PATH, so the
+programs step passes ffmpeg over:
+- **The build.** FFmpeg-Builds' month-end release (formerly BtbN/FFmpeg-Builds), GPL variant,
+  for the encoders Ubuntu's ffmpeg has (libx264, libopus). ffmpeg.org's download page links these
+  builds, and month-end tags are kept for years. `tools/ci/pinned-downloads.toml` records it:
+  URL, SHA-256, version, provenance, licence, and how to move it. It is fetched for CI alone,
+  never re-hosted or shipped.
+- **The check.** The bytes are held to the pinned SHA-256 before anything unpacks, a copy
+  restored from `actions/cache` included. Other bytes are a red under an `infrastructure` title,
+  never a fallback: they are not an outage. Only `bin/ffmpeg` and `bin/ffprobe` unpack, named by
+  the archive's own listing, and each must call itself the pinned version.
+- **The fallback.** A fetch that fails (the host down, the asset gone) falls back to the programs
+  step, which installs ffmpeg from the mirror as before. A warning and the job summary say the
+  shard is on the mirror, so an upstream outage is never worse than before the pin.
+- **The cache.** Only a push to `main` saves it, only when it was not restored, and only a copy
+  this step held to the pin. A pull request's run and a queue commit's only read it.
+
+The archive outage of 2026-11-19 reddened every suite shard at this step for over an hour, which
+is why. Each job keeps the rest itself:
 
 - the checkout, before the action, because a local action loads only from a checkout;
 - the Runner identity step, first, so a failed checkout still logs the image. The runner
@@ -3673,6 +3694,17 @@ It does not read, and review holds instead:
 Other OS packages (`apt-get`, `apk`, `brew`) are outside the install rule. They come with the
 image the job runs in, which is pinned by digest, or with the runner image, which every job
 logs in its Runner identity step.
+
+- **A program a workflow or a local action downloads and runs** is pinned by hand, since
+  Dependabot cannot move it: by its exact URL, its SHA-256 and its version, recorded in
+  `tools/ci/pinned-downloads.toml` with its provenance and licence. The pin-refresh job (#4585)
+  reads that file to say when one is stale. Today it holds one, the setup action's ffmpeg build.
+  To move the ffmpeg pin:
+  - pick a newer month-end `autobuild-YYYY-MM-DD-HH-MM` release, since only those are kept;
+  - take its `linux64-gpl` asset and read that asset's `digest` from
+    `gh api repos/FFmpeg-Builds/FFmpeg-Builds/releases/tags/<tag>`;
+  - change the URL, the digest, the version and both cache keys together, in the action and in
+    the record. The setup-step rails hold them to one another.
 
 ### How a refresh arrives
 
