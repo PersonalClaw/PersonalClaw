@@ -11,6 +11,7 @@ import {
   knownFindings,
   reducedMotionFindings,
   runMatrix,
+  settleMotion,
   stepVerdict,
 } from './surfaceChecks'
 
@@ -257,6 +258,78 @@ for (const theme of THEMES) test.describe(`the UI quality check reports every pl
     expect(failed, 'a row whose controls never hold still fails').not.toBeNull()
     expect(failed).toContain(`${where} at 1440px: the controls did not hold still`)
     expect(failed).toContain('probe-restless')
+  })
+
+  // An opened window, and the page after the keyboard walk, are read once they hold still, not a
+  // fixed beat later (#5851). A beat covered a fade that moves no box only by luck: Settings'
+  // opened windows fade in, and a fade read half done is a lower contrast than the one a user
+  // reads. Planted: a window that fades in over 500 ms, once as a CSS transition of its colour and
+  // opacity and once as a script's animation, and a 40 px control that grows to 48 px 300 ms after
+  // the walk's Escape. Each is read finished; a fade that outlasts the limit fails, naming what
+  // still ran.
+  const plantFade = (page: Page, how: 'css' | 'script', ms: number) =>
+    page.evaluate(
+      ([kind, length]) => {
+        const win = document.createElement('div')
+        win.id = 'probe-fade'
+        win.setAttribute('aria-label', 'probe fade')
+        win.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647;width:120px;height:40px;opacity:0;color:#777777'
+        document.body.append(win)
+        if (kind === 'css') {
+          win.style.transition = `opacity ${length}ms linear, color ${length}ms linear`
+          void win.offsetWidth
+          win.style.opacity = '1'
+          win.style.color = '#000000'
+        } else {
+          win.animate([{ opacity: 0 }, { opacity: 1 }], { duration: length, fill: 'forwards' })
+        }
+      },
+      [how, ms] as const,
+    )
+  const fadeNow = (page: Page) =>
+    page.evaluate(() => {
+      const s = getComputedStyle(document.getElementById('probe-fade') as HTMLElement)
+      return `${s.opacity} ${s.color}`
+    })
+
+  for (const how of ['css', 'script'] as const) {
+    test(`an opened window's ${how} fade is read finished, never half done (${theme})`, async ({ page }) => {
+      await loadClean(page, theme)
+      await plantFade(page, how, 500)
+      const started = Date.now()
+      await settleMotion(page, `probe fade [opened] (${theme})`)
+      expect(Date.now() - started, 'the fade was waited out').toBeGreaterThanOrEqual(400)
+      expect(await fadeNow(page)).toBe(how === 'css' ? '1 rgb(0, 0, 0)' : '1 rgb(119, 119, 119)')
+    })
+  }
+
+  test(`a fade that outlasts the limit fails the row, naming what still ran (${theme})`, async ({ page }) => {
+    await loadClean(page, theme)
+    await plantFade(page, 'script', 20_000)
+    const where = `probe fade [opened] (${theme}, endless)`
+    const failed = await settleMotion(page, where).then(
+      () => null,
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    )
+    expect(failed, 'a fade that never ends in time fails').not.toBeNull()
+    expect(failed).toContain(`${where}: the page did not hold still`)
+    expect(failed).toContain('div "probe fade"')
+  })
+
+  test(`a control that grows 300 ms after the walk's Escape is read at rest at every compact width (${theme})`, async ({ page }) => {
+    await loadClean(page, theme)
+    await page.evaluate(() => {
+      const b = document.createElement('button')
+      b.tabIndex = -1
+      b.textContent = 'probe-late'
+      b.style.cssText = 'position:fixed;left:0;bottom:0;z-index:2147483647;width:40px;height:40px'
+      document.body.append(b)
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') setTimeout(() => { b.style.width = '48px'; b.style.height = '48px' }, 300)
+      })
+    })
+    const at = await targetsAt(page, { where: `#/dashboard (${theme}, a late move)`, theme, kind: 'route', route: 'dashboard' })
+    for (const w of COMPACT_WIDTHS) expect(at(w), `the control at rest at ${w} px`).not.toContain('probe-late')
   })
 
   test(`a baselined finding passes, a new one fails, and a fixed one fails until its entry goes (${theme})`, async () => {

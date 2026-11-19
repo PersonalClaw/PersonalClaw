@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, SUBSTATE_ROUTES, THEMES, type Theme } from './routes'
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
 import { idleRunState } from '../src/lib/workPhase'
-import { BASELINED_STEPS, runMatrix, stepVerdict, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
+import { BASELINED_STEPS, runMatrix, settleMotion, stepVerdict, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
 import { FIXED_WAITING, GARDEN_FOLDER_TREE, GARDEN_READS, LEARNING_WEEK, NEEDS_YOU_READS, PROJECT_PAGE, PROJECTS_LIST, STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
 import { FIXED_CLOCK } from './fixedClock'
 import { apiGet } from './pairedApi'
@@ -545,7 +545,9 @@ for (const theme of THEMES) {
         const opened = await opener.open(page)
         // A recipe whose target is absent must not report a clean surface: it skips with its reason.
         test.skip(opened !== true, opened === true ? '' : `${opener.label}: ${opened.skip}`)
-        await page.waitForTimeout(700)
+        // The window it opened is read once it holds still: its entrance fade finished and its
+        // controls at rest, not a fixed 700 ms later (#5851).
+        await settleMotion(page, `${opener.label} [opened] (${theme})`)
         await assertMounted(page, before, opener.label)
         await checkSurface(
           page,
