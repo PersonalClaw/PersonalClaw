@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import personalclaw.mcp_workflows as mw
+import personalclaw.workflows.agent_plans as ap
 from personalclaw.workflows.matcher import MATCH_THRESHOLD
 
 
@@ -40,31 +40,31 @@ class _FakeMemory:
 
 def test_live_embedder_returns_the_wired_embed(monkeypatch: Any) -> None:
     svc = _FakeMemory(can_vector_search=True)
-    monkeypatch.setattr(mw, "_memory_service", lambda: svc)
-    assert mw._live_embedder() == svc.embed
+    monkeypatch.setattr(ap, "_memory_service", lambda: svc)
+    assert ap._live_embedder() == svc.embed
 
 
 def test_live_embedder_is_none_when_vector_search_is_off(monkeypatch: Any) -> None:
-    monkeypatch.setattr(mw, "_memory_service", lambda: _FakeMemory(can_vector_search=False))
-    assert mw._live_embedder() is None
+    monkeypatch.setattr(ap, "_memory_service", lambda: _FakeMemory(can_vector_search=False))
+    assert ap._live_embedder() is None
 
 
 def test_live_embedder_is_none_with_no_service(monkeypatch: Any) -> None:
-    monkeypatch.setattr(mw, "_memory_service", lambda: None)
-    assert mw._live_embedder() is None
+    monkeypatch.setattr(ap, "_memory_service", lambda: None)
+    assert ap._live_embedder() is None
 
 
 # ── T5: the live summarizer wiring ──
 
 
 def test_live_summarizer_is_a_callable_when_a_service_is_wired(monkeypatch: Any) -> None:
-    monkeypatch.setattr(mw, "_memory_service", lambda: _FakeMemory())
-    assert callable(mw._live_summarizer())
+    monkeypatch.setattr(ap, "_memory_service", lambda: _FakeMemory())
+    assert callable(ap._live_summarizer())
 
 
 def test_live_summarizer_is_none_with_no_service(monkeypatch: Any) -> None:
-    monkeypatch.setattr(mw, "_memory_service", lambda: None)
-    assert mw._live_summarizer() is None
+    monkeypatch.setattr(ap, "_memory_service", lambda: None)
+    assert ap._live_summarizer() is None
 
 
 # ── the entity resolver wiring (degraded → None) ──
@@ -72,20 +72,20 @@ def test_live_summarizer_is_none_with_no_service(monkeypatch: Any) -> None:
 
 def test_entity_resolver_returns_resolve_entities_when_a_graph_is_wired(monkeypatch: Any) -> None:
     svc = _FakeMemory(has_graph=True)
-    monkeypatch.setattr(mw, "_memory_service", lambda: svc)
-    assert mw._entity_resolver() == svc.resolve_entities
+    monkeypatch.setattr(ap, "_memory_service", lambda: svc)
+    assert ap._entity_resolver() == svc.resolve_entities
 
 
 def test_entity_resolver_is_none_without_a_graph(monkeypatch: Any) -> None:
-    monkeypatch.setattr(mw, "_memory_service", lambda: _FakeMemory(has_graph=False))
-    assert mw._entity_resolver() is None
+    monkeypatch.setattr(ap, "_memory_service", lambda: _FakeMemory(has_graph=False))
+    assert ap._entity_resolver() is None
 
 
 # ── the 0.62 tie-break threshold, read from live config ──
 
 
 def test_match_threshold_is_the_documented_default() -> None:
-    assert mw._match_threshold() == 0.62 == MATCH_THRESHOLD
+    assert ap._match_threshold() == 0.62 == MATCH_THRESHOLD
 
 
 # ── the matcher call actually FORWARDS the live injections (the load-bearing clause) ──
@@ -93,9 +93,9 @@ def test_match_threshold_is_the_documented_default() -> None:
 
 def test_match_library_forwards_live_embedder_summarizer_and_threshold(monkeypatch: Any) -> None:
     svc = _FakeMemory(can_vector_search=True)
-    monkeypatch.setattr(mw, "_memory_service", lambda: svc)
+    monkeypatch.setattr(ap, "_memory_service", lambda: svc)
     # Isolate the wiring from library loading: one sentinel profile is enough to reach the call.
-    monkeypatch.setattr(mw, "_library_profiles", lambda **_k: [object()])
+    monkeypatch.setattr(ap, "_library_profiles", lambda **_k: [object()])
 
     captured: dict[str, Any] = {}
 
@@ -120,7 +120,7 @@ def test_match_library_forwards_live_embedder_summarizer_and_threshold(monkeypat
     monkeypatch.setattr("personalclaw.workflows.matcher.match_template", fake_match_template)
 
     classified = type("C", (), {"shape": "make"})()
-    result = mw._match_library("build a log parser", classified)
+    result = ap._match_library("build a log parser", classified)
 
     assert result == "MATCH"
     assert captured["embedder"] == svc.embed  # T4 wired to the LIVE embedder
@@ -131,8 +131,8 @@ def test_match_library_forwards_live_embedder_summarizer_and_threshold(monkeypat
 
 
 def test_match_library_is_none_when_no_profiles(monkeypatch: Any) -> None:
-    monkeypatch.setattr(mw, "_library_profiles", lambda **_k: [])
-    assert mw._match_library("anything", type("C", (), {"shape": ""})()) is None
+    monkeypatch.setattr(ap, "_library_profiles", lambda **_k: [])
+    assert ap._match_library("anything", type("C", (), {"shape": ""})()) is None
 
 
 # ── the preamble wiring: the live resolver reaches build_preamble_node, node lands first ──
@@ -140,7 +140,7 @@ def test_match_library_is_none_when_no_profiles(monkeypatch: Any) -> None:
 
 def test_prepend_grounding_preamble_wires_the_live_resolver(monkeypatch: Any) -> None:
     svc = _FakeMemory(has_graph=True)
-    monkeypatch.setattr(mw, "_memory_service", lambda: svc)
+    monkeypatch.setattr(ap, "_memory_service", lambda: svc)
 
     captured: dict[str, Any] = {}
 
@@ -151,7 +151,7 @@ def test_prepend_grounding_preamble_wires_the_live_resolver(monkeypatch: Any) ->
     monkeypatch.setattr("personalclaw.workflows.preamble.build_preamble_node", fake_build)
 
     root = {"kind": "action", "id": "work", "config": {}}
-    result = mw._prepend_grounding_preamble("research Acme Corp", root)
+    result = ap._prepend_grounding_preamble("research Acme Corp", root)
 
     assert captured["resolver"] == svc.resolve_entities  # the LIVE resolver was wired in
     assert result != root  # the tree was rewritten
@@ -159,10 +159,10 @@ def test_prepend_grounding_preamble_wires_the_live_resolver(monkeypatch: Any) ->
 
 
 def test_prepend_grounding_preamble_returns_root_unchanged_when_no_node(monkeypatch: Any) -> None:
-    monkeypatch.setattr(mw, "_memory_service", lambda: None)
+    monkeypatch.setattr(ap, "_memory_service", lambda: None)
     monkeypatch.setattr("personalclaw.workflows.preamble.build_preamble_node", lambda *a, **k: None)
     root = {"kind": "action", "id": "work", "config": {}}
-    assert mw._prepend_grounding_preamble("nothing to ground", root) is root
+    assert ap._prepend_grounding_preamble("nothing to ground", root) is root
 
 
 # ── topic extraction feeding the grill ──
@@ -172,14 +172,14 @@ def test_plan_topics_is_wired_to_extract_topics(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         "personalclaw.workflows.preamble.extract_topics", lambda goal: ["alpha", "beta"]
     )
-    assert mw._plan_topics("anything") == ["alpha", "beta"]
+    assert ap._plan_topics("anything") == ["alpha", "beta"]
 
 
 # ── brownfield: codebase_context populated only when a project BINDS a workspace ──
 
 
 def test_codebase_context_is_empty_for_no_project() -> None:
-    assert mw._codebase_context_for("") == ""
+    assert ap._codebase_context_for("") == ""
 
 
 def test_codebase_context_is_empty_when_the_project_binds_no_workspace(monkeypatch: Any) -> None:
@@ -188,7 +188,7 @@ def test_codebase_context_is_empty_when_the_project_binds_no_workspace(monkeypat
             return type("P", (), {"workspace_dir": ""})()
 
     monkeypatch.setattr("personalclaw.tasks.hierarchy.HierarchyStore", _Store)
-    assert mw._codebase_context_for("proj") == ""
+    assert ap._codebase_context_for("proj") == ""
 
 
 def test_codebase_context_synthesizes_a_block_for_a_bound_workspace(
@@ -205,5 +205,5 @@ def test_codebase_context_synthesizes_a_block_for_a_bound_workspace(
             return type("P", (), {"workspace_dir": str(tmp_path)})()
 
     monkeypatch.setattr("personalclaw.tasks.hierarchy.HierarchyStore", _Store)
-    block = mw._codebase_context_for("proj")
+    block = ap._codebase_context_for("proj")
     assert isinstance(block, str) and block != ""  # a populated brownfield block, from the tree

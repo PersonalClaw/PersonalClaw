@@ -669,12 +669,16 @@ def test_the_tool_server_asks_the_gateway_and_never_an_engine_of_its_own(
     """🔴 Before: each of these was answered by the tool server's own engine, which holds no
     definitions and drives no run."""
     from personalclaw import mcp_workflows, mcp_workflows_gateway
+    from personalclaw.workflows import agent_plans
 
     monkeypatch.setattr(mcp_core, "_SERVES_AN_AGENT_CLI", True)
     monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", KEY)
     monkeypatch.setattr(mcp_workflows, "service", _NotHere())
     monkeypatch.setattr(mcp_workflows, "_on_engine", _NotHere().__getattr__)
     monkeypatch.setattr(mcp_workflows, "_run", _NotHere().__getattr__)
+    # The planner left for workflows.agent_plans with its own `service` and `_run` (#5813).
+    monkeypatch.setattr(agent_plans, "service", _NotHere())
+    monkeypatch.setattr(agent_plans, "_run", _NotHere().__getattr__)
     made: list[tuple[str, str]] = []
 
     def answering(verb: str):

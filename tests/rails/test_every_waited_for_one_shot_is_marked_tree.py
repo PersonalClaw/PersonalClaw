@@ -15,7 +15,7 @@ from every_waited_for_one_shot_is_marked_shared import _SRC
 #: (file, enclosing function) of each one-shot call a person waits for.
 WAITED_FOR = [
     ("nl_to_cron.py", "ask"),  # a chat's automation tool turning a phrase into a schedule
-    ("mcp_workflows.py", "summarize"),  # a chat's workflow tool matching a template
+    ("workflows/agent_plans.py", "summarize"),  # a chat's workflow tool matching a template
     ("dashboard/handlers/loop_routes.py", "_ask"),  # the loop composer's task analysis
     ("inbox_service.py", "draft_reply"),  # the Inbox page's Draft reply
     ("inbox_service.py", "_within_limit"),  # …asked again within her word limit

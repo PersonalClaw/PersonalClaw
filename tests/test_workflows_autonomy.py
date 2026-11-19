@@ -585,7 +585,7 @@ def test_the_counterfactual_reports_the_stops_unattended_would_skip():
 def test_the_plan_surface_carries_the_interrupt_verdicts():
     """The production reader. `_autonomy_surface` is the only consumer of this module in the run-up
     to approval; a verdict it does not emit is a verdict nobody sees."""
-    from personalclaw.mcp_workflows import _autonomy_surface
+    from personalclaw.workflows.agent_plans import _autonomy_surface
 
     surface = _autonomy_surface({"inputs": {}, "root": CREDENTIAL_SPEC["root"], "metadata": {}})
     assert surface["unattended_interrupts"] == [

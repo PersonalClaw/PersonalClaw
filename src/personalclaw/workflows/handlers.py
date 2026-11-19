@@ -1075,7 +1075,8 @@ async def api_agent_plan(request: web.Request) -> web.Response:
     chat's plan reads none of her memory. The body is the tool's arguments, and the answer the plan
     the tool answers in the gateway (``plan``) and the line it opens with (``summary``), or the
     planner's refusal. It writes nothing of hers, so it is not guarded."""
-    from personalclaw import mcp_core, mcp_workflows
+    from personalclaw import mcp_core
+    from personalclaw.workflows.agent_plans import plan_answer
 
     body = await json_object_body(request)
     session_key = approval_answer.work_of_request(request)
@@ -1083,7 +1084,7 @@ async def api_agent_plan(request: web.Request) -> web.Response:
     def plan() -> tuple[dict[str, Any], str]:
         token = mcp_core.set_current_session_key(session_key)
         try:
-            return mcp_workflows.plan_answer(body)
+            return plan_answer(body)
         finally:
             mcp_core.reset_current_session_key(token)
 

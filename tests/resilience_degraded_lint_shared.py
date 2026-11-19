@@ -77,7 +77,7 @@ _CALL_SITE_SURFACES = {
     # floor is BUILT IN — a missing/failing summarizer degrades to the deterministic
     # matcher tiers (T1-T3) and the keyword scorer stays authoritative, so the caller
     # always gets a bounded match result rather than an error.
-    "mcp_workflows.py": "assistant_reasoning",
+    "workflows/agent_plans.py": "assistant_reasoning",
     "web/fetch.py": "assistant_reasoning",
     # The scheduled-report runner. Its own surface rather than the reasoning axis: the
     # honest floor is a DEFERRED run (no stamp, no watermark advance, retried next window), which
