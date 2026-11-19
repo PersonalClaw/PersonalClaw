@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from personalclaw.durability import numbered_rows
-from personalclaw.learning.decay import DecayVerdict, active_days_between, evaluate
+from personalclaw.relevance_decay import DecayVerdict, active_days_between, evaluate
 
 logger = logging.getLogger(__name__)
 

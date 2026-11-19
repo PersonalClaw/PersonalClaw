@@ -60,7 +60,7 @@ def test_the_ladder_and_the_curve_cannot_disagree():
     The code this replaces had a day-threshold ladder and no curve at all, so
     "stale" and "decayed" were unrelated notions.
     """
-    from personalclaw.learning.decay import evaluate
+    from personalclaw.relevance_decay import evaluate
 
     healthy = evaluate(kind="skill", active_days_since_use=1)
     assert C.target_state(healthy, C.STATE_ACTIVE) == C.STATE_ACTIVE
@@ -69,7 +69,7 @@ def test_the_ladder_and_the_curve_cannot_disagree():
 
 
 def test_a_review_verdict_does_not_change_state():
-    from personalclaw.learning.decay import evaluate
+    from personalclaw.relevance_decay import evaluate
 
     review = evaluate(kind="skill", active_days_since_use=200, stability=0.8)
     assert review.review

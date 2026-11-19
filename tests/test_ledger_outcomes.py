@@ -14,7 +14,7 @@ What is asserted here, and why each clause is load-bearing:
   membership, so a second resolver pass writes nothing. Driven by resolving the SAME question
   twice, not by reading the code;
 * `measured` vs `inconclusive` drive DIFFERENT DECAY — the two resolutions map onto different
-  `learning.decay` profiles, and at the same age the kernel keeps the measured evidence while
+  `relevance_decay` profiles, and at the same age the kernel keeps the measured evidence while
   pruning the inconclusive one. The direction is railed against the kernel's own table, so the
   two cannot drift into agreeing;
 * the ledger-sourced measurement — ground truth read off the producer's own log, ordered by FILE
@@ -30,7 +30,7 @@ from typing import Any
 
 import pytest
 
-from personalclaw.learning import decay
+from personalclaw import relevance_decay as decay
 from personalclaw.ledger import outcomes
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import store as store_mod

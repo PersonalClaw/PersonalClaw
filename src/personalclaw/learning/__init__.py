@@ -13,7 +13,7 @@ place each:
 - **What am I allowed to look at?** → :mod:`personalclaw.learning.hygiene`
 - **Where does the raw signal land?** → :mod:`personalclaw.learning.staging`
 - **How does a change get made?** → :mod:`personalclaw.learning.proposals`
-- **Is it still relevant?** → :mod:`personalclaw.learning.decay` + `.usage` + `.curator`
+- **Is it still relevant?** → :mod:`personalclaw.relevance_decay` + `.usage` + `.curator`
 - **What reaches the prompt?** → :mod:`personalclaw.learning.surfacing`
 
 A cadence composes them in that order: gate first (cheapest, and a denial means
@@ -28,9 +28,6 @@ on its own.
 from __future__ import annotations
 
 from personalclaw.learning.curator import Candidate, CuratorReport, MutationLog, run_aging
-from personalclaw.learning.decay import DecayVerdict
-from personalclaw.learning.decay import evaluate as evaluate_decay
-from personalclaw.learning.decay import strength
 from personalclaw.learning.gate import (
     Cadence,
     GateDecision,
@@ -68,6 +65,9 @@ from personalclaw.learning.surfacing import (
     classify_intent,
 )
 from personalclaw.learning.usage import UsageRecord, UsageStore, promotion_ready
+from personalclaw.relevance_decay import DecayVerdict
+from personalclaw.relevance_decay import evaluate as evaluate_decay
+from personalclaw.relevance_decay import strength
 
 __all__ = [
     "Allocation",

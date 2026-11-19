@@ -1337,7 +1337,7 @@ class MemoryService:
         write side — a world condition that got promoted before synthesis could
         collapse it must not become durable guidance either.
 
-        Ranked by heat, which is permitted: `learning/decay.py`'s doctrine bars
+        Ranked by heat, which is permitted: `relevance_decay.py`'s doctrine bars
         *strength* (the bare recency curve) from rank, and heat weights its usage
         term above its recency term precisely so recency can break a tie but never
         create one. The kernel's prune/review VERDICT is not consulted here at all.

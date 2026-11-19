@@ -103,7 +103,7 @@ def decay_profile(kind: "MemoryKind") -> str:
     except (KeyError, ValueError) as exc:
         raise ValueError(
             f"no decay profile for memory kind {kind!r} — add it to "
-            "memory_record._DECAY_PROFILES and learning.decay.KIND_MULTIPLIERS"
+            "memory_record._DECAY_PROFILES and relevance_decay.KIND_MULTIPLIERS"
         ) from exc
 
 
@@ -350,11 +350,11 @@ class MemoryRecord:
 
         The WEIGHTS are unchanged, and that is load-bearing: usage is weighted above
         recency (0.7 vs 0.5) so strength can break a ranking tie but never create one.
-        See `learning/decay.py`'s doctrine note.
+        See `relevance_decay.py`'s doctrine note.
         """
         import math as _math
 
-        from personalclaw.learning.decay import strength as _strength
+        from personalclaw.relevance_decay import strength as _strength
 
         visits = float(self.recall_count + self.visit_count)
         # diminishing-returns visit term (log) so a runaway counter can't dominate

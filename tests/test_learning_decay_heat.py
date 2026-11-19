@@ -17,7 +17,6 @@ import math
 
 import pytest
 
-from personalclaw.learning.decay import KIND_MULTIPLIERS, evaluate, strength
 from personalclaw.memory_record import (
     _DECAY_PROFILES,
     MemoryKind,
@@ -26,6 +25,7 @@ from personalclaw.memory_record import (
     decay_profile,
 )
 from personalclaw.memory_service import MemoryService
+from personalclaw.relevance_decay import KIND_MULTIPLIERS, evaluate, strength
 from personalclaw.vector_memory import VectorMemoryStore
 
 
@@ -276,7 +276,8 @@ def test_no_memory_ranking_asks_the_eviction_verdict(svc, monkeypatch, rank):
     and neither is asked; the curator, whose job the verdict is, asks it for each candidate."""
     from every_name import put_in_every_name
 
-    from personalclaw.learning import curator, decay
+    from personalclaw import relevance_decay as decay
+    from personalclaw.learning import curator
 
     asked: list[dict] = []
     built: list[decay.DecayVerdict] = []

@@ -46,7 +46,7 @@ names the wrong one. The right axis is the *capture* side: every time the world
 produces this rule again, that is one observation, and the dedup path that used
 to drop a repeat silently was throwing that signal away.
 
-**Recency rides the ONE decay kernel.** :mod:`personalclaw.learning.decay` is the
+**Recency rides the ONE decay kernel.** :mod:`personalclaw.relevance_decay` is the
 single answer to "is this still relevant?", and a second private curve here would
 be the third-implementation defect that module was written to end. Human-authored
 lessons ride it at ``importance=1.0`` — five times slower, still not never, which
@@ -64,7 +64,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from personalclaw.learning import decay
+from personalclaw import relevance_decay as decay
 from personalclaw.learning.hygiene import MIN_EVIDENCE_DEFAULT
 
 logger = logging.getLogger(__name__)
