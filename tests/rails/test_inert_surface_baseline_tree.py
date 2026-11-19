@@ -16,6 +16,7 @@ a population). ``tests/test_inert_surface_baseline.py`` proves each detector on 
 
 from __future__ import annotations
 
+import ast
 import re
 import textwrap
 from functools import cache
@@ -23,19 +24,25 @@ from pathlib import Path
 
 import pytest
 import site_baseline
+import source_index
 from rails_repo import REPO
 
 from scripts import generate_inert_surface_baseline as inert
 from scripts.generate_inert_surface_baseline import (
     KIND_CONFIG_READER,
-    _attribute_names_in_src,
+    KIND_ENUM,
     _enum_members,
-    _inert_enum_members,
     _iterated_enum_classes,
     _parse,
     _src_py_files,
     build_inventory,
 )
+
+#: The census reads the package's trees from the suite's shared index, which the runtest hook
+#: warms before this module's first test, outside every test's time (``tests/source_index.py``):
+#: the tests below walk the trees and parse none. A file the index does not hold, as a planted
+#: tree's, the census parses itself.
+inert.TREES = lambda path: source_index.tree(path) if source_index.holds(path) else None
 
 
 @cache
@@ -44,7 +51,20 @@ def _inventory() -> dict:
     return build_inventory()
 
 
-@pytest.mark.timeout(140)
+def test_the_census_reads_the_suites_trees_and_parses_a_planted_file_itself(tmp_path):
+    """The census takes a package file's tree from the shared index, the same object, so this
+    module parses none of the package inside a test's time; a file the index does not hold it
+    parses itself. Without the first, every test here still passes, each a parse slower."""
+    path = source_index.package_files()[0]
+    assert _parse.__wrapped__(path) is source_index.tree(path)
+    planted = tmp_path / "planted.py"
+    planted.write_text("PLANTED = 1\n", encoding="utf-8")
+    assert not source_index.holds(planted)
+    tree = _parse.__wrapped__(planted)
+    assert tree is not None and ast.unparse(tree) == "PLANTED = 1"
+
+
+@pytest.mark.timeout(100)
 def test_every_inert_surface_is_listed_with_its_reason():
     """Every surface the census finds is a line of :data:`inert.SITES`, and every line is a
     surface it finds. A new one fails by name: add the missing writer or reader. A wired one
@@ -89,7 +109,7 @@ def _planted(root: Path) -> list[str]:
     return [site for site in inert.sites(build_inventory(root)) if site.startswith(planted)]
 
 
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(100)
 def test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line(tmp_path):
     """The positive control, on the real list: the tree's surfaces with a planted module's fail,
     naming its unread enum member and its unimported export, and its read member is no site; the
@@ -116,7 +136,7 @@ def test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line(tmp_path):
     assert (REPO / inert.SITES).read_text(encoding="utf-8") == listed
 
 
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(100)
 def test_the_real_config_reader_census_fires_and_clears_an_accessor():
     """Vacuity + real-tree calibration in both directions."""
     inv = _inventory()
@@ -150,28 +170,19 @@ def test_the_enum_census_still_finds_a_nontrivial_population():
     census reporting nothing while every other kind still looked healthy. The census must
     still SEE many enum classes and still REPORT some inert members.
 
-    🔴 The timeout is RAISED, not the work reduced, and the number is measured — the same
-    ruling `test_render_is_deterministic` records above, for the same reason and at the same
-    number. This is the file's second-heaviest test: it walks and parses every `src` file for
-    the `>50` claim, then `build_inventory()` walks the tree AGAIN. Measured through pytest at
-    load average 40: **19.2s** of call time alone, and **28.5s** running with the rest of this
-    file — second only to the 42.8s of `test_render_is_deterministic`, which is already at 300
-    for having crossed 120s in CI twice (#1205, #1222). CI starved this one past 120s the same
-    way. Both assertions are untouched; only the wall-clock budget moves.
-
-    Neither half of the work can be dropped without gutting the guard. The `>50` sweep is
-    what proves the walk still SEES the population, and the `>= 5` half has to read the real
-    census output — a stubbed or cached inventory would assert on the stub, which is exactly
-    the suspiciously-clean census this test exists to catch. `_parse()` is deliberately
-    uncached tree-wide (see `test_render_is_deterministic`: both builds have to be real), so
-    there is no memoization to lean on here either.
+    Neither half can be dropped without gutting the guard. The `>50` sweep proves the walk
+    still SEES the population, and the `>= 5` half reads the real tree's census, the one every
+    test here reads: built once by :func:`_inventory`, from the same trees, not a stub. It used
+    to build the census a second time for itself (19.2 s of call time at load average 40, and
+    CI starved it past 120 s); a second build of the same immutable trees proves nothing the
+    first does not.
     """
     files = _src_py_files()
     classes = {
         cls for f in files if (tree := _parse(f)) is not None for cls, _ in _enum_members(tree)
     }
     assert len(classes) > 50, f"only {len(classes)} enum classes seen — the walk is broken"
-    assert build_inventory()["totals"]["by_kind"]["enum"] >= 5, (
+    assert _inventory()["totals"]["by_kind"]["enum"] >= 5, (
         "the enum census reports (almost) nothing — whole-class clearing has over-reached; "
         "shrink the detected shapes rather than trusting a suspiciously clean census"
     )
@@ -180,7 +191,7 @@ def test_the_enum_census_still_finds_a_nontrivial_population():
 # A census of the tree, moved here from tests/test_inert_surface_baseline.py so it runs once, in
 # the rails job, not in every suite leg (#3929): it took 57 s of that file's 66 s on a Linux leg
 # (2026-10-24), and 85-95 s under coverage (2026-10-14/15).
-@pytest.mark.timeout(200)
+@pytest.mark.timeout(100)
 def test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen():
     """The finding itself, on the real tree: ``Lineage`` is recognised as iterated (its
     validation set in ``workflows/publish.py``) and no ``Lineage`` member is reported.
@@ -200,5 +211,10 @@ def test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen():
     publish = next(f for f in files if f.as_posix().endswith("workflows/publish.py"))
     assert (publish.resolve(), "Lineage") in iterated
 
-    inert = {surface for _, surface in _inert_enum_members(files, _attribute_names_in_src(files))}
-    assert not [s for s in inert if s.startswith("Lineage.")], sorted(inert)
+    reported = [
+        surface
+        for bucket in _inventory()["per_file"].values()
+        for surface in bucket["surfaces"]
+        if surface.startswith(f"{KIND_ENUM}:Lineage.")
+    ]
+    assert not reported, reported

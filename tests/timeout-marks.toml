@@ -56,28 +56,28 @@ reason = "walks the shipped 20,000-block cap itself, which is the point of the t
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_every_inert_surface_is_listed_with_its_reason"
-cap = 140
-reason = "the inert-surface census: every export of the package read against every signature, built once for the module by whichever of its tests runs first (_inventory); 68 s on CI at worst (a merge leg, 2026-10-24)"
+cap = 100
+reason = "the inert-surface census, built once a worker by whichever of its tests runs first (_inventory), from the suite's shared trees, which are parsed outside the test's time: every export of the package read against every signature; 21.3 s alone locally at load average 40, where main's took 32 s, which CI ran in 62 s (rails leg 2, run 44459096797)"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line"
-cap = 120
-reason = "the inert-surface census, built once for the module by whichever of its tests runs first (_inventory); 57 s on CI at worst (a merge leg, 2026-10-24)"
+cap = 100
+reason = "the inert-surface census, built once a worker by whichever of its tests runs first (_inventory), from the suite's shared trees, which are parsed outside the test's time; 21.0 s alone locally at load average 40, where main's took 32 s, which CI ran in 62 s (rails leg 2, run 44459096797)"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_real_config_reader_census_fires_and_clears_an_accessor"
-cap = 120
-reason = "the inert-surface census, built once for the module by whichever of its tests runs first (_inventory); 57 s on CI at worst (a merge leg, 2026-10-24)"
+cap = 100
+reason = "the inert-surface census, built once a worker by whichever of its tests runs first (_inventory), from the suite's shared trees, which are parsed outside the test's time; 19.5 s alone locally at load average 40, where main's took 32 s, which CI ran in 62 s (rails leg 2, run 44459096797)"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen"
-cap = 200
-reason = "the inert-surface census over the package, against a planted lineage; 100 s on CI at worst (breadth's coverage leg, 2026-10-24); a rail since #5472, run once a run"
+cap = 100
+reason = "the inert-surface census, built once a worker by whichever of its tests runs first (_inventory), from the suite's shared trees, which are parsed outside the test's time, and a sweep of the same trees for the lineage's iteration sites; 22.6 s alone locally at load average 40, where main's took 32 s, which CI ran in 62 s (rails leg 2, run 44459096797)"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_enum_census_still_finds_a_nontrivial_population"
 cap = 100
-reason = "the enum census over every module of the package; 49 s on CI at worst (a merge leg, 2026-10-24)"
+reason = "the inert-surface census, built once a worker by whichever of its tests runs first (_inventory), from the suite's shared trees, which are parsed outside the test's time, and an enum sweep of the same trees; 20.9 s alone locally at load average 40, where main's took 32 s, which CI ran in 62 s (rails leg 2, run 44459096797)"
 
 [[mark]]
 site = "tests/test_optimize_harness_runs_to_its_proposal.py::test_max_iterations_is_the_number_of_candidates_the_search_tries"

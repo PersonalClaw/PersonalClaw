@@ -100,7 +100,7 @@ import dataclasses
 import functools
 import json
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -154,18 +154,47 @@ def _rel(path: Path) -> str:
     return path.resolve().relative_to(_repo_root()).as_posix()
 
 
+#: Where a parsed file comes from before this module parses it. A caller that already holds the
+#: package's trees sets it (the suite's shared index, ``tests/source_index.py``, from the census's
+#: rail), and it answers None for a file it does not hold. The trees it hands over are shared, and
+#: nothing here changes a tree.
+TREES: Callable[[Path], ast.Module | None] | None = None
+
+
 @functools.cache
 def _parse(path: Path) -> ast.Module | None:
-    """Parse one source file once per process.
+    """Parse one source file once per process, or take it from :data:`TREES`.
 
     The census's kinds revisit the same production tree, and its tests intentionally
     build it more than once. Source paths are immutable during one generator/test process,
     so reparsing them adds cost without adding coverage.
     """
+    if TREES is not None and (held := TREES(path)) is not None:
+        return held
     try:
         return ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError):
         return None
+
+
+#: Each parsed file's nodes, in ``ast.walk``'s order, by the tree's ``id``, beside the tree
+#: itself so the ``id`` cannot be reused while its entry is held.
+_WALKED: dict[int, tuple[ast.AST, tuple[ast.AST, ...]]] = {}
+
+
+def _walk(tree: ast.AST) -> tuple[ast.AST, ...]:
+    """Every node of one parsed tree (a file, or a function in one), walked once per process.
+
+    Each kind of the census reads every production file, and each used to walk every file's
+    whole tree again: about 23M node visits a build, most of the census's time. The trees come
+    from :func:`_parse`, which keeps one per file for the process, so their walks can be kept
+    beside them. The order is ``ast.walk``'s, so a kind that reads the first match reads the same
+    node it did."""
+    held = _WALKED.get(id(tree))
+    if held is None or held[0] is not tree:
+        held = (tree, tuple(ast.walk(tree)))
+        _WALKED[id(tree)] = held
+    return held[1]
 
 
 def _src_py_files() -> list[Path]:
@@ -189,7 +218,7 @@ def _attribute_names_in_src(files: list[Path]) -> set[str]:
         tree = _parse(f)
         if tree is None:
             continue
-        for node in ast.walk(tree):
+        for node in _walk(tree):
             if isinstance(node, ast.Attribute):
                 names.add(node.attr)
     return names
@@ -216,7 +245,7 @@ def _load_body_kwarg_names(loader_tree: ast.Module) -> set[str]:
     """
     names: set[str] = set()
     found: set[str] = set()
-    for cls in ast.walk(loader_tree):
+    for cls in _walk(loader_tree):
         if isinstance(cls, ast.ClassDef) and cls.name == "AppConfig":
             for item in cls.body:
                 if (
@@ -269,7 +298,7 @@ def _inert_config_surfaces() -> list[tuple[str, str]]:
 def _enum_members(tree: ast.Module) -> list[tuple[str, str]]:
     """(class_name, member) for every public member of every Enum subclass in ``tree``."""
     out: list[tuple[str, str]] = []
-    for node in ast.walk(tree):
+    for node in _walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
         base_names = {
@@ -335,7 +364,7 @@ def _enum_name_bindings(
     here = path.resolve()
     for name in enum_names.get(here, set()):
         classes[name] = here
-    for node in ast.walk(tree):
+    for node in _walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 target = _module_file(alias.name)
@@ -369,7 +398,7 @@ def _iterated_expressions(tree: ast.Module) -> list[ast.expr]:
     async), each comprehension's ``for ... in <expr>``, and ``list/tuple/set/frozenset/
     sorted/iter/reversed/enumerate(<expr>)``."""
     out: list[ast.expr] = []
-    for node in ast.walk(tree):
+    for node in _walk(tree):
         if isinstance(node, (ast.For, ast.AsyncFor)):
             out.append(node.iter)
         elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
@@ -526,7 +555,7 @@ def _inert_enum_surfaces(files: list[Path], attr_names: set[str]) -> list[tuple[
 
 def _tuple_string_members(tree: ast.Module, name: str) -> list[str]:
     """String members of a module-level ``NAME = (...)`` tuple/list assignment."""
-    for node in ast.walk(tree):
+    for node in _walk(tree):
         if isinstance(node, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id == name for t in node.targets
         ):
@@ -568,7 +597,7 @@ def _inert_trigger_kind_surfaces() -> list[tuple[str, str]]:
         tree = _parse(f)
         if tree is None:
             continue
-        for node in ast.walk(tree):
+        for node in _walk(tree):
             if (
                 isinstance(node, ast.Constant)
                 and isinstance(node.value, str)
@@ -607,7 +636,7 @@ def _editable_registry_keys() -> tuple[Path, list[str]]:
 
 def _editable_config_keys(tree: ast.Module) -> list[str]:
     """String keys of the module-level ``_EDITABLE_CONFIG`` dict (Assign or AnnAssign)."""
-    for node in ast.walk(tree):
+    for node in _walk(tree):
         value = None
         if isinstance(node, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id == "_EDITABLE_CONFIG" for t in node.targets
@@ -728,7 +757,7 @@ def _terminal_attribute_reads(
     ``personalclaw.sandbox.wrap_argv`` therefore yields ``wrap_argv``, not the intermediate
     module component ``sandbox``; ``cfg.agent.sandbox`` yields the terminal config field.
     """
-    indexed = nodes if nodes is not None else tuple(ast.walk(tree))
+    indexed = nodes if nodes is not None else _walk(tree)
     parents = {id(child): parent for parent in indexed for child in ast.iter_child_nodes(parent)}
     out: list[ast.Attribute] = []
     for node in indexed:
@@ -747,7 +776,7 @@ def _imported_module_chains(
 ) -> set[tuple[str, ...]]:
     """Attribute chains that name imported modules rather than config fields."""
     modules: set[tuple[str, ...]] = set()
-    for node in nodes if nodes is not None else ast.walk(tree):
+    for node in nodes if nodes is not None else _walk(tree):
         if not isinstance(node, ast.Import):
             continue
         for alias in node.names:
@@ -781,7 +810,7 @@ def _external_call_names(files: list[Path], declaration_files: set[Path]) -> set
         tree = _parse(path)
         if tree is None:
             continue
-        for node in ast.walk(tree):
+        for node in _walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             if isinstance(node.func, ast.Name):
@@ -897,11 +926,11 @@ def _config_alias_index(
             decl.path.rsplit(".", 1)[0] if "." in decl.path else ""
         )
 
-    indexed = nodes if nodes is not None else tuple(ast.walk(tree))
+    indexed = nodes if nodes is not None else _walk(tree)
     functions = tuple(
         node for node in indexed if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     )
-    function_nodes = {id(function): tuple(ast.walk(function)) for function in functions}
+    function_nodes = {id(function): _walk(function) for function in functions}
     assignments: list[tuple[str, ast.expr]] = []
     self_assignments: list[tuple[str, tuple[str, ...]]] = []
     for node in indexed:
@@ -1000,7 +1029,7 @@ def _dynamic_config_reader_paths(
     * values of a literal mapping iterated into the field-name argument of such a
       ``getattr`` call.
     """
-    indexed = nodes if nodes is not None else tuple(ast.walk(tree))
+    indexed = nodes if nodes is not None else _walk(tree)
     read: set[str] = set()
     dynamic_helpers: dict[str, list[tuple[int, set[str]]]] = {}
     for function in indexed:
@@ -1008,7 +1037,7 @@ def _dynamic_config_reader_paths(
             continue
         args = [*function.args.posonlyargs, *function.args.args]
         arg_indexes = {arg.arg: index for index, arg in enumerate(args)}
-        for node in ast.walk(function):
+        for node in _walk(function):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
@@ -1130,7 +1159,7 @@ def _direct_config_reader_paths(
         tree = _parse(path)
         if tree is None:
             continue
-        nodes = tuple(ast.walk(tree))
+        nodes = _walk(tree)
         prefixes, aliases, function_returns = _config_alias_index(tree, declarations, nodes)
         modules = _imported_module_chains(tree, nodes)
         terminal_ids = {id(node) for node in _terminal_attribute_reads(tree, nodes)}
@@ -1217,7 +1246,7 @@ def _config_accessor_reader_paths(
         cls = next(
             (
                 node
-                for node in ast.walk(tree)
+                for node in _walk(tree)
                 if isinstance(node, ast.ClassDef) and node.name == owner_class
             ),
             None,
@@ -1317,7 +1346,7 @@ def _inert_config_reader_surfaces() -> list[tuple[str, str]]:
 
 def _module_all(tree: ast.Module) -> list[str]:
     """String members of a module-level ``__all__`` assignment."""
-    for node in ast.walk(tree):
+    for node in _walk(tree):
         if isinstance(node, ast.Assign) and any(
             isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
         ):
@@ -1353,7 +1382,7 @@ def _sdk_imported_names() -> set[str]:
             tree = _parse(f)
             if tree is None:
                 continue
-            for node in ast.walk(tree):
+            for node in _walk(tree):
                 if (
                     isinstance(node, ast.ImportFrom)
                     and node.module
