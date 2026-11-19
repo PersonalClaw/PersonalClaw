@@ -2469,9 +2469,10 @@ and on dispatch, one run at a time and never cancelled:
   again while its collector run is listed. One whose day is before the window's and whose
   collector run the listing no longer holds has aged out: it is counted as aged, neither dropped
   nor refused. Only the collector runs the window does not hold are fetched: about 70 a week.
-  Which artifact a workflow carries, and whose run is trusted to have uploaded it, is a fixed
-  table in `tools/ci/fetch.py` (`CARRIES`, `--carry`), never a name a run passes: the weekly
-  report's `flake-report-window`, and the daily flaky tests' `flaky-tests-window` below.
+  Which artifact a workflow carries, whose run is trusted to have uploaded it, and which events
+  may have started that run is a fixed table in `tools/ci/fetch.py` (`CARRIES`, `--carry`), never
+  a name a run passes: the weekly report's `flake-report-window`, from its schedule or a dispatch,
+  and the daily flaky tests' `flaky-tests-window` below, from those or a `workflow_run`.
 - **Refused before the download.** A history archive's name gives its run and attempt; when no
   counted workflow's listing shows them, it is refused by its name and never downloaded (the
   deleted `ci.yml`'s histories, until they leave the window). The same check runs again on what
