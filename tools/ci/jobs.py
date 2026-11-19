@@ -1572,9 +1572,12 @@ def diagnose_playwright(
     there. An ``unexpected`` test whose retry failed or timed out too is a repeated failure
     without a rerun. Any other is not classified.
 
-    The rerun's own report is read only when every test it ran is one rerun, or a test of
-    :data:`PLAYWRIGHT_SETUP`, which it runs as their dependency, and its exit is 0 or 1. The
-    record's ``rerun`` names the alone rerun's own argv and exit, or no argv when none ran.
+    The rerun's own report is read only when every test it ran is one rerun, a test of
+    :data:`PLAYWRIGHT_SETUP`, which it runs as their dependency, or a sibling that passed or was
+    skipped there: a test the rerun's own selection ran beside a rerun one, at one of its places
+    in one of its projects (a test written in a loop runs with its variants), which is never
+    classified. Its exit is 0 or 1. The record's ``rerun`` names the alone rerun's own argv and
+    exit, or no argv when none ran.
 
     The step's report is this run's only when it was written since the job started (*started*):
     one an earlier run left is never read as this one's. A report that is missing, older than
@@ -1658,10 +1661,13 @@ def diagnose_playwright(
             entries[test_id] = _entry(test_id, None, why, first[test_id])
     elif kept is not None:
         out = work / "report.json"
-        projects = sorted({project for _, _, project in alone})
-        places = sorted(
-            {f"{PLAYWRIGHT_TEST_DIR}/{f}:{line}" for (f, _, _), (_, line) in alone.items()}
-        )
+        # What the argv selects: Playwright runs every test at each named place in each named
+        # project, so a test written in a loop runs with its variants, and two flakes of two
+        # projects run each other's place too. The report is read against these same two sets.
+        named = {project for _, _, project in alone}
+        selected = {(f, line) for (f, _, _), (_, line) in alone.items()}
+        projects = sorted(named)
+        places = sorted(f"{PLAYWRIGHT_TEST_DIR}/{f}:{line}" for f, line in selected)
         rerun_argv = [
             *PLAYWRIGHT_STEP,
             *verdict.E2E_ALONE,
@@ -1697,11 +1703,23 @@ def diagnose_playwright(
         seen: dict[tuple[str, str, str], str] | None = None
         if ran is not None:
             seen = {(f, t, p): status for f, t, status, p, _, _ in ran if p != PLAYWRIGHT_SETUP}
-            foreign = sorted(k for k, got in seen.items() if got != "skipped" and k not in alone)
+            at = {(f, t, p): line for f, t, _, p, _, line in ran if p != PLAYWRIGHT_SETUP}
+            others = sorted(k for k, got in seen.items() if got != "skipped" and k not in alone)
+            # A sibling: a test the argv's own selection ran beside a rerun one, at one of its
+            # places and in one of its projects. It is read only to hold it passed there.
+            siblings = [k for k in others if (k[0], at[k]) in selected and k[2] in named]
+            foreign = [k for k in others if k not in siblings]
+            failed = [k for k in siblings if seen[k] != "expected"]
             if foreign:
                 reasons.append(
                     f"rerun: its report names {foreign[0][0]}::{foreign[0][1]}"
                     f" [{foreign[0][2]}], which was not rerun, so it classifies nothing"
+                )
+                seen = None
+            elif failed:
+                reasons.append(
+                    f"rerun: {failed[0][0]}::{failed[0][1]} [{failed[0][2]}] ran beside the"
+                    f" rerun at its own place and was {seen[failed[0]]}, so it classifies nothing"
                 )
                 seen = None
         clean = seen is not None and code in (0, 1) and not other and not interrupted

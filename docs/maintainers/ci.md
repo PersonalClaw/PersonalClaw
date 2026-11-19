@@ -3389,11 +3389,16 @@ budget, and red on a first failure the retry passes.
   stateful passes, the specs with a home of their own) is not rerun, and not classified. An
   `unexpected` test whose retry failed or timed out too is a `repeated failure` with no rerun; one
   that failed with no retry run, or whose retry ended otherwise, is not classified. The rerun's
-  report is read only when every test it ran is one it reran, or a `setup` test (chromium's
-  dependency), and its exit is 0 or 1. The record's `rerun` names the alone rerun's own argv and
-  exit, or no argv when none ran. A report that is missing, older than the job (an earlier run's,
-  left when Playwright exits 1 before writing one, as on a config that throws at load), or not of
-  the shape Playwright writes classifies nothing, and says so.
+  report is read only when every test it ran is one it reran, a `setup` test (chromium's
+  dependency), or a sibling that passed or was skipped there, and its exit is 0 or 1. Playwright
+  runs every test at each named place in each named project, so a test written in a loop runs
+  with its variants, and two flakes of two projects run each other's place: those siblings of the
+  rerun's own selection are never classified, a sibling that failed there classifies nothing, and
+  a place with many variants makes the rerun longer, inside the job's time left. The record's
+  `rerun` names the alone rerun's own argv and exit, or no argv when none ran. A report that is
+  missing, older than the job (an earlier run's, left when Playwright exits 1 before writing one,
+  as on a config that throws at load), or not of the shape Playwright writes classifies nothing,
+  and says so.
 
 Three contract rows, one per runner, hold what the tree must not add, each rule with a planted
 break, each listed option, plugin and key its own, and a fourth holds the test files themselves:
