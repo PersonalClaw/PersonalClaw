@@ -57,9 +57,16 @@ FAMILIES: tuple[str, ...] = (
     "/api/chat/sessions/{session}/questions",
     "/api/auth",
     "/api/ws",
+    "/api/browse/connector",
 )
 
 DEVICE_SCOPE_ROUTES: dict[tuple[str, str], Row] = {
+    # A browser connector's session reaches its own routes and nothing else (connector_origin).
+    ("POST", "/api/browse/connector"): Row("connector"),  # attach
+    ("DELETE", "/api/browse/connector"): Row("connector"),  # detach
+    ("GET", "/api/browse/connector"): Row("connector"),  # whether it is attached
+    ("GET", "/api/browse/connector/tabs"): Row("connector"),  # the tabs runs asked it for
+    ("POST", "/api/browse/connector/tabs/{request_id}"): Row("connector"),  # a tab it opened
     ("GET", "/api/auth/session"): Row(
         SHELL
     ),  # the account view, cut to {signed_in, scope, expires_at}

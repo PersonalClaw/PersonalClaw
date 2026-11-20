@@ -24,7 +24,11 @@ from aiohttp import web
 
 # The vocabulary is core (`auth.automation_scopes`), so the pairing-code store can check a code's
 # scope; it's named here too, where everything else about a scoped session lives.
-from personalclaw.auth.automation_scopes import SCOPES, normalize_scope  # noqa: F401
+from personalclaw.auth.automation_scopes import (  # noqa: F401
+    CONNECTOR_SCOPE,
+    SCOPES,
+    normalize_scope,
+)
 from personalclaw.dashboard.device_scope_routes import (  # noqa: F401 — the table's names, here too
     DEVICE_SCOPE_ROUTES,
     FAMILIES,
@@ -72,7 +76,10 @@ def scope_words(scope: Iterable[str]) -> str:
 
 def refusal_message(scope: Iterable[str]) -> str:
     """The sentence of the uniform refusal: the scopes the session holds, never the route."""
-    return f"This automation client can use only what its scope allows: {scope_words(scope)}."
+    held = tuple(scope)
+    if CONNECTOR_SCOPE in held:
+        return "This browser connector can use only the connector's own routes."
+    return f"This automation client can use only what its scope allows: {scope_words(held)}."
 
 
 def refused(scope: Iterable[str]) -> Any:

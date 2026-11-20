@@ -148,8 +148,12 @@ DEVICE_KINDS: tuple[str, ...] = ("browser", "mobile", "desktop", "cli", "unknown
 #: declare it. A stored row keeps it (:data:`STORED_DEVICE_KINDS`).
 AUTOMATION_KIND = "automation"
 
+#: The kind of a browser connector's device: a browser extension paired from its own origin
+#: (``connector_origin``). Like :data:`AUTOMATION_KIND`, only the gateway sets it, never a client.
+CONNECTOR_KIND = "connector"
+
 #: Every kind a stored row may carry.
-STORED_DEVICE_KINDS: tuple[str, ...] = (*DEVICE_KINDS, AUTOMATION_KIND)
+STORED_DEVICE_KINDS: tuple[str, ...] = (*DEVICE_KINDS, AUTOMATION_KIND, CONNECTOR_KIND)
 
 #: The kinds a person signs in with. A link opened by one of these is a browser sign-in.
 BROWSER_KINDS = frozenset({"browser", "mobile", "desktop"})
@@ -327,6 +331,10 @@ class DeviceInfo:
     #: when. The link stays a token beside that sign-in; this is what its row says about it.
     opened_by: str = ""
     opened_at: float = 0.0
+    #: A browser connector's row only: the exact origin its extension paired from
+    #: (``origin.extension_origin``), the one origin its session is taken from on the connector's
+    #: routes (``connector_origin``). Revoking the device deletes the row, and it with it.
+    origin: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -340,6 +348,8 @@ class DeviceInfo:
         if self.opened_at:
             out["opened_by"] = self.opened_by
             out["opened_at"] = self.opened_at
+        if self.origin:
+            out["origin"] = self.origin
         return out
 
 
@@ -555,7 +565,15 @@ def _parse_device(raw: Any, nonce: str) -> DeviceInfo:
         ip=_sanitize_ip(raw.get("ip", "")),
         opened_by=sanitize_device_name(raw.get("opened_by", "")) if opened_at else "",
         opened_at=opened_at,
+        origin=_stored_origin(raw.get("origin", "")),
     )
+
+
+def _stored_origin(value: Any) -> str:
+    """A stored row's connector origin, held to the rule it was recorded by, or ``""``."""
+    from personalclaw.dashboard.origin import extension_origin
+
+    return extension_origin(value) if isinstance(value, str) else ""
 
 
 def _parse_record(raw: Any, nonce: str) -> SessionRecord | None:

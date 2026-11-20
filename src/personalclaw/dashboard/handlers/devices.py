@@ -53,10 +53,11 @@ from aiohttp import web
 
 from personalclaw.dashboard import device_scopes
 from personalclaw.dashboard.handlers.page_shell import page_document
-from personalclaw.dashboard.origin import check_origin
+from personalclaw.dashboard.origin import check_origin, extension_origin
 from personalclaw.dashboard.owner_presence import ACTION_PAIR_DEVICE, require_owner_presence
 from personalclaw.dashboard.owner_token_url import script_source as owner_token_script_source
 from personalclaw.dashboard.session_store import (
+    CONNECTOR_KIND,
     POOL_CAPS,
     DeviceInfo,
     describe_user_agent,
@@ -97,6 +98,8 @@ ERR_UNKNOWN_INTEGRATION = "integration_unknown"
 ERR_SCOPE_INVALID = "device_pair_scope_invalid"
 ERR_LIFETIME_INVALID = "device_pair_lifetime_invalid"
 ERR_SCOPE_UNBINDABLE = "device_pair_scope_unbindable"
+#: A code made for an automation client, redeemed from a browser extension's own origin.
+ERR_CONNECTOR_CODE_SCOPED = "device_pair_connector_code_scoped"
 
 #: The user id a paired device authenticates as. Distinct from `enrolled-device` so the auth
 #: log says which door was used.
@@ -370,7 +373,12 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
     ip = _client_ip(request)
     cfg = _auth_cfg()
 
-    if not check_origin(request):
+    # A browser extension's own origin (the browser connector) is taken here only with a valid
+    # code, under the same attempt limit below, and the device it pairs is a connector: its row
+    # keeps that origin and its session reaches the connector's routes alone (`connector_origin`).
+    web_origin = check_origin(request)
+    connector = "" if web_origin else extension_origin(request.headers.get("Origin", ""))
+    if not web_origin and not connector:
         _audit("device_paired", "denied", caller=ip, error="origin rejected")
         return json_error(ERR_ORIGIN, status=403)
 
@@ -407,9 +415,18 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
     # for the longest a credential may last. An automation client's lasts what its code says,
     # which the owner chose when making it; nothing in this body names or widens its scope.
     scope = outcome.scope
+    if connector and scope:
+        # An automation client's code is its own; a browser connector pairs from an unscoped one.
+        _record_failure(ip)
+        _audit("device_paired", "denied", caller=ip, error="an automation code from an extension")
+        return json_error(ERR_CONNECTOR_CODE_SCOPED, status=400)
     ttl = outcome.lifetime_secs if scope else browser_session_ttl(cfg)
+    if connector:
+        scope = (device_scopes.CONNECTOR_SCOPE,)
     derived_name, derived_kind = _described(request)
-    if scope:
+    if connector:
+        kind = CONNECTOR_KIND
+    elif scope:
         # The gateway alone sets the kind, from the code's scope: what the client declares is
         # ignored. An unscoped redemption that declares it gets `unknown`
         # (`sanitize_device_kind`).
@@ -427,8 +444,11 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
         kind=kind,
         minted_at=time.time(),
         ip=ip[:64],
+        origin=connector,
     )
-    previous = _replaced_sign_in(request)
+    # A browser connector pairs from inside the owner's own browser, whose cookie is her dashboard's
+    # sign-in: it neither replaces that sign-in nor sets a cookie (its session is the body's token).
+    previous = "" if connector else _replaced_sign_in(request)
     minted = mint_session(
         PAIRED_DEVICE_USER,
         ttl,
@@ -467,9 +487,14 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
             "landing": landing_for(device.kind, scoped=bool(scope)),
             # The page keeps it (`owner_token_url.keepPair`); it is never in the cookie.
             "pair": minted.pair,
-        }
+            # A browser connector's own session, sent as `Authorization: Bearer` with the pair: on
+            # this request alone, the one that recorded its origin, and never logged.
+            **({"token": token} if connector else {}),
+        },
+        headers={"Cache-Control": "no-store"} if connector else None,
     )
-    _set_session_cookie(request, resp, token, ttl)
+    if not connector:
+        _set_session_cookie(request, resp, token, ttl)
     return resp
 
 

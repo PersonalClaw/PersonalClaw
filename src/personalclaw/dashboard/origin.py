@@ -13,6 +13,7 @@ else (port, bind address, allowed origins) is derived from it.
 import ipaddress
 import logging
 import os
+import re
 import shutil
 import socket
 from collections.abc import Iterable
@@ -702,6 +703,30 @@ def check_origin(
         if is_loopback(parsed_host):
             return True
     return False
+
+
+#: The schemes an extension origin is never: a page's, and a local file's.
+_WEB_SCHEMES = frozenset({"http", "https", "file"})
+_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*")
+_AUTHORITY = re.compile(r"[A-Za-z0-9._~-]+")
+
+
+def extension_origin(value: str) -> str:
+    """*value* when it is an origin a browser extension's own requests carry, else ``""``.
+
+    A scheme that is not ``http``, ``https`` or ``file``, then ``://`` and a plain authority, with
+    nothing after it, compared whole and never read further: core names no browser vendor. Never
+    the literal ``null``: a sandboxed frame or a ``data:`` document sends it, and a local file sends
+    ``null`` or ``file://``, so an origin a page can send never stands for a browser connector
+    (``connector_origin``). Checked where an origin is recorded and again where it is matched.
+    """
+    origin = str(value or "")
+    if not origin or len(origin) > 255 or origin.strip() != origin:
+        return ""
+    scheme, sep, authority = origin.partition("://")
+    if not sep or not _SCHEME.fullmatch(scheme) or scheme in _WEB_SCHEMES:
+        return ""
+    return origin if _AUTHORITY.fullmatch(authority) else ""
 
 
 def origin_refusal(request: web.Request) -> web.Response:
