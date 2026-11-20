@@ -9618,12 +9618,15 @@ export const api = {
     del(`/api/rooms/${encodeURIComponent(id)}/members/${encodeURIComponent(name)}`),
   // The human speaks. Only the human may POST here — a member's line is written by the turn
   // loop after its provider answers, never by a caller naming a speaker.
-  postRoomMessage: (id: string, content: string) =>
-    post<RoomMessagePosted>(`/api/rooms/${encodeURIComponent(id)}/messages`, { content }),
+  // `confirm` is her yes to the question a room asks when the message would reopen a turn the
+  // gateway cut off after it changed something (`repeatedSteps.askToRepeat`).
+  postRoomMessage: (id: string, content: string, confirm?: string) =>
+    post<RoomMessagePosted>(`/api/rooms/${encodeURIComponent(id)}/messages`, confirm ? { content, confirm } : { content }),
   // Finish a round a stopped gateway cut off, answering the message already on the transcript.
   // Idempotent, and NOT a resume for a budget pause — that one resumes on a human message only.
-  continueRoom: (id: string) =>
-    post<{ room: RoomRecord }>(`/api/rooms/${encodeURIComponent(id)}/continue`),
+  // Asks first, as Retry does, when the cut-off turn changed something; `confirm` is her yes.
+  continueRoom: (id: string, confirm?: string) =>
+    post<{ room: RoomRecord }>(`/api/rooms/${encodeURIComponent(id)}/continue`, confirm ? { confirm } : undefined),
   // This room's OWN budget; 0 goes back to inheriting `rooms.round_budget`.
   setRoomRoundBudget: (id: string, roundBudget: number) =>
     patch<{ room: RoomRecord }>(`/api/rooms/${encodeURIComponent(id)}`, { round_budget: roundBudget }),

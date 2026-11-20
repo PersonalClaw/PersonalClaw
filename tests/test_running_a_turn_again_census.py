@@ -8,18 +8,19 @@ and a move to another agent while the turn answered did not. Each now asks throu
 
 * It reads every place in core that runs a turn again (a function that deletes transcript rows and
   starts a turn with ``run_chat``, a caller of the queue's re-send of the turn that just ended,
-  ``queue_retry``, and a function handed that re-send, ``send_again``), and fails for one that is
-  not named below: a door in :data:`DOORS`, or the gateway's own re-send in :data:`ON_ITS_OWN`.
+  ``queue_retry``, a function handed that re-send, ``send_again``, and a function that starts a
+  room's round, ``_start_round``, which reopens a member's turn the gateway cut off), and fails
+  for one that is not named below: a door in :data:`DOORS`, or the gateway's own re-send in
+  :data:`ON_ITS_OWN`.
 * Each door calls ``ask_first`` before it deletes or runs anything.
 * Each of the gateway's own re-sends (``run_chat``'s ``_send_again()``) sits behind the check that
   the turn made no call, so it never sends one that made a call.
 * Each door is driven over a turn that finished a write: it answers with the question (an app,
   with the refusal; a move, with the error that offers Retry) and runs nothing; and over a turn
-  that only read, it runs unasked.
+  that only read, it runs unasked. A room's two doors, Continue and a message to an interrupted
+  room, are driven in ``tests/test_rooms_api.py``, over the calls the room's record keeps.
 
-What the census cannot see: a turn run again under a name other than these three; and a room's
-Continue, which reopens a member's turn the gateway cut off, from the room's own record, which
-keeps no call a member made.
+What the census cannot see: a turn run again under a name other than these four.
 """
 
 from __future__ import annotations

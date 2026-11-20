@@ -180,6 +180,11 @@ class Room:
       :func:`begin_turn`, cleared by :func:`end_turn`. A ``speaking`` that no running round
       owns is a turn that was cut off (the process stopped mid-turn), which is exactly the fact
       the restart needs: that member is owed its turn first.
+    * ``speaking_calls`` is what the open turn did, as it did it: each call the member made, with
+      its state (``unknown`` while it runs, then ``completed`` or ``failed``) and whether it only
+      reads (``effect``). Written by :func:`record_call`, emptied by :func:`end_turn` and when a
+      new turn begins, so a cut-off turn keeps what it finished, and running it again asks first
+      about what may repeat (``dashboard.repeated_steps``).
     """
 
     id: str
@@ -191,6 +196,7 @@ class Room:
     round_budget: int = 0
     pending_queue: list[str] = field(default_factory=list)
     speaking: str = ""
+    speaking_calls: list[dict] = field(default_factory=list)
     members: list[RoomMember] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -249,6 +255,10 @@ class Room:
             round_budget=max(0, int(data.get("round_budget", 0) or 0)),
             pending_queue=[str(n) for n in (data.get("pending_queue") or []) if str(n)],
             speaking=str(data.get("speaking", "") or ""),
+            # A record from before calls were kept reads as a turn that recorded none.
+            speaking_calls=[
+                dict(c) for c in (data.get("speaking_calls") or []) if isinstance(c, dict)
+            ],
             members=members,
         )
 
@@ -667,8 +677,37 @@ def begin_turn(room_id: str) -> str:
         return ""
     name = room.pending_queue.pop(0)
     room.speaking = name
+    room.speaking_calls = []
     _write_index(rooms)
     return name
+
+
+#: The keys a recorded call keeps (:attr:`Room.speaking_calls`).
+CALL_KEYS = ("id", "title", "kind", "input", "effect", "state")
+
+
+def record_call(room_id: str, member: str, call: dict) -> None:
+    """Keep *call*, one of the open turn's calls, on the room record: added when it is made and
+    replaced as it finishes (matched by its ``id``), or dropped when *call* says it never ran
+    (``state`` ``""``). Only *member*'s, and only while its turn is the open one: a call that
+    reaches the store after its turn ended is not this turn's."""
+    rooms = _read_index_strict()
+    room = _require_indexed_room(rooms, room_id)
+    call_id = str(call.get("id") or "")
+    if room.speaking != member or not call_id:
+        return
+    record = {key: str(call.get(key) or "") for key in CALL_KEYS}
+    kept: list[dict] = []
+    for made in room.speaking_calls:
+        if made.get("id") != call_id:
+            kept.append(made)
+        elif record["state"]:
+            kept.append(record)  # in the place it was made: the question names them in order
+    if record["state"] and all(c.get("id") != call_id for c in room.speaking_calls):
+        kept.append(record)
+    if kept != room.speaking_calls:
+        room.speaking_calls = kept
+        _write_index(rooms)
 
 
 def end_turn(room_id: str, *, spoke: bool, summoned: Sequence[str] = ()) -> Room:
@@ -693,6 +732,7 @@ def end_turn(room_id: str, *, spoke: bool, summoned: Sequence[str] = ()) -> Room
     rooms = _read_index_strict()
     room = _require_indexed_room(rooms, room_id)
     room.speaking = ""
+    room.speaking_calls = []
     if spoke:
         room.rounds_used += 1
     for name in summoned:

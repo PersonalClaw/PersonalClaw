@@ -31,7 +31,17 @@ DOORS: dict[tuple[str, str], str] = {
     ("dashboard/running_turn.py", "say_moved"): (
         "changing the agent, its CLI, its model or its effort while the turn answers"
     ),
+    ("dashboard/handlers/rooms.py", "api_room_continue"): (
+        "Continue on a room whose round the gateway cut off mid-turn"
+    ),
+    ("dashboard/handlers/rooms.py", "api_room_message_post"): (
+        "a message to a room whose round the gateway cut off mid-turn"
+    ),
 }
+
+#: What a door asks through: the chat's turn, and a room's cut-off turn
+#: (``_reopening_asks``, through ``repeated_steps.ask_first_in_room`` and the same rule).
+_ASKS = ("ask_first", "_reopening_asks")
 
 
 #: The gateway's own re-send of a turn: after a lost connection, an empty reply or an agent that
@@ -55,6 +65,10 @@ _QUEUES_IT_AGAIN = "queue_retry"
 
 
 _HANDED_THE_RE_SEND = "send_again"
+
+
+#: A room's round, which reopens a member's turn the gateway cut off before anything it owes.
+_STARTS_A_ROUND = "_start_round"
 
 
 def _own_nodes(func: ast.AST) -> list[ast.AST]:
@@ -98,13 +112,14 @@ def _runs_a_turn_again(func: ast.AST) -> bool:
         (_STARTS_A_TURN in called and _deletes_transcript_rows(nodes))
         or _QUEUES_IT_AGAIN in called
         or (_HANDED_THE_RE_SEND in called and _HANDED_THE_RE_SEND in _parameters(func))
+        or _STARTS_A_ROUND in called
     )
 
 
 def _reruns_in_the_tree() -> set[tuple[str, str]]:
     """Every function in core that runs a turn again. A file that names none of the three ways a
     turn is run again cannot hold one, so only the files that do are parsed."""
-    names = (_STARTS_A_TURN, _QUEUES_IT_AGAIN, _HANDED_THE_RE_SEND)
+    names = (_STARTS_A_TURN, _QUEUES_IT_AGAIN, _HANDED_THE_RE_SEND, _STARTS_A_ROUND)
     found: set[tuple[str, str]] = set()
     for path in source_index.package_files():
         text = source_index.text(path)
@@ -138,12 +153,13 @@ def test_every_place_that_runs_a_turn_again_is_named():
 def test_each_door_asks_through_the_one_function_before_it_runs_anything(door):
     func = _function(door)
     nodes = _own_nodes(func)
-    asks = [n.lineno for n in nodes if _called(n) == "ask_first"]
+    asks = [n.lineno for n in nodes if _called(n) in _ASKS]
     assert asks, f"{door[1]} runs a turn again without asking through `ask_first`"
     acts = [
         n.lineno
         for n in nodes
-        if _called(n) in (_STARTS_A_TURN, _HANDED_THE_RE_SEND) or isinstance(n, ast.Delete)
+        if _called(n) in (_STARTS_A_TURN, _HANDED_THE_RE_SEND, _STARTS_A_ROUND, "append_message")
+        or isinstance(n, ast.Delete)
     ]
     assert acts, f"{door[1]} no longer runs anything: the census reads the wrong function"
     assert min(asks) < min(acts), f"{door[1]} deletes or runs something before it asks"

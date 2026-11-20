@@ -63,9 +63,10 @@ from personalclaw.rooms.store import (
     RoomMember,
     append_message,
     read_messages,
+    record_call,
     require_room,
 )
-from personalclaw.security import fence_untrusted
+from personalclaw.security import fence_untrusted, redact_field
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.llm.base import ModelProvider
@@ -732,6 +733,9 @@ async def run_member_turn(
                 on_refused=lambda event, why: notes.append(
                     posture.ToolRefusal(member_name, str(event.title or ""), why)
                 ),
+                # Each call kept on the room record as it is made and as it finishes, so a turn
+                # the gateway cuts off keeps what it did, and running it again asks first.
+                on_tool_step=_call_recorder(room_id, member_name),
             )
 
     cursors.advance(room_id, member_name, len(messages))
@@ -752,6 +756,55 @@ async def run_member_turn(
         return ""
     append_message(room_id, role="assistant", content=reply, speaker=member_name)
     return reply
+
+
+#: A call's result outcomes that say it never ran (``llm.events.unasked_outcome``): a gate refused
+#: it, a stop reached it first, or it could not be started.
+_NOT_RUN = frozenset({"cancelled", "refused", "failed", "denied"})
+
+#: How much of a call's input the room record keeps: enough to name what it touched.
+_CALL_INPUT_CHARS = 2000
+
+
+def _call_recorder(room_id: str, member_name: str) -> Callable[[object, object | None], None]:
+    """The ``on_tool_step`` that keeps the open turn's calls on the room record
+    (:func:`~personalclaw.rooms.store.record_call`): ``unknown`` when made, ``completed`` or
+    ``failed`` when it finishes, dropped when its result says it never ran. Its effect is decided
+    as the chat's is, when it is made: a read exactly when its declared risk and its input resolve
+    to safe (``task_modes.resolve_effective_risk``), else a change. Its input is kept redacted,
+    as the room's lines are."""
+    from personalclaw.llm.events import unasked_outcome
+    from personalclaw.task_modes import resolve_effective_risk, tool_input_to_str
+
+    def record(card: object, result: object | None) -> None:
+        if result is None:
+            state = "unknown"
+        else:
+            meta = getattr(result, "tool_meta", None) or {}
+            if unasked_outcome(meta) in _NOT_RUN:
+                state = ""
+            else:
+                state = "failed" if meta.get("ok") is False else "completed"
+        title = str(getattr(card, "title", "") or "")
+        kind = str(getattr(card, "tool_kind", "") or "")
+        tool_input = getattr(card, "tool_input", "")
+        risk = resolve_effective_risk(
+            str(getattr(card, "risk_level", "") or ""), title, kind, tool_input
+        )
+        record_call(
+            room_id,
+            member_name,
+            {
+                "id": str(getattr(card, "tool_call_id", "") or ""),
+                "title": title,
+                "kind": kind,
+                "input": redact_field(tool_input_to_str(tool_input))[:_CALL_INPUT_CHARS],
+                "effect": "read" if risk == "safe" else "write",
+                "state": state,
+            },
+        )
+
+    return record
 
 
 def _usage_recorder(

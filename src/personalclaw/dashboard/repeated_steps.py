@@ -37,6 +37,12 @@ The question names those calls, and the yes that answers it carries the question
 (``confirm``), so a yes answers the steps it was shown: a turn that changed since is asked about
 again rather than run. An app cannot answer it for the owner. A door that cannot show the question
 to her refuses, and says where she can answer it.
+
+A room is a door too: Continue on a round the gateway cut off, and a message to such a room,
+reopen the cut-off member's turn, whose runner after a restart neither sees nor remembers what its
+first attempt did. A room keeps the open turn's calls on its record as they are made and finish
+(``rooms.store.record_call``), each with the effect it was judged to have when it was made, and
+:func:`ask_first_in_room` asks over them by the same rule and with the same question.
 """
 
 from __future__ import annotations
@@ -55,8 +61,15 @@ from personalclaw.dashboard import turn_rows
 from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.declined_calls import declined_step, said
 from personalclaw.http_errors import CONSENT_QUESTION, json_error
-from personalclaw.sel import sel
-from personalclaw.turns import ToolPart, completed_side_effect, failed_side_effect, outcome_unknown
+from personalclaw.sel import sel, sel_log_async
+from personalclaw.turns import (
+    ToolPart,
+    ToolState,
+    advance,
+    completed_side_effect,
+    failed_side_effect,
+    outcome_unknown,
+)
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -193,6 +206,11 @@ async def _finished_changes(
     if not _changes(session, rows, None):
         return []
     declared_by = await _declarations(state, session)
+    return _named(_changes(session, rows, declared_by))
+
+
+def _named(calls: list[ToolPart]) -> list[FinishedStep]:
+    """The calls as the question names them."""
     return [
         FinishedStep(
             call_id=call.tool_call_id,
@@ -201,7 +219,7 @@ async def _finished_changes(
             failed=call.state == "failed",
             running=call.state == "unknown",
         )
-        for call in _changes(session, rows, declared_by)
+        for call in calls
     ]
 
 
@@ -342,18 +360,111 @@ async def ask_first(
     if request is None:
         return RunAgain(steps)
     asked = _digest(session.key, started_by, attempt[-1], steps)
+    return await _asked(
+        steps, asked, request=request, operation=operation, resources=session.key, confirm=confirm
+    )
+
+
+async def _asked(
+    steps: list[FinishedStep],
+    asked: str,
+    *,
+    request: web.Request,
+    operation: str,
+    resources: str,
+    confirm: str,
+) -> RunAgain:
+    """A door's answer over *steps*, which may repeat: her yes when the request carries the
+    question's digest *asked*, else the question (an app, the refusal), recorded as *operation*."""
     app_name = request.get("app", "")
     if not app_name and confirm == asked:
         return RunAgain(steps, confirmed=True)
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller=f"app:{app_name}" if app_name else "dashboard",
         operation=operation,
         outcome="refused" if app_name else "needs_confirm",
         source="dashboard",
-        resources=session.key,
+        resources=resources,
         metadata={"repeats": _audited(steps)},
     )
     return RunAgain(steps, answer=_refusal(steps) if app_name else _question(steps, asked))
 
 
-__all__ = ["REPEATS_STEPS", "FinishedStep", "RunAgain", "ask_first"]
+#: The states a room's recorded call may hold (``rooms.store.record_call``).
+_ROOM_CALL_STATES: dict[str, ToolState] = {
+    "completed": "completed",
+    "failed": "failed",
+    "unknown": "unknown",
+}
+
+
+def _room_changes(calls: list[dict[str, Any]]) -> list[ToolPart]:
+    """The room turn's recorded calls that finished, completed or failed, as changes, or were
+    still running as changes when the turn was cut off: the same three the chat counts
+    (:func:`_changes`). A call recorded as a read is never one, and neither is a read still
+    running, which the chat reads as stopped.
+
+    Each is replayed as the part its call made, moved through ``turns.advance`` along the way the
+    record says it went: made, started, then completed or failed; or, for a write the turn was
+    cut off in, made and left unknown. A read the turn was cut off in is no change, so it is not
+    replayed."""
+    found: list[ToolPart] = []
+    for i, call in enumerate(calls):
+        state = _ROOM_CALL_STATES.get(str(call.get("state") or ""))
+        if state is None:
+            continue
+        made = ToolPart(
+            id=f"room-call-{i}",
+            at="",
+            updated_at="",
+            tool_call_id=str(call.get("id") or ""),
+            title=str(call.get("title") or ""),
+            tool_kind=str(call.get("kind") or ""),
+            input=str(call.get("input") or ""),
+            effect="read" if call.get("effect") == "read" else "write",
+        )
+        if state == "unknown" and made.effect != "write":
+            continue
+        part = (
+            advance(made, "unknown")
+            if state == "unknown"
+            else advance(advance(made, "running"), state)
+        )
+        if (
+            completed_side_effect(part)
+            or failed_side_effect(part)
+            or (outcome_unknown(part) and part.effect == "write")
+        ):
+            found.append(part)
+    return found
+
+
+async def ask_first_in_room(
+    room_id: str,
+    member: str,
+    calls: list[dict[str, Any]],
+    *,
+    request: web.Request,
+    operation: str,
+    confirm: str = "",
+) -> RunAgain:
+    """Ask before a room reopens *member*'s cut-off turn, whose recorded *calls*
+    (``Room.speaking_calls``) are what its first attempt did: the room's door through the same
+    rule as :func:`ask_first`. Nothing that may repeat, it reopens the turn unasked; otherwise only
+    on her yes to exactly those steps, whose digest names the room, the member and each step as the
+    question shows it. The room keeps no mark of when a turn began, and a runtime may reuse a call
+    id, so a step's id alone could name another file than the one she was shown."""
+    steps = _named(_room_changes(calls))
+    if not steps:
+        return RunAgain([])
+    parts = [room_id, member]
+    for step in steps:
+        parts += [step.call_id, step.tool, step.target, str(step.failed), str(step.running)]
+    asked = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:32]
+    return await _asked(
+        steps, asked, request=request, operation=operation, resources=room_id, confirm=confirm
+    )
+
+
+__all__ = ["REPEATS_STEPS", "FinishedStep", "RunAgain", "ask_first", "ask_first_in_room"]

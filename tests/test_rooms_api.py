@@ -1254,3 +1254,254 @@ def test_the_room_payload_carries_everything_one_poll_needs(cfg):
     # round is running at all — answers the view cannot compute, so the payload carries them.
     for field in ("speaking", "owed", "round_running"):
         assert field in room, field
+
+
+# ── Continue asks before a cut-off turn's changes can run again ─────────────────────────────
+
+#: A member's call, as its runtime makes it: (id, tool, declared risk, input, finished).
+WRITE = ("c1", "write_file", "caution", {"path": "notes/price.md", "content": "charge more"}, True)
+READ = ("c1", "read_file", "safe", {"path": "notes/price.md"}, True)
+WRITING = (
+    "c1",
+    "write_file",
+    "caution",
+    {"path": "notes/price.md", "content": "charge more"},
+    False,
+)
+
+
+class _WorksThenHangsProvider:
+    """A member that makes its calls, sees each one it finishes come back, and then hangs: the
+    turn a restart cuts off after its calls ran."""
+
+    def __init__(self, calls) -> None:
+        self.calls = calls
+        self.entered = asyncio.Event()
+
+    async def stream(self, message: str):
+        from personalclaw.llm.events import EVENT_TEXT_CHUNK, AgentEvent
+
+        async for event in self._calls_only():
+            yield event
+        self.entered.set()
+        await asyncio.Event().wait()  # only a cancellation ends this turn
+        yield AgentEvent(kind=EVENT_TEXT_CHUNK, text="unreachable")
+
+    async def _calls_only(self):
+        """Its calls, and nothing after them."""
+        from personalclaw.llm.events import EVENT_TOOL_CALL, EVENT_TOOL_RESULT, AgentEvent
+
+        for call_id, title, risk, args, finished in self.calls:
+            yield AgentEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id=call_id,
+                title=title,
+                risk_level=risk,
+                tool_input=args,
+            )
+            if finished:
+                yield AgentEvent(
+                    kind=EVENT_TOOL_RESULT,
+                    tool_call_id=call_id,
+                    title=title,
+                    tool_output="ok",
+                    tool_meta={"ok": True},
+                )
+
+
+class _WorksThenHangsSessions(_HangingSessions):
+    def __init__(self, calls) -> None:
+        super().__init__()
+        self._calls = calls
+
+    async def get_or_create(self, key, agent=None, **kwargs):
+        return self.providers.setdefault(key, _WorksThenHangsProvider(self._calls)), True, False
+
+
+def _cut_off_after(room_id, calls):
+    """The analyst's turn makes *calls* and then the gateway stops; the room is interrupted."""
+    before = _WorksThenHangsSessions(calls)
+    dying = _LiveState(before)
+
+    async def crash():
+        await _post_live(room_id, "what should we charge?", dying)
+        await _wait_for_turn(before, f"room:{room_id}:analyst")
+        for task in list(dying._background_tasks):
+            task.cancel()
+        await asyncio.gather(*list(dying._background_tasks), return_exceptions=True)
+
+    asyncio.run(crash())
+
+
+def _room_with_a_cut_off_turn(calls):
+    from tests.test_rooms_store import _StreamingSessions
+
+    room_id = _body(_create("Cut off"))["room"]["id"]
+    _add_member(room_id, {"name": "analyst"})
+    _add_member(room_id, {"name": "skeptic"})
+    _cut_off_after(room_id, calls)
+    after = _StreamingSessions(
+        replies={
+            f"room:{room_id}:analyst": "charge more",
+            f"room:{room_id}:skeptic": "charge less",
+        }
+    )
+    return room_id, after, _LiveState(after)
+
+
+def _continue(room_id, state, payload=None, *, app=""):
+    async def go():
+        req = _live_request(
+            "POST", f"/api/rooms/{room_id}/continue", payload, state, room_id=room_id
+        )
+        if app:
+            req["app"] = app
+        answered = await h.api_room_continue(req)
+        await asyncio.gather(*list(state._background_tasks))
+        return answered
+
+    return asyncio.run(go())
+
+
+def _spoken(room_id):
+    return [
+        (m.get("speaker", ""), m["content"])
+        for m in store.read_messages(room_id)
+        if m["role"] == "assistant"
+    ]
+
+
+def test_continue_asks_before_a_cut_off_turns_finished_write_runs_again(cfg):
+    """🔴 Red before: Continue answered 200 and ran the cut-off turn again from its start, on a
+    runner that remembers nothing of its first attempt, so the file it wrote could be written
+    again. Now it asks, naming the write, runs nothing until she says yes, and then finishes."""
+    room_id, after, state = _room_with_a_cut_off_turn([WRITE])
+    assert [c["state"] for c in store.require_room(room_id).speaking_calls] == ["completed"]
+
+    asked = _continue(room_id, state)
+
+    assert asked.status == 409, _body(asked)
+    error = _body(asked)["error"]
+    assert error["code"] == "retry_repeats_steps"
+    assert error["detail"]["steps"] == [{"tool": "write_file", "target": "notes/price.md"}]
+    assert store.require_room(room_id).speaking == "analyst", "the cut-off turn is still owed"
+    assert after.providers == {}, "nothing ran before she answered"
+
+    done = _continue(room_id, state, {"confirm": error["detail"]["confirm"]})
+
+    assert done.status == 200
+    assert _spoken(room_id) == [("analyst", "charge more"), ("skeptic", "charge less")]
+    room = store.require_room(room_id)
+    assert (room.speaking, room.speaking_calls) == ("", []), "a finished turn keeps no calls"
+
+
+def test_continue_asks_about_a_write_the_turn_was_cut_off_in(cfg):
+    room_id, after, state = _room_with_a_cut_off_turn([WRITING])
+    asked = _continue(room_id, state)
+    assert asked.status == 409
+    steps = _body(asked)["error"]["detail"]["steps"]
+    assert steps == [{"tool": "write_file", "target": "notes/price.md", "running": True}]
+    assert after.providers == {}
+
+
+def test_continue_runs_a_cut_off_turn_that_only_read_unasked(cfg):
+    """The control: a turn whose finished calls only read repeats nothing, so asking on every
+    Continue cannot pass."""
+    room_id, after, state = _room_with_a_cut_off_turn([READ])
+    assert store.require_room(room_id).speaking_calls[0]["effect"] == "read"
+    done = _continue(room_id, state)
+    assert done.status == 200
+    assert _spoken(room_id) == [("analyst", "charge more"), ("skeptic", "charge less")]
+
+
+def test_continue_asks_again_for_a_yes_to_other_steps(cfg):
+    room_id, after, state = _room_with_a_cut_off_turn([WRITE])
+    stale = _continue(room_id, state, {"confirm": "0" * 32})
+    assert stale.status == 409 and _body(stale)["error"]["detail"]["confirm"] != "0" * 32
+    assert after.providers == {}
+
+
+@pytest.mark.parametrize(
+    "later",
+    [
+        pytest.param({"id": "c2"}, id="another-call"),
+        pytest.param(
+            {"input": '{"path": "notes/cost.md", "content": "charge more"}'},
+            id="same-id-another-file",
+        ),
+    ],
+)
+def test_a_yes_to_a_cut_off_turns_steps_is_asked_again_once_it_made_another(cfg, later):
+    """Her yes is to the steps she was shown. A step the turn records after she was asked (another
+    call, or another file under the same id from a runtime that reuses ids) is one she did not
+    see, so that yes is asked again and nothing runs."""
+    room_id, after, state = _room_with_a_cut_off_turn([WRITE])
+    shown = _body(_continue(room_id, state))["error"]["detail"]["confirm"]
+    first = store.require_room(room_id).speaking_calls[0]
+    store.record_call(room_id, "analyst", {**first, **later})
+
+    stale = _continue(room_id, state, {"confirm": shown})
+
+    assert stale.status == 409, _body(stale)
+    assert _body(stale)["error"]["detail"]["confirm"] not in ("", shown)
+    assert after.providers == {}, "nothing ran on a yes to other steps"
+    assert store.require_room(room_id).speaking == "analyst"
+
+
+def test_an_app_cannot_continue_a_turn_that_wrote_for_her(cfg):
+    room_id, after, state = _room_with_a_cut_off_turn([WRITE])
+    confirm = _body(_continue(room_id, state))["error"]["detail"]["confirm"]
+    refused = _continue(room_id, state, {"confirm": confirm}, app="some-app")
+    assert refused.status == 409
+    error = _body(refused)["error"]
+    assert error["code"] == "retry_repeats_steps" and "detail" not in error
+    assert "from the dashboard" in error["message"]
+    assert after.providers == {}
+
+
+def test_a_message_to_a_room_whose_cut_off_turn_wrote_asks_first_and_writes_nothing(cfg):
+    """A message reopens the cut-off turn too, so it asks the same question before its line is
+    written, and is taken once she says yes."""
+    room_id, after, state = _room_with_a_cut_off_turn([WRITE])
+    before = len(store.read_messages(room_id))
+
+    async def say(payload):
+        posted = await h.api_room_message_post(
+            _live_request("POST", f"/api/rooms/{room_id}/messages", payload, state, room_id=room_id)
+        )
+        await asyncio.gather(*list(state._background_tasks))
+        return posted
+
+    asked = asyncio.run(say({"content": "and the floor?"}))
+    assert asked.status == 409 and _body(asked)["error"]["code"] == "retry_repeats_steps"
+    assert len(store.read_messages(room_id)) == before, "the message was written before her yes"
+    assert after.providers == {}
+
+    confirm = _body(asked)["error"]["detail"]["confirm"]
+    posted = asyncio.run(say({"content": "and the floor?", "confirm": confirm}))
+    assert posted.status == 201
+    assert [s for s, _ in _spoken(room_id)][:1] == ["analyst"]
+
+
+def test_stream_and_collect_tells_of_each_call_when_made_and_when_finished():
+    """The seam the room records calls through: each call twice, made and finished, asked or not;
+    a fault in the callback never breaks the turn; and a caller that passes none sees nothing."""
+    from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
+    from personalclaw.llm_helpers import stream_and_collect
+
+    class _Provider:
+        async def stream(self, message):
+            async for event in _WorksThenHangsProvider([WRITE])._calls_only():
+                yield event
+            yield AgentEvent(kind=EVENT_TEXT_CHUNK, text="done")
+            yield AgentEvent(kind=EVENT_COMPLETE)
+
+    seen: list[tuple[str, str | None]] = []
+
+    def told(card, result):
+        seen.append((card.title, None if result is None else result.kind))
+        raise RuntimeError("a record that fails")
+
+    assert asyncio.run(stream_and_collect(_Provider(), "go", on_tool_step=told)) == "done"
+    assert seen == [("write_file", None), ("write_file", "tool_result")]
+    assert asyncio.run(stream_and_collect(_Provider(), "go")) == "done"

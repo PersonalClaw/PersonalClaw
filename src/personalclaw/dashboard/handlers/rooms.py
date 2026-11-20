@@ -39,7 +39,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.config import loader as config_loader
-from personalclaw.dashboard import session_export
+from personalclaw.dashboard import repeated_steps, session_export
 from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import (
@@ -49,7 +49,7 @@ from personalclaw.request_validation import (
     string_field,
 )
 from personalclaw.rooms import arbiter, posture, store
-from personalclaw.sel import sel
+from personalclaw.sel import sel, sel_log_async
 
 logger = logging.getLogger(__name__)
 
@@ -438,9 +438,20 @@ async def api_room_message_post(request: web.Request) -> web.Response:
         _require_enabled()
         body = await json_object_body(request, empty_ok=False)
         content = require_string(body, "content")
+        state = _gateway_state(request)
+        # A room the gateway cut off mid-turn reopens that turn first, so a message asks first
+        # too, before anything is written: Continue's question, answered the same way.
+        asked = await _reopening_asks(
+            request,
+            state,
+            store.require_room(room_id),
+            confirm=string_field(body, "confirm"),
+            operation="rooms.message",
+        )
+        if asked.answer is not None:
+            return asked.answer
         store.append_message(room_id, role="user", content=content, speaker=store.HUMAN_SPEAKER)
         _take_in_the_humans_links(room_id, content)
-        state = _gateway_state(request)
         arbiter.note_human_message(state, room_id)
         arbiter.queue_human_turns(room_id, content)
         messages = store.read_messages(room_id)
@@ -450,6 +461,7 @@ async def api_room_message_post(request: web.Request) -> web.Response:
     except store.RoomError as exc:
         return _refusal(exc)
     if owes:
+        await _reopened(asked, room_id, operation="rooms.message")
         _start_round(state, room_id)
     payload = _room_payload(store.require_room(room_id), state)
     return web.json_response({"messages": messages, "room": payload}, status=201)
@@ -473,19 +485,71 @@ async def api_room_continue(request: web.Request) -> web.Response:
     **Idempotent**: a room that is running, paused, or owes nothing is answered as it stands,
     because a second click on Continue — or one from a tab that has not seen the round finish —
     wants a room that is not interrupted, and that is already true.
+
+    **It asks first** when the cut-off turn finished a call that may have changed something, or
+    was cut off in one: the turn runs again from its start, on a runner that does not remember
+    its first attempt, so it may repeat them. It answers ``409 retry_repeats_steps`` naming them,
+    as Retry does (``repeated_steps.ask_first_in_room``), and continues once the request comes
+    back with that question's ``confirm`` in its body.
     """
     room_id = request.match_info["room_id"]
     try:
         _require_enabled()
+        body = await json_object_body(request)
         room = store.require_room(room_id)
         if room.archived:
             raise store.RoomError("room_archived", f"Room {room_id!r} is archived.")
+    except RequestValidationError as exc:
+        return exc.response
     except store.RoomError as exc:
         return _refusal(exc)
     state = _gateway_state(request)
     if not room.paused and room.owed():
+        asked = await _reopening_asks(
+            request, state, room, confirm=string_field(body, "confirm"), operation="rooms.continue"
+        )
+        if asked.answer is not None:
+            return asked.answer
+        await _reopened(asked, room_id, operation="rooms.continue")
         _start_round(state, room_id)
     return web.json_response({"room": _room_payload(store.require_room(room_id), state)})
+
+
+async def _reopening_asks(
+    request: web.Request, state: Any, room: store.Room, *, confirm: str, operation: str
+) -> repeated_steps.RunAgain:
+    """Whether the round a request would start reopens a turn the gateway cut off, and what that
+    turn's recorded calls ask first (``repeated_steps.ask_first_in_room``). A room that is
+    running answers its own turns, and a room with no cut-off turn reopens none: neither asks."""
+    if (
+        not room.speaking
+        or room.speaking not in room.owed()
+        or arbiter.round_running(state, room.id)
+    ):
+        return repeated_steps.RunAgain([])
+    return await repeated_steps.ask_first_in_room(
+        room.id,
+        room.speaking,
+        room.speaking_calls,
+        request=request,
+        operation=operation,
+        confirm=confirm,
+    )
+
+
+async def _reopened(asked: repeated_steps.RunAgain, room_id: str, *, operation: str) -> None:
+    """The audit row of her yes to a cut-off turn's steps, when she gave one."""
+    if asked.audit is None:
+        return
+    await sel_log_async(
+        sel().log_api_access,
+        caller="dashboard",
+        operation=operation,
+        outcome="allowed",
+        source="dashboard",
+        resources=room_id,
+        metadata=asked.audit,
+    )
 
 
 def _take_in_the_humans_links(room_id: str, content: str) -> None:

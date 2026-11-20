@@ -90,6 +90,7 @@ async def stream_and_collect(
     agent: str = "",
     on_ungated: "Callable[[UngatedCall], HostAnswer] | None" = None,
     on_refused: "Callable[[LLMEvent, str], None] | None" = None,
+    on_tool_step: "Callable[[LLMEvent, LLMEvent | None], None] | None" = None,
 ) -> str:
     """Stream a message through an LLM provider and collect the full response.
 
@@ -107,14 +108,12 @@ async def stream_and_collect(
             whose auto-approve patterns answer a call under HOOK_BASED.
         on_chunk: Optional callback invoked with each text chunk (for progress).
         on_tool_approval: Optional async callback for interactive approval.
-        on_complete: Optional callback invoked with the terminal ``EVENT_COMPLETE``
-            event (which carries the turn's token counts + cost) just before the
-            text is returned — the seam the cost/token ledger's non-``run_chat``
-            write-sites use. A turn that ends in an
-            error hands it its ``EVENT_SPENT`` instead, what the calls it made before
-            the error cost, and the error is raised after. Default ``None``
-            leaves the streamed text byte-identical for every other caller. Never
-            raises into the turn: a callback fault is swallowed.
+        on_complete: Optional callback invoked with the terminal ``EVENT_COMPLETE`` event (which
+            carries the turn's token counts + cost) just before the text is returned — the seam the
+            cost/token ledger's non-``run_chat`` write-sites use. A turn that ends in an error hands
+            it its ``EVENT_SPENT`` instead, what the calls it made before the error cost, and the
+            error is raised after. Default ``None`` leaves the streamed text byte-identical for
+            every other caller. Never raises into the turn: a callback fault is swallowed.
         on_substitution: For a caller that shows it, the sentence a turn says when its
             model failed before replying and the next model of its chain answers ("Ran on
             Y instead of X: …"), before anything that model streams. Passing it is what
@@ -131,6 +130,7 @@ async def stream_and_collect(
         on_refused: Told of each asked call the deny-list or a blocking hook refused, with the
             refusal's reason, for a caller that shows its turn's refusals. Each is audited whether
             or not one is told.
+        on_tool_step: Told of each call as it is made and as it finishes (``_tell_tool_step``).
 
     Returns:
         The complete response text.
@@ -153,6 +153,7 @@ async def stream_and_collect(
         try:
             async with closing_stream(provider.stream(message)) as events:
                 async for event in events:
+                    _tell_tool_step(on_tool_step, event, called)
                     if event.kind == EVENT_TEXT_CHUNK:
                         result_text += event.text
                         if on_chunk:
@@ -253,6 +254,29 @@ async def stream_and_collect(
                 logger.debug("Cancel before retry failed", exc_info=True)
             await asyncio.sleep(_PROMPT_BUSY_DELAY * (2**attempt))
     return ""  # unreachable, satisfies type checker
+
+
+def _tell_tool_step(
+    on_tool_step: "Callable[[LLMEvent, LLMEvent | None], None] | None",
+    event: LLMEvent,
+    called: dict[str, LLMEvent],
+) -> None:
+    """Tell *on_tool_step*, for a caller that keeps a record of what its turn did, of each call
+    twice: with its card and ``None`` when it is made, and with the card, as made, and its result
+    when it finishes, whether or not it was asked about. A turn cut off between the two leaves the
+    call as made and never finished. ``None``: nobody is told. Called before the stream's own
+    handling of the event, which forgets the card. Never raises into the turn: a callback fault is
+    swallowed."""
+    if on_tool_step is None or event.kind not in (EVENT_TOOL_CALL, EVENT_TOOL_RESULT):
+        return
+    if event.kind == EVENT_TOOL_CALL:
+        card, result = event, None
+    else:
+        card, result = called.get(str(event.tool_call_id or ""), event), event
+    try:
+        on_tool_step(card, result)
+    except Exception:  # noqa: BLE001 — a record of the turn must never break the turn
+        logger.debug("stream_and_collect on_tool_step failed", exc_info=True)
 
 
 async def _report_ungated(

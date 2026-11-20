@@ -21,6 +21,7 @@ import { MessageUser } from '../../ui/chat/MessageUser'
 import { NumberField } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
 import { RoomApprovals } from './RoomApprovals'
+import { askToRepeat } from './repeatedSteps'
 import { RoomPauseCard } from './RoomPauseCard'
 import { RoomMembersPanel } from './RoomMembersPanel'
 import {
@@ -154,13 +155,19 @@ export function RoomView({ roomId, navigate, setQuery }: {
     if (!content || sending) return
     setSending(true)
     setActionError(null)
-    try {
-      await api.postRoomMessage(roomId, content)
+    const say = async (confirmed?: string) => {
+      await (confirmed ? api.postRoomMessage(roomId, content, confirmed) : api.postRoomMessage(roomId, content))
       setDraft('')
       // Re-read the room: it now owes this message's turns (behind any it already owed) and says
       // a round is running them, which is what starts the poll above.
       refresh()
+    }
+    try {
+      await say()
     } catch (e) {
+      // A room the gateway cut off mid-turn reopens that turn first, and asks before a turn that
+      // changed something runs again: the chat's own question, and on her yes the same message.
+      if (askToRepeat(e, (yes) => { void say(yes).catch((again) => setActionError({ error: again })) })) return
       // No banner Retry: the draft is kept, so Send right below IS the retry, and it sends what
       // the composer holds now rather than a copy captured when this failed.
       setActionError({ error: e })
@@ -202,7 +209,16 @@ export function RoomView({ roomId, navigate, setQuery }: {
   const [continuing, setContinuing] = useState(false)
   const continueRound = useCallback(() => {
     setContinuing(true)
-    void act(() => api.continueRoom(roomId), 'continue the round').finally(() => setContinuing(false))
+    void act(async () => {
+      try {
+        await api.continueRoom(roomId)
+      } catch (e) {
+        // A cut-off turn that changed something asks first, as Retry does: the chat's question,
+        // and on her yes Continue again with it.
+        if (askToRepeat(e, (yes) => { void act(() => api.continueRoom(roomId, yes), 'continue the round') })) return
+        throw e
+      }
+    }, 'continue the round').finally(() => setContinuing(false))
   }, [roomId, act])
 
   // ── the load states, as ONE ladder ──
