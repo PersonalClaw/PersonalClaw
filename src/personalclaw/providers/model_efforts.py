@@ -152,6 +152,23 @@ async def _listing(entry: Any) -> dict[str, tuple[str, ...]] | None:
     return levels
 
 
+def listed_levels(model_id: str) -> tuple[str, ...] | None:
+    """The levels the app listings this process has read declare for ``model_id``, lowest first,
+    or ``None`` when no listing read within :data:`_TTL_SECS` names it: what a wire client, which
+    knows its model but not the provider entry it serves, sends a level by. A native turn reads
+    its model's listing before its first request (:func:`turn_effort`), so the listing its level
+    was judged by is the one its wire reads. A model two providers list takes the levels either
+    declares: the turn has already held the level to its own provider's."""
+    now = time.monotonic()
+    found: tuple[str, ...] | None = None
+    for read_at, levels in list(_listed.values()):
+        if levels is None or now - read_at >= _TTL_SECS or model_id not in levels:
+            continue
+        known = found or ()
+        found = known + tuple(level for level in levels[model_id] if level not in known)
+    return found
+
+
 async def declared_efforts(model_ref: str) -> tuple[str, ...] | None:
     """The levels a native chat bound to ``model_ref`` declares, lowest first: ``()`` for Auto,
     ``None`` where nothing says (see the module's docstring)."""
