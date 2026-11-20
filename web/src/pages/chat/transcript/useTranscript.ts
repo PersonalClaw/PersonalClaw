@@ -10,6 +10,7 @@ import type { useComposerNotice } from '../../../ui/composer/ComposerNotice'
 import type { ComposerValue } from '../../../ui/composer/types'
 import { liveWorkflowCards } from '../WorkflowProgressCard'
 import { liveLoopCards } from '../SdlcProgressCard'
+import { liveManualAutomationCards } from '../ManualAutomationCard'
 import { sessionMapEntries, type SessionMapEntry } from '../sessionMap'
 import { askToRepeat } from '../repeatedSteps'
 import { branchIndexOf } from '../branchLineage'
@@ -481,9 +482,13 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     return false
   }
 
-  // The tool results that show a run's or a loop's live card: the first to name each, however often the
-  // agent read it after (`liveWorkflowCards`, `liveLoopCards`). Every later read keeps its plain tool card.
-  const liveCards = useMemo(() => new Set([...liveWorkflowCards(turns), ...liveLoopCards(turns)]), [turns])
+  // The tool results that show a run's, a loop's or a manual automation's live card: the first to name
+  // each, however often the agent read it after (`liveWorkflowCards`, `liveLoopCards`,
+  // `liveManualAutomationCards`). Every later read keeps its plain tool card.
+  const liveCards = useMemo(
+    () => new Set([...liveWorkflowCards(turns), ...liveLoopCards(turns), ...liveManualAutomationCards(turns)]),
+    [turns],
+  )
   // The Session Map's entries — one per USER message, each owning the turns of its exchange.
   // Derived ONCE, here, and handed to both forms, so the rail and the coarse-pointer drawer index
   // the identical array (a "Message 3 of 7" that means a different 7 in each form is two maps).
