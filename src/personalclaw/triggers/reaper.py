@@ -121,6 +121,9 @@ def overdue(
     A pure read, separate from the reap so the doctor and a test can ask the question without
     causing an effect. Sorted by id for a stable, reproducible sweep order.
 
+    The deadline counts the time the machine was awake (`claims.held_for`), as a claim's expiry
+    does.
+
     Deliberately reads through `claims.running_ids`, so an EXPIRED claim is already invisible here:
     the 1h self-expiry is the outer backstop and this deadline is the inner one, and a reaper that
     re-reaped self-expired claims would log a kill for a run nothing is holding.
@@ -130,10 +133,11 @@ def overdue(
     now = now or time.time()
     out: list[tuple[str, float]] = []
     for trigger_id in claims.running_ids(now=now, base_dir=base_dir):
-        started = claims.running_since(trigger_id, now=now, base_dir=base_dir)
-        if started is None:
+        # Awake time (`claims.held_for`): a run the machine slept through has not run for the time
+        # it slept, and counted, the deadline cut off a run still going.
+        elapsed = claims.held_for(trigger_id, now=now, base_dir=base_dir)
+        if elapsed is None:
             continue
-        elapsed = now - started
         if elapsed > deadline_secs:
             out.append((trigger_id, elapsed))
     return sorted(out)

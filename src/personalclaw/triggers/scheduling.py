@@ -286,9 +286,14 @@ class Claim:
     # The program image of `owner_pid` that granted it (`PROCESS_IMAGE`), stamped the same way and
     # read back the same way: a restart keeps the pid and changes the image.
     owner_image: str = field(default_factory=lambda: PROCESS_IMAGE)
+    # How long the machine slept since the claim was taken (`claims.read_claim` measures it). A
+    # claim ages by the time the machine was awake: sleep is wall-clock time in which neither the
+    # run nor the gateway made progress, and counted, it expired a run still going and let the
+    # next fire start beside it. `claimed_at` stays the wall-clock start: when the run began.
+    slept_secs: float = 0.0
 
     def expired(self, now: float) -> bool:
-        return now >= self.claimed_at + max(1.0, self.max_duration_secs)
+        return now - self.slept_secs >= self.claimed_at + max(1.0, self.max_duration_secs)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -296,7 +301,7 @@ class Claim:
             "holder": self.holder,
             "claimed_at": self.claimed_at,
             "max_duration_secs": self.max_duration_secs,
-            "expires_at": self.claimed_at + self.max_duration_secs,
+            "expires_at": self.claimed_at + self.slept_secs + self.max_duration_secs,
             "owner_pid": self.owner_pid,
             "owner_image": self.owner_image,
         }

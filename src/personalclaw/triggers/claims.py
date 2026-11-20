@@ -30,6 +30,20 @@ one hour and the reaper bounds it at thirty minutes, but both are DEADLINES: unt
 run reads as in flight, so the first answer a user gets after a restart is "still running" about a
 process that no longer exists. The owning pid turns that into an OBSERVATION — see `orphaned_ids`,
 and the boot pass in `reaper.terminalize_orphans` that consumes it.
+
+**A claim ages by the time the machine was awake.** Its age was the wall clock's, and sleep is
+wall-clock time in which neither the run nor the gateway made progress: a laptop that slept half an
+hour through an automation's run woke to the reaper calling the run overdue, and one that slept an
+hour to the claim reading as expired, so the next fire started a second run beside the first. A
+claim therefore also carries, from when it was taken, the two clocks the platform keeps since boot:
+one that stops while the machine sleeps (`time.monotonic()` on macOS and Linux alike) and one that
+counts sleep (`CLOCK_MONOTONIC` on macOS, `CLOCK_BOOTTIME` on Linux, containers included), with
+when that boot began. A reader takes from the claim's wall-clock age the time the machine slept
+since (`_slept`): the advance of the clock that counts sleep less the advance of the one that
+doesn't. Neither clock moves when the wall clock is set, so a wall-clock step (an NTP correction,
+or the time changed by hand) is never read as sleep. A claim from another boot, one written before
+claims carried the stamps, or one read where the platform keeps no clock that counts sleep, is aged
+by the wall clock as before.
 """
 
 from __future__ import annotations
@@ -38,6 +52,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -48,6 +63,66 @@ from personalclaw.triggers.scheduling import CLAIM_MAX_DURATION_SECS, Claim
 logger = logging.getLogger(__name__)
 
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+#: How far apart two readings of when the boot began may be and still name one boot. The reading
+#: is the wall clock less the time since boot, so a wall clock set by a minute moves it by a
+#: minute, and a new boot moves it by at least the old boot's uptime. A step past this reads as
+#: another boot, whose claims age by the wall clock: what a step alone gives (it is not sleep), and
+#: the safe side.
+_SAME_BOOT_SECS = 60.0
+
+
+def _clocks() -> tuple[float, float, float]:
+    """``(wall, awake, since_boot)``: now by the wall clock, by the clock that stops while the
+    machine sleeps, and by the clock that counts the time since boot, sleep included.
+
+    Both boot clocks are one clock for every process on a boot, and neither moves when the wall
+    clock is set. The awake clock is ``time.monotonic()`` (``mach_absolute_time`` on macOS,
+    ``CLOCK_MONOTONIC`` on Linux); the one that counts sleep is ``CLOCK_MONOTONIC`` on macOS and
+    ``CLOCK_BOOTTIME`` on Linux. ``since_boot`` is 0 where the platform keeps no such clock, and
+    then no claim is aged by awake time.
+    """
+    wall = time.time()
+    awake = time.monotonic()
+    if sys.platform == "darwin":
+        counts_sleep = getattr(time, "CLOCK_MONOTONIC", None)
+    elif sys.platform.startswith("linux"):
+        counts_sleep = getattr(time, "CLOCK_BOOTTIME", None)
+    else:
+        counts_sleep = None
+    since_boot = 0.0
+    if counts_sleep is not None:
+        try:
+            since_boot = time.clock_gettime(counts_sleep)
+        except OSError:
+            since_boot = 0.0
+    return wall, awake, since_boot
+
+
+def _slept(raw: dict[str, Any]) -> float:
+    """How long the machine slept since a stored claim was taken: the advance since then of the
+    clock that counts sleep less the advance of the one that doesn't, never below 0. 0 for a claim
+    taken on another boot, one written before claims carried the stamps, or where the platform
+    keeps no clock that counts sleep.
+    """
+    try:
+        claimed_awake = float(raw.get("claimed_awake") or 0.0)
+        claimed_since_boot = float(raw.get("claimed_since_boot") or 0.0)
+        boot_at = float(raw.get("boot_at") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if claimed_awake <= 0 or claimed_since_boot <= 0 or boot_at <= 0:
+        return 0.0
+    wall, awake, since_boot = _clocks()
+    if since_boot <= 0:
+        return 0.0
+    # Another boot: its clocks began again (behind the claim's), or it began at another time.
+    if since_boot < claimed_since_boot or awake < claimed_awake:
+        return 0.0
+    if abs((wall - since_boot) - boot_at) > _SAME_BOOT_SECS:
+        return 0.0
+    return max(0.0, (since_boot - claimed_since_boot) - (awake - claimed_awake))
 
 
 def _claims_dir(base_dir: Path | str | None) -> Path:
@@ -71,6 +146,10 @@ def read_claim(
     trigger hostage until a janitor notices. A malformed record also reads as None — an
     unparseable claim that blocked every future fire would be worse than one that is ignored,
     and the row is visible on disk for a human either way.
+
+    Expiry counts the time the machine was awake: the claim carries how long it slept since the
+    claim was taken (`Claim.slept_secs`, from :func:`_slept`), so a run that slept through its
+    hour is still held.
     """
     now = now or time.time()
     path = _claim_path(trigger_id, base_dir)
@@ -87,7 +166,10 @@ def read_claim(
         owner_image = str(raw.get("owner_image") or "")
     except (TypeError, ValueError):
         return None
-    if claimed_at <= 0 or now - claimed_at >= max_secs:
+    if claimed_at <= 0:
+        return None
+    slept = _slept(raw)
+    if now - slept - claimed_at >= max_secs:
         return None
     return Claim(
         trigger_id=str(raw.get("trigger_id") or trigger_id),
@@ -102,7 +184,20 @@ def read_claim(
         # The same for the image, and the same "" for a record that carries none: defaulted, every
         # claim this pid's previous image left would read as this image's own.
         owner_image=owner_image,
+        slept_secs=slept,
     )
+
+
+def held_for(
+    trigger_id: str, *, now: float = 0.0, base_dir: Path | str | None = None
+) -> float | None:
+    """How long a trigger's run has held its claim, counting the time the machine was awake, or
+    None when it is idle. The reaper's deadline is measured by this (`reaper.overdue`)."""
+    now = now or time.time()
+    claim = read_claim(trigger_id, now=now, base_dir=base_dir)
+    if claim is None:
+        return None
+    return max(0.0, now - claim.slept_secs - claim.claimed_at)
 
 
 def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
@@ -114,10 +209,15 @@ def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
     if claim is None or not getattr(claim, "trigger_id", ""):
         return
     path = _claim_path(claim.trigger_id, base_dir)
+    claimed_at = float(getattr(claim, "claimed_at", 0.0))
+    wall, awake, since_boot = _clocks()
+    # The time between the grant and this write, by the wall clock (a claim is written as it is
+    # granted): each boot clock's stamp is back-dated by it, to the grant.
+    lag = max(0.0, wall - claimed_at)
     payload = {
         "trigger_id": claim.trigger_id,
         "holder": getattr(claim, "holder", ""),
-        "claimed_at": float(getattr(claim, "claimed_at", 0.0)),
+        "claimed_at": claimed_at,
         "max_duration_secs": float(
             getattr(claim, "max_duration_secs", CLAIM_MAX_DURATION_SECS) or CLAIM_MAX_DURATION_SECS
         ),
@@ -127,6 +227,18 @@ def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
         # anything other than the process that runs the fire.
         "owner_pid": int(getattr(claim, "owner_pid", 0) or 0),
         "owner_image": str(getattr(claim, "owner_image", "") or ""),
+        # Both boot clocks when the claim was taken, and when their boot began: what a reader
+        # measures the sleep since by (`_slept`). None where the platform keeps no clock that
+        # counts sleep, and the claim then ages by the wall clock.
+        **(
+            {
+                "claimed_awake": awake - lag,
+                "claimed_since_boot": since_boot - lag,
+                "boot_at": wall - since_boot,
+            }
+            if since_boot > 0
+            else {}
+        ),
     }
     atomic_json_write(path, payload)
     _moved(claim.trigger_id)
