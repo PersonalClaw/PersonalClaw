@@ -851,6 +851,17 @@ holds every row the filter leaves (up to 10,000), a true `total`, each filter va
   holds the keys, empty, and does mark it. With no answer the pass keeps and marks
   nothing; one no model could finish is owed and tried again on the heartbeat, and said
   in a notice that names the output limit to raise.
+- **A chat's consolidated count follows a rewrite of its transcript.** The transcript
+  records how many of its messages consolidation has read (`last_consolidated`), and a
+  pass reads the messages after it. An /undo, a regenerate and an edit-and-resend save
+  the chat with `force`, and that save lowers the count to where its messages first
+  differ from the file's (`chat_persistence._read_so_far`,
+  `transcript_rewrites.messages_unchanged`: the same speaker's, at the same time or in the same
+  words), so the edited message and every one sent after it are read once. A forced
+  save that rewrites nothing (a rename, a tag) keeps it. A pass marks only the
+  messages it read that the transcript still holds (`ConversationLog.mark_consolidated`),
+  never past its end, so one that was waiting on its model across an /undo leaves the
+  messages sent since for the next pass.
 - **Consolidation keeps a folder chat's memory in that folder's partition**
   (`HistoryConsolidator._kept_in`): the daily history entry and the session summary,
   the facts, the episodes, the persona notes, the seal, and the per-store

@@ -22,7 +22,8 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw import session_search as ss
-from personalclaw.history import ConversationLog, match_snippet
+from personalclaw.history import ConversationLog
+from personalclaw.search_snippets import match_snippet
 
 _FILLER = "nothing much to report today " * 60
 

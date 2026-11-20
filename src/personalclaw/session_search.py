@@ -1128,7 +1128,7 @@ def search(
     :data:`SCAN_READ_BYTES` goes (:func:`_newest_within`), which also matches inside words; with
     no index at all, that window is all a search reads unless ``rest`` asks for every chat. A
     chat a direct read found carries the passage where it was said, marked, as an index hit
-    does (``history.match_snippet``).
+    does (``search_snippets.match_snippet``).
     """
     text = (query or "").strip()
     listed = [
