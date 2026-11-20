@@ -5686,16 +5686,26 @@ def test_a_cut_short_red_job_reruns_nothing_in_place(monkeypatch: pytest.MonkeyP
     assert plan == f"`{SHARD}` was cancelled or timed out: its attempt-1 record may be missing"
 
 
-def _cancelled_shard(monkeypatch: pytest.MonkeyPatch, *, ran: bool) -> object:
+#: A field a job's listing leaves out, for :func:`_cancelled_shard`.
+_UNLISTED = object()
+
+
+def _cancelled_shard(monkeypatch: pytest.MonkeyPatch, *, ran: bool, **listed: object) -> object:
     """The rerun plan for attempt 1 red only in a cancelled suite shard: one that ran (a step and
     a runner), or one GitHub cancelled before any runner took it (no step, no runner name or id),
-    as e704f86a7's and 90dab8394's macOS shards were."""
+    as e704f86a7's and 90dab8394's macOS shards were. *listed* then sets fields of the shard's
+    listing, and :data:`_UNLISTED` leaves one out."""
     api, _ = _rerun_ready(monkeypatch)
     listing = f"/repos/{REPO}/actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=1"
     shard = api.answers[listing]["jobs"][0]
     shard["conclusion"] = "cancelled"
     if not ran:
         shard.update(steps=[], runner_name="", runner_id=0)
+    for key, value in listed.items():
+        if value is _UNLISTED:
+            shard.pop(key, None)
+        else:
+            shard[key] = value
     run = mc.read_run(api, REPO, RUN)
     assert isinstance(run, mc.Run)
     reasons = ["attempt 1's `results` is 'failure'"]
@@ -5716,6 +5726,25 @@ def test_a_cancelled_shard_that_ran_still_reruns_nothing_in_place(
     """The control: a shard that ran and was cancelled may have left no attempt-1 record, so N3
     still stops it."""
     plan = _cancelled_shard(monkeypatch, ran=True)
+    assert plan == f"`{SHARD}` was cancelled or timed out: its attempt-1 record may be missing"
+
+
+@pytest.mark.parametrize(
+    "listed",
+    [
+        {"runner_name": "macos-14-arm64-7", "runner_id": 0},
+        {"runner_name": "", "runner_id": 123},
+        {"runner_name": _UNLISTED, "runner_id": _UNLISTED},
+    ],
+    ids=["a-runner-name", "a-runner-id", "no-runner-fields-listed"],
+)
+def test_a_cancelled_shard_with_no_step_that_names_a_runner_or_lists_none_reruns_nothing(
+    monkeypatch: pytest.MonkeyPatch, listed: dict[str, object]
+) -> None:
+    """CORE N1 on the untaken rule: no step alone is not a shard no runner took. A runner's name
+    or id says one took it, and a listing that gives neither field says nothing, read as taken,
+    so N3 still stops each."""
+    plan = _cancelled_shard(monkeypatch, ran=False, **listed)
     assert plan == f"`{SHARD}` was cancelled or timed out: its attempt-1 record may be missing"
 
 
