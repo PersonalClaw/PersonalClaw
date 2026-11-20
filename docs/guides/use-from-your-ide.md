@@ -12,26 +12,38 @@ that is not a setting you can change.
 
 ---
 
-## The one hard limit: same machine, full stop
+## Same machine by default
 
 The MCP surface answers a client on **loopback** (`127.0.0.1` / `::1`) and refuses everything
-else. There are two config fields that look like they lift that — `external_access.mcp.allow_remote`
-and `external_access.public_url` — and **they do not work for an MCP client.** Do not spend an
-evening on them.
+else, unless you turn remote access on. From another machine, the way through is an SSH tunnel to
+that loopback: `ssh -L 10000:127.0.0.1:10000 you@that-machine`, then point the client at
+`http://127.0.0.1:10000/mcp`.
 
-Why: the gateway's CSRF middleware runs before the MCP surface does, and it only trusts a request
-with no `Origin` header when the peer is loopback. A browser always sends `Origin`; an MCP client
-is not a browser and never does. So an off-machine MCP client is refused **before** the
-`allow_remote` check ever executes. Setting both fields correctly — remote allowed, public URL
-matching the request's `Host` exactly, a valid token presented — still returns `403`, and the
-refusal says so (here for a client at `192.0.2.10`):
+With remote access off, a client on another machine is refused before the MCP surface reads its
+call, and told why (here a client at `192.0.2.10`):
 
 ```json
 {"error": {"code": "auth_origin_not_allowed", "message": "PersonalClaw's MCP surface takes requests only from programs on the machine PersonalClaw runs on; this one came from 192.0.2.10. To reach it, run your client on PersonalClaw's machine and connect to 127.0.0.1, or forward a port to that machine's 127.0.0.1 over SSH and connect through the tunnel."}}
 ```
 
-That is measured, not theoretical. The security outcome is fine — remote fails closed, harder than
-designed — but the two knobs are a promise the gateway currently cannot keep.
+### Remote access
+
+To let a client on another machine call the surface directly, set both of these in `config.json`.
+Neither is editable from the dashboard, on purpose.
+
+- `external_access.mcp.allow_remote`: `true`
+- `external_access.public_url`: the address the client calls, for example `https://claw.example`
+
+Then a call from another machine is taken only when its `Host` is the public URL's host exactly
+and it carries this surface's token or a registered client's. One with no token or a wrong one gets
+a bare `401`, and one to another `Host` a bare `403`. The same two settings work for the
+OpenAI-compatible and A2A surfaces (`external_access.openai.allow_remote`,
+`external_access.a2a.allow_remote`).
+
+These settings only decide which callers the surface takes. The gateway still has to be reachable
+at that address, which is your own listen address and network setup. Prefer the tunnel: it puts
+nothing new on the network. Capture and the webhook never take a caller on another machine,
+whatever the setting.
 
 **So: run your editor on the same machine as the gateway.** If your editor is somewhere else,
 forward a port over SSH (`ssh -L 10000:127.0.0.1:10000 you@gateway-host`) and point the client at
@@ -348,8 +360,8 @@ A client that still sends it is told it was revoked, and when.
 | `{"error": "..."}` (503) | an incident is active (`~/.personalclaw/incident.json`). Every inbound surface is suspended while unattended work is paused; resume from Settings → Security → Guardrails. |
 | `405 Method Not Allowed` on a `GET` | correct. The surface is POST-only; this is the serving-and-healthy signal. |
 | `{"error": "unauthorized"}` (401) | missing, malformed, or stale `Authorization: Bearer` header. Rotate and re-copy. |
-| `auth_origin_not_allowed` (403), "…takes requests only from programs on the machine PersonalClaw runs on; this one came from …" | you are reaching the gateway from off the machine. This is the 403 you will actually get, and it is not fixable by config — see [the hard limit](#the-one-hard-limit-same-machine-full-stop). |
-| `{"error": "forbidden"}` (403) | the MCP surface's *own* peer refusal — same cause (not loopback), but you rarely see it, because the CSRF check above fires first. |
+| `auth_origin_not_allowed` (403), "…takes requests only from programs on the machine PersonalClaw runs on; this one came from …" | you are reaching the gateway from off the machine with remote access off. Use a tunnel, or turn it on — see [remote access](#remote-access). |
+| `{"error": "forbidden"}` (403) | the MCP surface's *own* peer refusal: with remote access on, the call's `Host` isn't the public URL's, or `external_access.public_url` isn't set. |
 | `{"error": {"code": "auth_bearer_invalid", …}}` (403) | you pointed the client at an `/api/…` path instead of `/mcp`, with this surface's token in the Bearer header. That is the *dashboard's* auth talking, not this surface's. |
 | `{"error": "rate limited"}` (429) | you exceeded the burst of 20. The SDK drops the whole transport on this — reconnect and slow down. |
 | `-32601 unknown tool '…'` | that tool does not exist here. Only the six read-only tools do. |

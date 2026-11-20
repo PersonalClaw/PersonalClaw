@@ -333,6 +333,20 @@ describe('the page says when an integration token stopped working', () => {
     await screen.findByText('Requests per second')
     expect(screen.queryByText('not serving')).toBeNull()
   })
+
+  it('a surface that never takes a remote caller shows no remote pill, whatever its allow_remote says', async () => {
+    // Red before: the pill read `allow_remote` alone, so capture with the flag set in config.json
+    // said "Reachable from outside this machine." while its own check refuses every such caller.
+    const surfaces = [
+      { surface: 'capture', enabled: true, allow_remote: true, token_configured: true, token_problem: '', loopback_only: true },
+      { surface: 'mcp', enabled: true, allow_remote: true, token_configured: true, token_problem: '', loopback_only: false },
+    ]
+    externalAccess.mockResolvedValue({ ...STATE, surfaces })
+    render(<ExternalAccessPanel />)
+    await screen.findByText('Requests per second')
+    expect(screen.getAllByText('remote')).toHaveLength(1)
+    expect(screen.getAllByTitle('Reachable from outside this machine.')).toHaveLength(1)
+  })
 })
 
 describe('a rate cap whose raise is declined or refused keeps the stored cap', () => {

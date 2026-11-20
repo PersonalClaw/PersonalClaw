@@ -36,6 +36,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _origin_refusal_waived(request: web.Request, port: int) -> bool:
+    """Whether a state-changing request :func:`check_origin` refused is still let through, to a
+    rule of its own that decides it: a browser connector's own origin (``connector_origin``), or a
+    program on another machine calling a surface its owner opened to remote callers
+    (``inbound.auth.takes_remote``), which that surface's peer rule and bearer token then decide."""
+    from personalclaw.inbound.auth import takes_remote
+
+    return connector_origin.admits(request, port) or takes_remote(request)
+
+
 def _single_post_ceiling() -> int:
     """Body-size ceiling for the MAIN + API apps.
 
@@ -904,7 +914,7 @@ async def start_dashboard(
     ) -> web.StreamResponse:
         if request.method not in _safe_methods:
             origin_ok = check_origin(request, require=True, fallback_header="Referer")
-            if not origin_ok and not connector_origin.admits(request, port):
+            if not origin_ok and not _origin_refusal_waived(request, port):
                 # The one wire error envelope, not plain text: the login page (and the
                 # FE error funnel generally) branches on {"error": {"code"}}, and a
                 # text body parsed as JSON became {} — which the login page then
