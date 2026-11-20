@@ -26,13 +26,14 @@ pastes an expression (``${{``), so nothing an event names becomes shell; and its
 checkout and the App's token alone. Every step of every job is its fixture as a whole: its keys,
 condition, environment, inputs and closed list of lines, nothing past them (no ``shell``, no
 ``BASH_ENV``); and neither the workflow nor a job sets ``env``, ``defaults`` or a ``container``,
-which would reach every step under it. contract.yml's wake is held the same way. A poster may also
-hold the in-place rerun's two jobs (#5809 piece 3), both or neither: ``rerun``, after ``post`` and
-only for a run post names, holds ``actions: write`` with ``contents: read``, deploys nowhere, reads
-no secret, and runs exactly three steps: the runner identity, main's checkout and the controller's
-``rerun`` on its own token, within a bound inside the merge queue's check limit; ``rerun-fallback``,
-for that run whenever ``rerun`` did not succeed, holds post's reads and post's one token step and
-decides the queue commit with its rerun ended.
+which would reach every step under it. Each job runs on a GitHub-hosted ``ubuntu-24.04`` runner.
+contract.yml's wake is held the same way. A poster may also hold the in-place rerun's two jobs
+(#5809 piece 3), both or neither: ``rerun``, after ``post`` and only for a run post names, holds
+``actions: write`` with ``contents: read``, deploys nowhere, reads no secret, and runs exactly three
+steps: the runner identity, main's checkout and the controller's ``rerun`` on its own token, within
+a bound inside the merge queue's check limit; ``rerun-fallback``, for that run whenever ``rerun``
+did not succeed, holds post's reads and post's one token step and decides the queue commit with its
+rerun ended.
 Each rule fails on a planted edit.
 """
 
@@ -361,6 +362,10 @@ _JOBS = {
     ),
 }
 _WORKFLOW_KEYS = {"name", "on", "concurrency", "permissions", "jobs"}
+#: The runner every job of the poster and contract.yml's wake runs on: GitHub-hosted, as the file
+#: names it (CORE N1 on #6312). A self-hosted runner's own hooks run beside each step, the token
+#: steps among them, and a label list or a runner group picks a runner the file does not name.
+_RUNNER = "ubuntu-24.04"
 
 
 def _keys(data: dict) -> set[str]:
@@ -390,8 +395,13 @@ def _closed(step: object, want: dict[str, Any]) -> bool:
 def _closed_job_problems(
     where: str, job: dict, keys: set[str], steps: tuple[tuple[str, dict[str, Any]], ...]
 ) -> list[str]:
-    """*job* sets no key past *keys* and runs exactly *steps*, each its fixture as a whole."""
+    """*job* runs on ``_RUNNER``, sets no key past *keys* and runs exactly *steps*, each its fixture
+    as a whole."""
     found: list[str] = []
+    if job.get("runs-on") != _RUNNER:
+        found.append(
+            f"{where} runs on {job.get('runs-on')!r}, not a GitHub-hosted {_RUNNER} runner"
+        )
     extra = sorted(map(str, set(job) - keys - {"name", "steps"}))
     if extra:
         found.append(
@@ -1023,6 +1033,21 @@ def _anchored(text: str, old: str, new: str) -> tuple[str, str]:
             "    environment: ci-controller\n",
             "the post job sets ['container']",
             id="a container under post",
+        ),
+        # CORE N1 on #6312: each job runs on a GitHub-hosted runner, as the file names it.
+        pytest.param(
+            "    runs-on: ubuntu-24.04\n",
+            "    runs-on: [self-hosted]\n",
+            "the post job runs on ['self-hosted']",
+            id="post on a self-hosted runner",
+        ),
+        pytest.param(
+            "    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    environment: ci-controller\n"
+            "    permissions:\n      contents: read   #",
+            "    runs-on: [ubuntu-24.04, self-hosted]\n    timeout-minutes: 10\n"
+            "    environment: ci-controller\n    permissions:\n      contents: read   #",
+            "the contract job runs on ['ubuntu-24.04', 'self-hosted']",
+            id="contract on a self-hosted runner by a label list",
         ),
     ],
 )
@@ -1673,6 +1698,11 @@ def test_the_contract_workflow_keeps_its_shape() -> None:
             "        shell: bash -c 'gh run cancel 1; bash {0}'\n",
             "contract.yml's wake's dispatch step is not its closed step as a whole",
         ),
+        (
+            "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
+            "    runs-on: [self-hosted, linux]\n    timeout-minutes: 5\n",
+            "contract.yml's wake runs on ['self-hosted', 'linux']",
+        ),
     ],
 )
 def test_a_planted_edit_of_the_contract_workflow_fails(old: str, new: str, says: str) -> None:
@@ -2016,6 +2046,19 @@ _RERUN_ENV = (
             f"        shell: bash -c '{_FORGE}; bash {{0}}'\n",
             "the rerun-fallback job sets ['defaults']",
             id="job-level defaults on the fallback",
+        ),
+        # CORE N1 on #6312: the rerun and its fallback each run on a GitHub-hosted runner.
+        pytest.param(
+            f"    runs-on: ubuntu-24.04\n    timeout-minutes: {_RERUN_MINUTES}\n",
+            f"    runs-on: self-hosted\n    timeout-minutes: {_RERUN_MINUTES}\n",
+            "the rerun job runs on 'self-hosted'",
+            id="the rerun on a self-hosted runner",
+        ),
+        pytest.param(
+            "    runs-on: ubuntu-24.04\n",
+            "    runs-on: {group: ci-runners}\n",
+            "the rerun-fallback job runs on {'group': 'ci-runners'}",
+            id="the fallback on a runner group",
         ),
     ],
 )
