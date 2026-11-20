@@ -85,7 +85,7 @@
     - switch "MCP tool surface"
     - text: A#A gateway Agent-to-agent requests from another assistant you run.
     - switch "A#A gateway"
-    - text: Capture proxy Records an external agent’s sessions by proxying them. Carries full prompts, so it is the most sensitive surface here.
+    - text: Capture proxy Records an external agent’s sessions by proxying them. Carries full prompts, so it is the most sensitive surface here. Cannot be exposed remotely.
     - switch "Capture proxy"
     - text: Control bridge Semantic actions against your own dashboard. Loopback-only, always — it cannot be exposed remotely. Cannot be exposed remotely.
     - switch "Control bridge"
