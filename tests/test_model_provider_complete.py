@@ -602,3 +602,112 @@ async def test_anthropic_says_a_completion_stopped_at_its_cap(
     (done,) = [e async for e in events if e.kind == EVENT_COMPLETE]
     assert done.stop_reason == "max_tokens"
     assert done.output_tokens == 8_192
+
+
+# ── the reasoning effort a request carries ─────────────────────────────
+
+
+def _effort_sent(model: str, effort: str) -> str | None:
+    """What ``reasoning_effort`` the OpenAI wire sends ``model`` for the turn's ``effort``."""
+    import asyncio
+
+    from personalclaw.llm.openai import OpenAIProvider
+
+    chunks = [
+        _FakeChunk(
+            choices=[_FakeChoice(delta=_FakeDelta(content="x"), finish_reason="stop")],
+            usage=_FakeUsage(prompt_tokens=1, completion_tokens=1),
+        )
+    ]
+    completions = _FakeChatCompletions(chunks=chunks)
+    provider = OpenAIProvider(model=model, credential=_cred())
+    provider._client.chat = _FakeChat(completions)
+
+    async def run() -> None:
+        _ = [
+            e
+            async for e in provider.complete(
+                [{"role": "user", "content": "hi"}], reasoning_effort=effort
+            )
+        ]
+
+    asyncio.run(run())
+    return completions.calls[0].get("reasoning_effort")
+
+
+@pytest.fixture
+def listed(monkeypatch: pytest.MonkeyPatch):
+    """An app's listing, as a native turn read it before its request: each model and the levels
+    its app declares for it."""
+    import time
+
+    from personalclaw.providers import model_efforts
+
+    monkeypatch.setattr(model_efforts, "_listed", {})
+
+    def declare(**models: tuple[str, ...]) -> None:
+        model_efforts._listed[("my-provider", "fingerprint")] = (time.monotonic(), dict(models))
+
+    return declare
+
+
+@pytest.mark.parametrize(
+    ("model", "declared", "effort", "sent"),
+    [
+        # 🔴 Each was sent nothing, or high: the wire went by the model's name alone.
+        ("my-reasoner", ("low", "medium", "high"), "high", "high"),
+        ("my-reasoner", ("low", "medium", "high", "max"), "max", "max"),
+        ("o3", ("low", "medium", "high", "xhigh"), "xhigh", "xhigh"),
+        # A level the model does not declare, and a model that declares none, get none.
+        ("my-reasoner", ("low", "medium"), "high", None),
+        ("o3", (), "high", None),
+    ],
+    ids=["declared", "declared max", "declared xhigh", "undeclared level", "declares none"],
+)
+def test_a_level_the_models_app_declares_is_sent_as_it_is_whatever_its_name(
+    fake_openai: types.ModuleType, listed, model, declared, effort, sent
+) -> None:
+    listed(**{model: declared})
+    assert _effort_sent(model, effort) == sent
+
+
+@pytest.mark.parametrize(
+    ("model", "effort", "sent"),
+    [
+        ("solo1-chat", "high", None),
+        ("gpt-4o", "high", None),
+        ("o3", "high", "high"),
+        ("o3", "max", "high"),
+        ("gpt-5-mini", "", None),
+    ],
+    ids=["a name that only contains o1", "no reasoning", "reasoning", "max steps down", "none"],
+)
+def test_a_model_no_app_speaks_for_is_judged_by_its_name(
+    fake_openai: types.ModuleType, listed, model, effort, sent
+) -> None:
+    """The wire's own default, for a model no listing names: a reasoning model by its name, and a
+    level this wire has no rule for as the nearest lower one."""
+    listed(**{"some-other-model": ("low",)})
+    assert _effort_sent(model, effort) == sent
+
+
+@pytest.mark.parametrize(
+    ("model", "declared", "sent"),
+    [("my-reasoner", ("low", "medium", "high"), None), ("o3", (), "high")],
+    ids=["declared levels gone stale", "declares none gone stale"],
+)
+def test_a_listing_read_too_long_ago_no_longer_speaks_for_its_model(
+    fake_openai: types.ModuleType, monkeypatch: pytest.MonkeyPatch, model, declared, sent
+) -> None:
+    """A listing answers for its models only for as long as a turn reads it again
+    (``model_efforts._TTL_SECS``). One read longer ago says nothing: the wire falls back to the
+    model's name, as for a model no listing names."""
+    import time
+
+    from personalclaw.providers import model_efforts
+
+    aged = time.monotonic() - model_efforts._TTL_SECS - 1
+    monkeypatch.setattr(
+        model_efforts, "_listed", {("my-provider", "fingerprint"): (aged, {model: declared})}
+    )
+    assert _effort_sent(model, "high") == sent

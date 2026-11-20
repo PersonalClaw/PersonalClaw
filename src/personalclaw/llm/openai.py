@@ -66,8 +66,9 @@ _REASONING_MODEL = re.compile(r"(?<![a-z0-9])(?:o1|o3|o4|gpt-5)(?![a-z0-9])")
 #: The effort levels a reasoning model is sent as themselves.
 _REASONING_EFFORTS = ("low", "medium", "high")
 
-#: The level sent in place of one this wire has no rule for: OpenAI has no ``max``, and ``xhigh``
-#: is not taken by every reasoning model, so both are sent as ``high``.
+#: The level sent in place of one this wire has no rule for, for a model nothing but its name
+#: speaks for: OpenAI has no ``max``, and ``xhigh`` is not taken by every reasoning model, so both
+#: are sent as ``high``. A level a model's app declares is never stepped down.
 _EFFORT_STEP_DOWN = {"xhigh": "high", "max": "high"}
 
 
@@ -78,10 +79,22 @@ def reasoning_efforts(model: str) -> tuple[str, ...]:
 
 
 def _reasoning_effort(model: str, effort: str) -> str:
-    """The ``reasoning_effort`` a request to ``model`` carries for the session's ``effort``: ``""``
-    (send none) for no effort and for a model that does not reason, a level the wire has no rule
-    for as the nearest lower one (``_EFFORT_STEP_DOWN``), and any other value as it is."""
-    if not effort or not reasoning_efforts(model):
+    """The ``reasoning_effort`` a request to ``model`` carries for the session's ``effort``.
+
+    A model an app's listing names takes what that listing declares for it, whatever the model is
+    called (``providers.model_efforts.listed_levels``): ``effort`` as it is when it is one of
+    those levels, and none otherwise, a model that declares none included. A model no listing
+    names is judged by its name alone, as this wire's own default (:func:`reasoning_efforts`):
+    none for a model that does not reason, and a level the wire has no rule for as the nearest
+    lower one (``_EFFORT_STEP_DOWN``). ``""`` (send none) for no effort."""
+    if not effort:
+        return ""
+    from personalclaw.providers.model_efforts import listed_levels
+
+    declared = listed_levels(model)
+    if declared is not None:
+        return effort if effort in declared else ""
+    if not reasoning_efforts(model):
         return ""
     return _EFFORT_STEP_DOWN.get(effort, effort)
 
@@ -529,8 +542,8 @@ class OpenAIProvider(ModelProvider):
             request_kwargs["tools"] = tools
         if self._max_tokens is not None:
             request_kwargs["max_tokens"] = self._max_tokens
-        # A reasoning model takes ``reasoning_effort`` directly; any other model refuses it, so
-        # it is sent only to one (``_reasoning_effort``). "" = omit (the model's default).
+        # A model takes ``reasoning_effort`` at the levels its app declares, or, where no app
+        # says, a reasoning model by its name (``_reasoning_effort``). "" = omit (its default).
         effort = _reasoning_effort(str(request_kwargs["model"]), reasoning_effort)
         if effort:
             request_kwargs["reasoning_effort"] = effort

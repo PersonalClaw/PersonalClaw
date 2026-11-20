@@ -31,6 +31,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A reload no longer has the gateway read its whole settings file once for every asset and read it answers. The public address every response's security header names is read again only when the settings file changes, so a page's many requests no longer each hold the gateway for a settings read.**
 - **A reload no longer waits while the gateway reads every installed app's folder. The apps list reads each app's manifest, hero image, disclosure and interface files in a worker thread, so a home with many apps no longer holds the page's other requests while it does.**
 - **Stopping an automation's agent, or a run budget or a fan-out stop ending it, no longer starts the automations chained after it, as a cancelled workflow run starts none. An agent that never ran starts none either, and work that finished or failed still does.**
+- **A reasoning effort the model's app declares now reaches a model on the OpenAI wire whatever the model is called, and a declared max or xhigh level goes as itself rather than as high.**
 - **Leaving plan mode, by Cancel or the task-mode pill, while the plan's own turn is running stops that turn first, so none of its tool calls runs in the mode the chat goes back to.**
 - **The desktop app started at login on macOS opens no window, as Open at Login means: its menu-bar item or the Dock opens it.**
 - **Cancel or Approve of a plan that recorded no mode to go back to leaves the chat in Ask, where only read-only tools run, instead of Agent.**
