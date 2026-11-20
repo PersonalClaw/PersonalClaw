@@ -170,12 +170,15 @@ def prune_table(cur: Any, table: str, keep: int, *, at: str) -> int:
 
 
 def _lines(path: Path) -> list[str]:
-    """The non-blank lines of *path*, without their line ends; none for a file that is not there."""
+    """The non-blank lines of *path*, without their line ends; none for a file that is not there.
+
+    Split on newlines alone: a row written with ``ensure_ascii=False`` may hold U+2028 or another
+    character ``splitlines`` also breaks on, and a trim then kept neither half of it."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return []
-    return [line.rstrip("\r\n") for line in text.splitlines() if line.strip()]
+    return [line.rstrip("\r") for line in text.split("\n") if line.strip()]
 
 
 def _row(line: str) -> dict | None:

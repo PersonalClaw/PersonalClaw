@@ -21,9 +21,11 @@ Soul guardrails this module enforces:
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
+import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -358,7 +360,9 @@ def _iter_rows() -> list[dict]:
         return []
     out: list[dict] = []
     try:
-        for line in p.read_text(encoding="utf-8").splitlines():
+        # Split on newlines alone: a row is written with ``ensure_ascii=False``, so a value may
+        # hold U+2028 or another character ``splitlines`` also breaks on, and that row was lost.
+        for line in p.read_text(encoding="utf-8").split("\n"):
             if not line.strip():
                 continue
             try:
@@ -583,8 +587,102 @@ def totals(
     ``key_filter`` keeps only the rows whose session key it accepts, for an owner of a key shape
     the prefix rule does not fit: a workflow run books its steps under
     ``workflow:<run>:<step>`` (``workflows.ownership.run_spend``)."""
+    if session_key and not (since or until or session_prefix or key_filter):
+        return _session_total(session_key)
     agg = _blank_agg()
     for row in _iter_rows():
         if _row_selected(row, since, until, session_key, session_prefix, key_filter):
             _fold(agg, row)
     return agg
+
+
+#: The bytes of the ledger's start, and of the end of what it folded, an index remembers, to know
+#: the file it folded is the file there now: a file put in its place after a delete can have the
+#: same inode and size, and a copy over it (a restore) keeps the inode and may keep the start.
+_HEAD_BYTES = 256
+_SEAM_BYTES = 64
+
+
+@dataclass
+class _SessionIndex:
+    """Each session's total over the whole ledger, folded from its first ``offset`` bytes."""
+
+    path: str = ""
+    ident: tuple[int, int] = (0, 0)
+    head: bytes = b""
+    seam: bytes = b""
+    offset: int = 0
+    sessions: dict[str, dict] = field(default_factory=dict)
+
+
+_INDEX = _SessionIndex()
+_INDEX_LOCK = threading.Lock()
+
+
+def _appended(p: Path, offset: int, size: int) -> bytes:
+    """The ledger's bytes from *offset* up to *size*."""
+    with open(p, "rb") as f:
+        f.seek(offset)
+        return f.read(size - offset)
+
+
+def _head(p: Path) -> bytes:
+    with open(p, "rb") as f:
+        return f.read(_HEAD_BYTES)
+
+
+def _seam_holds(p: Path, idx: _SessionIndex) -> bool:
+    """Whether the bytes just before the index's offset are still the ones it folded there."""
+    if not idx.seam:
+        return True
+    with open(p, "rb") as f:
+        f.seek(idx.offset - len(idx.seam))
+        return f.read(len(idx.seam)) == idx.seam
+
+
+def _session_total(session_key: str) -> dict:
+    """:func:`totals` for one session over the whole ledger, from a running fold of it.
+
+    The chat asks for its own total on every load and after every reply (its cost chip), and so
+    do the CLI, the OpenAI-dialect server and a loop's planner. Each ask parsed every row, up to
+    the 50,000 of the cap, to keep one session's. Now the rows are folded once, by session, and
+    each ask folds only what was appended since. A rewrite (a trim's atomic replace, another
+    file put in its place, a copy over it) is a new inode, a shorter file, another start or other
+    bytes where the fold stopped, and is folded again from its first byte; a last line with no
+    newline yet is left until it has one."""
+    p = _path()
+    with _INDEX_LOCK:
+        idx = _INDEX
+        try:
+            st = p.stat()
+            if not p.is_file():
+                raise FileNotFoundError(str(p))
+            ident = (st.st_dev, st.st_ino)
+            head = _head(p)
+            if (
+                idx.path != str(p)
+                or idx.ident != ident
+                or st.st_size < idx.offset
+                or not head.startswith(idx.head)
+                or not _seam_holds(p, idx)
+            ):
+                idx.path, idx.ident, idx.offset, idx.sessions = str(p), ident, 0, {}
+                idx.head, idx.seam = b"", b""
+            if st.st_size > idx.offset:
+                data = _appended(p, idx.offset, st.st_size)
+                end = data.rfind(b"\n") + 1
+                for raw in data[:end].split(b"\n"):
+                    if (row := _row_of(raw)) is not None:
+                        key = str(row.get("session_key", ""))
+                        _fold(idx.sessions.setdefault(key, _blank_agg()), row)
+                idx.offset += end
+                if end:
+                    idx.seam = (idx.seam + data[:end])[-_SEAM_BYTES:]
+            if len(idx.head) < _HEAD_BYTES:
+                idx.head = head[: idx.offset]
+        except OSError:
+            idx.path, idx.ident, idx.head, idx.seam, idx.offset = "", (0, 0), b"", b"", 0
+            idx.sessions = {}
+            return _blank_agg()
+        agg = idx.sessions.get(session_key)
+        return copy.deepcopy(agg) if agg is not None else _blank_agg()

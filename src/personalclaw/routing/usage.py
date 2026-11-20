@@ -394,7 +394,8 @@ def _iter_json_lines(path: Path | None) -> list[dict[str, Any]]:
     except (FileNotFoundError, OSError):
         return []
     out: list[dict[str, Any]] = []
-    for line in text.splitlines():
+    # Newlines alone: a row may hold U+2028, which ``splitlines`` breaks on (the ledger's own read).
+    for line in text.split("\n"):
         line = line.strip()
         if not line:
             continue
