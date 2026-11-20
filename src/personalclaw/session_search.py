@@ -910,10 +910,12 @@ def _home_sessions() -> str:
 
 
 def _file_key(key: str) -> str:
-    """A session key as its transcript's file is named — the form the chat listing uses."""
-    from personalclaw.history import _safe_key
+    """A session key as its transcript's file is named — the form the chat listing uses
+    (``ConversationLog._file_stem``: a key whose slug's file is another key's has one of its own).
+    """
+    from personalclaw.history import ConversationLog
 
-    return _safe_key(key.strip())
+    return ConversationLog()._file_stem(key.strip())
 
 
 def _file_stamp(name: str) -> tuple[float, int] | None:

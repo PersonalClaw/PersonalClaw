@@ -1346,7 +1346,8 @@ Fields: every key the line holds today (`chat_persistence.py:914-1033`): `create
 `workspace_dir`, `project_id`, `acp_provider`, `acp_provider_agent`, `task_mode`, `pinned`, `color_index`,
 `color_theme`, `natural_voice`, `tags`, `lifecycle`, `last_activity_at`, `never_archive`, `forked_from`
 (now `{session, message_id}`: the chat and the message it was forked at), `side`, `tab_id`, `app`,
-`created_by_app`, `imported_from`, `message_count`; with `folder_id` renamed `group_id` (§13.4); plus
+`created_by_app`, `imported_from`, `message_count`, `key` (the key the transcript is, when its slug
+changed it: `ConversationLog._file_stem`); with `folder_id` renamed `group_id` (§13.4); plus
 `v: 1`, and:
 
 | Field | Type | Meaning |

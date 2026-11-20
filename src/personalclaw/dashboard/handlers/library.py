@@ -202,7 +202,7 @@ class _Context:
                     self._chats[str(entry.get("key") or "")] = str(entry.get("title") or "")
             except Exception:
                 logger.debug("library: chat titles unreadable", exc_info=True)
-        return self._chats.get(history._safe_key(key), "")
+        return self._chats.get(history.ConversationLog()._file_stem(key), "")
 
     def loop_title(self, loop_id: str) -> str:
         if self._loops is None:

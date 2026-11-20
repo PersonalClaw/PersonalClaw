@@ -24,7 +24,12 @@ from personalclaw.dashboard.chat_utils import (
     resolve_history_key,
 )
 from personalclaw.dashboard.state import DashboardState, _ChatSession
-from personalclaw.history import CREATED_BY_APP_META_KEY, listed_title
+from personalclaw.history import (
+    CREATED_BY_APP_META_KEY,
+    RECORDED_KEY,
+    listed_title,
+    recorded_key_of,
+)
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import VALID_TASK_MODES
 from personalclaw.turn_source import TURN_STARTS, source_of
@@ -208,6 +213,8 @@ _CREATE_TIME_META_KEYS = frozenset(
         "tab_id",
         "app",
         CREATED_BY_APP_META_KEY,
+        # The key the transcript is (`ConversationLog._file_stem`): every save writes it.
+        RECORDED_KEY,
     }
 )
 
@@ -866,6 +873,18 @@ def restore_recent_sessions(
     return restored
 
 
+def _where_and_whose(session: _ChatSession, history_key: str) -> dict:
+    """What a save's meta line says of where the chat works and whose transcript it is: the folder
+    on record (``memory_locality``), and the key it is (``history.recorded_key_of``), so a key with
+    the same slug is given a file of its own (``ConversationLog._file_stem``) and a file an earlier
+    version wrote is claimed by this save."""
+    folder = memory_locality.folder_on_record(session.workspace_dir)
+    return {
+        **({memory_locality.CHAT_FOLDER: folder} if folder else {}),
+        **recorded_key_of(history_key),
+    }
+
+
 def save_session_to_history(
     state: DashboardState,
     session: _ChatSession,
@@ -1023,9 +1042,7 @@ def save_session_to_history(
             meta_line["reasoning_effort"] = session.reasoning_effort
         if session.mode:
             meta_line["mode"] = session.mode
-        folder = memory_locality.folder_on_record(session.workspace_dir)
-        if folder:
-            meta_line[memory_locality.CHAT_FOLDER] = folder
+        meta_line.update(_where_and_whose(session, history_key))
         # The project this chat belongs to (issue 314). Omitted here, it was in-memory only, so
         # every project↔chat binding died on restart: `/api/projects/<id>/linked` scans
         # `state._sessions` rather than storage (`tasks/hierarchy_handlers.py`), so the project's

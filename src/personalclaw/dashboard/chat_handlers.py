@@ -7,6 +7,7 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -67,7 +68,7 @@ from personalclaw.dashboard.chat_utils import (
     take_in_the_users_links,
 )
 from personalclaw.dashboard.state import DashboardState, _ChatSession
-from personalclaw.history import CREATED_BY_APP_META_KEY
+from personalclaw.history import CREATED_BY_APP_META_KEY, RECORDED_KEY
 from personalclaw.http_errors import json_error
 from personalclaw.own_words import (
     OWN_WORDS,
@@ -690,6 +691,14 @@ def _disk_listing(log) -> list:
         return log.list_sessions_with_metadata()
 
 
+def _listed_key(entry: Mapping[str, Any], meta: Mapping[str, Any]) -> str:
+    """The key a transcript on disk is listed by: the one it records
+    (``ConversationLog._file_stem``), else the one its file name says. Read off the name alone,
+    ``inbound:cli:<name>``'s file came back as ``inbound_cli_<name>``, a row beside the live chat
+    that named no chat."""
+    return str(meta.get(RECORDED_KEY) or entry.get("key", ""))
+
+
 async def api_chat_sessions(request: web.Request) -> web.Response:
     """GET /api/chat/sessions — list all chat sessions.
 
@@ -786,7 +795,7 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
     # and the answer off the event loop too: for 12,005 chats they held it for 0.1 s more.
     def _merge_disk() -> None:
         for d, meta in disk:
-            raw_key = d.get("key", "")
+            raw_key = _listed_key(d, meta)
             if raw_key.startswith("dashboard:"):
                 name = raw_key.removeprefix("dashboard:")
             elif raw_key.startswith("dashboard_"):

@@ -286,13 +286,38 @@ def model_window(view: list[dict], max_messages: int) -> list[dict]:
 
 
 def _safe_key(key: str) -> str:
-    """Convert a session key (e.g. a channel thread_ts) to a safe filename."""
+    """A session key's slug (e.g. a channel thread_ts), safe as a file name: every character but a
+    letter, a digit, ``-``, ``_`` and ``.`` becomes ``_``. Two keys can share one slug (``a:b`` and
+    ``a?b``), so a transcript's name is its key's :meth:`ConversationLog._file_stem`, which keeps
+    them apart; use this for the slug alone."""
     return re.sub(r"[^\w\-.]", "_", key)
 
 
+#: Where a transcript's first save records the key it is (``ConversationLog._file_stem``).
+RECORDED_KEY = "key"
+#: How many hex digits of a key's hash name its own transcript when its slug's is another key's.
+_KEY_HASH_HEX = 8
+
+
+def recorded_key_of(key: str) -> dict[str, str]:
+    """What a transcript's first line records of the key it is: ``{"key": key}``, for a key its slug
+    changed, so the file says whose it is (``ConversationLog._file_stem``); nothing for a key that
+    is its own slug, whose file's name already says it."""
+    return {RECORDED_KEY: key} if _safe_key(key) != key else {}
+
+
+def _hashed_stem(key: str) -> str:
+    """*key*'s own file name when its slug's file is another key's: the slug and a short hash of
+    the whole key, so it is the same name every time and no other key's."""
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:_KEY_HASH_HEX]
+    return f"{_safe_key(key)}-{digest}"
+
+
 def session_path(key: str) -> Path:
-    """Where session ``key``'s transcript lives in the active home."""
-    return _sessions_dir() / f"{_safe_key(key)}.jsonl"
+    """Where session ``key``'s transcript lives in the active home: the file
+    :meth:`ConversationLog._path` names, so a key that shares its slug with another chat's is read
+    from its own file, its memory mode included."""
+    return ConversationLog()._path(key)
 
 
 def import_conversation(
@@ -670,8 +695,39 @@ class ConversationLog:
         except OSError:
             return False
 
+    def _file_stem(self, key: str) -> str:
+        """The name *key*'s transcript has here, without ``.jsonl``: its slug (:func:`_safe_key`),
+        unless the file of that name records another key (:data:`RECORDED_KEY`), when it is the
+        slug and a short hash of the whole key (``<slug>-<8 hex>``). Two keys that differ only in
+        what the slug turns into ``_`` (``dashboard:a:b``, ``dashboard:a?b``) so keep two
+        transcripts, and nothing already kept moves.
+
+        A file that records no key (one an earlier version wrote) is its slug's until a save
+        claims it (:meth:`append`, ``chat_persistence.save_session_to_history``). A key that is
+        its own slug names its own file: the chat list's keys are file names. A key with a file
+        of its own keeps it while it is there, so deleting the chat that holds the slug leaves
+        it its transcript."""
+        slug = _safe_key(key)
+        if slug == key:
+            return slug
+        hashed = _hashed_stem(key)
+        if (self._dir / chat_record.held_child(self._dir, f"{hashed}.jsonl")).exists():
+            return hashed
+        owner = self._recorded_key(self._dir / chat_record.held_child(self._dir, f"{slug}.jsonl"))
+        return slug if owner in (None, key) else hashed
+
+    def _recorded_key(self, path: Path) -> str | None:
+        """The key *path*'s transcript records, or ``None`` when it records none or is none."""
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        head = self._head(str(path), stat, listing=False)
+        owner = head.meta.get(RECORDED_KEY) if head is not None else None
+        return owner if isinstance(owner, str) and owner else None
+
     def _path(self, key: str) -> Path:
-        return self._dir / chat_record.held_child(self._dir, f"{_safe_key(key)}.jsonl")
+        return self._dir / chat_record.held_child(self._dir, f"{self._file_stem(key)}.jsonl")
 
     def has_log(self, key: str) -> bool:
         """Return True if a conversation log file exists for *key*."""
@@ -731,10 +787,15 @@ class ConversationLog:
                 meta["tab_id"] = tab_id
             if marked:
                 meta["memory_mode"] = marked
+            meta.update(recorded_key_of(key))
             atomic_write(path, json.dumps(meta) + "\n")
             chat_record.saved(path, meta)
-        elif marked and read_memory_mode(path) != marked:
-            self.update_metadata(key, {"memory_mode": marked})
+        else:
+            claim = recorded_key_of(key) if self._recorded_key(path) is None else {}
+            if marked and read_memory_mode(path) != marked:
+                claim["memory_mode"] = marked
+            if claim:  # a file an earlier version wrote is this key's from its first write
+                self.update_metadata(key, claim)
 
         msg: dict = {
             "role": role,
@@ -1096,7 +1157,7 @@ class ConversationLog:
     def _forget_archive_batches(self, key: str) -> None:
         """Unlink the archive batches earlier versions trimmed out of *key*'s transcript."""
         adir = _archive_dir(self._dir)
-        safe = _safe_key(key)
+        safe = self._file_stem(key)
         try:
             batches = [
                 p for p in adir.glob(f"{safe}__*.jsonl") if _is_archive_batch_of(p.name, safe)
@@ -1120,7 +1181,7 @@ class ConversationLog:
         return st.st_mtime_ns, st.st_size
 
     def summary_path(self, key: str) -> Path:
-        return self._dir / f"{_safe_key(key)}{SUMMARY_SUFFIX}"
+        return self._dir / f"{self._file_stem(key)}{SUMMARY_SUFFIX}"
 
     def read_summary(self, key: str) -> dict | None:
         """*key*'s background-summary record, or ``None``.
@@ -1246,7 +1307,7 @@ class ConversationLog:
         if self.is_home_log():
             from personalclaw import session_search
 
-            session_search.INDEXER.note_changed(_safe_key(key))
+            session_search.INDEXER.note_changed(self._file_stem(key))
 
     def get_metadata(self, key: str) -> dict:
         """Return session metadata for *key*."""
