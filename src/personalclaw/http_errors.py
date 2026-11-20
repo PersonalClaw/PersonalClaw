@@ -261,6 +261,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "device_pair_code_invalid": "The pairing code did not verify.",
     "device_pair_expired": "The pairing code has expired.",
     "device_pair_origin_rejected": "The request origin is not allowed to pair a device.",
+    "device_pair_connector_code_scoped": (
+        "This code was made for an automation client. Make a new code in Settings › Devices & "
+        "Access › Devices to pair the browser connector."
+    ),
     "device_pair_locked_out": "Too many failed pairing attempts; try again later.",
     "device_pair_scope_invalid": (
         "An automation client's pairing code can be made only for the scopes listed."

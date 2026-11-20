@@ -21,7 +21,7 @@ import os
 import pytest
 from aiohttp import web
 
-from personalclaw.dashboard import device_scopes
+from personalclaw.dashboard import connector_origin, device_scopes
 
 
 def gateway_routes() -> web.Application:
@@ -117,6 +117,11 @@ def test_this_release_admits_no_steer_answer_or_approval(served) -> None:
     """PR 1's rule: every row a client could act through is OUTSIDE until its principal exists."""
     for (method, route), row in device_scopes.DEVICE_SCOPE_ROUTES.items():
         if row is device_scopes.OUTSIDE or row.scope in (device_scopes.SHELL, device_scopes.PUBLIC):
+            continue
+        if row.scope == device_scopes.CONNECTOR_SCOPE:
+            # No code grants it (pair/complete gives it to a browser connector alone), and its rows
+            # are the connector's own routes, none a steer, an answer or an approval.
+            assert connector_origin.is_connector_path(route), (method, route)
             continue
         assert row.scope in device_scopes.GRANTABLE, (method, route, row.scope)
         if row.scope == "loops":

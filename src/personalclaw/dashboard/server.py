@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from personalclaw.config import config_dir
-from personalclaw.dashboard import chat, handlers, housekeeping
+from personalclaw.dashboard import chat, connector_origin, handlers, housekeeping
 from personalclaw.dashboard.fallbacks import api_fallback, spa_fallback
 from personalclaw.dashboard.handlers.knowledge import setup_knowledge_routes
 from personalclaw.dashboard.handlers.library import setup_library_routes
@@ -903,7 +903,8 @@ async def start_dashboard(
         handler: object,
     ) -> web.StreamResponse:
         if request.method not in _safe_methods:
-            if not check_origin(request, require=True, fallback_header="Referer"):
+            origin_ok = check_origin(request, require=True, fallback_header="Referer")
+            if not origin_ok and not connector_origin.admits(request, port):
                 # The one wire error envelope, not plain text: the login page (and the
                 # FE error funnel generally) branches on {"error": {"code"}}, and a
                 # text body parsed as JSON became {} — which the login page then

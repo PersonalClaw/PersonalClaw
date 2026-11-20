@@ -1488,6 +1488,25 @@ What this does not hold:
 - **A channel's dashboard link.** The hour-long link a channel hands its owner is a token for that
   hour: whoever holds it can use it as a Bearer until it ends.
 
+## 25. A browser connector's origin, and the token it may keep
+
+The browser connector is a browser extension, so its requests carry the extension's own origin. The
+origin check takes that origin only where the extension paired with a valid single-use code (the
+origin is then recorded on its device's row), and afterwards only on the connector's own routes,
+beside that device's session, compared whole (`dashboard/connector_origin.py`). Its session holds
+the connector scope, so it reaches those routes and nothing else, whatever origin a request
+carries. An origin a page can send (`null`, `file://`, http or https) is never recorded.
+
+What this does not hold:
+
+- **The token in the extension's storage.** The pairing hands the session token back in its answer,
+  and the connector sends it as a Bearer. It sets no cookie, since the browser's cookie for the
+  gateway is your own dashboard sign-in, which pairing the connector leaves as it was. Whatever can
+  read the extension's storage can use the token on the connector's routes until it expires or the
+  device is signed out.
+- **Another program that claims the origin.** A program on this machine, not a browser, can send
+  any `Origin` it likes. With the connector's token it reaches what the connector does, and no more.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing

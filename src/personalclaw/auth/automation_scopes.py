@@ -10,7 +10,12 @@ from __future__ import annotations
 from typing import Any
 
 #: The vocabulary, fixed. Order is the order the pairing form lists them in.
-SCOPES: tuple[str, ...] = ("status", "loops", "approvals", "loop_create", "loop_land")
+SCOPES: tuple[str, ...] = ("status", "loops", "approvals", "loop_create", "loop_land", "connector")
+
+#: The scope of a browser connector's session: the connector's own routes and nothing else. Never a
+#: pairing code's: ``pair/complete`` gives it to a device that redeemed an unscoped code from an
+#: extension's own origin (``connector_origin``), so no form or code names it.
+CONNECTOR_SCOPE = "connector"
 
 
 def normalize_scope(value: Any) -> tuple[str, ...]:

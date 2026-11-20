@@ -127,7 +127,14 @@ def _valid(token: str) -> tuple[bool, str, str]:
 
 def test_the_vocabulary_is_fixed_and_a_scope_is_sorted() -> None:
     scopes = _scopes()
-    assert scopes.SCOPES == ("status", "loops", "approvals", "loop_create", "loop_land")
+    assert scopes.SCOPES == (
+        "status",
+        "loops",
+        "approvals",
+        "loop_create",
+        "loop_land",
+        "connector",
+    )
     assert scopes.normalize_scope(["status", "loops", "loops"]) == ("loops", "status")
     for bad in (["loops", "admin"], ["LOOPS"], "loops", [1], [], None, {"loops": 1}):
         with pytest.raises(ValueError):
