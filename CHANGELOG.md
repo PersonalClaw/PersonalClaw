@@ -46,6 +46,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Security
 
 - **The gateway image runs its agent CLIs on Node 24.22.3, which carries Node's security fixes for HTTP/2 and TLS.**
+- **Large merged ranges in a workbook are read within the cell cap.**
 
 ## [0.3.9] — 2026-11-16
 
