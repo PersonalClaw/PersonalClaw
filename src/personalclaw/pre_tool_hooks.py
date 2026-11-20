@@ -114,6 +114,7 @@ async def on_tool(
     subagent_id: str = "",
     parent_session_key: str = "",
     on_results: Callable[[list[ScriptHookResult]], None] | None = None,
+    cwd: str = "",
 ) -> HooksSaid:
     """The operator's blocking hooks on a call to *tool_name* with *tool_input* (its arguments, or
     their JSON text), made in a turn that runs as *agent*.
@@ -121,7 +122,9 @@ async def on_tool(
     *store* is the hook store to fire through, the gateway's own when ``None``; a process with none
     reads the home's (``ScriptHookStore``). *subagent_id* and *parent_session_key* say which
     subagent made the call, for the hooks to read. *on_results* is shown each hook's result, for a
-    host that tells its owner what the hooks did (a chat's activity line)."""
+    host that tells its owner what the hooks did (a chat's activity line). *cwd* is the working
+    folder of the chat or subagent making the call, where each hook runs (``hooks.hook_folder``):
+    "" for none, the workspace."""
     try:
         hook_ids = bound_hook_ids(agent)
     except Exception:  # noqa: BLE001 - see the module docstring: an unread binding refuses
@@ -149,6 +152,7 @@ async def on_tool(
                 subagent_id=subagent_id,
                 parent_session_key=parent_session_key,
                 agent_role=(agent or "") if subagent_id else "",
+                cwd=cwd,
             )
         )
     except Exception as exc:  # noqa: BLE001 - a hook that cannot run refuses, as one that blocks
@@ -172,9 +176,10 @@ async def on_request(
     subagent_id: str = "",
     parent_session_key: str = "",
     on_results: Callable[[list[ScriptHookResult]], None] | None = None,
+    cwd: str = "",
 ) -> HooksSaid:
     """The operator's blocking hooks on *event*, a call put to a host's gate (a permission
-    request), made in a turn that runs as *agent*.
+    request), made in a turn that runs as *agent*, in the folder *cwd*.
 
     The hooks are told the call by its title, read as the chat's gate reads it (``validation
     .sanitize_string``), and its input read as JSON. A call PersonalClaw's own runtime asks about
@@ -192,6 +197,7 @@ async def on_request(
         subagent_id=subagent_id,
         parent_session_key=parent_session_key,
         on_results=on_results,
+        cwd=cwd,
     )
 
 

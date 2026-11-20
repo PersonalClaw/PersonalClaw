@@ -1125,6 +1125,47 @@ def _dispatch_key(hook: "ScriptHook", hook_event: dict) -> str:
     )
 
 
+def hook_folder(cwd: str = "") -> tuple[str, str]:
+    """``(folder, refusal)``: the folder a lifecycle hook runs in and is told it runs in (its
+    payload's ``cwd``), or the sentence that refuses the run.
+
+    *cwd* is the working folder of the chat or helper the hook fires for, which its fire site reads
+    from that chat or helper and never from the event. It runs there, as the file system resolves
+    it: a folder that chat already works in, so a hook reaches no folder its chat's own tools do
+    not. Fired for no chat (a Test, a workflow, an event), it runs in the workspace a chat with no
+    folder of its own works in (``config.loader.default_workspace_dir``).
+
+    🔴 Never the gateway's own folder. Every hook was told ``cwd: os.getcwd()`` and ran there,
+    wherever the gateway was started from, so a formatter or a ``git status`` acted on a folder
+    nobody was working in, and its safety checks judged that folder. A folder that is not one (a
+    relative path, one that is gone, a sensitive one), or no usable workspace, refuses the run
+    instead: running it anywhere else acts on the wrong files.
+    """
+    from personalclaw.config.loader import default_workspace_dir
+    from personalclaw.security import is_sensitive_path
+
+    named = str(cwd or "").strip()
+    if not named:
+        if folder := default_workspace_dir():
+            return folder, ""
+        return "", "it was fired for no chat, and no usable workspace is set to run it in"
+    resolved = os.path.realpath(named) if os.path.isabs(named) else ""
+    if resolved and os.path.isdir(resolved) and not is_sensitive_path(resolved):
+        return resolved, ""
+    return "", f"the folder its chat works in ({named}) is not a folder it can run in"
+
+
+def _hook_payload(hook: "ScriptHook", hook_event: dict | None, folder: str, *, test: bool) -> dict:
+    """The event *hook* is handed: *hook_event* (its event alone, for a Test from the Triggers
+    page), told *folder* as its ``cwd``, and tagged ``test`` for a rehearsal so a provider can tell
+    it from the real thing. A copy: the caller's dict is not ours to change."""
+    payload = dict(hook_event) if hook_event is not None else {"hook_event_name": hook.event}
+    payload["cwd"] = folder
+    if test:
+        payload["test"] = True
+    return payload
+
+
 def held_owner_id(hook_id: str) -> str:
     """The id a lifecycle trigger's held settings are kept under (``triggers.held_secrets``):
     apart from every stored trigger's, so the two kinds never share a key."""
@@ -1138,8 +1179,10 @@ async def run_script_hook(
     *,
     enforced: bool = False,
     test: bool = False,
+    cwd: str = "",
 ) -> ScriptHookResult:
-    """Dispatch hook execution through its registered ActionProvider.
+    """Dispatch hook execution through its registered ActionProvider, in the folder *cwd* names
+    (:func:`hook_folder`).
 
     ``enforced`` declares that THIS fire's result is consumed as a gate — the caller reads the
     exit-2 signal and rejects the tool. It decides which status an exit 2 records: ``blocked``
@@ -1158,21 +1201,13 @@ async def run_script_hook(
     history, and "Ran 2×  · ok" where both runs were Test clicks is the UI's only claim about
     a trigger that has never actually fired.
     """
-    import os
-
     from personalclaw.action_providers import get_action_provider
     from personalclaw.action_providers.base import ActionContext
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
 
     _ensure_default_providers_registered()
-
-    if hook_event is None:
-        hook_event = {"hook_event_name": hook.event, "cwd": os.getcwd()}
-    if test:
-        # The tag rides the payload so a provider can tell a rehearsal from the real thing.
-        # Copied first — the caller's dict is not ours to mutate.
-        hook_event = dict(hook_event)
-        hook_event["test"] = True
+    folder, no_folder = hook_folder(cwd)
+    hook_event = _hook_payload(hook, hook_event, folder, test=test)
 
     def _record(status: str) -> None:
         # Every terminal branch records through here so the rehearsal rule cannot
@@ -1239,6 +1274,8 @@ async def run_script_hook(
     ungranted = grants.missing(hook)
     if ungranted:
         return _refused(grants.refusal(hook, ungranted), "blocked")
+    if no_folder:
+        return _refused(f"“{hook.name or hook.provider}” did not run: {no_folder}.", "error")
 
     # 🔴 THE INJECTION SCREEN AND THE FENCE, as a stored trigger's fire runs them on its payload.
     # What the event carried leaves the gateway here, so its words are screened and fenced on the
@@ -1267,6 +1304,7 @@ async def run_script_hook(
         context=handed.context,
         payload=handed.payload,
         trigger_id=f"{LIFECYCLE_TRIGGER_PREFIX}{hook.id}",
+        cwd=folder,
     )
     # Incident kill switch: a script hook's ACTION is an automated
     # side-effect (bash/webhook/spawn), so it is suspended during an incident even
@@ -1635,8 +1673,12 @@ class ScriptHookStore:
         subagent_id: str = "",
         parent_session_key: str = "",
         agent_role: str = "",
+        cwd: str = "",
     ) -> list[ScriptHookResult]:
         """Fire all enabled hooks matching the given event. Returns results.
+
+        ``cwd`` is the working folder of the chat or helper the event is for, where each hook runs
+        and what its payload says (:func:`hook_folder`); "" for none: the workspace.
 
         For PreToolUse/PostToolUse, matcher filters by tool name.
         For AgentSpawn/UserPromptSubmit/Stop, all hooks for that event fire.
@@ -1660,6 +1702,7 @@ class ScriptHookStore:
             subagent_id=subagent_id,
             parent_session_key=parent_session_key,
             agent_role=agent_role,
+            cwd=cwd,
         )
 
     async def fire_for_ids(
@@ -1674,8 +1717,10 @@ class ScriptHookStore:
         subagent_id: str = "",
         parent_session_key: str = "",
         agent_role: str = "",
+        cwd: str = "",
     ) -> list[ScriptHookResult]:
-        """Fire only the hooks in ``hook_ids`` that match ``event`` (agent-scoped).
+        """Fire only the hooks in ``hook_ids`` that match ``event`` (agent-scoped), each in ``cwd``,
+        the working folder of the chat or helper it fires for (:func:`hook_folder`).
 
         The agent-scoped firing primitive: an agent references a subset of the
         hook library and only those hooks fire for it — global hooks are NOT run.
@@ -1712,6 +1757,7 @@ class ScriptHookStore:
             subagent_id=subagent_id,
             parent_session_key=parent_session_key,
             agent_role=agent_role,
+            cwd=cwd,
         )
 
     async def _fire(
@@ -1728,20 +1774,20 @@ class ScriptHookStore:
         subagent_id: str = "",
         parent_session_key: str = "",
         agent_role: str = "",
+        cwd: str = "",
     ) -> list[ScriptHookResult]:
         """Shared firing core. ``hook_ids`` (when not None) restricts firing to
-        that allow-set of hook ids; None fires every enabled matching hook.
+        that allow-set of hook ids; None fires every enabled matching hook. Each runs in ``cwd``
+        (:func:`run_script_hook` resolves it, and writes it into the payload).
 
         ``enforced`` rides down to :func:`run_script_hook` so an exit 2 is recorded as a real
         ``blocked`` only on the gating seam. It is ANDed with
         :data:`BLOCKING_EVENTS` here: ``PreToolUse`` is the one event with a block seam at all, so
         a ``Stop`` hook that exits 2 records ``advisory`` no matter who fired it — there was
         nothing for it to block."""
-        import os
-
         results = []
-        # Build base hook event
-        hook_event: dict = {"hook_event_name": event, "cwd": os.getcwd()}
+        # Build base hook event (its `cwd` is the folder each hook runs in, written as it runs)
+        hook_event: dict = {"hook_event_name": event}
         # Recursion depth for invoke-agent's spawn bound. Reserved key.
         hook_event["__hook_depth"] = depth
         # Subagent attribution: present only when a subagent fires, so a
@@ -1780,6 +1826,7 @@ class ScriptHookStore:
                 context,
                 hook_event,
                 enforced=enforced and event in BLOCKING_EVENTS,
+                cwd=cwd,
             )
             results.append(result)
             logger.info(
@@ -1862,8 +1909,10 @@ async def fire_tool_hooks(
     subagent_id: str = "",
     parent_session_key: str = "",
     agent_role: str = "",
+    cwd: str = "",
 ) -> None:
-    """Fire PreToolUse hooks for an EVENT_TOOL_CALL event.
+    """Fire PreToolUse hooks for an EVENT_TOOL_CALL event, in ``cwd``, the working folder of the
+    chat or helper making the call (:func:`hook_folder`).
 
     PostToolUse is NOT fired here because EVENT_TOOL_CALL is a notification
     that the tool is starting - the tool hasn't completed yet. PostToolUse
@@ -1900,6 +1949,7 @@ async def fire_tool_hooks(
             subagent_id=subagent_id,
             parent_session_key=parent_session_key,
             agent_role=agent_role,
+            cwd=cwd,
         )
     except Exception:
         logger.debug("PreToolUse hook error", exc_info=True)

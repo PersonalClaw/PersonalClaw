@@ -65,6 +65,7 @@ class TestFireToolHooks:
                 subagent_id="",
                 parent_session_key="",
                 agent_role="",
+                cwd="",
             )
 
     @pytest.mark.asyncio
@@ -78,6 +79,7 @@ class TestFireToolHooks:
                 subagent_id="",
                 parent_session_key="",
                 agent_role="",
+                cwd="",
             )
 
     @pytest.mark.asyncio
@@ -92,6 +94,7 @@ class TestFireToolHooks:
                 subagent_id="",
                 parent_session_key="",
                 agent_role="",
+                cwd="",
             )
 
     @pytest.mark.asyncio
@@ -105,6 +108,7 @@ class TestFireToolHooks:
                 subagent_id="",
                 parent_session_key="",
                 agent_role="",
+                cwd="",
             )
 
     @pytest.mark.asyncio
@@ -118,6 +122,7 @@ class TestFireToolHooks:
                 subagent_id="",
                 parent_session_key="",
                 agent_role="",
+                cwd="",
             )
 
     @pytest.mark.asyncio
@@ -142,4 +147,5 @@ class TestFireToolHooks:
                 subagent_id="",
                 parent_session_key="",
                 agent_role="",
+                cwd="",
             )

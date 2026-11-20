@@ -60,7 +60,9 @@ class RunScriptActionProvider(ActionProvider):
         # job_id/message double as the script's context: the event drives the
         # session key, the free-form context is the script's input message. The launch is made on
         # a worker thread that carries this call's context, so the script is held to the run its
-        # action is dispatched for, whichever pool runs it.
+        # action is dispatched for, whichever pool runs it. It runs in the folder the dispatch set
+        # (`ActionContext.cwd`, a lifecycle hook's chat folder), handed on only when one is set.
+        where = str(getattr(ctx, "cwd", "") or "")
         try:
             result = await asyncio.to_thread(
                 run_script_sandboxed,
@@ -68,6 +70,7 @@ class RunScriptActionProvider(ActionProvider):
                 f"action:{ctx.event}",
                 ctx.context,
                 zt_timeout or timeout,
+                **({"cwd": where} if where else {}),
             )
         except Exception as exc:
             return ActionResult(

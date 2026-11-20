@@ -254,7 +254,8 @@ class BashActionProvider(ActionProvider):
         # another app — instead of the one that happened to be noticed.
         #
         # Refused, not sanitised: there is no safe rewrite of a command that names a credential.
-        # A relative path is read from where the command runs: the gateway's own folder.
+        # A relative path is read from where the command runs: the folder its dispatch set
+        # (`ActionContext.cwd`, a lifecycle hook's chat folder), or else the gateway's own.
         #
         # Then the shell denylist every command path asks (`shell_denylist.denied_command`), here
         # whoever started the action: a schedule, a hook, Run now, a webhook, a workflow node, an
@@ -265,13 +266,14 @@ class BashActionProvider(ActionProvider):
         from personalclaw import protected_folders, security, shell_denylist
 
         payload_env = _payload_env(ctx)
+        where = str(getattr(ctx, "cwd", "") or "")
         for text in (command, *_run_values(command, payload_env)):
-            refusal = security.is_sensitive_bash_command(text, cwd=os.getcwd())
+            refusal = security.is_sensitive_bash_command(text, cwd=where or os.getcwd())
             if refusal:
                 return _refused(command, refusal, ctx, control="sensitive_path")
             if (denied := shell_denylist.denied_command(text)) is not None:
                 return _refused(command, denied, ctx)
-            if found := protected_folders.protected_delete(text, cwd=os.getcwd()):
+            if found := protected_folders.protected_delete(text, cwd=where or os.getcwd()):
                 said = protected_folders.refusal(found, where="a bash action")
                 return _refused(command, said, ctx, control="protected_folder")
 
@@ -332,6 +334,7 @@ class BashActionProvider(ActionProvider):
             proc = await create_subprocess_limited(
                 *wrapped_argv,
                 profile=PROFILE_TOOL,
+                cwd=where or None,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

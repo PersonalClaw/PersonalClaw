@@ -977,9 +977,13 @@ def _build_native_runtime(
     model_axis: str = "",
     tool_groups: list | None = None,
     unmetered: bool = False,
+    hooks_take_no_folder: bool = False,
     **kwargs: Any,
 ) -> ModelProvider:
     """Construct a :class:`NativeAgentRuntime` for a ``native`` agent.
+
+    ``hooks_take_no_folder`` is set for a chat an app started: the owner's hooks on its calls run
+    in the workspace, not in *cwd*, which the app may have set (``chat_runner.hook_folder_of``).
 
     Its inference ModelProvider is resolved through the SAME active-model
     selection (Settings → Models). ``model_axis`` names the chat sub-category
@@ -1043,7 +1047,9 @@ def _build_native_runtime(
     # that names none (as its tools are), read at each call, never the global set.
     from personalclaw import pre_tool_hooks
 
-    hook_fire = partial(pre_tool_hooks.on_tool, agent=agent)
+    hook_fire = partial(
+        pre_tool_hooks.on_tool, agent=agent, cwd="" if hooks_take_no_folder else str(cwd or "")
+    )
 
     # Tool surface = the always-on PLATFORM provider (filesystem + shell + the
     # tool_result_get affordance, cwd-confined to THIS session) + EVERY registered
@@ -1522,6 +1528,8 @@ def resolve_provider_for_use_case(
     # leaks into the model-axis resolvers; meaningful only to the native builder,
     # which binds it per-turn so artifact_save can stamp the artifact's project_id.
     _project_id = str(kwargs.pop("project_id", "") or "")
+    # An app's chat (`chat_runner.hook_folder_of`): the owner's hooks take no folder. Native-only.
+    _hooks_take_no_folder = bool(kwargs.pop("hooks_take_no_folder", False))
     # The chat sub-category whose CHAIN governs this session's INNER model:
     # a heartbeat task passes "background", a loop's worker
     # and planner "loops", subagent spawns and webhook agent turns "orchestration" (a
@@ -1600,6 +1608,7 @@ def resolve_provider_for_use_case(
             model_axis=_model_axis or use_case,
             tool_groups=_tool_groups,
             unmetered=_unmetered,
+            hooks_take_no_folder=_hooks_take_no_folder,
             **kwargs,
         )
 

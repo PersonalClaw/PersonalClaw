@@ -1046,6 +1046,14 @@ def started_by_app(session: _ChatSession) -> str:
     return getattr(session, "created_by_app", "") or ""
 
 
+def hook_folder_of(session: _ChatSession) -> str:
+    """The folder the owner's hooks fired for *session* run in (``hooks.hook_folder``): the folder
+    the chat works in, or "" for a chat an app started (:func:`started_by_app`), whose hooks run in
+    the workspace. An app may set its own chat's folder, and the hooks are the owner's commands,
+    run with her authority: they never run in a folder an app chose."""
+    return "" if started_by_app(session) else memory_locality.chat_folder(session)
+
+
 def _apply_approval_floor(
     session: _ChatSession,
     *,
@@ -1503,6 +1511,7 @@ async def run_chat(
                 tool_name=tool_name,
                 tool_input=tool_input,
                 tool_response=tool_response,
+                cwd=hook_folder_of(session),
             )
             for r in results:
                 if r.exit_code == 0 and r.stdout:
@@ -2010,6 +2019,7 @@ async def run_chat(
             agent=provider_agent or session.agent or None,
             model=session.model or None,
             cwd=session.workspace_dir or None,
+            hooks_take_no_folder=bool(started_by_app(session)),
             reasoning_effort_override=turn_effort or None,
             provider_kind=provider_kind or None,
             acp_mode=acp_mode or None,
@@ -2984,7 +2994,10 @@ async def run_chat(
                         event.risk_level or "",
                     )
                 await fire_tool_hooks(
-                    state._hook_store, event.title, tool_input_to_str(event.tool_input)
+                    state._hook_store,
+                    event.title,
+                    tool_input_to_str(event.tool_input),
+                    cwd=hook_folder_of(session),
                 )
                 # Mirror the call to the linked channel's stream: a line of its own, in progress
                 # until the call ends. The line before it is not marked done here — it ends the way
@@ -3467,6 +3480,7 @@ async def run_chat(
                     agent=session.agent or None,
                     store=state._hook_store,
                     on_results=_show_hook_results,
+                    cwd=hook_folder_of(session),
                 )
                 if _hooks_said.refused:
                     await _refuse_call(event, why=_hooks_said.refusal, kind="hook")
