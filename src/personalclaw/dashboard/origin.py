@@ -357,6 +357,28 @@ def address_beyond_loopback(addresses: Iterable[str] | None = None) -> str:
     return ""
 
 
+def lan_address(bind_host: str) -> str:
+    """The network address a gateway bound at *bind_host* is reached at from another device, or
+    ``""`` when there is none: the address itself when it is one beyond loopback, this machine's
+    own (:func:`address_beyond_loopback`) when it listens on every IPv4 interface, and nothing for a
+    loopback bind, which no other device can reach. The rule LAN discovery advertises by
+    (``companion.discovery.decide``)."""
+    host = (bind_host or "").strip().strip("[]")
+    if not host or is_loopback(host) or host == "::":
+        return ""
+    if host == _BIND_ALL:
+        return address_beyond_loopback()
+    return host
+
+
+def url_host(host: str) -> str:
+    """*host* as a URL names it: an IPv6 address bracketed, anything else as it is."""
+    try:
+        return f"[{host}]" if ipaddress.ip_address(host).version == 6 else host
+    except ValueError:
+        return host
+
+
 def tailscale_cli_present() -> bool:
     """Return ``True`` if the ``tailscale`` CLI is on PATH.
 
@@ -553,13 +575,24 @@ def format_dashboard_urls(
 
 
 def build_allowed_origins(
-    port: int, local_only: bool, configured_host: str = "", dashboard_url: str = ""
+    port: int,
+    local_only: bool,
+    configured_host: str = "",
+    dashboard_url: str = "",
+    *,
+    bind_host: str = "",
 ) -> set[str]:
     """Compute the set of allowed origins for the dashboard.
 
     When *dashboard_url* is provided, its origin (scheme + host + port)
     is added as-is so that reverse-proxy setups (e.g. Caddy with TLS on
     a custom domain) pass the CSRF check without code changes.
+
+    When the gateway listens beyond loopback (*bind_host*, the address it binds), the network
+    address it is reached at (:func:`lan_address`) is added at its port, as an address literal:
+    the address a paired phone is pointed at, so its redeem, its changes and its live socket are
+    taken from there. A literal and never "Origin equals Host": a name that resolves to that
+    address (DNS rebinding) sends a matching Origin and Host, and must still be refused.
 
     Which home the gateway runs on adds nothing. A frontend dev server on this machine (Vite's,
     on :3100) is a loopback origin, and :func:`check_origin` trusts a loopback origin on any
@@ -580,6 +613,9 @@ def build_allowed_origins(
         mh = machine_hostname()
         if mh:
             origins.add(f"http://{mh}:{port}")
+        lan = lan_address(bind_host)
+        if lan:
+            origins.add(f"http://{url_host(lan)}:{port}")
     # Dev proxy origin
     proxy = devspaces_proxy_url(port)
     if proxy:

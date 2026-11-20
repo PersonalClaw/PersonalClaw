@@ -135,29 +135,61 @@ def _audit(
         logger.debug("SEL audit failed for %s", operation, exc_info=True)
 
 
-def _pair_base_url(request: web.Request) -> str:
-    """The origin a device should be pointed at.
+#: Why a pairing names no address, said on the panel in place of a QR code no phone could use.
+PAIR_LOOPBACK_ONLY = (
+    "PersonalClaw listens only on this computer, so a phone on your network can't reach it. To "
+    "pair a phone, restart the gateway with PERSONALCLAW_BIND_HOST=0.0.0.0 and sign-in on, then "
+    "pair again."
+)
+PAIR_NO_ADDRESS = (
+    "PersonalClaw listens on your network, but this computer has no network address a phone could "
+    "use. Connect it to your network, then pair again. Or type the code instead."
+)
 
-    Prefers the configured public URL (a tunnelled instance must not hand out a LAN address),
-    then falls back to the Host the OWNER's own authenticated request arrived on — which on a
-    LAN install is exactly the address a phone needs. `Host` is caller-controlled in general,
-    but this caller is the authenticated owner reading their own dashboard, so echoing it back
-    tells them nothing they did not type; it is still bounded and screened for control
-    characters so it cannot smuggle anything into a rendered QR payload.
+
+def _pair_base_url(request: web.Request) -> tuple[str, str]:
+    """The origin a device should be pointed at, and ``""`` with the reason when there is none.
+
+    Prefers the configured public URL (a tunnelled instance must not hand out a LAN address).
+    A request that came in on loopback, the dashboard open on this computer as it usually is, is
+    pointed at the network address the gateway listens on (``origin.lan_address``, of the bind the
+    server recorded): echoing its host would hand the phone ``127.0.0.1``, which on a phone is the
+    phone. A gateway on loopback only gets no address, and the reason says what to turn on. What it
+    listens on is never changed here. Any other request falls back to the Host the OWNER's own
+    authenticated request arrived on, which on a LAN install is exactly the address a phone needs.
+    `Host` is caller-controlled in general, but this caller is the authenticated owner reading their
+    own dashboard, so echoing it back tells them nothing they did not type; it is still bounded and
+    screened for control characters so it cannot smuggle anything into a rendered QR payload.
     """
     try:
         from personalclaw.dashboard.exposure import public_url
 
         configured = public_url()
         if configured:
-            return configured.rstrip("/")
+            return configured.rstrip("/"), ""
     except Exception:  # noqa: BLE001
         logger.debug("could not resolve the configured public URL", exc_info=True)
 
     host = str(request.host or "")[:255]
     if not host or any(ch.isspace() or not ch.isprintable() for ch in host):
-        return ""
-    return f"{request.scheme}://{host}"
+        return "", ""
+    from personalclaw.dashboard.origin import is_loopback, lan_address, url_host
+
+    if is_loopback(_host_name(host)):
+        bind_host = str(request.app.get("bind_host", "") or "")
+        lan = lan_address(bind_host)
+        if not lan:
+            beyond = bool(bind_host) and not is_loopback(bind_host)
+            return "", PAIR_NO_ADDRESS if beyond else PAIR_LOOPBACK_ONLY
+        return f"{request.scheme}://{url_host(lan)}:{request.app['port']}", ""
+    return f"{request.scheme}://{host}", ""
+
+
+def _host_name(host: str) -> str:
+    """*host* (a ``Host`` header) without its port: ``[::1]:10000`` is ``::1``."""
+    if host.startswith("["):
+        return host[1:].split("]", 1)[0]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
 
 
 # ── pair/start ──────────────────────────────────────────────────────────
@@ -193,7 +225,7 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
 
     code, expires_at = pairing.issue_code(label=label, scope=scope, lifetime_secs=lifetime_secs)
     formatted = pairing.format_code(code)
-    base = _pair_base_url(request)
+    base, unreachable = _pair_base_url(request)
     # The QR payload: a single URL a phone camera can act on. The code rides in it because a
     # two-step "scan this, then type that" flow is the one people abandon. Resolved HERE and
     # never composed in the browser — the dashboard may be open on loopback while the
@@ -211,6 +243,8 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
             "pairing_url": pairing_url,
             "expires_at": expires_at,
             "expires_in": pairing.PAIR_CODE_TTL_SECS,
+            # No link a phone could use, and why, which the panel says in place of the QR code.
+            **({"pairing_unreachable": unreachable} if unreachable else {}),
             # An automation client's code says what its session will hold, and for how long.
             **({"scope": list(scope), "lifetime_days": days} if scope else {}),
         }

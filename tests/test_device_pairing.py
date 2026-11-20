@@ -29,6 +29,7 @@ from browser_sign_in import browser_token
 from signed_in_sessions import without_sign_in
 
 from personalclaw.auth import pairing
+from personalclaw.dashboard import origin
 from personalclaw.dashboard import session_store as ss
 from personalclaw.dashboard import token_auth
 from personalclaw.dashboard.handlers import auth as auth_h
@@ -46,6 +47,9 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(pairing, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(ss, "config_dir", lambda: tmp_path, raising=False)
     (tmp_path / "config.json").write_text(json.dumps({"auth": {}}), encoding="utf-8")
+    # The gateway these routes run in listens on the network (`_app`), at this address, so a
+    # pairing asked on loopback names it (test_a_phone_is_paired_to_an_address_it_can_reach.py).
+    monkeypatch.setattr(origin, "address_beyond_loopback", lambda addresses=None: "192.0.2.5")
     token_auth.use_persistent_secret()
     token_auth.revoke_all_sessions()
     auth_h.reset_lockouts()
@@ -69,6 +73,7 @@ def sel_events(monkeypatch) -> list[dict[str, Any]]:
 def _app() -> web.Application:
     app = without_sign_in(web.Application())
     app["port"] = PORT
+    app["bind_host"] = "0.0.0.0"
     app["allowed_origins"] = {f"http://localhost:{PORT}"}
     devices_h.register_device_routes(app)
     return app

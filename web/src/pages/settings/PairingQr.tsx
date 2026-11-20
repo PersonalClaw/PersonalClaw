@@ -41,7 +41,7 @@ function Refusal({ what, icon: Icon }: { what: string; icon: typeof QrCode }) {
   )
 }
 
-export function PairingQr({ url, expired }: { url: string; expired: boolean }) {
+export function PairingQr({ url, expired, unreachable }: { url: string; expired: boolean; unreachable?: string }) {
   // Encoding is pure and depends only on the URL, so a countdown tick must not redraw ~700
   // squares once a second.
   const symbol = useMemo(() => (url ? encodeQr(url) : null), [url])
@@ -51,6 +51,11 @@ export function PairingQr({ url, expired }: { url: string; expired: boolean }) {
     // and the paragraph beside this one explains the withdrawal. A third full sentence here would
     // be the same fact told three times.
     return <Refusal icon={XCircle} what="Nothing left to scan." />
+  }
+  if (!url && unreachable) {
+    // No phone could reach this gateway: it listens only on this computer, or has no network
+    // address. The sentence saying what to turn on sits beside this, where the link would be.
+    return <Refusal icon={QrCode} what="No address a phone can reach." />
   }
   if (!url) {
     // `pair/start` returns an empty `pairing_url` when it cannot resolve its own address from the

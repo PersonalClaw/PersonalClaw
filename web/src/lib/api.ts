@@ -1092,6 +1092,10 @@ export interface DevicePairStart {
   pairing_url: string
   expires_at: number
   expires_in: number
+  /** Present only when `pairing_url` is empty because no phone could reach this gateway (it
+   *  listens only on this computer, or has no network address): the sentence that says what to
+   *  turn on, shown where the link would be. */
+  pairing_unreachable?: string
 }
 export interface AppUiPage { route: string; label: string; icon: string }
 /** An app's DECLARED quality bar, rendered as the Store/Library card badge row.

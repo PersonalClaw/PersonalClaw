@@ -322,6 +322,26 @@ describe('pairing surfaces the code and the link', () => {
     expect(screen.getByRole('button', { name: /Copy pairing code/i })).toBeTruthy()
   })
 
+  it('a gateway on this computer only says what to turn on, in place of a link a phone cannot use', async () => {
+    // 🔴 Red before: `pair/start` named 127.0.0.1, which on a phone is the phone. Now a gateway that
+    // listens only on this computer answers no link and the reason, and the panel says the reason
+    // where the link would be: no QR, no empty link with a copy button, and the code still there.
+    const why =
+      "PersonalClaw listens only on this computer, so a phone on your network can't reach it. To pair a phone, restart the gateway with PERSONALCLAW_BIND_HOST=0.0.0.0 and sign-in on, then pair again."
+    vi.spyOn(api, 'devices').mockResolvedValue([])
+    vi.spyOn(api, 'devicePairStart').mockResolvedValue({ ...START, pairing_url: '', pairing_unreachable: why })
+    mount()
+    await waitFor(() => expect(screen.getByText(/No devices signed in/i)).toBeTruthy())
+    fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
+
+    await waitFor(() => expect(screen.getByText('ABCD-EFGH')).toBeTruthy())
+    expect(screen.queryByRole('img', { name: /scan it with the camera/i })).toBeNull()
+    expect(screen.getByText(/No address a phone can reach/i)).toBeTruthy()
+    expect(screen.getByText(why)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Copy pairing link/i }), 'no empty link to copy').toBeNull()
+    expect(screen.getByRole('button', { name: /Copy pairing code/i })).toBeTruthy()
+  })
+
   it('a FAILED pair/start is reported, not swallowed into a blank panel', async () => {
     const toasts = captureToasts()
     vi.spyOn(api, 'devices').mockResolvedValue([])

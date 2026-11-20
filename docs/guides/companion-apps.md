@@ -61,12 +61,19 @@ nothing else — single-use, short-lived, hashed at rest, and at most five outst
 That bound is the point: an 8-character string read off one screen and typed into another should
 not be usable twice, and cannot be.
 
-> **Known rough edge.** Redeeming that code *from a browser you reached by IP address* is
-> currently refused with `CSRF check failed: request origin not allowed` — the gateway's
-> allowed-origin set covers its loopback names and its hostname, not its LAN address. Reading
-> the dashboard over the LAN works; it is only this state-changing call that is rejected. Until
-> that is settled, reach the gateway by hostname (`http://<machine-name>:PORT`) for the redeem
-> step, or use the token link.
+**Pair a device from the dashboard instead.** Settings › Devices › **Pair a device** shows a
+single-use code and a QR code that carries it. The QR names the address a phone on your network
+can reach, even when the dashboard is open on `127.0.0.1`: the address the gateway listens on, or
+this machine's own network address when it listens on every interface
+(`PERSONALCLAW_BIND_HOST=0.0.0.0`). A public URL, when one is set, comes first. A gateway that
+listens only on this computer gets no QR, and the panel says to restart it with
+`PERSONALCLAW_BIND_HOST=0.0.0.0` and sign-in on. Nothing here changes what the gateway listens on.
+
+> **Which addresses can make changes.** Once the gateway listens beyond loopback, a browser that
+> reached it by this machine's hostname, or by the network address the pairing QR names, can make
+> changes and get live updates, redeeming a code included. Any other address of the machine, or a
+> name that only resolves to it, can read pages but every change is refused with
+> `auth_origin_not_allowed`. Use the address the QR names, the hostname, or the token link.
 
 ---
 
