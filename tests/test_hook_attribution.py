@@ -41,9 +41,9 @@ def _capture_payloads():
     """Patch run_script_hook to record the hook_event each fire builds."""
     seen: list[dict] = []
 
-    # `enforced` rides down from `_fire`; swallowed here because this double is about the
+    # `enforced` and `cwd` ride down from `_fire`; swallowed here because this double is about the
     # attribution PAYLOAD, and a double that rejects a real keyword fails on the wrong axis.
-    async def _fake(hook, context="", hook_event=None, *, enforced=False):
+    async def _fake(hook, context="", hook_event=None, *, enforced=False, cwd=""):
         seen.append(hook_event or {})
         return ScriptHookResult(hook_id=hook.id, hook_name=hook.name, event=hook.event, exit_code=0)
 
@@ -125,6 +125,7 @@ class TestFireToolHooksAttribution:
             subagent_id="sa-7",
             parent_session_key="dashboard:p",
             agent_role="coder",
+            cwd="",
         )
 
     @pytest.mark.asyncio
@@ -140,4 +141,5 @@ class TestFireToolHooksAttribution:
             subagent_id="",
             parent_session_key="",
             agent_role="",
+            cwd="",
         )

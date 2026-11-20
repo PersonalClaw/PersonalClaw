@@ -2004,6 +2004,7 @@ class SubagentManager:
                         store=self.hook_store,
                         subagent_id=info.id,
                         parent_session_key=info.parent_session_key,
+                        cwd=info.cwd,
                     )
                     if hooks_said.refused:
                         tier.refused(call_id, event.title or "", hooks_said.note)
@@ -2117,6 +2118,7 @@ class SubagentManager:
                         subagent_id=info.id,
                         parent_session_key=info.parent_session_key,
                         agent_role=info.agent,
+                        cwd=info.cwd,
                     )
                 elif event.kind == EVENT_TOOL_RESULT:
                     meta = event.tool_meta or {}

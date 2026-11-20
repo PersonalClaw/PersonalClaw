@@ -998,6 +998,19 @@ the switch went on and the state stayed `autopaused`, so it never fired again. T
 failures that stopped it stay in its history, so one more failure stops it again;
 a quarantined trigger is refused.
 
+**A lifecycle hook runs in the folder of the chat it fires for.** Each fire site hands the
+hook store the working folder of the chat or helper the event is for: the chat's
+(`memory_locality.chat_folder`), a helper's (`SubagentInfo.cwd`), the built-in runtime's own.
+The hook's command runs there, its payload's `cwd` says so, and its action's checks (a
+sensitive path, a delete of the folder it runs in, the action denylist) judge that folder,
+through `ActionContext.cwd`, which only the dispatch sets and an event cannot name. A fire for
+no chat (a Test from the Triggers page, an event) runs in the workspace, and so does every hook of a
+chat an app started (`chat_runner.hook_folder_of`): an app may set its own chat's folder, and the
+hooks are the owner's commands. A folder that is not
+one (gone, or not a whole path), or no usable workspace, refuses the run, never runs it in the
+gateway's own folder (`hooks.hook_folder`). `bash` and `run-script` actions run in it; an
+`invoke-agent` hook's agent works where its own `cwd` setting says, as before.
+
 **An agent a trigger starts carries the trigger.** Both store-trigger dispatches
 set `ActionContext.trigger_id`, and so does a lifecycle hook's fire and its Test
 (`lifecycle:<id>`, `hooks.run_script_hook`); `invoke-agent` and `run-prompt` spawn their

@@ -456,7 +456,12 @@ def enforce_action(
     """
     from personalclaw.filled_secrets import masked_here
 
-    decision = check_action(provider_name, action_config, ctx, session_key, written=written)
+    # A delete of the folder the action runs in is judged against the folder its dispatch set
+    # (`ActionContext.cwd`, a lifecycle hook's chat folder), the gateway's own when it set none.
+    where = str(getattr(ctx, "cwd", "") or "")
+    decision = check_action(
+        provider_name, action_config, ctx, session_key, written=written, cwd=where
+    )
     if not decision.blocked:
         return decision
     decision = replace(

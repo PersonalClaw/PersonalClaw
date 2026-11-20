@@ -62,6 +62,11 @@ class ActionContext:
     carried in. The run fills those in where its steps use them, and any other text that reads as a
     reference stays text. Set by the dispatches that fill references (a trigger's fire, Run now and
     a workflow step), empty from every other. Out of `payload` for `answer`'s reason.
+    `cwd` is the folder the action runs in, set by the dispatch alone: a lifecycle hook's fire sets
+    the folder of the chat or helper it fires for, or the workspace (`hooks.hook_folder`), and a
+    command its action runs starts there and is judged there. "" from every other dispatch, whose
+    command runs in the gateway's own folder. Out of `payload` for `answer`'s reason: what an event
+    carries must not be able to choose where a command runs.
     """
 
     event: str
@@ -74,6 +79,7 @@ class ActionContext:
     fire_files: tuple[str, ...] = ()
     project_id: str = ""
     secret_references: tuple[str, ...] = ()
+    cwd: str = ""
 
 
 def is_workflow_step(ctx: Any) -> bool:

@@ -107,7 +107,7 @@ def test_fire_for_ids_injects_hook_depth(monkeypatch, tmp_path):
 
     # `enforced` rides down from `_fire`; swallowed because this double is about the
     # `__hook_depth` payload, and a double that rejects a real keyword fails on the wrong axis.
-    async def _fake_run(hook, context, hook_event, *, enforced=False):
+    async def _fake_run(hook, context, hook_event, *, enforced=False, cwd=""):
         seen["depth"] = hook_event.get("__hook_depth")
         return SimpleNamespace(
             hook_id=hook.id,

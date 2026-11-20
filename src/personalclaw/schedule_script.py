@@ -344,9 +344,18 @@ def _parse_launcher_output(stdout: str) -> dict:
 
 
 def run_script_sandboxed(
-    script_spec: str, job_id: str, job_message: str, timeout: int = 0, *, session_key: str = ""
+    script_spec: str,
+    job_id: str,
+    job_message: str,
+    timeout: int = 0,
+    *,
+    session_key: str = "",
+    cwd: str = "",
 ) -> dict:
     """Run a ``file.py:func`` script in the sandbox; return a status dict.
+
+    *cwd* is the folder the script runs in (``ActionContext.cwd``: a lifecycle hook's chat folder),
+    the gateway's own when "". The script itself is found by its own path, wherever it runs.
 
     Returns ``{"status": "ok"|"skip"|"done"|"report"|"error", "message"|"error"}``.
     The internal secret + port are passed to the launcher via an unlinked temp
@@ -451,6 +460,7 @@ def run_script_sandboxed(
                 text=True,
                 timeout=timeout,
                 env=env,
+                cwd=cwd or None,
             )
         except subprocess.TimeoutExpired:
             return {"status": "error", "error": f"script timed out after {timeout}s"}
