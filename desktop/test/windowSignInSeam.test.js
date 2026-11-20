@@ -434,15 +434,20 @@ function world({ windowDoor = false } = {}) {
     },
   };
   // The door's answers, whatever a test puts in its place: each session and pair it hands out is noted.
+  // What a read hands out calls the door in place at that read, so a test that keeps it and wraps it, or
+  // sets it back, calls that door, never a read of itself.
   let signIn = async () => gateways.signIn;
   Object.defineProperty(box.homeGateway, "signIn", {
-    get: () => async (...args) => {
-      const out = await signIn(...args);
-      if (out && out.ok) {
-        noteSecret(out.ready && out.ready.token);
-        noteSecret(out.pair);
-      }
-      return out;
+    get: () => {
+      const door = signIn;
+      return async (...args) => {
+        const out = await door(...args);
+        if (out && out.ok) {
+          noteSecret(out.ready && out.ready.token);
+          noteSecret(out.pair);
+        }
+        return out;
+      };
     },
     set: (fn) => {
       signIn = fn;
@@ -499,6 +504,21 @@ function rowIs(w, state, message = state) {
   const sentence = { signed_out: w.box.SIGNED_OUT_SENTENCE, cant_sign_in: w.box.NOT_SIGNED_IN_AGAIN_SENTENCE }[state];
   if (sentence) assert.equal(w.box.localState.sentence, sentence, `${message}: the row's sentence`);
 }
+
+describe("the test's door: a door a test keeps, wraps and sets back", () => {
+  it("answers through a wrapper of the kept door, and through the kept door once it is set back", async () => {
+    const w = world();
+    const kept = w.box.homeGateway.signIn;
+    let wrapped = 0;
+    w.box.homeGateway.signIn = async (...args) => ((wrapped += 1), kept(...args));
+    w.gateways.signIn = { ok: true, ready: ready(5000, NEXT), pair: null };
+    assert.deepEqual(await w.box.homeGateway.signIn({ port: 5000 }), w.gateways.signIn);
+    assert.equal(wrapped, 1);
+    w.box.homeGateway.signIn = kept;
+    assert.deepEqual(await w.box.homeGateway.signIn({ port: 5000 }), w.gateways.signIn, "the kept door, set back, does not answer");
+    assert.equal(wrapped, 1, "the wrapper is still in place after the kept door was set back");
+  });
+});
 
 describe("the app's own gateway: a non-terminal loss, then a proof of the same start", () => {
   it("withholds and keeps the session, then writes the same one back, with nothing minted, before anything carries the credentials again", async () => {
