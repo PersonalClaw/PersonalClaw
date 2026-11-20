@@ -1156,7 +1156,8 @@ handoff_refused`) and records nothing; a handoff message's skill, tool and app m
 `source` (`native` | `acp`). At most one per assistant message, saved in place as it changes; the strip above
 the composer reads the running turn's. It is the agent's own working list (an agent CLI's ACP `plan` update,
 the native runtime's `update_plan` tool), not chat plan mode, which is the planning walkthrough a chat binds
-to (`dashboard/chat_plan.py`, `chat_plans/<safe key>.json`) and is unchanged.
+to (`dashboard/chat_plan.py`, `chat_plans/<safe key>.json`, or `<safe key>-<8 hex>.json` for a chat
+whose safe key another chat's plan holds) and is unchanged.
 
 **`helper`**: `work` (`subagent:<id>`), `agent`, `task` (redacted, short), `mode` (`batch` |
 `background` | `cli`: an agent CLI's own helper), `state` (`HelperState`: `queued`,
