@@ -4145,14 +4145,14 @@ class GatewayOrchestrator:
                 if any(settled):
                     self._push_trigger_refresh()
                 # What runs after the trigger that started it runs now that its work has ended,
-                # not when the agent started. Not after an agent its owner declined: it never ran.
+                # and only after work that ran and was not stopped (`subagent_endings`). The chain
+                # it carried is dropped either way, so no later run of the trigger picks it up.
                 from personalclaw.triggers.chain import held_chain
 
                 for m in started_by_a_trigger:
-                    if getattr(m, "declined", False) is not True:
-                        self._chain_after_work(
-                            source_trigger=m.trigger_id, payload=held_chain(m.trigger_id)
-                        )
+                    carried = held_chain(m.trigger_id)
+                    if subagent_endings.continues_its_chain(m):
+                        self._chain_after_work(source_trigger=m.trigger_id, payload=carried)
 
             # A trigger's own agent says how it went on the trigger's route now that it has ended,
             # wherever its reply goes: the fire, or the Run now, that started it said nothing

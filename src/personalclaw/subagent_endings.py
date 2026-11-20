@@ -109,6 +109,18 @@ def starts_a_turn(member: Any) -> bool:
     return not (told_instead(member) or ended_with_its_starter(member))
 
 
+def continues_its_chain(member: Any) -> bool:
+    """Whether *member*'s ending runs what is chained after the automation that started it (a
+    ``run_completed`` trigger waiting on it): work that ran and ended on its own, finished or
+    failed, as a workflow run's end does (`workflows.run_finish.chain_after_run`). Not work that
+    never ran (its start declined, refused or unanswered) and not work that was stopped, by her,
+    by a kill of its fan-out or by a run budget (``cancelled``): a cancelled workflow run
+    continues nothing either."""
+    return not any(
+        getattr(member, ending, False) is True for ending in ("declined", "never_ran", "cancelled")
+    )
+
+
 def note(member: Any, *, task: str, reason: str) -> str:
     """What its chat's agent is told of *member*'s ending, under the completion event's header: the
     helper, how it ended, its task, why, and that no report of it will come. *task* and *reason*
