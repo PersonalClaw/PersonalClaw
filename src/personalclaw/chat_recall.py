@@ -131,7 +131,7 @@ def chats_of(log: ConversationLog, session_key: str) -> frozenset[str]:
     key = (session_key or "").strip()
     if not key:
         return frozenset()
-    names = {_one_file(_safe_key(k)) for k in (key, dashboard_history_key(key))}
+    names = {_one_file(log._file_stem(k)) for k in (key, dashboard_history_key(key))}
     listed = log.list_sessions_with_metadata()
     own = [(entry, meta) for entry, meta in listed if _one_file(entry["key"]) in names]
     tabs = {meta.get("tab_id") for _entry, meta in own if meta.get("tab_id")}

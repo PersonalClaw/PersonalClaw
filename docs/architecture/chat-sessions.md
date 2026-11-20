@@ -447,6 +447,17 @@ chat, channel thread, loop worker, webhook, subagent).
   record and nothing shortens it**: there is no size cap, no rotation and no
   background rewrite, at any size. What bounds cost is what a reader takes —
   `recent()` and `history_for_model()` return a window.
+  `{safe_key}` is the key's slug: every character but a letter, a digit,
+  `-`, `_` and `.` becomes `_`. Two keys can share a slug (`dashboard:a:b`
+  and `dashboard:a?b`), so a transcript records the key it is (`key`, on
+  its first line), and a key whose slug's file records another key keeps its
+  own, `{safe_key}-{8 hex of the key's hash}.jsonl`
+  (`ConversationLog._file_stem`), kept while it is there, so deleting the
+  chat that holds the slug leaves the other its transcript. Every reader goes
+  through that name, the memory-mode readers too (`history.session_path`). A
+  file that records no key (one an earlier version wrote) is its slug's until
+  a save claims it, where it is: the first key with its slug to save, which may
+  be an alike chat opened after the upgrade rather than the one that wrote it.
 - **Each chat's settings are its record** (`chat_record.py`), beside its
   transcript: `{safe_key}.chat.json`. Its title, pin, folder, tags, archive,
   memory mode, runtime binding and consolidation mark are read from it, and a
