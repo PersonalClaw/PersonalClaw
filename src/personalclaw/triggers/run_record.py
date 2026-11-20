@@ -129,7 +129,9 @@ def stamp_run(
         trigger.last_run_id = run_id
     stamp = to_iso(at or time.time())
     outcome = SCHEDULE_STATUS_TO_OUTCOME.get(status, Outcome.FAILED.value)
-    if status == "waiting":
+    if status in ("waiting", "needs_input"):
+        # Nothing it was asked has happened yet: it stopped for a person, or a spend ceiling held
+        # it (`schedule_history.HELD_BY_A_SPEND_CEILING`). Not a success, and not its failure.
         trigger.last_waiting_at = stamp
     elif outcome in _WENT_WRONG:
         trigger.last_failure_at = stamp
@@ -162,6 +164,7 @@ def _row(
     a park's line says it waits on you, and on what. A *late* run that did its work records
     ``ran_late``, and every row of one that did not fail says first why it was late.
     """
+    from personalclaw.guardrails.failure import budget_refusal
     from personalclaw.schedule_history import (
         UNSETTLED_STATUSES,
         ScheduleRun,
@@ -174,7 +177,11 @@ def _row(
 
     failure = ""
     work_id = ""
-    if _failed(result, exc):
+    if _held_by_a_spend_ceiling(result, exc):
+        status = "needs_input"
+        cap = budget_refusal(exc)
+        summary = trace = cap.sentence() if cap is not None else error
+    elif _failed(result, exc):
         status = "failure"
         why = error or (f"{type(exc).__name__}: {exc}" if exc is not None else "")
         failure = why or failure_for_result(result)
@@ -208,6 +215,17 @@ def _row(
         error=failure[:ERROR_MAX],
         work_id=work_id,
     )
+
+
+def _held_by_a_spend_ceiling(result: Any, exc: BaseException | None) -> bool:
+    """Whether the day's spend ceiling refused a call the action made: it raised that refusal
+    (`guardrails.failure.budget_refusal`, its ``scope`` "day"). A run's own cap resets with
+    nothing, so its refusal is the automation's failure; and a result that only says "budget"
+    (`ActionResult.failure_class`) does not say which ceiling, so it is not held either."""
+    from personalclaw.guardrails.failure import budget_refusal
+
+    cap = budget_refusal(exc) if exc is not None else None
+    return cap is not None and cap.scope == "day"
 
 
 def _failed(result: Any, exc: BaseException | None) -> bool:
@@ -307,7 +325,12 @@ async def _record(
         return ""
     finished = time.time()
     yours = run_source.yours(source)
-    if exc is not None:
+    if _held_by_a_spend_ceiling(result, exc):
+        # The day's spend ceiling refused a call the action made: held, as the pre-run hold
+        # writes it (`schedule_history.HELD_BY_A_SPEND_CEILING`), so no exit and no count toward a
+        # pause.
+        tag = "needs_input"
+    elif exc is not None:
         # A RAISING provider is classified by exception type: auth, transport, config, failed.
         tag = autopause.classify_exception(exc)
     elif _failed(result, None):

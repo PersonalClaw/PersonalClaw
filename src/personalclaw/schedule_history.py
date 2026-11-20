@@ -185,6 +185,16 @@ _RESULT_STATUS: dict[str, str] = {
     "degraded": "degraded",
 }
 
+#: The status of a run the day's spend ceiling held: one the gateway's pre-run hold refused before
+#: it ran (`gateway._record_refused_fire`), and one whose agent or action the day's ceiling refused
+#: a call of as it ran (`SubagentInfo.ended_by`, `run_record.record_run`). Deferred
+#: (`history.SCHEDULE_STATUS_TO_OUTCOME`): no exit, so it counts toward no pause, and it is not a
+#: failure of the automation's: it runs again once the day's ceiling resets at midnight. A run's
+#: own cap (`max_tokens_per_run`, a trigger's `max_cost_usd_per_run`) resets with nothing, so its
+#: refusal stays the automation's failure: held, an automation whose job needs more than its cap
+#: would spend the cap on every fire and never pause.
+HELD_BY_A_SPEND_CEILING = "needs_input"
+
 #: Every status `status_for_result` can return: the closed vocabulary `triggers/history.py`'s
 #: `SCHEDULE_STATUS_TO_OUTCOME` must translate (`test_triggers_status_vocabulary` reads this).
 RESULT_STATUSES: frozenset[str] = frozenset({"success", "failure", *_RESULT_STATUS.values()})
