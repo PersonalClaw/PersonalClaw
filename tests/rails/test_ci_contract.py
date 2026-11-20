@@ -3197,6 +3197,10 @@ _UNIONS: dict[str, tuple[str, ...]] = {
     "shard-union": ("ubuntu", "macos", "arm", "coverage-shard", "random-order"),
     "shard-union-canary": ("canary",),
 }
+#: breadth.yml's jobs #5846 retires with its coverage leg (the catalogue marks coverage-shard
+#: ``retiring``). A row holds each while breadth.yml has it: the removal lands in two merges, these
+#: rows first, so a tree without them is the change they wait for, not a check gone.
+_RETIRING_BREADTH_JOBS = frozenset({"coverage-shard", "coverage", "planned-ids-coverage-shard"})
 #: The jobs whose red is not a verdict on the run: the canary, its planned collection and its
 #: union, each continue-on-error.
 _ADVISORY_UNION_JOBS = frozenset({"canary", "planned-ids-canary", "shard-union-canary"})
@@ -3325,12 +3329,16 @@ def shard_union_violations(tree: Tree) -> list[str]:
     jobs = _breadth_jobs(tree)
     bad: list[str] = []
     suites = {job_id for job_id, job in jobs.items() if _SHARD_LIST in _runs(job)}
-    held = [leg for legs in _UNIONS.values() for leg in legs]
+    unions = {
+        union: tuple(leg for leg in legs if leg in jobs or leg not in _RETIRING_BREADTH_JOBS)
+        for union, legs in _UNIONS.items()
+    }
+    held = [leg for legs in unions.values() for leg in legs]
     bad += [
         f"breadth.yml:{leg} runs suite shards that no union holds to its planned suite"
         for leg in sorted(suites - set(held))
     ]
-    for union, legs in _UNIONS.items():
+    for union, legs in unions.items():
         job = jobs.get(union)
         if job is None:
             bad.append(f"breadth.yml has no {union} job")
@@ -5503,11 +5511,16 @@ ROWS: tuple[Row, ...] = (
                 'platform = "macos-14"\npython = "3.13.16"\ntimeout_min = 50\n',
                 expect="the catalogue's python-suite-macos runs on macos-14",
             ),
-            _plant(
-                "breadth's coverage on a branch push",
-                _BREADTH,
-                '    tags: ["rehearsal-v*"]\n',
-                '    tags: ["rehearsal-v*"]\n    branches: ["**"]\n',
+            Control(
+                "a branch push workflow that measures coverage",
+                lambda root: _write(
+                    root,
+                    f"{_WORKFLOWS}/covered.yml",
+                    "name: Covered\non:\n  push:\n    branches: ['**']\npermissions: {}\njobs:\n"
+                    "  cov:\n    runs-on: ubuntu-24.04\n    steps:\n"
+                    "      - run: uv run pytest --cov=personalclaw -n 2 -q\n",
+                ),
+                expect="covered.yml:cov measures coverage on a push or pull request",
             ),
             _plant(
                 "--cov in a merge-tier entry",
@@ -5598,8 +5611,14 @@ ROWS: tuple[Row, ...] = (
                 fails=False,
             ),
             Control(
-                "coverage in breadth.yml, and in the breadth tier's entries, passes",
-                _nothing,
+                "coverage in a workflow only a schedule starts passes",
+                lambda root: _write(
+                    root,
+                    f"{_WORKFLOWS}/covered.yml",
+                    "name: Covered\non:\n  schedule:\n    - cron: '0 5 * * *'\npermissions: {}\n"
+                    "jobs:\n  cov:\n    runs-on: ubuntu-24.04\n    steps:\n"
+                    "      - run: uv run pytest --cov=personalclaw -n 2 -q\n",
+                ),
                 fails=False,
             ),
         ),
@@ -5788,30 +5807,29 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "the canary in the gating union",
                 _BREADTH,
-                "--leg ubuntu:4 --leg macos:6 --leg arm:4 --leg coverage-shard:6\n",
-                "--leg ubuntu:4 --leg macos:6 --leg arm:4 --leg coverage-shard:6 --leg canary:4\n",
+                "--leg ubuntu:4 --leg macos:6 --leg arm:4",
+                "--leg ubuntu:4 --leg macos:6 --leg arm:4 --leg canary:4",
                 expect="breadth.yml:shard-union holds",
             ),
             _plant(
                 "the gating union waiting on the canary",
                 _BREADTH,
-                "    needs: [freshness, ubuntu, macos, arm, coverage-shard, planned-ids-ubuntu,",
-                "    needs: [freshness, ubuntu, macos, arm, coverage-shard, canary,"
-                " planned-ids-ubuntu,",
+                "    needs: [freshness, ubuntu, macos, arm, ",
+                "    needs: [freshness, ubuntu, macos, arm, canary, ",
                 expect="breadth.yml:shard-union waits on canary, whose red is not the run's",
             ),
             _plant(
                 "the gating union not waiting on a leg's planned collection",
                 _BREADTH,
-                " planned-ids-arm, planned-ids-coverage-shard,",
-                " planned-ids-coverage-shard,",
+                " planned-ids-macos, planned-ids-arm,",
+                " planned-ids-macos,",
                 expect="breadth.yml:shard-union does not wait on planned-ids-arm",
             ),
             _plant(
                 "the gating union not waiting on a leg's shards",
                 _BREADTH,
-                "    needs: [freshness, ubuntu, macos, arm, coverage-shard, planned-ids-ubuntu,",
-                "    needs: [freshness, ubuntu, macos, coverage-shard, planned-ids-ubuntu,",
+                "    needs: [freshness, ubuntu, macos, arm, ",
+                "    needs: [freshness, ubuntu, macos, ",
                 expect="breadth.yml:shard-union does not wait on arm",
             ),
             _plant(
@@ -5824,15 +5842,15 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "the gating union leaving a leg out",
                 _BREADTH,
-                "--leg ubuntu:4 --leg macos:6 --leg arm:4 --leg coverage-shard:6\n",
-                "--leg ubuntu:4 --leg macos:6 --leg coverage-shard:6\n",
+                "--leg ubuntu:4 --leg macos:6 --leg arm:4",
+                "--leg ubuntu:4 --leg macos:6",
                 expect="breadth.yml:shard-union holds",
             ),
             _plant(
                 "the gating union short of a leg's shards",
                 _BREADTH,
-                "--leg ubuntu:4 --leg macos:6 --leg arm:4 --leg coverage-shard:6\n",
-                "--leg ubuntu:4 --leg macos:5 --leg arm:4 --leg coverage-shard:6\n",
+                "--leg ubuntu:4 --leg macos:6 --leg arm:4",
+                "--leg ubuntu:4 --leg macos:5 --leg arm:4",
                 expect="breadth.yml:shard-union holds",
             ),
             _plant(
@@ -5914,12 +5932,12 @@ ROWS: tuple[Row, ...] = (
                 expect="breadth.yml:planned-ids-arm runs on ubuntu-24.04, not arm's",
             ),
             _plant_in_job(
-                "the coverage leg's planned suite collected on another Python",
+                "the macOS leg's planned suite collected on another Python",
                 _BREADTH,
-                "planned-ids-coverage-shard",
+                "planned-ids-macos",
                 '      PY: "3.12.15"\n',
                 '      PY: "3.13.16"\n',
-                expect="breadth.yml:planned-ids-coverage-shard collects on Python 3.13.16",
+                expect="breadth.yml:planned-ids-macos collects on Python 3.13.16",
             ),
             _plant_in_job(
                 "the ubuntu leg's planned suite collected without the leg's env",
@@ -5985,12 +6003,12 @@ ROWS: tuple[Row, ...] = (
                 expect="breadth.yml:planned-ids-ubuntu does not collect `shards universe`'s files",
             ),
             _plant_in_job(
-                "the coverage leg's planned suite collected in a venv on another Python",
+                "the macOS leg's planned suite collected in a venv on another Python",
                 _BREADTH,
-                "planned-ids-coverage-shard",
+                "planned-ids-macos",
                 '          python-version: "3.12.15"\n',
                 '          python-version: "3.13.16"\n',
-                expect="breadth.yml:planned-ids-coverage-shard's setup-uv sets up Python",
+                expect="breadth.yml:planned-ids-macos's setup-uv sets up Python",
             ),
             Control(
                 "the gating union downloading the canary's files too passes: it reads its legs'",
@@ -6189,12 +6207,19 @@ ROWS: tuple[Row, ...] = (
                 "installer=$(curl -fsSL https://personalclaw.dev/install | sha256sum)\n"
                 "          if true; then",
             ),
-            _plant(
+            _plant_in_job(
                 "a failed coverage download read as carried",
                 _BREADTH,
-                "      - name: Download the coverage data of every shard\n",
+                "shard-union",
+                "      - name: each leg's shards collected its planned suite, each id once\n",
                 "      - name: Download the coverage data of every shard\n"
-                "        continue-on-error: true\n",
+                "        continue-on-error: true\n"
+                "        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
+                " # v8.0.2\n"
+                "        with:\n"
+                "          pattern: coverage-data-shard*\n"
+                "      - name: each leg's shards collected its planned suite, each id once\n",
+                expect="a failed coverage download is not a failure",
             ),
             _plant(
                 "a shard count other than SHARDS'",
@@ -9115,7 +9140,6 @@ uv venv "$RUNNER_TEMP/shard-python"
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --seeds "${{ github.run_number }}1,${{ github.run_number }}2" --out "$RUNNER_TEMP/entry/random-order__${{ matrix.shard }}.json"
 
-"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/rails-macos-26-3.12__1.json"
 
@@ -9133,7 +9157,6 @@ uv venv "$RUNNER_TEMP/shard-python"
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-arm__1.json"
 
-"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-coverage-shard__1.json"
 
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-canary__1.json"
 
@@ -9155,7 +9178,6 @@ uv venv "$RUNNER_TEMP/shard-python"
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/random-order__${{ matrix.shard }}.json"
 
-"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/rails-macos-26-3.12__1.json"
 
@@ -9173,7 +9195,6 @@ uv venv "$RUNNER_TEMP/shard-python"
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-arm__1.json"
 
-"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-coverage-shard__1.json"
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-canary__1.json"
 
@@ -9182,23 +9203,6 @@ uv venv "$RUNNER_TEMP/shard-python"
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/shard-union__1.json"
 
 "$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/shard-union-canary__1.json"
-
-""",  # noqa: E501
-    "breadth's: the coverage shards' result, gated before the combine": r"""
-result='${{ needs.coverage-shard.result }}'
-# Reachable only when a shard was cancelled while the run lived on: part of the
-# suite was measured by nothing, so it is red (matrix's doctrine).
-if [ "$result" = "cancelled" ]; then
-  echo "::error title=coverage shards unproven::a coverage shard was cancelled while" \
-       "this run was still live, so part of the suite was measured by nothing. Re-run."
-  exit 1
-fi
-if [ "$result" != "success" ]; then
-  echo "::error title=coverage shards failed::the coverage shards' result was" \
-       "'$result' (expected 'success'). Open the red 'coverage-shard (...)' leg(s) above."
-  exit 1
-fi
-echo "all coverage shards passed"
 
 """,  # noqa: E501
     "random-order's: each order's state-leak report, and the shard's file list, kept beside its"
@@ -9249,6 +9253,45 @@ fi
 
 _NOT_COMMAND_LINES = frozenset(
     tuple(words) for text in _NOT_COMMANDS.values() for _, words in _run_lines(text) if words
+)
+
+#: The lines of the coverage jobs #5846 retires that validate nothing, read as the lines above
+#: are. A row allows them while breadth.yml runs them and does not ask for them once it does not:
+#: the removal lands in two merges, these rows first.
+_RETIRING_NOT_COMMANDS: dict[str, str] = {
+    "coverage's: what its shards and its planned collection ran, written to the run's record": r"""
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --out "$RUNNER_TEMP/entry/planned-ids-coverage-shard__1.json"
+""",  # noqa: E501
+    "coverage's: their results, read back from the entries they wrote": r"""
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/coverage__${{ matrix.shard }}.json"
+
+"$(uv python find "$PY")" -c "import json,sys; e=json.load(open(sys.argv[1])); print(e[\"result\"], e.get(\"reused_from\") or \"ran\"); sys.exit(e[\"result\"] != \"success\")" "$RUNNER_TEMP/entry/planned-ids-coverage-shard__1.json"
+""",  # noqa: E501
+    "breadth's: the coverage shards' result, gated before the combine": r"""
+result='${{ needs.coverage-shard.result }}'
+# Reachable only when a shard was cancelled while the run lived on: part of the
+# suite was measured by nothing, so it is red (matrix's doctrine).
+if [ "$result" = "cancelled" ]; then
+  echo "::error title=coverage shards unproven::a coverage shard was cancelled while" \
+       "this run was still live, so part of the suite was measured by nothing. Re-run."
+  exit 1
+fi
+if [ "$result" != "success" ]; then
+  echo "::error title=coverage shards failed::the coverage shards' result was" \
+       "'$result' (expected 'success'). Open the red 'coverage-shard (...)' leg(s) above."
+  exit 1
+fi
+echo "all coverage shards passed"
+
+""",  # noqa: E501
+}
+_RETIRING_NOT_COMMAND_LINES = frozenset(
+    tuple(words)
+    for text in _RETIRING_NOT_COMMANDS.values()
+    for _, words in _run_lines(text)
+    if words
 )
 
 
@@ -9315,7 +9358,7 @@ def _job_lines(key: str, job: dict[str, Any], bad: list[str]) -> list[_Line]:
             if words is None:
                 bad.append(f"{_where(key)} runs {text!r} ({name!r}), which no argv can be")
                 continue
-            if tuple(words) in _NOT_COMMAND_LINES:
+            if tuple(words) in _NOT_COMMAND_LINES | _RETIRING_NOT_COMMAND_LINES:
                 continue
             argv = tuple(words)
             if argv in seen:
@@ -10103,14 +10146,13 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             '  { argv = ["npm", "run", "typecheck:web"] },\n',
             expect="web-unit: command step 1 is an install (sh tools/ci/allow_userns.sh)",
         ),
-        _plant(
+        _plant_in_entry(
             "a toolchain install no breadth.yml job of the entry runs",
             catalogue.CATALOGUE,
-            'id = "coverage"\ntiers = ["breadth"]\ninputs = [":(glob)**"]\nexternal_inputs = []\n'
-            'toolchain = ["uv-sync"]',
-            'id = "coverage"\ntiers = ["breadth"]\ninputs = [":(glob)**"]\nexternal_inputs = []\n'
-            'toolchain = ["uv-sync", "electron"]',
-            expect="coverage: toolchain names electron, and none of its breadth.yml jobs installs",
+            "shard-union",
+            "toolchain = []",
+            'toolchain = ["electron"]',
+            expect="shard-union: toolchain names electron, and none of its breadth.yml jobs",
         ),
         _plant(
             "the audit not live, and reused by tree",
@@ -10127,12 +10169,13 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             'platform = "ubuntu-24.04"',
             expect="python-suite-macos: platform is ubuntu-24.04, but",
         ),
-        _plant(
+        _plant_in_entry(
             "a runner that differs from the job's",
             catalogue.CATALOGUE,
-            'id = "coverage"\ntiers = ["breadth"]',
-            'id = "coverage"\nplatform = "ubuntu-22.04"\ntiers = ["breadth"]',
-            expect="coverage: platform is ubuntu-22.04, and breadth.yml runs it on ubuntu-24.04",
+            "shard-union",
+            'tiers = ["breadth"]\n',
+            'tiers = ["breadth"]\nplatform = "ubuntu-22.04"\n',
+            expect="shard-union: platform is ubuntu-22.04, and breadth.yml runs it on ubuntu-24.04",
         ),
         _plant(
             "reports that are not the ones its steps write",
@@ -14027,7 +14070,10 @@ def own_test_step_violations(tree: Tree) -> list[str]:
                     " itself: a tier workflow runs each test through"
                     " `python -m tools.ci run-job <id>`"
                 )
+    present = {(name, str(job_id)) for name, job_id, _ in _jobs(tree, raw=True)}
     for name, job_id, label in sorted(_STEPS_THAT_RUN_THEIR_OWN_TEST - seen):
+        if job_id in _RETIRING_BREADTH_JOBS and (name, job_id) not in present:
+            continue
         if (name, job_id) not in runs_run_job:
             bad.append(
                 f"{name} job {job_id} step {label!r} runs no test any more, and its job runs no"

@@ -75,6 +75,9 @@ _WALK = ".github/workflows/clean-machine-walkthroughs.yml"
 _BREADTH = ".github/workflows/breadth.yml"
 _PR = ".github/workflows/pr.yml"
 _SUITE_LEGS = ("ubuntu", "macos", "arm", "coverage-shard")
+#: The breadth jobs #5846 retires: an entry for one breadth.yml no longer has is not stale while
+#: they leave (a removal lands in two merges, these entries first).
+_RETIRING_JOBS = frozenset({"coverage-shard"})
 #: The breadth legs that may carry an earlier result: the rails on macOS, and the whole-suite
 #: collection that counts parses of the source tree (it runs no test). The suite legs run the
 #: security-marked modules, so they run every night and carry nothing.
@@ -290,7 +293,9 @@ def violations(root: Path) -> list[str]:
             bad.append(f"{e.file}: the entry for `{e.text}` matches nothing: delete it")
 
     sites: dict[tuple[str, str, str | None], tuple[dict[str, Any], int]] = {}
+    present: set[tuple[str, str]] = set()
     for rel, job_id, job in _workflow_jobs(root):
+        present.add((rel, job_id))
         if _on(job.get("continue-on-error")):
             sites[(rel, job_id, None)] = (job, -1)
         for i, step in enumerate(job.get("steps") or []):
@@ -313,6 +318,8 @@ def violations(root: Path) -> list[str]:
     for key in named:
         if key not in sites:
             rel, job_id, step = key
+            if job_id in _RETIRING_JOBS and (rel, job_id) not in present:
+                continue
             what = f"step {step!r}" if step else "the job"
             bad.append(f"{rel}:{job_id}: the entry for {what} matches nothing: delete it")
     return bad
