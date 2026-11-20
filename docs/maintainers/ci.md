@@ -358,24 +358,27 @@ verdict says all it must fix:
     its `results` job names or cancelled or timed out with none; and each failed test was
     classified by its rerun (a flake or a repeated failure, never a rail's, a security test's, an
     unclassified or a quarantined one), reads no file the pull request changes (as the flake rule
-    reads it), and has a flaky history: an open `Flaky test: <id>` issue that the flaky-tests
-    workflow's account or a maintainer (owner, member, collaborator) filed, since anyone can open
-    an issue of any title. A job that failed on CI's own `infrastructure` error, with no failed
-    test in it, does not stop a red being flake-class (#5848), but only where CI's own code alone
-    can have written it: the job's first failed step is `Set up the toolchain`, the setup action,
-    which runs before any of the head's code and writes the error when the runner's package mirror
-    or Homebrew could not install a program the job names, after its own retries. Any other step
-    runs the head's tests or tools, which can print the same error (the dependency audit's own step
-    runs the head's `tools/ci/`), so that red is held as any other is. None of it holds when the
-    head changes what the setup step runs or reads, which the run takes from the head: a tier
-    workflow (`merge.yml`, `pr.yml`), what writes the error (`INFRA_WRITERS`: a local action or
-    `tools/ci/audit.py`), or the setup's inputs (`.nvmrc`, `.python-version`, `pyproject.toml`
-    and `tools/ci/catalogue.toml`).
-    A failure on main in the last 7 days is not read yet, so fewer reds are
-    flake-class, never more. A red's verdict writes one `::notice` titled `failed test` that counts
-    its failed tests, then one per test (one JSON object each, at most 8): a step keeps ten
-    notices, so a red whose named tests fall short of the count is not flake-class. A queue entry
-    two entries list is a named red, never a crash.
+    reads it; `pyproject.toml`, which every pytest run reads, is read by its keys at the change's
+    own base, a pull request's merge base or the commit a queue commit was built on, and a change
+    to only the formatter's, the import sorter's or the type checker's settings, or to a
+    dependency group the suite's `uv sync` installs on neither side, `dev` and
+    `tool.uv.default-groups` with every group they include, is read by none), and has a flaky
+    history: an open `Flaky test: <id>` issue that the flaky-tests workflow's account or a
+    maintainer (owner, member, collaborator) filed, since anyone can open an issue of any title. A
+    job that failed on CI's own `infrastructure` error, with no failed test in it, does not stop a
+    red being flake-class (#5848), but only where CI's own code alone can have written it: the job's
+    first failed step is `Set up the toolchain`, the setup action, which runs before any of the
+    head's code and writes the error when the runner's package mirror or Homebrew could not install
+    a program the job names, after its own retries. Any other step runs the head's tests or tools,
+    which can print the same error (the dependency audit's own step runs the head's `tools/ci/`), so
+    that red is held as any other is. None of it holds when the head changes what the setup step
+    runs or reads, which the run takes from the head: a tier workflow (`merge.yml`, `pr.yml`), what
+    writes the error (`INFRA_WRITERS`: a local action or `tools/ci/audit.py`), or the setup's inputs
+    (`.nvmrc`, `.python-version`, `pyproject.toml` and `tools/ci/catalogue.toml`). A failure on main
+    in the last 7 days is not read yet, so fewer reds are flake-class, never more. A red's verdict
+    writes one `::notice` titled `failed test` that counts its failed tests, then one per test (one
+    JSON object each, at most 8): a step keeps ten notices, so a red whose named tests fall short of
+    the count is not flake-class. A queue entry two entries list is a named red, never a crash.
   - **A queue commit's red** carries the same note, so the lane's tooling can re-enqueue a
     flake-class red: its pull request's removals from the queue and the run's attempts count, and
     the pull request's earlier heads are held to its head's tree and change, as on its own red.

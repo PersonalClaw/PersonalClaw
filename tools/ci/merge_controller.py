@@ -2758,6 +2758,48 @@ def _infrastructure(get: Get, repo: str, job: Mapping[str, Any]) -> str:
     return ""
 
 
+#: The file every pytest run reads (:data:`verdict.PYTEST_CONFIG`), read by its keys (#5809).
+PYPROJECT = "pyproject.toml"
+
+
+def _root_text(get: Get, repo: str, sha: str, name: str) -> str | None:
+    """The text of the file *name* at the root of commit *sha*, or None when it has none, each
+    read by sha (a commit, its tree, a blob), so :func:`content_addressed` keeps it."""
+    tree = _commit_tree(get, repo, sha)
+    listing = _read(get, f"/repos/{repo}/git/trees/{tree}")
+    entries = listing.get("tree") if isinstance(listing, Mapping) else None
+    if not isinstance(entries, list):
+        raise Unread(f"the tree of {sha} lists no paths")
+    found = [e for e in entries if isinstance(e, Mapping) and e.get("path") == name]
+    if not found:
+        return None
+    if found[0].get("type") != "blob" or not isinstance(found[0].get("sha"), str):
+        raise Unread(f"{name} at {sha} is not a file")
+    blob = _read(get, f"/repos/{repo}/git/blobs/{found[0]['sha']}")
+    content = blob.get("content") if isinstance(blob, Mapping) else None
+    if not isinstance(content, str) or blob.get("encoding") != "base64":
+        raise Unread(f"{name} at {sha} has no base64 content")
+    try:
+        return base64.b64decode(content).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        raise Unread(f"{name} at {sha} is not UTF-8 text: {exc}") from exc
+
+
+def _pyproject_reads(get: Get, repo: str, ends: tuple[str, str] | None) -> str:
+    """What a pytest run reads of the change to :data:`PYPROJECT` between *ends*, the base the
+    change is measured from (a pull request's merge base, the commit a queue commit was built
+    on, never main's tip, which would charge the head with main's own changes or hide its) and
+    its head: ``""`` for nothing (:func:`verdict.pyproject_reads`), else what, or why it cannot
+    tell. With no ends, or a read that fails, the change counts whole."""
+    if ends is None:
+        return "no base to compare it against"
+    try:
+        base, head = (_root_text(get, repo, sha, PYPROJECT) for sha in ends)
+    except Unread as exc:
+        return f"unread: {exc}"
+    return verdict.pyproject_reads(base, head)
+
+
 def flake_class(
     get: Get,
     repo: str,
@@ -2768,6 +2810,7 @@ def flake_class(
     *,
     outside: tuple[str, ...] = (),
     results_red: bool = True,
+    ends: tuple[str, str] | None = None,
 ) -> tuple[bool, str]:
     """Whether the run's red is flake-class (0.4.0 A5, with CORE's first condition), and why:
     every reason is its ``results`` job's; every job of the last attempt that did not pass is a
@@ -2790,7 +2833,7 @@ def flake_class(
     if outside and not results_red:
         return True, "; ".join(outside) + ": a new head runs it again"
     if outside:
-        ok, why = flake_class(get, repo, run, [], changed, flaky)
+        ok, why = flake_class(get, repo, run, [], changed, flaky, ends=ends)
         return (ok, f"{why}; and {'; '.join(outside)}") if ok else (ok, why)
     jobs = _pages(get, f"/repos/{repo}/actions/runs/{run.id}/attempts/{run.attempt}/jobs", "jobs")
     judges = [_int(j.get("id")) for j in jobs if j.get("name") == RESULTS_JOB]
@@ -2802,6 +2845,12 @@ def flake_class(
     paths = {p for key in changed for p in key}
     owned = (MERGE_WORKFLOW, PR_WORKFLOW, *SETUP_INPUTS)
     own = any(p in owned or p.startswith(INFRA_WRITERS) for p in paths)
+    # A change to pyproject.toml is read by its keys (#5809), at the commits *changed* is
+    # measured between (*ends*): every pytest run reads the file, but not every key of it. Only
+    # the failed tests' reads are narrowed; the setup reads all of it, so *own* is not.
+    pyproject = _pyproject_reads(get, repo, ends) if PYPROJECT in paths else ""
+    if PYPROJECT in paths and not pyproject:
+        paths.discard(PYPROJECT)
     failed: dict[str, str] = {}
     infra: dict[str, str] = {}
     for job in jobs:
@@ -2848,7 +2897,8 @@ def flake_class(
         if isinstance(hit, str):
             return False, hit
         if hit:
-            return False, f"`{test}` reads `{hit[0]}`, which the pull request changes"
+            read = f"`{hit[0]}` (`{pyproject}`)" if hit[0] == PYPROJECT else f"`{hit[0]}`"
+            return False, f"`{test}` reads {read}, which the pull request changes"
         if flaky_title(test) not in flaky:
             return False, (
                 f"`{test}` has no flaky history (no open flaky-test issue the workflow or a"
@@ -2912,6 +2962,7 @@ def retry(
     changed: Mapping[tuple[str, str], object] | None = None,
     outside: tuple[str, ...] = (),
     results_red: bool = True,
+    ends: tuple[str, str] | None = None,
 ) -> Retry | str:
     """What the red verdict on a pull request's run says of its retries, or why it says nothing
     but that. The count is the run's attempts after the first, and each earlier head of the pull
@@ -2921,7 +2972,9 @@ def retry(
 
     A queue commit's red (:func:`_queue_retry_note`) names its pull request (*pull*) and that
     pull request's *head*, whose tree and change the earlier heads are held to, and the queue
-    commit's own change against its parent (*changed*), which its failed tests are read against.
+    commit's own change against its parent (*changed*), which its failed tests are read against,
+    and the two commits it is measured between (*ends*). A pull request's own change is measured
+    from its merge base with main, so that is the base its ``pyproject.toml`` is read at.
     """
     if queue is None:
         return "no GraphQL read was given"
@@ -2940,6 +2993,11 @@ def retry(
             continue
         if tree == tree_oid or _change(get, repo, "main", sha) == own:
             count += 1
+    if ends is None and changed is None and any(PYPROJECT in key for key in own):
+        try:
+            ends = (merge_base(get, repo, "main", head), head)
+        except Unread:
+            ends = None  # read whole: flake_class fails closed
     ok, why = flake_class(
         get,
         repo,
@@ -2949,6 +3007,7 @@ def retry(
         timeline.flaky,
         outside=outside,
         results_red=results_red,
+        ends=ends,
     )
     return Retry(count, ok, why)
 
@@ -2990,6 +3049,7 @@ def _queue_retry_note(
             pull=entry.number,
             head=entry.pr_head,
             changed=_change(get, repo, built_on, run.head_sha),
+            ends=(built_on, run.head_sha),
         )
     except (Unread, trust.Refused) as exc:
         return _unread(exc)

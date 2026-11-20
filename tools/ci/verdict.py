@@ -102,6 +102,7 @@ import math
 import os
 import re
 import sys
+import tomllib
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import NoReturn
@@ -401,6 +402,15 @@ FAILED_NOTICE = "failed test"
 FAILED_NOTICES = 8
 #: What every pytest test's run reads besides its own file and the conftests above it.
 PYTEST_CONFIG = ("pyproject.toml",)
+#: The ``pyproject.toml`` keys no pytest run of the suite reads (#5809): the formatter's, the import
+#: sorter's and the type checker's settings. Every other key counts, one this list does not name
+#: included (:func:`pyproject_reads`).
+PYPROJECT_INERT = frozenset({"tool.black", "tool.isort", "tool.mypy"})
+#: The dependency group ``uv sync`` installs with no ``--group`` (PEP 735's ``dev``), beside
+#: ``tool.uv.default-groups``.
+DEV_GROUP = "dev"
+#: The tables whose keys are read one by one: a change to one key is not a change to the others.
+_PYPROJECT_TABLES = ("project", "tool", "dependency-groups")
 #: What every Vitest test's run reads besides its own file: the runner's configuration, and the
 #: folder its setup files are in.
 VITEST_CONFIG = ("web/vitest.config.ts", "web/vite.config.ts")
@@ -666,6 +676,82 @@ def _read_by(test: str, files: tuple[str, ...], prefixes: tuple[str, ...], chang
     if changed.startswith(E2E) and changed.endswith(".spec.ts"):
         return changed == test.split("::", 1)[0]
     return changed.startswith(prefixes)
+
+
+def _pyproject_keys(doc: Mapping[str, object]) -> dict[str, object]:
+    """*doc*'s keys at table depth: ``project.<key>``, ``tool.<name>`` and
+    ``dependency-groups.<group>``, and every other top-level key as itself."""
+    keys: dict[str, object] = {}
+    for top, value in doc.items():
+        if top in _PYPROJECT_TABLES and isinstance(value, Mapping):
+            keys.update((f"{top}.{k}", v) for k, v in value.items())
+        else:
+            keys[top] = value
+    return keys
+
+
+def _installed_groups(doc: Mapping[str, object]) -> frozenset[str] | None:
+    """The dependency groups the suite's environment installs, ``uv sync`` with no ``--group``:
+    :data:`DEV_GROUP` and each ``tool.uv.default-groups`` name, with each group one includes
+    (PEP 735's ``include-group``), transitively. None, for every group, when ``default-groups`` is
+    ``"all"`` or a table is not of the shape uv reads."""
+    groups = doc.get("dependency-groups", {})
+    tool = doc.get("tool", {})
+    uv = tool.get("uv", {}) if isinstance(tool, Mapping) else None
+    if not isinstance(groups, Mapping) or not isinstance(uv, Mapping):
+        return None
+    defaults = uv.get("default-groups", [DEV_GROUP])
+    if not isinstance(defaults, list) or not all(isinstance(g, str) for g in defaults):
+        return None  # "all", or a shape uv would refuse
+    seen: set[str] = set()
+    todo = [DEV_GROUP, *defaults]
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        entries = groups.get(name, [])
+        if not isinstance(entries, list):
+            return None
+        for entry in entries:
+            if isinstance(entry, Mapping):
+                included = entry.get("include-group")
+                if not isinstance(included, str):
+                    return None
+                todo.append(included)
+            elif not isinstance(entry, str):
+                return None
+    return frozenset(seen)
+
+
+def pyproject_reads(base: str | None, head: str | None) -> str:
+    """What a pytest run of the suite reads of a change to ``pyproject.toml``
+    (:data:`PYTEST_CONFIG`), from its text at the base the change is measured from (a pull
+    request's merge base, a queue commit's parent) and at the head: ``""`` when nothing, else the
+    first key it reads, or why it cannot tell. Each key at table depth (:func:`_pyproject_keys`)
+    that differs, or that one side lacks, is read, but :data:`PYPROJECT_INERT` and a dependency
+    group the suite's environment installs on neither side (:func:`_installed_groups`). A side
+    that is missing or does not parse is read whole, so the rule fails closed."""
+    docs = []
+    for side, text in (("base", base), ("head", head)):
+        if text is None:
+            return f"pyproject.toml, which the {side} has none of"
+        try:
+            docs.append(tomllib.loads(text))
+        except tomllib.TOMLDecodeError as exc:
+            return f"pyproject.toml, whose {side} copy does not parse ({exc})"
+    before, after = (_pyproject_keys(doc) for doc in docs)
+    installed = [_installed_groups(doc) for doc in docs]
+    for key in sorted(set(before) | set(after)):
+        if key in before and key in after and before[key] == after[key]:
+            continue
+        if key in PYPROJECT_INERT:
+            continue
+        group = key.removeprefix("dependency-groups.")
+        if group != key and all(i is not None and group not in i for i in installed):
+            continue
+        return key
+    return ""
 
 
 def changed_reads(test: str, changed: Iterable[str]) -> list[str] | str:

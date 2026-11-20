@@ -23,8 +23,10 @@ from typing import Any
 import pytest
 from ci_merge_controller_shared import GATE_BOUNDS, GATE_FILTERS
 
+from tools.ci import catalogue
 from tools.ci import merge_controller as mc
 from tools.ci import merge_verdict, trust, verdict, workflows
+from tools.ci.jobs import INSTALL_ARGV
 
 REPO = "owner/project"
 RUN = 77
@@ -4863,11 +4865,17 @@ def test_the_flaky_title_is_flaky_tests_own() -> None:
 
 
 def _queue_red_run(
-    notes: tuple[str, ...] = _counted(_failed()), retry: FakeRetry | None = None
+    notes: tuple[str, ...] = _counted(_failed()),
+    retry: FakeRetry | None = None,
+    built_on: str = MAIN,
 ) -> tuple[FakeApi, mc.Queue]:
-    """#12's queue commit, its run red in one suite shard naming one flaky test; the queue's read
+    """#12's queue commit, built on ``built_on`` (the queue commit of #11, the entry ahead, when
+    it is not main's tip), its run red in one suite shard naming one flaky test; the queue's read
     and the retry note's, each answered by its own fake."""
-    api, entries = _queued()
+    api, entries = _queued(built_on)
+    if built_on != MAIN:
+        entries.entries.insert(0, _entry(built_on, MAIN, number=11, position=1))
+        entries.entries[1]["position"] = 2
     api.jobs(1, (SHARD, "completed", "failure"), ("results", "completed", "failure"))
     api.flakes(1, *notes, title="failed test")
     answers = retry or FakeRetry()
@@ -4904,6 +4912,92 @@ def test_a_queue_commit_s_failed_test_that_reads_its_change_is_not_flake_class()
     found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
     assert found is not None and found.output["title"].startswith("Red (retry 0 of 2): ")
     assert "reads `tests/test_timing.py`, which the pull request changes" in found.output["summary"]
+
+
+# ── A pyproject.toml change is read by its keys (#5809) ───────────────────────────────────────
+#
+# Every pytest run reads pyproject.toml, but a change to only keys no pytest run reads leaves a
+# failed test its flake pass. The file is read at the two commits the change is measured
+# between: on the queue, the commit the queue commit was built on and the queue commit.
+
+_PYPROJECT = (
+    '[project]\nname = "personalclaw"\n\n[tool.pytest.ini_options]\naddopts = "-q"\n\n'
+    "[tool.uv]\n"
+)
+#: What #6267 added: a dependency group no suite job installs.
+_DOCUMENTS = '\n[dependency-groups]\ndocuments = ["python-docx>=1.1,<2"]\n'
+_PYPROJECT_FILE = {"filename": "pyproject.toml", "status": "modified", "patch": "@@ -1 +1 @@\n+x"}
+
+
+def _pyproject_at(api: FakeApi, commit: str, text: str) -> None:
+    """*commit*'s root lists pyproject.toml holding *text*, as its tree read without
+    ``recursive`` lists it."""
+    commit_path = f"/repos/{REPO}/git/commits/{commit}"
+    if commit_path not in api.answers:
+        api.tree(commit, {})
+    tree = api.answers[commit_path]["tree"]["sha"]
+    oid = _oid("pyproject" + text)
+    api.answers[f"/repos/{REPO}/git/blobs/{oid}"] = {
+        "content": base64.b64encode(text.encode()).decode(),
+        "encoding": "base64",
+    }
+    entry = {"path": "pyproject.toml", "mode": "100644", "type": "blob", "sha": oid}
+    api.answers[f"/repos/{REPO}/git/trees/{tree}"] = {"sha": tree, "tree": [entry]}
+
+
+def _queue_pyproject_run(
+    base: str | None, head: str | None, built_on: str = MAIN
+) -> tuple[FakeApi, mc.Queue]:
+    """#12's queue commit, red on one flaky test, its change pyproject.toml alone; the file is
+    *base* at ``built_on`` and *head* at the queue commit (None for no answer to read)."""
+    api, queue = _queue_red_run(built_on=built_on)
+    for text, commit in ((base, built_on), (head, QUEUE)):
+        if text is not None:
+            _pyproject_at(api, commit, text)
+    api.answers[f"/repos/{REPO}/compare/{built_on}...{QUEUE}"] = {"files": [_PYPROJECT_FILE]}
+    api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": [_PYPROJECT_FILE]}
+    return api, queue
+
+
+def test_a_queue_commit_s_flake_on_a_pyproject_change_no_test_reads_is_flake_class() -> None:
+    """#6267: the change added only a dependency group no suite job installs, so its macOS
+    flake was not read against pyproject.toml and is flake-class."""
+    api, queue = _queue_pyproject_run(_PYPROJECT, _PYPROJECT + _DOCUMENTS)
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure"
+    assert found.output["title"].startswith("Red (retry 0 of 2, flake-class): "), found.output
+
+
+def test_a_queue_commit_s_flake_on_a_pyproject_change_a_test_reads_is_not_flake_class() -> None:
+    api, queue = _queue_pyproject_run(_PYPROJECT, _PYPROJECT.replace('"-q"', '"-q -x"'))
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.output["title"].startswith("Red (retry 0 of 2): ")
+    said = f"`{FLAKY_TEST}` reads `pyproject.toml` (`tool.pytest`), which the pull request changes"
+    assert said in found.output["summary"], found.output["summary"]
+
+
+def test_a_pyproject_the_poster_cannot_read_is_read_whole() -> None:
+    """No answer for the queue commit's pyproject.toml: the change counts whole, as it fails
+    closed."""
+    api, queue = _queue_pyproject_run(_PYPROJECT, None)
+    del api.answers[f"/repos/{REPO}/git/commits/{QUEUE}"]["tree"]
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and not found.output["title"].startswith("Red (retry 0 of 2, flake")
+
+
+def test_a_queue_commit_s_pyproject_is_read_against_the_commit_it_was_built_on() -> None:
+    """D2: the change is measured from the commit the queue commit was built on, the entry
+    ahead's here, so that is where pyproject.toml is read. Main's tip lacks the entry ahead's
+    pytest setting: read there, the flake would be charged with the entry ahead's change."""
+    ahead = _PYPROJECT.replace('"-q"', '"-q -x"')
+    api, queue = _queue_pyproject_run(ahead, ahead + _DOCUMENTS, built_on=AHEAD)
+    _pyproject_at(api, MAIN, _PYPROJECT)
+    # Main's merge base with the queue commit is main's tip: a read there would see the entry
+    # ahead's pytest setting as this change's.
+    api.answers[f"/repos/{REPO}/compare/main...{QUEUE}"] = {"merge_base_commit": {"sha": MAIN}}
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None
+    assert found.output["title"].startswith("Red (retry 0 of 2, flake-class): "), found.output
 
 
 def _queue_infra_run(*changed: str) -> tuple[FakeApi, mc.Queue]:
@@ -4951,6 +5045,53 @@ def test_a_queue_commit_whose_change_touches_a_local_action_owns_its_infrastruct
     assert (
         f"- not flake-class: `{SHARD}` failed on an infrastructure error, and {OWNS}"
     ) in found.output["summary"]
+
+
+def test_an_inert_pyproject_change_still_owns_an_infrastructure_error_at_setup() -> None:
+    """The setup reads all of pyproject.toml (``uv sync``), so only the failed tests' reads are
+    narrowed by its keys (#5809): a change to inert keys alone still owns a setup error."""
+    api, queue = _queue_infra_run("pyproject.toml")
+    _pyproject_at(api, MAIN, _PYPROJECT)
+    _pyproject_at(api, QUEUE, _PYPROJECT + _DOCUMENTS)
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.output["title"].startswith("Red (retry 0 of 2): ")
+    assert (
+        f"- not flake-class: `{SHARD}` failed on an infrastructure error, and {OWNS}"
+    ) in found.output["summary"]
+
+
+#: uv's options that choose which dependency groups an install or a run holds.
+_UV_GROUP_OPTIONS = (
+    "--group", "--only-group", "--all-groups", "--no-group", "--no-default-groups",
+    "--dev", "--no-dev", "--only-dev",
+)  # fmt: skip
+
+
+def _uv_groups_chosen(argv: tuple[str, ...]) -> list[str]:
+    if argv[:1] != ("uv",):
+        return []
+    return [a for a in argv if a.split("=", 1)[0] in _UV_GROUP_OPTIONS]
+
+
+def test_each_flake_class_pytest_job_holds_the_groups_the_pyproject_rule_reads() -> None:
+    """The flake rule reads a dependency group's change as read only when the suite's
+    environment holds the group (:func:`verdict.pyproject_reads`): ``uv sync`` with no group
+    option, and ``uv run`` with none. That holds for each flake-class job whose steps run pytest.
+    A job that chooses its groups (``documents``' ``--only-group``) is no flake-class job; made
+    one, or given a group option, the rule would need its own set of groups."""
+    assert not _uv_groups_chosen(INSTALL_ARGV["uv-sync"])
+    found = []
+    for job in catalogue.read().jobs:
+        if job.id not in mc.FLAKE_CLASS_JOBS or not any(
+            "pytest" in step.argv for step in job.command
+        ):
+            continue
+        found.append(job.id)
+        assert "uv-sync" in job.toolchain, job.id
+        for step in job.command:
+            assert not _uv_groups_chosen(step.argv), (job.id, step.argv)
+    assert sorted(found) == ["python-suite", "python-suite-macos"]
+    assert not mc._flake_job("documents")
 
 
 def test_a_queue_commit_s_note_it_cannot_read_leaves_its_red_as_it_is() -> None:
