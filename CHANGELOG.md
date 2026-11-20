@@ -36,6 +36,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Cancel or Approve of a plan that recorded no mode to go back to leaves the chat in Ask, where only read-only tools run, instead of Agent.**
 - **On macOS, a restart now stops the background agents the previous run left running, and its notice says which it stopped and which had already ended.**
 - **The Run now card of an automation the chat made to run when you run it shows under the reply that points to it, not inside the folded steps, once per automation. Its words follow what the automation needs allowed now: once you allow it on the Triggers page it stops saying it can't run yet, and if it was deleted it says so and offers no Run now.**
+- **An MCP server's sign-in whose authorization server has forgotten PersonalClaw's registration registers again at the next Sign in instead of failing every time. A client ID you entered that it stops accepting is kept, and the next Sign in asks for a new one. A signed-out card offers Sign out too.**
 
 ### Security
 
