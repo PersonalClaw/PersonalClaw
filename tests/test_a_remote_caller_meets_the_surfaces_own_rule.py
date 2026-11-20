@@ -306,3 +306,80 @@ def test_the_panel_reports_capture_and_the_bridge_as_loopback_only(monkeypatch):
     _config(monkeypatch, remote=True)
     rows = {row["surface"]: row for row in external_access._surface_rows()}
     assert {name for name, row in rows.items() if row["loopback_only"]} == {"capture", "bridge"}
+
+
+@pytest.mark.asyncio
+async def test_a_remote_call_takes_one_surfaces_own_setting_not_anothers(monkeypatch):
+    """With MCP open to remote callers and A2A not, each answers by its own ``allow_remote``."""
+    from personalclaw.config.external_access import ExternalAccessConfig
+    from personalclaw.config.external_access import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.loader import AppConfig
+
+    cfg = AppConfig()
+    cfg.external_access = ExternalAccessConfig(
+        enabled=True,
+        public_url=f"https://{PUBLIC}",
+        a2a=Surface(enabled=True, allow_remote=False),
+        mcp=Surface(enabled=True, allow_remote=True),
+    )
+    monkeypatch.setattr(AppConfig, "load", staticmethod(lambda *a, **k: cfg))
+    _peer(monkeypatch, REMOTE)
+    client = await _client()
+    try:
+        a2a_status, a2a_body = await _post(client, "/a2a/tasks", headers=_bearer("a2a"))
+        mcp_status, _ = await _post(client, "/mcp", headers=_bearer("mcp"))
+    finally:
+        await client.close()
+    assert (a2a_status, a2a_body["error"]["code"]) == (403, "auth_origin_not_allowed")
+    assert mcp_status not in (401, 403, 404)
+
+
+@pytest.mark.parametrize("remote", [True, False], ids=["on", "off"])
+@pytest.mark.asyncio
+async def test_the_dashboards_own_middleware_decides_a_remote_call_the_same_way(
+    tmp_path, monkeypatch, remote
+):
+    """The rows above run the origin check's pieces in front of the surfaces. This one runs the
+    real gateway, ``start_dashboard``'s own ``csrf_middleware`` included, so a revert of its line
+    is red here. It also pins OpenAI's refusal: a fixed sentence, never the peer reason."""
+    from signed_in_gateway import signed_in_gateway
+
+    async with signed_in_gateway(tmp_path, monkeypatch) as gw:
+        from personalclaw.config.external_access import ExternalAccessConfig
+        from personalclaw.config.external_access import ExternalAccessSurfaceConfig as Surface
+        from personalclaw.config.loader import AppConfig
+
+        cfg = AppConfig()
+        cfg.external_access = ExternalAccessConfig(
+            enabled=True,
+            public_url=f"https://{PUBLIC}",
+            a2a=Surface(enabled=True, allow_remote=remote),
+            openai=Surface(enabled=True, allow_remote=remote),
+        )
+        monkeypatch.setattr(AppConfig, "load", staticmethod(lambda *a, **k: cfg))
+        a2a_token = _bearer("a2a")
+        openai_token = _bearer("openai")
+        monkeypatch.setattr(auth, "_peer_host", lambda request: REMOTE)
+        monkeypatch.setattr(web.BaseRequest, "remote", property(lambda self: REMOTE))
+
+        async def post(path, headers, host=PUBLIC):
+            async with aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar()) as session:
+                async with session.post(
+                    gw.url(path), data=b"{", headers={"Host": host, **headers}
+                ) as resp:
+                    return resp.status, await resp.json(content_type=None)
+
+        a2a_status, a2a_body = await post("/a2a/tasks", a2a_token)
+        rebound_status, rebound_body = await post(
+            "/v1/chat/completions", openai_token, host="rebound.example"
+        )
+
+    if remote:
+        assert (a2a_status, a2a_body["error"]["code"]) == ADMITTED
+        assert rebound_status == 403
+        assert rebound_body["error"]["code"] == "forbidden"
+        assert "rebound.example" not in json.dumps(rebound_body)
+        assert "public_url" not in json.dumps(rebound_body)
+    else:
+        assert (a2a_status, a2a_body["error"]["code"]) == (403, "auth_origin_not_allowed")
+        assert f"this one came from {REMOTE}" in a2a_body["error"]["message"]
