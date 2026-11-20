@@ -57,6 +57,7 @@ from personalclaw.request_validation import bool_field, json_object_body
 from personalclaw.security import MaskConflict
 from personalclaw.sel import sel
 from personalclaw.stale_write import stale_write_refusal
+from personalclaw.task_modes import VALID_TASK_MODES
 from personalclaw.turn_source import FROM_OUTSIDE, provenance
 
 
@@ -70,6 +71,27 @@ def config_dir() -> Path:
 
 
 logger = logging.getLogger(__name__)
+
+#: The task mode a chat leaves plan mode for when its plan recorded none it can go back to: a
+#: binding that lost it, or one an older build wrote with a mode this one does not know. Ask runs
+#: only read-only tools, so leaving a plan never grants more than the chat had; Agent runs all.
+_NO_MODE_TO_RESTORE = "ask"
+
+
+def _mode_to_restore(chat_key: str, binding: dict[str, Any]) -> str:
+    """The task mode leaving plan mode goes back to: the one activation recorded, when it is a
+    mode other than plan, else :data:`_NO_MODE_TO_RESTORE`."""
+    recorded = binding.get("resume_task_mode")
+    if isinstance(recorded, str) and recorded in VALID_TASK_MODES and recorded != "plan":
+        return recorded
+    logger.warning(
+        "chat %s: its plan recorded no mode to go back to (%r); it leaves plan mode in %s",
+        chat_key,
+        recorded,
+        _NO_MODE_TO_RESTORE,
+    )
+    return _NO_MODE_TO_RESTORE
+
 
 #: The step ``kind`` a chat-owned walkthrough step carries. The planning model's kind set
 #: is intentionally OPEN (it validates shape, never a taxonomy), so a chat contributes its
@@ -650,7 +672,7 @@ async def api_chat_plan_approve(request: web.Request) -> web.Response:
     restored = ""
     fresh = None
     if complete:
-        restored = str(binding.get("resume_task_mode", "agent")) or "agent"
+        restored = _mode_to_restore(chat.key, binding)
         apply_task_mode(state, chat, restored)
         parked = bool(binding.pop("parked", False))
         if parked:
@@ -772,8 +794,8 @@ async def api_chat_plan_cancel(request: web.Request) -> web.Response:
 
     The counterpart to a manual-only activation: without an exit, a chat that opened a
     plan gate could never leave it (the task-mode control refuses to while a step is
-    awaiting review). Restores the remembered task mode and drops the sidecar. With no plan open
-    it changes nothing.
+    awaiting review). Restores the remembered task mode, or Ask when none was remembered
+    (:func:`_mode_to_restore`), and drops the sidecar. With no plan open it changes nothing.
     """
     resolved = _resolve(request)
     if isinstance(resolved, web.Response):
@@ -787,7 +809,7 @@ async def api_chat_plan_cancel(request: web.Request) -> web.Response:
         return web.json_response(
             {"ok": True, "task_mode": getattr(chat, "_task_mode", "agent") or "agent"}
         )
-    restored = str(binding.get("resume_task_mode", "agent")) or "agent"
+    restored = _mode_to_restore(chat.key, binding)
     clear(chat.key)
     if planning:
         await stop_the_planning_turn(state, chat)
