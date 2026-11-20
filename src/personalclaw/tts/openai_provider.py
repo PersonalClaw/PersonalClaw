@@ -17,6 +17,7 @@ import os
 import tempfile
 from typing import Any
 
+from personalclaw.llm.catalog import openai_compatible_base
 from personalclaw.llm.registry import ProviderResolutionError, require_model
 from personalclaw.net.client import EgressBlocked
 from personalclaw.net.http_clients import http_client
@@ -104,7 +105,8 @@ class OpenAITtsProvider(TtsProvider):
             return None
 
         persona = speech_voice or _DEFAULT_SPEECH_VOICE
-        base_url = self._endpoint or None
+        # The address chat on the same Base URL sends to: a bare host is under /v1.
+        base_url = openai_compatible_base(self._endpoint) if self._endpoint else None
 
         if output_path:
             path = output_path

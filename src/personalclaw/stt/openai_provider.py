@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 
+from personalclaw.llm.catalog import openai_compatible_base
 from personalclaw.llm.registry import ProviderResolutionError, require_model
 from personalclaw.net.client import EgressBlocked
 from personalclaw.net.http_clients import http_client
@@ -90,7 +91,8 @@ class OpenAISttProvider(SttProvider):
             )
 
         lang = language.split("-")[0] if language else None
-        base_url = self._endpoint or None
+        # The address chat on the same Base URL sends to: a bare host is under /v1.
+        base_url = openai_compatible_base(self._endpoint) if self._endpoint else None
 
         async def _run() -> str:
             # The upload asks the egress guard first, under the owner's Network egress settings.
