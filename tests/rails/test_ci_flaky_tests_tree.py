@@ -1,9 +1,9 @@
 """``.github/workflows/flaky-tests.yml``'s trust shape: one issue per flaky test (#3948).
 
-It runs daily and on dispatch, on main only, one run at a time. It may also run after CI
-telemetry's scheduled run on main finishes green (#5850): then it listens to CI telemetry's runs
-on main alone, its one job skips every other one, and the one-at-a-time group is the job's, so a
-skipped run never joins it, where it would cancel a pending one. Its one job holds
+It runs after CI telemetry's scheduled run on main finishes green (#5850), daily as the fallback,
+and on dispatch, on main only, one run at a time. It listens to CI telemetry's runs on main alone,
+its one job skips every one but that, and the one-at-a-time group is the job's, so a skipped run
+never joins it, where it would cancel a pending one. Its one job holds
 ``actions: read`` and ``issues: write`` beside the checkout's ``contents: read``, and its token
 reaches only the fetch and the step that writes the issues. It fetches a day more than the 14 days
 an issue closes after, and keeps no cache. It carries its own window from its previous run
@@ -28,20 +28,18 @@ _FLAKY = "flaky-tests.yml"
 _TOKEN = re.compile(r"\$\{\{[^}]*\b(?:github\.token|secrets\.)")
 _FETCH = "fetch the last 14 days' histories"
 _ISSUES = "open, edit, reopen and close the flaky tests' issues"
-_ON_MAIN = "${{ github.ref == 'refs/heads/main' }}"
-_ON = {"schedule": [{"cron": "23 11 * * *"}], "workflow_dispatch": None}
-#: The triggers once it also runs after CI telemetry's scheduled run (#5850): CI telemetry's
-#: completed runs on main, each a skipped run of the job but the scheduled one.
+#: Its triggers: its cron, a dispatch, and CI telemetry's completed runs on main, each a skipped
+#: run of the job but the scheduled one (#5850).
 _TELEMETRY = {"workflows": ["CI telemetry"], "types": ["completed"], "branches": ["main"]}
-_ON_CHAINED = {**_ON, "workflow_run": _TELEMETRY}
-#: The job's condition then: main, and of CI telemetry's runs only its scheduled one on main,
-#: finished green. A red collection leaves the day to the cron run.
+_ON = {"schedule": [{"cron": "23 11 * * *"}], "workflow_dispatch": None, "workflow_run": _TELEMETRY}
+#: The job's condition: main, and of CI telemetry's runs only its scheduled one on main, finished
+#: green. A red collection leaves the day to the cron run.
 _AFTER_TELEMETRY = (
     "github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'schedule' && "
     "github.event.workflow_run.head_branch == 'main' && "
     "github.event.workflow_run.conclusion == 'success')"
 )
-_ON_MAIN_CHAINED = "${{ github.ref == 'refs/heads/main' && (" + _AFTER_TELEMETRY + ") }}"
+_ON_MAIN = "${{ github.ref == 'refs/heads/main' && (" + _AFTER_TELEMETRY + ") }}"
 _ONE_AT_A_TIME = {"group": "flaky-tests", "cancel-in-progress": False}
 _WINDOW = '--window "$RUNNER_TEMP/window"'
 #: The carried window's artifact, named here rather than read from the head's tools/ci.
@@ -75,54 +73,8 @@ _CARRY_STEP = (
 )
 
 
-#: The workflow's triggers, the job's condition and its one-at-a-time group, before and once it
-#: runs after CI telemetry's scheduled run: the pieces :func:`_chained` replaces.
-_TRIGGERS = "  workflow_dispatch:\n"
-_CHAINED_TRIGGERS = (
-    "  workflow_dispatch:\n"
-    "  # CI telemetry's scheduled run finishing (#5850): every run of it on main starts one here,\n"
-    "  # and the job skips all but the scheduled one, finished green.\n"
-    "  workflow_run:\n"
-    '    workflows: ["CI telemetry"]\n'
-    "    types: [completed]\n"
-    "    branches: [main]\n"
-)
-_GROUP = (
-    "# One run at a time, never cancelled: a second would list the same issues and open a test's"
-    " twice.\nconcurrency:\n  group: flaky-tests\n  cancel-in-progress: false\n\n"
-)
-_JOB = f"    if: {_ON_MAIN}\n"
-_CHAINED_JOB = (
-    "    if: >-\n"
-    "      ${{ github.ref == 'refs/heads/main'\n"
-    "      && (github.event_name != 'workflow_run'\n"
-    "          || (github.event.workflow_run.event == 'schedule'\n"
-    "              && github.event.workflow_run.head_branch == 'main'\n"
-    "              && github.event.workflow_run.conclusion == 'success')) }}\n"
-    "    # One run at a time, never cancelled: a second would list the same issues and open a\n"
-    "    # test's twice. The job's group, not the workflow's: a skipped run joins no group, and a\n"
-    "    # run queued in the workflow's would cancel the one pending there.\n"
-    "    concurrency:\n"
-    "      group: flaky-tests\n"
-    "      cancel-in-progress: false\n"
-)
-
-
-def _chained(text: str) -> str:
-    """The workflow as it runs after CI telemetry's scheduled run, too: the real one when it
-    already does, otherwise the real one with those three pieces replaced."""
-    if _CHAINED_TRIGGERS in text:
-        return text
-    for old, new in ((_TRIGGERS, _CHAINED_TRIGGERS), (_GROUP, ""), (_JOB, _CHAINED_JOB)):
-        assert text.count(old) == 1, f"the chained workflow's anchor is not once: {old!r}"
-        text = text.replace(old, new)
-    return text
-
-
-def _texts(old: str = "", new: str = "", *, chained: bool = False) -> dict[str, str]:
+def _texts(old: str = "", new: str = "") -> dict[str, str]:
     texts = {p.name: p.read_text(encoding="utf-8") for p in sorted(_WORKFLOWS.glob("*.yml"))}
-    if chained:
-        texts[_FLAKY] = _chained(texts[_FLAKY])
     if old:
         assert texts[_FLAKY].count(old) == 1, f"the plant's anchor is not once: {old!r}"
         texts[_FLAKY] = texts[_FLAKY].replace(old, new)
@@ -181,38 +133,31 @@ def violations(texts: dict[str, str]) -> list[str]:
     workflow = yaml.safe_load(texts[_FLAKY])
     bad: list[str] = []
     on = workflow.get("on", workflow.get(True))
-    chained = isinstance(on, dict) and "workflow_run" in on
-    if chained and on != _ON_CHAINED:
+    if on != _ON:
         bad.append(
             f"{_FLAKY} runs on {on}, not daily at 11:23 UTC and on dispatch, and after CI "
             "telemetry's runs on main"
         )
-    elif not chained and on != _ON:
-        bad.append(f"{_FLAKY} runs on {on}, not daily at 11:23 UTC and on dispatch")
     taken = {c for name, text in texts.items() if name != _FLAKY for c in _crons(text)}
     if _crons(texts[_FLAKY]) & taken:
         bad.append(f"{_FLAKY}'s slot is another workflow's")
     jobs = workflow.get("jobs") or {}
     job = jobs.get("flaky-tests") or {}
     top, held = workflow.get("concurrency"), job.get("concurrency")
-    if chained and top is not None:
+    if top is not None:
         bad.append(
             f"{_FLAKY}'s skipped runs join its concurrency group, and one cancels a pending run"
         )
-    elif chained and held != _ONE_AT_A_TIME:
-        bad.append(f"{_FLAKY} can run twice at once or cancel a run")
-    elif not chained and (top != _ONE_AT_A_TIME or held is not None):
+    elif held != _ONE_AT_A_TIME:
         bad.append(f"{_FLAKY} can run twice at once or cancel a run")
     if workflow.get("permissions") != {"contents": "read"}:
         bad.append(f"{_FLAKY} grants {workflow.get('permissions')!r} at the top")
     if set(jobs) != {"flaky-tests"}:
         bad.append(f"{_FLAKY} has jobs {sorted(jobs)}, not flaky-tests alone")
     condition = " ".join(str(job.get("if", "")).split())
-    if "github.ref == 'refs/heads/main'" not in condition or (
-        not chained and condition != _ON_MAIN
-    ):
+    if "github.ref == 'refs/heads/main'" not in condition:
         bad.append(f"{_FLAKY}:flaky-tests runs off main")
-    elif chained and condition != _ON_MAIN_CHAINED:
+    elif condition != _ON_MAIN:
         bad.append(
             f"{_FLAKY}:flaky-tests runs after a CI telemetry run that is not its scheduled one, "
             "finished green on main"
@@ -447,21 +392,6 @@ _PLANTS = [
         "does not upload its carried window, flaky-tests-window, and that alone",
         id="a-second-upload",
     ),
-]
-
-
-@pytest.mark.parametrize(("old", "new", "said"), _PLANTS)
-def test_each_rule_fails_on_its_plant(old: str, new: str, said: str) -> None:
-    found = violations(_texts(old, new))
-    assert any(said in line for line in found), found
-
-
-def test_the_workflow_run_after_ci_telemetrys_scheduled_run_holds_its_trust_shape() -> None:
-    assert violations(_texts(chained=True)) == []
-
-
-#: Plants of the workflow as it runs after CI telemetry's scheduled run, too (#5850).
-_CHAINED_PLANTS = [
     pytest.param(
         "permissions:\n  contents: read\n\njobs:",
         "concurrency:\n  group: flaky-tests\n  cancel-in-progress: false\n\n"
@@ -476,12 +406,6 @@ _CHAINED_PLANTS = [
         id="no-group-on-the-job",
     ),
     pytest.param(
-        "      cancel-in-progress: false\n",
-        "      cancel-in-progress: true\n",
-        "can run twice at once or cancel a run",
-        id="a-cancelled-run",
-    ),
-    pytest.param(
         "    branches: [main]\n",
         "",
         "and after CI telemetry's runs on main",
@@ -492,12 +416,6 @@ _CHAINED_PLANTS = [
         '    workflows: ["CI telemetry", "Merge"]',
         "and after CI telemetry's runs on main",
         id="another-workflows-runs",
-    ),
-    pytest.param(
-        "  workflow_run:\n",
-        "  pull_request:\n  workflow_run:\n",
-        "and after CI telemetry's runs on main",
-        id="a-pull-request-trigger",
     ),
     pytest.param(
         "github.event.workflow_run.event == 'schedule'\n              && ",
@@ -517,16 +435,10 @@ _CHAINED_PLANTS = [
         "runs after a CI telemetry run that is not its scheduled one",
         id="after-a-red-collection",
     ),
-    pytest.param(
-        "github.ref == 'refs/heads/main'",
-        "github.ref != ''",
-        "runs off main",
-        id="off-main",
-    ),
 ]
 
 
-@pytest.mark.parametrize(("old", "new", "said"), _CHAINED_PLANTS)
-def test_each_rule_of_the_chained_run_fails_on_its_plant(old: str, new: str, said: str) -> None:
-    found = violations(_texts(old, new, chained=True))
+@pytest.mark.parametrize(("old", "new", "said"), _PLANTS)
+def test_each_rule_fails_on_its_plant(old: str, new: str, said: str) -> None:
+    found = violations(_texts(old, new))
     assert any(said in line for line in found), found

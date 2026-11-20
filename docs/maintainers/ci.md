@@ -2319,6 +2319,13 @@ the shard planner and the weekly report read it.
   was never due, and a disabled workflow's slots say `disabled`. Scheduled runs here start
   hours late (one workflow's last ten nights: 239-469 minutes), so a slot is called missed only
   once the next one has passed.
+- **Timely or best effort.** So a scheduled workflow whose result a gate or a report reads by a
+  time is timely: an event that is not its cron starts it, a run it reads finishing or a pull
+  request, and its cron stays as the fallback. Every other one is best effort, and a person reads
+  what it finds whenever it runs. `tests/rails/test_scheduled_workflows_run_on_their_event_tree.py`
+  classifies each scheduled workflow, a timely one with its event and a best-effort one with why
+  nothing waits on it, and fails a scheduled workflow it does not hold and a timely one its event
+  does not start (#5850).
 - **Kept 90 days.** One main run's history measured 49 MB as JSON lines and 2.7 MB compressed,
   about what its junit reports take. The junit reports stay at 7 days: the history holds every
   figure they give, so 90 days of both would double the storage for nothing. At the 59 main CI
@@ -2494,14 +2501,18 @@ and on dispatch, one run at a time and never cancelled:
 ### The flaky tests' issues
 
 The verdict passes a pull request run whose only failures are flakes, so a test can flake on
-every run and still merge. `.github/workflows/flaky-tests.yml` runs daily at 11:23 UTC, a slot no
-other workflow takes, and on dispatch, on `main` only and one run at a time. It keeps one issue
+every run and still merge. `.github/workflows/flaky-tests.yml` runs when CI telemetry's scheduled
+run finishes green on `main`, daily at 11:23 UTC as the fallback (a slot no other workflow takes),
+and on dispatch, on `main` only and one run at a time. It listens to CI telemetry's runs on
+`main`, so each of them starts a run whose job skips, with no runner, unless it is the scheduled
+one; the one-at-a-time group is the job's, since a skipped run queued in the workflow's group
+would cancel the run pending there. It keeps one issue
 for each such test (`tools/ci/flaky_issues.py`, `python -m tools.ci flaky-issues`). It is a
 workflow of its own so the collector holds no write.
 
 - **The window.** `python -m tools.ci fetch --days 15 --carry flaky-tests` builds the last 14
   days of histories, a day of slack, as the weekly report's fetch does, from the window the
-  previous day's run carried: that run uploads `window.zip` alone as `flaky-tests-window`
+  previous run carried: that run uploads `window.zip` alone as `flaky-tests-window`
   (stored, kept 3 days, and only once its fetch succeeded), and the next run checks every history
   in it again and fetches only the collector runs it does not hold, about 25 a day. Fetched afresh
   every day, the 15 days were about 740 histories, twice the token's hourly calls, and the job ran
