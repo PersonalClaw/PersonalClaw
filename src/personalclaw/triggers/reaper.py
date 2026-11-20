@@ -594,6 +594,107 @@ def record_stopped_work(
     return record
 
 
+def record_left_behind_work(
+    *,
+    store: Any = None,
+    now: float = 0.0,
+    base_dir: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    """Close every automation run the last gateway left waiting on its agent. NEVER raises.
+
+    🔴 THE DEFECT THIS CLOSES: after a crash, an automation's agent run read `launched` for good.
+    An action that starts an agent (`invoke-agent`, `run-prompt`) returns once it has, and its run
+    waits as `launched` on the agent's ending, naming the agent in `work_id`. A stop closes each
+    such run first (`record_stopped_work`, from the gateway's `_shutdown`), but a gateway that died
+    instead (a crash, a kill, a power loss) never ran that, and the next start's pass over the
+    agents it left (`subagent_orphans`) knows no trigger. The run said "started work that has not
+    reported back yet" for good, the trigger's stamps did not move, and no card went on the review.
+    The same crash lost an agent still waiting to start (a free slot, or her Allow): it is not kept
+    on disk (`subagent_waiting.kept`), since its run was to carry it, and nothing said so.
+
+    So the start closes each run still waiting on an agent, working or waiting, as interrupted,
+    with a reason that says the last gateway did not stop cleanly: its row (`settle_interrupted`),
+    its trigger's stamps (`_stamp`, a fire's trigger reading degraded and a run of yours leaving
+    the health alone), and the audit. The records join the boot's orphan records, which the gateway
+    turns into cards on the restart's one notice (`gateway._record_boot_review`), so none is kept
+    here. Every such row is cut off: the pass runs before this gateway starts any agent
+    (`_init_cron` comes before `_init_subagents`), no automation's agent outlives its gateway, and
+    one gateway holds a home at a time (`gateway_base`). A row about a workflow run is not touched:
+    a run resumes across a restart and settles itself. A lifecycle hook's agent keeps no rows.
+
+    Reads the run files, not the agents' folders, so a run whose agent never started (and so has
+    no folder) is closed too. A run whose trigger is gone has its row closed and no card.
+    """
+    from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
+    from personalclaw.schedule_history import ScheduleRunStore
+    from personalclaw.session_keys import SUBAGENT
+    from personalclaw.triggers import run_source, settle
+
+    records: list[dict[str, Any]] = []
+    try:
+        now = now or time.time()
+        root = _root(base_dir)
+        left = ScheduleRunStore(root).left_unsettled(work_prefix=SUBAGENT.prefix)
+    except Exception:  # noqa: BLE001 - the start goes on whether or not this lands
+        logger.warning("could not read the runs the last gateway left waiting", exc_info=True)
+        return records
+    for trigger_id, row in left:
+        if trigger_id.startswith(LIFECYCLE_TRIGGER_PREFIX):
+            continue
+        try:
+            work_id = str(row.get("work_id") or "")
+            elapsed = max(0.0, now - float(row.get("started_at") or now))
+            reason = _left_behind_reason(elapsed)
+            if not settle.settle_interrupted(trigger_id, work_id, why=reason, at=now, home=root):
+                continue
+            logger.warning(
+                "Boot: trigger %s's run was waiting on %s when the last gateway ended without "
+                "stopping; recording it as interrupted",
+                trigger_id,
+                work_id,
+            )
+            _audit(
+                trigger_id,
+                tool_name="boot_left_behind_work",
+                outcome="interrupted",
+                elapsed=elapsed,
+            )
+            if store is not None and _stored(store, trigger_id) is None:
+                continue
+            record: dict[str, Any] = {
+                "trigger_id": trigger_id,
+                "work_id": work_id,
+                "elapsed": int(elapsed),
+                "reason": reason,
+                "source": run_source.of_row(row),
+                "recorded": False,
+            }
+            record["recorded"] = _stamp(
+                store,
+                trigger_id,
+                status=RESTART_INTERRUPTED_STATUS,
+                reason=reason,
+                run_id=str(row.get("run_id") or ""),
+                now=now,
+                yours=run_source.yours(run_source.of_row(row)),
+            )
+            records.append(record)
+        except Exception:  # noqa: BLE001 - one unreadable run must not stop the others
+            logger.warning(
+                "could not close %s's run the last gateway left", trigger_id, exc_info=True
+            )
+    return records
+
+
+def _left_behind_reason(elapsed: float) -> str:
+    """Why a run whose agent the last gateway took with it did not finish, and what happens now."""
+    return (
+        "Interrupted: the last gateway ended without stopping cleanly (a crash, a kill or a power "
+        "loss), and the agent this run started ended with it, working or waiting to start, "
+        f"{int(elapsed)}s after the run began. {_NOT_RUN_AGAIN}"
+    )
+
+
 def _stop_reason(*, restarting: bool, elapsed: float) -> str:
     """Why a run a stop cut off did not finish, and what happens to it now."""
     if restarting:

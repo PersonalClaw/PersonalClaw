@@ -2869,6 +2869,16 @@ class GatewayOrchestrator:
                     )
             except Exception:
                 logger.warning("boot orphan pass failed", exc_info=True)
+            # The runs the last gateway left waiting on an agent, working or waiting to start, as a
+            # crash leaves them: no claim, and no stop that closed them (`reaper.
+            # record_left_behind_work`). Before the agents start, so every one is cut off.
+            from personalclaw.triggers.reaper import record_left_behind_work
+
+            interrupted += await asyncio.to_thread(
+                record_left_behind_work,
+                store=_trigger_store,
+                base_dir=_trigger_store.base_dir,
+            )
             # What both passes found, KEPT for the user to decide (`triggers/review.py`): the sweep
             # has re-armed every schedule and the orphan pass has closed every run, so this is the
             # only record left of what did not happen. Then ONE notice about all of it.

@@ -32,6 +32,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A reload no longer waits while the gateway reads every installed app's folder. The apps list reads each app's manifest, hero image, disclosure and interface files in a worker thread, so a home with many apps no longer holds the page's other requests while it does.**
 - **Leaving plan mode, by Cancel or the task-mode pill, while the plan's own turn is running stops that turn first, so none of its tool calls runs in the mode the chat goes back to.**
 - **The desktop app started at login on macOS opens no window, as Open at Login means: its menu-bar item or the Dock opens it.**
+- **After a crash, a kill or a power loss, the next start closes each automation run whose agent was working or waiting to start as interrupted, and puts it on the restart review on the Triggers page, as a stop or Restart does. Such a run no longer reads as launched for good.**
 - **Cancel or Approve of a plan that recorded no mode to go back to leaves the chat in Ask, where only read-only tools run, instead of Agent.**
 - **On macOS, a restart now stops the background agents the previous run left running, and its notice says which it stopped and which had already ended.**
 
