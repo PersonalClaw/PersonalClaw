@@ -206,6 +206,12 @@ ERROR_CODES: dict[str, str] = {
         "what was spent of it against what the call needed; `fix` says where it is raised or "
         "removed, or when it resets. A retry before then meets the same ceiling."
     ),
+    "ERR_WORKBOOK_FEATURES_DROPPED": (
+        "A workbook's next version would drop what the version it was read from holds and no "
+        "version written from its rows can carry (charts, conditional formatting, tables, borders "
+        "and the like). The refusal names each with its sheet; the call is made again with "
+        "`drop_unsupported` only once the user agreed."
+    ),
 }
 
 

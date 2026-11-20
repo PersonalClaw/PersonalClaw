@@ -286,7 +286,7 @@ Generate an image from a text prompt, using the model bound to the 'image_gen' u
 
 ### `sheet_create`
 
-Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` (JSON text: an array of row arrays) for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. To make the next version of an existing spreadsheet, read it with artifact_get and call this with its slug and the base that read names: a call that names an existing spreadsheet (by slug, or by the same name) with no base, or with a base someone else's newer version has replaced, is refused and nothing is written. To make a SEPARATE spreadsheet, give it a different name. Returns the slug and where to download the file.
+Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` (JSON text: an array of row arrays) for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. To make the next version of an existing spreadsheet, read it with artifact_get and call this with its slug and the base that read names: a call that names an existing spreadsheet (by slug, or by the same name) with no base, or with a base someone else's newer version has replaced, is refused and nothing is written. The next version keeps each formula you send back as the reading showed it, and the formats, widths and merges of the cells you keep. To make a SEPARATE spreadsheet, give it a different name. Returns the slug and where to download the file.
 
 **Response type:** `artifact.detail`
 
@@ -296,6 +296,7 @@ Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply 
 - `base` (string, optional) — The base artifact_get named for the version you read (like 'v3-1a2b3c4d5e6f7a8b'), required to write over an existing artifact; a new one needs none
 - `csv` (string, optional) — Single-sheet CSV text
 - `description` (string, optional) — Optional short description
+- `drop_unsupported` (boolean, optional) — Only after the user agreed: write the next version of a workbook that holds what it cannot carry (charts, conditional formatting, tables, borders), which a call without this refuses, naming each
 - `format` (string, optional) — Output format: 'xlsx' (default) or 'csv' (one tab and no formulas: a cell whose text begins with =, +, -, @, a tab or a carriage return is saved behind a single quote and opens as text, while numbers stay numbers)
 - `name` (string, required) — Display name for the spreadsheet
 - `rows` (string, optional) — A single tab's rows, as JSON text: an array of row arrays (row 0 = header)

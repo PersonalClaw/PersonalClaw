@@ -59,6 +59,8 @@ NATIVE: dict[tuple[str, str], str] = {
     ("task_update", "action_plan[].completed"): "tasks/models.py",
     ("project_run_create", "attended"): "agents/native/sdlc_tools.py",
     ("code_map", "refresh"): "tool_providers/code_map.py",
+    # No field spec: a workbook's next version is said yes to only by a word that spells one.
+    ("sheet_create", "drop_unsupported"): "mcp_sheet_versions.py",
     ("toggle_automation", "enabled"): "inbound/bridge.py",
     # One boolean per tool group, so it has no key to find; read by the test below.
     ("reset_tools", "groups.*"): "agents/native/runtime.py",
