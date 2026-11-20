@@ -295,7 +295,7 @@ export function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChang
 }
 
 // ── Incident kill switch ────────────────────────────────────────────────────
-function IncidentSection() {
+export function IncidentSection() {
   const [state, setState] = useState<{ active: boolean; reason: string; started_at: string } | null>(null)
   const [busy, setBusy] = useState(false)
   // 🔴 A failed read used to substitute `{ active: false }`, i.e. it FABRICATED "no incident is
@@ -318,7 +318,7 @@ function IncidentSection() {
   }
 
   return (
-    <Section title="Incident kill switch" hint="Suspend ALL unattended work — cron jobs, hooks, event triggers, subagent spawns — at once. Interactive chat keeps working. Resume is explicit.">
+    <Section title="Incident kill switch" hint="Stops cron jobs, triggers, hooks, loops and subagent starts at once. Interactive chat keeps working. Recurring scheduled work runs at its next time, and a one-shot waits for you to run it; a hook or event fire that happens while it is on is dropped. Resume is explicit.">
       <div className={`rounded-lg px-4 py-1 ${state?.active ? 'bg-error/10 ring-1 ring-error/40' : 'bg-surface-container'}`}>
         <Row label={state?.active ? 'Incident mode is ACTIVE' : 'Incident mode'}
           hint={loadErr

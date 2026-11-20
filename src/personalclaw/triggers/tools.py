@@ -1895,8 +1895,8 @@ def manual_refusal() -> str:
 
     if incident_active():
         return (
-            "incident mode is active: unattended fires are suspended "
-            "(resume with `personalclaw incident off`)"
+            "incident mode is active: nothing is run while it is on, and this run is not run "
+            "later (resume with `personalclaw incident off`)"
         )
     return ""
 

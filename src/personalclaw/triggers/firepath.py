@@ -322,8 +322,9 @@ async def evaluate(ctx: FireContext) -> FireDecision:
     if incident_active():
         return _refuse(
             "incident",
-            "incident mode is active: unattended fires are suspended "
-            "(resume with `personalclaw incident off`)",
+            "incident mode is active: this fire is dropped and not run later; a recurring "
+            "automation runs at its next time, and a one-shot is kept, switched off, to run by "
+            "hand (resume with `personalclaw incident off`)",
             passed,
         )
     passed.append("incident")
