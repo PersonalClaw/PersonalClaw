@@ -17,7 +17,7 @@ from typing import Any
 from personalclaw import ids
 
 #: What a door says of a message that the queue keeps on its item.
-_QUEUED = ("channel", "files", "source", "asked_for_by", "own_words", "attended")
+_QUEUED = ("channel", "files", "source", "asked_for_by", "own_words", "attended", "notice")
 
 
 def _taking(method: Any, **given: Any) -> dict[str, Any]:

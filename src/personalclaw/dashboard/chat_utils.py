@@ -20,9 +20,8 @@ if TYPE_CHECKING:
 
 from personalclaw import memory_locality, task_modes
 from personalclaw.context_compaction import ALL_KEPT, TOO_FEW_MESSAGES
-from personalclaw.dashboard.chat_queue import ON_RECORD
+from personalclaw.dashboard.chat_queue import NOTICE, NOTICE_CAP, ON_RECORD, QUEUE_BOUND
 from personalclaw.dashboard.state import (
-    CRON_NOTIFY_PREFIX,
     SUBAGENT_COMPLETION_PREFIX,
     DashboardState,
     _ChatSession,
@@ -1118,6 +1117,45 @@ def _remove_queued_by_id(messages: list[dict], queue_id: str) -> bool:
     return False
 
 
+def room_for_a_notice(state: DashboardState, session: _ChatSession) -> bool:
+    """Make room in *session*'s queue for one more automation's notice, or say there is none.
+
+    Only notices make room for a notice. When :data:`~chat_queue.NOTICE_CAP` of them wait, the
+    oldest one is dropped: its placeholder row goes, the page is told (``queue_pop``), and the chat
+    says which automation's notice it was. A message a person sent, a retry of the turn, a steer it
+    did not take and a helper's report are never dropped for one. When the queue holds
+    :data:`~chat_queue.QUEUE_BOUND` messages of any kind, there is no room: the notice is refused
+    and nothing waiting is touched (``api_send_message`` sends it as a notification instead).
+    """
+    if len(session._queue) >= QUEUE_BOUND:
+        logger.warning(
+            "Queue full for session %s (%d waiting): a notice is refused, nothing is dropped",
+            session.key,
+            len(session._queue),
+        )
+        return False
+    notices = [i for i, item in enumerate(session._queue) if item.get(NOTICE)]
+    if len(notices) >= NOTICE_CAP:
+        dropped = session.queue_pop(notices[0])
+        logger.warning("Notices full for session %s: the oldest notice is dropped", session.key)
+        _remove_queued_by_id(session.messages, dropped["id"])
+        state.broadcast_ws(
+            "queue_pop",
+            {
+                "session": session.key,
+                "content": _redact_for_display(dropped["content"]),
+                "queue_id": dropped["id"],
+            },
+        )
+        session.append(
+            "system",
+            f"This chat was busy, so the oldest notice waiting in it, from"
+            f' "{dropped[NOTICE]}", was dropped to make room.',
+            "msg msg-info",
+        )
+    return True
+
+
 def _dequeue_next_message(session, merge_enabled: bool) -> tuple:
     """Drain the queue: merge non-cron messages or pop the first one.
 
@@ -1133,7 +1171,7 @@ def _dequeue_next_message(session, merge_enabled: bool) -> tuple:
         for item in list(session._queue):
             if (
                 item.get(ON_RECORD)
-                or item["content"].startswith(CRON_NOTIFY_PREFIX)
+                or item.get(NOTICE)
                 or item["content"].startswith(SUBAGENT_COMPLETION_PREFIX)
             ):
                 break

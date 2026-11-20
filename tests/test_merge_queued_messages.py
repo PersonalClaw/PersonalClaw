@@ -8,6 +8,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.dashboard.chat import _dequeue_next_message
+from personalclaw.dashboard.chat_queue import NOTICE
 from personalclaw.dashboard.state import (
     CRON_NOTIFY_PREFIX,
     SUBAGENT_COMPLETION_PREFIX,
@@ -82,12 +83,12 @@ class TestDequeueNextMessage:
         assert len(session._queue) == 0
 
     def test_cron_message_not_merged(self):
-        """Cron-prefixed messages are never merged — popped individually."""
+        """An automation's notice (its item's NOTICE) is never merged: popped individually."""
         cron_msg = f"{CRON_NOTIFY_PREFIX}daily-check]: run report"
         session = _ChatSession("s1")
         session._queue = [
             {"id": "a", "content": "user msg"},
-            {"id": "b", "content": cron_msg},
+            {"id": "b", "content": cron_msg, NOTICE: "daily-check"},
             {"id": "c", "content": "another user msg"},
         ]
         for item in session._queue:
@@ -101,13 +102,13 @@ class TestDequeueNextMessage:
         assert [q["content"] for q in session._queue] == [cron_msg, "another user msg"]
 
     def test_partial_merge_before_cron(self):
-        """Multiple user messages before a cron are merged; cron and later messages stay."""
+        """Multiple user messages before a notice are merged; the notice and later ones stay."""
         cron_msg = f"{CRON_NOTIFY_PREFIX}daily]: run report"
         session = _ChatSession("s1")
         session._queue = [
             {"id": "a", "content": "msg1"},
             {"id": "b", "content": "msg2"},
-            {"id": "c", "content": cron_msg},
+            {"id": "c", "content": cron_msg, NOTICE: "daily"},
             {"id": "d", "content": "msg3"},
         ]
         for item in session._queue:
@@ -120,11 +121,11 @@ class TestDequeueNextMessage:
         assert [q["content"] for q in session._queue] == [cron_msg, "msg3"]
 
     def test_cron_first_in_queue_pops_individually(self):
-        """If cron message is first, it pops as single (no merge)."""
+        """If a notice is first, it pops as single (no merge)."""
         cron_msg = f"{CRON_NOTIFY_PREFIX}hourly]: check status"
         session = _ChatSession("s1")
         session._queue = [
-            {"id": "a", "content": cron_msg},
+            {"id": "a", "content": cron_msg, NOTICE: "hourly"},
             {"id": "b", "content": "user follow-up"},
         ]
         for item in session._queue:

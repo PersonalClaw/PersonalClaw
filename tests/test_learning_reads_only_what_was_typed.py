@@ -297,6 +297,46 @@ async def test_an_automations_message_is_not_learned_as_her_words(tmp_path, memo
 
 
 @pytest.mark.asyncio
+async def test_a_queued_message_typed_to_look_like_a_notice_runs_as_hers(tmp_path, memory):
+    """🔴 Red before: the drain told a notice by its words, so her queued message that starts like
+    one was written as an automation's notice (an `inject` row with a `cronLabel`), and the turn
+    it ran as was kept out of what learning reads. A notice is told apart by its queue item
+    (`chat_queue.NOTICE`) now."""
+    state, _model = await _state(tmp_path)
+    session = state.get_or_create_session("look-alike")
+    look_alike = f'{CRON_NOTIFY_PREFIX}"Morning digest"]\nno, keep the summary to three lines'
+    session.queue_append(look_alike)
+
+    session.append("user", "summarize the import log", "msg msg-u")
+    with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
+        await run_chat(state, session, "summarize the import log")
+        await session.task
+
+    (row,) = [m for m in session.messages if m["content"].startswith(CRON_NOTIFY_PREFIX)]
+    assert row["role"] == "user", row
+    assert "cronLabel" not in (row.get("cls") or "")
+
+
+@pytest.mark.asyncio
+async def test_a_queued_notice_still_runs_as_the_automations(tmp_path, memory):
+    """The control: a notice queued by its door (`notice=`) runs as an `inject` row naming its
+    automation."""
+    state, _model = await _state(tmp_path)
+    session = state.get_or_create_session("notice")
+    wrapped = f'{CRON_NOTIFY_PREFIX}"Morning digest"]\nThe build is green.\n{CRON_NOTIFY_END}'
+    session.queue_append(wrapped, notice="Morning digest")
+
+    session.append("user", "summarize the import log", "msg msg-u")
+    with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
+        await run_chat(state, session, "summarize the import log")
+        await session.task
+
+    (row,) = [m for m in session.messages if m["content"].startswith(CRON_NOTIFY_PREFIX)]
+    assert row["role"] == "inject", row
+    assert json.loads(row["cls"]) == {"cronLabel": "Morning digest"}
+
+
+@pytest.mark.asyncio
 async def test_messages_sent_during_a_turn_teach_only_what_each_one_typed(tmp_path, memory):
     """Two messages sent while a turn ran become the next turn together, under a line the merge
     adds, and the second carried a pasted block: that turn learns the words she typed, with the

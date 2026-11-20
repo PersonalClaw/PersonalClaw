@@ -12,7 +12,7 @@ from aiohttp import web
 from personalclaw import bounded_log, notification_kinds
 from personalclaw.dashboard import chat_intake
 from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
-from personalclaw.dashboard.chat_utils import _remove_queued_by_id
+from personalclaw.dashboard.chat_utils import room_for_a_notice
 from personalclaw.dashboard.state import (
     CRON_NOTIFY_END,
     CRON_NOTIFY_PREFIX,
@@ -627,6 +627,48 @@ def _is_tracked_channel(state: "DashboardState", channel_id: str, provider: str)
         return False
 
 
+#: What a notice that could not go into the chat it came from says, sent as a notification.
+_CLOSED_CHAT_NOTE = "\n\n_(session closed — delivered as notification)_"
+_BUSY_CHAT_NOTE = "\n\n_(the chat was too busy to take it — delivered as notification)_"
+
+
+def _notice_into_its_chat(state: Any, session: Any, job_name: str | None, text: str) -> bool:
+    """Take an automation's notice into the chat it came from (``send_message`` to its origin):
+    queued while a turn runs, as one more notice (``chat_queue.NOTICE``), else the ``inject`` row
+    whose turn it starts. Returns False, taking nothing in, when the chat's queue has no room for
+    it (``chat_utils.room_for_a_notice``): the caller sends it as a notification instead."""
+    label = job_name or "cron"
+    label, _ = redact_exfiltration_urls(label)
+    label, _ = redact_credentials(label)
+    # text and title already redacted by the caller.
+    # Text wrapper kept for LLM context; cronLabel in cls JSON provides structured data for
+    # the frontend, and the queue item's NOTICE tells a waiting notice apart.
+    wrapped = f'{CRON_NOTIFY_PREFIX}"{label}"]\n{text}\n{CRON_NOTIFY_END}'
+    inject_cls = json.dumps({"cronLabel": label})
+    if not room_for_a_notice(state, session):
+        return False
+    # Taken in as every message is: queued, else the `inject` row its turn starts.
+    taken = session.take_in_at_door(state, wrapped, role="inject", cls=inject_cls, notice=label)
+    if taken.disposition != chat_intake.STARTED:
+        _cls = json.loads(inject_cls)
+        _cls["queue_id"] = session._queue[-1]["id"]
+        session.append("queued", wrapped, json.dumps(_cls))
+        state.say_run_state(session)  # one more message waits behind the turn
+        state.push_sessions_update()
+        return True
+    # circular import: chat_runner imports from personalclaw.dashboard.handlers
+    # (MAX_PROMPT_BYTES, _list_provider_prompts), so we can't import it at module top-level
+    # without a cycle.
+    from personalclaw.dashboard.chat_runner import run_chat
+
+    task = asyncio.create_task(run_chat(state, session, wrapped))
+    session.task = task
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
+    state.push_sessions_update()
+    return True
+
+
 async def api_send_message(request: web.Request) -> web.Response:
     """POST /api/send-message — deliver a message to the messaging channel and/or dashboard.
 
@@ -813,6 +855,7 @@ async def api_send_message(request: web.Request) -> web.Response:
     sent_channel = False
     channel_ts: str | None = None
     sent_session = False
+    chat_busy = False  # the chat it came from could take no more notices
     target_session = body.get("session")
     job_name = None
     channel_attempted = False
@@ -894,48 +937,15 @@ async def api_send_message(request: web.Request) -> web.Response:
                     (session is not None and not was_loaded),
                 )
                 if session:
-                    label = job_name or "cron"
-                    label, _ = redact_exfiltration_urls(label)
-                    label, _ = redact_credentials(label)
-                    # text and title already redacted above (L2538-2542)
-                    # Text wrapper kept for LLM context and queue detection;
-                    # cronLabel in cls JSON provides structured data for frontend.
-                    wrapped = f'{CRON_NOTIFY_PREFIX}"{label}"]\n{text}\n{CRON_NOTIFY_END}'
-                    inject_cls = json.dumps({"cronLabel": label})
-                    if len(session._queue) >= 50:  # only ever behind a running turn
-                        evicted = session.queue_pop(0)
-                        logger.warning(
-                            "Queue full for session %s — evicting oldest message", session_name
-                        )
-                        _remove_queued_by_id(session.messages, evicted["id"])
-                    # Taken in as every message is: queued, else the `inject` row its turn starts.
-                    taken = session.take_in_at_door(state, wrapped, role="inject", cls=inject_cls)
-                    if taken.disposition != chat_intake.STARTED:
-                        _cls = json.loads(inject_cls)
-                        _cls["queue_id"] = session._queue[-1]["id"]
-                        session.append("queued", wrapped, json.dumps(_cls))
-                        state.say_run_state(session)  # one more message waits behind the turn
-                        state.push_sessions_update()
-                    else:
-                        # circular import: chat_runner imports from
-                        # personalclaw.dashboard.handlers (MAX_PROMPT_BYTES,
-                        # _list_provider_prompts), so we can't import it at
-                        # module top-level without a cycle.
-                        from personalclaw.dashboard.chat_runner import run_chat
-
-                        task = asyncio.create_task(run_chat(state, session, wrapped))
-                        session.task = task
-                        state._background_tasks.add(task)
-                        task.add_done_callback(state._background_tasks.discard)
-                        state.push_sessions_update()
-                    sent_session = True
+                    sent_session = _notice_into_its_chat(state, session, job_name, text)
+                    chat_busy = not sent_session
         # Fall back to normal delivery if no session target or session is gone
         if not sent_session:
             if target_session and job_name:
                 safe_name, _ = redact_exfiltration_urls(job_name)
                 safe_name, _ = redact_credentials(safe_name)
                 title = f"Trigger: {safe_name}"
-                text += "\n\n_(session closed — delivered as notification)_"
+                text += _BUSY_CHAT_NOTE if chat_busy else _CLOSED_CHAT_NOTE
             state.notify(notification_kinds.AGENT, title, text)
 
             async def _send(delivery: Any, channel: str) -> Any:

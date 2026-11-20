@@ -58,7 +58,7 @@ from personalclaw.dashboard.chat_persistence import (
     prior_turns_transcript,
     save_session_to_history,
 )
-from personalclaw.dashboard.chat_queue import ATTENDED, ON_RECORD, queued_pastes
+from personalclaw.dashboard.chat_queue import ATTENDED, NOTICE, ON_RECORD, queued_pastes
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_context_fed,
@@ -118,8 +118,6 @@ from personalclaw.dashboard.referenced_content import (
 )
 from personalclaw.dashboard.screen_frames import _apply_screen_frame
 from personalclaw.dashboard.state import (
-    CRON_NOTIFY_PREFIX,
-    CRON_NOTIFY_RE,
     SUBAGENT_COMPLETION_PREFIX,
     DashboardState,
     _ChatSession,
@@ -4841,10 +4839,11 @@ async def run_chat(
                 # Redact merged message before storing in session
                 next_msg, _ = redact_exfiltration_urls(next_msg)
                 next_msg, _ = redact_credentials(next_msg)
-                is_cron = next_msg.startswith(CRON_NOTIFY_PREFIX)
+                # An automation's notice runs alone, and its item names the automation
+                # (`chat_queue.NOTICE`): a message typed to look like one is still hers.
+                cron_label = consumed[0].get(NOTICE, "")
+                is_cron = bool(cron_label)
                 is_subagent = next_msg.startswith(SUBAGENT_COMPLETION_PREFIX)
-                _m = CRON_NOTIFY_RE.match(next_msg) if is_cron else None
-                cron_label = _m.group(1) if _m else "cron"
                 cron_label, _ = redact_exfiltration_urls(cron_label)
                 cron_label, _ = redact_credentials(cron_label)
                 # The files the queued messages came with, which the turn carries as its own.
