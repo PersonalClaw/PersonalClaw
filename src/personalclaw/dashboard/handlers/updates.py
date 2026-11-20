@@ -4,10 +4,11 @@ import asyncio
 import collections
 import json
 import logging
-import os
 import re
 import time
 from dataclasses import dataclass
+from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any, Coroutine
 
@@ -435,17 +436,45 @@ async def _do_update_check(*, asked: bool) -> bool:
         return False
 
 
-async def api_changelog(request: web.Request) -> web.Response:
-    """GET /api/changelog — read full CHANGELOG.md from project."""
-    proj = os.environ.get("PERSONALCLAW_PROJECT_DIR", "")
-    if not proj:
-        return web.json_response({"content": ""})
-    path = Path(proj) / "CHANGELOG.md"
+#: The changelog's file name: at a source checkout's root, and inside the package of every
+#: distribution (the wheel, the image, the desktop app's bundle), which carries the copy of the
+#: release it was built from (``setup.py`` ``BuildWithWeb``).
+CHANGELOG = "CHANGELOG.md"
+
+
+def _packaged_changelog() -> Traversable:
+    """The copy of the changelog the installed package carries."""
+    return resources.files("personalclaw") / CHANGELOG
+
+
+def _changelog_text() -> str:
+    """The changelog this install shows: a source checkout's working copy, so its unreleased lines
+    show as they are written, else the copy the package carries, the one of the release it runs.
+    ``""`` when neither can be read.
+
+    It used to read only the folder ``PERSONALCLAW_PROJECT_DIR`` names. The CLI sets that only for
+    a checkout, and the desktop app sets it to its bundle's resources, so every other install
+    showed no changelog at all."""
+    checkout = self_update.source_checkout()
+    if checkout:
+        try:
+            return (Path(checkout) / CHANGELOG).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            pass
     try:
-        content = path.read_text(encoding="utf-8")
-    except Exception:
-        content = ""
-    return web.json_response({"content": content})
+        # Inside the try too: a loader with no resource reader (a frozen bundle's, say) raises
+        # from `resources.files` itself, and the card then shows its empty state, not a 500.
+        return _packaged_changelog().read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError, TypeError, ValueError, ModuleNotFoundError):
+        return ""
+
+
+async def api_changelog(request: web.Request) -> web.Response:
+    """GET /api/changelog — the changelog of the release this install runs.
+
+    A source checkout's working copy, else the package's copy (:func:`_changelog_text`), read off
+    the event loop: the file is hundreds of kilobytes."""
+    return web.json_response({"content": await asyncio.to_thread(_changelog_text)})
 
 
 # In-flight guard: only one update may run at a time, the owner's and the staged auto-update's

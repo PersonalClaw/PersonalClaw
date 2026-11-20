@@ -55,7 +55,16 @@ SRC_PREFIX = f"src/{PACKAGE}"
 #: `src/personalclaw/static/dist` at it before the sdist/wheel is cut — so it is the one
 #: entry that genuinely has to be named here. Destination mirrors that symlink so
 #: `dashboard.handlers.core.index` resolves the SPA identically frozen or installed.
-EXTRA_DATAS: tuple[tuple[str, str], ...] = (("web/dist", f"{PACKAGE}/static/dist"),)
+#:
+#: The root files of :data:`PACKAGED_ROOT_FILES` go into the package folder, where the wheel
+#: carries them too (`setup.py` `BuildWithWeb`).
+#:
+#: A file's destination is the folder it is put in, as PyInstaller reads `datas`.
+PACKAGED_ROOT_FILES: tuple[str, ...] = ("CHANGELOG.md",)
+EXTRA_DATAS: tuple[tuple[str, str], ...] = (
+    ("web/dist", f"{PACKAGE}/static/dist"),
+    *((name, PACKAGE) for name in PACKAGED_ROOT_FILES),
+)
 
 #: The one package-data glob allowed to match nothing, and why.
 #:

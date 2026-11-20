@@ -305,6 +305,10 @@ def _source_payload(root: Path) -> dict[str, set[str]]:
     package_data_sources = {source for source, _destination in manifest.package_data_datas(root)}
     package_sources = python_sources | package_data_sources
     package_members = {Path(source).relative_to("src").as_posix() for source in package_sources}
+    # The root files the package carries as its own (the changelog the Updates panel reads): at
+    # the root in the sdist, in the package in the wheel.
+    root_files = set(manifest.PACKAGED_ROOT_FILES)
+    package_members |= {f"{_PACKAGE}/{name}" for name in root_files}
 
     web_root = root / "web" / "dist"
     web_sources = {
@@ -329,6 +333,7 @@ def _source_payload(root: Path) -> dict[str, set[str]]:
         "web_members": web_members,
         "native_sources": native_sources,
         "native_members": native_members,
+        "root_files": root_files,
     }
 
 
@@ -516,6 +521,7 @@ def inspect_sdist(sdist: Path, *, root: Path | None = None) -> str:
     bodies = _sdist_members(sdist)
     members = set(bodies)
     required = {"LICENSE", "MANIFEST.in", "README.md", "pyproject.toml", "setup.py", "PKG-INFO"}
+    required |= payload["root_files"]
     missing = (payload["package_sources"] | payload["web_sources"] | required) - members
     if missing:
         _fail(f"{sdist.name} omitted required source files: {sorted(missing)[:30]}")
