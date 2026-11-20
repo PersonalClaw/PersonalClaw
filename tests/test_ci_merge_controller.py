@@ -5686,6 +5686,39 @@ def test_a_cut_short_red_job_reruns_nothing_in_place(monkeypatch: pytest.MonkeyP
     assert plan == f"`{SHARD}` was cancelled or timed out: its attempt-1 record may be missing"
 
 
+def _cancelled_shard(monkeypatch: pytest.MonkeyPatch, *, ran: bool) -> object:
+    """The rerun plan for attempt 1 red only in a cancelled suite shard: one that ran (a step and
+    a runner), or one GitHub cancelled before any runner took it (no step, no runner name or id),
+    as e704f86a7's and 90dab8394's macOS shards were."""
+    api, _ = _rerun_ready(monkeypatch)
+    listing = f"/repos/{REPO}/actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=1"
+    shard = api.answers[listing]["jobs"][0]
+    shard["conclusion"] = "cancelled"
+    if not ran:
+        shard.update(steps=[], runner_name="", runner_id=0)
+    run = mc.read_run(api, REPO, RUN)
+    assert isinstance(run, mc.Run)
+    reasons = ["attempt 1's `results` is 'failure'"]
+    return mc._rerun_plan(api, REPO, run, QUEUE, reasons, reasons, mc.Retry(0, True, "a shard"))
+
+
+def test_a_shard_no_runner_took_reruns_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    """🔴 Red before: a shard GitHub cancelled before any runner took it ran nothing, so it left
+    no record to miss, and main's verdict fills it from the first attempt that runs it. CORE N3's
+    guard read it as cut short and posted the queue commit's red at once."""
+    plan = _cancelled_shard(monkeypatch, ran=False)
+    assert plan == mc.RerunNote(RUN, _T0 + datetime.timedelta(minutes=108), (SHARD,))
+
+
+def test_a_cancelled_shard_that_ran_still_reruns_nothing_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control: a shard that ran and was cancelled may have left no attempt-1 record, so N3
+    still stops it."""
+    plan = _cancelled_shard(monkeypatch, ran=True)
+    assert plan == f"`{SHARD}` was cancelled or timed out: its attempt-1 record may be missing"
+
+
 def test_a_note_that_never_posted_leaves_the_fallback_to_post_attempt_1_s_red(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

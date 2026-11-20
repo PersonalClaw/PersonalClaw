@@ -3214,16 +3214,27 @@ def _red_jobs(jobs: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     return [j for j in jobs if j.get("name") != RESULTS_JOB and j.get("conclusion") in _RED_JOBS]
 
 
+def _untaken(job: Mapping[str, Any], run: Run) -> bool:
+    """Whether no runner took attempt 1's *job*, read as main's verdict reads it
+    (``verdict.listed_job``, then ``verdict.never_acquired``). A job it refuses is unread."""
+    try:
+        listed = verdict.listed_job(dict(job), run_id=run.id, attempt=1, where="attempt 1's jobs")
+    except verdict.Refused as exc:
+        raise Unread(str(exc)) from None
+    return verdict.never_acquired(listed)
+
+
 def _rerun_plan(
     get: Get, repo: str, run: Run, sha: str, reasons: list[str], failing: list[str], retried: object
 ) -> RerunNote | str:
     """The in-place rerun of attempt 1's failed jobs, or why there is none, so the red posts: it
     is attempt 1 of the run; its red is flake-class (the retry note's :func:`flake_class`) with a
     retry left; every reason is its ``results``' (no gate, contract, queue or change reason);
-    every red job is a flake-class job's, failed, cancelled or timed out; and the queue's check
-    limit leaves at least :data:`RERUN_FLOOR_MINUTES`, and the longest red job's attempt-1 time
-    and :data:`RERUN_MARGIN_MINUTES`, from the earlier of the queue commit's commit time and the
-    run's creation."""
+    every red job is a flake-class job's, failed, cancelled or timed out, and none was cut short
+    but one no runner took (CORE N3); and the queue's check limit leaves at least
+    :data:`RERUN_FLOOR_MINUTES`, and the longest red job's attempt-1 time and
+    :data:`RERUN_MARGIN_MINUTES`, from the earlier of the queue commit's commit time and the run's
+    creation."""
     if run.attempt != 1:
         return f"it is attempt {run.attempt}: only attempt 1's failed jobs rerun in place, once"
     if not isinstance(retried, Retry) or not retried.flake_class:
@@ -3237,10 +3248,16 @@ def _rerun_plan(
     names = [str(j.get("name") or "") for j in red]
     if not red or not all(_flake_job(n) for n in names) or len(set(names)) != len(names):
         return "its red jobs are not each a flake-class job's, named once"
-    cut = [str(j.get("name") or "") for j in red if j.get("conclusion") != "failure"]
+    cut = [
+        str(j.get("name") or "")
+        for j in red
+        if j.get("conclusion") != "failure" and not _untaken(j, run)
+    ]
     if cut:
         # A job cut short may have left no attempt-1 record, and then main's verdict reads it
         # "missing on attempt 1" on the rerun: no notice, a red after the rerun's wait (CORE N3).
+        # A job no runner took is not one: it ran nothing and left no record, and main's verdict
+        # fills such a job from the first attempt that runs it (``verdict.never_acquired``).
         return f"`{cut[0]}` was cancelled or timed out: its attempt-1 record may be missing"
     waits = _waits()
     alone = [n for n in names if _entry_id(n) in waits]
