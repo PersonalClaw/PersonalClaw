@@ -25,6 +25,7 @@ from typing import Any
 from personalclaw.documents.docx_parser import LossReport
 from personalclaw.documents.limits import (
     MAX_CELLS,
+    DocumentTooLarge,
     assert_archive_within_limits,
     truncation_detail,
 )
@@ -66,6 +67,7 @@ def parse_xlsx(data: bytes) -> tuple[SheetModel, LossReport]:
     from openpyxl import load_workbook
 
     assert_archive_within_limits(data)
+    _assert_merges_within_cap(data)
     report = LossReport()
     wb = load_workbook(io.BytesIO(data), data_only=False)
     try:
@@ -84,6 +86,67 @@ def parse_xlsx(data: bytes) -> tuple[SheetModel, LossReport]:
             location="workbook",
         )
     return SheetModel(sheets=sheets), report
+
+
+#: A sheet's largest extent, which a whole-column or whole-row range (``A:A``, ``3:3``) covers.
+_SHEET_COLUMNS, _SHEET_ROWS = 16_384, 1_048_576
+
+
+def _assert_merges_within_cap(data: bytes) -> None:
+    """Refuse *data* when its sheets' merged ranges together cover more than ``MAX_CELLS``
+    cells, before ``openpyxl`` reads it.
+
+    The full read makes an object for every cell a merge covers
+    (``WorksheetReader.bind_merged_cells``) before a single cell is walked, and a merge is a few
+    bytes of XML: one that names a whole sheet is seventeen billion objects, which the package's
+    size check cannot see. So the merges are counted first, read the way ``openpyxl`` reads them:
+    its own ``iterparse`` (lxml where it is installed), each ``ref`` through ``range_boundaries``.
+
+    Every part is read, whatever it is called and however it is encoded: ``openpyxl`` finds a
+    sheet through the package's relationships, not its name, and its parser reads encodings in
+    which the element's name is not ASCII. A part that is not XML is skipped, as it holds no
+    sheet. A ``ref`` openpyxl cannot read is left to its read, which refuses it. The package's
+    own caps, checked before this, bound what is parsed.
+    """
+    import zipfile
+
+    from openpyxl.utils.cell import range_boundaries
+    from openpyxl.xml.functions import iterparse
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, OSError, ValueError):
+        return  # not a package: the read says so in its own words
+    covered = 0
+    with archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            try:
+                with archive.open(info) as part:
+                    for _event, element in iterparse(part):
+                        if str(element.tag).rsplit("}", 1)[-1] == "mergeCell":
+                            covered += _merged_area(range_boundaries, element.get("ref"))
+                            if covered > MAX_CELLS:
+                                raise DocumentTooLarge(
+                                    f"its merged ranges cover more than {MAX_CELLS:,} cells; "
+                                    f"this build reads at most {MAX_CELLS:,}"
+                                )
+                        element.clear()
+            except (SyntaxError, ValueError, zipfile.BadZipFile, OSError, EOFError):
+                continue  # not XML (or not readable as it), so no sheet openpyxl reads
+
+
+def _merged_area(range_boundaries: Any, ref: object) -> int:
+    """The cells a merge's *ref* covers, a whole column or row at the sheet's full extent; 0 for
+    a ref ``openpyxl`` cannot read."""
+    try:
+        first_col, first_row, last_col, last_row = range_boundaries(str(ref or ""))
+    except (TypeError, ValueError):
+        return 0
+    columns = (last_col or _SHEET_COLUMNS) - (first_col or 1) + 1
+    rows = (last_row or _SHEET_ROWS) - (first_row or 1) + 1
+    return max(columns, 0) * max(rows, 0)
 
 
 def _sheet(ws: Any, report: LossReport, budget: int) -> tuple[Sheet, int]:
