@@ -100,8 +100,15 @@ def note_fire(store: Any, trigger_id: str, *, at: float) -> None:
         if row is None:
             return
         live = row.trigger
+        base = live.to_dict()
         count_fire(live, at=at)
-        store.upsert(live)
+        # The count adds to the row as stored, under its lock (`TriggerStore.write_changes`): the
+        # read above is outside it, so an edit or another count since then stands too.
+        write = getattr(store, "write_changes", None)
+        if callable(write):
+            write(live, base=base)
+        else:
+            store.upsert(live)
     except Exception:  # noqa: BLE001 - see the docstring
         logger.debug("could not count the fire of %s", trigger_id, exc_info=True)
 

@@ -394,6 +394,9 @@ class RoutingTriggerStore:
     def upsert(self, trigger: Any) -> Any:
         return self._native.upsert(trigger)
 
+    def write_changes(self, trigger: Any, *, base: dict[str, Any]) -> Any:
+        return self._native.write_changes(trigger, base=base)
+
     def delete(self, trigger_id: str) -> bool:
         return bool(self._native.delete(trigger_id))
 
