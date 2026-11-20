@@ -17,3 +17,6 @@ export function useChatSocket(
   status.current = onStatus
   useEffect(() => { status.current?.(true) }, [])
 }
+
+/** The tab's own reports to the gateway (`sendFrame`): a quiet socket takes them and says nothing. */
+export function sendFrame(_frame: Record<string, unknown>): void {}

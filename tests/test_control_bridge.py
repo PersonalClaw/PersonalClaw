@@ -31,14 +31,21 @@ from personalclaw.inbound import bridge
 
 
 class _State:
-    """The two DashboardState methods the bridge actually calls."""
+    """The DashboardState methods the bridge actually calls. ``focused`` is whether a dashboard
+    tab on this computer has reported focus, so ``open_cockpit`` has a tab to move."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, focused: bool = True) -> None:
         self.broadcasts: list[tuple] = []
         self.notices: list[tuple] = []
+        self.focused = focused
 
     def broadcast_ws(self, kind, payload):
         self.broadcasts.append((kind, payload))
+
+    def send_to_last_focused(self, kind, payload) -> bool:
+        if self.focused:
+            self.broadcasts.append((kind, payload))
+        return self.focused
 
     def notify(self, kind, title, body, *, meta=None):
         self.notices.append((kind, title, body, meta or {}))
@@ -189,6 +196,16 @@ class TestAdmission:
 
 
 # ── requiresConfirmation, enforced here ──────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _a_fresh_navigate_budget():
+    """``open_cockpit`` is rate-limited per client, process-wide: no test spends another's."""
+    from personalclaw.inbound import caps
+
+    caps.reset_for_tests()
+    yield
+    caps.reset_for_tests()
 
 
 @pytest.fixture(autouse=True)

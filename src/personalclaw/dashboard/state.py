@@ -1053,6 +1053,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self._ws_app: dict[web.WebSocketResponse, str] = {}
         self._ws_scope: dict[web.WebSocketResponse, tuple[str, ...]] = {}
         self._ws_release: dict[web.WebSocketResponse, Any] = {}
+        # The owner's own sockets on this machine, each with when its tab last took focus (0.0
+        # until it does): the one a control bridge's `navigate` is sent to (`send_to_last_focused`).
+        self._ws_here: dict[web.WebSocketResponse, float] = {}
         self._ws_log_subscribers: set[web.WebSocketResponse] = set()
         self._ws_subagent_subscribers: set[web.WebSocketResponse] = set()
         # The streamed-chunk stamp (`next_stream_seq`): the resume watermark a session

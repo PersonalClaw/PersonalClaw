@@ -65,10 +65,12 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import stat
 import time
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -80,6 +82,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.inbound import tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.auth import BRIDGE_SURFACE, peer_allowed, token_env_key, verify_bearer
+from personalclaw.inbound.caps import DEFAULT_CAPS, check_rate_for_client
 from personalclaw.inbound.clients import InboundClient, log_binding_violation, lookup_by_token
 from personalclaw.inbound.framing import fence_payload
 from personalclaw.inbound.gate import admission_problem
@@ -148,15 +151,82 @@ class Action:
 # calls), so a validation rule added to either is inherited here for free.
 
 
+#: The dashboard's pages a local agent may open with ``open_cockpit``. Each is one of the
+#: dashboard's routes (``ROUTES`` in ``desktop/deepLinks.js``, which its tests hold equal to the
+#: dashboard's ``ROUTABLE``), and each is a decision of its own: a route the dashboard adds is not
+#: an agent's to open until it is named here. Left out are the pages that configure what runs
+#: (capabilities, agents, tools, skills, learning, prompts, apps and the store), an app's own page,
+#: the terminal, the code cockpit, and settings, where sign-ins, devices and pairing codes are.
+AGENT_PAGES: frozenset[str] = frozenset(
+    {
+        "dashboard",
+        "chat",
+        "projects",
+        "library",
+        "knowledge",
+        "memory",
+        "tasks",
+        "inbox",
+        "automations",
+        "triggers",
+        "workflows",
+        "files",
+        "artifacts",
+        "notifications",
+        "loop",
+        "loops",
+        "mission-control",
+    }
+)
+
+#: An item's id on a page, as a ``personalclaw://`` link's segment is held (``deepLinks.js``):
+#: ASCII letters, digits and ``. _ : @ ~ -``, never ``.`` or ``..``. The same rule the dashboard
+#: checks (``web/src/app/useBridgeNavigation.ts``), so the bridge never says yes to an id the
+#: page refuses.
+_PAGE_ID = re.compile(r"[A-Za-z0-9._:@~-]{1,128}")
+
+#: A local agent opens at most one page every this many seconds: a page that keeps moving under
+#: you is the agent's fault to stop, not yours to fight.
+NAVIGATE_EVERY_SECS = 3.0
+_NAVIGATE_CAPS = replace(DEFAULT_CAPS, rps=1 / NAVIGATE_EVERY_SECS, burst=1)
+
+#: The client whose action is running, as ``(client id, its name)``: set around the handler by
+#: :func:`handle_action`, read by ``open_cockpit`` to name who moved your page.
+_CALLER: ContextVar[tuple[str, str]] = ContextVar("bridge_caller", default=("", ""))
+
+
 async def _open_cockpit(state: Any, params: dict) -> dict:
-    """Navigation only — no state changes, hence ``sideEffect: none``."""
+    """Navigation only — no state changes, hence ``sideEffect: none``.
+
+    Only to a page an agent may open (:data:`AGENT_PAGES`), with an id of the characters a
+    ``personalclaw://`` link's segment may carry, at most once every
+    :data:`NAVIGATE_EVERY_SECS` for a client, and only to the dashboard tab on this computer you
+    used last (``DashboardState.send_to_last_focused``): not every tab, and not a paired phone's.
+    The frame carries the page and the id, never a built route, and the client's name, which the
+    page says when it moves (``web/src/app/useBridgeNavigation.ts``). Anything that cannot be
+    done is an error, so the agent is never told a page opened that did not."""
     kind = str(params.get("kind") or "").strip()
     ident = str(params.get("id") or "").strip()
     if not kind:
         raise ValueError("kind required")
-    route = f"#/{kind}/{ident}" if ident else f"#/{kind}"
-    state.broadcast_ws("navigate", {"route": route, "source": "control_bridge"})
-    return {"route": route}
+    if kind not in AGENT_PAGES:
+        raise ValueError(f"kind {kind[:40]!r} is not a page an agent may open")
+    if ident and (ident in (".", "..") or not _PAGE_ID.fullmatch(ident)):
+        raise ValueError("id holds a character a page's id may not carry, or is too long")
+    client_id, name = _CALLER.get()
+    if not check_rate_for_client("bridge:navigate", client_id, "surface", caps=_NAVIGATE_CAPS):
+        raise ValueError(
+            f"open_cockpit opens at most one page every {NAVIGATE_EVERY_SECS:g} seconds"
+        )
+    frame = {
+        "kind": kind,
+        "id": ident,
+        "source": "control_bridge",
+        "client": name or "A local agent",
+    }
+    if not state.send_to_last_focused("navigate", frame):
+        raise ValueError("no dashboard is open on this computer to open the page in")
+    return {"route": f"#/{kind}/{ident}" if ident else f"#/{kind}"}
 
 
 async def _read_transcript(state: Any, params: dict) -> dict:
@@ -288,12 +358,19 @@ _REGISTRY: tuple[Action, ...] = (
         name="open_cockpit",
         params_schema={
             "type": "object",
-            "properties": {"kind": {"type": "string"}, "id": {"type": "string"}},
+            "properties": {
+                "kind": {"type": "string", "enum": sorted(AGENT_PAGES)},
+                "id": {"type": "string", "pattern": f"^{_PAGE_ID.pattern}$", "maxLength": 128},
+            },
             "required": ["kind"],
         },
         side_effect="none",
         requires_confirmation=False,
-        description="Focus a cockpit surface in the dashboard (navigation only).",
+        description=(
+            "Open one of the dashboard's pages, and an item on it, in the dashboard tab used last "
+            "on this computer (navigation only). The page says which client opened it, and a page "
+            "in use says what was asked instead of moving."
+        ),
         handler=_open_cockpit,
     ),
     Action(
@@ -772,7 +849,11 @@ async def handle_action(request: web.Request) -> web.Response:
             },
             status=202,
         )
-    return await _run(state, action, params, "/action")
+    caller = _CALLER.set((client.client_id, client.label) if client is not None else ("", ""))
+    try:
+        return await _run(state, action, params, "/action")
+    finally:
+        _CALLER.reset(caller)
 
 
 def _confirmation_body(action: str, params: dict) -> str:
