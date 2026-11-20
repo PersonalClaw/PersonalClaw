@@ -443,7 +443,7 @@ export function DevicesPanel() {
                   is enough because the code rides inside that URL; the code is shown beside it
                   anyway, because a camera that will not focus must not be the only way in. */}
               <div className="flex flex-wrap items-start gap-l">
-                <PairingQr url={pairing.pairing_url} expired={expired} />
+                <PairingQr url={pairing.pairing_url} expired={expired} unreachable={pairing.pairing_unreachable} />
 
                 {/* AN EXPIRED PAYLOAD IS WITHDRAWN, NOT DIMMED. The gateway refuses a dead code
                     (`redeem_code` → `expired`), so leaving it on screen invites the owner to carry
@@ -480,15 +480,22 @@ export function DevicesPanel() {
                       </div>
                     </div>
 
-                    <div>
-                      <div data-type="body-s" className="text-on-surface-low">Link to open on the device</div>
-                      <div className="mt-1 flex items-start gap-s">
-                        <code data-type="body-s" className="min-w-0 select-all break-all font-mono text-on-surface">
-                          {pairing.pairing_url}
-                        </code>
-                        <CopyButton value={pairing.pairing_url} label="pairing link" />
+                    {/* The link, or why there is none: a gateway on this computer only names no
+                        address a phone could use, and says what to turn on instead. Never an
+                        empty link with a button to copy it. */}
+                    {pairing.pairing_url ? (
+                      <div>
+                        <div data-type="body-s" className="text-on-surface-low">Link to open on the device</div>
+                        <div className="mt-1 flex items-start gap-s">
+                          <code data-type="body-s" className="min-w-0 select-all break-all font-mono text-on-surface">
+                            {pairing.pairing_url}
+                          </code>
+                          <CopyButton value={pairing.pairing_url} label="pairing link" />
+                        </div>
                       </div>
-                    </div>
+                    ) : pairing.pairing_unreachable ? (
+                      <p data-type="body-s" className="text-on-surface-low">{pairing.pairing_unreachable}</p>
+                    ) : null}
                   </div>
                 )}
               </div>

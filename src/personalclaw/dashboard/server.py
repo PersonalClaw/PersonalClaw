@@ -632,7 +632,7 @@ def _allow_dashboard_url(
     _has_token_auth = any(getattr(mw, "_is_token_auth", False) for mw in app.middlewares)
     if _has_token_auth:
         app["allowed_origins"] = build_allowed_origins(
-            port, local_only, configured_host, dashboard_url
+            port, local_only, configured_host, dashboard_url, bind_host=app["bind_host"]
         )
         logger.info(
             "dashboard_url=%s: added to CSRF allowed origins (token auth verified)",
@@ -884,7 +884,18 @@ async def start_dashboard(
                 raise
         return await handler(request)  # type: ignore[operator]
 
-    app["allowed_origins"] = build_allowed_origins(port, local_only, configured_host)
+    # Where the gateway listens, decided ONCE here (`gateway_bind_host`: the env var, then
+    # local_only, then the loopback invariant of a gateway with sign-in off) and recorded: the
+    # listener binds it, both origin sets add the network address it is reached at, and a pairing
+    # link names that address (`handlers.devices._pair_base_url`), so none can name one it isn't on.
+    from personalclaw.auth.modes import AuthMode as _BindAuthMode
+
+    app["bind_host"] = gateway_bind_host(
+        local_only, no_auth=app["auth_cfg"].mode == _BindAuthMode.NONE
+    )
+    app["allowed_origins"] = build_allowed_origins(
+        port, local_only, configured_host, bind_host=app["bind_host"]
+    )
 
     @web.middleware  # type: ignore[misc]
     async def csrf_middleware(
@@ -1022,14 +1033,14 @@ async def start_dashboard(
     # makes AuthMode.NONE override this).
     # AuthMode.NONE invariant: an unauthenticated gateway must never leave loopback. One decision
     # (`gateway_bind_host`), which every sign-in link names as well (`origin.link_host`).
-    _bind_host = gateway_bind_host(local_only, no_auth=_no_auth)
+    _bind_host = app["bind_host"]
     # The security log made before anything is served, its key with it (an fsync, on a home's
     # first run), in a worker thread: never by the first event a handler writes, which would make
     # it on the event loop (sel.sel_log_async).
     from personalclaw.sel import sel
 
     await asyncio.to_thread(sel)
-    site = web.TCPSite(runner, _bind_host, port)
+    site = web.TCPSite(runner, app["bind_host"], port)
     await _start_site(site, port)
 
     # Port bind succeeded — now safe to write the secret file

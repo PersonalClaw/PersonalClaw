@@ -26,6 +26,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Pair a device names an address a phone can reach when the dashboard is open on this computer: the network address the gateway listens on, and the phone's redeem and changes are taken from there. A gateway that listens only on this computer says what to turn on instead of showing a QR code no phone could use.**
 - **An automation running while the computer sleeps keeps its claim, so no second run of it starts beside the first when the machine wakes. A run's claim, and the half-hour deadline after which a run is called timed out, count the time the machine was awake, not the time it slept.**
 - **A document an agent makes from HTML has its credentials masked in what it holds, not only in the markup it was made from.**
 - **A reload no longer has the gateway read its whole settings file once for every asset and read it answers. The public address every response's security header names is read again only when the settings file changes, so a page's many requests no longer each hold the gateway for a settings read.**
