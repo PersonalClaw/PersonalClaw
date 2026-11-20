@@ -6,8 +6,20 @@ store to flip (six independent stores), so incident mode does NOT mutate stores;
 is checked at the execution seams (cron due-collection, hook fire, event-trigger
 fire, the idle runtime that fires loop cycles and idle triggers, the loop watchdog,
 memory consolidation and background compression, inbox AI, non-interactive subagent
-spawn). Each seam gains one ``if incident_active(): skip``, and nothing is lost by
-it: the skipped work is still due when the switch is turned off.
+spawn). Each seam gains one ``if incident_active(): skip``, and what becomes of the work it
+skips is the seam's own: some is done once the switch is off, and some is not. Seam by seam
+(`tests/test_incident_words_match_the_seams.py`):
+
+- A recurring automation whose time comes is refused, and runs at its next time: the tick moves
+  it on before the gate refuses it, so Resume does not run it.
+- A one-shot whose time passes is switched off and kept, to run by hand.
+- A lifecycle hook's action, a webhook, and an event automation (an Inbox message, a memory write)
+  that fire meanwhile are dropped: each leaves a history row saying so, and none runs later.
+- A background agent's start is refused, and the work that asked for it is told.
+- Idle automations and loop cycles are held due, and run on the first check after Resume.
+- A running loop or workflow run is held where it is, and goes on after Resume.
+- File and page watches skip their polls, and catch up after Resume.
+- Inbox sorting, memory consolidation and background compression wait, and run after Resume.
 
 **Interactive chat is untouched** — the user talking to their assistant during an
 incident is the point. Resume is EXPLICIT (``POST /api/incident/resume {confirm}``
@@ -115,9 +127,8 @@ def activate(reason: str = "") -> IncidentState:
 
 
 def resume() -> IncidentState:
-    """Turn incident mode OFF (SEL-audited). The window (started_at→now) is left in
-    the log via the SEL transition so the Runs surface can show 'suppressed during
-    incident'."""
+    """Turn incident mode OFF (SEL-audited). The SEL keeps the transition; what the incident
+    dropped meanwhile stays dropped (the module docstring, seam by seam)."""
     state = IncidentState(active=False, reason="", started_at="")
     _write(state)
     _audit("incident_resumed")

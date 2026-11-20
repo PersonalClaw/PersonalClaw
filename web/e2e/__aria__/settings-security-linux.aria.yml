@@ -275,7 +275,7 @@
     - heading "Guardrails" [level=#]
     - paragraph: The personal safety floor — a daily spend ceiling, an outbound secret scan, circuit breakers for a failing provider and a failing tool loop, and a kill switch. The budget, scan and kill switch bind unattended work only; the breakers apply to any run, including this chat.
     - heading "Incident kill switch" [level=#]
-    - paragraph: Suspend ALL unattended work — cron jobs, hooks, event triggers, subagent spawns — at once. Interactive chat keeps working. Resume is explicit.
+    - paragraph: Stops cron jobs, triggers, hooks, loops and subagent starts at once. Interactive chat keeps working. Recurring scheduled work runs at its next time, and a one-shot waits for you to run it; a hook or event fire that happens while it is on is dropped. Resume is explicit.
     - text: Incident mode Off — automation runs normally.
     - switch "Incident mode"
     - heading "Unattended browsing" [level=#]

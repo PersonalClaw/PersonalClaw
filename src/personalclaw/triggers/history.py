@@ -335,9 +335,10 @@ def _hook_reason(status: str, outcome: str) -> str:
     if status == "queued":
         return "queued behind a run already in flight; it starts when that one ends"
     if status == "skipped_incident":
-        # Names the CAUSE and the exit, not just the state: an incident pause the user cannot see
-        # the end of is indistinguishable from a hook that broke.
-        return "suppressed: incident mode is active; automated actions resume when it clears"
+        # Names the CAUSE and what becomes of this fire, not just the state: a hook fire during an
+        # incident is dropped (`guardrails/incident.py`), so a row that said actions "resume when
+        # it clears" read as this one still to come.
+        return "not run: incident mode was on, and a hook fire during it is not run later"
     if status == "blocked_injection":
         return "not run: the injection screen refused the text it was handed"
     if status == "withheld":
