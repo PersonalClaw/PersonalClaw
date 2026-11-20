@@ -53,6 +53,19 @@ async function hero(props: { draft?: string; draftUnderWay?: () => boolean; onEx
   return { ...r, again: (p: typeof props) => r.rerender(view(p)) }
 }
 const dialog = () => screen.queryByRole('dialog', { name: QUESTION })
+/** The window, opened inside act. It opens when its claim answers, and the Modal listens for
+ *  Escape from a passive effect. A claim answered outside act runs that effect in a later task
+ *  than the one that puts the window on screen, and on a loaded runner it ran after the test had
+ *  pressed Escape: the press was lost and the window stayed (#6306's run 44621656987). Answered
+ *  inside act, the window and its effects are in place when act returns. */
+async function opened() {
+  let answer = (_v: unknown) => {}
+  h.answerExplain.mockReturnValueOnce(new Promise((r) => { answer = r }))
+  await hero()
+  await waitFor(() => expect(claims()).toBe(1))
+  await act(async () => { answer({ ok: true, state: { step: 'done', explain_asked: true } }) })
+  return screen.getByRole('dialog', { name: QUESTION })
+}
 const pause = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)))
 const claims = () => h.answerExplain.mock.calls.length
 /** Fake timers, for the cases that wait. Use tick() with getByRole or queryByRole only: findBy* and
@@ -257,8 +270,7 @@ describe('an answer, or none', () => {
     ['Escape', () => fireEvent.keyDown(window, { key: 'Escape' })],
     ['a scrim click', () => fireEvent.click(document.querySelector('[aria-modal="true"]')!.previousElementSibling!)],
   ] as const)('%s closes it and writes nothing more', async (_how, close) => {
-    await hero()
-    await screen.findByRole('dialog', { name: QUESTION })
+    await opened()
     const before = h.others.length
     close()
     await waitFor(() => expect(dialog()).toBeNull())
