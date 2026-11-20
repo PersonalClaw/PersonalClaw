@@ -115,7 +115,7 @@ digest, naming that run and the commit's tree. Together the records must hold ev
 in the newest, every shard, none carried. Every gating leg (each OS, Python and architecture,
 random-order, security, the installer smoke, the audit and the union checks) must be green on
 every attempt. The advisory legs (`release_tag.ADVISORY_LEGS`: the next-Ubuntu canary and the two
-legs that read its suite, and coverage) measure rather than gate: each must have run, and each
+legs that read its suite) measure rather than gate: each must have run, and each
 red one must be owned by an open issue titled as breadth's report titles it (`breadth: <leg> is
 red`), filed by that report or a maintainer, never by anyone else, since on a public repository
 anyone may open an issue. The gate names each advisory red with its issue, so they stay visible
@@ -739,8 +739,7 @@ the `breadth.yml` jobs it maps to, in both directions, and every entry to the re
 - Every `run:` line of a mapped job is one entry's step. The only lines left out are a closed
   list in the row, each named for what it does: the runner's identity, the installs the
   toolchain names, and breadth's evidence lines (a leg's inputs, the one leg's decision to
-  carry, what it ran, its result read back) with the scratch interpreter they run on and the
-  coverage shards' gate. A listed line that no mapped job runs any more fails the row too, so
+  carry, what it ran, its result read back) with the scratch interpreter they run on. A listed line that no mapped job runs any more fails the row too, so
   the list holds only lines that exist. Each breadth job is one entry's at most.
 - An install is toolchain, never a step: `uv sync`, `npm ci`, the Playwright browser install and
   Electron's binary (`sh tools/ci/install_electron.sh`, which `npm ci` does not run) are
@@ -790,7 +789,7 @@ the `breadth.yml` jobs it maps to, in both directions, and every entry to the re
   entry's steps may sit in a continue-on-error step only when the entry its leg records carries
   that step's red. A plant that edits a leg's command edits the entry's argv and the leg's
   written-out line alike, and the row is read twice, over `breadth.yml` as written and with the
-  nine legs #5600 moves through run-job (the five suite legs, rails-macos, collection-parses and
+  eight legs #5600 moves through run-job (the four suite legs, rails-macos, collection-parses and
   the two security legs), with the same verdict on every plant both ways. The rows that hold the
   run-job line itself, the two above and the catalogue row, read workflows as written; their
   plants on a written-out leg read random-order's, which #5600 leaves written out.
@@ -1980,8 +1979,8 @@ which then holds the later order's. For each suite leg, a `planned-ids-<leg>` jo
 leg's own runner and Python (its `PY` and setup-uv's, which `uv run pytest` collects on)
 collects the planned suite (`shards universe` writes every file the plan covers, with the same
 exclusions) and uploads `planned-ids-<leg>`. So a platform or a Python never reads as a
-mismatch. `shard-union` then runs `shards union` over the five legs whose red is the run's
-(ubuntu, macos, arm, coverage-shard and random-order), which fails, naming each leg, on an id no
+mismatch. `shard-union` then runs `shards union` over the four legs whose red is the run's
+(ubuntu, macos, arm and random-order), which fails, naming each leg, on an id no
 shard collected, an id the planned suite lacks, an id collected twice (by two shards or one),
 an id the planned suite holds twice, an id file that is not text, and a shard or a planned
 collection that uploaded no ids. It is red, never absent. The canary's shards are held to its
@@ -2070,7 +2069,7 @@ tag's push, which is how a release measures its commit ([the release tags](#the-
   runner's image, architecture and toolchain, and on `main` it skips pytest and carries the
   earlier result, red or green, only when every input matches.
 - **Legs that run every night:** the suite on Ubuntu 24.04 on 3.13, on macOS 26 on 3.12 (six
-  shards, two at a time), on Ubuntu 24.04 on arm64 on 3.13, and under coverage; the security
+  shards, two at a time), and on Ubuntu 24.04 on arm64 on 3.13; the security
   corpus on Ubuntu 24.04 on 3.12 and on macOS 26 on 3.13, a canary on the next Ubuntu image
   (advisory), the randomized-order leg, the installer smoke, and the dependency audit.
   `NON_REUSABLE` in `tools/ci/breadth_evidence.py` names them. The suite legs
@@ -2080,6 +2079,12 @@ tag's push, which is how a release measures its commit ([the release tags](#the-
   only in image and Python, so a red is the new image's: pytest keeps its own temporary
   folders, since `RUNNER_TEMP` sits under the runner's home, where the suite's home guard
   refuses a test's folders and paths print as `~/...`.
+- **No leg runs under the coverage tracer (#5846):** breadth's coverage leg, the suite a fifth
+  time under `--cov` on `python-suite`'s runner and Python, was red on 26 of 41 nights, on time
+  bounds the traced run missed and tests every untraced leg passed, and nothing gated on its
+  number. A job may still measure the suite (the selection map is built from a traced run), but
+  only as `continue-on-error`, so its red is never its run's
+  (`tests/rails/test_supply_chain_tree.py`).
 - **The union check** also runs every night: a `planned-ids-<leg>` collection for each suite leg,
   on that leg's runner and Python, and `shard-union`, which holds each gating leg's shards to it,
   each test id once, and `shard-union-canary`, the canary's, advisory as the canary is (see "The
@@ -2199,15 +2204,14 @@ of the same commit was red is the release gate's question (#3911), not this work
   included), and no leg in it carries an earlier result;
 - the evidence is named by its digest and kept 90 days;
 - `report` writes only issues, and only on `main`;
-- every breadth shard records what it ran: every job but `freshness`, `coverage` and `report`
+- every breadth shard records what it ran: every job but `freshness` and `report`
   is a leg writing entries under one key no other job writes, its `decide --key` is that key,
   and the keys with their matrices' shard counts (every dimension, no `exclude`) are `SHARDS`;
   a managed Python is installed before `uv python find`; a crashed decision runs the shard;
   every `--tree` is the checkout's or freshness's with no fallback; the served installer is
   never hashed from a `curl … | sha256sum` pipe (continued lines joined), and an unreadable one
   exits red after its inputs are written; the installer smoke and the audit record freshness's
-  night, read from the run's `created_at` and tied to the cron slot; and a failed coverage
-  download is a failure;
+  night, read from the run's `created_at` and tied to the cron slot;
 - off `main` nothing is reused: `freshness`, every `decide` and `report` pass the full ref
   (`$GITHUB_REF`); every `decide`, `ran` and `report` pass the run attempt; every leg's job is
   named `breadth-leg <key>`; no never-reused leg downloads `freshness`'s map, and a tree-keyed
@@ -2598,10 +2602,9 @@ test files ran each source file. Nothing selects from it yet.
   A file that is not a coverage database, another schema, and a database with no test context
   (a run without `--cov-context=test`) exit 2 and write nothing.
 
-`[tool.coverage.run]` in `pyproject.toml` records what the map needs, in every coverage run,
-breadth's coverage leg included:
+`[tool.coverage.run]` in `pyproject.toml` records what the map needs, in every coverage run:
 
-- `branch = false`: lines, not branches, so the leg's percentage is line coverage;
+- `branch = false`: lines, not branches, so the map holds line coverage;
 - `relative_files = true`: paths relative to the checkout, so shards run on different runners
   combine into one map;
 - `parallel = true`, and `patch = ["subprocess"]`: every child interpreter a test starts is
@@ -2617,7 +2620,7 @@ breadth's coverage leg included:
 `SELECTION_MAP_COV` what to measure. The map is written from a red run too, and the exit is then
 the suite's.
 
-Not yet: the nightly map build in breadth's coverage leg, `tools/ci/select.py` reading the map,
+Not yet: a nightly map build, `tools/ci/select.py` reading the map,
 shadow mode, and the recall study.
 
 ## The rails a change can break

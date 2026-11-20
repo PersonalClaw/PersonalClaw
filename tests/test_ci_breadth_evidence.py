@@ -91,7 +91,7 @@ def test_a_leg_that_may_not_be_reused_always_runs() -> None:
 
 
 #: breadth.yml's suite legs: each runs the suite, so the security-marked modules.
-SUITE_LEGS = ("ubuntu-24.04-3.13", "macos-26-3.12", "ubuntu-24.04-arm-3.13", "coverage")
+SUITE_LEGS = ("ubuntu-24.04-3.13", "macos-26-3.12", "ubuntu-24.04-arm-3.13", "random-order")
 
 
 @pytest.mark.parametrize("leg_id", SUITE_LEGS)
@@ -637,15 +637,15 @@ def test_an_unsettled_green_never_satisfies_a_release() -> None:
 
 
 def test_every_legs_issue_is_found_by_one_search(tmp_path, monkeypatch) -> None:
-    """Twenty-odd legs, one ``search/issues`` call a step, and only the bot's issues' comments."""
+    """Eighteen legs, one ``search/issues`` call a step, and only the bot's issues' comments."""
     gh = _Gh()
     gh.page_size = 2  # the open issues span several pages
-    red_legs = ["audit", "canary", "coverage", "macos-26-3.12", "ubuntu-24.04-3.13"]
+    red_legs = ["audit", "canary", "random-order", "macos-26-3.12", "ubuntu-24.04-3.13"]
     for leg in red_legs:
         gh.open_issue(be.issue_title(leg), f"{be.MARKER}{'0' * 64}\n")
     someone = gh.open_issue(be.issue_title("security"), "", user=_SOMEONE)
     tonight = _all_green(**{f"{leg}/1": _leg(be.RED) for leg in red_legs})
-    assert len({be.leg_of(k) for k in tonight}) >= 20
+    assert len({be.leg_of(k) for k in tonight}) >= 18
     _, done = _night(tmp_path, monkeypatch, gh, tonight, 1)
     assert len(gh.queries) == 2, "one search for the report and one for the issues step"
     assert "author:app/github-actions" in gh.queries[0]
@@ -776,7 +776,7 @@ def test_an_unreadable_search_writes_no_issue_and_fails_the_step_once(
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     actions = [
         be.Action(leg, "open", "1" * 64, (f"{leg}/1",), False)
-        for leg in ("audit", "canary", "coverage")
+        for leg in ("audit", "canary", "random-order")
     ]
     path = tmp_path / "actions.json"
     path.write_text(be.json.dumps([a.__dict__ for a in actions]), encoding="utf-8")

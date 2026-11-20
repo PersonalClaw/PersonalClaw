@@ -149,7 +149,7 @@ mark in `tests/timeout-marks.toml` with the cap and a one-line reason: what the 
 takes the time, why that work is real, and what it was measured at on CI. A table test's slow
 rows carry their caps in a module-level table keyed by the row's name (`ROW_TIMEOUTS` in the
 contract tables, passed to each row by `table_params`). The cap is about twice the worst wall
-time on any CI leg, breadth's coverage leg included. When a census or a fixture is built once
+time on any CI leg. When a census or a fixture is built once
 for a module, whichever of its tests runs first builds it inside its own cap, so every test that
 reads it carries the same mark. A mark that caps a whole module or family at once (a module's
 `pytestmark`, any mark in a `conftest.py`) is refused: it would hide the one test that turned

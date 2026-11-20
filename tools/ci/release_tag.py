@@ -345,12 +345,16 @@ def _breadth_records(
     return records
 
 
+#: The legs breadth no longer runs whose red was advisory: coverage, retired by #5846. A record
+#: no longer has to hold one, and where a record written before holds one, its red still reads as
+#: it did, owned by an open issue rather than refusing a release.
+RETIRED_LEGS = frozenset({"coverage"})
 #: The breadth legs that measure rather than gate (#3911): the next-Ubuntu canary and the two
-#: legs that read its suite (``continue-on-error`` in breadth.yml), and coverage. A release
-#: needs each of them run, and each red one owned by an open issue named for it; every other
-#: leg (each OS, Python and architecture, random-order, security, the installer smoke, the
-#: audit and the union checks) must be green.
-ADVISORY_LEGS = frozenset({"canary", "planned-ids-canary", "shard-union-canary", "coverage"})
+#: legs that read its suite (``continue-on-error`` in breadth.yml), and :data:`RETIRED_LEGS`. A
+#: release needs each of breadth's own run, and each red one owned by an open issue named for it;
+#: every other leg (each OS, Python and architecture, random-order, security, the installer smoke,
+#: the audit and the union checks) must be green.
+ADVISORY_LEGS = frozenset({"canary", "planned-ids-canary", "shard-union-canary"}) | RETIRED_LEGS
 #: The conclusions a finished run's records are read under. A red leg's job fails its run, so a
 #: run whose only reds are advisory concludes ``failure``; the records say which legs. Any other
 #: conclusion (cancelled, timed out, never started) measured nothing a release may rest on.

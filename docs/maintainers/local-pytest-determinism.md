@@ -30,9 +30,8 @@ partition the suite into shards of whole test files (three on Ubuntu, five on ma
 recorded per-file durations (`python -m tools.ci shards`), measure no coverage,
 and cap macOS shards at two xdist workers. The nightly `breadth.yml` runs
 the suite the same way: four shards on Ubuntu and arm64, and six on macOS. Every
-one of these legs sets `PERSONALCLAW_SKIP_APP_BACKENDS=1`. Coverage is measured
-separately, nightly in `breadth.yml`, in six shards of its own
-(`coverage-shard`), and the `coverage` job combines their data into one report.
+one of these legs sets `PERSONALCLAW_SKIP_APP_BACKENDS=1`. No CI leg measures
+coverage (#5846); `make selection-map` runs the suite under coverage locally.
 
 No shard runs the rails. The modules in `tests/rails/`, which check the source
 tree rather than run the product, are left out of every shard plan and run once

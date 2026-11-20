@@ -13,11 +13,12 @@ import re
 import subprocess
 import sys
 import textwrap
+import tomllib
 from pathlib import Path
 
 import pytest
 import yaml
-from ci_run_job import read_run_job
+from ci_run_job import catalogue_entries, entry_of, read_run_job
 from supply_chain_shared import _LOGIN_SHELL_RE, README, REPO_ROOT, _logical_lines
 
 from tools.ci import oci_layout
@@ -28,9 +29,6 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
 #: Where the release builds and smokes every artifact: release.yml calls it as its `artifacts` job.
 ARTIFACTS_WORKFLOW = WORKFLOWS / "release-artifacts.yml"
-
-
-BREADTH_WORKFLOW = WORKFLOWS / "breadth.yml"
 
 
 def _action(step: object) -> str:
@@ -64,12 +62,6 @@ def _as_run(workflow: object) -> object:
     entry's command (``tests/ci_run_job.py``): a leg holds its rules whichever way it runs."""
     listed = REPO_ROOT / "tools" / "ci" / "catalogue.toml"
     return read_run_job(listed.read_text(encoding="utf-8"), workflow)
-
-
-def _breadth_workflow() -> dict[str, object]:
-    workflow = _as_run(yaml.safe_load(BREADTH_WORKFLOW.read_text(encoding="utf-8")))
-    assert isinstance(workflow, dict)
-    return workflow
 
 
 def _step(job: dict[str, object], *, name: str) -> dict[str, object]:
@@ -503,44 +495,95 @@ def test_no_job_that_runs_the_suite_holds_a_token_that_can_write() -> None:
     assert not can_write, can_write
 
 
-def test_the_coverage_job_still_measures_and_keeps_only_its_report() -> None:
-    """The suite is measured in quarters, each under ``--cov`` on its own runner, and the
-    ``coverage`` job combines every quarter's data into the one report it keeps."""
-    workflow = _breadth_workflow()
-    jobs = workflow.get("jobs")
-    assert isinstance(jobs, dict)
-    shard, coverage = jobs.get("coverage-shard"), jobs.get("coverage")
-    assert isinstance(shard, dict) and isinstance(coverage, dict)
-    matrix = shard.get("strategy", {}).get("matrix", {})
-    shards = matrix.get("shard") if isinstance(matrix, dict) else None
-    assert isinstance(shards, list) and len(shards) > 1, shards
+def _measures_coverage(words: list[str], env: dict[str, object]) -> str:
+    """What turns the coverage tracer on in one step, or ``""``: pytest-cov's ``--cov`` or
+    ``--cov=…``, coverage's own ``coverage run``, ``make selection-map`` (the suite traced for the
+    map, #3946), or a ``PYTEST_ADDOPTS`` that names ``--cov``."""
+    if any(w == "--cov" or w.startswith("--cov=") for w in words):
+        return "--cov"
+    if any(a == "coverage" and b == "run" for a, b in zip(words, words[1:])):
+        return "coverage run"
+    if "make" in words and "selection-map" in words:
+        return "make selection-map"
+    addopts = str(env.get("PYTEST_ADDOPTS", "")).split()
+    if any(w == "--cov" or w.startswith("--cov=") for w in addopts):
+        return "PYTEST_ADDOPTS"
+    return ""
 
-    def runs(job: dict[str, object]) -> list[str]:
-        steps = job.get("steps")
-        assert isinstance(steps, list)
-        return [str(step.get("run", "")) for step in steps if isinstance(step, dict)]
 
-    measured = [run for run in runs(shard) if "--cov=personalclaw" in run]
-    assert measured, "no shard of the suite is measured"
-    for run in measured:
-        assert (
-            'tests --shard-list "$RUNNER_TEMP/shard.txt"' in run
-        ), f"each shard must measure its own share of the suite, all {len(shards)} of them: {run}"
-    listing = [run for run in runs(shard) if "tools.ci shards list" in run]
-    want = f"--leg coverage-shard --shard ${{{{ matrix.shard }}}}/{len(shards)}"
-    assert listing and want in " ".join(listing[0].split()), listing
-    assert coverage.get("needs") == ["coverage-shard"]
-    script = "tools/ci/coverage_combine.sh"
-    assert f"sh {script}" in runs(coverage), "no step runs the script that combines the shards"
-    combine = (Path(__file__).resolve().parents[2] / script).read_text(encoding="utf-8")
-    assert "coverage combine" in combine and "coverage xml" in combine, combine
-    assert f'"$found" -ne {len(shards)}' in combine, "the report waits for every shard's data"
-    upload = _step(coverage, name="Upload coverage artifacts").get("with")
-    assert isinstance(upload, dict)
-    assert upload.get("path") == "coverage.xml"
-    assert not any(
-        "git push" in run for run in runs(shard) + runs(coverage)
-    ), "the coverage jobs publish nothing"
+def test_no_job_whose_red_is_its_runs_measures_coverage() -> None:
+    """The coverage tracer slows what it measures, so a timing bound a traced run misses is the
+    tracer's red, not the code's. Breadth's coverage leg reddened its run on just those, on tests
+    every untraced leg passed that night (#5846), and it is gone. A job may still measure the
+    suite (the selection map, #3946, is built from a traced run), but its red is never its run's:
+    it is ``continue-on-error``, like the canary. A leg that runs its entry through run-job is
+    read as the entry's steps, and each step's env is the workflow's, the job's, the entry's own
+    (which run-job sets) and the step's."""
+    entries = catalogue_entries((REPO_ROOT / "tools" / "ci" / "catalogue.toml").read_text("utf-8"))
+    traced = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        text = path.read_text(encoding="utf-8")
+        raw = yaml.safe_load(text)
+        assert isinstance(raw, dict)
+        # The env run-job sets from each entry a job runs, read before the steps are expanded.
+        entry_env = {
+            name: {
+                k: v
+                for step in (job.get("steps") or [])
+                if isinstance(step, dict) and (entry := entry_of(step, entries)) is not None
+                for k, v in dict(getattr(entry, "env", None) or {}).items()
+            }
+            for name, job in (raw.get("jobs") or {}).items()
+            if isinstance(job, dict)
+        }
+        workflow = _as_run(yaml.safe_load(text))
+        assert isinstance(workflow, dict)
+        jobs = workflow.get("jobs")
+        assert isinstance(jobs, dict)
+        for name, job in jobs.items():
+            steps = job.get("steps") if isinstance(job, dict) else None
+            if not isinstance(steps, list) or job.get("continue-on-error") is True:
+                continue
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                env = {
+                    **(workflow.get("env") or {}),
+                    **(job.get("env") or {}),
+                    **entry_env.get(name, {}),
+                    **(step.get("env") or {}),
+                }
+                how = _measures_coverage(str(step.get("run", "")).split(), env)
+                if how and f"{path.name}:{name} ({how})" not in traced:
+                    traced.append(f"{path.name}:{name} ({how})")
+    assert not traced, f"these jobs measure coverage and their red is their run's: {traced}"
+
+
+def test_pytest_measures_no_coverage_unless_a_command_asks() -> None:
+    """pyproject's ``addopts`` reach every pytest, so a ``--cov`` there would trace every leg."""
+    with (REPO_ROOT / "pyproject.toml").open("rb") as f:
+        addopts = tomllib.load(f)["tool"]["pytest"]["ini_options"]["addopts"]
+    words = addopts.split() if isinstance(addopts, str) else list(addopts)
+    assert words and not any(w == "--cov" or w.startswith("--cov") for w in words), words
+
+
+@pytest.mark.parametrize(
+    ("words", "env", "how"),
+    [
+        ("uv run pytest --cov=personalclaw tests", {}, "--cov"),
+        ("uv run pytest --cov personalclaw tests", {}, "--cov"),
+        ("uv run coverage run -m pytest tests", {}, "coverage run"),
+        ("make -j2 selection-map", {}, "make selection-map"),
+        ("uv run pytest tests", {"PYTEST_ADDOPTS": "-q --cov=personalclaw"}, "PYTEST_ADDOPTS"),
+        ("uv run pytest -q tests", {"PYTEST_ADDOPTS": "-q"}, ""),
+        ("uv run coverage combine coverage-data", {}, ""),
+        ("make check", {}, ""),
+    ],
+)
+def test_each_way_a_step_turns_the_tracer_on_is_read(
+    words: str, env: dict[str, object], how: str
+) -> None:
+    assert _measures_coverage(words.split(), env) == how
 
 
 #: Runtimes whose `run`/`exec` hands a command to a fresh container, where the image's
