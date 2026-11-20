@@ -115,6 +115,17 @@ def _what_its_row_says(info: Any, status: str, error: str) -> str:
     return why_it_failed(info) if error else what_it_said(info)
 
 
+def _what_its_trace_says(info: Any, status: str, said: str) -> str:
+    """The trace of the row of the agent *info* describes: a failed one's line, then what it had
+    written before it failed (`schedule_history.failure_trace`), where it was the line alone; ""
+    for any other, whose trace is its line."""
+    from personalclaw.schedule_history import failure_trace
+
+    if status != "failure":
+        return ""
+    return failure_trace(said, printed=str(getattr(info, "result", "") or ""))
+
+
 def settle_agent_run(
     info: Any, *, base_dir: Path | None = None, on_attention: OnAttention | None = None
 ) -> bool:
@@ -168,6 +179,7 @@ def settle_agent_run(
             work_id,
             status=status,
             summary=said,
+            trace=_what_its_trace_says(info, status, said),
             error=error,
             exit_type=_exit_for(status),
         )

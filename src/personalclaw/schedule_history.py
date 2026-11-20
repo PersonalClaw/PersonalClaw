@@ -230,7 +230,7 @@ def summary_for_result(result: Any) -> str:
 
 
 #: How much of a failed command's error output its failure keeps: the end, where a command says
-#: what went wrong. The history row keeps the whole output as its trace.
+#: what went wrong. The history row keeps the whole output as its trace (`failure_trace`).
 _FAILURE_OUTPUT_TAIL = 400
 
 
@@ -256,6 +256,24 @@ def failure_for_result(result: Any) -> str:
     if code:
         return f"exited with code {code}"
     return "the action reported failure"
+
+
+def failure_trace(why: str, *, printed: str = "", errors: str = "") -> str:
+    """The trace of a run that failed or waits on you: *why* (its row's line), then what its work
+    *printed* and wrote to its *errors* output, each under its own heading. *why* alone when it
+    printed nothing.
+
+    🔴 A failed or parked run's trace WAS its line again (`summary = trace = failure`), so opening
+    the row showed the same sentence, and Investigate was handed that one line as the summary, the
+    error and the trace, with nothing to diagnose from: a command's output past the 400 characters
+    its line quotes, a browse run's account of its steps. The row's store caps and redacts this as
+    it does every trace (`ScheduleRunStore`).
+    """
+    parts = [why.strip()]
+    for heading, text in (("Output:", printed), ("Error output:", errors)):
+        if text := str(text or "").strip():
+            parts.append(f"{heading}\n{text}")
+    return "\n\n".join(part for part in parts if part)
 
 
 def late_summary(late: str, summary: str) -> str:
