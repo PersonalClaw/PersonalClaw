@@ -24,6 +24,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from personalclaw import chat_threads
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -37,16 +38,9 @@ def chat_link(state: DashboardState, name: str) -> tuple[str, str]:
     ``("", "")`` when it is on none.
 
     Read from the store each time it is asked, whoever wrote the link: :func:`link`, or a channel
-    app through the SDK's ``SessionManager``. A store that cannot be read answers no link."""
-    if state.sessions is None:
-        return "", ""
-    try:
-        thread, channel_id = state.sessions.get_channel_link(dashboard_history_key(name))
-    except Exception:  # noqa: BLE001 - see the docstring
-        return "", ""
-    if not isinstance(thread, str) or not thread:
-        return "", ""
-    return thread, channel_id if isinstance(channel_id, str) else ""
+    app through the SDK's ``SessionManager``. A store that cannot be read answers no link. The one
+    reading is core's (``chat_threads.chat_link``), which readers below the dashboard ask too."""
+    return chat_threads.chat_link(state.sessions, name)
 
 
 def chat_channel(state: DashboardState, name: str) -> str:
@@ -55,14 +49,9 @@ def chat_channel(state: DashboardState, name: str) -> str:
 
     Where its answers, its notices and its approval prompts go
     (``DashboardState.channel_provider_for``), read from the store each time it is asked, like the
-    link. A store that cannot be read answers none, and nothing is sent anywhere."""
-    if state.sessions is None:
-        return ""
-    try:
-        provider = state.sessions.get_channel_provider(dashboard_history_key(name))
-    except Exception:  # noqa: BLE001 - see the docstring
-        return ""
-    return provider if isinstance(provider, str) else ""
+    link (``chat_threads.chat_channel``). A store that cannot be read answers none, and nothing is
+    sent anywhere."""
+    return chat_threads.chat_channel(state.sessions, name)
 
 
 def linked_chat(state: DashboardState, thread_key: str) -> _ChatSession | None:

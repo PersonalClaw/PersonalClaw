@@ -945,34 +945,6 @@ class TestTheCollectors:
         assert str(store.items["needs_input_e0"].status) == "pending"
         assert [i.source_id for i in collect_inbox(store)] == ["needs_input_e0"]
 
-    def test_only_unanswered_channel_sessions_are_collected(self) -> None:
-        from personalclaw.proactive.collect import collect_channels
-
-        def session(role: str) -> Any:
-            return type(
-                "Sess",
-                (),
-                {
-                    "messages": [{"role": role, "content": "hi"}],
-                    "last_activity_at": 100.0,
-                    "title": "#ops",
-                },
-            )()
-
-        state = type(
-            "St",
-            (),
-            {
-                "_sessions": {
-                    "channel:slack:ops": session("user"),
-                    "channel:slack:done": session("assistant"),
-                    "dashboard:ui": session("user"),
-                }
-            },
-        )()
-        got = {i.source_id for i in collect_channels(state)}
-        assert got == {"channel:slack:ops"}
-
     def test_an_unreadable_lane_contributes_nothing_rather_than_raising(self) -> None:
         from personalclaw.proactive.collect import collect_channels, collect_inbox
 

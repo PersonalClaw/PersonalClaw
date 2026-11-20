@@ -258,6 +258,12 @@ def _age(first_proposed_at: str, now: datetime | None) -> str:
     return "under an hour"
 
 
+def how_long(since: str, now: datetime | None) -> str:
+    """How long ago *since* (an ISO time) was, in the words a digest uses (:func:`_age`), or "".
+    The channel lane says with it how long a chat's messages have waited."""
+    return _age(since, now)
+
+
 def carried_note(first_proposed_at: str, now: datetime | None) -> str:
     """The line a carried proposal carries: that it is carried over, and how long it has waited."""
     age = _age(first_proposed_at, now)
