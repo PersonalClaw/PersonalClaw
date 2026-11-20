@@ -81,6 +81,38 @@ PROVIDER_FOR_ACTION: dict[str, str] = {
 AUTO_CAPABLE_PROVIDERS: frozenset[str] = frozenset({"inbox-op"})
 
 
+def capability_set(declared: Any) -> frozenset[str]:
+    """The providers a digest may dispatch with nobody watching, as *declared*: a digest node's
+    own ``capabilities``, or what its run recorded of them (the run's ``auto_capabilities``).
+
+    A list of provider names, or the JSON text of one. Anything else, or a list that names
+    none, is the default set (:data:`AUTO_CAPABLE_PROVIDERS`): an unreadable declaration
+    collapses to the default rather than to everything, so it never widens the fence.
+    """
+    raw = declared
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raw = None
+    if not isinstance(raw, (list, tuple)):
+        return AUTO_CAPABLE_PROVIDERS
+    names = frozenset(str(n).strip() for n in raw if str(n).strip())
+    return names or AUTO_CAPABLE_PROVIDERS
+
+
+def always_runs(action_type: str, capabilities: frozenset[str] = AUTO_CAPABLE_PROVIDERS) -> bool:
+    """Whether a rule taught for a proposal of *action_type* can ever answer one on its own: its
+    provider is in the set the digest may run unattended, *capabilities* (its node's, which is
+    :data:`AUTO_CAPABLE_PROVIDERS` unless the node widens it). Rules are read only for a proposal
+    that set admits (`auto_execute` asks the set first), so for any other kind an Always or a
+    Never would be stored and never applied. The digest view says it on each row from its run's
+    own set (``always_runs``); the card offers Always and Never only where it is true, and
+    ``answer.persist_rule`` teaches no other.
+    """
+    return PROVIDER_FOR_ACTION.get(action_type, "") in capabilities
+
+
 def answer_capabilities(action_type: str) -> frozenset[str]:
     """What her Yes on one proposal admits: the provider of the proposal's own kind, and only it.
 
@@ -728,8 +760,10 @@ __all__ = [
     "AutoAction",
     "AutoExecResult",
     "DeferredProposal",
+    "always_runs",
     "answer_capabilities",
     "auto_execute",
+    "capability_set",
     "default_budget_check",
     "dumps",
     "not_done_note",

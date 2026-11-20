@@ -558,8 +558,12 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
           <Button size="xs" variant="secondary" loading={busy === `${n} no`} onClick={() => onReply(`${n} no`)}>No</Button>
           {/* "Always" is offered ONLY when the run recorded a pattern to teach. Without one there
               is nothing narrow to remember, and inventing a pattern from the action type would
-              teach a rule far broader than the one thing the user is looking at. */}
-          {row.pattern_key ? (
+              teach a rule far broader than the one thing the user is looking at. Nor for a kind
+              no rule can ever answer (the server's `always_runs`: by default filing a task always
+              asks), where an Always would be stored and never applied. */}
+          {row.pattern_key && row.always_runs === false ? (
+            <span data-type="caption" className="self-center text-on-surface-low">asks you each time</span>
+          ) : row.pattern_key ? (
             <>
               <Button size="xs" variant="ghost" loading={busy === `always yes ${n}`} onClick={() => onReply(`always yes ${n}`)}
                 title={`Always allow ${row.pattern_key}`}>Always</Button>

@@ -316,25 +316,18 @@ def _ledger_writer(ctx: ActionContext) -> Any:
 def _capabilities(action_config: dict[str, Any]) -> frozenset[str]:
     """The frozen set of providers this digest may DISPATCH.
 
-    Read off the node, defaulting to `AUTO_CAPABLE_PROVIDERS` (just `inbox-op`). This is a
-    second, narrower fence than the trigger-level one in `triggers/screen.py`: that one decides
-    whether the trigger may run `triage-digest` AT ALL, and it cannot express "and the digest
-    may then archive but not send", because the only provider it sees on the node is
-    `triage-digest` itself. A malformed declaration collapses to the default rather than to
-    everything — an unparseable capability list must never widen a fence.
+    Read off the node (`autoexec.capability_set`), defaulting to `AUTO_CAPABLE_PROVIDERS` (just
+    `inbox-op`). This is a second, narrower fence than the trigger-level one in
+    `triggers/screen.py`: that one decides whether the trigger may run `triage-digest` AT ALL, and
+    it cannot express "and the digest may then archive but not send", because the only provider it
+    sees on the node is `triage-digest` itself. A malformed declaration collapses to the default
+    rather than to everything — an unparseable capability list must never widen a fence. The run
+    records the set it ran under (``auto_capabilities``), so its card and its replies say Always
+    only where a rule taught there could answer on its own.
     """
-    from personalclaw.proactive.autoexec import AUTO_CAPABLE_PROVIDERS
+    from personalclaw.proactive.autoexec import capability_set
 
-    raw = action_config.get("capabilities")
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except ValueError:
-            raw = None
-    if not isinstance(raw, (list, tuple)):
-        return AUTO_CAPABLE_PROVIDERS
-    names = frozenset(str(n).strip() for n in raw if str(n).strip())
-    return names or AUTO_CAPABLE_PROVIDERS
+    return capability_set(action_config.get("capabilities"))
 
 
 def _auto_stage(action_config: dict[str, Any], ctx: ActionContext, cfg: Any) -> Any:
@@ -477,6 +470,7 @@ class TriageDigestActionProvider(ActionProvider):
         summary["window_start"] = since_iso
         summary["ledger_rows"] = _record(result, ctx)
         summary["notes"] = list(result.notes)
+        summary["auto_capabilities"] = sorted(_capabilities(action_config))
         if result.batch.degraded:
             # The digest went out at its floor: the items, the gate applied, and no new
             # proposals, which its body says. A run that did that is degraded, and says so, not a

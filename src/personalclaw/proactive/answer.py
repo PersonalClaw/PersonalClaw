@@ -130,7 +130,14 @@ def write_reply_row(
     return True
 
 
-def persist_rule(door: Door, pattern: str, approve: bool) -> tuple[str, str]:
+#: What a proposal whose kind no rule can answer is called, in the sentence that says nothing was
+#: remembered for it (:func:`persist_rule`). A kind with no words here is "this kind of proposal".
+_ASKS_EACH_TIME = {"create_task": "filing a task"}
+
+
+def persist_rule(
+    door: Door, pattern: str, approve: bool, *, action_type: str, runs_on_its_own: bool
+) -> tuple[str, str]:
     """Teach one approval rule through the SAME guarded write the rules manager POSTs to.
 
     Returns ``(key, error)``. The write goes through ``MemoryService.set_semantic``, so the
@@ -138,11 +145,22 @@ def persist_rule(door: Door, pattern: str, approve: bool) -> tuple[str, str]:
     proposal with no pattern has nothing to remember, which is said rather than raised: the card
     offers no "always" for one, and a typed "always" still answers the proposal once. A memory that
     cannot be reached is said the same way: the answer stands, and nothing was taught.
+
+    🔴 Nor does a proposal of a kind no rule can ever answer: *runs_on_its_own* is false, which is
+    the digest view's ``always_runs`` on its row (`autoexec.always_runs`, under the set its run
+    may dispatch unattended). Rules are read only for a proposal that set admits, which filing a
+    task by default is not, so an Always taught for one was stored, never applied, and the next
+    digest asked again while the card had said "Always allow". A Never is as inert. The card
+    offers neither for such a row, and a typed "always yes" or "always no" answers it once and says
+    nothing was remembered.
     """
     from personalclaw.proactive.approval import ApprovalRule, Verdict, rule_to_value
 
     if not pattern.strip():
         return "", "this proposal has no pattern to remember, so nothing was taught"
+    if not runs_on_its_own:
+        what = _ASKS_EACH_TIME.get(action_type, "this kind of proposal")
+        return "", f"{what} always asks for your answer, so no rule could answer it for you"
     rule = ApprovalRule(
         pattern=pattern,
         verdict=Verdict.APPROVE if approve else Verdict.DENY,
@@ -379,7 +397,13 @@ async def answer(run_id: str, text: str, *, door: Door) -> Answered:
         rule_key, rule_error = "", ""
         if parsed.persists_rule:
             rule_key, rule_error = await asyncio.to_thread(
-                persist_rule, door, str(row.get("pattern_key", "") or ""), parsed.approves
+                persist_rule,
+                door,
+                str(row.get("pattern_key", "") or ""),
+                parsed.approves,
+                action_type=about["action_type"],
+                # The view's own word on the row, so the reply and the card can never disagree.
+                runs_on_its_own=row.get("always_runs") is True,
             )
         reason, detail = "", ""
         if parsed.approves:
