@@ -72,7 +72,6 @@
 {"site": "src/personalclaw/dashboard/memory_holds.py::_ask_then_write::_sel().log_api_access", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/dashboard/memory_write_gate.py::memory_write_middleware._mw::sel().log_api_access", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/dashboard/memory_write_gate.py::memory_write_middleware._mw::sel().log_api_access #2", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/dashboard/repeated_steps.py::ask_first::sel().log_api_access", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/dashboard/running_turn.py::rebind::sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/dashboard/server.py::start_dashboard.sel_audit_middleware::sel().log_api_access", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/dashboard/server.py::start_dashboard.sel_audit_middleware::sel().log_api_access #2", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}

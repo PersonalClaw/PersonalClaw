@@ -33,6 +33,10 @@ const H = vi.hoisted(() => ({
   agents: { fn: null as null | (() => Promise<unknown>) },
 }))
 
+// The confirm dialog, answered by the test: the room's question before a cut-off turn runs again.
+const confirmSpy = vi.hoisted(() => vi.fn(async (_opts: unknown) => true))
+vi.mock('../../ui/dialog', () => ({ confirm: (opts: unknown) => confirmSpy(opts) }))
+
 vi.mock('../../lib/api', async () => {
   const real = await vi.importActual<typeof import('../../lib/api')>('../../lib/api')
   return {
@@ -114,6 +118,7 @@ beforeEach(() => {
   H.archiveRoom.mockReset()
   H.addRoomMember.mockReset()
   H.continueRoom.mockReset()
+  confirmSpy.mockClear()
   H.room.fn = async () => detail()
   H.agents.fn = async () => ({ agents: [], default_agent: '' })
 })
@@ -341,6 +346,31 @@ describe('🔴 following a round', () => {
 
     expect(H.continueRoom).toHaveBeenCalledWith('pricing-debate')
     expect(H.postRoomMessage, 'the question is already on the transcript').not.toHaveBeenCalled()
+  })
+
+  it('asks before Continue runs a cut-off turn that changed something, and continues only on her yes', async () => {
+    H.room.fn = async () => secondRound({ round_running: false })
+    const detail = {
+      title: 'Run this turn again?',
+      said: 'This turn finished 1 step that may have changed something. Running the turn again replaces this attempt and may repeat it.',
+      steps: [{ tool: 'write_file', target: 'notes/price.md' }],
+      more: 0,
+      confirm: 'feedfacefeedfacefeedfacefeedface',
+    }
+    H.continueRoom
+      .mockRejectedValueOnce(new ApiError('This turn finished 1 step…', 409, 'retry_repeats_steps', detail))
+      .mockResolvedValue({ room: room({ round_running: true }) })
+    confirmSpy.mockImplementationOnce(async () => false)
+    mount()
+
+    await userEvent.click(await screen.findByRole('button', { name: /^Continue/ }))
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1))
+    expect((confirmSpy.mock.calls[0][0] as { title: string }).title).toBe('Run this turn again?')
+    expect(H.continueRoom.mock.calls, 'no yes, so nothing more was sent').toEqual([['pricing-debate']])
+
+    H.continueRoom.mockRejectedValueOnce(new ApiError('This turn finished 1 step…', 409, 'retry_repeats_steps', detail))
+    await userEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    await waitFor(() => expect(H.continueRoom).toHaveBeenCalledWith('pricing-debate', detail.confirm))
   })
 })
 
