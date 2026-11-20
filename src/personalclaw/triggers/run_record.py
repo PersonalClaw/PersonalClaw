@@ -164,18 +164,21 @@ def _row(
 ) -> ScheduleRun:
     """The row one run records: a `ScheduleRun`, timed from *began* to *finished*.
 
-    A failure's line, trace and error are why it failed: *error* when the dispatch rendered one
-    (the WHAT/WHY/FIX envelope of a raise), else the exception, else why the result says it failed
+    A failure's line and error are why it failed: *error* when the dispatch rendered one (the
+    WHAT/WHY/FIX envelope of a raise), else the exception, else why the result says it failed
     (`schedule_history.failure_for_result`). Anything else records what the action reported
     (`status_for_result`): its sentence for a person as the line, and what it printed as the trace;
-    a park's line says it waits on you, and on what. A *late* run that did its work records
-    ``ran_late``, and every row of one that did not fail says first why it was late.
+    a park's line says it waits on you, and on what. A failed or parked run's trace is its line,
+    then what the action printed and wrote to its error output (`failure_trace`). A *late* run that
+    did its work records ``ran_late``, and every row of one that did not fail says first why it
+    was late.
     """
     from personalclaw.guardrails.failure import budget_refusal
     from personalclaw.schedule_history import (
         UNSETTLED_STATUSES,
         ScheduleRun,
         failure_for_result,
+        failure_trace,
         late_summary,
         status_for_result,
         summary_for_result,
@@ -184,6 +187,7 @@ def _row(
 
     failure = ""
     work_id = ""
+    printed = str(getattr(result, "stdout", "") or "") if result is not None else ""
     if _held_by_a_spend_ceiling(result, exc):
         status = "needs_input"
         cap = budget_refusal(exc)
@@ -192,13 +196,15 @@ def _row(
         status = "failure"
         why = error or (f"{type(exc).__name__}: {exc}" if exc is not None else "")
         failure = why or failure_for_result(result)
-        summary = trace = failure
+        errors = str(getattr(result, "stderr", "") or "") if result is not None else ""
+        summary, trace = failure, failure_trace(failure, printed=printed, errors=errors)
     else:
         status = status_for_result(result)
         summary = summary_for_result(result)
-        trace = str(getattr(result, "stdout", "") or "") if result is not None else ""
+        trace = printed
         if status == "waiting":
-            summary = trace = parks.waiting_line(result)
+            summary = parks.waiting_line(result)
+            trace = failure_trace(summary, printed=printed)
         if late:
             if status == "success":
                 status = "ran_late"
