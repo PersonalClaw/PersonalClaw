@@ -396,10 +396,21 @@ function fetchReleases({ request = require("https").request, userAgent }) {
 function downloadAsset(asset, file, { request = require("https").request, userAgent, onProgress = () => {}, cancelled = () => false }) {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let out = null;
+    // The partial file goes once its stream has let go of it, and only then does the download fail:
+    // a stream still opening makes the file after an earlier remove, so a caller that looked right
+    // after the failure could still find it.
     const fail = (why) => {
       if (settled) return;
       settled = true;
-      fs.rm(file, { force: true }, () => reject(why instanceof UpdateFailure ? why : new UpdateFailure("download")));
+      const failure = why instanceof UpdateFailure ? why : new UpdateFailure("download");
+      const remove = () => fs.rm(file, { force: true }, () => reject(failure));
+      if (out && !out.closed) {
+        out.once("close", remove);
+        out.destroy();
+      } else {
+        remove();
+      }
     };
     getOnce(request, asset.url, { hosts: DOWNLOAD_HOSTS, redirects: MAX_REDIRECTS, headers: { "User-Agent": userAgent }, timeoutMs: DOWNLOAD_IDLE_MS }, (res, status) => {
       if (status !== 200) {
@@ -407,7 +418,6 @@ function downloadAsset(asset, file, { request = require("https").request, userAg
         fail(new UpdateFailure("download"));
         return;
       }
-      let out;
       try {
         out = fs.createWriteStream(file, { flags: "wx", mode: 0o600 });
       } catch {
@@ -721,6 +731,16 @@ function makeAppUpdater({
   let stopping = false;
   /** The private folder of the download under way, which the start's sweep leaves alone. */
   let activeDir = null;
+  /** The step under way (Update's download, or Restart to finish's copy): it settles once it has
+   *  removed what it does not keep. */
+  let inFlight = null;
+  const track = (step) => {
+    inFlight = step;
+    const done = () => {
+      if (inFlight === step) inFlight = null;
+    };
+    step.then(done, done);
+  };
   const uid = getuid();
   /** What is said while nothing failed: why this copy updates from the releases page, if it does. */
   const standing = where.how === "page" || where.how === "dev" ? sentenceFor(where.why, where) : "";
@@ -923,7 +943,7 @@ function makeAppUpdater({
     if (!state.available || !sameVersion(state.available.version, version)) return { ok: false, sentence: "That version is not the one on offer. Check again." };
     if (!state.available.installable) return { ok: false, sentence: state.sentence || sentenceFor(where.why, where) };
     busy = true;
-    (async () => {
+    track((async () => {
       let dir = null;
       try {
         set({ phase: "downloading", sentence: "", last: null, dropped: null, progress: { received: 0, total: 0 } });
@@ -975,6 +995,7 @@ function makeAppUpdater({
         log(`the app update to ${version} stopped: ${err && err.message}`);
         set({ phase: "failed", progress: null, sentence: err instanceof UpdateFailure ? err.message : sentenceFor("") });
       } finally {
+        let removing = null;
         if (dir && !readyCopy) {
           // During the quit the folder goes at once: the process may not live to finish an rm.
           if (stopping) {
@@ -984,13 +1005,15 @@ function makeAppUpdater({
               log(`the app update's folder ${dir} could not be removed: ${err && err.message}`);
             }
           } else {
-            fs.rm(dir, { recursive: true, force: true }, () => {});
+            removing = fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
           }
         }
         activeDir = null;
         busy = false;
+        // The step settles once its folder is gone.
+        if (removing) await removing;
       }
-    })();
+    })());
     return { ok: true };
   }
 
@@ -1019,7 +1042,7 @@ function makeAppUpdater({
     }
     busy = true;
     const ready = readyCopy;
-    (async () => {
+    track((async () => {
       try {
         set({ phase: "placing", sentence: `Putting PersonalClaw ${ready.version} in place…` });
         if (readyState(ready) !== "ok") throw new UpdateFailure("put_in_place");
@@ -1051,7 +1074,7 @@ function makeAppUpdater({
         // A staged copy holds the updater until the quit: nothing else starts while the app restarts.
         if (!staged) busy = false;
       }
-    })();
+    })());
     return { ok: true };
   }
 
@@ -1226,7 +1249,8 @@ function makeAppUpdater({
       return last;
     },
     /** The quit's first step: no more checks, a ready copy nobody restarted on is removed, and a
-     *  download still under way keeps nothing when it ends. */
+     *  download or a Restart to finish still under way keeps nothing when it ends. Resolves once
+     *  that step has ended and removed what it made: its folder, or the copy beside the app. */
     stop() {
       stopping = true;
       if (timer) clearTimer(timer);
@@ -1234,6 +1258,8 @@ function makeAppUpdater({
       if (retryTimer) clearTimer(retryTimer);
       retryTimer = null;
       discardReady();
+      const ends = () => {};
+      return inFlight ? inFlight.then(ends, ends) : Promise.resolve();
     },
     check,
     noteGateway,
