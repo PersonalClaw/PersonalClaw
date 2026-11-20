@@ -8,9 +8,12 @@ Three lanes, three functions, one rule each about what "accumulated" means:
   `evaluate_alert` fires once at ingestion and never re-evaluates. Re-polling here would be a
   second ingestion path with a second set of alert semantics. Only rows about no chat: the digest
   is no chat's work (`inbox_reach`), so a chat's own row reaches neither its model nor its run.
-* **channel** — a `channel:` session whose last turn is not the assistant's. That is the
-  cheapest honest reading of "unresolved": the machine has the ball. Sessions the user has
-  since answered themselves fall out with no bookkeeping.
+* **channel** — a chat that continues on a channel thread (its link, ``chat_threads.chat_link``)
+  whose messages since its last answer wait. That is the cheapest honest reading of "unresolved":
+  the machine has the ball. Chats the user has since answered themselves fall out with no
+  bookkeeping. An item names the chat, its channel, how many messages wait and how long, never what
+  they say: what the digest collects reaches its model and its run's record, which other chats'
+  agents can read (``workflows.chat_runs``). A Temporary or Incognito chat is not collected.
 * **run** — the Run Ledger's own rows for recent runs that have ENDED (the substrate's
   materiality), NOT a fresh classification. A run that failed, was cancelled or was handed to you
   is `error`, one whose effect LANDED is `action`, one that only produced words is `response`. A
@@ -149,32 +152,77 @@ def collect_inbox(store: Any, *, since_ts: float = 0.0, state: Any = None) -> li
     return out
 
 
-def _channel_item(key: str, session: Any) -> CollectedItem | None:
-    """One `channel:` session as the lane collects it: None unless the machine has the ball."""
-    if not str(key).startswith("channel:"):
+def _persistent(state: Any, key: str, thread: str) -> bool:
+    """Whether the chat *key*, on the channel thread *thread*, keeps a lasting record: a Temporary
+    or Incognito one leaves nothing for the digest to carry. Asked of the one reader of a session's
+    mode (``memory_writes.session_mode``: the live chat, the registry a channel marks, the
+    transcript, strictest wins), under the chat's key and the thread's, which a channel app marks
+    when its thread is made private from the channel. A mode nothing can say is not persistent."""
+    from personalclaw.constants import dashboard_history_key
+    from personalclaw.memory_writes import PERSISTENT, session_mode
+
+    if session_mode(dashboard_history_key(key), state=state) != PERSISTENT:
+        return False
+    return session_mode(thread, state=state) in (None, PERSISTENT)
+
+
+def _channel_item(state: Any, key: str, session: Any) -> CollectedItem | None:
+    """The chat *key* as the channel lane collects it: None unless it continues on a channel
+    thread and the machine has the ball, and for a Temporary or Incognito chat.
+
+    🔴 It collected a session whose KEY started with ``channel:``, which no chat has: a message
+    through the channel door opens an ordinary chat (``chat-<n>-<s>``) and links it to its thread
+    (``chat_threads.chat_link``), so the section was always empty while the digest read as if it
+    had checked. And it put the waiting message's words in its ``detail``.
+
+    The item names the chat's title and channel, how many messages wait since its last answer and
+    how long the first has waited, never what they say (see the module docstring).
+    """
+    from personalclaw.chat_threads import chat_channel, chat_link
+
+    sessions = getattr(state, "sessions", None)
+    thread, _channel_id = chat_link(sessions, key)
+    if not thread or not _persistent(state, key, thread):
         return None
     messages = list(getattr(session, "messages", []) or [])
-    if not messages:
+    waiting = []
+    for message in reversed(messages):
+        role = (
+            message.get("role", "") if isinstance(message, dict) else getattr(message, "role", "")
+        )
+        if role == "assistant":
+            break
+        if role == "user":
+            waiting.append(message)
+    if not waiting:
         return None
-    last = messages[-1]
-    role = str(last.get("role", "") if isinstance(last, dict) else getattr(last, "role", ""))
-    if role == "assistant":
-        return None
-    last_activity = float(getattr(session, "last_activity_at", 0.0) or 0.0)
+    from datetime import datetime, timezone
+
+    from personalclaw.channel_trust import channel_display_name
+    from personalclaw.proactive.carry import how_long
+
+    first = waiting[-1]
+    since = str(first.get("ts", "") if isinstance(first, dict) else getattr(first, "ts", ""))
+    waited = how_long(since, datetime.now(timezone.utc))
+    channel = channel_display_name(chat_channel(sessions, key)) or "its channel"
     title = str(getattr(session, "title", "") or "").strip() or str(key)
+    count = len(waiting)
+    said = f"{count} message{'' if count == 1 else 's'} waiting on {channel}"
+    last_activity = float(getattr(session, "last_activity_at", 0.0) or 0.0)
     return CollectedItem(
         source=SOURCE_CHANNEL,
         source_id=str(key),
-        title=f"unanswered in {title}",
-        detail=_clip(last.get("content", "") if isinstance(last, dict) else str(last)),
-        sender=role or "user",
+        title=_clip(f"unanswered in {title}"),
+        detail=f"{said}, for {waited}" if waited else said,
+        sender="user",
         materiality=MATERIALITY_RESPONSE,
         ts=f"{last_activity:.0f}",
     )
 
 
 def collect_channels(state: Any, *, since_ts: float = 0.0) -> list[CollectedItem]:
-    """`channel:` sessions whose last turn is not the assistant's — the machine has the ball."""
+    """Chats on a channel thread whose waiting messages have no answer: the machine has the ball
+    (:func:`_channel_item`)."""
     out: list[CollectedItem] = []
     try:
         sessions = dict(getattr(state, "_sessions", {}) or {})
@@ -186,7 +234,7 @@ def collect_channels(state: Any, *, since_ts: float = 0.0) -> list[CollectedItem
             last_activity = float(getattr(session, "last_activity_at", 0.0) or 0.0)
             if since_ts and last_activity and last_activity < since_ts:
                 continue
-            collected = _channel_item(str(key), session)
+            collected = _channel_item(state, str(key), session)
             if collected is not None:
                 out.append(collected)
         except Exception:  # noqa: BLE001
@@ -340,7 +388,7 @@ def current_item(
             return _inbox_item(row, _digest_reads(state)) if row is not None else None
         if source == SOURCE_CHANNEL and state is not None:
             session = dict(getattr(state, "_sessions", {}) or {}).get(source_id)
-            return _channel_item(source_id, session) if session is not None else None
+            return _channel_item(state, source_id, session) if session is not None else None
         if source == SOURCE_RUN:
             from personalclaw.workflows import store as run_store
 
