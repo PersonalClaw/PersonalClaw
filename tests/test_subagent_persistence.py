@@ -874,7 +874,7 @@ class TestOrphanReconciliation:
         ):
             await orphans.reconcile_orphans(manager._agents)
 
-        mock_check.assert_called_once_with(88888, 1234567890.5)
+        mock_check.assert_called_once_with(88888, 1234567890.5, None)
 
     @pytest.mark.asyncio
     async def test_already_tombstoned_skipped(self, agent_root):
@@ -982,21 +982,23 @@ class TestOrphanNotice:
         orphans.announce_orphans(
             notes,
             [
-                orphans.Orphan("a1", "Research the venues", "/tmp/a1/result.txt"),
-                orphans.Orphan("b2", "Summarize the thread"),
+                orphans.Orphan("a1", "Research the venues", "/tmp/a1/result.txt", orphans.STOPPED),
+                orphans.Orphan("b2", "Summarize the thread", process=orphans.STOPPED),
             ],
         )
         ((kind, title, body),) = notes.sent
         assert kind == notification_kinds.SUBAGENT
         assert title == "A restart stopped 2 background agents"
         assert body.split("\n\n") == [
-            "a1 — Research the venues: its result so far is saved at /tmp/a1/result.txt.",
-            "b2 — Summarize the thread: it saved no result.",
+            "a1 — Research the venues: stopped; its result so far is saved at /tmp/a1/result.txt.",
+            "b2 — Summarize the thread: stopped; it saved no result.",
         ]
 
     def test_a_single_agent_reads_as_one(self, agent_root):
         notes = _Notes()
-        orphans.announce_orphans(notes, [orphans.Orphan("a1", "Research the venues")])
+        orphans.announce_orphans(
+            notes, [orphans.Orphan("a1", "Research the venues", process=orphans.STOPPED)]
+        )
         assert notes.sent[0][1] == "A restart stopped a background agent"
 
     def test_nothing_is_said_when_nothing_was_left(self, agent_root):
@@ -1077,8 +1079,9 @@ class TestOrphanNotice:
             await asyncio.gather(*pending)
 
         ((_kind, title, body),) = gateway.dashboard_state.sent
-        assert title == "A restart stopped a background agent"
-        assert body == "gone1 — Draft the weekly note: it saved no result."
+        # Its process had exited with the gateway that ran it: nothing was left to stop.
+        assert title == "A restart found a background agent that had already ended"
+        assert body == "gone1 — Draft the weekly note: it had already ended; it saved no result."
         assert (agent_root / "gone1" / "tombstone.json").exists()
 
 

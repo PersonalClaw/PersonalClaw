@@ -14,6 +14,7 @@ import shutil
 import time
 from pathlib import Path
 
+from personalclaw import process_facts
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.llm.cleanup import _is_safe_path
@@ -139,6 +140,20 @@ def update_state(agent_id: str, **fields: object) -> None:
     state.update(fields)
     state["updated_at"] = time.time()
     _atomic_write(p, state)
+
+
+def record_pid(agent_id: str, pid: int) -> None:
+    """Record the process an agent runs in, so a later run can stop it if this one leaves it
+    behind: its pid, when the pid was recorded, and the kernel's start mark for it
+    (``process_facts``). The mark names that one process for as long as it runs, so a later run
+    can tell it from another program the system gave the pid to since."""
+    found = process_facts.process(pid)
+    update_state(
+        agent_id,
+        pid=pid,
+        pid_recorded_at=time.time(),
+        pid_started=found.started if found is not None else None,
+    )
 
 
 # ── result streaming ─────────────────────────────────────────────────

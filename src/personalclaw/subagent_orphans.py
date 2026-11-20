@@ -24,6 +24,7 @@ from collections.abc import Container, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from personalclaw import process_facts
 from personalclaw.sel import sel
 from personalclaw.subagent import _redact
 from personalclaw.subagent_persistence import (
@@ -39,6 +40,13 @@ logger = logging.getLogger(__name__)
 #: The agents one notice names; a restart that stopped more says how many it left out.
 _NAMED_IN_NOTICE = 8
 
+#: What the start-up pass found of a left-behind agent's process (:attr:`Orphan.process`): it was
+#: still the agent's and was stopped; it had exited, or its pid now runs another program, so the
+#: agent had already ended; or it is running and its facts could not be read to tell whose it is.
+STOPPED = "stopped"
+GONE = "gone"
+UNCHECKED = "unchecked"
+
 
 @dataclass(frozen=True)
 class Orphan:
@@ -50,6 +58,10 @@ class Orphan:
     name: str
     #: Where its result was saved, or "" when it saved none.
     result_path: str = ""
+    #: What the pass found of its process: :data:`STOPPED`, :data:`GONE` or :data:`UNCHECKED`.
+    process: str = GONE
+    #: The pid it left running, for :data:`UNCHECKED`; 0 otherwise.
+    pid: int = 0
 
 
 class _Tracked:
@@ -74,9 +86,10 @@ async def reconcile_orphans(tracked: Container[str]) -> list[Orphan]:
 
     For each orphan (folder with state.json but no tombstone.json,
     and not one of *tracked* — the agents this run is managing):
-    - PID alive → SIGKILL, tombstone (gateway_restart)
-    - PID dead + result → tombstone (gateway_restart, result_available)
-    - PID dead + no result → tombstone (gateway_restart, notification_pending)
+    - PID alive and still the agent's process → SIGKILL, tombstone (gateway_restart)
+    - PID dead, or now another program's → tombstone, the process left alone
+    - recovery is result_available with a result, else notification_pending
+    Each orphan says what became of its process (:attr:`Orphan.process`).
     """
     settled: list[Orphan] = []
     try:
@@ -101,12 +114,23 @@ async def reconcile_orphans(tracked: Container[str]) -> list[Orphan]:
                     pass
 
                 recovery = "undeliverable"
+                process = GONE
                 if pid and is_pid_alive(pid):
                     # Use pid_recorded_at (when PID was actually written) instead of
                     # started (folder creation time) to avoid false negatives under load
                     pid_recorded_at = state.get("pid_recorded_at", state.get("started", 0))
-                    if is_orphan_process(pid, pid_recorded_at):
+                    ours = is_orphan_process(pid, pid_recorded_at, state.get("pid_started"))
+                    if ours is None:
+                        process = UNCHECKED
+                    elif not ours:
+                        logger.info(
+                            "Orphan %s: pid %s now runs another program; left it alone",
+                            agent_id,
+                            pid,
+                        )
+                    else:
                         kill_orphan_pid(pid)
+                        process = STOPPED
                         try:
                             sel().log_tool_invocation(
                                 session_key=f"subagent:{agent_id}",
@@ -158,6 +182,8 @@ async def reconcile_orphans(tracked: Container[str]) -> list[Orphan]:
                         agent_id=agent_id,
                         name=_redact(name),
                         result_path=str(_agent_dir(agent_id) / "result.txt") if has_result else "",
+                        process=process,
+                        pid=(pid or 0) if process == UNCHECKED else 0,
                     )
                 )
             except Exception:
@@ -172,12 +198,15 @@ async def reconcile_orphans(tracked: Container[str]) -> list[Orphan]:
     return settled
 
 
-def _title(stopped: int, kept: int, ended: int) -> str:
-    """What the restart did, in the notice's title: "A restart stopped 2 background agents, kept 3
-    that had not started and ended one that could not start"."""
+def _title(orphans: Sequence[Orphan], kept: int, ended: int) -> str:
+    """What the restart did, in the notice's title: "A restart stopped 2 background agents, found
+    one that had already ended, kept 3 that had not started and ended one that could not start"."""
+    found = [o.process for o in orphans]
     clauses: list[str] = []
     for verb, count, tail in (
-        ("stopped", stopped, ""),
+        ("stopped", found.count(STOPPED), ""),
+        ("found", found.count(GONE), " that had already ended"),
+        ("left", found.count(UNCHECKED), " running that it could not check"),
         ("kept", kept, " that had not started"),
         ("ended", ended, " that could not start"),
     ):
@@ -210,7 +239,7 @@ def announce_orphans(
     from personalclaw import notification_kinds
 
     ended = sum(1 for taken in taken_back if taken.now == ENDED)
-    title = _title(len(orphans), len(taken_back) - ended, ended)
+    title = _title(orphans, len(taken_back) - ended, ended)
     # One paragraph per agent and no markup: the notification list shows a body's first line as
     # plain text, and the detail renders the rest as markdown, so plain paragraphs read in both.
     lines = []
@@ -220,7 +249,10 @@ def announce_orphans(
             if orphan.result_path
             else "it saved no result."
         )
-        lines.append(f"{orphan.agent_id} — {orphan.name or 'no task recorded'}: {outcome}")
+        lines.append(
+            f"{orphan.agent_id} — {orphan.name or 'no task recorded'}: "
+            f"{_what_became(orphan)}; {outcome}"
+        )
     lines += [f"{t.agent_id} — {t.name or 'no task recorded'}: {said(t)}" for t in taken_back]
     count = len(lines)
     lines = lines[:_NAMED_IN_NOTICE]
@@ -230,6 +262,16 @@ def announce_orphans(
         state.notify(notification_kinds.SUBAGENT, title, _redact("\n\n".join(lines)))
     except Exception:
         logger.warning("could not tell the owner what a restart did to its agents", exc_info=True)
+
+
+def _what_became(orphan: Orphan) -> str:
+    if orphan.process == STOPPED:
+        return "stopped"
+    if orphan.process == UNCHECKED:
+        return (
+            f"still running as process {orphan.pid}, which PersonalClaw could not check was its own"
+        )
+    return "it had already ended"
 
 
 def is_pid_alive(pid: int) -> bool:
@@ -245,19 +287,25 @@ def is_pid_alive(pid: int) -> bool:
         return False
 
 
-def is_orphan_process(pid: int, spawned_at: float) -> bool:
-    """Check if PID belongs to the original subagent (not a recycled PID).
+def is_orphan_process(pid: int, spawned_at: float, started: object = None) -> bool | None:
+    """Whether *pid* still runs the process the agent ran in, not another program the system gave
+    the pid to since; ``None`` when its facts cannot be read to tell.
 
-    Compares /proc/{pid} creation time against the recorded spawn time.
-    Returns False if the process was created after the agent was spawned
-    (indicating PID reuse).
+    *started* is the kernel's start mark the spawn recorded (``record_pid``): the process is the
+    agent's when its mark now is the same. A folder from before the mark was recorded has only
+    *spawned_at*, when the pid was recorded: the process is the agent's when it started no later
+    than then (two seconds' slack, for a clock read late). On Linux and macOS alike
+    (``process_facts``), so no platform judges every leftover someone else's.
     """
-    try:
-        proc_stat = os.stat(f"/proc/{pid}")
-        # Process was created before or around the time we spawned the agent
-        return proc_stat.st_ctime <= spawned_at + 2.0
-    except (FileNotFoundError, OSError):
-        return False
+    found = process_facts.process(pid)
+    if found is None:
+        return None
+    if isinstance(started, int) and not isinstance(started, bool):
+        return found.started == started
+    began = process_facts.started_at(found)
+    if began is None:
+        return None
+    return began <= spawned_at + 2.0
 
 
 def kill_orphan_pid(pid: int) -> None:
