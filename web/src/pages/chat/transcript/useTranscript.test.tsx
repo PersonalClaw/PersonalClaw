@@ -71,6 +71,22 @@ beforeEach(async () => {
 })
 afterEach(() => cleanup())
 
+describe("a manual automation's Run now is a live card", () => {
+  it('🔴 the transcript keeps it out of the folded steps', () => {
+    // Red before: the transcript's live cards were workflow runs and loops only, so the card the
+    // reply points to ("use its Run now, shown with this reply") was folded into "Worked through N
+    // steps", and no button was under the reply until she opened them.
+    const data = { trigger: { id: 'manual:kitchen-quote-comparison', name: 'Kitchen quote comparison', kind: 'manual' }, needs_grant: [] }
+    const made = { kind: 'tool' as const, id: 'c1', tool: 'automation_create', done: true, output: `Created it.\n<automation-data>${JSON.stringify(data)}</automation-data>` }
+    const turns: ChatTurn[] = [
+      userTurn('make me a button that runs the comparison', '2026-11-20T09:00:00Z'),
+      { role: 'assistant', segments: [made, { kind: 'text', text: 'Use its Run now, shown with this reply.' }] },
+    ]
+    const { result } = mount({ initial: turns })
+    expect(result.current.t.liveCards.has(made)).toBe(true)
+  })
+})
+
 describe('a quote says whose words it is', () => {
   it('🔴 names a widget\'s message as a widget\'s, and yours as yours', () => {
     // Red before: a passage quoted from a widget's message read "You said:", and the draft it

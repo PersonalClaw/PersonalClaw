@@ -152,8 +152,9 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
       const wf = liveCards.has(seg) ? workflowRefFromTool(t.tool, t.output) : null
       if (wf) return <WorkflowProgressCard key={seg.id || i} refObj={wf} />
       // An automation made to run when she runs it ("a button that runs …") is shown with its
-      // Run now, the button she asked for.
-      const manual = t.done && t.ok !== false ? manualAutomationFromTool(t.tool, t.output) : null
+      // Run now, the button she asked for: once, where the chat first names it, under the reply
+      // that points to it (`liveManualAutomationCards`).
+      const manual = liveCards.has(seg) ? manualAutomationFromTool(t.tool, t.output) : null
       if (manual) return <ManualAutomationCard key={seg.id || i} refObj={manual} />
       // The helpers a `subagent_run` call started, each a row under the call (#3820).
       const started = t.done ? helpersFromTool(t.tool, t.output) : []
@@ -242,8 +243,9 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
   // A loop's or a workflow run's card is a LIVE, auto-refreshing widget that must stay visible:
   // never buried inside the collapsed "Worked for 12s · N steps" disclosure, which would hide the
   // one thing the user came back to check. Pull those out of the work fold and render them at the
-  // top level between the work and the final answer: one per loop or run (`liveCards`). So is an
-  // ask still waiting for work the chat started (`waitsPastItsTurn`).
+  // top level between the work and the final answer: one per loop or run (`liveCards`). So is a
+  // manual automation's Run now, which the reply tells her to use, and an ask still waiting for
+  // work the chat started (`waitsPastItsTurn`).
   const isCard = (s: Segment) => liveCards.has(s)
   // A question still waiting on her is never folded away either: the agent is halted on it.
   const waitsForHer = (s: Segment) => s.kind === 'question' && (s as QuestionSegment).answerable && !(s as QuestionSegment).outcome
