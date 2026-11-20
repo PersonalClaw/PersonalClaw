@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { playCue } from '../../design/soundCues'
-import { isAChatsPhase, workPhaseOf, type WorkPhase } from '../../lib/workPhase'
-import { api, ApiError, type ContextPart, type RunState } from '../../lib/api'
+import { isAChatsPhase, runActOf, workPhaseOf, type WorkPhase } from '../../lib/workPhase'
+import { api, ApiError, type ContextPart, type RunAct, type RunState } from '../../lib/api'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../../lib/data'
 import { useStreamCoalescer } from './useStreamCoalescer'
@@ -352,6 +352,8 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // apply; each snapshot sets it again, as its `stream_seq` does the answer's.
   const [turnPhase, setTurnPhase] = useState<WorkPhase | null>(null)
   const [turnLine, setTurnLine] = useState('')
+  // What the running call does while the phase is `tool` (`work_phase`'s `act`), for the orb.
+  const [turnAct, setTurnAct] = useState<RunAct | null>(null)
   // How the turn this view follows ended, from its last frame (`done` or `error`, and its ending
   // line), for the head of its reply to settle on; cleared when the next turn starts.
   const [turnEnding, setTurnEnding] = useState<TurnEnding | null>(null)
@@ -438,6 +440,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     const running = !!rs.turn
     setTurnPhase(running ? workPhaseOf(rs.phase) : null)
     setTurnLine(running ? String(rs.line ?? '') : '')
+    setTurnAct(running ? runActOf(rs.act) : null)
     setTakesSteers(running && !!rs.steerable)
     setTurnLastStep(running ? rs.last_step_at ?? null : null)
     // A turn's last frame says how it ended. A snapshot's idle run state says nothing of the turn
@@ -547,6 +550,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     runningTurnRef.current = null
     setTurnPhase(null)
     setTurnLine('')
+    setTurnAct(null)
     setTurnLastStep(null)
     setTurnEnding(null)
     setQueued([])  // queue is per-session; clear when the open session changes
@@ -1281,7 +1285,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     bookmarks, setBookmarks,
     // The live turn: the streaming claim, how it ends, what it is doing, whether it takes a steer.
     streaming, streamingRef, markStreaming, sayTurnEnded, srAnnounce, turnSeqRef, stoppedTurnRef, runningTurnRef,
-    takesSteers, takesSteersRef, turnPhase, turnLine, turnEnding, turnStart, turnLastStep, turnUsage, sessionSkillsEpoch, wsConnected,
+    takesSteers, takesSteersRef, turnPhase, turnAct, turnLine, turnEnding, turnStart, turnLastStep, turnUsage, sessionSkillsEpoch, wsConnected,
     // The read that opened the session.
     loadingHistory, missing, setMissing, loadFailure, setLoadAttempt,
     // What the frames and the reads say beside the transcript.

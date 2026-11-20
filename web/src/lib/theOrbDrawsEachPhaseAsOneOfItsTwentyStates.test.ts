@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { WORK_PHASES, type WorkPhase } from './workPhase'
 import {
   MARK_SCENE_OF, ORB_SCENES, ORB_SCENE_OF, ORB_STAGES, ORB_STAGE_LABELS, ORB_STATE_OF_AGENT_ROW, ORB_STATE_OF_PIP, SCENE_MOVES,
-  markSceneOf, markSceneOfPhase, orbSceneOf, type OrbScene,
+  TOOL_SCENE_OF_ACT, markSceneOf, markSceneOfPhase, orbSceneOf, type OrbScene,
 } from './orbState'
 import { voiceOrbStage } from '../ui/composer/voiceOrb'
 
@@ -29,7 +29,7 @@ describe('every phase is one of the twenty states', () => {
     ['thinking', 'thinking'],
     ['planning', 'planning'],
     ['searching', 'searching'],
-    // any other tool runs, as a command does, until the gateway says what a call does
+    // any other tool, whose call says nothing of what it does, runs as a command does
     ['tool', 'running'],
     ['delegating', 'delegating'],
     ['streaming', 'answering'],
@@ -43,9 +43,11 @@ describe('every phase is one of the twenty states', () => {
     expect(orbSceneOf(phase)).toBe(scene)
   })
 
-  it('reading and editing are drawn but driven by no phase yet', () => {
-    const driven = new Set<OrbScene>([...WORK_PHASES.map((p) => ORB_SCENE_OF[p]), ...ORB_STAGES])
-    expect(ORB_SCENES.filter((s) => !driven.has(s))).toEqual(['reading', 'editing'])
+  it('every state is driven: by a phase, by what a tool step’s call does, or by a stage', () => {
+    const byPhase = new Set<OrbScene>([...WORK_PHASES.map((p) => ORB_SCENE_OF[p]), ...ORB_STAGES])
+    expect(ORB_SCENES.filter((s) => !byPhase.has(s)), 'reading and editing are a tool step’s alone').toEqual(['reading', 'editing'])
+    const driven = new Set<OrbScene>([...byPhase, ...Object.values(TOOL_SCENE_OF_ACT)])
+    expect(ORB_SCENES.filter((s) => !driven.has(s))).toEqual([])
   })
 
   it('the table cannot be written to', () => {

@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { AgentOrb } from './AgentOrb'
-import { ORB_SCENE_OF, ORB_STATE_OF, SCENE_MOVES } from '../lib/orbState'
+import { TOOL_STEP_HOLD_MS } from './orb/useHeldToolStep'
+import { ORB_SCENE_OF, ORB_STATE_OF, SCENE_MOVES, markSceneOfPhase } from '../lib/orbState'
 import { WORK_PHASES, WORK_PHASE_LOOKS, phaseFamily, phaseLabel, type WorkPhase } from '../lib/workPhase'
 
 // ── The agent orb: each phase drawn as its state of the halftone orb, in the orb tokens (#6117) ──
@@ -168,6 +169,119 @@ describe('high contrast', () => {
       expect(orb.dataset.orbInkToken, phase).toBe('CanvasText')
       expect(orb.dataset.orbGlyph ?? null, phase).toBe(BADGED[phase] ?? null)
       unmount()
+    }
+  })
+})
+
+// A tool step is drawn as what its call does, as the gateway says it (`work_phase`'s `act`): one
+// that reads is reading, one that edits is editing, one that runs or says nothing is running a
+// command. The image keeps the phase's name, and a row's 12 px mark keeps the sphere's own form.
+describe('a tool step is drawn as what its call does', () => {
+  it.each([['read', 'reading'], ['edit', 'editing'], ['run', 'running'], [null, 'running']] as const)('a call that says %s is drawn %s, moving, named for its phase', (act, scene) => {
+    for (const size of [64, 20] as const) {
+      const { container, unmount } = render(<AgentOrb phase="tool" act={act} size={size} />)
+      const orb = orbOf(container)
+      expect(orb.dataset.orbScene, `${size} px`).toBe(scene)
+      expect(orb.dataset.orbPhase).toBe('tool')
+      expect(orb.dataset.agentOrb).toBe('animated')
+      expect(screen.getByRole('img')).toHaveAccessibleName(phaseLabel('tool'))
+      unmount()
+    }
+  })
+
+  it('at 12 px a reading or an editing step is the same still mark as any tool step', () => {
+    const marks = (['read', 'edit', 'run', null] as const).map((act) => {
+      const { container, unmount } = render(<AgentOrb phase="tool" act={act} size={12} />)
+      const scene = orbOf(container).dataset.orbScene
+      unmount()
+      return scene
+    })
+    expect(marks).toEqual(Array(4).fill(markSceneOfPhase('tool')))
+  })
+
+  it('an act in any other phase draws nothing of it', () => {
+    for (const phase of WORK_PHASES.filter((p) => p !== 'tool')) {
+      const { container, unmount } = render(<AgentOrb phase={phase} act="read" />)
+      expect(orbOf(container).dataset.orbScene, phase).toBe(ORB_SCENE_OF[phase])
+      unmount()
+    }
+  })
+})
+
+// A tool step's state holds at least TOOL_STEP_HOLD_MS (1.2 s) from when the step began, so a read
+// or an edit that is over in milliseconds is still seen. Only the turn thinking or planning again
+// waits for it; the next step, a wait on the owner, the answer, the turn's end and a stage replace it
+// at once, and a step that ran longer than the hold gives way at once. The image's name says the
+// phase as it is all along (`docs/design/agent-orb.md`, "Phase to state").
+describe('a tool step holds its state long enough to be seen', () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  /** The orb at 20 px, a tool step that reads begun, and a way to move it on. */
+  function aReadBegins(size: 20 | 64 | 12 = 20) {
+    const { container, rerender } = render(<AgentOrb phase="tool" act="read" size={size} />)
+    const to = (phase: WorkPhase, act: 'read' | 'edit' | 'run' | null = null, stage: 'speaking' | null = null) =>
+      rerender(<AgentOrb phase={phase} act={act} stage={stage} size={size} />)
+    const wait = (ms: number) => act(() => { vi.advanceTimersByTime(ms) })
+    return { orb: () => orbOf(container), to, wait }
+  }
+
+  it.each(['thinking', 'planning'] as const)('a read over in milliseconds stays reading for 1.2 s while the turn is %s, named for the phase', (phase) => {
+    expect(TOOL_STEP_HOLD_MS).toBe(1200)
+    const { orb, to, wait } = aReadBegins()
+    wait(10)
+    to(phase)
+    expect(orb().dataset.orbScene).toBe('reading')
+    expect(orb().dataset.orbPhase).toBe(phase)
+    expect(screen.getByRole('img')).toHaveAccessibleName(phaseLabel(phase))
+    wait(TOOL_STEP_HOLD_MS - 11)
+    expect(orb().dataset.orbScene).toBe('reading')
+    wait(1)
+    expect(orb().dataset.orbScene).toBe(ORB_SCENE_OF[phase])
+  })
+
+  it('the next step replaces a held one at once, and holds from its own start', () => {
+    const { orb, to, wait } = aReadBegins()
+    to('thinking')
+    wait(400)
+    to('tool', 'edit')
+    expect(orb().dataset.orbScene).toBe('editing')
+    to('thinking')
+    wait(TOOL_STEP_HOLD_MS - 1)
+    expect(orb().dataset.orbScene).toBe('editing')
+    wait(1)
+    expect(orb().dataset.orbScene).toBe('thinking')
+  })
+
+  it.each(['approval', 'input', 'streaming', 'done', 'error', 'retrying'] as const)('%s replaces a tool step at once, held or not', (phase) => {
+    for (const thinksFirst of [false, true]) {
+      const { orb, to, wait } = aReadBegins()
+      if (thinksFirst) { to('thinking'); wait(100); expect(orb().dataset.orbScene).toBe('reading') }
+      to(phase)
+      expect(orb().dataset.orbScene, `${phase}, thought first: ${thinksFirst}`).toBe(ORB_SCENE_OF[phase])
+      cleanup()
+    }
+  })
+
+  it('a stage replaces a tool step at once', () => {
+    const { orb, to } = aReadBegins()
+    to('tool', 'read', 'speaking')
+    expect(orb().dataset.orbScene).toBe('speaking')
+  })
+
+  it('a step that ran longer than the hold gives way to thinking at once', () => {
+    const { orb, to, wait } = aReadBegins()
+    to('tool', 'run')
+    wait(TOOL_STEP_HOLD_MS + 300)
+    to('thinking')
+    expect(orb().dataset.orbScene).toBe('thinking')
+  })
+
+  it('a row’s 12 px mark holds nothing: it is the phase’s own mark at once', () => {
+    const { orb, to } = aReadBegins(12)
+    for (const phase of ['thinking', 'approval', 'tool', 'done'] as const) {
+      to(phase, phase === 'tool' ? 'edit' : null)
+      expect(orb().dataset.orbScene, phase).toBe(markSceneOfPhase(phase))
     }
   })
 })

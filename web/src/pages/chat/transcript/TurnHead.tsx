@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AgentOrb } from '../../../ui/AgentOrb'
 import { cx } from '../../../ui/cx'
 import { prefersReducedMotion } from '../../../design/motion'
+import type { RunAct } from '../../../lib/api'
 import { phaseLabel, type WorkPhase } from '../../../lib/workPhase'
 import { MIN_HOLD_MS, bloomsFor, fadeMs, useHeldEnding, type TurnEnding } from '../../../ui/turnEnding'
 
@@ -20,11 +21,14 @@ export const SHOW_DELAY_MS = 150
 type Stage = 'hidden' | 'shown' | 'leaving'
 const WAITING_TO_START: TurnEnding = { phase: 'queued', line: '', outcome: null }
 
-export function TurnHead({ running, phase, line, ending, onShown, className }: {
+export function TurnHead({ running, phase, act = null, line, ending, onShown, className }: {
   /** Whether this page holds a running turn (the stream's claim). */
   running: boolean
   /** The running turn's phase, `null` until the gateway has said one or once its last frame came. */
   phase: WorkPhase | null
+  /** What the running call does while the phase is `tool` (`work_phase`'s `act`), which the orb
+   *  draws; `null` when the gateway says nothing of it. */
+  act?: RunAct | null
   /** The gateway's line for the phase. */
   line: string
   /** How the turn ended, once its last frame said so. */
@@ -77,7 +81,7 @@ export function TurnHead({ running, phase, line, ending, onShown, className }: {
     <div data-turn-head data-turn-head-stage={stage}
       className={cx('flex min-w-0 items-center gap-s transition-opacity duration-(--duration-medium) ease-out motion-reduce:transition-none', className)}
       style={{ opacity: stage === 'leaving' ? 0 : 1 }}>
-      <AgentOrb phase={shows.phase} onSettled={onSettled} bloom={bloomsFor(running && phase ? null : ending)} />
+      <AgentOrb phase={shows.phase} act={running && phase ? act : null} onSettled={onSettled} bloom={bloomsFor(running && phase ? null : ending)} />
       <p data-turn-line data-type="body-m" aria-live={saying ? 'polite' : 'off'} className="min-w-0 truncate text-on-surface-var">
         {shows.line.trim() || phaseLabel(shows.phase)}
       </p>

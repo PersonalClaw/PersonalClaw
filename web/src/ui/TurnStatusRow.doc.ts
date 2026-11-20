@@ -10,6 +10,7 @@ const doc: UiDoc = {
   props: [
     { name: 'running', description: 'Whether a turn runs: the row shows SHOW_DELAY_MS after it starts and, once it ends, goes, or holds its ending first.' },
     { name: 'phase', description: "The turn's phase from the phase contract, null until the gateway has said one (drawn as waiting to start)." },
+    { name: 'act', description: "What the running call does while the phase is 'tool' (work_phase's act: 'read', 'edit' or 'run'), null otherwise. The orb draws it: reading, editing or running a command, each held 1.2 s from the step's start while the turn thinks again; the line still says the phase. Not passed once the turn has ended." },
     { name: 'line', description: "The gateway's line for the phase: the tool by name while one runs. Empty falls back to the phase's word." },
     { name: 'startedAt', description: 'When the turn began (epoch ms), from its run state; null counts from when the row first saw it running.' },
     { name: 'lastStepAt', description: "When the turn's runtime last did anything (epoch ms, the run state's last_step_at); after a minute of nothing in a working phase the row says No new activity for 1m. Null counts from when the turn began." },

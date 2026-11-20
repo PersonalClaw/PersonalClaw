@@ -123,6 +123,19 @@ describe('a turn that runs in the peeked chat', () => {
     expect(line()).toBe('Needs your OK: shell')
   })
 
+  it('draws a tool step as what its call does, and a call that says nothing as one that runs', async () => {
+    await peek(runningState({ session: KEY, phase: 'tool', act: 'read', line: 'read_file', seq: 3 }))
+    await waitFor(() => expect(orb()?.dataset.orbScene).toBe('reading'))
+    expect(line()).toBe('read_file')
+    frame(runningState({ session: KEY, phase: 'tool', act: 'edit', line: 'edit_file', seq: 4 }))
+    expect(orb()!.dataset.orbScene).toBe('editing')
+    frame(runningState({ session: KEY, phase: 'tool', act: 'run', line: 'bash', seq: 5 }))
+    expect(orb()!.dataset.orbScene).toBe('running')
+    frame(runningState({ session: KEY, phase: 'tool', act: null, line: 'mcp__notes__append', seq: 6 }))
+    expect(orb()!.dataset.orbScene).toBe('running')
+    expect(line()).toBe('mcp__notes__append')
+  })
+
   it('a frame for another chat, or one older than what it holds, changes nothing', async () => {
     await peek(runningState({ session: KEY, phase: 'tool', line: 'Terminal ls', seq: 5 }))
     await waitFor(() => expect(orb()?.dataset.orbPhase).toBe('tool'))

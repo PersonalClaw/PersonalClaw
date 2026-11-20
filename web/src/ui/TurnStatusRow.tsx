@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { matchBinding } from '../app/keymap'
 import { prefersReducedMotion } from '../design/motion'
+import type { RunAct } from '../lib/api'
 import { WORK_PHASE_LOOKS, phaseLabel, type WorkPhase } from '../lib/workPhase'
 import { AgentOrb } from './AgentOrb'
 import { Tooltip } from './Tooltip'
@@ -95,11 +96,14 @@ const onMotionChange = (cb: () => void) => {
 
 type Stage = 'hidden' | 'shown' | 'ending' | 'leaving'
 
-export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = null, usage, onStop, stopShortcut = true, onShown, ending = null, className }: {
+export function TurnStatusRow({ running, phase, act = null, line, startedAt, lastStepAt = null, usage, onStop, stopShortcut = true, onShown, ending = null, className }: {
   /** Whether a turn runs: the row shows a moment after it starts and, once it ends, goes, or holds its `ending` first. */
   running: boolean
   /** The turn's phase, `null` until the gateway has said one (waiting to start). */
   phase: WorkPhase | null
+  /** What the running call does while the phase is `tool` (`work_phase`'s `act`), which the orb
+   *  draws; `null` when the gateway says nothing of it. */
+  act?: RunAct | null
   /** The gateway's line for the phase: the tool by name while one runs. */
   line: string
   /** When the turn began (epoch ms), or `null` for when the row first saw it running. */
@@ -215,7 +219,7 @@ export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = nu
     <div data-turn-status="" data-phase={shows} data-turn-stage={stage}
       className={cx('flex min-w-0 items-center gap-s transition-opacity duration-(--duration-medium) ease-out motion-reduce:transition-none', className)}
       style={stage === 'leaving' && !reduced ? { opacity: 0 } : undefined}>
-      <AgentOrb phase={shows} size={20} onSettled={onSettled} bloom={bloomsFor(ends ? ending : null)} />
+      <AgentOrb phase={shows} act={ends ? null : act} size={20} onSettled={onSettled} bloom={bloomsFor(ends ? ending : null)} />
       <span data-turn-state="" data-type="body-s" className="min-w-0 truncate text-on-surface">{words}</span>
       {turns ? (
         <span data-turn-word="" aria-hidden="true" data-type="body-s" className="shrink-0 text-on-surface-var">

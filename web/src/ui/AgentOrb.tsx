@@ -2,10 +2,12 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { computedToken, onEditorTokensChange } from '../design/editorTheme'
 import { prefersReducedMotion } from '../design/motion'
 import { ORB_STAGE_LABELS, ORB_STATE_OF, SCENE_MOVES, markSceneOfPhase, orbSceneOf, type OrbBadge, type OrbScene, type OrbStage } from '../lib/orbState'
+import type { RunAct } from '../lib/api'
 import { WORK_PHASE_LOOKS, phaseLabel, type WorkPhase } from '../lib/workPhase'
 import { cx } from './cx'
 import { drawFrame, type Inks, type Rgb } from './orb/halftone'
 import { SCENES } from './orb/scenes'
+import { useHeldToolStep } from './orb/useHeldToolStep'
 import { useSceneMorph } from './orb/useSceneMorph'
 import { runDots, tintOf, useOnScreen } from './orbDots'
 
@@ -128,9 +130,15 @@ export function orbInksOf(tokens: Record<Exclude<keyof Inks, 'dark'>, string>): 
   }
 }
 
-export function AgentOrb({ phase, stage = null, size = 20, className, onSettled, bloom = true }: {
+export function AgentOrb({ phase, act = null, stage = null, size = 20, className, onSettled, bloom = true }: {
   /** The turn's phase, from the phase contract. Never an orb state or a status line's words. */
   phase: WorkPhase
+  /** What the call does while the phase is `tool`, as the gateway says it (`work_phase`'s `act`):
+   *  it draws a call that reads as reading and one that edits as editing. Nothing in any other
+   *  phase, and nothing at 12 px, where a row's mark is the sphere's own form. A tool step's state
+   *  holds `TOOL_STEP_HOLD_MS` (1.2 s) from the step's start while the turn thinks or plans again;
+   *  any other phase or a stage replaces it at once. */
+  act?: RunAct | null
   /** What holds that is not a phase: a capture, a transcription, a reply read aloud, the gateway
    *  away. It wins over the phase while it is set. */
   stage?: OrbStage | null
@@ -148,8 +156,9 @@ export function AgentOrb({ phase, stage = null, size = 20, className, onSettled,
   const look = ORB_STATE_OF[phase]
   const mark = size === 12
   // At 12 px the orb is a still mark, in the sphere's own form for its state: a scene does not hold
-  // at that size.
-  const scene = mark ? markSceneOfPhase(phase, stage) : orbSceneOf(phase, stage)
+  // at that size. A tool step's state holds 1.2 s from when the step began while the turn only thinks
+  // again, so a call over in milliseconds is still seen (`orb/useHeldToolStep.ts`).
+  const scene = useHeldToolStep(mark ? markSceneOfPhase(phase, stage) : orbSceneOf(phase, stage, act))
   const [motion, contrast] = useSyncExternalStore(onOrbMediaChange, mediaSnapshot, mediaSnapshot).split('|') as ['reduced' | 'motion', Contrast]
   const hidden = useSyncExternalStore(onVisibilityChange, visibility, visibility) === 'hidden'
   const tokens = orbInkTokens(contrast)

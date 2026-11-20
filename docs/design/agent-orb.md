@@ -99,15 +99,21 @@ with its ×, and then goes; after that, with no turn running, nothing on the pag
 - The voice states move with a level. Until the voice paths hand the orb the microphone's or the
   reply's level, it is a smooth, irregular stand-in, so the drawing rises and falls like a voice
   without claiming to measure one.
-- Reading and editing are drawn and in the gallery's code, but nothing drives them yet: they need the
-  gateway to say what a tool call does (read, edit or run). Until it does, every tool call is drawn as
-  running a command.
+- A tool step is drawn as what its call does, as the gateway says it (`work_phase`'s `act`): reading
+  for a call that reads, editing for one that edits, and running a command for one that runs and for
+  one the gateway says nothing of, such as a tool an MCP server serves. A read or an edit on
+  PersonalClaw's own runtime is over in a few milliseconds, before the morph into its state has
+  arrived, so a step's state holds at least 1.2 s from when the step began (`TOOL_STEP_HOLD_MS`,
+  `web/src/ui/orb/useHeldToolStep.ts`) while the turn thinks or plans again. The next step, a wait on
+  the owner, the answer, the turn's end and a stage replace it at once, and a step that ran longer
+  than the hold gives way at once. The line beside the orb and the image's name say the phase as it
+  is all along, so for up to 1.2 s the orb draws a step that has ended while the line says Thinking.
 
 ## Phase to state
 
-Every phase maps to one of the twenty states (`ORB_SCENE_OF`), and the few things that drive the orb
-without being a phase are a closed set of typed stages (`ORB_STAGES`), each named by the page that
-knows it. The text always names the exact phase or stage: colour, motion and the drawing never carry
+Every phase maps to one of the twenty states (`ORB_SCENE_OF`), a tool step by what its call does
+(`TOOL_SCENE_OF_ACT`), and the few things that drive the orb without being a phase are a closed set
+of typed stages (`ORB_STAGES`), each named by the page that knows it. The text always names the exact phase or stage: colour, motion and the drawing never carry
 it alone. The exact words and their lengths per surface are #3899's.
 
 | Phase or stage | Meaning | State | Status text |
@@ -118,7 +124,7 @@ it alone. The exact words and their lengths per surface are #3899's.
 | `thinking` | started, no answer yet | thinking | Thinking |
 | `planning` | making or revising a plan | planning | Planning |
 | `searching` | searching knowledge, the web or the files | searching | the phase's line, such as "Searching your knowledge" |
-| `tool` | running any other tool | running a command, until the gateway says what a call does | the tool's own label |
+| `tool` | running any other tool | by what the call does (`act`): reading for `read`, editing for `edit`, running a command for `run` or for a call that says nothing; held 1.2 s from the step's start while the turn thinks again | the tool's own label |
 | `delegating` | handing work to helpers | delegating | the phase's line, such as "Handing off to 2 helpers" |
 | `streaming` | writing its answer | answering | Writing |
 | `retrying` | a retry or a fail-over of the model call is pending | retrying | the phase's line |
