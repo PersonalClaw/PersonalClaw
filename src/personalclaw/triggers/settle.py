@@ -104,6 +104,17 @@ STOPPED_LINE = "It was stopped before it finished."
 OnAttention = Callable[[Any, Any], None]
 
 
+def _what_its_row_says(info: Any, status: str, error: str) -> str:
+    """What the row of the agent *info* describes says, by the *status* it ended with."""
+    if status == "declined":
+        return DECLINED_LINE
+    if status == "stopped":
+        return str(getattr(info, "error", "") or "") or STOPPED_LINE
+    if status == "needs_input":  # the refusal's own sentence
+        return str(getattr(info, "error", "") or "")
+    return why_it_failed(info) if error else what_it_said(info)
+
+
 def settle_agent_run(
     info: Any, *, base_dir: Path | None = None, on_attention: OnAttention | None = None
 ) -> bool:
@@ -123,7 +134,7 @@ def settle_agent_run(
         from personalclaw.config.loader import config_dir
         from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
         from personalclaw.schedule_history import ScheduleRunStore
-        from personalclaw.subagent import agent_work_id
+        from personalclaw.subagent import DAY_SPEND_CEILING, agent_work_id
 
         if trigger_id.startswith(LIFECYCLE_TRIGGER_PREFIX):
             return False
@@ -132,7 +143,10 @@ def settle_agent_run(
         # Its owner stopped it (or a stop of what started it did): `SubagentInfo.cancelled`, which
         # a stop sets and nothing else does. Its error is the stop's own reason, not a failure.
         stopped = not declined and getattr(info, "cancelled", False) is True
-        error = "" if declined or stopped else str(getattr(info, "error", "") or "")
+        # The day's spend ceiling refused a call it made (`SubagentInfo.ended_by`): held, as a fire
+        # the ceiling holds before it runs is, with the refusal's own sentence, and no failure.
+        held = not (declined or stopped) and getattr(info, "ended_by", "") == DAY_SPEND_CEILING
+        error = "" if declined or stopped or held else str(getattr(info, "error", "") or "")
         refused = list(getattr(info, "refused", None) or [])
         status = (
             "declined"
@@ -140,15 +154,14 @@ def settle_agent_run(
             else (
                 "stopped"
                 if stopped
-                else "failure" if error else "refused" if refused else "success"
+                else (
+                    "needs_input"
+                    if held
+                    else "failure" if error else "refused" if refused else "success"
+                )
             )
         )
-        if declined:
-            said = DECLINED_LINE
-        elif stopped:
-            said = str(getattr(info, "error", "") or "") or STOPPED_LINE
-        else:
-            said = why_it_failed(info) if error else what_it_said(info)
+        said = _what_its_row_says(info, status, error)
         work_id = agent_work_id(agent_id)
         taken = ScheduleRunStore(home).settle_sync(
             trigger_id,
@@ -159,7 +172,7 @@ def settle_agent_run(
             exit_type=_exit_for(status),
         )
         if taken and not (declined or stopped):
-            why = refused_line(refused) if status == "refused" else error
+            why = refused_line(refused) if status == "refused" else said if held else error
             _took(
                 trigger_id,
                 work_id,

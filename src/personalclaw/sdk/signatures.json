@@ -3504,7 +3504,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "workflow_run"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "starter_ended"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "never_ran"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "stopped_by_you"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "stopped_by_you"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "ended_by"}
    ],
    "returns": "None"
   },

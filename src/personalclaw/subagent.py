@@ -137,6 +137,11 @@ def tool_approval_id(agent_id: str, request_id: object) -> str:
     return f"subagent:{agent_id}:{request_id}"
 
 
+#: `SubagentInfo.ended_by` for an agent the day's spend ceiling ended, refusing one of its calls.
+#: Not a run's own cap: that one resets with nothing, so its refusal is the agent's failure.
+DAY_SPEND_CEILING = "day_budget"
+
+
 def agent_work_id(agent_id: str) -> str:
     """How a trigger's history row names the agent its fire started (`ActionResult.work_id`), so
     the row can say how that agent's run ended when it does. The same string is the agent's
@@ -323,6 +328,11 @@ class SubagentInfo:
     never_ran: bool = False
     # She stopped it herself (`cancel`'s `by_you`): told the same way. Last, as above.
     stopped_by_you: bool = False
+    #: What ended it, typed, where its record needs more than the flags above: `DAY_SPEND_CEILING`
+    #: when the day's spend ceiling refused a call it made (`guardrails.failure.budget_refusal`, its
+    #: ``scope`` "day"). Its trigger's run is then held as a fire the ceiling holds before it runs
+    #: is, and counts toward no pause (`triggers.settle.settle_agent_run`).
+    ended_by: str = ""
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1584,6 +1594,8 @@ class SubagentManager:
             cap = budget_refusal(exc)  # a spend cap's refusal is said as itself, and not traced
             if not info.reaped:
                 info.error = cap.sentence() if cap is not None else str(exc)
+                if cap is not None and cap.scope == "day":
+                    info.ended_by = DAY_SPEND_CEILING
                 info.done = True
                 Stats().inc_subagent_failed()
                 self._write_tombstone(info, "error")
