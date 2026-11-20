@@ -78,13 +78,14 @@ def test_a_quoted_field_after_a_comma_and_a_space_is_one_cell(tmp_path, monkeypa
 
 
 def test_plain_csv_text_is_read_as_before(tmp_path, monkeypatch):
-    """Unquoted cells, a blank line between rows and Windows line endings read as they did."""
+    """Unquoted cells, a blank line between rows and Windows line endings read as they did. A
+    plain number is written as a number (``documents.csv_numbers``)."""
     text = "Region,Q1\r\nEMEA,120\r\n\r\nAPAC,99.5\r\n"
 
     assert _sheet_from(tmp_path, monkeypatch, text) == [
         ["Region", "Q1"],
-        ["EMEA", "120"],
-        ["APAC", "99.5"],
+        ["EMEA", 120],
+        ["APAC", 99.5],
     ]
 
 

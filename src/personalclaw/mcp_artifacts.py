@@ -396,7 +396,10 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "A single tab's rows, as JSON text: an array of row arrays (row 0 = header)",  # noqa: E501
                     },
-                    "csv": {"type": "string", "description": "Single-sheet CSV text"},
+                    "csv": {
+                        "type": "string",
+                        "description": "Single-sheet CSV text. A cell below the header whose text is a plain number (12, -3.5, 0.25: no leading zero, separator, sign but a minus, exponent or trailing zero) is written as a number; every other cell stays text",  # noqa: E501
+                    },
                     "format": {
                         "type": "string",
                         "description": "Output format: 'xlsx' (default) or 'csv' (one tab and no formulas: a cell whose text begins with =, +, -, @, a tab or a carriage return is saved behind a single quote and opens as text, while numbers stay numbers)",  # noqa: E501
@@ -2638,6 +2641,7 @@ def _sheet_model(
     elif csv_text.strip():
         import csv
 
+        from personalclaw.documents.csv_numbers import typed_rows
         from personalclaw.knowledge.readers import delimited_rows
 
         # Read the way Knowledge reads a .csv file, so a quoted field holding a comma, a line
@@ -2647,7 +2651,9 @@ def _sheet_model(
         except csv.Error as exc:
             _audit("denied", error=f"unreadable csv: {exc}")
             return None, None, tool_failure(f"could not read the csv text: {exc}.")
-        model = SheetModel.from_rows({"Sheet1": parsed})
+        # Every cell of CSV text is text: a plain number below the header becomes a number,
+        # and every other cell stays as it was.
+        model = SheetModel.from_rows({"Sheet1": typed_rows(parsed)})
     else:
         _audit("denied", error="no sheet input")
         return None, None, tool_failure("provide sheets, rows, or csv.")

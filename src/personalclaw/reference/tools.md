@@ -294,7 +294,7 @@ Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply 
 
 **Parameters:**
 - `base` (string, optional) — The base artifact_get named for the version you read (like 'v3-1a2b3c4d5e6f7a8b'), required to write over an existing artifact; a new one needs none
-- `csv` (string, optional) — Single-sheet CSV text
+- `csv` (string, optional) — Single-sheet CSV text. A cell below the header whose text is a plain number (12, -3.5, 0.25: no leading zero, separator, sign but a minus, exponent or trailing zero) is written as a number; every other cell stays text
 - `description` (string, optional) — Optional short description
 - `drop_unsupported` (boolean, optional) — Only after the user agreed: write the next version of a workbook that holds what it cannot carry (charts, conditional formatting, tables, borders), which a call without this refuses, naming each
 - `format` (string, optional) — Output format: 'xlsx' (default) or 'csv' (one tab and no formulas: a cell whose text begins with =, +, -, @, a tab or a carriage return is saved behind a single quote and opens as text, while numbers stay numbers)
