@@ -1528,10 +1528,12 @@ def test_decide_writes_the_body_and_says_whether_to_post(tmp_path: Path, monkeyp
         "dispatch=",
         "base=",
         "cleanup=",
+        "rerun=",
         "post=true",
         "dispatch=",
         "base=",
         "cleanup=",
+        "rerun=",
         "post=false",
     ]
     assert not (tmp_path / "none.json").exists()
@@ -3536,7 +3538,13 @@ def test_start_never_posts_even_where_every_other_path_would(
     argv += ["--controller-app-id", str(APP), "--out", str(out)]
     assert mc.main(argv, get=api, query=query) == 0
     assert not out.exists(), "--start wrote a body to post"
-    assert outputs.read_text().splitlines() == ["dispatch=", "base=", "cleanup=", "post=false"]
+    assert outputs.read_text().splitlines() == [
+        "dispatch=",
+        "base=",
+        "cleanup=",
+        "rerun=",
+        "post=false",
+    ]
 
 
 def test_start_names_the_head_to_dispatch_and_nothing_else(
@@ -3551,6 +3559,7 @@ def test_start_names_the_head_to_dispatch_and_nothing_else(
         f"dispatch={HEAD}",
         f"base={MAIN}",
         "cleanup=",
+        "rerun=",
         "post=false",
     ]
 
@@ -3564,7 +3573,13 @@ def test_an_unread_start_starts_nothing_and_leaves_it_to_the_runs_completion(
     monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
     argv = ["decide", "--repo", REPO, "--start", str(RUN), "--controller-revision", CONTROLLER]
     assert mc.main([*argv, "--out", str(tmp_path / "v.json")], get=api) == 0
-    assert outputs.read_text().splitlines() == ["dispatch=", "base=", "cleanup=", "post=false"]
+    assert outputs.read_text().splitlines() == [
+        "dispatch=",
+        "base=",
+        "cleanup=",
+        "rerun=",
+        "post=false",
+    ]
 
 
 # ── A contract run's wake: the same judge as a Merge run's completion ─────────────────────────
@@ -5092,6 +5107,1013 @@ def test_each_flake_class_pytest_job_holds_the_groups_the_pyproject_rule_reads()
             assert not _uv_groups_chosen(step.argv), (job.id, step.argv)
     assert sorted(found) == ["python-suite", "python-suite-macos"]
     assert not mc._flake_job("documents")
+
+
+# ── A flake-class queue red's failed jobs, rerun in place (#5809 piece 3) ─────────────────────
+#
+# A flake-class red on attempt 1 with time left posts the poster's note in progress, so the queue
+# keeps the entry, and names the run to the rerun job; attempt 2 under that note is judged by its
+# results' earlier-attempt notice. Times count from 00:00Z, the run's start and its commit's.
+
+_T0 = datetime.datetime(2026, 10, 28, tzinfo=datetime.timezone.utc)
+_RULES = f"/repos/{REPO}/rules/branches/main"
+_RERUN_RUN = f"/repos/{REPO}/actions/runs/{RUN}"
+
+
+def _at(minutes: float) -> str:
+    return mc._stamp(_T0 + datetime.timedelta(minutes=minutes))
+
+
+def _rerun_ready(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    now: float = 20,
+    limit: int | None = 120,
+    took: float = 10,
+    retry: FakeRetry | None = None,
+) -> tuple[FakeApi, mc.Queue]:
+    """#12's queue commit, red on attempt 1 in one suite shard with one flaky test, *now* minutes
+    in, under a check limit of *limit* (None: main's rules unread), its shard *took* minutes."""
+    api, queue = _queue_red_run(retry=retry)
+    api.answers[_RERUN_RUN]["created_at"] = _at(0)
+    api.answers[f"/repos/{REPO}/git/commits/{QUEUE}"]["committer"] = {"date": _at(1)}
+    listing = f"/repos/{REPO}/actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=1"
+    jobs = api.answers[listing]["jobs"]
+    for job in jobs:
+        job["started_at"], job["completed_at"] = _at(0), _at(took)
+    # A job attempt 1 had green, which a rerun of its failed jobs carries.
+    jobs.append({**jobs[0], "id": 190, "name": "changes", "conclusion": "success"})
+    api.answers[listing]["total_count"] = len(jobs)
+    if limit is not None:
+        api.answers[_RULES] = [
+            {"type": "pull_request", "parameters": {}},
+            {"type": "merge_queue", "parameters": {"check_response_timeout_minutes": limit}},
+        ]
+    monkeypatch.setattr(mc, "_clock", lambda: _T0 + datetime.timedelta(minutes=now))
+    return api, queue
+
+
+def _as_check(found: mc.Posting) -> dict[str, Any]:
+    """A posting as the newest-verdict read lists it back: status, conclusion, ids, output."""
+    body = found.body()
+    return {
+        "status": body["status"],
+        "conclusion": body.get("conclusion"),
+        "external_id": body["external_id"],
+        "output": body["output"],
+    }
+
+
+def test_a_flake_class_queue_red_with_time_left_posts_its_rerun_note_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, queue)
+    found = outcome.posting
+    assert found is not None and outcome.rerun == RUN
+    body = found.body()
+    assert body["status"] == "in_progress" and "conclusion" not in body, body
+    assert body["external_id"] == f"{RUN}/1/rerun" and found.head_sha == QUEUE
+    assert found.output["title"] == f"Rerunning in place: attempt 1's failed jobs ({SHARD})"
+    assert "- retry 0 of 2\n- flake-class: 1 failed test(s)" in found.output["summary"]
+    note = mc.rerun_note(_as_check(found))
+    assert note == mc.RerunNote(RUN, _T0 + datetime.timedelta(minutes=108), (SHARD,))
+
+
+@pytest.mark.parametrize(
+    "now, took, says",
+    [
+        (80, 10, "no rerun in place: 40 of the queue's 120 minutes are left, under the 45"),
+        (60, 50, "no rerun in place: 60 of the queue's 120 minutes are left, under the 65"),
+    ],
+    ids=["under the floor", "under its longest job and the margin"],
+)
+def test_a_flake_class_queue_red_short_of_time_posts_its_red_at_once(
+    monkeypatch: pytest.MonkeyPatch, now: float, took: float, says: str
+) -> None:
+    api, queue = _rerun_ready(monkeypatch, now=now, took=took)
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, queue)
+    assert outcome.rerun is None and outcome.posting is not None
+    assert outcome.posting.conclusion == "failure"
+    assert says in outcome.posting.output["summary"], outcome.posting.output["summary"]
+
+
+def test_a_queue_red_whose_check_limit_cannot_be_read_posts_its_red(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch, limit=None)
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, queue)
+    assert outcome.rerun is None and outcome.posting is not None
+    assert outcome.posting.conclusion == "failure"
+    assert "- no rerun in place: unread: " in outcome.posting.output["summary"]
+
+
+def test_a_queue_red_with_its_retry_budget_spent_posts_its_red(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch, retry=FakeRetry(timeline=(_removed(), _removed())))
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, queue)
+    assert outcome.rerun is None and outcome.posting is not None
+    assert "- no rerun in place: its retry budget is spent" in outcome.posting.output["summary"]
+
+
+def test_a_queue_red_that_is_not_flake_class_asks_for_no_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch, retry=FakeRetry(flaky=()))
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, queue)
+    assert outcome.rerun is None and outcome.posting is not None
+    assert outcome.posting.conclusion == "failure"
+    assert "no rerun in place" not in outcome.posting.output["summary"]
+
+
+def test_a_rerun_needs_every_reason_to_be_its_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    api, _ = _rerun_ready(monkeypatch)
+    run = mc.read_run(api, REPO, RUN)
+    assert isinstance(run, mc.Run)
+    retried = mc.Retry(0, True, "a flake")
+    both = ["attempt 1's `results` is 'failure'", "a gate is red"]
+    assert mc._rerun_plan(api, REPO, run, QUEUE, both, both[:1], retried) == (
+        "it is red for more than its results"
+    )
+    assert mc._rerun_plan(api, REPO, run, QUEUE, both[:1], both[:1], retried) == mc.RerunNote(
+        RUN, _T0 + datetime.timedelta(minutes=108), (SHARD,)
+    )
+
+
+def _noted(api: FakeApi, *, run: int = RUN, jobs: tuple[str, ...] = (SHARD,)) -> mc.RerunNote:
+    """The App's note on the queue commit, its newest verdict, for *run*'s *jobs*."""
+    note = mc.RerunNote(run, _T0 + datetime.timedelta(minutes=108), jobs)
+    retried = mc.Retry(0, True, "a flake")
+    shape = mc.Run(run, 1, QUEUE, "merge_group", "")
+    _verdicts(api, QUEUE, _as_check(mc._rerun_posting(shape, QUEUE, note, retried)))
+    return note
+
+
+def _rerun_attempt(
+    api: FakeApi,
+    *,
+    reran: tuple[str, ...] = (SHARD,),
+    earlier: tuple[str, ...] | str | None = (SHARD,),
+    results="failure",
+    shard: str = "success",
+    carried: Mapping[str, str] | None = None,
+) -> None:
+    """Attempt 2 of the run, completed, as GitHub lists a rerun of failed jobs (CORE G1): every
+    job a new id; *reran* and ``results`` started after the attempt did (at minute 30), every
+    other job carried with attempt 1's times (its conclusion *carried*'s, if named); its results
+    *results*, with the earlier-attempt notice naming *earlier* (a JSON list, or the text as
+    given)."""
+    api.answers[_RERUN_RUN]["run_attempt"] = 2
+    api.answers[f"{_RERUN_RUN}/attempts/2"] = {"run_attempt": 2, "run_started_at": _at(30)}
+    first = api.answers[f"/repos/{REPO}/actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=1"]
+    listed = []
+    for job in first["jobs"]:
+        job = {**job, "id": job["id"] + 1000, "run_attempt": 2}
+        if job["name"] in (*reran, "results"):
+            conclusion = results if job["name"] == "results" else shard
+            job.update(conclusion=conclusion, started_at=_at(31), completed_at=_at(40))
+        elif carried and job["name"] in carried:
+            job["conclusion"] = carried[job["name"]]
+        listed.append(job)
+    api.listing(2, *listed)
+    if earlier is not None:
+        message = earlier if isinstance(earlier, str) else json.dumps(list(earlier))
+        notice = {"annotation_level": "notice", "title": verdict.EARLIER_NOTICE, "message": message}
+        api.answers[api.notes_path(2)] = [notice]
+
+
+def test_a_rerun_in_place_green_on_attempt_2_posts_the_queue_commit_green(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    _noted(api)
+    _rerun_attempt(api)
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "success", found and found.output
+    assert found.head_sha == QUEUE
+
+
+@pytest.mark.parametrize(
+    "attempt, says",
+    [
+        ({"earlier": ("python-suite (2/3)",)}, "red only on attempt 1 for python-suite (2/3)"),
+        ({"earlier": (SHARD, SHARD)}, "is 'failure' for more than the jobs it reran"),
+        ({"earlier": SHARD}, "is 'failure' for more than the jobs it reran"),
+        ({"earlier": None}, "is 'failure' for more than the jobs it reran"),
+        ({"reran": (SHARD, "changes")}, "did not rerun exactly attempt 1's failed jobs"),
+        ({"reran": ()}, "did not rerun exactly attempt 1's failed jobs"),
+        ({"carried": {"changes": "failure"}}, "attempt 2's listing shows changes other than"),
+        ({"results": "cancelled", "earlier": None}, "attempt 2's `results` is 'cancelled'"),
+    ],
+    ids=[
+        "another key",
+        "a key twice",
+        "not a JSON list",
+        "no notice",
+        "a green job rerun",
+        "the red job not rerun",
+        "the listing red",
+        "cancelled",
+    ],
+)
+def test_a_rerun_in_place_attempt_2_other_than_the_note_s_posts_red(
+    monkeypatch: pytest.MonkeyPatch, attempt: dict[str, Any], says: str
+) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    _noted(api)
+    _rerun_attempt(api, **attempt)
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure"
+    assert says in found.output["summary"], found.output["summary"]
+
+
+#: Run 44267021282's real listings (#6243's queue commit, 2026-11-18): attempt 2 a GitHub rerun of
+#: its failed jobs, `results` alone. Each row: id, attempt, conclusion, started, completed, name.
+#: Every job of attempt 2 has a new id; only the rerun's start after attempt 2's (09:15:00Z) tells
+#: the reran job from the 34 carried with attempt 1's times (CORE G1).
+_REAL_ATTEMPT_1 = (
+    ("134673968624", "1", "success", "2026-11-18T08:27:17Z", "2026-11-18T08:27:19Z", "tree-check"),
+    ("134673969011", "1", "success", "2026-11-18T08:27:50Z", "2026-11-18T08:28:32Z", "shard-plan"),
+    ("134674270996", "1", "success", "2026-11-18T08:28:52Z", "2026-11-18T08:29:32Z", "changes"),
+    ("134675348174", "1", "success", "2026-11-18T08:29:58Z", "2026-11-18T08:34:43Z", "web-build"),
+    ("134675348908", "1", "success", "2026-11-18T08:30:45Z", "2026-11-18T08:34:40Z", "static"),
+    (
+        "134675348941",
+        "1",
+        "success",
+        "2026-11-18T08:31:14Z",
+        "2026-11-18T08:44:59Z",
+        "python-suite-macos (5/5)",
+    ),
+    (
+        "134675348948",
+        "1",
+        "success",
+        "2026-11-18T08:30:38Z",
+        "2026-11-18T08:40:45Z",
+        "python-suite-macos (2/5)",
+    ),
+    (
+        "134675349043",
+        "1",
+        "success",
+        "2026-11-18T08:33:43Z",
+        "2026-11-18T08:51:59Z",
+        "python-suite-macos (1/5)",
+    ),
+    ("134675349080", "1", "success", "2026-11-18T08:31:46Z", "2026-11-18T08:40:10Z", "rails (1/3)"),
+    (
+        "134675349092",
+        "1",
+        "success",
+        "2026-11-18T08:34:43Z",
+        "2026-11-18T08:44:01Z",
+        "python-suite (1/3)",
+    ),
+    (
+        "134675349111",
+        "1",
+        "success",
+        "2026-11-18T08:35:04Z",
+        "2026-11-18T08:51:50Z",
+        "python-suite-macos (3/5)",
+    ),
+    (
+        "134675349116",
+        "1",
+        "success",
+        "2026-11-18T08:33:58Z",
+        "2026-11-18T08:51:43Z",
+        "python-suite-macos (4/5)",
+    ),
+    (
+        "134675349178",
+        "1",
+        "success",
+        "2026-11-18T08:36:10Z",
+        "2026-11-18T08:49:21Z",
+        "python-suite (3/3)",
+    ),
+    (
+        "134675349595",
+        "1",
+        "success",
+        "2026-11-18T08:37:28Z",
+        "2026-11-18T08:49:28Z",
+        "python-suite (2/3)",
+    ),
+    ("134677851251", "1", "success", "2026-11-18T08:40:24Z", "2026-11-18T08:46:22Z", "rails (2/3)"),
+    ("134677875833", "1", "success", "2026-11-18T08:41:28Z", "2026-11-18T08:42:19Z", "package"),
+    (
+        "134677875925",
+        "1",
+        "success",
+        "2026-11-18T08:44:27Z",
+        "2026-11-18T08:51:23Z",
+        "e2e-shard (2/2)",
+    ),
+    (
+        "134677875993",
+        "1",
+        "success",
+        "2026-11-18T08:44:03Z",
+        "2026-11-18T08:50:14Z",
+        "e2e-shard (1/2)",
+    ),
+    ("134677876099", "1", "success", "2026-11-18T08:45:15Z", "2026-11-18T08:58:13Z", "e2e-pinned"),
+    ("134680509030", "1", "success", "2026-11-18T08:45:51Z", "2026-11-18T08:49:52Z", "rails (3/3)"),
+    (
+        "134680793102",
+        "1",
+        "success",
+        "2026-11-18T08:46:01Z",
+        "2026-11-18T08:49:27Z",
+        "rails-checks",
+    ),
+    (
+        "134681536945",
+        "1",
+        "success",
+        "2026-11-18T08:47:11Z",
+        "2026-11-18T08:50:59Z",
+        "desktop-smoke",
+    ),
+    ("134682337488", "1", "success", "2026-11-18T08:47:30Z", "2026-11-18T08:48:08Z", "security"),
+    (
+        "134682799843",
+        "1",
+        "success",
+        "2026-11-18T08:48:16Z",
+        "2026-11-18T08:48:56Z",
+        "namespace-sandbox",
+    ),
+    ("134683467188", "1", "success", "2026-11-18T08:48:38Z", "2026-11-18T08:49:01Z", "client"),
+    ("134684300659", "1", "success", "2026-11-18T08:50:49Z", "2026-11-18T08:59:02Z", "web-unit"),
+    (
+        "134684684316",
+        "1",
+        "success",
+        "2026-11-18T08:51:40Z",
+        "2026-11-18T08:54:07Z",
+        "desktop-unit",
+    ),
+    ("134684725244", "1", "success", "2026-11-18T08:51:46Z", "2026-11-18T08:52:22Z", "mobile-unit"),
+    ("134684894310", "1", "success", "2026-11-18T08:52:02Z", "2026-11-18T08:54:30Z", "image"),
+    ("134684941327", "1", "success", "2026-11-18T08:52:08Z", "2026-11-18T08:55:15Z", "browse-live"),
+    (
+        "134684946778",
+        "1",
+        "success",
+        "2026-11-18T08:52:47Z",
+        "2026-11-18T08:53:45Z",
+        "apps-contract",
+    ),
+    ("134685138098", "1", "success", "2026-11-18T08:54:11Z", "2026-11-18T08:54:48Z", "audit"),
+    ("134689177147", "1", "success", "2026-11-18T08:59:05Z", "2026-11-18T08:59:46Z", "e2e"),
+    ("134689177249", "1", "success", "2026-11-18T09:00:19Z", "2026-11-18T09:01:02Z", "ui-quality"),
+    ("134690563271", "1", "failure", "2026-11-18T09:01:30Z", "2026-11-18T09:01:48Z", "results"),
+)
+_REAL_ATTEMPT_2 = (
+    ("134697875186", "2", "success", "2026-11-18T08:27:50Z", "2026-11-18T08:28:32Z", "shard-plan"),
+    ("134697876606", "2", "success", "2026-11-18T08:29:58Z", "2026-11-18T08:34:43Z", "web-build"),
+    ("134697876950", "2", "success", "2026-11-18T08:28:52Z", "2026-11-18T08:29:32Z", "changes"),
+    (
+        "134697877060",
+        "2",
+        "success",
+        "2026-11-18T08:33:43Z",
+        "2026-11-18T08:51:59Z",
+        "python-suite-macos (1/5)",
+    ),
+    (
+        "134697877279",
+        "2",
+        "success",
+        "2026-11-18T08:37:28Z",
+        "2026-11-18T08:49:28Z",
+        "python-suite (2/3)",
+    ),
+    (
+        "134697877485",
+        "2",
+        "success",
+        "2026-11-18T08:34:43Z",
+        "2026-11-18T08:44:01Z",
+        "python-suite (1/3)",
+    ),
+    (
+        "134697877496",
+        "2",
+        "success",
+        "2026-11-18T08:36:10Z",
+        "2026-11-18T08:49:21Z",
+        "python-suite (3/3)",
+    ),
+    (
+        "134697877501",
+        "2",
+        "success",
+        "2026-11-18T08:30:38Z",
+        "2026-11-18T08:40:45Z",
+        "python-suite-macos (2/5)",
+    ),
+    ("134697877643", "2", "success", "2026-11-18T08:41:28Z", "2026-11-18T08:42:19Z", "package"),
+    ("134697877758", "2", "success", "2026-11-18T08:30:45Z", "2026-11-18T08:34:40Z", "static"),
+    (
+        "134697877930",
+        "2",
+        "success",
+        "2026-11-18T08:31:14Z",
+        "2026-11-18T08:44:59Z",
+        "python-suite-macos (5/5)",
+    ),
+    ("134697878119", "2", "success", "2026-11-18T08:45:15Z", "2026-11-18T08:58:13Z", "e2e-pinned"),
+    (
+        "134697878392",
+        "2",
+        "success",
+        "2026-11-18T08:33:58Z",
+        "2026-11-18T08:51:43Z",
+        "python-suite-macos (4/5)",
+    ),
+    (
+        "134697878706",
+        "2",
+        "success",
+        "2026-11-18T08:35:04Z",
+        "2026-11-18T08:51:50Z",
+        "python-suite-macos (3/5)",
+    ),
+    (
+        "134697878885",
+        "2",
+        "success",
+        "2026-11-18T08:44:27Z",
+        "2026-11-18T08:51:23Z",
+        "e2e-shard (2/2)",
+    ),
+    (
+        "134697879243",
+        "2",
+        "success",
+        "2026-11-18T08:46:01Z",
+        "2026-11-18T08:49:27Z",
+        "rails-checks",
+    ),
+    (
+        "134697879318",
+        "2",
+        "success",
+        "2026-11-18T08:44:03Z",
+        "2026-11-18T08:50:14Z",
+        "e2e-shard (1/2)",
+    ),
+    (
+        "134697879410",
+        "2",
+        "success",
+        "2026-11-18T08:47:11Z",
+        "2026-11-18T08:50:59Z",
+        "desktop-smoke",
+    ),
+    ("134697879695", "2", "success", "2026-11-18T08:31:46Z", "2026-11-18T08:40:10Z", "rails (1/3)"),
+    ("134697879720", "2", "success", "2026-11-18T08:48:38Z", "2026-11-18T08:49:01Z", "client"),
+    ("134697879845", "2", "success", "2026-11-18T08:47:30Z", "2026-11-18T08:48:08Z", "security"),
+    ("134697880044", "2", "success", "2026-11-18T08:40:24Z", "2026-11-18T08:46:22Z", "rails (2/3)"),
+    ("134697880212", "2", "success", "2026-11-18T08:45:51Z", "2026-11-18T08:49:52Z", "rails (3/3)"),
+    ("134697880454", "2", "success", "2026-11-18T08:50:49Z", "2026-11-18T08:59:02Z", "web-unit"),
+    ("134697880496", "2", "success", "2026-11-18T08:59:05Z", "2026-11-18T08:59:46Z", "e2e"),
+    ("134697880601", "2", "failure", "2026-11-18T09:15:07Z", "2026-11-18T09:15:14Z", "results"),
+    (
+        "134697880612",
+        "2",
+        "success",
+        "2026-11-18T08:51:40Z",
+        "2026-11-18T08:54:07Z",
+        "desktop-unit",
+    ),
+    (
+        "134697880894",
+        "2",
+        "success",
+        "2026-11-18T08:48:16Z",
+        "2026-11-18T08:48:56Z",
+        "namespace-sandbox",
+    ),
+    ("134697881193", "2", "success", "2026-11-18T08:52:02Z", "2026-11-18T08:54:30Z", "image"),
+    ("134697881273", "2", "success", "2026-11-18T09:00:19Z", "2026-11-18T09:01:02Z", "ui-quality"),
+    ("134697881323", "2", "success", "2026-11-18T08:51:46Z", "2026-11-18T08:52:22Z", "mobile-unit"),
+    (
+        "134697881509",
+        "2",
+        "success",
+        "2026-11-18T08:52:47Z",
+        "2026-11-18T08:53:45Z",
+        "apps-contract",
+    ),
+    ("134697882463", "2", "success", "2026-11-18T08:52:08Z", "2026-11-18T08:55:15Z", "browse-live"),
+    ("134697882987", "2", "success", "2026-11-18T08:54:11Z", "2026-11-18T08:54:48Z", "audit"),
+    ("134697923733", "2", "success", "2026-11-18T08:27:17Z", "2026-11-18T08:27:19Z", "tree-check"),
+)
+
+
+def _github_listing(rows: tuple[tuple[str, ...], ...], attempt: int, run: int) -> dict[str, Any]:
+    jobs = [
+        {
+            "id": int(i),
+            "name": name,
+            "status": "completed",
+            "conclusion": conclusion,
+            "started_at": started,
+            "completed_at": completed,
+            "run_id": run,
+            "run_attempt": attempt,
+            "labels": ["ubuntu-24.04"],
+        }
+        for i, _, conclusion, started, completed, name in rows
+    ]
+    return {"total_count": len(jobs), "jobs": jobs}
+
+
+def test_a_rerun_in_place_is_read_from_github_s_own_listing() -> None:
+    """CORE G1, on run 44267021282's real listings with one flaky shard red on attempt 1 and its
+    rerun green: every job of attempt 2 has a new id, and only the start time tells the two jobs
+    reran from the 33 carried. Read by ids, the rerun would be every job."""
+    run_id, shard = 44267021282, "python-suite (2/3)"
+    first = [(*row[:2], "failure", *row[3:]) if row[5] == shard else row for row in _REAL_ATTEMPT_1]
+    second = [
+        (
+            (row[0], row[1], "success", "2026-11-18T09:15:09Z", "2026-11-18T09:30:00Z", shard)
+            if row[5] == shard
+            else row
+        )
+        for row in _REAL_ATTEMPT_2
+    ]
+    api = FakeApi()
+    runs = f"/repos/{REPO}/actions/runs/{run_id}"
+    api.answers[f"{runs}/attempts/1/jobs?per_page=100&page=1"] = _github_listing(
+        tuple(first), 1, run_id
+    )
+    api.answers[f"{runs}/attempts/2/jobs?per_page=100&page=1"] = _github_listing(
+        tuple(second), 2, run_id
+    )
+    api.answers[f"{runs}/attempts/2"] = {"run_attempt": 2, "run_started_at": "2026-11-18T09:15:00Z"}
+    (results,) = [row[0] for row in _REAL_ATTEMPT_2 if row[5] == "results"]
+    api.answers[f"/repos/{REPO}/check-runs/{results}/annotations?per_page=100&page=1"] = [
+        {
+            "annotation_level": "notice",
+            "title": verdict.EARLIER_NOTICE,
+            "message": json.dumps([shard]),
+        }
+    ]
+    note = mc.RerunNote(run_id, _T0, (shard,))
+    run = mc.Run(run_id, 2, QUEUE, "merge_group", "")
+    assert mc.rerun_reasons(api, REPO, run, note) == ([], ["ubuntu-24.04"])
+    assert {row[0] for row in _REAL_ATTEMPT_1}.isdisjoint(row[0] for row in _REAL_ATTEMPT_2)
+
+
+def test_a_cut_short_red_job_reruns_nothing_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CORE N3: a job cancelled or timed out may have left no attempt-1 record, which main's
+    verdict reads as missing on attempt 1: no notice, so a rerun could never be excused."""
+    api, _ = _rerun_ready(monkeypatch)
+    listing = f"/repos/{REPO}/actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=1"
+    api.answers[listing]["jobs"][0]["conclusion"] = "timed_out"
+    run = mc.read_run(api, REPO, RUN)
+    assert isinstance(run, mc.Run)
+    reasons = ["attempt 1's `results` is 'failure'"]
+    plan = mc._rerun_plan(api, REPO, run, QUEUE, reasons, reasons, mc.Retry(0, True, "a flake"))
+    assert plan == f"`{SHARD}` was cancelled or timed out: its attempt-1 record may be missing"
+
+
+def test_a_note_that_never_posted_leaves_the_fallback_to_post_attempt_1_s_red(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CORE S1: post failed after naming a rerun, so there is no note and no attempt 2. The
+    fallback posts attempt 1's red, so the entry is not left to the queue's limit."""
+    api, queue = _rerun_ready(monkeypatch, now=30)
+    api.answers[f"{_RERUN_RUN}/attempts/1"] = dict(api.answers[_RERUN_RUN])
+    found = mc.rerun_ended(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure" and found.head_sha == QUEUE
+    summary = found.output["summary"]
+    assert f"its failed jobs' rerun in place (run {RUN}) ended: its note never posted" in summary
+    assert "attempt 1's `results` is 'failure'" in summary
+
+
+def test_a_rerun_in_place_with_two_earlier_notices_is_unread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    _noted(api)
+    _rerun_attempt(api)
+    api.answers[api.notes_path(2)] = api.answers[api.notes_path(2)] * 2
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure"
+    assert "writes 2 notices of keys red only on attempt 1" in found.output["summary"]
+
+
+def test_a_rerun_in_place_a_job_of_which_names_no_start_is_unread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    _noted(api)
+    _rerun_attempt(api)
+    page = api.answers[f"/repos/{REPO}/actions/runs/{RUN}/attempts/2/jobs?per_page=100&page=1"]
+    del page["jobs"][0]["started_at"]
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure"
+    assert "names no started_at" in found.output["summary"]
+
+
+def test_a_note_s_attempt_3_excuses_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CORE G2: the note excuses its run's attempt 2 alone; a third attempt is someone else's."""
+    api, queue = _rerun_ready(monkeypatch)
+    _noted(api)
+    _rerun_attempt(api)
+    api.answers[_RERUN_RUN]["run_attempt"] = 3
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure"
+    assert f"run {RUN}'s attempt 3 is not its note's rerun" in found.output["summary"]
+
+
+def test_a_red_job_others_wait_on_reruns_nothing_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CORE G1: a rerun of a job a later stage waits on reruns that stage too, beside `results`."""
+    api, queue = _rerun_ready(monkeypatch)
+    listing = f"/repos/{REPO}/actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=1"
+    api.answers[listing]["jobs"][0]["name"] = "e2e-shard (1/2)"
+    api.flakes(1, *_counted(_failed(key="e2e-shard (1/2)")), title="failed test")
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, queue)
+    assert outcome.rerun is None and outcome.posting is not None
+    assert "no rerun in place: `e2e-shard (1/2)` is a job that waits or is waited on" in (
+        outcome.posting.output["summary"]
+    ), outcome.posting.output["summary"]
+
+
+def test_a_pull_request_s_rerun_red_only_on_attempt_1_excuses_nothing() -> None:
+    """CORE G2: the earlier-attempt notice is read only on a queue commit's in-place rerun. On a
+    pull request's rerun the old rule stands: a red on attempt 1 stays red."""
+    api = FakeApi()
+    api.run(run_attempt=2)
+    api.jobs(1, (SHARD, "completed", "failure"), ("results", "completed", "failure"))
+    api.jobs(2, (SHARD, "completed", "success"), ("results", "completed", "failure"))
+    notice = {"annotation_level": "notice", "title": verdict.EARLIER_NOTICE, "message": "[]"}
+    api.answers[api.notes_path(2)] = [{**notice, "message": json.dumps([SHARD])}]
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "failure", found
+    assert "attempt 1's `results` is 'failure'" in found.output["summary"]
+
+
+def test_a_rerun_with_no_note_is_attempt_1_s_red_still(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rerun someone else asked for: no note excuses attempt 1, so its red stands."""
+    api, queue = _rerun_ready(monkeypatch)
+    _rerun_attempt(api)
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure"
+    assert "attempt 1's `results` is 'failure'" in found.output["summary"]
+
+
+def test_a_rerun_red_again_posts_its_red_and_asks_for_no_second_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rerun with no note (someone else's), whose flaky test failed again: flake-class still,
+    with a retry left, but only attempt 1 reruns in place, once, so its red posts for the lane's
+    re-enqueue. With a note, the note's own attempt 2 posts its red the same way."""
+    api, queue = _rerun_ready(monkeypatch)
+    _rerun_attempt(api, earlier=None, shard="failure")
+    api.flakes(2, *_counted(_failed()), title="failed test")
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, queue)
+    found = outcome.posting
+    assert found is not None and found.conclusion == "failure" and outcome.rerun is None
+    assert "- retry 1 of 2\n- flake-class: " in found.output["summary"], found.output["summary"]
+    assert "- no rerun in place: it is attempt 2" in found.output["summary"]
+
+
+def test_a_note_s_own_attempt_1_is_never_judged_twice(monkeypatch: pytest.MonkeyPatch) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    _noted(api)
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, queue)
+    assert outcome.posting is None and outcome.rerun is None
+    assert "its attempt 2 is judged" in outcome.why
+
+
+def test_a_note_of_another_run_judges_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    _noted(api, run=RUN + 1)
+    _rerun_attempt(api)
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, queue)
+    assert outcome.posting is None and f"in run {RUN + 1}" in outcome.why
+
+
+_NOTE = {
+    "status": "in_progress",
+    "conclusion": None,
+    "external_id": f"{RUN}/1/rerun",
+    "output": {
+        "text": f"```{mc.RERUN_FENCE}\nrun {RUN}\nattempt 1\ndeadline {_at(108)}\n"
+        f"job {SHARD}\n```\n"
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"status": "completed"},
+        {"conclusion": "failure"},
+        {"external_id": f"{RUN}/2/rerun"},
+        {"external_id": f"{RUN}/1"},
+        {"output": {"text": _NOTE["output"]["text"].replace(f"run {RUN}\n", "run 1\n")}},
+        {"output": {"text": _NOTE["output"]["text"].replace("attempt 1", "attempt 2")}},
+        {"output": {"text": _NOTE["output"]["text"].replace(_at(108), "soon")}},
+        {"output": {"text": _NOTE["output"]["text"].replace(f"job {SHARD}\n", "")}},
+        {"output": {"text": _NOTE["output"]["text"].replace("```\n", f"job {SHARD}\n```\n")}},
+        {"output": {"text": _NOTE["output"]["text"].replace("```\n", "more\n```\n")}},
+        {"output": {"summary": "no fence"}},
+    ],
+    ids=[
+        "completed",
+        "a conclusion",
+        "attempt 2's id",
+        "no rerun in its id",
+        "another run",
+        "another attempt",
+        "no deadline",
+        "no job",
+        "a job twice",
+        "a field it does not know",
+        "no fence",
+    ],
+)
+def test_only_the_poster_s_note_whole_reads_as_a_rerun_note(change: dict[str, Any]) -> None:
+    assert mc.rerun_note(_NOTE) == mc.RerunNote(
+        RUN, _T0 + datetime.timedelta(minutes=108), (SHARD,)
+    )
+    assert mc.rerun_note({**_NOTE, **change}) is None
+
+
+# The rerun job: CORE R1 before it reruns anything, then the poll and the wake.
+
+_RERUNS = ("POST", f"/repos/{REPO}/actions/runs/{RUN}/rerun-failed-jobs")
+_WAKES = ("POST", f"/repos/{REPO}/actions/workflows/merge-verdict.yml/dispatches")
+
+
+class _Polled:
+    """The run as each poll reads it: *states*, (attempt, status), one a pause."""
+
+    def __init__(self, api: FakeApi, *states: tuple[int, str], clock: list[float]) -> None:
+        self.api, self.states, self.clock = api, list(states), clock
+
+    def __call__(self, seconds: float) -> None:
+        self.clock[0] += seconds / 60
+        attempt, status = self.states.pop(0)
+        self.api.answers[_RERUN_RUN] = {
+            **self.api.answers[_RERUN_RUN],
+            "run_attempt": attempt,
+            "status": status,
+        }
+
+
+def _poller(
+    monkeypatch: pytest.MonkeyPatch, *states: tuple[int, str], now: float = 20
+) -> tuple[FakeApi, FakeWriter, _Polled]:
+    api, _ = _rerun_ready(monkeypatch, now=now)
+    api.answers[_RERUN_RUN]["conclusion"] = "failure"
+    _noted(api)
+    clock = [now]
+    monkeypatch.setattr(mc, "_clock", lambda: _T0 + datetime.timedelta(minutes=clock[0]))
+    writer = FakeWriter({_RERUNS: (201, None), _WAKES: (204, None)})
+    return api, writer, _Polled(api, *states, clock=clock)
+
+
+def test_the_rerun_job_reruns_waits_for_attempt_2_then_wakes_the_poster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, writer, polled = _poller(
+        monkeypatch, (1, "completed"), (2, "in_progress"), (2, "completed")
+    )
+    assert mc.rerun_in_place(api, writer, REPO, RUN, APP, sleep=polled) == ""
+    assert [c[:2] for c in writer.calls] == [_RERUNS, _WAKES]
+    assert writer.body(*_WAKES) == {"ref": "main", "inputs": {"head": QUEUE}}
+
+
+@pytest.mark.parametrize(
+    "plant, says",
+    [
+        ({"event": "pull_request"}, "is not this repository's merge.yml run of a queue commit"),
+        ({"head_branch": "main"}, "is not this repository's merge.yml run of a queue commit"),
+        ({"path": mc.PR_WORKFLOW}, "is not this repository's merge.yml run"),
+        ({"run_attempt": 2}, "is attempt 2"),
+        ({"status": "in_progress"}, "'in_progress'"),
+        ({"conclusion": "success"}, "concluded 'success', not 'failure'"),
+    ],
+)
+def test_the_rerun_job_reads_the_run_again_before_it_reruns_anything(
+    monkeypatch: pytest.MonkeyPatch, plant: dict[str, Any], says: str
+) -> None:
+    api, writer, polled = _poller(monkeypatch)
+    api.answers[_RERUN_RUN].update(plant)
+    assert says in mc.rerun_in_place(api, writer, REPO, RUN, APP, sleep=polled)
+    assert writer.calls == []
+
+
+def test_the_rerun_job_reruns_nothing_without_the_app_s_note_for_its_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, writer, polled = _poller(monkeypatch)
+    _verdicts(api, QUEUE)
+    assert "is no rerun note of run" in mc.rerun_in_place(api, writer, REPO, RUN, APP, sleep=polled)
+    _noted(api, jobs=("python-suite (2/3)",))
+    assert "not the note's" in mc.rerun_in_place(api, writer, REPO, RUN, APP, sleep=polled)
+    assert writer.calls == []
+
+
+def test_the_rerun_job_reruns_nothing_past_the_note_s_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, writer, polled = _poller(monkeypatch, now=108)
+    assert "has passed" in mc.rerun_in_place(api, writer, REPO, RUN, APP, sleep=polled)
+    assert writer.calls == []
+
+
+def test_the_rerun_job_stops_at_the_note_s_deadline_with_no_wake(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CORE's refinement: the poll ends at the note's deadline, inside the queue's limit, so the
+    fallback's red lands while the queue still holds the entry."""
+    states = [(2, "in_progress")] * 200
+    api, writer, polled = _poller(monkeypatch, *states, now=100)
+    why = mc.rerun_in_place(api, writer, REPO, RUN, APP, sleep=polled)
+    assert why == f"attempt 2 of run {RUN} did not complete by {_at(108)}"
+    assert [c[:2] for c in writer.calls] == [_RERUNS]
+    assert polled.clock[0] <= 108.5
+
+
+def test_the_rerun_job_never_waits_past_its_own_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    states = [(2, "in_progress")] * 400
+    api, writer, polled = _poller(monkeypatch, *states, now=0)
+    api.answers[f"/repos/{REPO}/rules/branches/main"][1]["parameters"][
+        "check_response_timeout_minutes"
+    ] = 360
+    _verdicts(api, QUEUE)
+    note = mc.RerunNote(RUN, _T0 + datetime.timedelta(minutes=300), (SHARD,))
+    _verdicts(
+        api,
+        QUEUE,
+        _as_check(
+            mc._rerun_posting(
+                mc.Run(RUN, 1, QUEUE, "merge_group", ""), QUEUE, note, mc.Retry(0, True, "x")
+            )
+        ),
+    )
+    why = mc.rerun_in_place(api, writer, REPO, RUN, APP, sleep=polled)
+    assert why == f"attempt 2 of run {RUN} did not complete by {_at(mc.RERUN_POLL_MINUTES)}"
+
+
+@pytest.mark.parametrize(
+    "answers, states, says",
+    [
+        ({_RERUNS: (403, {"message": "no"})}, (), "GitHub did not rerun the failed jobs (403)"),
+        ({_RERUNS: (201, None)}, ((3, "completed"),), "is on attempt 3"),
+        (
+            {_RERUNS: (201, None), _WAKES: (422, None)},
+            ((2, "completed"),),
+            "the poster's wake for",
+        ),
+    ],
+    ids=["refused", "another rerun", "no wake"],
+)
+def test_the_rerun_job_says_why_it_ends_with_no_wake(
+    monkeypatch: pytest.MonkeyPatch,
+    answers: dict[tuple[str, str], tuple[int, object]],
+    states: tuple[tuple[int, str], ...],
+    says: str,
+) -> None:
+    api, _, polled = _poller(monkeypatch, *states)
+    writer = FakeWriter(answers)
+    assert says in mc.rerun_in_place(api, writer, REPO, RUN, APP, sleep=polled)
+
+
+# The fallback, and the sweep behind the poller.
+
+
+def _rerun_still_going(api: FakeApi) -> None:
+    """Attempt 1 of the run, as its own read gives it, beside the run's attempt 2 still going."""
+    api.answers[f"{_RERUN_RUN}/attempts/1"] = {**api.answers[_RERUN_RUN], "run_attempt": 1}
+    api.answers[_RERUN_RUN] = {**api.answers[_RERUN_RUN], "run_attempt": 2, "status": "in_progress"}
+
+
+def test_a_rerun_that_ended_with_no_attempt_2_posts_attempt_1_s_red(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch, now=109)
+    _noted(api)
+    _rerun_still_going(api)
+    found = mc.rerun_ended(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure" and found.head_sha == QUEUE
+    summary = found.output["summary"]
+    assert f"its failed jobs' rerun in place (run {RUN}) ended with no verdict on it by" in summary
+    assert "attempt 1's `results` is 'failure'" in summary
+    assert "no rerun in place" not in summary
+
+
+def test_a_rerun_that_ended_with_attempt_2_complete_judges_attempt_2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    _noted(api)
+    _rerun_attempt(api)
+    found = mc.rerun_ended(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "success"
+
+
+def test_a_rerun_that_ended_posts_nothing_once_the_note_is_not_the_newest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch, now=109)
+    _verdicts(api, QUEUE, {"conclusion": "failure", "output": {"title": "Red: x"}})
+    _rerun_still_going(api)
+    outcome = mc.rerun_ended(api, REPO, RUN, CONTROLLER, queue)
+    assert outcome.posting is None and "no rerun of run" in outcome.why
+
+
+def _swept(api: FakeApi, queue: mc.Queue) -> list[mc.Outcome]:
+    return mc.judge_waiting(api, REPO, APP, CONTROLLER, None, limit=3, queue=queue)
+
+
+def test_the_sweep_judges_a_rerun_s_attempt_2_once_it_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    _noted(api)
+    _rerun_attempt(api)
+    (found,) = [o.posting for o in _swept(api, queue)]
+    assert found is not None and found.conclusion == "success" and found.head_sha == QUEUE
+
+
+def test_the_sweep_leaves_a_rerun_that_still_runs_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    api, queue = _rerun_ready(monkeypatch, now=60)
+    _noted(api)
+    _rerun_still_going(api)
+    assert [o.posting for o in _swept(api, queue)] == []
+
+
+def test_the_sweep_posts_attempt_1_s_red_past_a_rerun_s_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, queue = _rerun_ready(monkeypatch, now=109)
+    _noted(api)
+    _rerun_still_going(api)
+    (found,) = [o.posting for o in _swept(api, queue)]
+    assert found is not None and found.conclusion == "failure"
+    assert "ended with no verdict on it by" in found.output["summary"]
+
+
+def test_decide_names_the_run_to_rerun_and_posts_its_note(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    outputs = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    out = tmp_path / "v.json"
+    argv = ["decide", "--repo", REPO, "--run-id", str(RUN), "--controller-revision", CONTROLLER]
+    argv += ["--controller-app-id", str(APP), "--out", str(out)]
+    assert mc.main(argv, get=api, query=queue.query) == 0
+    assert f"rerun={RUN}" in outputs.read_text().splitlines()
+    (body,) = json.loads(out.read_text())
+    assert body["status"] == "in_progress" and "conclusion" not in body
+    # CORE F2: the note posts through the post step, as every verdict does.
+    writer = FakeWriter({("POST", f"/repos/{REPO}/check-runs"): (201, {"id": 9})})
+    assert mc.main(["post", "--repo", REPO, "--body", str(out)], api=writer) == 0
+    assert writer.body("POST", f"/repos/{REPO}/check-runs") == body
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"external_id": f"{RUN}/2/rerun"},
+        {"status": "queued"},
+        {"output": {"title": "t", "summary": "s", "text": "no fence"}},
+    ],
+    ids=["another id", "queued", "no fence"],
+)
+def test_post_refuses_an_in_progress_body_that_is_no_rerun_note(
+    monkeypatch: pytest.MonkeyPatch, change: dict[str, Any]
+) -> None:
+    api, queue = _rerun_ready(monkeypatch)
+    body = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting.body()  # type: ignore[union-attr]
+    assert mc.check_body(body) == body
+    with pytest.raises(ValueError):
+        mc.check_body({**body, **change})
+
+
+def test_the_rerun_command_exits_red_when_it_sends_no_wake(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api, writer, _ = _poller(monkeypatch)
+    api.answers[_RERUN_RUN]["conclusion"] = "success"
+    argv = ["rerun", "--repo", REPO, "--run-id", str(RUN), "--controller-app-id", str(APP)]
+    assert mc.main(argv, get=api, api=writer) == 3
+    assert writer.calls == []
 
 
 def test_a_queue_commit_s_note_it_cannot_read_leaves_its_red_as_it_is() -> None:

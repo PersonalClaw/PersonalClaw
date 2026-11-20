@@ -61,7 +61,10 @@ trusted-run branch the old path left).
    shards, untaken on attempts 1 to 3), a later attempt's record fills those jobs
    (``verdict.py``), and every attempt after n must be ``success``. A red after a green attempt or
    after any other red stays red. The green says the first attempts were red only for those jobs.
-   A queue commit's run excuses nothing: its attempt-1 red is its posted verdict.
+   A queue commit's run excuses nothing of the kind: its attempt-1 red is its posted verdict,
+   unless it reruns its failed jobs in place (#5809 piece 3, "A flake-class queue red's failed
+   jobs, rerun in place" below): then only the poster's own note excuses attempt 1, and attempt 2
+   is held to main's verdict naming exactly the note's jobs as red only on attempt 1.
 5. The head's dependency review passed (#4585 step 6): the poster reads the dependency graph's
    comparison of main's tip with the head itself (:func:`review_reading`), and an added package
    version with a known vulnerability, in any scope but development, is red.
@@ -208,6 +211,7 @@ import json
 import os
 import re
 import sys
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -218,7 +222,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from . import merge_verdict, trust, verdict, workflows
+from . import catalogue, merge_verdict, trust, verdict, workflows
 
 #: The run that brings a verdict: merge.yml, by its path in this repository.
 MERGE_WORKFLOW = f".github/workflows/{workflows.MERGE}"
@@ -693,17 +697,22 @@ class Posting:
     output: Mapping[str, str]
     details_url: str
     external_id: str
+    #: ``completed``, or ``in_progress`` for an in-place rerun's note (#5809), which has no
+    #: conclusion: main's merge queue keeps an entry whose required check has none.
+    status: str = "completed"
 
     def body(self) -> dict[str, object]:
-        return {
+        body: dict[str, object] = {
             "name": merge_verdict.CHECK_NAME,
             "head_sha": self.head_sha,
-            "status": "completed",
-            "conclusion": self.conclusion,
+            "status": self.status,
             "output": dict(self.output),
             "details_url": self.details_url,
             "external_id": self.external_id,
         }
+        if self.status == "completed":
+            body["conclusion"] = self.conclusion
+        return body
 
 
 @dataclass(frozen=True)
@@ -720,6 +729,9 @@ class Outcome:
     #: Whether the run that gave it also judges again a few waiting heads: a Merge run's
     #: completion only (:func:`judge`, :data:`WAITING_PER_RUN`).
     sweep: bool = False
+    #: The queue commit's run whose failed jobs rerun in place, its note posted (#5809): the
+    #: poster's ``rerun`` job takes it (:func:`rerun_in_place`).
+    rerun: int | None = None
 
 
 @dataclass(frozen=True)
@@ -2277,6 +2289,21 @@ def judge_waiting(
         built = [e.queue_commit for e in queue_entries(queue.query, repo) if e.queue_commit]
         for commit in [c for c in built if c not in skip][: limit if limit is not None else None]:
             newest = _newest_verdict(get, repo, commit, app)
+            note = rerun_note(newest)
+            if note is not None:
+                # The backstop behind an in-place rerun's poller (#5809, CORE): its attempt 2,
+                # once complete, is judged; past the note's deadline with none, attempt 1's red
+                # posts; else the rerun still runs, and nothing is posted.
+                run = read_run(get, repo, note.run_id)
+                if isinstance(run, Run) and run.attempt == 2:
+                    outcome = decide_queue(get, repo, run, controller_revision, queue)
+                elif _clock() >= note.deadline:
+                    outcome = rerun_ended(get, repo, note.run_id, controller_revision, queue)
+                else:
+                    continue
+                if outcome.posting is not None:
+                    changed.append(outcome)
+                continue
             if newest is not None and _waiting(newest):
                 outcome = rejudge(get, repo, commit, controller_revision, queue)
                 if outcome.posting is not None:
@@ -3055,6 +3082,310 @@ def _queue_retry_note(
         return _unread(exc)
 
 
+# ── A flake-class queue red's failed jobs, rerun in place (#5809 piece 3) ─────────────────────
+#
+# A queue commit's red posted at once makes GitHub drop the entry, and a re-enqueue runs the whole
+# run again. A flake-class red with time left in the queue's check limit instead reruns only its
+# failed jobs: the poster posts its verdict in progress, with no conclusion, so the queue keeps
+# the entry; the poster's ``rerun`` job reruns those jobs, waits for that attempt and wakes the
+# poster for it; and attempt 2 is judged by main's verdict in its ``results``, which names the
+# keys red only on attempt 1 (``verdict.EARLIER_NOTICE``). That attempt's red is excused only when
+# those keys are exactly the jobs the poster's own note names. Any other end posts attempt 1's red.
+
+#: The fence an in-place rerun's note holds its run, its attempt, its deadline and its jobs in.
+RERUN_FENCE = "merge-verdict-rerun"
+#: At least this much of the queue's check limit is left for a rerun, and its longest failed job's
+#: attempt-1 time plus :data:`RERUN_MARGIN_MINUTES` (a timed-out shard's rerun can take its whole
+#: bound again): less, and the red posts at once for a re-enqueue, as before.
+RERUN_FLOOR_MINUTES = 45
+RERUN_MARGIN_MINUTES = 15
+#: A note's deadline is this far before the queue's limit, so the fallback posts its red before
+#: GitHub times the entry out (merge-verdict.yml's ``rerun-fallback``, bounded at 10 minutes).
+RERUN_FALLBACK_MINUTES = 12
+#: The poller never waits longer than this, under its job's 100-minute bound, and its pause.
+RERUN_POLL_MINUTES = 95
+RERUN_POLL_SECONDS = 30
+#: Main's merge queue's rule, read for its check limit (``check_response_timeout_minutes``).
+QUEUE_RULE = "merge_queue"
+_RED_JOBS = ("failure", "cancelled", "timed_out")
+_RERUN_EXTERNAL = re.compile(r"([1-9][0-9]*)/1/rerun")
+
+
+def _clock() -> datetime.datetime:
+    """Now, in UTC: what each rerun's time is read against (the tests set it)."""
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _stamp(when: datetime.datetime) -> str:
+    return when.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _moment(text: object) -> datetime.datetime | None:
+    try:
+        when = datetime.datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo is not None else None
+
+
+@dataclass(frozen=True)
+class RerunNote:
+    """An in-place rerun the poster asked for: the queue commit's run, attempt 1's failed jobs
+    it reruns, and when its fallback posts attempt 1's red instead."""
+
+    run_id: int
+    deadline: datetime.datetime
+    jobs: tuple[str, ...]
+
+
+def rerun_external(run_id: int) -> str:
+    return f"{run_id}/1/rerun"
+
+
+def rerun_note(check: Mapping[str, Any] | None) -> RerunNote | None:
+    """*check*, the controller App's newest merge verdict on a queue commit
+    (:func:`_newest_verdict`, which reads the App's alone, by its id: CORE R2), as an in-place
+    rerun's note, or None when it is not one: in progress with no conclusion, its external id
+    ``<run>/1/rerun``, and its fence naming that run, attempt 1, a deadline and at least one job.
+    Anything else is no note, so it excuses nothing."""
+    if not isinstance(check, Mapping) or check.get("status") == "completed":
+        return None
+    if check.get("conclusion") is not None:
+        return None
+    named = _RERUN_EXTERNAL.fullmatch(str(check.get("external_id") or ""))
+    output = check.get("output")
+    text = output.get("text") if isinstance(output, Mapping) else None
+    if named is None or not isinstance(text, str):
+        return None
+    fenced = re.search(rf"```{RERUN_FENCE}\n(.*?)```", text, re.S)
+    if fenced is None:
+        return None
+    fields: dict[str, list[str]] = {}
+    for line in fenced.group(1).splitlines():
+        word, _, value = line.partition(" ")
+        fields.setdefault(word, []).append(value)
+    run_id = int(named.group(1))
+    stamps = fields.get("deadline", [])
+    deadline = _moment(stamps[0]) if len(stamps) == 1 else None
+    jobs = tuple(fields.get("job", []))
+    if (
+        fields.get("run") != [str(run_id)]
+        or fields.get("attempt") != ["1"]
+        or deadline is None
+        or not jobs
+        or len(set(jobs)) != len(jobs)
+        or set(fields) - {"run", "attempt", "deadline", "job"}
+    ):
+        return None
+    return RerunNote(run_id, deadline, tuple(sorted(jobs)))
+
+
+def queue_check_minutes(get: Get, repo: str) -> int:
+    """Main's merge queue's check limit: a required check with no conclusion by then fails and
+    the queue drops the entry. Read from main's rules (``rules/branches/main``), never assumed."""
+    rules = _read(get, f"/repos/{repo}/rules/branches/main")
+    found = [
+        rule.get("parameters", {}).get("check_response_timeout_minutes")
+        for rule in (rules if isinstance(rules, list) else [])
+        if isinstance(rule, Mapping)
+        and rule.get("type") == QUEUE_RULE
+        and isinstance(rule.get("parameters"), Mapping)
+    ]
+    if len(found) != 1 or _int(found[0]) is None or found[0] <= 0:
+        raise Unread(f"main's rules name {len(found)} merge queue check limits, not one")
+    return int(found[0])
+
+
+def _entry_id(name: str) -> str:
+    """A matrix entry's catalogue job id: ``python-suite (1/3)`` is ``python-suite``'s."""
+    return name.split(" (", 1)[0]
+
+
+def _waits() -> frozenset[str]:
+    """Every catalogue job that waits for another (its ``after``) or that another waits for: it
+    runs in a stage after the first, or in ``build``, so a rerun of it reruns the stages that
+    need it too. Only a job of neither kind runs in ``test``, whose one dependent is ``results``
+    (``plan.stage_jobs``), so only its rerun reruns exactly itself and ``results`` (CORE G1)."""
+    jobs = catalogue.read().jobs
+    return frozenset({j.id for j in jobs if j.after} | {a for j in jobs for a in j.after})
+
+
+def _red_jobs(jobs: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    return [j for j in jobs if j.get("name") != RESULTS_JOB and j.get("conclusion") in _RED_JOBS]
+
+
+def _rerun_plan(
+    get: Get, repo: str, run: Run, sha: str, reasons: list[str], failing: list[str], retried: object
+) -> RerunNote | str:
+    """The in-place rerun of attempt 1's failed jobs, or why there is none, so the red posts: it
+    is attempt 1 of the run; its red is flake-class (the retry note's :func:`flake_class`) with a
+    retry left; every reason is its ``results``' (no gate, contract, queue or change reason);
+    every red job is a flake-class job's, failed, cancelled or timed out; and the queue's check
+    limit leaves at least :data:`RERUN_FLOOR_MINUTES`, and the longest red job's attempt-1 time
+    and :data:`RERUN_MARGIN_MINUTES`, from the earlier of the queue commit's commit time and the
+    run's creation."""
+    if run.attempt != 1:
+        return f"it is attempt {run.attempt}: only attempt 1's failed jobs rerun in place, once"
+    if not isinstance(retried, Retry) or not retried.flake_class:
+        return "its red is not flake-class"
+    if retried.count >= RETRIES:
+        return "its retry budget is spent"
+    if not failing or set(reasons) != set(failing):
+        return "it is red for more than its results"
+    jobs = _pages(get, f"/repos/{repo}/actions/runs/{run.id}/attempts/1/jobs", "jobs")
+    red = _red_jobs(jobs)
+    names = [str(j.get("name") or "") for j in red]
+    if not red or not all(_flake_job(n) for n in names) or len(set(names)) != len(names):
+        return "its red jobs are not each a flake-class job's, named once"
+    cut = [str(j.get("name") or "") for j in red if j.get("conclusion") != "failure"]
+    if cut:
+        # A job cut short may have left no attempt-1 record, and then main's verdict reads it
+        # "missing on attempt 1" on the rerun: no notice, a red after the rerun's wait (CORE N3).
+        return f"`{cut[0]}` was cancelled or timed out: its attempt-1 record may be missing"
+    waits = _waits()
+    alone = [n for n in names if _entry_id(n) in waits]
+    if alone:
+        return (
+            f"`{alone[0]}` is a job that waits or is waited on: its rerun would rerun jobs that"
+            " need it, beside `results`"
+        )
+    limit = queue_check_minutes(get, repo)
+    raw = _read(get, f"/repos/{repo}/actions/runs/{run.id}")
+    commit = _read(get, f"/repos/{repo}/git/commits/{sha}")
+    committer = commit.get("committer") if isinstance(commit, Mapping) else None
+    times = [
+        _moment(raw.get("created_at") if isinstance(raw, Mapping) else None),
+        _moment(committer.get("date") if isinstance(committer, Mapping) else None),
+    ]
+    if any(t is None for t in times):
+        raise Unread(f"run {run.id} or its queue commit {sha} names no time it began")
+    start = min(t for t in times if t is not None)
+    longest = max((_job_time(j, "completed_at") - _job_time(j, "started_at") for j in red))
+    left = start + datetime.timedelta(minutes=limit) - _clock()
+    need = max(
+        datetime.timedelta(minutes=RERUN_FLOOR_MINUTES),
+        longest + datetime.timedelta(minutes=RERUN_MARGIN_MINUTES),
+    )
+    if left < need:
+        return (
+            f"{int(left.total_seconds() // 60)} of the queue's {limit} minutes are left, under the"
+            f" {int(need.total_seconds() // 60)} a rerun of its failed jobs needs"
+        )
+    deadline = start + datetime.timedelta(minutes=limit - RERUN_FALLBACK_MINUTES)
+    return RerunNote(run.id, deadline, tuple(sorted(names)))
+
+
+def _rerun_posting(run: Run, sha: str, note: RerunNote, retried: Retry) -> Posting:
+    """The note an in-place rerun posts: in progress, no conclusion, so the queue keeps the entry;
+    its fence what :func:`rerun_note` reads back."""
+    named = ", ".join(f"`{j}`" for j in note.jobs)
+    summary = "\n".join(
+        [
+            "This queue commit's red is flake-class, so its failed jobs rerun in place while the"
+            " queue keeps its entry (#5809):",
+            "",
+            *[f"- {line}" for line in retried.lines()],
+            f"- rerun: {named}",
+            f"- by {_stamp(note.deadline)}, or its fallback posts attempt 1's red",
+            "",
+            f"From Merge run {run.url or run.id}, attempt 1.",
+        ]
+    )
+    text = (
+        f"```{RERUN_FENCE}\nrun {run.id}\nattempt 1\ndeadline {_stamp(note.deadline)}\n"
+        + "".join(f"job {j}\n" for j in note.jobs)
+        + "```\n"
+    )
+    title = f"Rerunning in place: attempt 1's failed jobs ({', '.join(note.jobs)})"
+    output = {"title": title[:255], "summary": summary, "text": text}
+    return Posting(sha, "", output, run.url, rerun_external(run.id), status="in_progress")
+
+
+def rerun_reasons(get: Get, repo: str, run: Run, note: RerunNote) -> tuple[list[str], list[str]]:
+    """Rule 4 for a queue commit's rerun attempt (#5809): why its ``results`` are not green on
+    every attempt with the poster's own note excusing attempt 1, and attempt 2's ``results``
+    runner's labels. Read only on the in-place path (CORE G2): a queue commit's run, its attempt
+    2 exactly, with the App's note on attempt 1. Attempt 1's red is excused, and attempt 2's
+    ``results`` red with it, only when: attempt 1's red jobs are exactly the note's; attempt 2
+    reran exactly them and ``results`` (CORE G1: a job reran when it started at or after attempt
+    2's ``run_started_at``, since GitHub gives a carried job a new id but its old times; a missing
+    time is unread); attempt 2's own listing shows every job but ``results`` ``success`` or
+    ``skipped`` (the proof, as #5848's is); and attempt 2's ``results`` passed, or its
+    annotations hold exactly one ``verdict.EARLIER_NOTICE``, a JSON list of distinct names equal
+    to the note's jobs (CORE G3): main's verdict's word that each is green on attempt 2 and
+    nothing else is red. Two such notices are unread."""
+    if run.id != note.run_id or run.attempt != 2 or run.event != QUEUE_EVENT:
+        return [f"run {run.id}'s attempt {run.attempt} is not its note's rerun"], []
+    first = _pages(get, f"/repos/{repo}/actions/runs/{run.id}/attempts/1/jobs", "jobs")
+    second = _pages(get, f"/repos/{repo}/actions/runs/{run.id}/attempts/2/jobs", "jobs")
+    began = _read(get, f"/repos/{repo}/actions/runs/{run.id}/attempts/2")
+    since = _moment(began.get("run_started_at") if isinstance(began, Mapping) else None)
+    if since is None:
+        raise Unread(f"attempt 2 of run {run.id} names no time it started")
+    reasons: list[str] = []
+    red = {str(j.get("name") or "") for j in _red_jobs(first)}
+    if red != set(note.jobs):
+        reasons.append("attempt 1's red jobs are not the ones its rerun note names")
+    rerun = {str(j.get("name") or "") for j in second if _job_time(j, "started_at") >= since}
+    if rerun != {*note.jobs, RESULTS_JOB}:
+        reasons.append(
+            "attempt 2 did not rerun exactly attempt 1's failed jobs and `results`:"
+            f" {', '.join(sorted(rerun)) or 'nothing'}"
+        )
+    unclean = sorted(
+        str(j.get("name") or "")
+        for j in second
+        if j.get("name") != RESULTS_JOB
+        and not (j.get("status") == "completed" and j.get("conclusion") in ("success", "skipped"))
+    )
+    if unclean:
+        reasons.append(f"attempt 2's listing shows {', '.join(unclean)} other than green")
+    found = [j for j in second if j.get("name") == RESULTS_JOB]
+    labels: list[str] = []
+    if len(found) != 1:
+        return [*reasons, f"attempt 2 has {len(found)} `{RESULTS_JOB}` jobs, not one"], labels
+    job = found[0]
+    raw = job.get("labels")
+    labels = [str(x) for x in raw] if isinstance(raw, list) else []
+    if job.get("status") != "completed":
+        reasons.append(f"attempt 2's `{RESULTS_JOB}` is {job.get('status')!r}")
+    elif job.get("conclusion") == "failure":
+        job_id = _int(job.get("id"))
+        if job_id is None:
+            raise Unread(f"attempt 2's `{RESULTS_JOB}` job has no id to read its notices from")
+        notes = _all_pages(get, f"/repos/{repo}/check-runs/{job_id}/annotations")
+        these = [
+            n.get("message")
+            for n in notes
+            if n.get("title") == verdict.EARLIER_NOTICE and n.get("annotation_level") == "notice"
+        ]
+        if len(these) > 1:
+            raise Unread(
+                f"attempt 2's `{RESULTS_JOB}` writes {len(these)} notices of keys red only on"
+                " attempt 1, where main's verdict writes one"
+            )
+        try:
+            named = json.loads(these[0]) if these and isinstance(these[0], str) else None
+        except ValueError:
+            named = None
+        if (
+            not isinstance(named, list)
+            or not all(isinstance(n, str) for n in named)
+            or len(set(named)) != len(named)
+        ):
+            reasons.append(
+                f"attempt 2's `{RESULTS_JOB}` is 'failure' for more than the jobs it reran"
+            )
+        elif set(named) != set(note.jobs):
+            reasons.append(
+                f"attempt 2's `{RESULTS_JOB}` is red only on attempt 1 for"
+                f" {', '.join(sorted(named))}, not for the jobs its rerun note names"
+            )
+    elif job.get("conclusion") != "success":
+        reasons.append(f"attempt 2's `{RESULTS_JOB}` is {job.get('conclusion')!r}")
+    return reasons, labels
+
+
 # ── A queue commit of main's merge queue (0.4.0 A1) ─────────────────────────────────────────
 
 #: Main's merge queue in one read: each entry's place, its queue commit and the commit it was
@@ -3192,9 +3523,19 @@ def change_reasons(
 
 
 def decide_queue(
-    get: Get, repo: str, run: Run, controller_revision: str, queue: Queue | None
+    get: Get,
+    repo: str,
+    run: Run,
+    controller_revision: str,
+    queue: Queue | None,
+    *,
+    ended: bool = False,
 ) -> Outcome:
-    """A queue commit's run (the module's "A queue commit" rules)."""
+    """A queue commit's run (the module's "A queue commit" rules). A flake-class red on attempt 1
+    with time left posts the in-place rerun's note instead (:func:`_rerun_plan`), and the run's
+    attempt 2 under that note is judged by :func:`rerun_reasons`. With *ended* (``decide
+    --rerun-ended``, the poster's fallback or the sweep past a note's deadline), *run* is attempt 1
+    under the note, and its red posts, with no rerun asked again."""
     if queue is None:
         return Outcome(why=f"run {run.id} is a queue run, judged only with the queue's read")
     named = QUEUE_BRANCH.fullmatch(run.branch)
@@ -3205,7 +3546,14 @@ def decide_queue(
         newest = _newest_verdict(get, repo, sha, queue.app)
     except Unread as exc:
         return Outcome(why=f"queue commit {sha}'s verdicts are unread, so none is posted: {exc}")
-    if newest is not None and not _waiting(newest):
+    note = rerun_note(newest)
+    if note is not None and note.run_id != run.id:
+        return Outcome(why=f"queue commit {sha}'s failed jobs rerun in place in run {note.run_id}")
+    if note is not None and run.attempt == 1 and not ended:
+        return Outcome(why=f"run {run.id}'s failed jobs rerun in place: its attempt 2 is judged")
+    if ended and (run.attempt != 1 or (note is None and newest is not None)):
+        return Outcome(why=f"queue commit {sha} has no rerun of run {run.id} waiting to end")
+    if note is None and newest is not None and not _waiting(newest):
         return Outcome(why=f"queue commit {sha} has its verdict: it is never posted again")
     contract: Contract | None = None
     changed: list[str] = []
@@ -3250,8 +3598,20 @@ def decide_queue(
         _, base_tree = api_tree(get, repo, base)
         comparison = trust.compare_trees(base_tree, queue_tree, base=base, head=sha)
         changed = [] if comparison.trusted else [c.path for c in comparison.changes]
-        failing, labels, _, _ = results_reasons(get, repo, run)
+        if note is not None and not ended:
+            failing, labels = rerun_reasons(get, repo, run, note)
+        else:
+            failing, labels, _, _ = results_reasons(get, repo, run)
         reasons += failing
+        if ended:
+            # With no note at all, the note never posted (CORE S1): attempt 1's red posts, so the
+            # entry is not left to the queue's limit with no verdict.
+            reasons.append(
+                f"its failed jobs' rerun in place (run {run.id}) ended with no verdict on it by"
+                f" {_stamp(note.deadline)}"
+                if note is not None
+                else f"its failed jobs' rerun in place (run {run.id}) ended: its note never posted"
+            )
         gates = queue_gate_reading(get, repo, sha, base_tree, queue_tree)
         reasons += gates.reasons
         if changed:
@@ -3283,8 +3643,19 @@ def decide_queue(
         reasons.append(f"{WAITING_CONTRACT}{running}")
     if reasons:
         retried = _queue_retry_note(get, repo, run, entry, built_on, failing, reasons, queue)
+        detail: list[str] = []
+        if not ended and note is None and isinstance(retried, Retry) and retried.flake_class:
+            try:
+                plan = _rerun_plan(get, repo, run, sha, reasons, failing, retried)
+            except (Unread, trust.Refused) as exc:
+                plan = _unread(exc)
+            if isinstance(plan, RerunNote) and isinstance(retried, Retry):
+                return Outcome(
+                    posting=_rerun_posting(run, sha, plan, retried), base=base, rerun=run.id
+                )
+            detail = [f"- no rerun in place: {plan}"]
         return Outcome(
-            posting=_red(run, reasons, sha, None, retried),
+            posting=_red(run, reasons, sha, None, retried, detail),
             dispatch=start,
             base=base,
             cleanup=cleanup,
@@ -3401,6 +3772,96 @@ def dispatch(api: Api, repo: str, branch: str) -> None:
     _call(api, "POST", path, {"ref": branch, "inputs": {"head": head}}, 204)
 
 
+#: The poster's own workflow, which the rerun's wake dispatches on main for its queue commit.
+POSTER_WORKFLOW = "merge-verdict.yml"
+
+
+def rerun_in_place(
+    get: Get,
+    api: Api,
+    repo: str,
+    run_id: int,
+    app: int,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> str:
+    """The poster's ``rerun`` job (#5809): rerun a queue commit's failed jobs in place, wait for
+    that attempt, then wake the poster on main for its queue commit. ``""`` once the wake is sent;
+    else why not, and the job's fallback then posts attempt 1's red. Before it reruns anything it
+    reads the run again (CORE R1): this repository's merge.yml, a ``merge_group`` run on a queue
+    branch, attempt 1, completed ``failure``; the App's newest verdict on its queue commit is this
+    run's note, its deadline not passed; and attempt 1's red jobs are exactly the note's. It waits
+    until the note's deadline at most, and :data:`RERUN_POLL_MINUTES` (CORE's refinement): a red
+    after GitHub dropped the entry would be no use. A third attempt, or anyone else's rerun, is
+    no rerun of the note's."""
+    raw = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
+    if not isinstance(raw, Mapping):
+        raise Unread(f"run {run_id} is not an object")
+    repository = raw.get("repository")
+    head = raw.get("head_sha")
+    if (
+        not isinstance(repository, Mapping)
+        or repository.get("full_name") != repo
+        or raw.get("path") != MERGE_WORKFLOW
+        or raw.get("event") != QUEUE_EVENT
+        or not QUEUE_BRANCH.fullmatch(str(raw.get("head_branch") or ""))
+        or not isinstance(head, str)
+        or not _SHA.fullmatch(head)
+    ):
+        return f"run {run_id} is not this repository's merge.yml run of a queue commit"
+    if _int(raw.get("run_attempt")) != 1 or raw.get("status") != "completed":
+        return f"run {run_id} is attempt {raw.get('run_attempt')!r}, {raw.get('status')!r}"
+    if raw.get("conclusion") != "failure":
+        return f"run {run_id} concluded {raw.get('conclusion')!r}, not 'failure'"
+    note = rerun_note(_newest_verdict(get, repo, head, app))
+    if note is None or note.run_id != run_id:
+        return f"the App's newest verdict on {head} is no rerun note of run {run_id}"
+    jobs = _pages(get, f"/repos/{repo}/actions/runs/{run_id}/attempts/1/jobs", "jobs")
+    red = sorted(str(j.get("name") or "") for j in _red_jobs(jobs))
+    if tuple(red) != note.jobs:
+        return f"attempt 1's red jobs are {', '.join(red)}, not the note's"
+    ceiling = min(note.deadline, _clock() + datetime.timedelta(minutes=RERUN_POLL_MINUTES))
+    if _clock() >= ceiling:
+        return f"the note's deadline, {_stamp(note.deadline)}, has passed"
+    status, answer = api("POST", f"/repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs", None)
+    if status != 201:
+        return f"GitHub did not rerun the failed jobs ({status}): {answer!r}"
+    while True:
+        sleep(RERUN_POLL_SECONDS)
+        now = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
+        attempt = _int(now.get("run_attempt")) if isinstance(now, Mapping) else None
+        if attempt is not None and attempt > 2:
+            return f"run {run_id} is on attempt {attempt}: another rerun than the note's"
+        if attempt == 2 and isinstance(now, Mapping) and now.get("status") == "completed":
+            break
+        if _clock() >= ceiling:
+            return f"attempt 2 of run {run_id} did not complete by {_stamp(ceiling)}"
+    path = f"/repos/{repo}/actions/workflows/{POSTER_WORKFLOW}/dispatches"
+    status, answer = api("POST", path, {"ref": "main", "inputs": {"head": head}})
+    if status != 204:
+        return f"the poster's wake for {head} was not sent ({status}): {answer!r}"
+    return ""
+
+
+def rerun_ended(
+    get: Get, repo: str, run_id: int, controller_revision: str, queue: Queue | None
+) -> Outcome:
+    """The poster's ``rerun-fallback`` (``decide --rerun-ended``): the rerun job did not end with
+    its wake. Attempt 2, when it has completed, is judged as its wake would have judged it; else
+    attempt 1's red posts, saying its rerun ended. Either posts only while the App's newest
+    verdict on the queue commit is the run's note (:func:`decide_queue`)."""
+    run = read_run(get, repo, run_id)
+    if isinstance(run, Run) and run.attempt == 2:
+        return decide_queue(get, repo, run, controller_revision, queue)
+    raw = _read(get, f"/repos/{repo}/actions/runs/{run_id}/attempts/1")
+    if not isinstance(raw, Mapping) or raw.get("status") != "completed":
+        return Outcome(why=f"attempt 1 of run {run_id} is not a completed run to judge")
+    first = read_run(lambda _path: raw, repo, run_id)
+    if not isinstance(first, Run) or first.attempt != 1 or first.event != QUEUE_EVENT:
+        return Outcome(why=f"run {run_id} is no queue commit's attempt 1: {first}")
+    return decide_queue(get, repo, first, controller_revision, queue, ended=True)
+
+
 def delete_branch(api: Api, repo: str, branch: str) -> None:
     """Delete a judged or stale contract branch, or a trusted-run branch the old path left; one
     already gone is fine."""
@@ -3416,7 +3877,22 @@ def delete_branch(api: Api, repo: str, branch: str) -> None:
 
 
 def check_body(body: object) -> Mapping[str, Any]:
-    """The body, if it is one completed ``merge-verdict`` check run this module wrote."""
+    """The body, if it is one completed ``merge-verdict`` check run this module wrote, or one
+    in-place rerun's note (#5809): in progress, no conclusion, its external id ``<run>/1/rerun``
+    and its fence what :func:`rerun_note` reads back for that run (CORE F2: the note posts)."""
+    if isinstance(body, Mapping) and set(body) == _BODY_KEYS - {"conclusion"}:
+        if body["name"] != merge_verdict.CHECK_NAME or body["status"] != "in_progress":
+            raise ValueError("the body is not an in-progress merge-verdict check run")
+        if not isinstance(body["head_sha"], str) or not _SHA.fullmatch(body["head_sha"]):
+            raise ValueError("the body names no head")
+        named = _RERUN_EXTERNAL.fullmatch(str(body.get("external_id") or ""))
+        note = rerun_note({**body, "conclusion": None})
+        if named is None or note is None or note.run_id != int(named.group(1)):
+            raise ValueError("the in-progress body is no in-place rerun's note")
+        output = body["output"]
+        if not isinstance(output, Mapping) or not {"title", "summary"} <= set(output):
+            raise ValueError("the body's output has no title or summary")
+        return body
     if not isinstance(body, Mapping) or set(body) != _BODY_KEYS:
         raise ValueError("the body is not one merge-verdict check run")
     if body["name"] != merge_verdict.CHECK_NAME or body["status"] != "completed":
@@ -3519,6 +3995,13 @@ def main(
     which.add_argument(
         "--waiting", action="store_true", help="judge again every open head whose red still waits"
     )
+    which.add_argument(
+        "--rerun-ended",
+        type=int,
+        metavar="RUN_ID",
+        help="a queue commit's run whose rerun in place ended with no wake: judge its attempt 2,"
+        " or post attempt 1's red",
+    )
     one.add_argument(
         "--controller-app-id",
         type=int,
@@ -3539,7 +4022,13 @@ def main(
         "cleanup", help="delete contract and trusted-run branches (the App's token)"
     )
     five.add_argument("--branch", required=True, action="append")
-    for each in (one, two, three, four, five):
+    six = sub.add_parser(
+        "rerun",
+        help="rerun a queue commit's failed jobs in place, wait for them, then wake the poster",
+    )
+    six.add_argument("--run-id", required=True, type=int)
+    six.add_argument("--controller-app-id", required=True, type=int)
+    for each in (one, two, three, four, five, six):
         each.add_argument("--repo", required=True)
     args = parser.parse_args(argv)
     if not _REPO.fullmatch(args.repo):
@@ -3547,6 +4036,16 @@ def main(
     token = os.environ.get("GH_TOKEN", "")
     reader = content_addressed(get or merge_verdict.github_get(API, token))
     writer = api or github_api(token)
+    if args.command == "rerun":
+        try:
+            why = rerun_in_place(reader, writer, args.repo, args.run_id, args.controller_app_id)
+        except (Unread, trust.Refused) as exc:
+            why = _unread(exc)
+        if why:
+            print(f"::error title=no rerun in place::{why}")
+            return 3
+        print(f"run {args.run_id}'s attempt 2 completed: the poster is woken for it")
+        return 0
     if args.command == "decide" and args.start is not None:
         # A run that has started: at most its contract's dispatch. Nothing is posted, nothing is
         # swept and no waiting head is judged again here: only a completed run is judged.
@@ -3559,6 +4058,7 @@ def main(
         _output("dispatch", started.dispatch or "")
         _output("base", started.base or "")
         _output("cleanup", "")
+        _output("rerun", "")
         _output("post", "false")
         return 0
     if args.command == "decide":
@@ -3576,6 +4076,12 @@ def main(
         try:
             if args.run_id is not None:
                 outcomes = [judge(reader, args.repo, args.run_id, args.controller_revision, queue)]
+            elif args.rerun_ended is not None:
+                outcomes = [
+                    rerun_ended(
+                        reader, args.repo, args.rerun_ended, args.controller_revision, queue
+                    )
+                ]
             elif args.head is not None:
                 outcomes = [wake(reader, args.repo, args.head, args.controller_revision, queue)]
             elif args.check_run_id is not None:
@@ -3630,6 +4136,9 @@ def main(
         if dispatch_head:
             doomed.discard(CONTRACT_PREFIX + dispatch_head)
         _output("cleanup", " ".join(sorted(doomed)))
+        # A queue commit's own completed run alone asks for its failed jobs' rerun in place.
+        rerun = single.rerun if single is not None and args.run_id is not None else None
+        _output("rerun", str(rerun) if rerun else "")
         postings = [o.posting for o in outcomes if o.posting is not None]
         for o in outcomes:
             if o.posting is None:
@@ -3641,7 +4150,8 @@ def main(
         args.out.write_text(json.dumps(bodies, indent=2) + "\n", encoding="utf-8")
         for found in postings:
             title = found.output["title"]
-            print(f"merge-verdict on {found.head_sha}: {found.conclusion}: {title}")
+            word = found.conclusion or found.status
+            print(f"merge-verdict on {found.head_sha}: {word}: {title}")
         _output("post", "true")
         return 0
     if not token and api is None:
@@ -3654,7 +4164,8 @@ def main(
                 raise ValueError("the body file is not a list of check runs")
             for body in [check_body(b) for b in bodies]:
                 check_id = post(args.repo, body, lambda path, b: writer("POST", path, b))
-                said = f"{body['conclusion']} on {body['head_sha']} (check run {check_id})"
+                word = body.get("conclusion") or body["status"]
+                said = f"{word} on {body['head_sha']} (check run {check_id})"
                 print(f"posted merge-verdict {said}")
         elif args.command == "contract-branch":
             branch = make_contract_branch(writer, args.repo, args.head, args.base)

@@ -16061,6 +16061,14 @@ THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
                 _cut(_MERGE_YML, "      - name: main's tools/ci checks this run's catalogue\n",
                      "\n  shard-plan:\n"),
                 expect="for the changes job, and no tier workflow's changes runs it"),
+        # #5809 (CORE G4): the poster reads one notice of main's verdict from a queue commit's
+        # results; a step of the candidate's that writes it is no line results may run.
+        _plant_in_job("a results step that writes the earlier-attempt notice", _MERGE_YML,
+                      "results", "      - name: the verdict over the plan's keys and the run's"
+                      " records\n",
+                      "      - run: echo \"::notice title=red only on an earlier attempt::[]\"\n"
+                      "      - name: the verdict over the plan's keys and the run's records\n",
+                      expect="merge.yml job results runs 'echo \"::notice title=red only on"),
         _plant("a job that is neither", _PR_YML, "\n  results:\n",
                "\n  extra:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n"
                "      - run: echo hi\n\n  results:\n",
