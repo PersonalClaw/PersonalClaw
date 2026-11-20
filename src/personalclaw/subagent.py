@@ -69,6 +69,7 @@ from personalclaw.subagent_persistence import (
     create_agent_folder,
     delete_agent_folder,
     prune_stale_tombstones,
+    record_pid,
     update_state,
     write_result_chunk,
     write_tombstone,
@@ -1856,7 +1857,7 @@ class SubagentManager:
             pid = self._sessions.get_pid(session_key)
             if pid:
                 info._pid = pid  # make available for _write_tombstone
-                update_state(info.id, pid=pid, pid_recorded_at=time.time())
+                record_pid(info.id, pid)
         except Exception:
             logger.debug("Failed to record PID for %s", info.id, exc_info=True)
 

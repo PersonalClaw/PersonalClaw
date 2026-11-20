@@ -1,10 +1,11 @@
 """Read-only facts about this host's processes: their parents, their command lines, where they run.
 
-Four features ask the OS the same questions, and one place asks them: the run web preview (which
+Five features ask the OS the same questions, and one place asks them: the run web preview (which
 listening processes work inside a run's workspace, ``workflows/web_preview.py``), the app
 runtime (which processes still run an app's files after the app was unloaded,
 ``apps/app_runtime.py``), ``personalclaw stop`` (whether the pid a gateway recorded still runs
-that gateway), and the end of a run (which processes carry its marker, ``run_processes``). Asking
+that gateway), the end of a run (which processes carry its marker, ``run_processes``), and a
+restart (whether the pid a helper recorded still runs that helper, ``subagent_orphans``). Asking
 has traps of its own — ``lsof -p ""`` selects every process on the host rather than none, and
 ``lsof`` exits non-zero when it merely found nothing — and a second copy of the asking would have
 to relearn each of them.
@@ -239,6 +240,24 @@ def process(pid: int) -> Process | None:
         return _proc_process(pid)
     if sys.platform == "darwin":
         return _libproc_process(pid)
+    return None
+
+
+def started_at(found: Process) -> float | None:
+    """When *found* started, in seconds since the epoch, or ``None`` when that cannot be read.
+
+    Linux counts a start in clock ticks since the host booted, which ``/proc/stat``'s ``btime``
+    dates; macOS counts it in microseconds since the epoch."""
+    if PROC.is_dir():
+        try:
+            for line in (PROC / "stat").read_text(encoding="utf-8").splitlines():
+                if line.startswith("btime "):
+                    return int(line.split()[1]) + found.started / os.sysconf("SC_CLK_TCK")
+        except (OSError, ValueError, IndexError):
+            return None
+        return None
+    if sys.platform == "darwin":
+        return found.started / 1_000_000
     return None
 
 

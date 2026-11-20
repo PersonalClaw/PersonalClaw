@@ -32,6 +32,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Leaving plan mode, by Cancel or the task-mode pill, while the plan's own turn is running stops that turn first, so none of its tool calls runs in the mode the chat goes back to.**
 - **The desktop app started at login on macOS opens no window, as Open at Login means: its menu-bar item or the Dock opens it.**
 - **Cancel or Approve of a plan that recorded no mode to go back to leaves the chat in Ask, where only read-only tools run, instead of Agent.**
+- **On macOS, a restart now stops the background agents the previous run left running, and its notice says which it stopped and which had already ended.**
 
 ### Security
 

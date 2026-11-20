@@ -29,7 +29,7 @@ from personalclaw.approval_grants import ToolDecision
 from personalclaw.security import redact_for_model
 from personalclaw.sel import sel_log_async
 from personalclaw.subagent import SubagentManager, agent_work_id
-from personalclaw.subagent_orphans import Orphan, announce_orphans
+from personalclaw.subagent_orphans import STOPPED, Orphan, announce_orphans
 from personalclaw.subagent_persistence import ASKING, QUEUED
 from personalclaw.subagent_waiting import ENDED, STARTED, TakenBack, cut_off, take_back
 from personalclaw.turn_source import arrived_on
@@ -448,7 +448,7 @@ def test_the_restart_notice_names_each_one_it_kept_asked_again_or_ended(home):
     notes.notify = lambda kind, title, body, **_kw: notes.sent.append((kind, title, body))
     announce_orphans(
         notes,
-        [Orphan("a1b2c3d4", "Research the venues")],
+        [Orphan("a1b2c3d4", "Research the venues", process=STOPPED)],
         [
             TakenBack("e5f6a7b8", "Draft the agenda", QUEUED, QUEUED),
             TakenBack("c9d0e1f2", "Book the room", ASKING, ASKING),
@@ -470,7 +470,7 @@ def test_the_restart_notice_names_each_one_it_kept_asked_again_or_ended(home):
         "could not start"
     )
     assert body.split("\n\n") == [
-        "a1b2c3d4 — Research the venues: it saved no result.",
+        "a1b2c3d4 — Research the venues: stopped; it saved no result.",
         "e5f6a7b8 — Draft the agenda: it had not started, and waits for a free slot again.",
         "c9d0e1f2 — Book the room: it was waiting for your Allow to start, and asks again, since "
         "the restart closed the ask you had not answered.",
