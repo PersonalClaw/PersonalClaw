@@ -27,7 +27,8 @@ mutating tool. This module never writes a "don't execute" instruction anywhere �
 sets the posture the existing gate reads, and refuses to *leave* that posture while a
 step is still awaiting review.
 
-Storage: ``config_dir()/chat_plans/<safe key>.json``, atomic writes, reads tolerate a
+Storage: ``config_dir()/chat_plans/<safe key>.json``, or ``<safe key>-<8 hex>.json`` for a chat
+whose safe key another chat's plan already holds (:func:`_path`), atomic writes, reads tolerate a
 missing/corrupt file. This is a user-facing availability surface (the walkthrough panel),
 so a corrupt file **fails open** to "no plan session" + a warning rather than wedging the
 chat behind an unreadable gate.
@@ -49,7 +50,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.chat_persistence import resolve_session
 from personalclaw.dashboard.chat_utils import apply_task_mode, take_in_the_users_links
 from personalclaw.dashboard.state import DashboardState, _ChatSession
-from personalclaw.history import _safe_key
+from personalclaw.history import _hashed_stem, _safe_key
 from personalclaw.http_errors import json_error
 from personalclaw.planning import session as PS
 from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
@@ -102,11 +103,33 @@ PLAN_STEP_KIND = "chat_plan"
 # ── persistence (chat-owned sidecar for the shared PlanSession) ──
 
 
+def _whose(sidecar: Path) -> str | None:
+    """The chat the plan file *sidecar* records (its session's ``project_id``): ``None`` when there
+    is no file, and ``""`` when it cannot be read or records none."""
+    try:
+        raw = json.loads(sidecar.read_text())
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return ""
+    session = raw.get("session") if isinstance(raw, dict) else None
+    chat = session.get("project_id") if isinstance(session, dict) else None
+    return chat if isinstance(chat, str) else ""
+
+
 def _path(chat_key: str) -> Path:
-    # _safe_key is the single filename-sanitization rule already used for a session
-    # key (history.ConversationLog._path) — reused rather than re-derived so a chat's
-    # plan sidecar and its transcript agree on what a key's filename is.
-    return config_dir() / PS.CHAT_PLANS_DIR / f"{_safe_key(chat_key)}.json"
+    """Where *chat_key*'s plan is kept, named as its transcript is (``ConversationLog._file_stem``):
+    by the key's safe name (:func:`_safe_key`) while the file there is this chat's or there is none,
+    else by that name and a short hash of the whole key, which the chat keeps while it is there.
+    Two chats whose keys differ only in what the safe name turns into ``_`` (``a:b``, ``a?b``,
+    ``a_b``) so keep a plan, and its approvals, each. A file that cannot be read is no chat's: a
+    plan is never read from, or cleared at, a file this chat cannot show is its own."""
+    folder = config_dir() / PS.CHAT_PLANS_DIR
+    own = folder / f"{_hashed_stem(chat_key)}.json"
+    if own.exists():
+        return own
+    named = folder / f"{_safe_key(chat_key)}.json"
+    return named if _whose(named) in (None, chat_key) else own
 
 
 def read(chat_key: str) -> tuple[PlanSession | None, dict[str, Any]]:
@@ -126,8 +149,17 @@ def read(chat_key: str) -> tuple[PlanSession | None, dict[str, Any]]:
     if not isinstance(raw, dict) or not isinstance(raw.get("session"), dict):
         logger.warning("chat plan sidecar malformed for %s — treating as absent", chat_key)
         return None, {}
+    session = PlanSession.from_dict(raw["session"])
+    if session.project_id != chat_key:
+        # A plan is its chat's alone: one that records another chat is never shown or approved here.
+        logger.warning(
+            "chat plan sidecar for %s records chat %r — treating as absent",
+            chat_key,
+            session.project_id,
+        )
+        return None, {}
     binding = raw.get("binding")
-    return PlanSession.from_dict(raw["session"]), dict(binding) if isinstance(binding, dict) else {}
+    return session, dict(binding) if isinstance(binding, dict) else {}
 
 
 def write(session: PlanSession, binding: dict[str, Any]) -> None:

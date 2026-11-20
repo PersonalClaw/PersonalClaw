@@ -458,6 +458,12 @@ chat, channel thread, loop worker, webhook, subagent).
   file that records no key (one an earlier version wrote) is its slug's until
   a save claims it, where it is: the first key with its slug to save, which may
   be an alike chat opened after the upgrade rather than the one that wrote it.
+  A chat's plan file (`chat_plans/`, `dashboard/chat_plan.py` `_path`) is
+  named by the same rule, without the exception for a key that is its own
+  slug: the plan records its chat (its session's `project_id`), a key whose
+  slug's plan records another chat (or can't be read) keeps
+  `{safe_key}-{8 hex}.json`, and a chat reads, approves and cancels only a
+  plan that records it.
 - **Each chat's settings are its record** (`chat_record.py`), beside its
   transcript: `{safe_key}.chat.json`. Its title, pin, folder, tags, archive,
   memory mode, runtime binding and consolidation mark are read from it, and a
