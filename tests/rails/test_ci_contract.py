@@ -1084,11 +1084,13 @@ _MAIN_ONLY_ENVIRONMENTS = {
     ("release-tag.yml", "tag"): "ci-controller",
     ("merge-verdict.yml", "post"): "ci-controller",
     ("merge-verdict.yml", "contract"): "ci-controller",
+    ("merge-verdict.yml", "rerun-fallback"): "ci-controller",
 }
 _SCHEDULED_ONLY = {"schedule", "workflow_dispatch"}
-#: The main-only jobs that run on another trigger: the merge verdict's poster and its trusted
-#: run's maker, in a listener of runs (`workflow_run`) and checks (`check_run`), with a
-#: schedule, and a dispatch (a contract run's wake), that runs on nothing else. GitHub runs the
+#: The main-only jobs that run on another trigger: the merge verdict's poster, its trusted run's
+#: maker and its in-place rerun's fallback (#5809), in a listener of runs (`workflow_run`) and
+#: checks (`check_run`), with a schedule, and a dispatch (a contract run's or a rerun's wake),
+#: that runs on nothing else. GitHub runs the
 #: first three from the default branch; a dispatch on another branch runs that branch's file, but
 #: its jobs' condition runs them on main alone and the environment deploys only from main, as for
 #: the scheduled jobs above. So no candidate's run can name the environment through them either.
@@ -1098,6 +1100,12 @@ _ON_MAIN = "github.ref == 'refs/heads/main'"
 _LISTENER_ONLY = {
     ("merge-verdict.yml", "post"): {"workflow_run", "check_run", "schedule", "workflow_dispatch"},
     ("merge-verdict.yml", "contract"): {
+        "workflow_run",
+        "check_run",
+        "schedule",
+        "workflow_dispatch",
+    },
+    ("merge-verdict.yml", "rerun-fallback"): {
         "workflow_run",
         "check_run",
         "schedule",
