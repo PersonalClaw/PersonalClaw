@@ -507,6 +507,10 @@ async def tick(
     # gate downstream — the difference between "cannot tick" and "is skipped".
     triggers = provider.armable(store)
     by_id = {t.id: t for t in triggers}
+    # Each row as this tick read it: what its bookkeeping writes are diffed against, so each writes
+    # what the tick changed and nothing else of a copy an edit may have moved on from since
+    # (`_write_back`).
+    bases = {t.id: t.to_dict() for t in triggers}
 
     from personalclaw.triggers.missed import late_outcome
 
@@ -524,7 +528,7 @@ async def tick(
     #
     # Driven by the CLOCK rather than by an outcome, exactly as `unpark_due`'s docstring says: a
     # parked trigger produces no fires, so nothing in the outcome path could ever revive it.
-    result.unparked.extend(_unpark_ready(store, triggers, now=now, persist=persist))
+    result.unparked.extend(_unpark_ready(store, triggers, now=now, persist=persist, bases=bases))
 
     # 🔴 ARM WHAT NOTHING ARMED, every tick, before the due set is read. `due_ids` skips a row with
     # no next fire, and only the boot armed one, so a row an app added while the gateway ran — a
@@ -532,7 +536,7 @@ async def tick(
     # the Triggers page and never went off until a restart: an app mints its rows with no next
     # fire and leaves the arming to core. One whose first slot had already gone by when the clock
     # first saw it is decided as a missed slot is, with its own cause (`seen_late`).
-    armed = _arm_unarmed(store, triggers, now=now, persist=persist)
+    armed = _arm_unarmed(store, triggers, now=now, persist=persist, bases=bases)
     result.armed.extend(t.id for t in armed)
     late = [t for t in armed if slot_missed(to_epoch(t.next_fire_at), now)]
     if late:
@@ -602,7 +606,7 @@ async def tick(
             result.retired.append(trigger.id)
         elif persist:
             trigger.next_fire_at = to_iso(advanced)
-            store.upsert(trigger)
+            _write_back(store, trigger, bases)
             result.rescheduled.append(trigger.id)
 
         # 🔴 `payload_text` is deliberately LEFT EMPTY here, and that is
@@ -623,12 +627,13 @@ async def tick(
             user_active=user_active,
             persist=persist,
             slot_map=slot_map,
+            base=bases.get(trigger.id),
         )
         decision, row = admission.decision, admission.row
         if spent and persist and not decision.allowed:
             # Refused: nothing will run, and its typed row is already its record. No grant wrote the
             # taken slot, so it is written here — and the row stays, switched off, to be run again.
-            store.upsert(trigger)
+            _write_back(store, trigger, bases)
         row["scheduled_for"] = scheduled_for
         # 🔴 `ran_late`, which only the MANUAL missed-fire card ever wrote. The outcome and
         # `scheduled_for` were added together — a run that started 40 minutes after its
@@ -664,7 +669,12 @@ async def tick(
 
 
 def _arm_unarmed(
-    store: Any, triggers: list[Trigger], *, now: float, persist: bool
+    store: Any,
+    triggers: list[Trigger],
+    *,
+    now: float,
+    persist: bool,
+    bases: dict[str, dict[str, Any]] | None = None,
 ) -> list[Trigger]:
     """Arm, in place, each of *triggers* that is on with no next fire (`arm.needs_arming`), from
     `arm.first_fire`, and persist it when *persist*. Returns the ones it armed.
@@ -684,7 +694,7 @@ def _arm_unarmed(
             continue
         trigger.next_fire_at = to_iso(when)
         if persist:
-            store.upsert(trigger)
+            _write_back(store, trigger, bases)
         armed.append(trigger)
     return armed
 
@@ -768,6 +778,7 @@ async def admit_fire(
     persist: bool = True,
     slot_map: dict[str, str] | None = None,
     source: str = "",
+    base: dict[str, Any] | None = None,
 ) -> Admission:
     """Walk ONE trigger through the fire path and record what it decided.
 
@@ -797,10 +808,14 @@ async def admit_fire(
 
     `persist=False` is the dry run (`automation doctor`): the walk runs and nothing is written.
 
-    The grant's write is the trigger as the caller hands it over, so a one-shot whose slot the tick
-    has taken is switched off by this same write — after its claim is on disk, never before it.
+    The grant's write is what the caller and this walk changed of the trigger, so a one-shot whose
+    slot the tick has taken is switched off by this same write — after its claim is on disk, never
+    before it. It is written onto the row as stored (`_write_back`): *base* is the row as the
+    caller read it, and a field changed since by anyone else keeps their value.
     """
     from datetime import datetime
+
+    as_read = base if base is not None else trigger.to_dict()
 
     from personalclaw.triggers import claims
     from personalclaw.triggers import firepath as fp
@@ -888,13 +903,32 @@ async def admit_fire(
     count_fire(trigger, at=now)
     if persist:
         try:
-            store.upsert(trigger)
+            # What this admission and its caller changed, onto the row as stored: an edit saved
+            # during the walk's awaits stands (`_write_back`). *base* is the row as the caller read
+            # it (the tick's, which holds the slot it took), else as it was when the walk began.
+            _write_back(store, trigger, {trigger.id: as_read})
         except record_files.Unreadable:
             # The store cannot be read, so the grant's write is refused and the fire does not go
             # ahead: its claim goes too, or the trigger would read as running a run that never ran.
             claims.release_claim(trigger.id, base_dir=base_dir)
             raise
     return Admission(decision=decision, row=row)
+
+
+def _write_back(store: Any, trigger: Any, bases: dict[str, dict[str, Any]] | None) -> None:
+    """Write what this tick or admission changed of *trigger* onto its row as stored, and nothing
+    else of the copy it read (`TriggerStore.write_changes`). *bases* holds each row as it was read;
+    the trigger's moves on to what was written, so a later write of it writes only what changed
+    since. A store with no field write (a test's, a provider's that only `upsert`s) is written
+    whole, as before."""
+    base = bases.get(trigger.id) if bases is not None else None
+    write = getattr(store, "write_changes", None)
+    if base is None or not callable(write):
+        store.upsert(trigger)
+    else:
+        write(trigger, base=base)
+    if bases is not None:
+        bases[trigger.id] = trigger.to_dict()
 
 
 def _run_store(base_dir: Any) -> Any:
@@ -1042,7 +1076,14 @@ async def _fires_in_window(trigger: Any, *, now: float, base_dir: Any = None) ->
         return None
 
 
-def _unpark_ready(store: Any, triggers: list[Any], *, now: float, persist: bool) -> list[str]:
+def _unpark_ready(
+    store: Any,
+    triggers: list[Any],
+    *,
+    now: float,
+    persist: bool,
+    bases: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
     """Return PARKED triggers to ACTIVE once their cooldown has elapsed.
 
     🔴 WHY THIS EXISTS. `autopause.unpark_due` implements the clock decision and had **no caller**,
@@ -1088,7 +1129,7 @@ def _unpark_ready(store: Any, triggers: list[Any], *, now: float, persist: bool)
         trigger.park_retry_after = 0.0
         unparked.append(trigger.id)
         if persist:
-            store.upsert(trigger)
+            _write_back(store, trigger, bases)
     if unparked:
         logger.info("unparked %d trigger(s) whose cooldown elapsed: %s", len(unparked), unparked)
     return unparked

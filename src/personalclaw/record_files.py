@@ -498,11 +498,38 @@ class Kept:
                     out[rid] = record  # came in
             elif mine is not None and _canonical(mine) == before:
                 out[rid] = record  # changed there, and not here
+            elif mine is not None:
+                # Changed there AND here: this store's change to a field stands, and the other
+                # writer's change to every field this store left alone is kept with it. A lifecycle
+                # hook's run writes its own three fields, and a switch-off saved during the run is
+                # not undone by it.
+                both = _with_theirs(json.loads(form), json.loads(before), mine)
+                if both is not None:
+                    out[rid] = both
         for rid, before in self._base.items():
             mine = held.get(rid)
             if rid not in there and mine is not None and _canonical(mine) == before:
                 out[rid] = None  # removed there, and not changed here
         return out
+
+
+def _with_theirs(theirs: dict, base: dict, mine: dict) -> dict | None:
+    """*mine* with each field another writer changed (*theirs* against *base*, the record as this
+    store last read or wrote it) where this store left that field as it was: a field both changed
+    keeps this store's value. None when there is nothing of theirs to keep."""
+    absent = object()
+    out = dict(mine)
+    for key in set(theirs) | set(base):
+        was = _canonical(base.get(key, absent)) if key in base else None
+        if (_canonical(mine[key]) if key in mine else None) != was:
+            continue  # this store changed it: its value stands
+        if (_canonical(theirs[key]) if key in theirs else None) == was:
+            continue  # nobody changed it
+        if key in theirs:
+            out[key] = theirs[key]
+        else:
+            out.pop(key, None)
+    return None if out == mine else out
 
 
 def with_moves(records: list[dict], moves: Mapping[str, dict | None]) -> list[dict]:

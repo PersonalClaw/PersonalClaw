@@ -3843,6 +3843,14 @@
      {"annotation": "Trigger", "kind": "positional_or_keyword", "name": "trigger"}
     ],
     "returns": "Trigger"
+   },
+   "write_changes": {
+    "kind": "method",
+    "params": [
+     {"annotation": "Trigger", "kind": "positional_or_keyword", "name": "trigger"},
+     {"annotation": "dict[str, Any]", "kind": "keyword_only", "name": "base"}
+    ],
+    "returns": "Trigger | None"
    }
   }
  },

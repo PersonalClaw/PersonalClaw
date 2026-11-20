@@ -123,6 +123,36 @@ class LoadedTrigger:
         }
 
 
+#: Fields a writer adds to rather than sets: two writers' fire counts both count.
+_COUNTED = frozenset({"run_count"})
+_ABSENT = object()
+
+
+def merged_row(
+    stored: dict[str, Any], base: dict[str, Any], ours: dict[str, Any]
+) -> dict[str, Any]:
+    """*stored* with what a writer changed: each field where *ours* differs from *base* (the row as
+    the writer read it), where *stored* still holds what *base* does. A field another writer changed
+    since keeps that writer's value, and a counted field (`_COUNTED`) adds the writer's difference
+    to the stored count. A field the writer removed is removed only where it is unchanged."""
+    out = dict(stored)
+    for key in set(ours) | set(base):
+        mine, was = ours.get(key, _ABSENT), base.get(key, _ABSENT)
+        if mine == was:
+            continue
+        now = stored.get(key, _ABSENT)
+        if key in _COUNTED and all(isinstance(v, int) for v in (mine, was, now)):
+            out[key] = now + (mine - was)  # type: ignore[operator]
+            continue
+        if now != was:
+            continue
+        if mine is _ABSENT:
+            out.pop(key, None)
+        else:
+            out[key] = mine
+    return out
+
+
 class TriggerStore(TriggerStoreProvider):
     """`triggers.json`, with the shipped cron store's durability discipline.
 
@@ -345,6 +375,49 @@ class TriggerStore(TriggerStoreProvider):
             updated.append(row)
             self._write(updated)
         return trigger if row is plain else parse_trigger(row)[0]
+
+    def write_changes(self, trigger: Trigger, *, base: dict[str, Any]) -> Trigger | None:
+        """Write what *trigger* changed since *base* (its row as its writer read it) onto the row as
+        stored, under the lock, in its place. Returns the row as written, or None when no row of
+        its id is stored: one deleted meanwhile is not made again.
+
+        🔴 THE WRITE THE BOOKKEEPING NEEDED. Every writer handed `upsert` a whole `Trigger`, and the
+        scheduler's tick hands it the copy it read at its start: the next fire time, and then the
+        grant's fire count after the gate walk has awaited. An edit saved meanwhile (its schedule,
+        its action, a switch-off) was written over without a word. Here each field the writer
+        changed is written only where the stored row still holds what the writer read; one another
+        writer changed since keeps that writer's value (`merged_row`), and a fire count adds.
+
+        A row a registered `trigger` provider serves is merged onto that provider's row as it holds
+        it now, and written back there (`routing.route_upsert`), as `upsert` routes it.
+        """
+        from personalclaw.triggers import held_secrets, routing
+
+        ours = trigger.to_dict()
+        served = routing.served_by(trigger.id, native=self)
+        if served:
+            # The provider lists the row (that is how it is served), so a row it cannot hand back
+            # now is one it cannot read back: written whole, as `upsert` writes it, so its
+            # unverifiable write quarantines it (`routing.route_upsert`) instead of passing unseen.
+            current = routing.served_row(trigger.id)
+            held = getattr(current, "trigger", current) if current is not None else None
+            merged = (
+                parse_trigger(merged_row(held.to_dict(), base, ours))[0]
+                if held is not None
+                else trigger
+            )
+            return routing.route_upsert(merged, native=self) or merged
+        with self._file_lock():
+            rows = self._read_rows()
+            at = next((i for i, r in enumerate(rows) if str(r.get("id") or "") == trigger.id), None)
+            if at is None:
+                return None
+            before = rows[at]
+            plain = merged_row(before, base, ours)
+            row = held_secrets.hold(plain, before)
+            rows[at] = row
+            self._write(rows)
+        return parse_trigger(row)[0]
 
     def delete(self, trigger_id: str) -> bool:
         """Remove one trigger. Returns whether it was there.
