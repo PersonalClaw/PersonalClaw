@@ -534,6 +534,27 @@ class ScheduleRunStore:
             return None
         return named[-1]
 
+    def left_unsettled(self, *, work_prefix: str) -> list[tuple[str, dict[str, Any]]]:
+        """Every run still waiting on work whose id starts with *work_prefix*, as ``(job_id,
+        row)``: for each job, the last row about each such piece of work, where that row has not
+        settled. What the start-up pass closes for the work the last gateway took with it
+        (`reaper.record_left_behind_work`). Lock-free, as `unsettled_row` is."""
+        if not work_prefix or not self._dir.is_dir():
+            return []
+        left: list[tuple[str, dict[str, Any]]] = []
+        for path in sorted(self._dir.glob("*.jsonl")):
+            if path.name == _INDEX_NAME:
+                continue
+            last: dict[str, dict[str, Any]] = {}
+            for row in self._read_jsonl(path):
+                work = row.get("work_id")
+                if isinstance(work, str) and work.startswith(work_prefix):
+                    last[work] = row
+            for row in last.values():
+                if row.get("status") in UNSETTLED_STATUSES:
+                    left.append((str(row.get("job_id") or path.stem), row))
+        return left
+
     # ── Read (TaskProvider-shaped: returns (rows, total)) ─────────────
 
     def has_runs(self, job_id: str) -> bool:
