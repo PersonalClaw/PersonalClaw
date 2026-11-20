@@ -695,6 +695,9 @@ chat, channel thread, loop worker, webhook, subagent).
    `compaction_status` of `automatic` (`llm/events.COMPACTION_AUTOMATIC`),
    which keeps the answer streamed before it. An agent CLI keeps its
    conversation inside its own process, where PersonalClaw cannot compact it.
+   Its context in use is what it reports in a turn: ACP's usage update
+   (`used` tokens of a `size`-token window) or a vendor metadata frame's
+   `contextUsagePercentage`, whichever came last (`acp/translate.py`).
    One whose app declares that the CLI compacts itself
    (`register_acp_cli_entry(compacts_itself=True)`: Claude Code and Codex) is
    left to do that at its own limit, and its session goes on with the results

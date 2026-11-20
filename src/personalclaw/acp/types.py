@@ -88,6 +88,10 @@ UPDATE_TOOL_CALL = "tool_call"
 # status=pending) followed by one or more ``tool_call_update`` frames that fill in
 # the resolved rawInput and, on completion, the result content/rawOutput.
 UPDATE_TOOL_CALL_UPDATE = "tool_call_update"
+# ACP's own report of the context in use: ``used`` tokens of a window of ``size``. Some agent CLIs
+# report their context only this way, others only through the vendor metadata frame
+# (``contextUsagePercentage``), and the chat's context ring reads either.
+UPDATE_USAGE = "usage_update"
 
 # ── ACP Permission Outcomes ──
 

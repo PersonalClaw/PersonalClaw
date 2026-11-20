@@ -71,7 +71,9 @@ class _World:
     """One chat on one agent CLI, registered the way its app registers it, with the records a
     test reads."""
 
-    def __init__(self, tmp_path: Path, *, cli: str, compacts_itself: bool):
+    def __init__(
+        self, tmp_path: Path, *, cli: str, compacts_itself: bool, reports: str = "fills-context"
+    ):
         from personalclaw.acp_bundles._register import unregister_acp_cli_entry
         from personalclaw.llm.acp_agent import _factory
         from personalclaw.sdk.acp import register_acp_cli_entry
@@ -82,7 +84,7 @@ class _World:
         entry = register_acp_cli_entry(
             cli=cli,
             dialect="default",
-            command=[sys.executable, str(AGENT), "fills-context", str(self.record), "spec"],
+            command=[sys.executable, str(AGENT), reports, str(self.record), "spec"],
             **declared,
         )
         # Kept out of the shared registry, so this test's CLI serves only the chat it drives.
@@ -159,17 +161,26 @@ def make_world(tmp_path, monkeypatch):
     # The handshake's settle wait for MCP start-up notices: this agent sends none.
     monkeypatch.setattr("personalclaw.acp.client._DRAIN_DURATION", 0.05)
 
-    def make(*, cli: str, compacts_itself: bool) -> _World:
-        return _World(tmp_path, cli=cli, compacts_itself=compacts_itself)
+    def make(*, cli: str, compacts_itself: bool, reports: str = "fills-context") -> _World:
+        return _World(tmp_path, cli=cli, compacts_itself=compacts_itself, reports=reports)
 
     return make
 
 
+#: The two ways an agent CLI reports its context: the vendor metadata frame's percentage, and
+#: ACP's own usage update (🔴 red before for the second: it was never read, so the ring stayed
+#: empty and the threshold never applied).
+REPORTS = ("fills-context", "fills-context-by-usage")
+
+
 @pytest.mark.asyncio
-async def test_a_cli_that_compacts_itself_runs_past_the_threshold_on_the_same_session(make_world):
+@pytest.mark.parametrize("reports", REPORTS)
+async def test_a_cli_that_compacts_itself_runs_past_the_threshold_on_the_same_session(
+    make_world, reports
+):
     """🔴 Red before: its process was ended after the first answer and the second turn started a
     second one, on a new session, beside "Auto-compacted at 95% of the context window."."""
-    w = make_world(cli="scripted-compacting", compacts_itself=True)
+    w = make_world(cli="scripted-compacting", compacts_itself=True, reports=reports)
     try:
         await w.turn(FIRST_ASK)
         assert w.sessions.has_session(KEY), "the CLI was ended at the threshold"
@@ -194,12 +205,13 @@ async def test_a_cli_that_compacts_itself_runs_past_the_threshold_on_the_same_se
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reports", REPORTS)
 async def test_a_cli_that_cannot_compact_is_restarted_says_so_and_keeps_the_conversation(
-    make_world,
+    make_world, reports
 ):
     """🔴 Red before: the chat said "Auto-compacted at 95% of the context window." for a restart
     that compacted nothing and dropped everything the CLI held."""
-    w = make_world(cli="scripted-plain", compacts_itself=False)
+    w = make_world(cli="scripted-plain", compacts_itself=False, reports=reports)
     try:
         await w.turn(FIRST_ASK)
 

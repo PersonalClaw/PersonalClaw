@@ -960,6 +960,14 @@ class AcpSession:
         )
         raise AcpTimeoutError()
 
+    def _keep_context_pct(self, pct: float | None) -> None:
+        """Keep *pct*, the context in use a frame of this turn said, as the turn's reading: ACP's
+        own usage update (``translate.extract_usage_pct``) or the vendor metadata frame's
+        percentage (``translate.extract_context_pct``), whichever came last. A frame that says
+        nothing (None) leaves the reading as it was."""
+        if pct is not None:
+            self.last_prompt_stats.context_pct = pct
+
     async def _turn_events(
         self,
         req_id: int,
@@ -1075,6 +1083,7 @@ class AcpSession:
                         for tr in self._read_new_tool_results():  # prior tool's results first
                             yield tr
                         yield tool_event
+                    self._keep_context_pct(translate.extract_usage_pct(msg))
                     upd_events = translate.extract_tool_update_events(
                         msg, self._tool_call_inputs, self._tool_call_seen
                     )
@@ -1091,9 +1100,7 @@ class AcpSession:
                         for steer in await self._deliver_steers_at_tool_boundary():
                             yield AcpEvent(kind=EVENT_STEER, text=steer)
                 elif action == "metadata":
-                    pct = translate.extract_context_pct(msg)
-                    if pct is not None:
-                        self.last_prompt_stats.context_pct = pct
+                    self._keep_context_pct(translate.extract_context_pct(msg))
                 elif action == "compaction":
                     params = msg.params or {}
                     status = params.get("status", {})

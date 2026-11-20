@@ -23,6 +23,7 @@ import logging
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import TypeGuard
 
 from personalclaw.acp.types import (
     EVENT_PERMISSION_REQUEST,
@@ -32,6 +33,7 @@ from personalclaw.acp.types import (
     UPDATE_AGENT_MESSAGE_CHUNK,
     UPDATE_TOOL_CALL,
     UPDATE_TOOL_CALL_UPDATE,
+    UPDATE_USAGE,
     AcpEvent,
     JsonRpcMessage,
 )
@@ -636,6 +638,41 @@ def extract_context_pct(msg: JsonRpcMessage) -> float | None:
     params = msg.params or {}
     pct = params.get("contextUsagePercentage") if isinstance(params, dict) else None
     return float(pct) if pct is not None else None
+
+
+#: How far past its window a usage update's ``used`` may read and still be its window, full: a count
+#: taken a moment before the window's size was. Past it, the frame is read as a wrong one.
+_USAGE_ROUNDING = 1.01
+_overfull_usage_said = False
+
+
+def _is_count(n: object) -> TypeGuard[int | float]:
+    """A number a frame says, not a bool (which ``isinstance(True, int)`` also passes)."""
+    return isinstance(n, (int, float)) and not isinstance(n, bool)
+
+
+def extract_usage_pct(msg: JsonRpcMessage) -> float | None:
+    """The context in use, in percent, off ACP's own usage update (a ``session/update`` whose
+    ``sessionUpdate`` is ``usage_update``: ``used`` tokens of a window of ``size``), or None when
+    the frame is not one or does not say both as numbers with a window over 0. A count just past
+    the window reads 100; one well past it is a wrong frame, said once in the log and read as None.
+    """
+    global _overfull_usage_said
+    params = msg.params or {}
+    update = params.get("update", {}) if isinstance(params, dict) else {}
+    if not isinstance(update, dict) or update.get("sessionUpdate") != UPDATE_USAGE:
+        return None
+    used, size = update.get("used"), update.get("size")
+    if not _is_count(used) or not _is_count(size) or size <= 0 or used < 0:
+        return None
+    if used > size * _USAGE_ROUNDING:
+        if not _overfull_usage_said:
+            _overfull_usage_said = True
+            logger.warning(
+                "An agent CLI said %s tokens in use of a %s-token window: not read", used, size
+            )
+        return None
+    return min(100.0, used / size * 100)
 
 
 def encode_prompt_content(message: str) -> list[dict]:

@@ -45,6 +45,10 @@ In both of those, a prompt that follows a refused one is answered without the co
     Answers every prompt at once, :data:`FIRST_REVIEW` first and :data:`LATER_REVIEW` after, and
     reports its context as :data:`FULL_CONTEXT_PCT` full after each answer (the metadata
     notification that carries ``contextUsagePercentage``), asking nothing.
+``fills-context-by-usage``
+    The same, but reports its context through ACP's own usage update (a ``session/update`` whose
+    ``sessionUpdate`` is ``usage_update``: :data:`USAGE_USED` of :data:`USAGE_SIZE` tokens, which
+    is :data:`FULL_CONTEXT_PCT`), as claude-code's adapter does, and sends no metadata frame.
 ``edits``
     Asks to edit :data:`EDITED_FILE` in the folder it was started in, naming the file the way
     claude-code's adapter does: the ``tool_call`` opens with no input, an update names it in
@@ -108,6 +112,8 @@ PLAIN_ANSWER = "The alerts are the carrier adapter timing out; here is what to c
 DYING_STDERR = "engine: the connection to its service was reset"
 #: How full ``fills-context`` says its context is after each answer, and what it answers.
 FULL_CONTEXT_PCT = 95.0
+#: The usage update's tokens in use and its window (``fills-context-by-usage``): 95% of the window.
+USAGE_USED, USAGE_SIZE = 190_000, 200_000
 FIRST_REVIEW = "The change bumps the version in pyproject.toml and nothing else."
 LATER_REVIEW = "Next, check that the changelog names the new version."
 #: The file ``edits`` edits, in the folder the agent was started in, and its text after the edit.
@@ -552,16 +558,27 @@ class Agent:
             self.prompt_id = req_id
             self.say(PLAIN_ANSWER)
             self.end_turn("end_turn")
-        elif method == "session/prompt" and self.scenario == "fills-context":
+        elif method == "session/prompt" and self.scenario in (
+            "fills-context",
+            "fills-context-by-usage",
+        ):
             self.prompt_id = req_id
             self.say(LATER_REVIEW if self.prompts_seen else FIRST_REVIEW)
             self.prompts_seen += 1
-            self.send(
-                {
-                    "method": "_vendor.dev/metadata",
-                    "params": {"sessionId": SESSION_ID, "contextUsagePercentage": FULL_CONTEXT_PCT},
-                }
-            )
+            if self.scenario == "fills-context":
+                self.send(
+                    {
+                        "method": "_vendor.dev/metadata",
+                        "params": {
+                            "sessionId": SESSION_ID,
+                            "contextUsagePercentage": FULL_CONTEXT_PCT,
+                        },
+                    }
+                )
+            else:
+                self.update(
+                    {"sessionUpdate": "usage_update", "used": USAGE_USED, "size": USAGE_SIZE}
+                )
             self.end_turn("end_turn")
         elif method == "session/prompt" and self.scenario == "edits":
             self.start_edit(req_id)
