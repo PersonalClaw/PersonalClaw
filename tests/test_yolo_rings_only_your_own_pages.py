@@ -64,6 +64,7 @@ def sockets(monkeypatch, tmp_path):
     st._ws_app = {}
     st._ws_scope = {}
     st._ws_release = {}
+    st._ws_here = {}
     st._notification_log = []
     st._sessions = {}
     st.conversation_log = None

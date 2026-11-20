@@ -43,6 +43,7 @@ import { notify } from './appSdk'
 import { TerminalDrawer, fullTerminalRoute } from '../pages/terminal/TerminalDrawer'
 import { Toaster } from '../ui/Toaster'
 import { useApprovalToasts } from './useApprovalToasts'
+import { useBridgeNavigation } from './useBridgeNavigation'
 import { useNativeNotifications } from '../lib/nativeNotifications'
 import { useNotificationToasts } from '../lib/notificationToasts'
 import { DialogHost } from '../ui/dialog/DialogHost'
@@ -289,6 +290,9 @@ function AppInner() {
   // are native and this relays them to the Electron shell, which raises the OS banner and
   // hands back the route on a tap. A no-op in a browser tab — the bell is the fallback.
   useNativeNotifications(navigate)
+  // A local agent's `open_cockpit` (the control bridge): moves the tab used last to one of the
+  // dashboard's own pages, or says so where you are typing.
+  useBridgeNavigation(navigate, (page) => ROUTABLE.has(page))
   // The `immediate` mode's toast (#343). Mounted beside the native relay because it is the same
   // shape of thing — the gateway has already decided the note interrupts, and this is the surface
   // that acts on it — and because the matrix's promise ("Notify = a toast") has to hold on every

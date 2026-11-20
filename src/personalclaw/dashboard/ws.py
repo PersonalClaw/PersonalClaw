@@ -80,6 +80,34 @@ def _check_ws_origin(request: web.Request) -> None:
     raise web.HTTPForbidden(text="WebSocket origin not allowed")
 
 
+#: The headers a proxy or tunnel adds; a page opened on this computer sends none of them.
+_FORWARDED = ("Forwarded", "X-Forwarded-For", "X-Real-IP")
+
+
+def _the_owners_own_here(request: web.Request, scope: tuple[str, ...]) -> bool:
+    """Whether this socket is the owner's own dashboard on this machine. Only such a tab is moved
+    by a local agent's ``open_cockpit`` (``DashboardState.send_to_last_focused``).
+
+    Not an app's token, a scoped client's or a paired device's session. And opened here, not
+    through a proxy or tunnel on this machine, which makes every visitor's connection come from
+    loopback (``exposure.client_address``): the peer is loopback and no listed trusted proxy, the
+    request carries no proxy's forwarding header, and its Host is a loopback name, which a tunnel
+    nobody listed does not have (its Host is its public name)."""
+    from personalclaw.dashboard.exposure import is_trusted_proxy
+    from personalclaw.dashboard.origin import is_loopback
+
+    if request.get("app") or scope:
+        return False
+    peer = str(request.remote or "")
+    if not is_loopback(peer) or is_trusted_proxy(peer):
+        return False
+    if any(request.headers.get(name) for name in _FORWARDED):
+        return False
+    if not is_loopback(str(request.url.host or "")):
+        return False
+    return not _paired_device_session(request)
+
+
 async def _stamp_while_open(nonce: str, scope: tuple[str, ...]) -> None:
     """An open scoped socket counts as use: stamp its session once a throttle period while it is
     open, so the client's idle end counts from when it last listened (R3-6)."""
@@ -118,6 +146,7 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
         scope=scope,
         nonce=nonce,
         ends=float(request.get("session_expires_at") or 0.0),
+        here=_the_owners_own_here(request, scope),
     )
     keep_alive = asyncio.ensure_future(_stamp_while_open(nonce, scope)) if scope else None
 
@@ -212,6 +241,8 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
                                 )
                     elif msg_type == "unsubscribe_subagents":
                         state.unsubscribe_subagents(ws)
+                    elif msg_type == "focused":
+                        state.note_focus(ws)
                 except Exception:
                     pass
             elif msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):

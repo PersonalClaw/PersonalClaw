@@ -521,6 +521,7 @@ class TestPublisher:
         state._ws_app = {}
         state._ws_scope = {}
         state._ws_release = {}
+        state._ws_here = {}
         state._notification_log = []
         state._sessions = {}
         state._pending_approvals = {}

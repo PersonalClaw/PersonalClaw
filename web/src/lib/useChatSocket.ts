@@ -62,6 +62,15 @@ let open = false
 let retry = 0
 let timer: number | undefined
 
+/** Send *frame* to the gateway on the tab's socket, when it is open; nothing when it is not. A
+ *  frame the page sends is a report the gateway may act on (a tab's `focused`, which is the tab
+ *  a local agent's `open_cockpit` moves), so a caller that must be heard sends it again when the
+ *  socket opens (`onStatus`). */
+export function sendFrame(frame: Record<string, unknown>): void {
+  if (!ws || !open) return
+  try { ws.send(JSON.stringify(frame)) } catch { /* a closing socket: its next open reports again */ }
+}
+
 /** Call one consumer. A consumer that throws must not take the frame from the rest. */
 function call(fn: () => void): void {
   try { fn() } catch { /* the consumer's own failure; the others still get the frame */ }

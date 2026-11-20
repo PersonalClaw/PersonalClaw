@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -197,6 +198,8 @@ class DashboardWebSocketState:
     _ws_scope: dict[web.WebSocketResponse, tuple[str, ...]]
     #: The release of a scoped socket's hold on its session (``scoped_sessions.hold_open``).
     _ws_release: dict[web.WebSocketResponse, Any]
+    #: The owner's own sockets on this machine, each with when its tab last took focus.
+    _ws_here: dict[web.WebSocketResponse, float]
     _ws_clients: list[web.WebSocketResponse]
     _ws_log_subscribers: set[web.WebSocketResponse]
     _ws_loop: asyncio.AbstractEventLoop | None
@@ -672,6 +675,7 @@ class DashboardWebSocketState:
         scope: tuple[str, ...] = (),
         nonce: str = "",
         ends: float = 0.0,
+        here: bool = False,
     ) -> None:
         """Register a new WebSocket client.
 
@@ -681,7 +685,11 @@ class DashboardWebSocketState:
 
         ``scope`` is an automation client's (``device_scopes``): it hears only its scope's frames,
         and the socket closes when its session ends (*nonce*, signed out, idle or a mismatch) or
-        runs out (*ends*), F9."""
+        runs out (*ends*), F9.
+
+        ``here`` says the socket is the owner's own on this machine: not an app's, not a scoped
+        client's, not a paired device's session, and from a loopback peer. Only such a socket can
+        be the tab a control bridge's ``navigate`` goes to (:meth:`send_to_last_focused`)."""
         # Capture the gateway loop so off-loop broadcast_ws callers (MCP tool
         # subprocess callbacks, subagent/cron threads) can schedule sends onto it.
         if self._ws_loop is None:
@@ -695,6 +703,25 @@ class DashboardWebSocketState:
         if scope:
             self._ws_scope[ws] = tuple(scope)
             self._hold_scoped_open(ws, nonce, ends)
+        if here and not app and not scope:
+            self._ws_here[ws] = 0.0
+
+    def note_focus(self, ws: web.WebSocketResponse) -> None:
+        """The tab behind *ws* took focus (its ``focused`` frame). Kept for the owner's own
+        sockets on this machine only; any other socket's report is ignored."""
+        if ws in self._ws_here:
+            self._ws_here[ws] = time.monotonic()
+
+    def send_to_last_focused(self, msg_type: str, data: object) -> bool:
+        """Send a frame to the one tab that took focus last among the owner's own sockets on
+        this machine, and to no other: every tab hearing it would move every page, and a paired
+        phone's with them. ``False`` when no such tab has reported focus."""
+        focused = [(at, ws) for ws, at in self._ws_here.items() if at and ws in self._ws_clients]
+        if not focused:
+            return False
+        _, ws = max(focused, key=lambda pair: pair[0])
+        self._dispatch_ws([ws], msg_type, json.dumps({"type": msg_type, "data": data}))
+        return True
 
     def _hold_scoped_open(self, ws: web.WebSocketResponse, nonce: str, ends: float) -> None:
         """Close a scoped socket when its session ends, and when it runs out."""
@@ -719,6 +746,7 @@ class DashboardWebSocketState:
             pass
         self._ws_app.pop(ws, None)
         self._ws_scope.pop(ws, None)
+        self._ws_here.pop(ws, None)
         release = self._ws_release.pop(ws, None)
         if release is not None:
             release()
