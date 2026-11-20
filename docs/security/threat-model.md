@@ -802,6 +802,10 @@ Data leaving the running system:
   read to make first, and nothing is written; the refusal comes before anyone is asked to approve
   the call. A new artifact needs no base. A marker the agent writes back for a value its reading
   masked is put back from the version it read, as a text artifact's save puts it back. A
+  workbook's next version is made over the version it read too (`documents/sheet_carry.py`): a
+  formula sent back as its text at its own cell stays a formula, and no other text becomes one;
+  the cells it keeps keep their formats; and a version that would drop what its rows cannot
+  carry, a chart or conditional formatting, is refused, naming each, until you agree. A
   workflow's step writes what its run made from no copy of the artifact, so it names no base:
   instead the store reads the live version inside the write. And a current base proves only that
   the agent read your edit, not that what it wrote kept it, while a chat's Trust can approve the

@@ -359,6 +359,36 @@ async def _reset_tools(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> s
     return "on" if "schedule" in runtime._active_groups else "off"
 
 
+# ── sheet_create: drop_unsupported ───────────────────────────────────────────────────────────
+
+
+async def _sheet_drop(scratch: Path, mp: pytest.MonkeyPatch, sent: object) -> str:
+    """``"written"``, or ``"asked"`` when it refused the next version of a workbook holding what
+    a version cannot carry, naming it, with nothing written."""
+    from test_workbook_next_version_keeps_formulas import (
+        _budget,
+        _read,
+        _with_conditional_formatting,
+        _workbook,
+        _write,
+    )
+
+    from personalclaw.artifacts.native import NativeArtifactProvider
+    from personalclaw.documents.writers.xlsx_writer import render_xlsx
+
+    store = NativeArtifactProvider(root=scratch / "artifacts")
+    mp.setattr("personalclaw.artifacts.registry.get_provider", lambda *_a, **_k: store)
+    mp.setattr("personalclaw.mcp_artifacts._resolve_session_key", lambda *_a, **_k: "chat-1")
+    slug = _workbook(store, _with_conditional_formatting(render_xlsx(_budget())))
+    sheets, base = _read(slug)
+    done = _write(slug, base, sheets, drop_unsupported=sent)
+    if done.startswith("Error [ERR_WORKBOOK_FEATURES_DROPPED]:"):
+        assert store.get(slug).version == 1
+        return "asked"
+    assert done.startswith("Updated xlsx:"), done
+    return "written"
+
+
 class Door(NamedTuple):
     """A tool door, how it is driven, and what it does with each answer."""
 
@@ -407,6 +437,7 @@ DOORS = [
     Door("knowledge bulk pin.value", _bulk("pin", "is_pinned"), True, False, REFUSED),
     Door("knowledge bulk favorite.value", _bulk("favorite", "favorited"), True, False, REFUSED),
     Door("reset_tools.groups.*", _reset_tools, "on", "off", "off"),
+    Door("sheet_create.drop_unsupported", _sheet_drop, "written", "asked", "asked"),
 ]
 
 
@@ -424,7 +455,7 @@ def _sent(door: Door, answer: str) -> tuple[object, ...]:
 
 
 async def _answers(subtests, tmp_path: Path, answer: str) -> None:
-    assert len(DOORS) == 18, "a door was dropped from the table"
+    assert len(DOORS) == 19, "a door was dropped from the table"
     assert len(DOORS) == len({door.name for door in DOORS}), "two doors share a name"
     for at, door in enumerate(DOORS):
         for value in _sent(door, answer):

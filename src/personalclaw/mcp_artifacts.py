@@ -25,6 +25,7 @@ from personalclaw.artifacts.models import (
     is_valid_slug,
 )
 from personalclaw.mcp_core import MODEL_WORK, _resolve_session_key, get_current_session_key
+from personalclaw.mcp_sheet_versions import carry_note, carry_workbook
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import BUILDS_META_KEY, ToolFailure, tool_failure
 from personalclaw.validation import decode_json_text
@@ -41,6 +42,23 @@ _READ_PAGE_CHARS = 40_000
 _BASE_DESCRIPTION = (
     "The base artifact_get named for the version you read (like 'v3-1a2b3c4d5e6f7a8b'), "
     "required to write over an existing artifact; a new one needs none"
+)
+
+_SHEET_CREATE_DESCRIPTION = (
+    "Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. "
+    "Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` "
+    "(JSON text: an array of row arrays) for a single tab, or `csv` text. Row 0 is "
+    "treated as the header. KEEP NUMBERS "
+    "AS NUMBERS (not strings) so the result can be summed and charted — that "
+    "is the main reason to produce a spreadsheet rather than a table. "
+    "To make the next version of an existing spreadsheet, read it with "
+    "artifact_get and call this with its slug and the base that read names: a call "
+    "that names an existing spreadsheet (by slug, or by the same name) with no base, "
+    "or with a base someone else's newer version has replaced, is refused and "
+    "nothing is written. The next version keeps each formula you send back as the "
+    "reading showed it, and the formats, widths and merges of the cells you keep. "
+    "To make a SEPARATE spreadsheet, give it a different name. "
+    "Returns the slug and where to download the file."
 )
 
 
@@ -363,20 +381,7 @@ def _list_tools() -> list[dict[str, Any]]:
             "name": "sheet_create",
             "annotations": {"readOnlyHint": False},
             "_meta": {BUILDS_META_KEY: True},
-            "description": (
-                "Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. "
-                "Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` "
-                "(JSON text: an array of row arrays) for a single tab, or `csv` text. Row 0 is "
-                "treated as the header. KEEP NUMBERS "
-                "AS NUMBERS (not strings) so the result can be summed and charted — that "
-                "is the main reason to produce a spreadsheet rather than a table. "
-                "To make the next version of an existing spreadsheet, read it with "
-                "artifact_get and call this with its slug and the base that read names: a call "
-                "that names an existing spreadsheet (by slug, or by the same name) with no base, "
-                "or with a base someone else's newer version has replaced, is refused and "
-                "nothing is written. To make a SEPARATE spreadsheet, give it a different name. "
-                "Returns the slug and where to download the file."
-            ),
+            "description": _SHEET_CREATE_DESCRIPTION,
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -401,6 +406,10 @@ def _list_tools() -> list[dict[str, Any]]:
                         "description": "Existing artifact slug to update in place (bumps a version)",  # noqa: E501
                     },
                     "base": {"type": "string", "description": _BASE_DESCRIPTION},
+                    "drop_unsupported": {
+                        "type": "boolean",
+                        "description": "Only after the user agreed: write the next version of a workbook that holds what it cannot carry (charts, conditional formatting, tables, borders), which a call without this refuses, naming each",  # noqa: E501
+                    },
                     "description": {"type": "string", "description": "Optional short description"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                 },
@@ -2414,7 +2423,6 @@ def _document_create(
     from personalclaw.artifacts.models import MAX_BINARY_CONTENT_BYTES, MAX_CONTENT_BYTES
     from personalclaw.documents import available_formats, get_writer
     from personalclaw.documents.from_markup import document_from_markdown
-    from personalclaw.documents.model import SheetModel
     from personalclaw.html_documents import document_from_html
     from personalclaw.stale_write import refusal_outcome
     from personalclaw.web.extract import SanitizerUnavailable
@@ -2429,6 +2437,7 @@ def _document_create(
         )
     display_name = str(args.get("name") or "").strip() or f"Untitled {fmt}"
     slug = str(args.get("slug") or "").strip()
+    carried: Any = None
     # The artifact this call writes the next version of, the base it is written over and the
     # Project a new one is filed under. Said before rendering: a refusal here costs none.
     named, refusal, expected, project = _document_target(prov, name, args, fmt, sk)
@@ -2472,34 +2481,9 @@ def _document_create(
             _audit("denied", error="no deck input")
             return tool_failure("provide markdown or slides.")
     elif name == "sheet_create":
-        # Declared JSON text (a sheet map has no portable schema); a structured value from a
-        # caller that is not a model passes through `decode_json_text` untouched.
-        sheets = decode_json_text(args.get("sheets"))
-        rows = decode_json_text(args.get("rows"))
-        csv_text = str(args.get("csv") or "")
-        # ``from_rows`` rather than the constructor: the agent supplies DATA, and a raw
-        # value that looks like a formula stays a literal. A cell becomes a formula only
-        # when something declares it one - see SheetCell.
-        if isinstance(sheets, dict) and sheets:
-            model = SheetModel.from_rows({str(k): list(v or []) for k, v in sheets.items()})
-        elif isinstance(rows, list) and rows:
-            model = SheetModel.from_rows({"Sheet1": [list(r) for r in rows]})
-        elif csv_text.strip():
-            import csv
-
-            from personalclaw.knowledge.readers import delimited_rows
-
-            # Read the way Knowledge reads a .csv file, so a quoted field holding a comma, a line
-            # break or a quote stays one cell.
-            try:
-                parsed = delimited_rows(csv_text)
-            except csv.Error as exc:
-                _audit("denied", error=f"unreadable csv: {exc}")
-                return tool_failure(f"could not read the csv text: {exc}.")
-            model = SheetModel.from_rows({"Sheet1": parsed})
-        else:
-            _audit("denied", error="no sheet input")
-            return tool_failure("provide sheets, rows, or csv.")
+        model, carried, refused = _sheet_model(prov, named, expected, fmt, args, _audit)
+        if refused is not None:
+            return refused
     else:
         markdown = str(args.get("markdown") or "")
         html = str(args.get("html") or "")
@@ -2627,7 +2611,55 @@ def _document_create(
                 project_id=project.id,
             )
     _audit("success", art.slug)
-    return _document_reply(art, fmt, data, binary, target, project, sk)
+    return _document_reply(art, fmt, data, binary, target, project, sk) + carry_note(carried)
+
+
+def _sheet_model(
+    prov: Any, named: Any, expected: Any, fmt: str, args: dict[str, Any], _audit: Any
+) -> tuple[Any, Any, Any]:
+    """``(model, carried, refusal)`` for a ``sheet_create`` call: the workbook its ``sheets``,
+    ``rows`` or ``csv`` input builds, and, for the next version of the workbook *named*, what
+    ``mcp_sheet_versions.carry_workbook`` carried from the version it was read from. A refusal
+    comes with no model, audited here."""
+    from personalclaw.documents.model import SheetModel
+
+    # Declared JSON text (a sheet map has no portable schema); a structured value from a
+    # caller that is not a model passes through `decode_json_text` untouched.
+    sheets = decode_json_text(args.get("sheets"))
+    rows = decode_json_text(args.get("rows"))
+    csv_text = str(args.get("csv") or "")
+    # ``from_rows`` rather than the constructor: the agent supplies DATA, and a raw
+    # value that looks like a formula stays a literal. A cell becomes a formula only
+    # when something declares it one - see SheetCell.
+    if isinstance(sheets, dict) and sheets:
+        model = SheetModel.from_rows({str(k): list(v or []) for k, v in sheets.items()})
+    elif isinstance(rows, list) and rows:
+        model = SheetModel.from_rows({"Sheet1": [list(r) for r in rows]})
+    elif csv_text.strip():
+        import csv
+
+        from personalclaw.knowledge.readers import delimited_rows
+
+        # Read the way Knowledge reads a .csv file, so a quoted field holding a comma, a line
+        # break or a quote stays one cell.
+        try:
+            parsed = delimited_rows(csv_text)
+        except csv.Error as exc:
+            _audit("denied", error=f"unreadable csv: {exc}")
+            return None, None, tool_failure(f"could not read the csv text: {exc}.")
+        model = SheetModel.from_rows({"Sheet1": parsed})
+    else:
+        _audit("denied", error="no sheet input")
+        return None, None, tool_failure("provide sheets, rows, or csv.")
+    if named is None or fmt != "xlsx":
+        return model, None, None
+    # A next version starts from the version it was read from, which holds what the rows
+    # cannot say: its formulas, formats, widths and merges.
+    carried, refused = carry_workbook(prov, named, expected, model, args)
+    if carried is None:
+        _audit("denied", named.slug, "workbook_carry")
+        return None, None, refused
+    return carried.model, carried, None
 
 
 def _document_reply(

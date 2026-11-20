@@ -208,7 +208,8 @@ def document_text(
             ),
             leaves_out=(
                 "Its number formats, cell styles, column widths and merged cells are not in "
-                "this text.",
+                "this text. A next version written from it keeps them for the cells it keeps, "
+                "and a formula sent back as its text at its own cell stays a formula.",
                 *_losses(loss.summary(), loss.lossless),
             ),
         )
